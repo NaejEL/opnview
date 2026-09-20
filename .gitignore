@@ -1,0 +1,25 @@
+# Software-factory cycle logs
+factory-logs/
+
+# Go binaries
+/opnview
+/opnview.exe
+/bin/
+/dist/
+
+# Local SQLite database and runtime data (never in the repository)
+*.db
+*.db-shm
+*.db-wal
+/data/
+
+# MaxMind GeoLite2 databases: downloaded at runtime, never versioned
+*.mmdb
+/geoip/
+
+# Local configuration holding secrets (entered through the web wizard)
+config.local.*
+.env
+
+# Machine-local Claude Code settings
+.claude/settings.local.json

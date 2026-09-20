@@ -1,0 +1,51 @@
+{
+  "version": "2.0.0",
+  "inputs": [
+    {
+      "id": "factorySpec",
+      "type": "promptString",
+      "description": "Path to the approved spec (specs/SPEC-*.md)"
+    }
+  ],
+  "tasks": [
+    {
+      "label": "Factory: CI run",
+      "type": "shell",
+      "command": "./ci/factory.sh ${input:factorySpec}",
+      "windows": {
+        "command": "pwsh -File ci/factory.ps1 ${input:factorySpec}"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Factory: CI run (YOLO)",
+      "type": "shell",
+      "command": "./ci/factory.sh ${input:factorySpec} --yolo",
+      "windows": {
+        "command": "pwsh -File ci/factory.ps1 ${input:factorySpec} -Yolo"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Factory: new spec (interactive session)",
+      "type": "shell",
+      "command": "echo 'Open Claude Code and type: /factory-run \"<your requirement>\"'",
+      "windows": {
+        "command": "Write-Host 'Open Claude Code and type: /factory-run \"<your requirement>\"'"
+      },
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      }
+    }
+  ]
+}

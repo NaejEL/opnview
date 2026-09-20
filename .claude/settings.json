@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "deny": [
+      "Read(./factory-logs/**)",
+      "Read(./.git/objects/**)",
+      "Read(./bin/**)",
+      "Read(./dist/**)",
+      "Read(./data/**)",
+      "Read(./geoip/**)",
+      "Read(./**/*.mmdb)",
+      "Read(./**/*.db)"
+    ]
+  }
+}
