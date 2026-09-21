@@ -96,11 +96,11 @@ if (-not $claude) {
     exit 127
 }
 
-# The agents get exactly the checks entry point and nothing wider: not
-# 'docker *', not 'docker compose *'. Host 'go' and 'gofmt' are deliberately
-# absent — the toolchain exists only inside the container.
+# The agents get exactly the two checks entry points and nothing wider: not
+# 'docker *', not 'docker compose *'. Host 'go', 'gofmt' and 'sqlite3' are
+# deliberately absent — the toolchain exists only inside the container.
 # This string is kept identical in ci/factory.sh.
-$allowedTools = 'Read,Glob,Grep,Write,Edit,Bash(git *),Bash(bash *),Bash(shellcheck *),Bash(docker compose run --rm checks)'
+$allowedTools = 'Read,Glob,Grep,Write,Edit,Bash(git *),Bash(bash *),Bash(shellcheck *),Bash(docker compose run --rm checks),Bash(docker compose run --rm schema-checks)'
 
 $logDir = 'factory-logs'
 if (-not (Test-Path -LiteralPath $logDir -PathType Container)) {

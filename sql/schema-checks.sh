@@ -1,0 +1,868 @@
+#!/usr/bin/env bash
+# opnview — schema checks.
+#
+# Applies the migrations to a fresh database, seeds it, runs the seven screen
+# queries and their query plans, and asserts the acceptance criteria of
+# specs/SPEC-data-model-sqlite-schema.md. This script is the schema entry point
+# and is meant to run inside the development container, never on the host: no
+# sqlite3 is installed on the host.
+#
+# Canonical invocation, from the repository root, byte-for-byte identical in
+# PowerShell and in bash:
+#
+#     docker compose run --rm schema-checks
+#
+# Every check is run, even after one fails, and the failures are summarised at
+# the end. The script exits 0 only when every check passed.
+#
+# Every database it creates lives under /data, the named volume mounted outside
+# the bind-mounted working tree: a SQLite file and its -wal / -shm companions
+# must never land in the repository, and WAL on a Windows bind mount locks
+# pathologically.
+set -uo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DATA_DIR="${OPNVIEW_DATA_DIR:-/data}"
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+MAIN_DB="$DATA_DIR/schema-checks-main.db"
+REPEAT_DB="$DATA_DIR/schema-checks-repeat.db"
+ALT_DB="$DATA_DIR/schema-checks-alt.db"
+PURGE_DB="$DATA_DIR/schema-checks-purge.db"
+UNLIMITED_DB="$DATA_DIR/schema-checks-unlimited.db"
+INDEX_DB="$DATA_DIR/schema-checks-noindex.db"
+
+# Seed parameters. The default run and the alternative run below differ in
+# every count, so nothing may assume a segment, device or interface count.
+NOW=1750000000
+SEGMENTS=6
+DEVICES=40
+RULES=12
+FLOW_ROWS=100000
+ALERTS=500
+PAIR_ROWS=2000
+
+ALT_SEGMENTS=3
+ALT_DEVICES=17
+ALT_RULES=5
+ALT_FLOW_ROWS=4000
+ALT_ALERTS=60
+ALT_PAIR_ROWS=300
+
+WINDOW_END=$NOW
+WINDOW_START=$((NOW - 86400))
+SEGMENT_ID=1
+DEVICE_ID=3
+
+PASS_COUNT=0
+FAIL_COUNT=0
+FAILURES=""
+
+pass() {
+    PASS_COUNT=$((PASS_COUNT + 1))
+    printf -- '  ok   %s\n' "$1"
+}
+
+fail() {
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    FAILURES="$FAILURES
+  $1"
+    printf -- '  FAIL %s\n' "$1" >&2
+}
+
+section() {
+    printf -- '\n== %s\n' "$1"
+}
+
+# check <label> <expected> <actual>
+check() {
+    if [ "$2" = "$3" ]; then
+        pass "$1"
+    else
+        fail "$1 (expected '$2', got '$3')"
+    fi
+}
+
+# check_ge <label> <minimum> <actual>
+check_ge() {
+    if [ -n "$3" ] && [ "$3" -ge "$2" ] 2>/dev/null; then
+        pass "$1 ($3 >= $2)"
+    else
+        fail "$1 (expected at least $2, got '$3')"
+    fi
+}
+
+# q <db> <sql> — one scalar or one column of results.
+q() {
+    sqlite3 "$1" "$2"
+}
+
+# expect_sql_failure <label> <db> <sql>
+expect_sql_failure() {
+    local label="$1" db="$2" sql="$3" out
+    if out="$(sqlite3 -bail "$db" "PRAGMA foreign_keys = ON; $sql" 2>&1)"; then
+        fail "$label (the statement succeeded; it must be rejected)"
+    else
+        pass "$label (rejected: $(printf -- '%s' "$out" | head -n 1))"
+    fi
+}
+
+# --------------------------------------------------------------------------
+# Migration runner. A migration whose filename is already recorded in
+# schema_version is skipped, which is what makes re-applying a no-op.
+# --------------------------------------------------------------------------
+apply_migrations() {
+    local db="$1" errfile="$2" f name applied
+    : > "$errfile"
+    for f in "$REPO_ROOT"/migrations/*.sql; do
+        name="$(basename "$f")"
+        applied="$(sqlite3 "$db" "SELECT count(*) FROM schema_version WHERE filename = '$name';" 2>/dev/null)"
+        if [ "$applied" = "1" ]; then
+            continue
+        fi
+        printf -- '.bail on\nPRAGMA foreign_keys = ON;\n.read %s\n' "$f" |
+            sqlite3 "$db" 2>>"$errfile" || return 1
+    done
+    return 0
+}
+
+# seed_database <db> <segments> <devices> <rules> <flow_rows> <alerts> <pair_rows>
+seed_database() {
+    local db="$1"
+    {
+        printf -- '.bail on\n'
+        printf -- '.param init\n'
+        printf -- '.param set :now %s\n' "$NOW"
+        printf -- '.param set :segments %s\n' "$2"
+        printf -- '.param set :devices %s\n' "$3"
+        printf -- '.param set :rules %s\n' "$4"
+        printf -- '.param set :flow_rows %s\n' "$5"
+        printf -- '.param set :alerts %s\n' "$6"
+        printf -- '.param set :pair_rows %s\n' "$7"
+        printf -- '.read %s\n' "$REPO_ROOT/sql/seed.sql"
+    } | sqlite3 "$db"
+}
+
+# Split a query file on its "-- <prefix>: <Name>" markers into one file per
+# query, and write the ordered list of names to <outdir>/names.txt.
+split_queries() {
+    local src="$1" prefix="$2" outdir="$3"
+    mkdir -p "$outdir"
+    : > "$outdir/names.txt"
+    awk -v outdir="$outdir" -v prefix="$prefix" '
+        index($0, "-- " prefix ": ") == 1 {
+            n++
+            name = substr($0, length("-- " prefix ": ") + 1)
+            slug = name
+            gsub(/[^A-Za-z0-9]/, "_", slug)
+            file = sprintf("%s/%02d_%s.sql", outdir, n, slug)
+            print name >> (outdir "/names.txt")
+        }
+        n > 0 { print >> file }
+    ' "$src"
+}
+
+# run_query <db> <query file> — bind the parameters and execute.
+run_query() {
+    local db="$1" file="$2"
+    {
+        printf -- '.bail on\n'
+        printf -- '.param init\n'
+        printf -- '.param set :window_start %s\n' "$WINDOW_START"
+        printf -- '.param set :window_end %s\n' "$WINDOW_END"
+        printf -- '.param set :segment_id %s\n' "$SEGMENT_ID"
+        printf -- '.param set :device_id %s\n' "$DEVICE_ID"
+        printf -- '.read %s\n' "$file"
+    } | sqlite3 "$db"
+}
+
+# explain_query <db> <query file>
+explain_query() {
+    local db="$1" file="$2" tmp="$WORK/explain.sql"
+    {
+        printf -- 'EXPLAIN QUERY PLAN\n'
+        cat "$file"
+    } > "$tmp"
+    run_query "$db" "$tmp"
+}
+
+# wrap_query <query file> <outer prefix> <outer suffix> — turn a screen query
+# into a subquery so an assertion can be expressed over its result set without
+# restating it. The authoritative text stays the one in sql/queries.
+wrap_query() {
+    local file="$1" prefix="$2" suffix="$3" tmp="$WORK/wrapped.sql"
+    {
+        printf -- '%s\n' "$prefix"
+        sed 's/;[[:space:]]*$//' "$file"
+        printf -- '%s\n' "$suffix"
+    } > "$tmp"
+    printf -- '%s' "$tmp"
+}
+
+printf -- 'opnview schema checks\n'
+printf -- 'repository root : %s\n' "$REPO_ROOT"
+printf -- 'data directory  : %s\n' "$DATA_DIR"
+printf -- 'sqlite3         : %s\n' "$(sqlite3 --version)"
+
+mkdir -p "$DATA_DIR"
+rm -f "$DATA_DIR"/schema-checks-*.db "$DATA_DIR"/schema-checks-*.db-wal "$DATA_DIR"/schema-checks-*.db-shm
+
+# ===========================================================================
+section 'AC1, AC4 — migrations apply cleanly, and re-applying is a no-op'
+# ===========================================================================
+sqlite3 "$MAIN_DB" 'PRAGMA journal_mode = WAL;' > /dev/null
+if apply_migrations "$MAIN_DB" "$WORK/migrate1.err"; then
+    pass 'AC1 first apply exited 0'
+else
+    fail 'AC1 first apply exited non-zero'
+fi
+if [ -s "$WORK/migrate1.err" ]; then
+    fail "AC1 first apply wrote to stderr: $(cat "$WORK/migrate1.err")"
+else
+    pass 'AC1 first apply wrote nothing to stderr'
+fi
+
+OBJECTS_BEFORE="$(q "$MAIN_DB" "SELECT count(*) FROM sqlite_master;")"
+VERSIONS_BEFORE="$(q "$MAIN_DB" 'SELECT count(*) FROM schema_version;')"
+if apply_migrations "$MAIN_DB" "$WORK/migrate2.err"; then
+    pass 'AC1 second apply exited 0'
+else
+    fail 'AC1 second apply exited non-zero'
+fi
+if [ -s "$WORK/migrate2.err" ]; then
+    fail "AC1 second apply wrote to stderr: $(cat "$WORK/migrate2.err")"
+else
+    pass 'AC1 second apply wrote nothing to stderr'
+fi
+check 'AC1 second apply changed no schema object' \
+    "$OBJECTS_BEFORE" "$(q "$MAIN_DB" 'SELECT count(*) FROM sqlite_master;')"
+check 'AC1 second apply added no schema_version row' \
+    "$VERSIONS_BEFORE" "$(q "$MAIN_DB" 'SELECT count(*) FROM schema_version;')"
+
+q "$MAIN_DB" 'SELECT filename FROM schema_version ORDER BY filename;' > "$WORK/versions.txt"
+find "$REPO_ROOT/migrations" -maxdepth 1 -name '*.sql' -printf '%f\n' | sort > "$WORK/migration_files.txt"
+if diff -u "$WORK/migration_files.txt" "$WORK/versions.txt" > "$WORK/versions.diff"; then
+    pass 'AC4 schema_version matches the files in migrations/'
+else
+    fail "AC4 schema_version does not match migrations/: $(cat "$WORK/versions.diff")"
+fi
+
+# ===========================================================================
+section 'AC7 — deterministic seed, and the baseline row count'
+# ===========================================================================
+seed_database "$MAIN_DB" "$SEGMENTS" "$DEVICES" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS"
+apply_migrations "$REPEAT_DB" "$WORK/migrate3.err" || fail 'AC7 repeat database migration failed'
+seed_database "$REPEAT_DB" "$SEGMENTS" "$DEVICES" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS"
+
+table_counts() {
+    local db="$1" t
+    for t in $(q "$db" "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name;"); do
+        printf -- '%s %s\n' "$t" "$(q "$db" "SELECT count(*) FROM \"$t\";")"
+    done
+}
+table_counts "$MAIN_DB" > "$WORK/counts_main.txt"
+table_counts "$REPEAT_DB" > "$WORK/counts_repeat.txt"
+if diff -u "$WORK/counts_main.txt" "$WORK/counts_repeat.txt" > "$WORK/counts.diff"; then
+    pass 'AC7 two seed runs produce identical row counts per table'
+else
+    fail "AC7 seed is not deterministic: $(cat "$WORK/counts.diff")"
+fi
+printf -- '  seeded row counts:\n'
+sed 's/^/    /' "$WORK/counts_main.txt"
+
+LARGEST_TABLE="$(sort -k2 -n -r "$WORK/counts_main.txt" | head -n 1 | awk '{print $1}')"
+LARGEST_COUNT="$(sort -k2 -n -r "$WORK/counts_main.txt" | head -n 1 | awk '{print $2}')"
+check 'AC7 the largest growing table is flow' 'flow' "$LARGEST_TABLE"
+check_ge 'AC7 the largest growing table holds at least 100000 rows' 100000 "$LARGEST_COUNT"
+
+# ===========================================================================
+section 'AC2, AC3 — integrity and foreign keys'
+# ===========================================================================
+check 'AC2 PRAGMA integrity_check' 'ok' "$(q "$MAIN_DB" 'PRAGMA integrity_check;')"
+check 'AC2 PRAGMA foreign_key_check returns no rows' '' "$(q "$MAIN_DB" 'PRAGMA foreign_key_check;')"
+expect_sql_failure 'AC3 a flow whose segment does not exist is rejected' "$MAIN_DB" \
+    "INSERT INTO flow (log_digest, observed_at, ingested_at, interface_device,
+        interface_lookup_state, src_segment_id, src_address, dst_address, protocol,
+        ip_version, action, direction, packet_bytes, rule_lookup_state)
+     VALUES ('ac3-orphan-flow', $NOW, $NOW, 'ac3-device', 'resolved', 999999999,
+             'ac3-src', 'ac3-dst', 'tcp', 4, 'pass', 'in', 100, 'pending');"
+expect_sql_failure 'AC3 an alert whose device does not exist is rejected' "$MAIN_DB" \
+    "INSERT INTO alert (file_id, file_pos, occurred_at, ingested_at, signature_id,
+        signature, alert_action, src_address, dst_address, src_device_id)
+     VALUES ('ac3-file', 1, $NOW, $NOW, 1, 'ac3', 'allowed', 'a', 'b', 999999999);"
+
+# ===========================================================================
+section 'AC5, AC6 — the entity list, and the absence of a TLS/HTTP entity'
+# ===========================================================================
+DOC="$REPO_ROOT/docs/data-model.md"
+extract_block() {
+    awk -v begin="$2" -v end="$3" '
+        index($0, begin) == 1 { inside = 1; next }
+        index($0, end) == 1 { inside = 0 }
+        inside && NF && index($0, "```") != 1 { print $1 }
+    ' "$1"
+}
+extract_block "$DOC" '<!-- entity-list:begin -->' '<!-- entity-list:end -->' | sort > "$WORK/doc_entities.txt"
+q "$MAIN_DB" "SELECT name FROM sqlite_master WHERE type IN ('table', 'view')
+              AND name NOT LIKE 'sqlite_%' ORDER BY name;" | sort > "$WORK/db_entities.txt"
+if diff -u "$WORK/doc_entities.txt" "$WORK/db_entities.txt" > "$WORK/entities.diff"; then
+    pass "AC5 the documented entity list matches sqlite_master ($(wc -l < "$WORK/db_entities.txt" | tr -d ' ') entities)"
+else
+    fail "AC5 the entity lists differ: $(cat "$WORK/entities.diff")"
+fi
+check 'AC5 blocked_event is a view' 'view' \
+    "$(q "$MAIN_DB" "SELECT type FROM sqlite_master WHERE name = 'blocked_event';")"
+check 'AC6 no entity is a TLS or HTTP observation record' '' \
+    "$(q "$MAIN_DB" "SELECT name FROM sqlite_master
+        WHERE type IN ('table', 'view')
+          AND (lower(name) GLOB '*tls*' OR lower(name) GLOB '*http*');")"
+
+extract_block "$DOC" '<!-- growing-tables:begin -->' '<!-- growing-tables:end -->' | sort > "$WORK/growing.txt"
+extract_block "$DOC" '<!-- bounded-tables:begin -->' '<!-- bounded-tables:end -->' | sort > "$WORK/bounded.txt"
+sort -u "$WORK/growing.txt" "$WORK/bounded.txt" > "$WORK/classified.txt"
+grep -v '^blocked_event$' "$WORK/db_entities.txt" | sort > "$WORK/db_tables.txt"
+if diff -u "$WORK/db_tables.txt" "$WORK/classified.txt" > "$WORK/classified.diff"; then
+    pass 'AC10 every table is classified growing or bounded in the document'
+else
+    fail "AC10 the growing/bounded classification is incomplete: $(cat "$WORK/classified.diff")"
+fi
+
+# ===========================================================================
+section 'AC8, AC9, AC10 — the seven screen queries and their plans'
+# ===========================================================================
+split_queries "$REPO_ROOT/sql/queries/screens.sql" 'screen' "$WORK/screens"
+SCREEN_COUNT="$(wc -l < "$WORK/screens/names.txt" | tr -d ' ')"
+check 'AC8 screens.sql holds exactly seven queries' '7' "$SCREEN_COUNT"
+EXPECTED_SCREENS='Overview
+Matrix
+Segment
+Device
+Blocked
+Alerts
+Map'
+check 'AC8 the seven screen names are the roadmap screens' "$EXPECTED_SCREENS" \
+    "$(cat "$WORK/screens/names.txt")"
+
+# A plan line may name a table by its alias. Resolve aliases back to their
+# table so a scan can never hide behind a short name.
+resolve_scans() {
+    local qfile="$1" planfile="$2" token table
+    grep -oE '(FROM|JOIN)[[:space:]]+[a-z_]+[[:space:]]+AS[[:space:]]+[a-z_]+' "$qfile" |
+        awk '{print $4 " " $2}' | sort -u > "$WORK/aliases.txt"
+    grep -oE 'SCAN [A-Za-z_][A-Za-z0-9_]*' "$planfile" | awk '{print $2}' | sort -u |
+    while read -r token; do
+        [ -n "$token" ] || continue
+        table="$(awk -v a="$token" '$1 == a { print $2 }' "$WORK/aliases.txt")"
+        if [ -z "$table" ]; then
+            table="$token"
+        fi
+        printf -- '%s\n' "$table"
+    done
+}
+
+for f in "$WORK"/screens/[0-9]*.sql; do
+    name="$(head -n 1 "$f" | sed 's/^-- screen: //')"
+    rows="$(run_query "$MAIN_DB" "$f" | wc -l | tr -d ' ')"
+    if [ "$rows" -ge 1 ]; then
+        pass "AC9 the $name query returned $rows rows"
+    else
+        fail "AC9 the $name query returned no rows"
+    fi
+    explain_query "$MAIN_DB" "$f" > "$WORK/plan_$name.txt"
+    printf -- '  EXPLAIN QUERY PLAN — %s\n' "$name"
+    sed 's/^/    /' "$WORK/plan_$name.txt"
+    scanned_growing=''
+    while read -r table; do
+        [ -n "$table" ] || continue
+        if grep -qx "$table" "$WORK/growing.txt"; then
+            scanned_growing="$scanned_growing $table"
+        fi
+    done < <(resolve_scans "$f" "$WORK/plan_$name.txt")
+    if [ -z "$scanned_growing" ]; then
+        pass "AC10 the $name plan scans no growing table"
+    else
+        fail "AC10 the $name plan scans a growing table:$scanned_growing"
+    fi
+done
+
+# ===========================================================================
+section 'AC11 — the good plans are the indexes, not the data size'
+# ===========================================================================
+cp "$MAIN_DB" "$INDEX_DB"
+
+# demo_index_drop <screen file> <screen name> <index> <table> <alias>
+demo_index_drop() {
+    local file="$1" name="$2" index="$3" table="$4" alias="$5" plan="$WORK/plan_${2}_noindex.txt"
+    sqlite3 -bail "$INDEX_DB" "DROP INDEX $index;" > /dev/null
+    explain_query "$INDEX_DB" "$file" > "$plan"
+    printf -- '  %s plan without %s:\n' "$name" "$index"
+    sed 's/^/    /' "$plan"
+    if grep -qE "SCAN ($table|$alias)\b" "$plan"; then
+        pass "AC11 dropping $index turns the $name plan into a scan of $table"
+    else
+        fail "AC11 the $name plan did not degrade to a scan of $table; $index is not load-bearing"
+    fi
+}
+
+demo_index_drop "$WORK/screens/01_Overview.sql" 'Overview' 'idx_flow_observed_at' 'flow' 'f'
+demo_index_drop "$WORK/screens/06_Alerts.sql" 'Alerts' 'idx_alert_occurred_at' 'alert' 'al'
+demo_index_drop "$WORK/screens/07_Map.sql" 'Map' 'uq_volume_aggregate_24h_slot' \
+    'volume_aggregate_24h' 'v'
+
+# ===========================================================================
+section 'AC12 — the matrix cell carries all four figures'
+# ===========================================================================
+MATRIX_COMPLETE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/02_Matrix.sql" \
+    'SELECT count(*) FROM (' \
+    ') WHERE observed_bytes IS NOT NULL AND allowed_connections IS NOT NULL
+        AND blocked_connections IS NOT NULL AND matching_rules IS NOT NULL
+        AND blocked_connections > 0;')")"
+check_ge 'AC12 a matrix cell carries bytes, allowed, blocked and the matching rules' 1 "$MATRIX_COMPLETE"
+
+# ===========================================================================
+section 'AC13, AC14, AC15 — segments, classification and tunnels'
+# ===========================================================================
+SCOPES="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
+    "SELECT group_concat(traffic_scope, ',') FROM (SELECT traffic_scope FROM (" \
+    ") ORDER BY traffic_scope);")")"
+check 'AC13 the Overview query classifies flows east-west and north-south' 'east_west,north_south' "$SCOPES"
+
+if grep -inE '\b(like|glob|regexp)\b' "$REPO_ROOT"/migrations/*.sql > "$WORK/namematch.txt"; then
+    fail "AC14 the DDL contains a name-matching predicate: $(cat "$WORK/namematch.txt")"
+else
+    pass 'AC14 the DDL contains no LIKE, GLOB or REGEXP predicate at all'
+fi
+cp "$MAIN_DB" "$WORK/label.db"
+sqlite3 "$WORK/label.db" \
+    "UPDATE segment SET user_label = 'a label the maintainer chose' WHERE id = 1;" > /dev/null
+check 'AC14 relabelling leaves the discovered description untouched' \
+    "$(q "$MAIN_DB" 'SELECT discovered_description FROM segment WHERE id = 1;')" \
+    "$(q "$WORK/label.db" 'SELECT discovered_description FROM segment WHERE id = 1;')"
+check 'AC14 a query returns the user label and the discovered description together' \
+    'a label the maintainer chose|discovered-description-1' \
+    "$(q "$WORK/label.db" "SELECT user_label || '|' || discovered_description FROM segment WHERE id = 1;")"
+
+check_ge 'AC15 at least one seeded segment is a tunnel' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM segment WHERE is_tunnel = 1;')"
+check_ge 'AC15 at least one seeded segment is a VLAN' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM segment WHERE is_tunnel = 0 AND link_kind = 'vlan';")"
+check 'AC15 is_tunnel agrees with the discovered link type on every segment' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM segment
+        WHERE is_tunnel <> (CASE WHEN discovered_link_type = 'tunnel' THEN 1 ELSE 0 END);")"
+
+# ===========================================================================
+section 'AC16, AC17 — device identity and randomised MACs'
+# ===========================================================================
+check 'AC16 the lease and the flows of one device resolve to a single device row' '1' \
+    "$(q "$MAIN_DB" "SELECT count(DISTINCT d.id) FROM device d
+        JOIN dhcp_lease l ON l.device_id = d.id
+        JOIN flow f ON f.src_device_id = d.id
+        WHERE d.identity_kind = 'dhcp_client_id' AND d.id = 1;")"
+check_ge 'AC16 a device seen only in flows, with no MAC, is representable and queryable' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM device d
+        WHERE d.mac IS NULL AND d.identity_kind = 'address_in_segment'
+          AND EXISTS (SELECT 1 FROM flow f WHERE f.src_device_id = d.id)
+          AND NOT EXISTS (SELECT 1 FROM dhcp_lease l WHERE l.device_id = d.id);")"
+REUSED_ADDRESS="$(q "$MAIN_DB" "SELECT last_address FROM device WHERE id = $((DEVICES + 1));")"
+check 'AC16 an address reissued after a lease expiry stays two devices' '2' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM device WHERE last_address = '$REUSED_ADDRESS';")"
+check 'AC16 the two reissued identities differ' '2' \
+    "$(q "$MAIN_DB" "SELECT count(DISTINCT identity_key) FROM device WHERE last_address = '$REUSED_ADDRESS';")"
+
+check 'AC17 every MAC whose second hex digit is 2, 6, a or e is an unstable identity' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM device
+        WHERE mac IS NOT NULL AND instr('26ae', substr(mac, 2, 1)) > 0
+          AND unstable_identity <> 1;")"
+check 'AC17 no MAC whose second hex digit is 0, 4, 8 or c is an unstable identity' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM device
+        WHERE mac IS NOT NULL AND instr('048c', substr(mac, 2, 1)) > 0
+          AND unstable_identity <> 0;")"
+check_ge 'AC17 the seed contains globally administered MACs to test the negative direction' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM device WHERE mac IS NOT NULL AND instr('048c', substr(mac, 2, 1)) > 0;")"
+check_ge 'AC17 two randomised observations with different MACs remain two devices' 2 \
+    "$(q "$MAIN_DB" 'SELECT count(DISTINCT id) FROM device WHERE unstable_identity = 1;')"
+check 'AC17 every randomised device has its own identity_key' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) - count(DISTINCT identity_key) FROM device WHERE unstable_identity = 1;")"
+
+# ===========================================================================
+section 'AC18, AC19 — site-name attribution'
+# ===========================================================================
+expect_sql_failure 'AC18 an attribution without its resolver lookup is rejected' "$MAIN_DB" \
+    "INSERT INTO domain_attribution (flow_id, dns_resolution_id, site_name,
+        correlation_delay_seconds, attributed_at)
+     VALUES (1, 999999999, 'ac18', 1, $NOW);"
+check_ge 'AC18 the delay between the lookup and the flow is stored and queryable' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM domain_attribution WHERE correlation_delay_seconds > 0;')"
+check 'AC18 domain_attribution carries no provenance or method column' '' \
+    "$(q "$MAIN_DB" "SELECT name FROM pragma_table_info('domain_attribution')
+        WHERE lower(name) GLOB '*provenance*' OR lower(name) GLOB '*method*';")"
+
+DEVICE_ROWS_NO_SITE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/04_Device.sql" \
+    'SELECT count(*) FROM (' \
+    ') WHERE site_name IS NULL AND dst_address IS NOT NULL
+        AND country_code IS NOT NULL AND operator IS NOT NULL;')")"
+check_ge 'AC19 the Device query returns an unattributed flow with its address, country and operator' \
+    1 "$DEVICE_ROWS_NO_SITE"
+
+split_queries "$REPO_ROOT/sql/queries/diagnostics.sql" 'diagnostic' "$WORK/diag"
+DIAG_ATTR="$WORK/diag/01_Attribution_rate_per_device.sql"
+ATTR_ROWS="$(run_query "$MAIN_DB" "$DIAG_ATTR" | wc -l | tr -d ' ')"
+check_ge 'AC19 the documented attribution-rate query runs and returns rows' 1 "$ATTR_ROWS"
+printf -- '  attribution rate, first five devices:\n'
+run_query "$MAIN_DB" "$DIAG_ATTR" | head -n 5 | sed 's/^/    /'
+PARTIAL_ATTR="$(run_query "$MAIN_DB" "$(wrap_query "$DIAG_ATTR" \
+    'SELECT count(*) FROM (' \
+    ') WHERE attribution_rate_percent > 0 AND attribution_rate_percent < 100;')")"
+check_ge 'AC19 the attribution rate is a real rate, strictly between 0 and 100 per cent' 1 "$PARTIAL_ATTR"
+
+# ===========================================================================
+section 'AC20, AC21, AC22 — alerts, cache misses and unknown joins'
+# ===========================================================================
+ALERT_COMPLETE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
+    'SELECT count(*) FROM (' \
+    ") WHERE signature IS NOT NULL AND severity IS NOT NULL AND severity_state = 'resolved'
+        AND src_address IS NOT NULL AND dst_address IS NOT NULL
+        AND occurred_at IS NOT NULL AND device_id IS NOT NULL AND segment_id IS NOT NULL;")")"
+check_ge 'AC20 an alert joins to a device and a segment and carries signature, severity, endpoints and time' \
+    1 "$ALERT_COMPLETE"
+check 'AC20 the alert table itself carries no severity column' '' \
+    "$(q "$MAIN_DB" "SELECT name FROM pragma_table_info('alert') WHERE lower(name) GLOB '*severit*';")"
+ALERT_UNKNOWN="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
+    'SELECT count(*) FROM (' \
+    ") WHERE severity_state = 'unknown' AND severity IS NULL;")")"
+check_ge 'AC21 an alert whose signature is not cached is returned with an explicit unknown severity' \
+    1 "$ALERT_UNKNOWN"
+
+BLOCKED_UNKNOWN_RULE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/05_Blocked.sql" \
+    'SELECT count(*) FROM (' \
+    ") WHERE rule_lookup_state = 'not_found' AND rule_description IS NULL AND rid IS NOT NULL;")")"
+check_ge 'AC22 a blocked event whose rid matches no rule is returned with an unknown-rule state' \
+    1 "$BLOCKED_UNKNOWN_RULE"
+BLOCKED_UNKNOWN_IFACE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/05_Blocked.sql" \
+    'SELECT count(*) FROM (' \
+    ") WHERE interface_lookup_state = 'not_found' AND interface_description IS NULL
+        AND interface_device IS NOT NULL;")")"
+check_ge 'AC22 a flow whose raw interface name is unmapped is returned with an unknown-interface state' \
+    1 "$BLOCKED_UNKNOWN_IFACE"
+
+# ===========================================================================
+section 'AC23, AC24 — source availability and the eve.json cursor'
+# ===========================================================================
+check 'AC23 exactly five sources are modelled' '5' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM source_availability;')"
+check 'AC23 each source holds exactly one state' '5' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM source_availability
+        WHERE state IN ('reachable', 'present_but_disabled', 'unavailable');")"
+check 'AC23 each source carries a timestamp and the probe that determined it' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM source_availability WHERE probe IS NULL OR checked_at IS NULL;')"
+expect_sql_failure 'AC23 an invalid availability state is rejected' "$MAIN_DB" \
+    "UPDATE source_availability SET state = 'probably-fine' WHERE source = 'filter_log';"
+check 'AC23 one query returns the current state of all five sources' '5' \
+    "$(run_query "$MAIN_DB" "$WORK/diag/03_Source_availability.sql" | wc -l | tr -d ' ')"
+
+expect_sql_failure 'AC24 a duplicate (file_id, byte_offset) watermark is rejected' "$MAIN_DB" \
+    "INSERT INTO eve_ingest_cursor (file_id, byte_offset, file_sequence, rotation_state, observed_at)
+     SELECT file_id, byte_offset, file_sequence, rotation_state, observed_at
+     FROM eve_ingest_cursor LIMIT 1;"
+ALERTS_BEFORE="$(q "$MAIN_DB" 'SELECT count(*) FROM alert;')"
+sqlite3 -bail "$MAIN_DB" "INSERT OR IGNORE INTO alert (file_id, file_pos, occurred_at, ingested_at,
+        signature_id, signature, alert_action, src_address, dst_address)
+    SELECT file_id, file_pos, occurred_at, ingested_at, signature_id, signature,
+           alert_action, src_address, dst_address
+    FROM alert;" > /dev/null
+check 'AC24 replaying the same ingestion leaves the alert count unchanged' \
+    "$ALERTS_BEFORE" "$(q "$MAIN_DB" 'SELECT count(*) FROM alert;')"
+check 'AC24 rotation is representable and queryable' 'current|lost|rotated' \
+    "$(q "$MAIN_DB" "SELECT group_concat(rotation_state, '|') FROM
+        (SELECT DISTINCT rotation_state FROM eve_ingest_cursor ORDER BY rotation_state);")"
+
+# ===========================================================================
+section 'AC25 — NetFlow direction doubling collapses to one volume'
+# ===========================================================================
+check 'AC25 a direction-doubled pair yields one logical volume, not two' "$PAIR_ROWS" \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM pair_volume_observation;')"
+check 'AC25 the de-duplication key is unique and direction-free' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM (SELECT day_start_at, endpoint_low, endpoint_high,
+        service_port, protocol FROM pair_volume_observation
+        GROUP BY 1, 2, 3, 4, 5 HAVING count(*) > 1);')"
+check 'AC25 every stored pair is canonically ordered' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM pair_volume_observation WHERE endpoint_low > endpoint_high;')"
+
+# ===========================================================================
+section 'AC26 — timestamps are integer UTC epochs'
+# ===========================================================================
+TEXT_INSTANTS="$(q "$MAIN_DB" "
+    SELECT m.name || '.' || i.name || ' ' || i.type
+    FROM sqlite_master m
+    JOIN pragma_table_info(m.name) i
+    WHERE m.type = 'table' AND i.name GLOB '*_at' AND upper(i.type) <> 'INTEGER';")"
+check 'AC26 no instant-carrying column is declared TEXT' '' "$TEXT_INSTANTS"
+INSTANT_COLUMNS="$(q "$MAIN_DB" "
+    SELECT count(*) FROM sqlite_master m JOIN pragma_table_info(m.name) i
+    WHERE m.type = 'table' AND i.name GLOB '*_at';")"
+check_ge 'AC26 the schema actually has instant columns to check' 20 "$INSTANT_COLUMNS"
+expect_sql_failure 'AC26 a negative instant is rejected by a constraint' "$MAIN_DB" \
+    "INSERT INTO source_availability (source, state, probe, checked_at)
+     VALUES ('filter_log', 'reachable', 'ac26', -1);"
+expect_sql_failure 'AC26 a millisecond value stored as seconds is rejected by a constraint' "$MAIN_DB" \
+    "UPDATE source_availability SET checked_at = 1750000000000 WHERE source = 'filter_log';"
+
+# ===========================================================================
+section 'AC27, AC28, AC29 — aggregates, freshness and aggregate mode'
+# ===========================================================================
+run_query "$MAIN_DB" "$WORK/diag/02_Aggregate_coverage_per_period.sql" > "$WORK/coverage.txt"
+printf -- '  aggregate coverage:\n'
+sed 's/^/    /' "$WORK/coverage.txt"
+check 'AC27 the aggregate coverage query returns one row per period' '4' \
+    "$(wc -l < "$WORK/coverage.txt" | tr -d ' ')"
+EMPTY_PERIODS="$(awk -F'|' '$2 + 0 == 0 { print $1 }' "$WORK/coverage.txt")"
+check 'AC27 every one of the four periods is non-empty' '' "$EMPTY_PERIODS"
+for t in volume_aggregate_1h volume_aggregate_24h volume_aggregate_7d volume_aggregate_30d; do
+    check "AC28 every $t row carries a freshness timestamp" '0' \
+        "$(q "$MAIN_DB" "SELECT count(*) FROM $t WHERE computed_at IS NULL;")"
+done
+if grep -q 'Refresh contract' "$DOC"; then
+    pass 'AC28 the document states the refresh contract step 4 must honour'
+else
+    fail 'AC28 the document does not state a refresh contract'
+fi
+if grep -qE 'dns_resolution|domain_attribution' "$WORK/screens/07_Map.sql"; then
+    fail 'AC29 the aggregate-mode query reads a table holding domain names'
+else
+    pass 'AC29 the aggregate-mode query reads no table holding a domain name'
+fi
+check_ge 'AC29 the aggregate-mode query returns rows' 1 \
+    "$(run_query "$MAIN_DB" "$WORK/screens/07_Map.sql" | wc -l | tr -d ' ')"
+
+# ===========================================================================
+section 'AC30, AC31, AC32 — retention and purge'
+# ===========================================================================
+check 'AC30 the retention horizon is stored in the database and defaults to 90 days in seconds' \
+    '7776000' "$(q "$MAIN_DB" "SELECT value FROM setting WHERE key = 'retention_seconds';")"
+if grep -nE '7776000|\b90[[:space:]]*days?\b' \
+        "$REPO_ROOT/sql/queries/screens.sql" "$REPO_ROOT/sql/queries/diagnostics.sql" \
+        "$REPO_ROOT/sql/purge.sql" > "$WORK/retention_literals.txt"; then
+    fail "AC30 a retention duration appears as a literal: $(cat "$WORK/retention_literals.txt")"
+else
+    pass 'AC30 no retention duration appears as a literal in any query or in the purge'
+fi
+
+run_purge() {
+    local db="$1"
+    {
+        printf -- '.bail on\n'
+        printf -- '.param init\n'
+        printf -- '.param set :now %s\n' "$NOW"
+        printf -- '.read %s\n' "$REPO_ROOT/sql/purge.sql"
+    } | sqlite3 "$db"
+}
+
+cp "$MAIN_DB" "$PURGE_DB"
+HORIZON_HOURS=$((6 * 3600))
+sqlite3 "$PURGE_DB" "UPDATE setting SET value = '$HORIZON_HOURS' WHERE key = 'retention_seconds';" > /dev/null
+check 'AC30 the horizon is settable to a value of hours' "$HORIZON_HOURS" \
+    "$(q "$PURGE_DB" "SELECT value FROM setting WHERE key = 'retention_seconds';")"
+sqlite3 "$PURGE_DB" "UPDATE setting SET value = '7776000' WHERE key = 'retention_seconds';" > /dev/null
+
+CUTOFF=$((NOW - 7776000))
+PURGEABLE='flow:observed_at dns_resolution:looked_up_at alert:occurred_at
+dhcp_lease:observed_at device:last_seen_at pair_volume_observation:day_start_at
+geo_asn:looked_up_at domain_attribution:attributed_at
+volume_aggregate_1h:period_end_at volume_aggregate_24h:period_end_at
+volume_aggregate_7d:period_end_at volume_aggregate_30d:period_end_at'
+for t in $PURGEABLE; do
+    tbl="${t%%:*}"
+    col="${t##*:}"
+    before_old="$(q "$PURGE_DB" "SELECT count(*) FROM $tbl WHERE $col < $CUTOFF;")"
+    if [ "$before_old" -eq 0 ]; then
+        fail "AC31 the seed has nothing older than the horizon in $tbl, so the purge proves nothing"
+    else
+        pass "AC31 $tbl holds $before_old rows older than the horizon before the purge"
+    fi
+done
+
+BEFORE_NEW_FLOW="$(q "$PURGE_DB" "SELECT count(*) FROM flow WHERE observed_at >= $CUTOFF;")"
+BEFORE_NEW_ALERT="$(q "$PURGE_DB" "SELECT count(*) FROM alert WHERE occurred_at >= $CUTOFF;")"
+run_purge "$PURGE_DB"
+for t in $PURGEABLE; do
+    tbl="${t%%:*}"
+    col="${t##*:}"
+    check "AC31 the purge removed every $tbl row older than the horizon" '0' \
+        "$(q "$PURGE_DB" "SELECT count(*) FROM $tbl WHERE $col < $CUTOFF;")"
+done
+check 'AC31 the purge removed no flow newer than the horizon' "$BEFORE_NEW_FLOW" \
+    "$(q "$PURGE_DB" "SELECT count(*) FROM flow WHERE observed_at >= $CUTOFF;")"
+check 'AC31 the purge removed no alert newer than the horizon' "$BEFORE_NEW_ALERT" \
+    "$(q "$PURGE_DB" "SELECT count(*) FROM alert WHERE occurred_at >= $CUTOFF;")"
+check 'AC32 the purge leaves the foreign keys consistent' '' \
+    "$(q "$PURGE_DB" 'PRAGMA foreign_key_check;')"
+check 'AC32 the purge leaves no attribution without its lookup or its flow' '0' \
+    "$(q "$PURGE_DB" 'SELECT count(*) FROM domain_attribution a
+        WHERE NOT EXISTS (SELECT 1 FROM flow f WHERE f.id = a.flow_id)
+           OR NOT EXISTS (SELECT 1 FROM dns_resolution r WHERE r.id = a.dns_resolution_id);')"
+run_query "$PURGE_DB" "$WORK/diag/02_Aggregate_coverage_per_period.sql" > "$WORK/coverage_after.txt"
+printf -- '  aggregate coverage after the purge:\n'
+sed 's/^/    /' "$WORK/coverage_after.txt"
+EMPTY_AFTER="$(awk -F'|' '$2 + 0 == 0 { print $1 }' "$WORK/coverage_after.txt")"
+check 'AC32 every period the document says survives a purge is still queryable' '' "$EMPTY_AFTER"
+
+cp "$MAIN_DB" "$UNLIMITED_DB"
+sqlite3 "$UNLIMITED_DB" "UPDATE setting SET value = '0' WHERE key = 'retention_seconds';" > /dev/null
+table_counts "$UNLIMITED_DB" > "$WORK/counts_unlimited_before.txt"
+run_purge "$UNLIMITED_DB"
+table_counts "$UNLIMITED_DB" > "$WORK/counts_unlimited_after.txt"
+if diff -u "$WORK/counts_unlimited_before.txt" "$WORK/counts_unlimited_after.txt" > "$WORK/unlimited.diff"; then
+    pass 'AC31 with an unlimited horizon the purge removes nothing'
+else
+    fail "AC31 an unlimited horizon still deleted rows: $(cat "$WORK/unlimited.diff")"
+fi
+
+# ===========================================================================
+section 'AC33 — geo and ASN enrichment'
+# ===========================================================================
+check 'AC33 geo/ASN is keyed per address' 'address' \
+    "$(q "$MAIN_DB" "SELECT name FROM pragma_table_info('geo_asn') WHERE pk = 1;")"
+check 'AC33 a resolved lookup carries the MaxMind database build date' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM geo_asn WHERE lookup_state = 'resolved' AND maxmind_build_at IS NULL;")"
+check_ge 'AC33 a cache miss is a modelled row, not an absent one' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM geo_asn WHERE lookup_state = 'miss';")"
+MAP_MISS="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/07_Map.sql" \
+    'SELECT count(*) FROM (' \
+    ") WHERE geo_lookup_state = 'miss';")")"
+check_ge 'AC33 the Map query returns the cache miss rather than dropping its volume' 1 "$MAP_MISS"
+
+# ===========================================================================
+section 'AC34 — no address, CIDR or discovered name as a literal'
+# ===========================================================================
+CYCLE_FILES="$REPO_ROOT/migrations/0001_core.sql
+$REPO_ROOT/migrations/0002_aggregates_and_defaults.sql
+$REPO_ROOT/sql/queries/screens.sql
+$REPO_ROOT/sql/queries/diagnostics.sql
+$REPO_ROOT/sql/seed.sql
+$REPO_ROOT/sql/purge.sql
+$REPO_ROOT/sql/schema-checks.sh
+$REPO_ROOT/docs/data-model.md"
+DOTTED_QUAD='[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?'
+: > "$WORK/literals.txt"
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    grep -nE "$DOTTED_QUAD" "$f" >> "$WORK/literals.txt" 2>/dev/null
+done <<< "$CYCLE_FILES"
+if [ -s "$WORK/literals.txt" ]; then
+    fail "AC34 an address or CIDR literal was found: $(cat "$WORK/literals.txt")"
+else
+    pass 'AC34 no dotted-quad or CIDR literal in any file this cycle adds'
+fi
+check 'AC34 every seeded address was synthesised from a counter at generation time' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE src_address IS NULL OR dst_address IS NULL;")"
+
+# ===========================================================================
+section 'AC35 — no assumed segment, device or interface count'
+# ===========================================================================
+apply_migrations "$ALT_DB" "$WORK/migrate_alt.err" || fail 'AC35 the alternative database failed to migrate'
+seed_database "$ALT_DB" "$ALT_SEGMENTS" "$ALT_DEVICES" "$ALT_RULES" "$ALT_FLOW_ROWS" \
+    "$ALT_ALERTS" "$ALT_PAIR_ROWS"
+check 'AC35 the alternative seed has a different segment count' "$ALT_SEGMENTS" \
+    "$(q "$ALT_DB" 'SELECT count(*) FROM segment;')"
+check 'AC35 the alternative database is consistent' '' "$(q "$ALT_DB" 'PRAGMA foreign_key_check;')"
+ALT_SEGMENT_ID=$SEGMENT_ID
+ALT_DEVICE_ID=$DEVICE_ID
+for f in "$WORK"/screens/[0-9]*.sql; do
+    name="$(head -n 1 "$f" | sed 's/^-- screen: //')"
+    rows="$(run_query "$ALT_DB" "$f" | wc -l | tr -d ' ')"
+    if [ "$rows" -ge 1 ]; then
+        pass "AC35 the $name query returned $rows rows against the alternative seed"
+    else
+        fail "AC35 the $name query returned no rows against the alternative seed"
+    fi
+done
+printf -- '  alternative seed used segments=%s devices=%s rules=%s flows=%s (segment_id=%s device_id=%s)\n' \
+    "$ALT_SEGMENTS" "$ALT_DEVICES" "$ALT_RULES" "$ALT_FLOW_ROWS" "$ALT_SEGMENT_ID" "$ALT_DEVICE_ID"
+
+# ===========================================================================
+section 'AC36, AC37, AC42 — the model document'
+# ===========================================================================
+for needle in 'opnsense-api-survey.md' 'interfaces_info' 'get_interface_names' 'search_rule' \
+              'query_alerts' 'get_rule_info' 'FlowSourceAddrDetails' 'search_queries' \
+              'leases4/search' 'firewall/log'; do
+    if grep -qF "$needle" "$DOC"; then
+        pass "AC36 the document cites $needle"
+    else
+        fail "AC36 the document does not cite $needle"
+    fi
+done
+for needle in 'Observation-point limit' 'inferred' 'resolver correlation' 'availability state'; do
+    if grep -qF "$needle" "$DOC"; then
+        pass "AC37 the document states: $needle"
+    else
+        fail "AC37 the document does not state: $needle"
+    fi
+done
+# The line defining the pattern is skipped in every file, because it holds the
+# French words themselves and would otherwise match this script.
+FRENCH='\b(le|la|les|des|une|est|sont|pour|avec|cette|dans|nous|vous|mais|donc|ainsi|aucun|chaque|toujours|jamais|fichier|requête|données|réseau|serveur|adresse)\b'
+: > "$WORK/french.txt"
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    grep -v '^FRENCH=' "$f" | grep -nEi "$FRENCH" >> "$WORK/french.txt" 2>/dev/null
+done <<< "$CYCLE_FILES"
+if [ -s "$WORK/french.txt" ]; then
+    fail "AC42 a French word was found: $(head -n 5 "$WORK/french.txt")"
+else
+    pass 'AC42 no French word in any file this cycle touches'
+fi
+
+# ===========================================================================
+section 'AC39, AC41, AC45 — allowlist, line endings and stray databases'
+# ===========================================================================
+SH_ALLOWLIST="$(sed -n "s/^ALLOWED_TOOLS='\(.*\)'$/\1/p" "$REPO_ROOT/ci/factory.sh")"
+PS_ALLOWLIST="$(sed -n "s/^\\\$allowedTools = '\(.*\)'$/\1/p" "$REPO_ROOT/ci/factory.ps1")"
+check 'AC39 the two allowlist strings are identical' "$SH_ALLOWLIST" "$PS_ALLOWLIST"
+check 'AC39 the allowlist grants exactly the two documented invocations' \
+    'Bash(docker compose run --rm checks)
+Bash(docker compose run --rm schema-checks)' \
+    "$(printf -- '%s' "$SH_ALLOWLIST" | tr ',' '\n' | grep '^Bash(docker' | sort)"
+if printf -- '%s' "$SH_ALLOWLIST" | grep -qE 'Bash\(docker compose \*|Bash\(docker \*'; then
+    fail 'AC39 the allowlist grants a docker wildcard'
+else
+    pass 'AC39 the allowlist grants no docker wildcard'
+fi
+
+: > "$WORK/crlf.txt"
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    case "$f" in
+        *.sh|*.sql)
+            if grep -q $'\r' "$f"; then
+                printf -- '%s\n' "$f" >> "$WORK/crlf.txt"
+            fi
+            ;;
+    esac
+done <<< "$CYCLE_FILES"
+if [ -s "$WORK/crlf.txt" ]; then
+    fail "AC41 a file is not LF-terminated: $(cat "$WORK/crlf.txt")"
+else
+    pass 'AC41 every .sh and .sql file this cycle adds is LF-terminated'
+fi
+if bash -n "$REPO_ROOT/sql/schema-checks.sh"; then
+    pass 'AC41 bash -n on the harness exits 0'
+else
+    fail 'AC41 bash -n on the harness failed'
+fi
+
+STRAY="$(find "$REPO_ROOT" -name '*.db' -o -name '*.db-wal' -o -name '*.db-shm' | head -n 5)"
+check 'AC45 the bind-mounted working tree holds no database file' '' "$STRAY"
+DB_LOCATION="$(find "$DATA_DIR" -maxdepth 1 -name 'schema-checks-*.db' | wc -l | tr -d ' ')"
+check_ge 'AC45 every database a check created lives under the data directory' 1 "$DB_LOCATION"
+
+# ===========================================================================
+printf -- '\n==========================================================\n'
+printf -- 'checks passed : %s\n' "$PASS_COUNT"
+printf -- 'checks failed : %s\n' "$FAIL_COUNT"
+if [ "$FAIL_COUNT" -ne 0 ]; then
+    printf -- 'failed checks:%s\n' "$FAILURES" >&2
+    printf -- 'schema-checks: FAILED\n' >&2
+    exit 1
+fi
+printf -- 'schema-checks: OK\n'

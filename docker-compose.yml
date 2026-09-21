@@ -64,6 +64,20 @@ services:
     <<: *dev-base
     command: ["bash", "/workspace/ci/checks.sh"]
 
+  # The schema checks: migrations, seed, the seven screen queries and their
+  # query plans. Separate from `checks` so a schema failure stays
+  # distinguishable from a failure of the four Go commands. The command is
+  # baked in for the same reason as above, so the host invocation is
+  #
+  #     docker compose run --rm schema-checks
+  #
+  # quoting-free and identical in PowerShell and in bash. Every database it
+  # creates lives in the `data` volume mounted at /data, never in the working
+  # tree.
+  schema-checks:
+    <<: *dev-base
+    command: ["bash", "/workspace/sql/schema-checks.sh"]
+
 volumes:
   go-mod-cache:
   go-build-cache:

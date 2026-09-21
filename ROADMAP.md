@@ -91,7 +91,7 @@ container run says nothing about deployment.
 |#|Step|Deliverable|Status|
 |---|---|---|---|
 |1|OPNsense API exploration|Verified findings document|Done|
-|2|Data model and SQLite schema|Schema + model document|To do|
+|2|Data model and SQLite schema|Schema + model document|Done|
 |3|Static HTML mockup — overview|HTML file, fake data|To do|
 |4|Backend: collection and storage|Collectors + persistence + tests|To do|
 |5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|To do|
@@ -220,6 +220,15 @@ Go, single binary. Prerequisite: the containerised toolchain described under
 - Collection scheduler at the frequencies established in step 1.
 - Continuous incremental ingestion of `eve.json` with a durable cursor.
 - SQLite persistence, own history independent of the firewall's retention.
+- **The migration runner wraps each migration file in its own transaction.**
+  The step-2 DDL files carry no `BEGIN` / `COMMIT`: verified at step 2, a file
+  interrupted halfway leaves a half-created schema with no `schema_version`
+  row, and re-running it then aborts on an object that already exists — a
+  database unrecoverable without manual intervention. The runner, not the SQL,
+  owns that guarantee.
+- **Extend `sql/seed.sql` to IPv6.** It currently produces IPv4 rows only.
+  Nothing in the schema interprets an address family today, so step 2 passed,
+  but no IPv6 row has ever been exercised through the seven screen queries.
 - First-run setup wizard: URL, API key/secret, MaxMind key.
 - MaxMind GeoLite2 City and ASN databases: downloaded on first start,
   refreshed automatically, never embedded. Without a key the map is disabled

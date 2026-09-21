@@ -45,6 +45,16 @@
       }
     },
     {
+      "label": "Container: schema checks",
+      "type": "shell",
+      "command": "docker compose run --rm schema-checks",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
       "label": "Container: shell",
       "type": "shell",
       "command": "docker compose run --rm dev bash",
