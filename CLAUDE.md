@@ -36,6 +36,22 @@ and `tls` / `http` events, though they can be written to `eve.json`, cannot be
 read back through the API. See `docs/opnsense-api-survey.md`. Site names are
 inferred from resolver lookups, unconditionally.
 
+## Development and test environment
+
+No Go toolchain is installed on the host. The toolchain lives in a Debian
+`trixie-slim` container with the Go version pinned and checksum-verified. The
+four project commands run through one invocation, identical in PowerShell and
+in bash:
+
+```
+docker compose run --rm checks
+```
+
+Use `docker compose run --rm dev <command>` for anything else in the same
+environment. Never run `go`, `gofmt` or `sqlite3` on the host. Details, and the
+list of what this environment does *not* prove, are in `ROADMAP.md` under
+*Development and test environment*.
+
 See `ROADMAP.md` for the eight-step plan and the cross-cutting engineering
 rules (no hardcoded configuration, no secrets in the repo, read-only against
 the firewall, exactly two outbound calls, observation-point limit stated in

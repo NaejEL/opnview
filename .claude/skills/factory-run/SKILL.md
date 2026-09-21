@@ -83,8 +83,10 @@ Close with a structured report:
 
 - path of the spec used and its status;
 - files modified — output of `git status --porcelain`;
-- results of the project commands as reported by the Verifier: `gofmt -l .`,
-  `go vet ./...`, `go build ./...`, `go test ./...`, with their exit codes;
+- results of the project commands as reported by the Verifier — `gofmt -l .`,
+  `go vet ./...`, `go build ./...`, `go test ./...`, run in the container
+  through `docker compose run --rm checks` — with their exit codes. No Go
+  toolchain is installed on the host: a missing host `go` is never a failure;
 - final verdict and the number of iterations consumed;
 - remaining issues, if any;
 - suggested next action: **the user reviews the diff**. Do not commit on their

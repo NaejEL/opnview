@@ -26,26 +26,38 @@ touch is a defect to fix, not a style to match.
 - **Frontend served by the binary**: assets embedded with `embed`. No exotic
   build chain, **no resource loaded from a CDN** — fonts and scripts included
   in the binary.
-- The repository may still be empty. If `go.mod` does not exist and the spec
-  calls for Go code, initialise the module (`go mod init`) with a module path
-  consistent with the repository, then implement.
+- The module already exists: `go.mod` declares `github.com/NaejEL/opnview`.
+  Never run `go mod init`, and never change the module path.
 
 ## Project commands — actually run them, never assume
 
-- Formatting: `gofmt -l .` (must list nothing; otherwise `gofmt -w .`)
-- Static analysis: `go vet ./...`
-- Build: `go build ./...`
-- Tests: `go test ./...`
-- Shell scripts (if the spec touches `ct/` or an install script): `bash -n
-  <script>` at minimum, and `shellcheck <script>` when available.
+**No Go toolchain is installed on the host, by design.** The toolchain lives in
+a Debian container; see `ROADMAP.md`, section *Development and test
+environment*. Run the four project commands — `gofmt -l .`, `go vet ./...`,
+`go build ./...`, `go test ./...` — through the single canonical invocation,
+from the repository root:
 
-**Test tooling is not yet initialised in this repository.** The first cycle
-producing Go code must create the first `*_test.go` files using the standard
-`testing` library — no third-party framework without demonstrated need. Every
-later cycle extends that coverage.
+```
+docker compose run --rm checks
+```
 
-If the `go` command is missing from the machine, **stop and say so
-explicitly**: do not simulate a build, do not claim tests pass.
+That string is identical in PowerShell and in bash. For anything else inside
+the same environment, use `docker compose run --rm dev <command>` (for example
+`docker compose run --rm dev go test -run TestX ./internal/...`, or
+`docker compose run --rm dev gofmt -w .` to fix formatting).
+
+**Never run `go`, `gofmt` or `sqlite3` on the host, and never report a host
+result as the project result.** A missing host `go` is not a defect and is
+never a reason to stop: the host is not supposed to have one. What *is* a
+reason to stop is Docker being unavailable — say so explicitly, and do not
+simulate a build or claim tests pass.
+
+Shell scripts (if the spec touches `ct/` or an install script): `bash -n
+<script>` at minimum, and `shellcheck <script>` when available. These may run
+on the host.
+
+Tests use the standard `testing` library — no third-party framework without
+demonstrated need. Every cycle extends the coverage.
 
 ## Project constraints — non-negotiable
 
@@ -91,9 +103,9 @@ explicitly**: do not simulate a build, do not claim tests pass.
 5. Write the tests: **every acceptance criterion in the spec must be covered**
    by at least one test, named so the link is obvious (e.g.
    `TestMatrixCellCarriesAllowedAndBlocked`).
-6. Run, in order: `gofmt -l .`, `go vet ./...`, `go build ./...`,
-   `go test ./...`. **Hand back only when all of them pass.** If anything
-   fails, fix it and restart the whole sequence.
+6. Run the four project commands through `docker compose run --rm checks`.
+   **Hand back only when all of them pass.** If anything fails, fix it and
+   restart the whole sequence.
 7. Final report: architecture choices, files created or modified, acceptance
    criterion to test mapping, output of the commands you ran.
 
