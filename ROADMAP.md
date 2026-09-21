@@ -14,9 +14,10 @@ so and amend this roadmap rather than quietly working around it.
   MaxMind licence key are entered in the web setup wizard, never in a file to
   edit before starting.
 - **Read-only against the firewall.** No writes, no file read on the host:
-  the authenticated REST API and nothing else. Enabling Suricata's `dns` /
-  `tls` / `http` event types is a manual step the user performs, documented in
-  the README — the application never performs it.
+  the authenticated REST API and nothing else. Where a firewall setting has to
+  be turned on for a source to exist — the resolver query log, for instance —
+  it is a manual step the user performs, documented in the README. The
+  application never performs it.
 - **Two outbound calls, not one more**: the firewall API (local network) and
   the MaxMind database download. No telemetry, no version check, no resource
   loaded from a CDN.
@@ -35,16 +36,19 @@ Five, all read through the OPNsense REST API:
 |Source|Feeds|Required|
 |---|---|---|
 |Filter logs|matrix, blocked traffic|yes|
-|Suricata `eve.json` (`dns`, `tls`, `http`, `alert`)|site names (primary), alerts|no|
-|NetFlow / Insight|volumes per address pair|yes|
+|Suricata `eve.json` (`alert` only)|alerts|no|
+|NetFlow / Insight|volumes per address pair, daily|yes|
 |DHCP leases|hostnames and MACs|yes|
-|Resolver DNS lookups (Unbound or Dnsmasq)|site names (fallback)|yes|
+|Resolver DNS lookups (Unbound or Dnsmasq)|site names (sole source)|yes|
+
+The Suricata and resolver rows read differently from the original plan: see
+the step-1 findings below.
 
 ## Steps
 
 |#|Step|Deliverable|Status|
 |---|---|---|---|
-|1|OPNsense API exploration|Verified findings document|To do|
+|1|OPNsense API exploration|Verified findings document|Done|
 |2|Data model and SQLite schema|Schema + model document|To do|
 |3|Static HTML mockup — overview|HTML file, fake data|To do|
 |4|Backend: collection and storage|Collectors + persistence + tests|To do|
@@ -88,6 +92,28 @@ discovering rules with their labels.
 
 **Validation**: the report is credible and every endpoint is sourced.
 
+**Outcome**: `docs/opnsense-api-survey.md`, pinned to OPNsense 26.7.3, every
+endpoint cited. Three findings invalidate assumptions made above, and are
+carried into the steps that follow:
+
+1. **Suricata `dns` events do not exist.** The IDS model exposes only `http`
+   and `tls` under `eveLog`; there is no `dns` output type to enable, in the
+   UI or anywhere else.
+2. **`tls` and `http` events can be written but not read back.** The only API
+   endpoint that opens `eve.json` returns records carrying a top-level `alert`
+   key and silently discards every other event type, and the generic log
+   endpoint cannot open a file not named `.log`. Suricata is therefore an
+   **alert source only** — it cannot name sites.
+3. **Per-address-pair volume exists only at daily resolution, kept 62 days.**
+   No sub-daily per-pair data exists on the firewall, so the 1 h and 24 h
+   matrix periods cannot be served from Insight.
+
+A fourth finding is a trap rather than a limit: the Unbound query endpoint
+honours its time window only when the bounds arrive as JSON integers in the
+request body. Any other call form returns the 1000 most recent records with
+HTTP 200 and no diagnostic — silent data loss unless the collector asserts
+that the rows it gets back fall inside the window it asked for.
+
 ### Step 2 — Data model and SQLite schema
 
 Entities: segment (named zone, tunnels included), device, flow, blocked event,
@@ -97,18 +123,25 @@ DNS resolution, TLS/HTTP observation, rule, domain attribution, alert, geo/ASN.
 - Manual segment labelling by the user, never inferred from a name.
 - Randomised MAC (second hex digit even) marked as an unstable identity, not
   merged into phantom devices.
-- **Provenance on every site-name attribution**: observed (Suricata `tls`/`dns`
-  event) or inferred (resolver-lookup correlation). The UI reads this field to
-  say which method is active; a mixed installation — Suricata on some
-  interfaces only — must be representable.
+- **Provenance on every site-name attribution**: `observed` or `inferred`. The
+  field stays two-valued so a future OPNsense release exposing readable `tls`
+  events needs no migration, but on 26.7 every attribution is `inferred`, from
+  resolver-lookup correlation. The UI's "which method is active" indicator
+  must be able to say *no observed source available*.
 - Alerts: signature, severity, source, destination, timestamp, joined to the
   device and segment models.
 - Configurable retention, from a few hours to unlimited, with purge.
 - Aggregate mode: volumes, segments, countries, operators — without domain
   names.
-- Pre-computed aggregates for the 1 h / 24 h / 7 d / 30 d periods.
-- A durable ingestion cursor for `eve.json`, so a restart neither loses events
-  nor double-counts them.
+- Pre-computed aggregates for the 1 h / 24 h / 7 d / 30 d periods. These are
+  the **primary store, not a cache over Insight**: per-pair data on the
+  firewall is daily-only, and per-source data at 300 s is kept one hour.
+- **Source availability is a modelled state**, not an absence of rows: per
+  source, reachable / present-but-disabled / unavailable, with a timestamp and
+  the probe that determined it. Every screen reads it.
+- A durable ingestion cursor for `eve.json`: a per-`file_id` byte-offset
+  watermark over an alert-only feed, with rotation detection, so a restart
+  neither loses events nor double-counts them.
 
 **Validation**: the schema answers all seven screens without pathological
 queries.
@@ -153,26 +186,28 @@ Go, single binary. Prerequisite: **install Go**.
 ### Step 5 — Backend: correlation, classification, matrix
 
 - Source × destination matrix: volume, allowed connections, blocked
-  connections, matching rules by label.
+  connections, matching rules by label. The 1 h and 24 h periods are computed
+  from `opnview`'s own history; only 7 d and 30 d can lean on the firewall's
+  daily per-pair aggregate.
 - East-west / north-south classification, presented separately.
-- **Site names, primary path**: Suricata `tls` (SNI) and `dns` events, which
-  carry the name and the real pre-NAT source in the same record. Directly
-  observed — nothing is guessed.
-- **Site names, fallback path**: correlating resolver lookups with subsequent
-  flows, used only where Suricata does not cover the traffic. Its limits —
-  client-side caching, shared CDNs, encrypted DNS — are documented, and an
-  attribution rate is exposed. Never invent a domain: fall back to IP, country
-  and operator.
+- **Site names, sole path on 26.7**: correlating resolver lookups with
+  subsequent flows. Suricata cannot serve this (step 1, finding 2), so the
+  heuristic is no longer a fallback — it is the only path. Its limits —
+  client-side caching, shared CDNs, DNS-over-TLS and DNS-over-HTTPS — are
+  documented unconditionally, and an attribution rate is exposed per device.
+  Never invent a domain: fall back to IP, country and operator.
 - Device resolution through DHCP leases.
 - Geo and ASN enrichment.
 - HTTP API for the screens, period selector everywhere.
 
 **Validation**: the numbers are correct, the active attribution method is
-reported per record, and the fallback attribution rate is honest.
+reported per record, and the heuristic's attribution rate is honest.
 
 ### Step 6 — Backend: alerts and device correlation
 
-- Ingest Suricata alerts: signature, severity, source, destination, timestamp.
+- Ingest Suricata alerts: signature, source, destination, timestamp. The API
+  flattens the nested alert object to the signature string, so severity and
+  category are resolved separately through `get_rule_info/<sid>` and cached.
 - Join them to the device and segment models, so an alert names a machine
   rather than an address.
 - Aggregations for the Alerts screen: over time, by device, by segment, by
@@ -213,8 +248,8 @@ randomised MACs.
   **nothing** about OPNsense or MaxMind.
 - `docker-compose.yml` for non-Proxmox users.
 - README: problem solved, screenshots, one-line install, how to obtain the
-  OPNsense API and MaxMind keys, **how to enable Suricata's `dns` / `tls` /
-  `http` event types**, what an internal-interface IDS is and is not for, an
+  OPNsense API and MaxMind keys, **how to enable the resolver query log**,
+  what an internal-interface IDS is and is not for, an
   honest limitations section, a factual section on the data collected and what
   can be inferred from it, the two outbound calls. Licensed under MIT
   (`LICENSE`).
@@ -223,8 +258,23 @@ randomised MACs.
 
 ## Superseded decisions
 
-Recorded so they do not resurface. Revision of 2026-09-21, after Suricata was
-added as a data source:
+Recorded so they do not resurface.
+
+Revision of 2026-09-21, after the step-1 API survey
+(`docs/opnsense-api-survey.md`, OPNsense 26.7.3):
+
+- **Suricata is no longer a site-name source.** `dns` events do not exist and
+  `tls` / `http` events cannot be read back through the API. The revision
+  recorded below, which demoted the DNS × flow heuristic to a fallback, is
+  itself superseded: that heuristic is the only site-name path on 26.7, and
+  the README's limitations section applies to it unconditionally again.
+  Suricata stays a data source, for alerts alone — the Alerts screen and the
+  eight-step plan are unchanged.
+- **The matrix cannot lean on Insight for its short periods.** Per-address-pair
+  volume is daily-only, so `opnview`'s own history is the primary store rather
+  than a cache.
+
+Revision of 2026-09-21, after Suricata was added as a data source:
 
 - **The DNS × flow heuristic is no longer the primary way to name sites.** It
   is demoted to a fallback for installations without Suricata. It stays
