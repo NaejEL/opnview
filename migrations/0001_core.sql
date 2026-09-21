@@ -1,9 +1,16 @@
 -- opnview migration 0001 — core entities.
 --
--- Every entity here is fed by one of the five OPNsense sources surveyed in
+-- Every entity here is fed by a provider of one of the six kinds surveyed in
 -- docs/opnsense-api-survey.md, or by the runtime discovery described in that
 -- document's "Runtime discovery" section. docs/data-model.md maps each table
--- and each column to its endpoint and API field.
+-- and each column to its endpoint and API field, and docs/architecture.md
+-- names the six kinds and the seam a provider plugs into.
+--
+-- No provider name appears as a table name or as a column name anywhere in
+-- this file. A provider is a row in the `provider` registry and a foreign key
+-- to it; its name is a value, never an identifier. The single exception is
+-- `eve_ingest_cursor`, which names a file format rather than a product and is
+-- provisional until a second ingesting provider is surveyed.
 --
 -- Conventions applied throughout, and asserted by sql/schema-checks.sh:
 --   * Every column holding an instant is an INTEGER UTC epoch in seconds and
@@ -31,6 +38,51 @@ CREATE TABLE setting (
     value      TEXT NOT NULL,
     updated_at INTEGER NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
 );
+
+-- ---------------------------------------------------------------------------
+-- Provider registry — one row per implementation that can feed opnview,
+-- grouped by the kind of material it supplies. Bounded: one row per
+-- implementation known to the project.
+--
+-- Registering an implementation is an INSERT, never a migration: nothing here
+-- enumerates provider names in a CHECK. What is constrained is the `kind`, the
+-- six seams docs/architecture.md names, because a kind is a contract opnview
+-- implements and not data a deployment supplies.
+--
+-- Endpoints, one citation per kind, all in docs/opnsense-api-survey.md:
+--   firewall_log    /api/diagnostics/firewall/log            (data source 1)
+--   security_event  /api/ids/service/query_alerts            (data source 2)
+--   flow_volume     /api/diagnostics/networkinsight/...      (data source 3)
+--   dhcp_lease      /api/kea/leases4/search,
+--                   /api/dnsmasq/leases/search,
+--                   /api/dhcpv4/leases/searchLease           (data source 4)
+--   dns_lookup      /api/unbound/overview/search_queries,
+--                   /api/diagnostics/log/core/dnsmasq        (data source 5)
+--   geo_asn         the MaxMind GeoLite2 City and ASN databases, the second of
+--                   the two outbound calls the project allows
+--
+-- is_active separates "opnview reads this one" from "this one is reachable".
+-- A machine may have two implementations of a kind installed and running; the
+-- model must say which one the data came from. At most one provider per kind
+-- is active, enforced by the partial unique index below. On a freshly migrated
+-- database none is active: activeness is decided by step-4 detection, never by
+-- a migration.
+-- ---------------------------------------------------------------------------
+CREATE TABLE provider (
+    id            INTEGER PRIMARY KEY,
+    kind          TEXT NOT NULL
+                  CHECK (kind IN ('firewall_log', 'security_event', 'flow_volume',
+                                  'dhcp_lease', 'dns_lookup', 'geo_asn')),
+    provider_key  TEXT NOT NULL,
+    display_name  TEXT NOT NULL,
+    is_active     INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+    registered_at INTEGER NOT NULL CHECK (registered_at >= 0 AND registered_at < 4102444800),
+    UNIQUE (kind, provider_key)
+);
+
+-- At most one active provider per kind. A partial index, so the many inactive
+-- rows of one kind do not collide with each other.
+CREATE UNIQUE INDEX uq_provider_active_per_kind ON provider (kind) WHERE is_active = 1;
 
 -- ---------------------------------------------------------------------------
 -- Segment — a named zone, tunnels included.
@@ -208,16 +260,45 @@ CREATE TABLE flow (
     rule_id                INTEGER REFERENCES rule (id),
     rule_lookup_state      TEXT NOT NULL
                            CHECK (rule_lookup_state IN ('resolved', 'not_found', 'pending')),
-    traffic_scope          TEXT GENERATED ALWAYS AS (
-                               CASE
-                                   WHEN src_segment_id IS NOT NULL AND dst_segment_id IS NOT NULL
-                                       THEN 'east_west'
-                                   ELSE 'north_south'
-                               END) VIRTUAL
+    -- traffic_scope is written by the collector and pinned by the CHECK below
+    -- to exactly one expression over segment membership, so no row can carry a
+    -- value that disagrees with its segments — the same guarantee a generated
+    -- column gives, demonstrated by a failing insert in the checks.
+    --
+    -- It is a plain column rather than a generated one for a query-plan
+    -- reason, and for no other: SQLite never reports an index as covering for
+    -- a query that reads a generated column, virtual or stored, so making this
+    -- one generated would cost the Overview, Matrix and Segment queries their
+    -- covering plans — all three group by this value. The derivation is
+    -- unchanged and is still segment membership alone: no address, no CIDR, no
+    -- name, no assumed addressing plan.
+    traffic_scope          TEXT NOT NULL,
+    CHECK (traffic_scope = CASE
+                               WHEN src_segment_id IS NOT NULL AND dst_segment_id IS NOT NULL
+                                   THEN 'east_west'
+                               ELSE 'north_south'
+                           END)
 );
 
-CREATE INDEX idx_flow_observed_at ON flow (observed_at);
-CREATE INDEX idx_flow_src_segment_observed_at ON flow (src_segment_id, observed_at);
+-- Index shape. Column count is close to irrelevant to SQLite read speed; what
+-- matters is selectivity and whether the index answers the query without
+-- fetching the row. The two indexes serving an AGGREGATING screen query
+-- therefore carry the measures that query sums or counts, so its plan reads
+-- the index alone — "USING COVERING INDEX" in EXPLAIN QUERY PLAN. The two
+-- serving a DETAIL listing are left narrow: a listing returns most of the row
+-- anyway, so widening them would buy nothing and cost write throughput on
+-- every ingested record. docs/data-model.md names, per query, which index
+-- covers it and which measures were added for that purpose.
+--
+-- There is exactly one index leading on observed_at alone, deliberately: it is
+-- the load-bearing index of the Overview and Matrix queries, and a second one
+-- with the same leading column would hide its loss.
+CREATE INDEX idx_flow_observed_at ON flow
+    (observed_at, traffic_scope, action, packet_bytes,
+     src_segment_id, dst_segment_id, src_device_id, rule_id, rule_lookup_state);
+CREATE INDEX idx_flow_src_segment_observed_at ON flow
+    (src_segment_id, observed_at, src_device_id, packet_bytes, action,
+     traffic_scope, dst_address);
 CREATE INDEX idx_flow_src_device_observed_at ON flow (src_device_id, observed_at);
 CREATE INDEX idx_flow_blocked_observed_at ON flow (observed_at) WHERE action = 'block';
 
@@ -297,16 +378,20 @@ CREATE TABLE domain_attribution (
 CREATE INDEX idx_domain_attribution_resolution ON domain_attribution (dns_resolution_id);
 
 -- ---------------------------------------------------------------------------
--- Geo / ASN — the MaxMind lookup for one address.
--- Keyed per address rather than per prefix: MaxMind answers with a prefix but
--- SQLite has no natural longest-prefix join. maxmind_build_at is the build
--- date of the database that answered, so a stale enrichment is visible. A
--- cache miss is a row whose lookup_state is 'miss', never an absent row.
--- Source: the MaxMind GeoLite2 City and ASN databases, the second and last of
--- the two outbound calls the project allows. Acquisition is step 4.
+-- Geo / ASN — the geo and ASN enrichment of one address.
+-- Keyed per address rather than per prefix: the dataset answers with a prefix
+-- but SQLite has no natural longest-prefix join. dataset_build_at is the build
+-- date of the dataset that answered and provider_id names the provider that
+-- supplied it, so a stale enrichment is visible and attributable. A cache miss
+-- is a row whose lookup_state is 'miss', never an absent row; a 'pending' row
+-- has not been looked up yet and names no provider.
+-- Source: the geo_asn kind of the provider registry — today the MaxMind
+-- GeoLite2 City and ASN databases, the second and last of the two outbound
+-- calls the project allows. Acquisition is step 4.
 -- ---------------------------------------------------------------------------
 CREATE TABLE geo_asn (
     address          TEXT PRIMARY KEY,
+    provider_id      INTEGER REFERENCES provider (id),
     lookup_state     TEXT NOT NULL CHECK (lookup_state IN ('resolved', 'miss', 'pending')),
     country_code     TEXT,
     country_name     TEXT,
@@ -314,52 +399,84 @@ CREATE TABLE geo_asn (
     longitude        REAL,
     asn              INTEGER,
     operator         TEXT,
-    maxmind_build_at INTEGER
-                     CHECK (maxmind_build_at IS NULL
-                            OR (maxmind_build_at >= 0 AND maxmind_build_at < 4102444800)),
+    dataset_build_at INTEGER
+                     CHECK (dataset_build_at IS NULL
+                            OR (dataset_build_at >= 0 AND dataset_build_at < 4102444800)),
     looked_up_at     INTEGER NOT NULL CHECK (looked_up_at >= 0 AND looked_up_at < 4102444800),
     CHECK (lookup_state <> 'resolved'
-           OR (country_code IS NOT NULL AND maxmind_build_at IS NOT NULL))
+           OR (country_code IS NOT NULL
+               AND dataset_build_at IS NOT NULL
+               AND provider_id IS NOT NULL))
 );
 
 CREATE INDEX idx_geo_asn_looked_up_at ON geo_asn (looked_up_at);
 
 -- ---------------------------------------------------------------------------
--- IDS rule info cache — severity and category per signature id.
--- Source: /api/ids/settings/get_rule_info/<sid>. Survey: data source 2,
--- response shape, and gap 3: query_alerts overwrites the nested alert object
--- with the signature string, so severity and category are not in the alert
--- record and must be resolved separately and cached. A signature with no row
--- here is a cache miss, and the Alerts screen renders it as an explicit
--- unknown severity rather than dropping the alert.
+-- Rule-info cache — the normalised severity and category of one rule identity,
+-- per provider.
+-- Source: /api/ids/settings/get_rule_info/<sid> for the Suricata provider.
+-- Survey: data source 2, response shape, and gap 3: query_alerts overwrites
+-- the nested alert object with the signature string, so severity and category
+-- are not in the event record and must be resolved separately and cached. A
+-- rule identity with no row here is a cache miss, and the Alerts screen
+-- renders it as an explicit unknown severity rather than dropping the event.
+--
+-- Keyed per provider: two providers may name a rule identically and mean
+-- different rules, so the identity alone is not a key. The identity is TEXT,
+-- because a provider whose rules are named rather than numbered cannot use an
+-- integer.
+--
+-- normalised_severity is opnview's own ordered vocabulary; provider_severity
+-- keeps the raw value the provider reported, verbatim, so the normalisation
+-- stays auditable. docs/data-model.md gives the vocabulary, its order and the
+-- mapping from the Suricata numeric scale.
 -- ---------------------------------------------------------------------------
-CREATE TABLE ids_rule_info (
-    signature_id INTEGER PRIMARY KEY,
-    severity     INTEGER NOT NULL CHECK (severity >= 1),
-    category     TEXT,
-    rule_source  TEXT,
-    fetched_at   INTEGER NOT NULL CHECK (fetched_at >= 0 AND fetched_at < 4102444800)
+CREATE TABLE provider_rule_info (
+    provider_id         INTEGER NOT NULL REFERENCES provider (id),
+    rule_identity       TEXT NOT NULL,
+    normalised_severity TEXT NOT NULL
+                        CHECK (normalised_severity IN ('critical', 'high', 'medium',
+                                                       'low', 'informational')),
+    provider_severity   TEXT,
+    category            TEXT,
+    rule_source         TEXT,
+    fetched_at          INTEGER NOT NULL CHECK (fetched_at >= 0 AND fetched_at < 4102444800),
+    PRIMARY KEY (provider_id, rule_identity)
 );
 
 -- ---------------------------------------------------------------------------
--- Alert — one Suricata eve.json alert record. Suricata is an alert source and
--- nothing else on 26.7.
+-- Security event — one event contributed by a provider of the security_event
+-- kind. Today that is Suricata, which on 26.7 is an alert source and nothing
+-- else; the table describes the kind, not the product.
 -- Source: /api/ids/service/query_alerts (timestamp, src_ip, src_port,
 -- dest_ip, dest_port, proto, in_iface, alert as signature text, alert_sid,
 -- alert_action, fileid, filepos). Survey: data source 2.
--- The pair (file_id, file_pos) is the durable identity, so replaying an
--- ingestion inserts nothing new. There is deliberately no severity column:
--- severity lives in ids_rule_info.
+--
+-- Identity is (provider_id, provider_event_key): the key the provider itself
+-- guarantees stable, composed by the collector — for Suricata, from the eve
+-- file id and the byte offset inside it. That is ONE idempotence guarantee,
+-- placed on the core. The ingestion coordinate is NOT duplicated here: it is
+-- a transport concern and lives in eve_ingest_cursor, which carries a
+-- different guarantee about a different thing (see docs/data-model.md).
+--
+-- normalised_severity is nullable and is NULL for every Suricata event,
+-- because the API destroys the nested alert object before opnview can read it
+-- (survey, gap 3): its severity is resolved through provider_rule_info. The
+-- column exists for a provider that ships severity inside its event.
 -- ---------------------------------------------------------------------------
-CREATE TABLE alert (
+CREATE TABLE security_event (
     id                  INTEGER PRIMARY KEY,
-    file_id             TEXT NOT NULL,
-    file_pos            INTEGER NOT NULL CHECK (file_pos >= 0),
+    provider_id         INTEGER NOT NULL REFERENCES provider (id),
+    provider_event_key  TEXT NOT NULL,
     occurred_at         INTEGER NOT NULL CHECK (occurred_at >= 0 AND occurred_at < 4102444800),
     ingested_at         INTEGER NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
-    signature_id        INTEGER NOT NULL,
+    rule_identity       TEXT NOT NULL,
     signature           TEXT NOT NULL,
-    alert_action        TEXT NOT NULL CHECK (alert_action IN ('allowed', 'blocked', 'unknown')),
+    event_action        TEXT NOT NULL CHECK (event_action IN ('allowed', 'blocked', 'unknown')),
+    normalised_severity TEXT
+                        CHECK (normalised_severity IS NULL
+                               OR normalised_severity IN ('critical', 'high', 'medium',
+                                                          'low', 'informational')),
     src_address         TEXT NOT NULL,
     src_port            INTEGER CHECK (src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)),
     dst_address         TEXT NOT NULL,
@@ -369,12 +486,13 @@ CREATE TABLE alert (
     src_device_id       INTEGER REFERENCES device (id),
     src_segment_id      INTEGER REFERENCES segment (id),
     flow_ref            INTEGER,
-    UNIQUE (file_id, file_pos)
+    UNIQUE (provider_id, provider_event_key)
 );
 
-CREATE INDEX idx_alert_occurred_at ON alert (occurred_at);
-CREATE INDEX idx_alert_device_occurred_at ON alert (src_device_id, occurred_at);
-CREATE INDEX idx_alert_signature ON alert (signature_id, occurred_at);
+CREATE INDEX idx_security_event_occurred_at ON security_event (occurred_at);
+CREATE INDEX idx_security_event_device_occurred_at ON security_event (src_device_id, occurred_at);
+CREATE INDEX idx_security_event_rule_occurred_at
+    ON security_event (provider_id, rule_identity, occurred_at);
 
 -- ---------------------------------------------------------------------------
 -- eve.json ingestion cursor — a per-file byte-offset watermark over an
@@ -396,21 +514,32 @@ CREATE TABLE eve_ingest_cursor (
 );
 
 -- ---------------------------------------------------------------------------
--- Source availability — the modelled health of each of the five sources.
+-- Source availability — the modelled health of each registered provider, one
+-- row per registry row.
 -- No source can be told apart from silence by an empty result alone (survey,
--- gap 11), so each one carries a state, the instant it was determined, and
--- the probe that determined it. Every screen reads this table; an unavailable
--- source is rendered as its own condition, never as an absence of data.
+-- gap 11), so each provider carries a state, the instant it was determined,
+-- and the probe that determined it. Every screen reads this table; an
+-- unavailable provider is rendered as its own condition, never as an absence
+-- of data.
+--
+-- Availability is reachability, and nothing else. Which provider opnview
+-- actually reads is provider.is_active: a machine may have two reachable
+-- implementations of one kind. For the geo_asn kind the row describes the
+-- reachability of the DATASET; geo_asn.lookup_state describes a single address
+-- lookup against it. Two different questions, two different columns.
+--
+-- The provider set is data, so there is no CHECK enumerating provider names
+-- here: registering one is an INSERT into `provider` plus an INSERT here.
+-- Probe endpoints per kind are tabulated in docs/data-model.md, each cited in
+-- docs/opnsense-api-survey.md.
 -- ---------------------------------------------------------------------------
 CREATE TABLE source_availability (
-    source     TEXT PRIMARY KEY
-               CHECK (source IN ('filter_log', 'suricata_eve', 'netflow_insight',
-                                 'dhcp_leases', 'resolver_dns')),
-    state      TEXT NOT NULL
-               CHECK (state IN ('reachable', 'present_but_disabled', 'unavailable')),
-    probe      TEXT NOT NULL,
-    detail     TEXT,
-    checked_at INTEGER NOT NULL CHECK (checked_at >= 0 AND checked_at < 4102444800)
+    provider_id INTEGER PRIMARY KEY REFERENCES provider (id),
+    state       TEXT NOT NULL
+                CHECK (state IN ('reachable', 'present_but_disabled', 'unavailable')),
+    probe       TEXT NOT NULL,
+    detail      TEXT,
+    checked_at  INTEGER NOT NULL CHECK (checked_at >= 0 AND checked_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------

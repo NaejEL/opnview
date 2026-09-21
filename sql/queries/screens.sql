@@ -104,7 +104,7 @@ SELECT
     g.lookup_state                                          AS geo_lookup_state,
     g.country_code                                          AS country_code,
     g.operator                                              AS operator,
-    g.maxmind_build_at                                      AS maxmind_build_at,
+    g.dataset_build_at                                      AS dataset_build_at,
     a.site_name                                             AS site_name,
     a.correlation_delay_seconds                             AS correlation_delay_seconds,
     f.interface_lookup_state                                AS interface_lookup_state,
@@ -147,33 +147,44 @@ WHERE b.observed_at >= :window_start
 ORDER BY b.observed_at DESC;
 
 -- screen: Alerts
--- Suricata alerts joined to the device and the segment, with severity resolved
--- through the get_rule_info cache. A signature absent from that cache is
--- returned with severity_state 'unknown' and a null severity, not dropped.
+-- Security events joined to the device and the segment, each naming the
+-- provider that contributed it, with severity taken from the event itself when
+-- the provider ships one and otherwise resolved through the per-provider
+-- rule-info cache. A rule identity absent from that cache, and carrying no
+-- inline severity, is returned with severity_state 'unknown' and a null
+-- severity, not dropped. The rule identity is text, so a provider whose rules
+-- are named rather than numbered is returned unchanged.
+--
+-- Every join is a LEFT JOIN, the provider one included: security_event is the
+-- table the period predicate applies to, and it must drive the plan.
 SELECT
-    al.occurred_at                                          AS occurred_at,
-    al.signature_id                                         AS signature_id,
-    al.signature                                            AS signature,
-    al.alert_action                                         AS alert_action,
-    CASE WHEN ri.signature_id IS NULL THEN 'unknown' ELSE 'resolved' END AS severity_state,
-    ri.severity                                             AS severity,
+    se.occurred_at                                          AS occurred_at,
+    p.provider_key                                          AS provider_key,
+    se.rule_identity                                        AS rule_identity,
+    se.signature                                            AS signature,
+    se.event_action                                         AS event_action,
+    CASE WHEN coalesce(se.normalised_severity, ri.normalised_severity) IS NULL
+         THEN 'unknown' ELSE 'resolved' END                 AS severity_state,
+    coalesce(se.normalised_severity, ri.normalised_severity) AS severity,
     ri.category                                             AS category,
-    al.src_address                                          AS src_address,
-    al.src_port                                             AS src_port,
-    al.dst_address                                          AS dst_address,
-    al.dst_port                                             AS dst_port,
-    al.protocol                                             AS protocol,
-    al.src_device_id                                        AS device_id,
+    se.src_address                                          AS src_address,
+    se.src_port                                             AS src_port,
+    se.dst_address                                          AS dst_address,
+    se.dst_port                                             AS dst_port,
+    se.protocol                                             AS protocol,
+    se.src_device_id                                        AS device_id,
     d.hostname                                              AS hostname,
-    al.src_segment_id                                       AS segment_id,
+    se.src_segment_id                                       AS segment_id,
     coalesce(s.user_label, s.discovered_description)        AS segment_label
-FROM alert AS al
-LEFT JOIN ids_rule_info AS ri ON ri.signature_id = al.signature_id
-LEFT JOIN device AS d ON d.id = al.src_device_id
-LEFT JOIN segment AS s ON s.id = al.src_segment_id
-WHERE al.occurred_at >= :window_start
-  AND al.occurred_at < :window_end
-ORDER BY al.occurred_at DESC;
+FROM security_event AS se
+LEFT JOIN provider AS p ON p.id = se.provider_id
+LEFT JOIN provider_rule_info AS ri
+       ON ri.provider_id = se.provider_id AND ri.rule_identity = se.rule_identity
+LEFT JOIN device AS d ON d.id = se.src_device_id
+LEFT JOIN segment AS s ON s.id = se.src_segment_id
+WHERE se.occurred_at >= :window_start
+  AND se.occurred_at < :window_end
+ORDER BY se.occurred_at DESC;
 
 -- screen: Map
 -- Destinations by country and by operator, per source segment, read from the
@@ -194,7 +205,7 @@ SELECT
     sum(v.blocked_connections)                              AS blocked_connections,
     count(DISTINCT v.peer_address)                          AS distinct_peers,
     max(v.computed_at)                                      AS aggregate_computed_at,
-    max(g.maxmind_build_at)                                 AS maxmind_build_at
+    max(g.dataset_build_at)                                 AS dataset_build_at
 FROM volume_aggregate_24h AS v
 JOIN geo_asn AS g ON g.address = v.peer_address
 LEFT JOIN segment AS s ON s.id = v.src_segment_id

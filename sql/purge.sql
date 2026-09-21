@@ -14,11 +14,14 @@
 -- resolver lookup takes its attribution with it. After the purge,
 -- PRAGMA foreign_key_check returns no rows.
 --
--- What survives: segment, device, rule, interface_map, ids_rule_info,
--- source_availability, eve_ingest_cursor and setting are bounded reference
--- and state tables and are never purged. The four aggregates are purged by
--- period_end_at, so every period whose window still lies inside the horizon
--- stays queryable; only slots entirely older than the horizon go.
+-- What survives: segment, rule, interface_map, provider, provider_rule_info,
+-- source_availability, eve_ingest_cursor and setting are bounded reference and
+-- state tables and are never purged. The registry and the rule-info cache in
+-- particular stay bounded: they hold one row per implementation and one per
+-- rule identity seen at least once, not one per observation. The four
+-- aggregates are purged by period_end_at, so every period whose window still
+-- lies inside the horizon stays queryable; only slots entirely older than the
+-- horizon go.
 
 PRAGMA foreign_keys = ON;
 
@@ -45,7 +48,11 @@ WHERE looked_up_at < (
     WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
 );
 
-DELETE FROM alert
+-- security_event is purged by occurred_at, like every other observation. It
+-- has no provider-named detail table to follow: the one thing such a table
+-- would have carried is the ingestion coordinate, which lives in
+-- eve_ingest_cursor and is a watermark rather than event data.
+DELETE FROM security_event
 WHERE occurred_at < (
     SELECT :now - CAST(value AS INTEGER)
     FROM setting
@@ -78,7 +85,7 @@ WHERE last_seen_at < (
 )
 AND NOT EXISTS (SELECT 1 FROM flow f
                 WHERE f.src_device_id = device.id OR f.dst_device_id = device.id)
-AND NOT EXISTS (SELECT 1 FROM alert a WHERE a.src_device_id = device.id)
+AND NOT EXISTS (SELECT 1 FROM security_event e WHERE e.src_device_id = device.id)
 AND NOT EXISTS (SELECT 1 FROM dhcp_lease l WHERE l.device_id = device.id)
 AND NOT EXISTS (SELECT 1 FROM dns_resolution r WHERE r.device_id = device.id);
 

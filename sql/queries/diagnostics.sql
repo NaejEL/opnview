@@ -48,14 +48,23 @@ SELECT '30d', count(*), min(period_start_at), max(period_end_at), max(computed_a
 FROM volume_aggregate_30d;
 
 -- diagnostic: Source availability
--- The current state of all five sources, with the probe that determined it.
--- Every screen reads this: an unavailable source is a condition of its own and
--- is never rendered as an absence of traffic, alerts, devices or names.
+-- One row per REGISTERED PROVIDER — its kind, its key, its availability state,
+-- the probe that determined it, and whether it is the provider opnview
+-- actually reads for that kind. Every screen reads this: an unavailable
+-- provider is a condition of its own and is never rendered as an absence of
+-- traffic, security events, devices or names.
+--
+-- Availability and activeness are two different facts. Two implementations of
+-- one kind may both be 'reachable'; at most one of them is active.
 SELECT
-    source        AS source,
-    state         AS state,
-    probe         AS probe,
-    detail        AS detail,
-    checked_at    AS checked_at
-FROM source_availability
-ORDER BY source;
+    p.kind        AS kind,
+    p.provider_key AS provider_key,
+    p.display_name AS display_name,
+    a.state       AS state,
+    a.probe       AS probe,
+    a.detail      AS detail,
+    a.checked_at  AS checked_at,
+    p.is_active   AS is_active
+FROM provider AS p
+LEFT JOIN source_availability AS a ON a.provider_id = p.id
+ORDER BY p.kind, p.provider_key;

@@ -9,7 +9,9 @@ OPNsense 26.7.3. Every endpoint named below is cited there, with its URL; the
 citation is not repeated here. The authority on the schema is
 `migrations/*.sql`, and the authority on the queries is
 `sql/queries/screens.sql`. This document explains them; it does not restate
-them, so the two cannot drift.
+them, so the two cannot drift. `docs/architecture.md` names the six provider
+kinds and the seam a provider plugs into; this document is where each entity
+is written down.
 
 Everything is verified by one command, from the repository root:
 
@@ -73,7 +75,6 @@ table.
 
 <!-- entity-list:begin -->
 ```
-alert
 blocked_event
 device
 dhcp_lease
@@ -82,11 +83,13 @@ domain_attribution
 eve_ingest_cursor
 flow
 geo_asn
-ids_rule_info
 interface_map
 pair_volume_observation
+provider
+provider_rule_info
 rule
 schema_version
+security_event
 segment
 setting
 source_availability
@@ -112,7 +115,6 @@ bounded table.
 
 <!-- growing-tables:begin -->
 ```
-alert
 device
 dhcp_lease
 dns_resolution
@@ -120,6 +122,7 @@ domain_attribution
 flow
 geo_asn
 pair_volume_observation
+security_event
 volume_aggregate_1h
 volume_aggregate_24h
 volume_aggregate_30d
@@ -130,8 +133,9 @@ volume_aggregate_7d
 <!-- bounded-tables:begin -->
 ```
 eve_ingest_cursor
-ids_rule_info
 interface_map
+provider
+provider_rule_info
 rule
 schema_version
 segment
@@ -147,8 +151,9 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `segment` | one row per discovered interface; a firewall has tens, not millions |
 | `interface_map` | one row per raw device name the firewall reports |
 | `rule` | one row per rule in the running ruleset |
-| `ids_rule_info` | one row per signature id seen at least once; a rule set holds tens of thousands at most, and the table only ever holds the ones actually observed |
-| `source_availability` | exactly five rows, one per source, for the life of the database |
+| `provider` | one row per implementation the project knows of; nine today, and a new one is an `INSERT`, not a stream |
+| `provider_rule_info` | one row per (provider, rule identity) seen at least once; a rule set holds tens of thousands at most, and the table only ever holds the ones actually observed |
+| `source_availability` | exactly one row per `provider` row, for the life of the database |
 | `eve_ingest_cursor` | one watermark per rotated `eve.json` file; the firewall keeps the current file plus four archives |
 | `setting` | one row per configuration key |
 | `schema_version` | one row per applied migration |
@@ -159,7 +164,113 @@ table accumulates over time even on a network with a fixed number of machines.
 It is purged accordingly, under the guard described in its own section, and no
 screen query is allowed to scan it.
 
+## Providers
+
+`docs/architecture.md` holds the seam; this section holds the data. A
+**kind** is a contract `opnview` implements, a **provider** is one
+implementation of it, and the registry holds one row per implementation, not
+one per kind.
+
+Registering a provider is an `INSERT` into `provider` plus an `INSERT` into
+`source_availability`. Nothing in the DDL enumerates provider names: the only
+`CHECK` on the registry constrains `kind`, because a kind is code `opnview`
+ships and not data a deployment supplies.
+
+The nine rows migration 0002 seeds, with the survey section that established
+each one:
+
+| Kind | `provider_key` | Endpoint | Survey |
+|---|---|---|---|
+| `firewall_log` | `pf` | `/api/diagnostics/firewall/log` | data source 1 |
+| `security_event` | `suricata` | `/api/ids/service/query_alerts` | data source 2 |
+| `flow_volume` | `insight` | `/api/diagnostics/networkinsight/top/FlowSourceAddrDetails/...` | data source 3 |
+| `dhcp_lease` | `kea` | `/api/kea/leases4/search` | data source 4 |
+| `dhcp_lease` | `dnsmasq` | `/api/dnsmasq/leases/search` | data source 4 |
+| `dhcp_lease` | `isc` | `/api/dhcpv4/leases/searchLease` | data source 4, `UNVERIFIED:` |
+| `dns_lookup` | `unbound` | `/api/unbound/overview/search_queries` | data source 5 |
+| `dns_lookup` | `dnsmasq` | `/api/diagnostics/log/core/dnsmasq` | data source 5, `UNVERIFIED:` |
+| `geo_asn` | `maxmind_geolite2` | the GeoLite2 City and ASN databases | the second of the two outbound calls the project allows |
+
+**Two kinds have several providers**, and that is what makes the registry real
+rather than notional: `dns_lookup` has Unbound and Dnsmasq, `dhcp_lease` has
+Kea, Dnsmasq and ISC dhcpd. Step-1 detection already tells them apart, and
+`dhcp_lease.backend` and `dns_resolution.resolver` already record which one a
+row came from.
+
+**These names are data, not configuration.** A firewall with no Suricata still
+gets a Suricata registry row, in the `unavailable` state. That is the
+modelled-state design working as intended, and it is recorded here so it is not
+mistaken for a hardcoding defect: nothing in the DDL, in a screen query, in an
+index or in the purge tests any of these strings.
+
+**No provider name is an identifier.** Not a table name, not a column name, no
+exception. `eve_ingest_cursor` names a file format rather than a product and is
+itself provisional; it is rewritten when a second ingesting provider is
+surveyed.
+
+### The attribute rule
+
+For provider-specific data that does not fit the neutral core, in this order:
+
+1. **A typed, indexed column** for anything a screen **aggregates or filters
+   on**. Types and constraints are what make a predicate correct, and index
+   selectivity is what makes it fast.
+2. **A JSON column**, read only on a detail screen and never aggregated,
+   filtered or joined, for an attribute that is only ever displayed.
+3. **Never an entity-attribute-value table.** A table of
+   `(entity, attribute name, value)` triples turns one row read into N reads
+   plus a pivot, loses every type and every constraint, and destroys index
+   selectivity on exactly the predicates the screens use. It would make these
+   queries slower, not faster, and there is none in this schema.
+4. **Never a provider-named table.**
+
+### Severity: one ordered vocabulary
+
+`opnview`'s normalised severity is ordered text, most severe first:
+
+```
+critical > high > medium > low > informational
+```
+
+Text rather than a number, and `opnview`'s own rather than one vendor's scale
+promoted to universal. Both `security_event.normalised_severity` and
+`provider_rule_info.normalised_severity` are constrained to it; a value outside
+it is rejected by a `CHECK`.
+
+The mapping from the Suricata numeric scale, which runs 1 (most severe) to 4:
+
+| Suricata `severity` | `normalised_severity` |
+|---|---|
+| 1 | `critical` |
+| 2 | `high` |
+| 3 | `medium` |
+| 4 | `low` |
+
+`informational` has no Suricata equivalent. It is in the vocabulary for a
+provider that reports one, and `provider_rule_info.provider_severity` keeps the
+raw value the provider reported so the normalisation stays auditable. The
+vocabulary's adequacy for a second provider is unproven until one is surveyed.
+
 ## Per entity
+
+### `provider` — the registry
+
+One row per implementation that can feed `opnview`, keyed
+`(kind, provider_key)`. `kind` is constrained to the six above.
+
+**`is_active` is not reachability.** It says which implementation `opnview`
+actually reads for that kind; `source_availability.state` says which ones can
+be reached. A machine may have two reachable implementations of one kind. At
+most one provider per kind is active, enforced by the partial unique index
+`uq_provider_active_per_kind` over `kind` where `is_active = 1`; marking a
+second one active fails.
+
+On a freshly migrated database **no provider is active**. Activeness is
+determined by step-4 detection against a live firewall. Provider selection
+policy — how step 4 chooses — is not modelled here.
+
+**Retention:** never purged. **Indexes:** the primary key, the uniqueness
+constraint on `(kind, provider_key)`, and the partial unique index above.
 
 ### `segment` — a named zone, tunnels included
 
@@ -256,9 +367,9 @@ observations with different MACs remain two rows: they are two identity keys.
 
 **Retention:** purged by `last_seen_at`, but only once every observation that
 named the device has itself been purged. The purge guards the delete with a
-`NOT EXISTS` over `flow`, `alert`, `dhcp_lease` and `dns_resolution`, because
-removing an identity a surviving flow still points at would leave that flow
-unable to name a machine.
+`NOT EXISTS` over `flow`, `security_event`, `dhcp_lease` and `dns_resolution`,
+because removing an identity a surviving flow still points at would leave that
+flow unable to name a machine.
 
 **Indexes:** the primary key, `UNIQUE (identity_kind, identity_key)`, and
 `idx_device_segment` for listing a segment's machines.
@@ -288,23 +399,98 @@ generation, so a reissue is a second row rather than an overwrite.
 matching the digest a poll supplied, so the uniqueness constraint is what makes
 the echo harmless.
 
-**East-west and north-south** are carried by `traffic_scope`, a generated
-column that is `east_west` exactly when both `src_segment_id` and
-`dst_segment_id` are set, and `north_south` otherwise. It derives from segment
-membership and from nothing else — no address, no CIDR, no name, no assumed
-addressing plan.
+**East-west and north-south** are carried by `traffic_scope`, which is
+`east_west` exactly when both `src_segment_id` and `dst_segment_id` are set,
+and `north_south` otherwise. It derives from segment membership and from
+nothing else — no address, no CIDR, no name, no assumed addressing plan. The
+collector writes it on every insert; the paragraph below says why it is a plain
+column rather than a generated one.
 
 **Retention:** purged by `observed_at`. Purging a flow cascades to its
 attribution.
 
+**`traffic_scope` is a plain column pinned by a `CHECK`**, not a generated
+column. It is `NOT NULL` with no default, so step 4 must write it on every
+insert — an insert that omits it fails on the `NOT NULL` constraint before any
+other constraint is reached. The `CHECK` is exactly the expression that would have generated it, so
+no row can carry a value disagreeing with its segments — the checks demonstrate
+that with a failing insert. It is not generated for one reason only: SQLite
+never reports an index as covering for a query that reads a generated column,
+virtual or stored, and the Overview, Matrix and Segment queries all group by
+this value. Making it generated would cost all three their covering plans.
+
 **Indexes:**
 
-| Index | Serves |
+| Index | Serves | Covering |
+|---|---|---|
+| `idx_flow_observed_at` | the Overview and Matrix queries, and any period-wide read | yes, for both |
+| `idx_flow_src_segment_observed_at` | the Segment query | yes |
+| `idx_flow_src_device_observed_at` | the Device query | no |
+| `idx_flow_blocked_observed_at` | the Blocked query; a partial index on the blocking action only, so it stays small | no |
+
+There is exactly **one** index leading on `observed_at` alone, deliberately: a
+second one with the same leading column would hide its loss, and the checks
+prove the index is load-bearing by dropping it.
+
+#### Column review
+
+Every column of `flow`, and what reads it. A column nothing reads and nothing
+explains does not belong here.
+
+<!-- flow-columns:begin -->
+```
+action
+direction
+dst_address
+dst_device_id
+dst_port
+dst_segment_id
+id
+ingested_at
+interface_device
+interface_lookup_state
+ip_version
+log_digest
+observed_at
+packet_bytes
+protocol
+rid
+rule_id
+rule_lookup_state
+src_address
+src_device_id
+src_port
+src_segment_id
+traffic_scope
+```
+<!-- flow-columns:end -->
+
+| Column | Read by |
 |---|---|
-| `idx_flow_observed_at` | the Overview and Matrix queries, and any period-wide read |
-| `idx_flow_src_segment_observed_at` | the Segment query |
-| `idx_flow_src_device_observed_at` | the Device query |
-| `idx_flow_blocked_observed_at` | the Blocked query; a partial index on the blocking action only, so it stays small |
+| `id` | the Device query; the `domain_attribution` foreign key |
+| `log_digest` | nothing, and it stays: it is the **identity** of the row. The endpoint echoes back the record matching the digest a poll supplied, and this uniqueness constraint is what makes that echo harmless instead of a duplicate |
+| `observed_at` | all five flow-fed screen queries, the purge, the aggregate refresh |
+| `ingested_at` | the **aggregate refresh**: a slot is stale when its `computed_at` is older than the newest `ingested_at` among the flows in its window. That comparison is the staleness rule, and no separate dirty flag exists |
+| `interface_device`, `interface_lookup_state` | the Device and Blocked queries |
+| `src_segment_id`, `dst_segment_id` | Overview, Matrix, Segment, Blocked; the `traffic_scope` `CHECK` |
+| `src_device_id` | Overview, Segment, Device, Blocked; the purge's device guard |
+| `dst_device_id` | the **purge**: a device is removed only when no surviving flow names it as source **or destination** |
+| `src_address` | the Blocked query |
+| `dst_address` | the Segment, Device and Blocked queries; the `geo_asn` join |
+| `src_port` | nothing, and it stays: it is the other half of the connection tuple, and it is what lets a flow be matched back to a `pair_volume_observation`, whose `service_port` is Insight's `min(src_port, dst_port)`. Without it that correlation is impossible |
+| `dst_port` | the Device and Blocked queries |
+| `protocol` | the Device and Blocked queries |
+| `ip_version` | nothing, and it stays: it is the address family the filter log reports. An address column alone cannot be classified, and the project forbids inferring an addressing plan, so a v4/v6 split is answerable only from this column. IPv6 seed coverage is recorded against step 4 |
+| `action` | Overview, Matrix, Segment, Device; the `blocked_event` view and its partial index |
+| `direction` | nothing, and it stays: it is the in/out sense the filter log reports, and it is what tells a reader whether `src_address` on a blocked record is the machine inside or the machine outside. Reading a denial without it is guesswork |
+| `packet_bytes` | Overview, Matrix, Segment, Device; the aggregate refresh |
+| `rid` | the Blocked query alone, which returns the firewall's own rule identifier next to the resolved description. No other screen query reads it: the segment-pair screen joins through `rule_id` and reports `rule_lookup_state` instead |
+| `rule_id`, `rule_lookup_state` | the Matrix and Blocked queries |
+| `traffic_scope` | Overview, Matrix, Segment, Device, Blocked; the aggregate refresh |
+
+Four columns — `log_digest`, `src_port`, `ip_version` and `direction` — are
+read by no screen query, by no purge statement and by no aggregate refresh.
+Each is justified above, and each is kept deliberately.
 
 ### `blocked_event` — a view, not a table
 
@@ -367,56 +553,100 @@ device.
 **Indexes:** the primary key, plus `idx_domain_attribution_resolution` so the
 cascade from a purged lookup is an index search.
 
-### `geo_asn` — the MaxMind enrichment of one address
+### `geo_asn` — the geo and ASN enrichment of one address
 
-**Source:** the MaxMind GeoLite2 City and ASN databases, the second of the two
-outbound calls the project allows. Acquisition, refresh and licence handling
-are step 4; only the model is in scope here.
+**Source:** the active provider of the `geo_asn` kind — today the MaxMind
+GeoLite2 City and ASN databases, the second of the two outbound calls the
+project allows. Acquisition, refresh and licence handling are step 4; only the
+model is in scope here.
 
 **Identity:** `address`, the primary key. Keyed per address rather than per
-prefix: MaxMind answers with a prefix, and SQLite has no natural
+prefix: the dataset answers with a prefix, and SQLite has no natural
 longest-prefix join.
 
 **A cache miss is a modelled state.** `lookup_state` is `resolved`, `miss` or
 `pending`, and the Map query returns a miss with its state rather than dropping
-the volume attached to it. `maxmind_build_at` records the build date of the
-database that answered, so a stale enrichment is visible instead of silently
-wrong; a `CHECK` makes it mandatory on a resolved row.
+the volume attached to it. `dataset_build_at` records the build date of the
+dataset that answered and `provider_id` names the provider that supplied it, so
+a stale enrichment is visible instead of silently wrong, and attributable; a
+`CHECK` makes both mandatory on a resolved row, and a resolved row missing
+either is rejected.
+
+**Two different questions, two different columns.** The `geo_asn` provider's
+`source_availability` row says whether the **dataset** can be reached at all —
+present, absent, never downloaded. `geo_asn.lookup_state` says what happened to
+**one address** against it. A reachable dataset still produces misses, and an
+unreachable one produces none of either.
 
 **Retention:** purged by `looked_up_at`. **Indexes:** the primary key and
 `idx_geo_asn_looked_up_at`.
 
-### `alert` — one Suricata alert
+### `security_event` — one event from a security-event provider
 
-**Source:** `/api/ids/service/query_alerts`, data source 2 — `timestamp`,
+**Source:** the active provider of the `security_event` kind. Today that is
+Suricata, through `/api/ids/service/query_alerts`, data source 2 — `timestamp`,
 `src_ip`, `src_port`, `dest_ip`, `dest_port`, `proto`, `in_iface`, `alert_sid`,
 `alert_action`, `fileid`, `filepos`, and the `alert` key, which the backend has
-overwritten with the signature text.
+overwritten with the signature text. The table describes the kind, not the
+product.
 
-**Identity:** `(file_id, file_pos)`, unique. Paging is offset-from-end-of-file
-and therefore unstable, so the byte offset inside its file is the only durable
-identity; a replayed ingestion inserts nothing new.
+**Identity:** `(provider_id, provider_event_key)`, unique. `provider_event_key`
+is the key the provider itself guarantees stable, composed by the collector —
+for Suricata, from the eve file id and the byte offset inside it, because
+paging is offset-from-end-of-file and therefore unstable. Replaying an
+ingestion inserts nothing new.
 
-**There is no severity column here.** The backend destroys the nested alert
-object, so severity and category are not in the record (survey, gap 3). They
-come from `ids_rule_info`.
+**There is no ingestion-transport column here**, and that is the point of the
+restructuring. The file id and byte offset are an ingestion coordinate, not
+event data, and they already live in `eve_ingest_cursor`.
 
-**Retention:** purged by `occurred_at`.
+**Two guarantees about two different things, and step 4 must not merge them.**
 
-**Indexes:** `idx_alert_occurred_at` for the timeline,
-`idx_alert_device_occurred_at` for a device's alerts,
-`idx_alert_signature` for the by-signature aggregation.
+| | `security_event` | `eve_ingest_cursor` |
+|---|---|---|
+| Unique key | `(provider_id, provider_event_key)` | `(file_id, byte_offset)` |
+| Question it answers | have I already stored **this event**? | where did the reader **stop** in this file? |
+| Lifetime | purged with the event, by `occurred_at` | never purged; it is a watermark |
+| Scope | every provider of the kind | one provider's file format |
 
-### `ids_rule_info` — the `get_rule_info` cache
+Collapsing them would lose one: a watermark says nothing about which events it
+covered, and an event key says nothing about where to resume. `eve_ingest_cursor`
+additionally models rotation, which no event key can express.
 
-**Source:** `/api/ids/settings/get_rule_info/<sid>`, resolved on a cache-miss
-basis and stored, because the alert record cannot carry it.
+**The rule identity is text**, on this table and on the cache, so a provider
+whose rules are named rather than numbered fits without a migration. Step 6's
+by-signature aggregation will therefore compare strings rather than integers;
+that is noted, not solved here.
 
-**Identity:** `signature_id`, the primary key.
+**Severity is nullable and is NULL for every Suricata event.** The backend
+destroys the nested alert object, so severity and category are not in the
+record (survey, gap 3); they are resolved through `provider_rule_info`, exactly
+as before. The column exists for a provider that ships severity inside its
+event. The vocabulary is above, under *Severity: one ordered vocabulary*.
+
+**Retention:** purged by `occurred_at`. There is no detail table to cascade to.
+
+**Indexes:** `idx_security_event_occurred_at` for the timeline and for the
+Alerts query, `idx_security_event_device_occurred_at` for a device's events,
+`idx_security_event_rule_occurred_at` for the per-provider by-rule aggregation.
+
+### `provider_rule_info` — the rule-info cache, per provider
+
+**Source:** `/api/ids/settings/get_rule_info/<sid>` for the Suricata provider,
+resolved on a cache-miss basis and stored, because the event record cannot
+carry it.
+
+**Identity:** `(provider_id, rule_identity)`, the primary key. Keyed per
+provider because two providers may name a rule identically and mean different
+rules; the identity alone is not a key.
+
+`normalised_severity` is `opnview`'s vocabulary; `provider_severity` keeps the
+raw value the provider reported, verbatim.
 
 **A miss is modelled by absence of a row, and rendered explicitly.** The Alerts
-query left-joins this table and returns `severity_state` as `resolved` or
-`unknown`. An alert whose signature has never been resolved is returned with
+query left-joins this table on `(provider_id, rule_identity)` and returns
+`severity_state` as `resolved` or `unknown`. An event whose rule identity has
+never been resolved, and which carries no inline severity, is returned with
 `unknown` and a null severity, never dropped.
 
 **Retention:** never purged; it is a cache of firewall metadata, not an
@@ -438,27 +668,38 @@ silently reset.
 **Retention:** never purged. **Indexes:** the primary key and the uniqueness
 constraint.
 
-### `source_availability` — the health of each source
+### `source_availability` — the health of each registered provider
 
-Exactly five rows, created by migration 0002 in the `unavailable` state with
-the probe recorded as not yet run, because an absent row is something a screen
-could not tell apart from a healthy source. No source can be distinguished from
-silence by an empty result alone (survey, gap 11), so each row carries its
-state, the instant it was determined and the probe that determined it. A
-`CHECK` rejects any state outside `reachable`, `present_but_disabled` and
-`unavailable`.
+Exactly one row per `provider` row, created by migration 0002 in the
+`unavailable` state with the probe recorded as not yet run, because an absent
+row is something a screen could not tell apart from a healthy provider. No
+source can be distinguished from silence by an empty result alone (survey, gap
+11), so each row carries its state, the instant it was determined and the probe
+that determined it. A `CHECK` rejects any state outside `reachable`,
+`present_but_disabled` and `unavailable`, and the primary key is a foreign key,
+so an availability row for a provider that does not exist cannot be inserted.
 
-Per source, the probe and what an unavailable answer means. In every case the
+There is no `CHECK` enumerating provider names here, and that is the change
+this cycle makes: registering a provider is an `INSERT` into two tables, never
+a migration.
+
+Per kind, the probe and what an unavailable answer means. In every case the
 condition is stored as an **availability state** and rendered as its own
 condition; it is never rendered as an absence of data:
 
-| `source` | Probe | What is recorded instead of "no data" |
+| Kind | Probe | What is recorded instead of "no data" |
 |---|---|---|
-| `filter_log` | `/api/diagnostics/firewall/log` | an empty or non-array body, 401 or 403 is `unavailable`; a healthy empty array is `reachable` and surfaced as "reachable but silent" |
-| `suricata_eve` | `/api/ids/service/status` | 404, 401 or 403 is `unavailable`; a `stopped`, `disabled` or `unknown` status is `present_but_disabled` |
-| `netflow_insight` | `/api/diagnostics/netflow/is_enabled`, then `get_metadata` | `local == 0` is `present_but_disabled`; a zero `last_sync` is `present_but_disabled` with the detail saying it is not yet aggregating |
-| `dhcp_leases` | `/api/kea/service/status`, `/api/dnsmasq/service/status` | no backend running is `unavailable`, and devices fall back to being named by address |
-| `resolver_dns` | `/api/unbound/overview/is_enabled` | reporting off is `present_but_disabled`; an unreachable resolver is `unavailable`; a window the endpoint did not honour is a collection fault, also `unavailable`, never "this client made no queries" |
+| `firewall_log` | `/api/diagnostics/firewall/log` | an empty or non-array body, 401 or 403 is `unavailable`; a healthy empty array is `reachable` and surfaced as "reachable but silent" |
+| `security_event` | `/api/ids/service/status` | 404, 401 or 403 is `unavailable`; a `stopped`, `disabled` or `unknown` status is `present_but_disabled` |
+| `flow_volume` | `/api/diagnostics/netflow/is_enabled`, then `get_metadata` | `local == 0` is `present_but_disabled`; a zero `last_sync` is `present_but_disabled` with the detail saying it is not yet aggregating |
+| `dhcp_lease` | `/api/kea/service/status`, `/api/dnsmasq/service/status`, `/api/dhcpv4/service/status` | a backend that is not running is `unavailable`; when no backend of the kind runs, devices fall back to being named by address |
+| `dns_lookup` | `/api/unbound/overview/is_enabled`, `/api/dnsmasq/settings/get` | reporting or query logging off is `present_but_disabled`; an unreachable resolver is `unavailable`; a window the endpoint did not honour is a collection fault, also `unavailable`, never "this client made no queries" |
+| `geo_asn` | the local dataset file | never downloaded, or a download that failed, is `unavailable`; the row describes the **dataset**, while `geo_asn.lookup_state` describes a single address lookup |
+
+Availability is reachability. Which provider `opnview` reads is
+`provider.is_active`, and the diagnostic query
+`-- diagnostic: Source availability` in `sql/queries/diagnostics.sql` returns
+both, one row per registered provider.
 
 **Retention:** never purged. **Indexes:** the primary key.
 
@@ -573,11 +814,13 @@ migrations a no-op. The checks assert that the rows and the files in
 
 `sql/purge.sql` is the documented purge. It takes `:now`, reads the horizon
 from `setting`, and removes rows older than it from every growing table:
-`flow`, `dns_resolution`, `domain_attribution`, `alert`, `dhcp_lease`,
+`flow`, `dns_resolution`, `domain_attribution`, `security_event`, `dhcp_lease`,
 `device`, `pair_volume_observation`, `geo_asn` and the four aggregates.
-Bounded tables
-are never purged, so a surviving observation always joins to a segment, a
-device, a rule and an interface.
+Bounded tables are never purged, so a surviving observation always joins to a
+segment, a device, a rule and an interface — and, for a security event, to the
+provider that contributed it and to the rule-info entry that gives it a
+severity. `provider`, `provider_rule_info` and `source_availability` are
+bounded by the installation, not by time, and are never purged.
 
 Afterwards, `PRAGMA foreign_key_check` returns no rows: `domain_attribution`
 is removed by the `ON DELETE CASCADE` of both its parents, and nothing else
@@ -601,8 +844,57 @@ assumes a count of anything.
 | Segment | the devices of one segment, their volume, their denials, their distinct destinations | `idx_flow_src_segment_observed_at` |
 | Device | one device's flows with destination, country, operator and the inferred site name, returning unattributed flows rather than hiding them | `idx_flow_src_device_observed_at` |
 | Blocked | the blocked timeline with the rule and the interface, each carrying an explicit unknown state when the join key resolves to nothing | `idx_flow_blocked_observed_at`, the partial index |
-| Alerts | alerts joined to device and segment, with severity from the `get_rule_info` cache and an explicit unknown state on a cache miss | `idx_alert_occurred_at` |
+| Alerts | security events joined to provider, device and segment, with severity from the per-provider rule-info cache and an explicit unknown state on a cache miss | `idx_security_event_occurred_at` |
 | Map | destinations by country and operator per source segment, read from the 24 h aggregate; also the aggregate-mode query, reading no domain name | `uq_volume_aggregate_24h_slot` |
+
+### Covering indexes
+
+Column count is close to irrelevant to SQLite read speed. What matters is
+index selectivity, and whether the index answers the query without fetching the
+row. Where a screen query **aggregates a measure over an indexed range**, the
+measure belongs in the index, so the plan reads the index alone and `EXPLAIN
+QUERY PLAN` prints `USING COVERING INDEX`.
+
+Three of the seven are covered, and the checks assert exactly these three:
+
+<!-- covering-queries:begin -->
+```
+Overview idx_flow_observed_at
+Matrix idx_flow_observed_at
+Segment idx_flow_src_segment_observed_at
+```
+<!-- covering-queries:end -->
+
+| Query | Index | Measures added for coverage |
+|---|---|---|
+| Overview | `idx_flow_observed_at` | `traffic_scope`, `action`, `packet_bytes`, `src_segment_id`, `dst_segment_id`, `src_device_id` |
+| Matrix | `idx_flow_observed_at` | the same, plus `rule_id` and `rule_lookup_state` |
+| Segment | `idx_flow_src_segment_observed_at` | `src_device_id`, `packet_bytes`, `action`, `traffic_scope`, `dst_address` |
+
+The other four are **not** covered, and are not claimed to be:
+
+- **Device**, **Blocked** and **Alerts** are detail listings, not aggregations.
+  A listing returns most of the row anyway, so a covering index would have to
+  hold most of the table and would buy nothing.
+- **Map** aggregates over `volume_aggregate_24h`, whose load-bearing index is
+  `uq_volume_aggregate_24h_slot` — a **unique** index enforcing slot identity.
+  Adding the measures to it would widen the uniqueness key and destroy the
+  guarantee it exists for, and a second index leading on `period_start_at`
+  would hide the loss of the first. The trade is refused.
+
+Covering indexes are not free: widening an index makes every insert into that
+table more expensive, and step 4's collectors write continuously. The scale run
+below reports query time, not ingest time, and that gap is deliberate —
+measuring ingest needs a collector, which does not exist yet.
+
+### Scale
+
+The 100 000-row baseline is a test size, not a production one. The checks
+therefore run one **scale check** at 1 000 000 rows in `flow`, the largest
+growing table, re-run the seven queries, record the seven plans verbatim
+alongside the baseline ones, and report each query's wall-clock time. A plan
+that changes shape at scale — a new `SCAN` of a growing table, or a covered
+query that stops being covered — fails.
 
 Every plan is recorded verbatim by the checks. None of the seven scans a
 growing table; the scans that do appear are of bounded tables, which is
@@ -611,7 +903,7 @@ load-bearing index is shown to turn its query's plan into a scan, so a good
 plan is demonstrably the index rather than a coincidence of data size. The
 demonstration is run on a throwaway copy of the seeded database, on the
 Overview, Alerts and Map queries, dropping `idx_flow_observed_at`,
-`idx_alert_occurred_at` and `uq_volume_aggregate_24h_slot` in turn.
+`idx_security_event_occurred_at` and `uq_volume_aggregate_24h_slot` in turn.
 
 One honest qualification. The Matrix query is not used for that demonstration,
 because dropping `idx_flow_observed_at` does not turn its plan into a literal

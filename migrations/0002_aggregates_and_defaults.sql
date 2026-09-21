@@ -119,16 +119,40 @@ INSERT INTO setting (key, value, updated_at) VALUES
     ('retention_seconds', '7776000', CAST(strftime('%s', 'now') AS INTEGER)),
     ('aggregate_mode', 'full', CAST(strftime('%s', 'now') AS INTEGER));
 
--- Availability is a modelled state, so the five rows exist from the first
--- migration onwards. Until a probe has run, each source is 'unavailable' with
--- the probe recorded as not yet run — never an absent row, which a screen
--- could not tell apart from a source that is fine.
-INSERT INTO source_availability (source, state, probe, detail, checked_at) VALUES
-    ('filter_log', 'unavailable', 'not_yet_probed', NULL, 0),
-    ('suricata_eve', 'unavailable', 'not_yet_probed', NULL, 0),
-    ('netflow_insight', 'unavailable', 'not_yet_probed', NULL, 0),
-    ('dhcp_leases', 'unavailable', 'not_yet_probed', NULL, 0),
-    ('resolver_dns', 'unavailable', 'not_yet_probed', NULL, 0);
+-- The provider registry, seeded with the implementations that exist and have
+-- been surveyed today — one row per IMPLEMENTATION, not one per kind. Unbound
+-- and Dnsmasq are two providers of the dns_lookup kind; Kea, Dnsmasq and ISC
+-- dhcpd are three of the dhcp_lease kind. Step-1 detection already tells them
+-- apart, so "two providers of one kind" is exercised by real rows.
+--
+-- These names are DATA, not configuration. A firewall with no Suricata still
+-- gets a Suricata row, in the 'unavailable' state: that is the modelled-state
+-- design working, not a hardcoded assumption about the installation. Nothing
+-- in the DDL, in a query or in an index tests any of these strings.
+--
+-- No provider is active. Activeness says which implementation opnview reads,
+-- and it is decided by step-4 detection against a live firewall; a migration
+-- has no way to know and must not pretend to. Every citation below is in
+-- docs/opnsense-api-survey.md, and docs/data-model.md tabulates them.
+INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) VALUES
+    ('firewall_log',     'pf',                'pf filter log',        0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('security_event', 'suricata',          'Suricata',             0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('flow_volume',    'insight',           'NetFlow / Insight',    0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('dhcp_lease',     'kea',               'Kea DHCP',             0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('dhcp_lease',     'dnsmasq',           'Dnsmasq DHCP',         0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('dhcp_lease',     'isc',               'ISC dhcpd',            0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('dns_lookup',     'unbound',           'Unbound',              0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('dns_lookup',     'dnsmasq',           'Dnsmasq resolver',     0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('geo_asn',        'maxmind_geolite2',  'MaxMind GeoLite2',     0, CAST(strftime('%s', 'now') AS INTEGER));
+
+-- Availability is a modelled state, so exactly one row exists per registry row
+-- from the first migration onwards. Until a probe has run, each provider is
+-- 'unavailable' with the probe recorded as not yet run — never an absent row,
+-- which a screen could not tell apart from a provider that is fine. The row
+-- set is derived from the registry, so registering a provider and forgetting
+-- its availability row is not possible here.
+INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
+SELECT id, 'unavailable', 'not_yet_probed', NULL, 0 FROM provider;
 
 INSERT INTO schema_version (filename, applied_at)
 VALUES ('0002_aggregates_and_defaults.sql', CAST(strftime('%s', 'now') AS INTEGER));

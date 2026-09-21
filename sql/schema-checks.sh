@@ -3,7 +3,11 @@
 #
 # Applies the migrations to a fresh database, seeds it, runs the seven screen
 # queries and their query plans, and asserts the acceptance criteria of
-# specs/SPEC-data-model-sqlite-schema.md. This script is the schema entry point
+# specs/SPEC-data-model-sqlite-schema.md (labelled AC*) and of
+# specs/SPEC-provider-neutral-schema.md (labelled PN-AC*). A criterion of the
+# first spec that names an object this cycle renamed is RESTATED against the
+# new name, never removed and never relaxed. This script is the schema entry
+# point
 # and is meant to run inside the development container, never on the host: no
 # sqlite3 is installed on the host.
 #
@@ -32,6 +36,9 @@ ALT_DB="$DATA_DIR/schema-checks-alt.db"
 PURGE_DB="$DATA_DIR/schema-checks-purge.db"
 UNLIMITED_DB="$DATA_DIR/schema-checks-unlimited.db"
 INDEX_DB="$DATA_DIR/schema-checks-noindex.db"
+FRESH_DB="$DATA_DIR/schema-checks-fresh.db"
+REGISTER_DB="$DATA_DIR/schema-checks-register.db"
+SCALE_DB="$DATA_DIR/schema-checks-scale.db"
 
 # Seed parameters. The default run and the alternative run below differ in
 # every count, so nothing may assume a segment, device or interface count.
@@ -49,6 +56,10 @@ ALT_RULES=5
 ALT_FLOW_ROWS=4000
 ALT_ALERTS=60
 ALT_PAIR_ROWS=300
+
+# The scale run. The baseline above is a test size; this one is the check that
+# the plans hold at a production-ish volume in the largest growing table.
+SCALE_FLOW_ROWS=1000000
 
 WINDOW_END=$NOW
 WINDOW_START=$((NOW - 86400))
@@ -99,12 +110,38 @@ q() {
 }
 
 # expect_sql_failure <label> <db> <sql>
+#
+# A non-zero exit is not enough: a statement naming a column that no longer
+# exists also exits non-zero, and an assertion written against a renamed object
+# would then report "rejected" on a parse error rather than on the constraint
+# it claims to demonstrate. The captured message must therefore say
+# "constraint failed" -- the marker SQLite prints for CHECK, NOT NULL, UNIQUE
+# and FOREIGN KEY rejections alike. Every assertion in this harness expects one
+# of those four; there is no exception.
 expect_sql_failure() {
-    local label="$1" db="$2" sql="$3" out
+    local label="$1" db="$2" sql="$3" out first
     if out="$(sqlite3 -bail "$db" "PRAGMA foreign_keys = ON; $sql" 2>&1)"; then
         fail "$label (the statement succeeded; it must be rejected)"
+        return
+    fi
+    first="$(printf -- '%s' "$out" | head -n 1)"
+    case "$out" in
+        *'constraint failed'*)
+            pass "$label (rejected: $first)"
+            ;;
+        *)
+            fail "$label (rejected, but not by a constraint: $first)"
+            ;;
+    esac
+}
+
+# expect_sql_success <label> <db> <sql>
+expect_sql_success() {
+    local label="$1" db="$2" sql="$3" out
+    if out="$(sqlite3 -bail "$db" "PRAGMA foreign_keys = ON; $sql" 2>&1)"; then
+        pass "$label"
     else
-        pass "$label (rejected: $(printf -- '%s' "$out" | head -n 1))"
+        fail "$label (the statement failed: $(printf -- '%s' "$out" | head -n 1))"
     fi
 }
 
@@ -284,13 +321,19 @@ check 'AC2 PRAGMA foreign_key_check returns no rows' '' "$(q "$MAIN_DB" 'PRAGMA 
 expect_sql_failure 'AC3 a flow whose segment does not exist is rejected' "$MAIN_DB" \
     "INSERT INTO flow (log_digest, observed_at, ingested_at, interface_device,
         interface_lookup_state, src_segment_id, src_address, dst_address, protocol,
-        ip_version, action, direction, packet_bytes, rule_lookup_state)
+        ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope)
      VALUES ('ac3-orphan-flow', $NOW, $NOW, 'ac3-device', 'resolved', 999999999,
-             'ac3-src', 'ac3-dst', 'tcp', 4, 'pass', 'in', 100, 'pending');"
-expect_sql_failure 'AC3 an alert whose device does not exist is rejected' "$MAIN_DB" \
-    "INSERT INTO alert (file_id, file_pos, occurred_at, ingested_at, signature_id,
-        signature, alert_action, src_address, dst_address, src_device_id)
-     VALUES ('ac3-file', 1, $NOW, $NOW, 1, 'ac3', 'allowed', 'a', 'b', 999999999);"
+             'ac3-src', 'ac3-dst', 'tcp', 4, 'pass', 'in', 100, 'pending',
+             'north_south');"
+expect_sql_failure 'AC3 a security event whose device does not exist is rejected' "$MAIN_DB" \
+    "INSERT INTO security_event (provider_id, provider_event_key, occurred_at, ingested_at,
+        rule_identity, signature, event_action, src_address, dst_address, src_device_id)
+     SELECT id, 'ac3-key', $NOW, $NOW, '1', 'ac3', 'allowed', 'a', 'b', 999999999
+     FROM provider WHERE kind = 'security_event' LIMIT 1;"
+expect_sql_failure 'AC3 a security event whose provider does not exist is rejected' "$MAIN_DB" \
+    "INSERT INTO security_event (provider_id, provider_event_key, occurred_at, ingested_at,
+        rule_identity, signature, event_action, src_address, dst_address)
+     VALUES (999999999, 'ac3-key-2', $NOW, $NOW, '1', 'ac3', 'allowed', 'a', 'b');"
 
 # ===========================================================================
 section 'AC5, AC6 — the entity list, and the absence of a TLS/HTTP entity'
@@ -406,7 +449,8 @@ demo_index_drop() {
 }
 
 demo_index_drop "$WORK/screens/01_Overview.sql" 'Overview' 'idx_flow_observed_at' 'flow' 'f'
-demo_index_drop "$WORK/screens/06_Alerts.sql" 'Alerts' 'idx_alert_occurred_at' 'alert' 'al'
+demo_index_drop "$WORK/screens/06_Alerts.sql" 'Alerts' 'idx_security_event_occurred_at' \
+    'security_event' 'se'
 demo_index_drop "$WORK/screens/07_Map.sql" 'Map' 'uq_volume_aggregate_24h_slot' \
     'volume_aggregate_24h' 'v'
 
@@ -427,6 +471,12 @@ SCOPES="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
     "SELECT group_concat(traffic_scope, ',') FROM (SELECT traffic_scope FROM (" \
     ") ORDER BY traffic_scope);")")"
 check 'AC13 the Overview query classifies flows east-west and north-south' 'east_west,north_south' "$SCOPES"
+check 'AC13 every stored traffic_scope agrees with segment membership' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE traffic_scope <> (CASE
+        WHEN src_segment_id IS NOT NULL AND dst_segment_id IS NOT NULL
+        THEN 'east_west' ELSE 'north_south' END);")"
+expect_sql_failure 'AC13 a traffic_scope disagreeing with segment membership is rejected' "$MAIN_DB" \
+    "UPDATE flow SET traffic_scope = 'east_west' WHERE traffic_scope = 'north_south';"
 
 if grep -inE '\b(like|glob|regexp)\b' "$REPO_ROOT"/migrations/*.sql > "$WORK/namematch.txt"; then
     fail "AC14 the DDL contains a name-matching predicate: $(cat "$WORK/namematch.txt")"
@@ -524,14 +574,34 @@ ALERT_COMPLETE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/06_Alerts.sq
     ") WHERE signature IS NOT NULL AND severity IS NOT NULL AND severity_state = 'resolved'
         AND src_address IS NOT NULL AND dst_address IS NOT NULL
         AND occurred_at IS NOT NULL AND device_id IS NOT NULL AND segment_id IS NOT NULL;")")"
-check_ge 'AC20 an alert joins to a device and a segment and carries signature, severity, endpoints and time' \
+check_ge 'AC20 a security event joins to a device and a segment and carries signature, severity, endpoints and time' \
     1 "$ALERT_COMPLETE"
-check 'AC20 the alert table itself carries no severity column' '' \
-    "$(q "$MAIN_DB" "SELECT name FROM pragma_table_info('alert') WHERE lower(name) GLOB '*severit*';")"
+# AC20 restated for the provider-neutral core: the assertion is no longer "the
+# table has no severity column at all" but the behaviour that assertion
+# protected -- no Suricata-attributed row carries an inline severity value, so
+# its severity still comes from the rule-info cache and from nowhere else.
+SURICATA_EVENTS="$(q "$MAIN_DB" "SELECT count(*) FROM security_event e
+    JOIN provider p ON p.id = e.provider_id WHERE p.provider_key = 'suricata';")"
+check_ge 'AC20 the seed actually contains Suricata-attributed events to check' 1 "$SURICATA_EVENTS"
+check 'AC20 no Suricata-attributed row carries an inline severity value' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM security_event e
+        JOIN provider p ON p.id = e.provider_id
+        WHERE p.provider_key = 'suricata' AND e.normalised_severity IS NOT NULL;")"
+# Every severity the Alerts query resolved equals the cache entry for that
+# (provider, rule identity), so it demonstrably came from the cache.
+ALERT_SEVERITY_FROM_CACHE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
+    'SELECT count(*) FROM (' \
+    ") a WHERE a.severity_state = 'resolved' AND a.severity IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM provider_rule_info ri
+                        JOIN provider p ON p.id = ri.provider_id
+                        WHERE p.provider_key = a.provider_key
+                          AND ri.rule_identity = a.rule_identity
+                          AND ri.normalised_severity = a.severity);")")"
+check 'AC20 every resolved severity came from the rule-info cache' '0' "$ALERT_SEVERITY_FROM_CACHE"
 ALERT_UNKNOWN="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
     'SELECT count(*) FROM (' \
     ") WHERE severity_state = 'unknown' AND severity IS NULL;")")"
-check_ge 'AC21 an alert whose signature is not cached is returned with an explicit unknown severity' \
+check_ge 'AC21 an event whose rule identity is not cached is returned with an explicit unknown severity' \
     1 "$ALERT_UNKNOWN"
 
 BLOCKED_UNKNOWN_RULE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/05_Blocked.sql" \
@@ -549,30 +619,41 @@ check_ge 'AC22 a flow whose raw interface name is unmapped is returned with an u
 # ===========================================================================
 section 'AC23, AC24 — source availability and the eve.json cursor'
 # ===========================================================================
-check 'AC23 exactly five sources are modelled' '5' \
+# AC23 restated. It no longer pins a count -- it cannot, once the provider set
+# is data -- and is stronger in the other direction: EVERY registered provider
+# holds exactly one state, drawn from the three, with a timestamp and a probe,
+# and every provider that exists today is registered.
+PROVIDER_COUNT="$(q "$MAIN_DB" 'SELECT count(*) FROM provider;')"
+check_ge 'AC23 the registry holds every provider surveyed today' 9 "$PROVIDER_COUNT"
+check 'AC23 every registered provider holds exactly one availability row' "$PROVIDER_COUNT" \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM source_availability;')"
-check 'AC23 each source holds exactly one state' '5' \
+check 'AC23 no availability row exists for a provider that does not' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM source_availability a
+        WHERE NOT EXISTS (SELECT 1 FROM provider p WHERE p.id = a.provider_id);')"
+check 'AC23 every state is one of the three modelled values' "$PROVIDER_COUNT" \
     "$(q "$MAIN_DB" "SELECT count(*) FROM source_availability
         WHERE state IN ('reachable', 'present_but_disabled', 'unavailable');")"
-check 'AC23 each source carries a timestamp and the probe that determined it' '0' \
+check 'AC23 every provider carries a timestamp and the probe that determined it' '0' \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM source_availability WHERE probe IS NULL OR checked_at IS NULL;')"
 expect_sql_failure 'AC23 an invalid availability state is rejected' "$MAIN_DB" \
-    "UPDATE source_availability SET state = 'probably-fine' WHERE source = 'filter_log';"
-check 'AC23 one query returns the current state of all five sources' '5' \
+    "UPDATE source_availability SET state = 'probably-fine'
+     WHERE provider_id = (SELECT min(id) FROM provider);"
+check 'AC23 one query returns the current state of every registered provider' "$PROVIDER_COUNT" \
     "$(run_query "$MAIN_DB" "$WORK/diag/03_Source_availability.sql" | wc -l | tr -d ' ')"
 
 expect_sql_failure 'AC24 a duplicate (file_id, byte_offset) watermark is rejected' "$MAIN_DB" \
     "INSERT INTO eve_ingest_cursor (file_id, byte_offset, file_sequence, rotation_state, observed_at)
      SELECT file_id, byte_offset, file_sequence, rotation_state, observed_at
      FROM eve_ingest_cursor LIMIT 1;"
-ALERTS_BEFORE="$(q "$MAIN_DB" 'SELECT count(*) FROM alert;')"
-sqlite3 -bail "$MAIN_DB" "INSERT OR IGNORE INTO alert (file_id, file_pos, occurred_at, ingested_at,
-        signature_id, signature, alert_action, src_address, dst_address)
-    SELECT file_id, file_pos, occurred_at, ingested_at, signature_id, signature,
-           alert_action, src_address, dst_address
-    FROM alert;" > /dev/null
-check 'AC24 replaying the same ingestion leaves the alert count unchanged' \
-    "$ALERTS_BEFORE" "$(q "$MAIN_DB" 'SELECT count(*) FROM alert;')"
+ALERTS_BEFORE="$(q "$MAIN_DB" 'SELECT count(*) FROM security_event;')"
+sqlite3 -bail "$MAIN_DB" "INSERT OR IGNORE INTO security_event (provider_id, provider_event_key,
+        occurred_at, ingested_at, rule_identity, signature, event_action,
+        normalised_severity, src_address, dst_address)
+    SELECT provider_id, provider_event_key, occurred_at, ingested_at, rule_identity,
+           signature, event_action, normalised_severity, src_address, dst_address
+    FROM security_event;" > /dev/null
+check 'AC24 replaying the same ingestion leaves the security-event count unchanged' \
+    "$ALERTS_BEFORE" "$(q "$MAIN_DB" 'SELECT count(*) FROM security_event;')"
 check 'AC24 rotation is representable and queryable' 'current|lost|rotated' \
     "$(q "$MAIN_DB" "SELECT group_concat(rotation_state, '|') FROM
         (SELECT DISTINCT rotation_state FROM eve_ingest_cursor ORDER BY rotation_state);")"
@@ -602,11 +683,14 @@ INSTANT_COLUMNS="$(q "$MAIN_DB" "
     SELECT count(*) FROM sqlite_master m JOIN pragma_table_info(m.name) i
     WHERE m.type = 'table' AND i.name GLOB '*_at';")"
 check_ge 'AC26 the schema actually has instant columns to check' 20 "$INSTANT_COLUMNS"
+# Restated against the registry: the availability row is keyed by provider_id
+# since this cycle replaced the closed `source` enum with a foreign key.
 expect_sql_failure 'AC26 a negative instant is rejected by a constraint' "$MAIN_DB" \
-    "INSERT INTO source_availability (source, state, probe, checked_at)
-     VALUES ('filter_log', 'reachable', 'ac26', -1);"
+    "UPDATE source_availability SET checked_at = -1
+     WHERE provider_id = (SELECT min(id) FROM provider);"
 expect_sql_failure 'AC26 a millisecond value stored as seconds is rejected by a constraint' "$MAIN_DB" \
-    "UPDATE source_availability SET checked_at = 1750000000000 WHERE source = 'filter_log';"
+    "UPDATE source_availability SET checked_at = 1750000000000
+     WHERE provider_id = (SELECT min(id) FROM provider);"
 
 # ===========================================================================
 section 'AC27, AC28, AC29 — aggregates, freshness and aggregate mode'
@@ -666,7 +750,7 @@ check 'AC30 the horizon is settable to a value of hours' "$HORIZON_HOURS" \
 sqlite3 "$PURGE_DB" "UPDATE setting SET value = '7776000' WHERE key = 'retention_seconds';" > /dev/null
 
 CUTOFF=$((NOW - 7776000))
-PURGEABLE='flow:observed_at dns_resolution:looked_up_at alert:occurred_at
+PURGEABLE='flow:observed_at dns_resolution:looked_up_at security_event:occurred_at
 dhcp_lease:observed_at device:last_seen_at pair_volume_observation:day_start_at
 geo_asn:looked_up_at domain_attribution:attributed_at
 volume_aggregate_1h:period_end_at volume_aggregate_24h:period_end_at
@@ -683,7 +767,7 @@ for t in $PURGEABLE; do
 done
 
 BEFORE_NEW_FLOW="$(q "$PURGE_DB" "SELECT count(*) FROM flow WHERE observed_at >= $CUTOFF;")"
-BEFORE_NEW_ALERT="$(q "$PURGE_DB" "SELECT count(*) FROM alert WHERE occurred_at >= $CUTOFF;")"
+BEFORE_NEW_ALERT="$(q "$PURGE_DB" "SELECT count(*) FROM security_event WHERE occurred_at >= $CUTOFF;")"
 run_purge "$PURGE_DB"
 for t in $PURGEABLE; do
     tbl="${t%%:*}"
@@ -693,8 +777,11 @@ for t in $PURGEABLE; do
 done
 check 'AC31 the purge removed no flow newer than the horizon' "$BEFORE_NEW_FLOW" \
     "$(q "$PURGE_DB" "SELECT count(*) FROM flow WHERE observed_at >= $CUTOFF;")"
-check 'AC31 the purge removed no alert newer than the horizon' "$BEFORE_NEW_ALERT" \
-    "$(q "$PURGE_DB" "SELECT count(*) FROM alert WHERE occurred_at >= $CUTOFF;")"
+check 'AC31 the purge removed no security event newer than the horizon' "$BEFORE_NEW_ALERT" \
+    "$(q "$PURGE_DB" "SELECT count(*) FROM security_event WHERE occurred_at >= $CUTOFF;")"
+check 'AC31 the purge left the registry and the rule-info cache untouched' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM provider;')|$(q "$MAIN_DB" 'SELECT count(*) FROM provider_rule_info;')" \
+    "$(q "$PURGE_DB" 'SELECT count(*) FROM provider;')|$(q "$PURGE_DB" 'SELECT count(*) FROM provider_rule_info;')"
 check 'AC32 the purge leaves the foreign keys consistent' '' \
     "$(q "$PURGE_DB" 'PRAGMA foreign_key_check;')"
 check 'AC32 the purge leaves no attribution without its lookup or its flow' '0' \
@@ -723,8 +810,8 @@ section 'AC33 — geo and ASN enrichment'
 # ===========================================================================
 check 'AC33 geo/ASN is keyed per address' 'address' \
     "$(q "$MAIN_DB" "SELECT name FROM pragma_table_info('geo_asn') WHERE pk = 1;")"
-check 'AC33 a resolved lookup carries the MaxMind database build date' '0' \
-    "$(q "$MAIN_DB" "SELECT count(*) FROM geo_asn WHERE lookup_state = 'resolved' AND maxmind_build_at IS NULL;")"
+check 'AC33 a resolved lookup carries the dataset build date' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM geo_asn WHERE lookup_state = 'resolved' AND dataset_build_at IS NULL;")"
 check_ge 'AC33 a cache miss is a modelled row, not an absent one' 1 \
     "$(q "$MAIN_DB" "SELECT count(*) FROM geo_asn WHERE lookup_state = 'miss';")"
 MAP_MISS="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/07_Map.sql" \
@@ -742,7 +829,8 @@ $REPO_ROOT/sql/queries/diagnostics.sql
 $REPO_ROOT/sql/seed.sql
 $REPO_ROOT/sql/purge.sql
 $REPO_ROOT/sql/schema-checks.sh
-$REPO_ROOT/docs/data-model.md"
+$REPO_ROOT/docs/data-model.md
+$REPO_ROOT/docs/architecture.md"
 DOTTED_QUAD='[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?'
 : > "$WORK/literals.txt"
 while IFS= read -r f; do
@@ -855,6 +943,527 @@ STRAY="$(find "$REPO_ROOT" -name '*.db' -o -name '*.db-wal' -o -name '*.db-shm' 
 check 'AC45 the bind-mounted working tree holds no database file' '' "$STRAY"
 DB_LOCATION="$(find "$DATA_DIR" -maxdepth 1 -name 'schema-checks-*.db' | wc -l | tr -d ' ')"
 check_ge 'AC45 every database a check created lives under the data directory' 1 "$DB_LOCATION"
+
+# ===========================================================================
+# The criteria of specs/SPEC-provider-neutral-schema.md follow, labelled
+# PN-AC*. The criteria above are those of specs/SPEC-data-model-sqlite-schema.md,
+# restated against the renamed objects where this cycle renamed one.
+# ===========================================================================
+
+ARCH_DOC="$REPO_ROOT/docs/architecture.md"
+
+# ===========================================================================
+section 'PN-AC7, PN-AC20, PN-AC26 — no provider name is an identifier'
+# ===========================================================================
+# PN-AC7: registering a provider is an INSERT, not a migration, so no CHECK
+# anywhere enumerates the source names the closed enum used to hold.
+q "$MAIN_DB" "SELECT ifnull(sql, '') FROM sqlite_master;" > "$WORK/schema_sql.txt"
+SOURCE_ENUM_HITS=''
+for needle in filter_log suricata_eve netflow_insight dhcp_leases resolver_dns; do
+    if grep -qF "'$needle'" "$WORK/schema_sql.txt"; then
+        SOURCE_ENUM_HITS="$SOURCE_ENUM_HITS $needle"
+    fi
+done
+check 'PN-AC7 no CHECK in the live schema enumerates a source name' '' "$SOURCE_ENUM_HITS"
+
+# PN-AC20: no provider name in any table name, index name or column name.
+PROVIDER_NAME_IDENTIFIERS="$(q "$MAIN_DB" "
+    SELECT m.name || '.' || ifnull(i.name, '(object)')
+    FROM sqlite_master m
+    LEFT JOIN pragma_table_info(m.name) i
+    WHERE lower(m.name) GLOB '*maxmind*' OR lower(m.name) GLOB '*crowdsec*'
+       OR lower(m.name) GLOB '*zenarmor*' OR lower(m.name) GLOB '*suricata*'
+       OR lower(i.name) GLOB '*maxmind*' OR lower(i.name) GLOB '*crowdsec*'
+       OR lower(i.name) GLOB '*zenarmor*' OR lower(i.name) GLOB '*suricata*';")"
+check 'PN-AC20 no provider name appears in any table, index or column name' '' \
+    "$PROVIDER_NAME_IDENTIFIERS"
+check_ge 'PN-AC20 a provider name does appear as a value, in the registry' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE provider_key GLOB '*maxmind*'
+        OR provider_key = 'suricata';")"
+
+# PN-AC26: nothing anywhere is named for a provider that is not installed and
+# surveyed today. The list is every security or visibility product the roadmap
+# discussion raised and the survey did not cover.
+: > "$WORK/speculative.txt"
+# This script is excluded from its own grep: it is the file that has to name
+# those strings in order to forbid them, and matching itself would make the
+# check unfalsifiable rather than strict.
+grep -rinE --exclude='schema-checks.sh' 'crowdsec|zenarmor|sensei|snort|wazuh|ntopng' \
+    "$REPO_ROOT/migrations" "$REPO_ROOT/sql" "$REPO_ROOT/docs" >> "$WORK/speculative.txt" 2>/dev/null
+if [ -s "$WORK/speculative.txt" ]; then
+    fail "PN-AC26 a provider nobody surveyed is named: $(head -n 3 "$WORK/speculative.txt")"
+else
+    pass 'PN-AC26 no unsurveyed provider is named in migrations, sql or docs'
+fi
+
+# ===========================================================================
+section 'PN-AC9, PN-AC10, PN-AC12 — a freshly migrated, unseeded database'
+# ===========================================================================
+apply_migrations "$FRESH_DB" "$WORK/migrate_fresh.err" || fail 'PN-AC10 the fresh database failed to migrate'
+FRESH_PROVIDERS="$(q "$FRESH_DB" 'SELECT count(*) FROM provider;')"
+check_ge 'PN-AC10 the fresh database registers every provider surveyed today' 9 "$FRESH_PROVIDERS"
+check 'PN-AC10 every registry row has exactly one availability row' "$FRESH_PROVIDERS" \
+    "$(q "$FRESH_DB" 'SELECT count(*) FROM source_availability;')"
+check 'PN-AC10 no availability row references a registry row that does not exist' '0' \
+    "$(q "$FRESH_DB" 'SELECT count(*) FROM source_availability a
+        WHERE NOT EXISTS (SELECT 1 FROM provider p WHERE p.id = a.provider_id);')"
+check 'PN-AC10 every availability row is in the not-yet-probed unavailable state' "$FRESH_PROVIDERS" \
+    "$(q "$FRESH_DB" "SELECT count(*) FROM source_availability
+        WHERE state = 'unavailable' AND probe = 'not_yet_probed';")"
+expect_sql_failure 'PN-AC10 an availability row for a provider that does not exist is rejected' "$FRESH_DB" \
+    "INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
+     VALUES (999999999, 'reachable', 'pn-ac10', NULL, $NOW);"
+
+check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
+    "$(q "$FRESH_DB" 'SELECT count(*) FROM provider WHERE is_active = 1;')"
+
+expect_sql_failure 'PN-AC9 a registry row whose kind is outside the six is rejected' "$FRESH_DB" \
+    "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
+     VALUES ('telepathy', 'pn-ac9', 'PN-AC9', 0, $NOW);"
+extract_block "$ARCH_DOC" '<!-- provider-kinds:begin -->' '<!-- provider-kinds:end -->' |
+    sort > "$WORK/doc_kinds.txt"
+check 'PN-AC9 the document lists exactly six kinds' '6' \
+    "$(wc -l < "$WORK/doc_kinds.txt" | tr -d ' ')"
+q "$MAIN_DB" 'SELECT DISTINCT kind FROM provider ORDER BY kind;' | sort > "$WORK/db_kinds.txt"
+if diff -u "$WORK/doc_kinds.txt" "$WORK/db_kinds.txt" > "$WORK/kinds.diff"; then
+    pass 'PN-AC9 the documented kinds and the live kinds are identical'
+else
+    fail "PN-AC9 the kind lists differ: $(cat "$WORK/kinds.diff")"
+fi
+
+# ===========================================================================
+section 'PN-AC11, PN-AC12, PN-AC13 — several providers per kind, one active'
+# ===========================================================================
+for kind in dns_lookup dhcp_lease; do
+    check_ge "PN-AC11 the $kind kind has several providers" 2 \
+        "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = '$kind';")"
+done
+printf -- '  the registry:\n'
+q "$MAIN_DB" 'SELECT kind, provider_key, is_active FROM provider ORDER BY kind, provider_key;' |
+    sed 's/^/    /'
+
+KIND_COUNT="$(q "$MAIN_DB" 'SELECT count(DISTINCT kind) FROM provider;')"
+check 'PN-AC12 the seed makes exactly one provider active per kind' "$KIND_COUNT" \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM provider WHERE is_active = 1;')"
+check 'PN-AC12 no kind has two active providers' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM (SELECT kind FROM provider WHERE is_active = 1
+        GROUP BY kind HAVING count(*) > 1);')"
+expect_sql_failure 'PN-AC12 marking a second provider of the same kind active is rejected' "$MAIN_DB" \
+    "UPDATE provider SET is_active = 1
+     WHERE id = (SELECT p.id FROM provider p
+                 JOIN provider q ON q.kind = p.kind AND q.is_active = 1
+                 WHERE p.is_active = 0 LIMIT 1);"
+
+DIAG_AVAIL="$WORK/diag/03_Source_availability.sql"
+run_query "$MAIN_DB" "$DIAG_AVAIL" > "$WORK/availability.txt"
+printf -- '  provider availability diagnostic:\n'
+sed 's/^/    /' "$WORK/availability.txt"
+check 'PN-AC13 the diagnostic returns one row per registry row' "$PROVIDER_COUNT" \
+    "$(wc -l < "$WORK/availability.txt" | tr -d ' ')"
+check 'PN-AC13 every diagnostic row carries a kind, a key, a state, a probe and an active flag' '0' \
+    "$(awk -F'|' 'NF < 8 || $1 == "" || $2 == "" || $4 == "" || $5 == "" || $8 == "" { n++ }
+                  END { print n + 0 }' "$WORK/availability.txt")"
+check 'PN-AC13 the diagnostic names the active provider of every kind' "$KIND_COUNT" \
+    "$(awk -F'|' '$8 == 1 { n++ } END { print n + 0 }' "$WORK/availability.txt")"
+
+# ===========================================================================
+section 'PN-AC8, PN-AC18 — registering a second provider of an existing kind'
+# ===========================================================================
+# No DDL: an INSERT into the registry, an INSERT into availability, and events.
+cp "$MAIN_DB" "$REGISTER_DB"
+expect_sql_success 'PN-AC8 registering a second security-event provider needs no DDL' "$REGISTER_DB" \
+    "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
+       VALUES ('security_event', 'second-event-provider', 'Second event provider', 0, $NOW);
+     INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
+       SELECT id, 'reachable', 'pn-ac8-probe', NULL, $NOW
+       FROM provider WHERE provider_key = 'second-event-provider';
+     INSERT INTO security_event (provider_id, provider_event_key, occurred_at, ingested_at,
+         rule_identity, signature, event_action, normalised_severity,
+         src_address, src_port, dst_address, dst_port, protocol,
+         src_device_id, src_segment_id)
+       SELECT p.id, 'pn-ac8-event-' || k.n, $WINDOW_END - 60, $WINDOW_END - 30,
+              'named-rule-identity-alpha', 'second provider signature', 'blocked',
+              CASE WHEN k.n = 1 THEN 'critical' END,
+              e.src_address, e.src_port, e.dst_address, e.dst_port,
+              e.protocol, e.src_device_id, e.src_segment_id
+       FROM provider p, security_event e, (SELECT 1 AS n UNION ALL SELECT 2) k
+       WHERE p.provider_key = 'second-event-provider' AND e.id = 1;
+     INSERT INTO provider_rule_info (provider_id, rule_identity, normalised_severity,
+         provider_severity, category, rule_source, fetched_at)
+       SELECT id, 'named-rule-identity-alpha', 'informational', 'minor',
+              'pn-ac8-category', 'pn-ac8-source', $NOW
+       FROM provider WHERE provider_key = 'second-event-provider';"
+check 'PN-AC8 the second provider is registered with no schema change' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM sqlite_master;')" \
+    "$(q "$REGISTER_DB" 'SELECT count(*) FROM sqlite_master;')"
+ALERT_PROVIDERS="$(run_query "$REGISTER_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
+    'SELECT count(DISTINCT provider_key) FROM (' \
+    ');')")"
+check 'PN-AC8 the Alerts query returns rows attributed to both providers' '2' "$ALERT_PROVIDERS"
+printf -- '  Alerts rows per provider after registering a second one:\n'
+run_query "$REGISTER_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
+    'SELECT provider_key, count(*) FROM (' \
+    ') GROUP BY provider_key ORDER BY provider_key;')" | sed 's/^/    /'
+
+check 'PN-AC18 the same rule identity under two providers is two cache rows' '2' \
+    "$(q "$REGISTER_DB" "SELECT count(*) FROM provider_rule_info
+        WHERE rule_identity = 'named-rule-identity-alpha';")"
+check 'PN-AC18 both cache rows are retrievable and differ by provider' '2' \
+    "$(q "$REGISTER_DB" "SELECT count(DISTINCT provider_id) FROM provider_rule_info
+        WHERE rule_identity = 'named-rule-identity-alpha';")"
+# One event of the second provider ships its own severity inline ('critical');
+# the other has none and must resolve through the SECOND provider's cache entry
+# ('informational'), while the Suricata events on the very same rule identity
+# resolve through Suricata's own entry. Distinct answers from one rule identity
+# are what "keyed per provider" means.
+SEVERITIES_BY_PROVIDER="$(run_query "$REGISTER_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
+    "SELECT group_concat(provider_key || '=' || severity, ',') FROM (SELECT DISTINCT provider_key, severity FROM (" \
+    ") WHERE rule_identity = 'named-rule-identity-alpha' ORDER BY provider_key, severity);")")"
+check 'PN-AC18 each event resolves its severity through its own provider entry' \
+    'second-event-provider=critical,second-event-provider=informational,suricata=low' \
+    "$SEVERITIES_BY_PROVIDER"
+
+# ===========================================================================
+section 'PN-AC14, PN-AC15, PN-AC16, PN-AC17, PN-AC19 — the security-event core'
+# ===========================================================================
+check 'PN-AC14 security_event carries no ingestion-transport column' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM pragma_table_info('security_event')
+        WHERE lower(name) GLOB '*file*' OR lower(name) GLOB '*pos*' OR lower(name) GLOB '*offset*';")"
+check 'PN-AC14 no provider-named side table exists anywhere' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM sqlite_master
+        WHERE lower(name) GLOB '*suricata*' OR lower(name) GLOB '*maxmind*'
+           OR lower(name) GLOB '*unbound*' OR lower(name) GLOB '*dnsmasq*'
+           OR lower(name) GLOB '*kea*' OR lower(name) GLOB '*insight*';")"
+check 'PN-AC14 the ingestion coordinate still lives in the cursor table' '2' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('eve_ingest_cursor')
+        WHERE name IN ('file_id', 'byte_offset');")"
+
+check 'PN-AC15 the security-event uniqueness constraint has exactly two columns' '2' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_index_list('security_event') il
+        JOIN pragma_index_info(il.name) ii WHERE il.origin = 'u';")"
+check 'PN-AC15 they are the provider and the provider event key' '2' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_index_list('security_event') il
+        JOIN pragma_index_info(il.name) ii WHERE il.origin = 'u'
+          AND ii.name IN ('provider_id', 'provider_event_key');")"
+expect_sql_failure 'PN-AC15 a duplicate (provider_id, provider_event_key) is rejected' "$MAIN_DB" \
+    "INSERT INTO security_event (provider_id, provider_event_key, occurred_at, ingested_at,
+        rule_identity, signature, event_action, src_address, dst_address)
+     SELECT provider_id, provider_event_key, occurred_at, ingested_at, rule_identity,
+            signature, event_action, src_address, dst_address
+     FROM security_event LIMIT 1;"
+
+check 'PN-AC16 the rule identity is TEXT on the security-event core' 'TEXT' \
+    "$(q "$MAIN_DB" "SELECT type FROM pragma_table_info('security_event') WHERE name = 'rule_identity';")"
+check 'PN-AC16 the rule identity is TEXT on the rule-info cache' 'TEXT' \
+    "$(q "$MAIN_DB" "SELECT type FROM pragma_table_info('provider_rule_info') WHERE name = 'rule_identity';")"
+check_ge 'PN-AC16 the seed contains an event whose rule identity is non-numeric' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM security_event
+        WHERE CAST(rule_identity AS INTEGER) = 0 AND rule_identity <> '0';")"
+NON_NUMERIC_RESOLVED="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
+    'SELECT count(*) FROM (' \
+    ") WHERE CAST(rule_identity AS INTEGER) = 0 AND rule_identity <> '0'
+        AND severity_state = 'resolved' AND severity IS NOT NULL;")")"
+check_ge 'PN-AC16 the Alerts query returns it with its severity resolved from the cache' \
+    1 "$NON_NUMERIC_RESOLVED"
+
+check 'PN-AC17 every seeded Suricata-attributed event carries a NULL normalised severity' \
+    "$SURICATA_EVENTS" \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM security_event e JOIN provider p ON p.id = e.provider_id
+        WHERE p.provider_key = 'suricata' AND e.normalised_severity IS NULL;")"
+check_ge 'PN-AC17 the Alerts query returns resolved severities from the cache' 1 "$ALERT_COMPLETE"
+check_ge 'PN-AC17 the Alerts query returns unknown severities for uncached identities' 1 "$ALERT_UNKNOWN"
+
+for t in security_event provider_rule_info; do
+    expect_sql_failure "PN-AC19 a severity outside the vocabulary is rejected on $t" "$MAIN_DB" \
+        "UPDATE $t SET normalised_severity = 'catastrophic';"
+done
+check 'PN-AC19 every stored normalised severity is in the vocabulary' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(DISTINCT normalised_severity) FROM provider_rule_info
+        WHERE normalised_severity NOT IN ('critical', 'high', 'medium', 'low', 'informational');")"
+for needle in 'critical' 'high' 'medium' 'low' 'informational'; do
+    if grep -qF "$needle" "$DOC"; then
+        pass "PN-AC19 the document states the severity level $needle"
+    else
+        fail "PN-AC19 the document does not state the severity level $needle"
+    fi
+done
+if grep -qF 'Suricata numeric scale' "$DOC"; then
+    pass 'PN-AC19 the document gives the mapping from the Suricata numeric scale'
+else
+    fail 'PN-AC19 the document does not give the mapping from the Suricata numeric scale'
+fi
+
+# ===========================================================================
+section 'PN-AC21 — stale-dataset visibility survives the rename'
+# ===========================================================================
+check 'PN-AC21 every resolved geo row carries a dataset build date' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM geo_asn
+        WHERE lookup_state = 'resolved' AND dataset_build_at IS NULL;")"
+check 'PN-AC21 every resolved geo row names the provider that supplied it' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM geo_asn
+        WHERE lookup_state = 'resolved' AND provider_id IS NULL;")"
+expect_sql_failure 'PN-AC21 a resolved geo row with no dataset build date is rejected' "$MAIN_DB" \
+    "INSERT INTO geo_asn (address, provider_id, lookup_state, country_code, looked_up_at)
+     SELECT 'pn-ac21-a', id, 'resolved', 'ZZ', $NOW FROM provider WHERE kind = 'geo_asn' LIMIT 1;"
+expect_sql_failure 'PN-AC21 a resolved geo row naming no provider is rejected' "$MAIN_DB" \
+    "INSERT INTO geo_asn (address, provider_id, lookup_state, country_code,
+         dataset_build_at, looked_up_at)
+     VALUES ('pn-ac21-b', NULL, 'resolved', 'ZZ', $NOW, $NOW);"
+check_ge 'PN-AC21 a seeded cache miss still exists' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM geo_asn WHERE lookup_state = 'miss';")"
+check_ge 'PN-AC21 the Map query still returns the cache miss' 1 "$MAP_MISS"
+
+# ===========================================================================
+section 'PN-AC22 — migration discipline'
+# ===========================================================================
+check 'PN-AC22 migrations/ holds exactly two .sql files' '2' \
+    "$(find "$REPO_ROOT/migrations" -maxdepth 1 -name '*.sql' | wc -l | tr -d ' ')"
+check 'PN-AC22 no 0003 migration exists' '' \
+    "$(find "$REPO_ROOT/migrations" -maxdepth 1 -name '0003*' | head -n 1)"
+check 'PN-AC22 schema_version holds exactly two rows after a fresh apply' '2' \
+    "$(q "$FRESH_DB" 'SELECT count(*) FROM schema_version;')"
+
+# ===========================================================================
+section 'PN-AC24 — the architecture document'
+# ===========================================================================
+if [ -f "$ARCH_DOC" ]; then
+    pass 'PN-AC24 docs/architecture.md exists'
+else
+    fail 'PN-AC24 docs/architecture.md does not exist'
+fi
+while read -r kind; do
+    [ -n "$kind" ] || continue
+    if grep -qF "$kind" "$ARCH_DOC"; then
+        pass "PN-AC24 the architecture document names the $kind kind"
+    else
+        fail "PN-AC24 the architecture document does not name the $kind kind"
+    fi
+done < "$WORK/db_kinds.txt"
+for needle in 'declares its own availability' \
+              'modelled state, not an absence of rows' \
+              'at most one provider per kind is active' \
+              'surveyed exactly as the OPNsense API was surveyed'; do
+    if grep -qiF "$needle" "$ARCH_DOC"; then
+        pass "PN-AC24 the architecture document states: $needle"
+    else
+        fail "PN-AC24 the architecture document does not state: $needle"
+    fi
+done
+if grep -qF 'no plugin system' "$ARCH_DOC"; then
+    pass 'PN-AC24 the architecture document describes no plugin mechanism'
+else
+    fail 'PN-AC24 the architecture document does not rule a plugin mechanism out'
+fi
+: > "$WORK/plugin.txt"
+grep -inE 'dynamic(ally)? load|shared object|\.so\b|manifest file|external process' \
+    "$ARCH_DOC" | grep -viE 'no |never |not ' >> "$WORK/plugin.txt" 2>/dev/null
+if [ -s "$WORK/plugin.txt" ]; then
+    fail "PN-AC24 the architecture document specifies a loading mechanism: $(head -n 2 "$WORK/plugin.txt")"
+else
+    pass 'PN-AC24 the architecture document specifies no dynamic-loading mechanism'
+fi
+
+# ===========================================================================
+section 'PN-AC25 — the restructured tables cite their endpoints'
+# ===========================================================================
+for needle in 'query_alerts' 'get_rule_info' 'leases4/search' 'search_queries' \
+              'firewall/log' 'networkinsight'; do
+    if grep -qF "$needle" "$REPO_ROOT/migrations/0001_core.sql"; then
+        pass "PN-AC25 the DDL cites $needle where it is consumed"
+    else
+        fail "PN-AC25 the DDL does not cite $needle"
+    fi
+done
+for needle in 'availability state' 'never rendered as an absence of data' 'GeoLite2'; do
+    if grep -qF "$needle" "$DOC"; then
+        pass "PN-AC25 the model document states: $needle"
+    else
+        fail "PN-AC25 the model document does not state: $needle"
+    fi
+done
+
+# ===========================================================================
+section 'PN-AC29 — covering indexes'
+# ===========================================================================
+awk '
+    index($0, "<!-- covering-queries:begin -->") == 1 { inside = 1; next }
+    index($0, "<!-- covering-queries:end -->") == 1 { inside = 0 }
+    inside && NF && index($0, "```") != 1 { print $1, $2 }
+' "$DOC" > "$WORK/covering.txt"
+check_ge 'PN-AC29 the document claims at least one covered query' 1 \
+    "$(wc -l < "$WORK/covering.txt" | tr -d ' ')"
+while read -r cname cindex; do
+    [ -n "$cname" ] || continue
+    if grep -qF "USING COVERING INDEX $cindex" "$WORK/plan_$cname.txt"; then
+        pass "PN-AC29 the $cname plan reads $cindex as a covering index"
+    else
+        fail "PN-AC29 the $cname plan does not say USING COVERING INDEX $cindex"
+    fi
+done < "$WORK/covering.txt"
+
+# ===========================================================================
+section 'PN-AC31, PN-AC32 — no entity-attribute-value, and the flow columns'
+# ===========================================================================
+# An EAV table is one whose columns are an entity reference, an attribute name
+# and a value. Nothing here has a column named for an attribute name.
+check 'PN-AC31 no table carries an attribute-name column' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(m.name || '.' || i.name, ',')
+        FROM sqlite_master m JOIN pragma_table_info(m.name) i
+        WHERE m.type = 'table' AND m.name <> 'setting'
+          AND (lower(i.name) IN ('attribute', 'attribute_name', 'attr', 'attr_name',
+                                 'property', 'property_name', 'field_name'));")"
+if grep -qF 'entity-attribute-value' "$DOC"; then
+    pass 'PN-AC31 the document states the attribute rule'
+else
+    fail 'PN-AC31 the document does not state the attribute rule'
+fi
+
+extract_block "$DOC" '<!-- flow-columns:begin -->' '<!-- flow-columns:end -->' | sort > "$WORK/doc_flow_columns.txt"
+q "$MAIN_DB" "SELECT name FROM pragma_table_info('flow') ORDER BY name;" | sort > "$WORK/db_flow_columns.txt"
+if diff -u "$WORK/doc_flow_columns.txt" "$WORK/db_flow_columns.txt" > "$WORK/flow_columns.diff"; then
+    pass "PN-AC32 every flow column is reviewed in the document ($(wc -l < "$WORK/db_flow_columns.txt" | tr -d ' ') columns)"
+else
+    fail "PN-AC32 the reviewed flow columns and the live ones differ: $(cat "$WORK/flow_columns.diff")"
+fi
+# The diff above proves the reviewed column list is complete; it says nothing
+# about the "Read by" claims next to each column, which drifted unnoticed once.
+# Each row of that table names zero or more screen queries, and the claim is
+# checked against the query text itself, in both directions:
+#   - every screen query a row names reads at least one of that row's columns;
+#   - every column of a row that names a screen query is read by at least one
+#     of them.
+# A row naming no screen query (read only by the purge or the aggregate
+# refresh, or deliberately read by nothing) is left to its prose justification,
+# which the four assertions below pin down.
+awk '
+    index($0, "<!-- flow-columns:end -->") == 1 { inside = 1; next }
+    inside && index($0, "### ") == 1 { inside = 0 }
+    inside && index($0, "| `") == 1 {
+        split($0, cell, "|")
+        cols = ""
+        rest = cell[2]
+        while (match(rest, /`[a-z_]+`/)) {
+            cols = cols (cols == "" ? "" : ",") substr(rest, RSTART + 1, RLENGTH - 2)
+            rest = substr(rest, RSTART + RLENGTH)
+        }
+        screens = ""
+        n = split("Overview Matrix Segment Device Blocked Alerts Map", names, " ")
+        for (i = 1; i <= n; i++) {
+            if (match(cell[3], "[^A-Za-z]" names[i] "[^A-Za-z]")) {
+                screens = screens (screens == "" ? "" : ",") names[i]
+            }
+        }
+        if (cols != "" && screens != "") { print cols "|" screens }
+    }
+' "$DOC" > "$WORK/flow_read_by.txt"
+check_ge 'PN-AC32 the column review makes read-by claims to verify' 5 \
+    "$(wc -l < "$WORK/flow_read_by.txt" | tr -d ' ')"
+UNREAD_CLAIMS=''
+UNCLAIMED_COLUMNS=''
+while IFS='|' read -r cols screens; do
+    [ -n "$cols" ] || continue
+    for screen in $(printf -- '%s' "$screens" | tr ',' ' '); do
+        qfile="$(find "$WORK/screens" -maxdepth 1 -name "[0-9]*_${screen}.sql")"
+        hit=0
+        for col in $(printf -- '%s' "$cols" | tr ',' ' '); do
+            if grep -qE "(^|[^A-Za-z0-9_])${col}([^A-Za-z0-9_]|\$)" "$qfile"; then
+                hit=1
+            fi
+        done
+        [ "$hit" = 1 ] || UNREAD_CLAIMS="$UNREAD_CLAIMS $screen($cols)"
+    done
+    for col in $(printf -- '%s' "$cols" | tr ',' ' '); do
+        hit=0
+        for screen in $(printf -- '%s' "$screens" | tr ',' ' '); do
+            qfile="$(find "$WORK/screens" -maxdepth 1 -name "[0-9]*_${screen}.sql")"
+            if grep -qE "(^|[^A-Za-z0-9_])${col}([^A-Za-z0-9_]|\$)" "$qfile"; then
+                hit=1
+            fi
+        done
+        [ "$hit" = 1 ] || UNCLAIMED_COLUMNS="$UNCLAIMED_COLUMNS $col"
+    done
+done < "$WORK/flow_read_by.txt"
+check 'PN-AC32 every screen query the column review names reads a column of its row' \
+    '' "$UNREAD_CLAIMS"
+check 'PN-AC32 every column claimed read by a screen query is read by one of them' \
+    '' "$UNCLAIMED_COLUMNS"
+
+for needle in 'log_digest' 'src_port' 'ip_version' 'direction'; do
+    if grep -qE "^\| \`$needle\`.*and it stays" "$DOC"; then
+        pass "PN-AC32 the document justifies keeping $needle, which no query reads"
+    else
+        fail "PN-AC32 the document does not justify keeping $needle"
+    fi
+done
+
+# ===========================================================================
+section 'PN-AC30 — the scale run: 1 000 000 rows in the largest growing table'
+# ===========================================================================
+apply_migrations "$SCALE_DB" "$WORK/migrate_scale.err" || fail 'PN-AC30 the scale database failed to migrate'
+printf -- '  seeding %s flow rows, this takes a while...\n' "$SCALE_FLOW_ROWS"
+seed_database "$SCALE_DB" "$SEGMENTS" "$DEVICES" "$RULES" "$SCALE_FLOW_ROWS" "$ALERTS" "$PAIR_ROWS"
+SCALE_COUNT="$(q "$SCALE_DB" 'SELECT count(*) FROM flow;')"
+check_ge 'PN-AC30 the scale database holds 1 000 000 rows in flow' 1000000 "$SCALE_COUNT"
+check 'PN-AC30 the scale database is consistent' '' "$(q "$SCALE_DB" 'PRAGMA foreign_key_check;')"
+
+for f in "$WORK"/screens/[0-9]*.sql; do
+    name="$(head -n 1 "$f" | sed 's/^-- screen: //')"
+    started="$(date +%s%N)"
+    rows="$(run_query "$SCALE_DB" "$f" | wc -l | tr -d ' ')"
+    elapsed_ms=$(( ( $(date +%s%N) - started ) / 1000000 ))
+    printf -- '  %s at scale: %s rows in %s ms\n' "$name" "$rows" "$elapsed_ms"
+    if [ "$rows" -ge 1 ]; then
+        pass "PN-AC30 the $name query returned $rows rows at scale in ${elapsed_ms} ms"
+    else
+        fail "PN-AC30 the $name query returned no rows at scale"
+    fi
+    explain_query "$SCALE_DB" "$f" > "$WORK/scale_plan_$name.txt"
+    printf -- '  EXPLAIN QUERY PLAN at scale — %s\n' "$name"
+    sed 's/^/    /' "$WORK/scale_plan_$name.txt"
+    scanned_growing=''
+    while read -r table; do
+        [ -n "$table" ] || continue
+        if grep -qx "$table" "$WORK/growing.txt"; then
+            scanned_growing="$scanned_growing $table"
+        fi
+    done < <(resolve_scans "$f" "$WORK/scale_plan_$name.txt")
+    if [ -z "$scanned_growing" ]; then
+        pass "PN-AC30 the $name plan scans no growing table at scale"
+    else
+        fail "PN-AC30 the $name plan scans a growing table at scale:$scanned_growing"
+    fi
+    # The plan must keep the same shape: the same index, used the same way.
+    if diff -q "$WORK/plan_$name.txt" "$WORK/scale_plan_$name.txt" > /dev/null; then
+        pass "PN-AC30 the $name plan is identical at 100 000 and at 1 000 000 rows"
+    else
+        fail "PN-AC30 the $name plan changed shape at scale: $(diff "$WORK/plan_$name.txt" "$WORK/scale_plan_$name.txt" | tr '\n' ' ')"
+    fi
+done
+while read -r cname cindex; do
+    [ -n "$cname" ] || continue
+    if grep -qF "USING COVERING INDEX $cindex" "$WORK/scale_plan_$cname.txt"; then
+        pass "PN-AC29 the $cname plan is still covered at 1 000 000 rows"
+    else
+        fail "PN-AC29 the $cname plan stopped being covered at 1 000 000 rows"
+    fi
+done < "$WORK/covering.txt"
+
+# ===========================================================================
+section 'PN-AC28 — shellcheck'
+# ===========================================================================
+# The static analyser is not part of the development image, which carries the
+# Go toolchain and sqlite3 and nothing else. When it is present it is run here;
+# otherwise it is run on the host. A missing tool is never counted as a pass.
+if command -v shellcheck > /dev/null 2>&1; then
+    if shellcheck -S error "$REPO_ROOT/sql/schema-checks.sh"; then
+        pass 'PN-AC28 shellcheck reports no error-level finding on the harness'
+    else
+        fail 'PN-AC28 shellcheck reported an error-level finding on the harness'
+    fi
+else
+    printf -- '  shellcheck is absent from this image; run it on the host:\n'
+    printf -- '    shellcheck sql/schema-checks.sh\n'
+fi
 
 # ===========================================================================
 printf -- '\n==========================================================\n'

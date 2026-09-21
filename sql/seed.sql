@@ -15,7 +15,7 @@
 --   :devices      how many devices to observe          (must be > :segments)
 --   :rules        how many firewall rules to discover  (must be >= 2)
 --   :flow_rows    rows in flow, the largest growing table
---   :alerts       rows in alert
+--   :alerts       rows in security_event
 --   :pair_rows    logical pairs in pair_volume_observation; each one is
 --                 offered twice, once per direction, and must collapse to one
 --
@@ -25,6 +25,25 @@
 PRAGMA foreign_keys = ON;
 
 BEGIN IMMEDIATE;
+
+-- ---------------------------------------------------------------------------
+-- The provider registry already holds one row per surveyed implementation,
+-- created by migration 0002 with none active. A probe round has now run, so
+-- the seed marks exactly one provider active per kind -- the one this
+-- pretend-installation reads. The partial unique index rejects a second.
+--
+-- Everything below that needs a provider looks it up by kind and activeness,
+-- never by name: no other statement in this file tests a provider key.
+-- ---------------------------------------------------------------------------
+UPDATE provider SET is_active = 1
+WHERE (kind, provider_key) IN (
+    VALUES ('firewall_log', 'pf'),
+           ('security_event', 'suricata'),
+           ('flow_volume', 'insight'),
+           ('dhcp_lease', 'kea'),
+           ('dns_lookup', 'unbound'),
+           ('geo_asn', 'maxmind_geolite2')
+);
 
 -- ---------------------------------------------------------------------------
 -- Segments. The last one is discovered as a tunnel, every other as a VLAN, so
@@ -261,7 +280,7 @@ INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device,
                   interface_lookup_state, src_segment_id, dst_segment_id,
                   src_device_id, dst_device_id, src_address, dst_address,
                   src_port, dst_port, protocol, ip_version, action, direction,
-                  packet_bytes, rid, rule_id, rule_lookup_state)
+                  packet_bytes, rid, rule_id, rule_lookup_state, traffic_scope)
 SELECT
     i,
     printf('log-digest-%d', i),
@@ -288,7 +307,11 @@ SELECT
          THEN printf('orphan-rule-label-%d', i)
          ELSE printf('rule-label-%d', ((i - 1) % :rules) + 1) END,
     CASE WHEN rule_missing THEN NULL ELSE ((i - 1) % :rules) + 1 END,
-    CASE WHEN rule_missing THEN 'not_found' ELSE 'resolved' END
+    CASE WHEN rule_missing THEN 'not_found' ELSE 'resolved' END,
+    -- Segment membership and nothing else. The CHECK on the column rejects any
+    -- other value, so this expression cannot drift from the schema's.
+    CASE WHEN src_segment_id IS NOT NULL AND dst_segment_id IS NOT NULL
+         THEN 'east_west' ELSE 'north_south' END
 FROM placed;
 
 -- ---------------------------------------------------------------------------
@@ -345,10 +368,11 @@ generated AS (
         j % 37 = 0 AS is_miss
     FROM counter
 )
-INSERT INTO geo_asn (address, lookup_state, country_code, country_name,
-                     latitude, longitude, asn, operator, maxmind_build_at, looked_up_at)
+INSERT INTO geo_asn (address, provider_id, lookup_state, country_code, country_name,
+                     latitude, longitude, asn, operator, dataset_build_at, looked_up_at)
 SELECT
     address,
+    (SELECT id FROM provider WHERE kind = 'geo_asn' AND is_active = 1),
     CASE WHEN is_miss THEN 'miss' ELSE 'resolved' END,
     CASE WHEN is_miss THEN NULL ELSE country_code END,
     CASE WHEN is_miss THEN NULL ELSE printf('country-name-%s', country_code) END,
@@ -361,9 +385,22 @@ SELECT
 FROM generated;
 
 -- ---------------------------------------------------------------------------
--- Suricata alerts, and the get_rule_info cache that gives them a severity.
--- Ten of the fifty seeded signatures are deliberately absent from the cache,
--- so the Alerts screen has to render an explicit unknown severity.
+-- Security events, and the per-provider rule-info cache that gives them a
+-- severity.
+--
+-- Every event is attributed to the active provider of the security_event kind
+-- and carries the key that provider guarantees stable -- for this one, the eve
+-- file id and the byte offset inside it, composed into a single text key by
+-- the collector. The ingestion coordinate is not stored as columns here; that
+-- is eve_ingest_cursor's concern.
+--
+-- Rule identities are text. Forty-nine of the fifty are numeric strings and
+-- one is deliberately NON-NUMERIC, so a provider whose rules are named rather
+-- than numbered is exercised. Ten of the numeric ones are absent from the
+-- cache, so the Alerts screen has to render an explicit unknown severity.
+--
+-- normalised_severity is NULL on every row: Suricata ships no severity inside
+-- the event (survey, gap 3), and this restructuring changes nothing about it.
 -- ---------------------------------------------------------------------------
 WITH RECURSIVE counter (m) AS (
     SELECT 1
@@ -377,23 +414,29 @@ generated AS (
         -- so the recent window is busy enough to exercise the Alerts screen
         -- and a finite retention horizon still has something to purge.
         :now - (m * 601) - (max(m - 250, 0) * 40000) AS occurred_at,
-        ((m - 1) % :devices) + 1                     AS src_device_id
+        ((m - 1) % :devices) + 1                     AS src_device_id,
+        -- Three rotated files whatever :alerts is, so the ingestion cursor
+        -- always has a watermark per file to record.
+        1 + (((m - 1) * 3) / :alerts)                AS file_number,
+        m * 4096                                     AS byte_position
     FROM counter
 )
-INSERT INTO alert (id, file_id, file_pos, occurred_at, ingested_at, signature_id, signature,
-                   alert_action, src_address, src_port, dst_address, dst_port, protocol,
-                   in_interface_device, src_device_id, src_segment_id, flow_ref)
+INSERT INTO security_event (id, provider_id, provider_event_key, occurred_at, ingested_at,
+                            rule_identity, signature, event_action, normalised_severity,
+                            src_address, src_port, dst_address, dst_port, protocol,
+                            in_interface_device, src_device_id, src_segment_id, flow_ref)
 SELECT
     m,
-    -- Three rotated files whatever :alerts is, so the ingestion cursor always
-    -- has a watermark per file to record.
-    printf('eve-file-%d', 1 + (((m - 1) * 3) / :alerts)),
-    m * 4096,
+    (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1),
+    printf('eve-file-%d:%d', file_number, byte_position),
     occurred_at,
     occurred_at + 30,
-    1000000 + (m % 50),
+    CASE WHEN m % 50 = 3
+         THEN 'named-rule-identity-alpha'
+         ELSE printf('%d', 1000000 + (m % 50)) END,
     printf('signature-text-%d', m % 50),
     CASE WHEN m % 4 = 0 THEN 'blocked' ELSE 'allowed' END,
+    NULL,
     printf('%d.%d.%d.%d',
            (src_device_id / 16777216) % 256, (src_device_id / 65536) % 256,
            (src_device_id / 256) % 256, src_device_id % 256),
@@ -411,29 +454,61 @@ SELECT
     NULL
 FROM generated;
 
+-- The cache. normalised_severity is opnview's ordered vocabulary;
+-- provider_severity keeps the raw numeric string the provider reported, so the
+-- normalisation stays auditable. The mapping 1..4 -> critical, high, medium,
+-- low is documented in docs/data-model.md.
 WITH RECURSIVE counter (x) AS (
     SELECT 0
     UNION ALL
     SELECT x + 1 FROM counter WHERE x < 39
+),
+raw AS (
+    SELECT x, 1 + (x % 4) AS provider_severity FROM counter
 )
-INSERT INTO ids_rule_info (signature_id, severity, category, rule_source, fetched_at)
-SELECT 1000000 + x, 1 + (x % 4), printf('category-%d', x % 7), printf('rule-source-%d', x % 3),
-       :now - 3600
-FROM counter;
+INSERT INTO provider_rule_info (provider_id, rule_identity, normalised_severity,
+                                provider_severity, category, rule_source, fetched_at)
+SELECT
+    (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1),
+    CASE WHEN x = 3 THEN 'named-rule-identity-alpha' ELSE printf('%d', 1000000 + x) END,
+    CASE provider_severity
+        WHEN 1 THEN 'critical'
+        WHEN 2 THEN 'high'
+        WHEN 3 THEN 'medium'
+        ELSE 'low'
+    END,
+    printf('%d', provider_severity),
+    printf('category-%d', x % 7),
+    printf('rule-source-%d', x % 3),
+    :now - 3600
+FROM raw;
 
 -- ---------------------------------------------------------------------------
 -- eve.json ingestion cursor: one watermark per rotated file, with the rotation
 -- state. 'lost' is the case where rotation discarded the file the watermark
 -- referred to, so the gap is permanent and recorded as such.
+--
+-- This is a DIFFERENT guarantee from the one on security_event. The unique key
+-- here answers "where did the reader stop in this file"; the unique key there
+-- answers "have I already stored this event". Merging them would lose one of
+-- the two.
 -- ---------------------------------------------------------------------------
+WITH RECURSIVE counter (m) AS (
+    SELECT 1
+    UNION ALL
+    SELECT m + 1 FROM counter WHERE m < :alerts
+),
+watermarks AS (
+    SELECT 1 + (((m - 1) * 3) / :alerts) AS file_number, m * 4096 AS byte_position
+    FROM counter
+)
 INSERT INTO eve_ingest_cursor (file_id, byte_offset, file_sequence, rotation_state, observed_at)
 SELECT 'eve-file-0', 0, 0, 'lost', :now - 604800
 UNION ALL
-SELECT 'eve-file-1', max(file_pos), 1, 'rotated', :now FROM alert WHERE file_id = 'eve-file-1'
-UNION ALL
-SELECT 'eve-file-2', max(file_pos), 2, 'rotated', :now FROM alert WHERE file_id = 'eve-file-2'
-UNION ALL
-SELECT 'eve-file-3', max(file_pos), 3, 'current', :now FROM alert WHERE file_id = 'eve-file-3';
+SELECT printf('eve-file-%d', file_number), max(byte_position), file_number,
+       CASE WHEN file_number = 3 THEN 'current' ELSE 'rotated' END, :now
+FROM watermarks
+GROUP BY file_number;
 
 -- ---------------------------------------------------------------------------
 -- NetFlow per-pair volume.
@@ -571,32 +646,51 @@ WHERE src_segment_id IS NOT NULL
 GROUP BY 1, 2, 3, 4, 5, 6;
 
 -- ---------------------------------------------------------------------------
--- Source availability. The five rows already exist, created by migration 0002
--- in the "not yet probed" state; the seed records what a probe round found.
--- Suricata is present but disabled and the resolver is unavailable, so the
--- screens have both degraded states to render.
+-- Provider availability. One row per registry row already exists, created by
+-- migration 0002 in the "not yet probed" state; the seed records what a probe
+-- round found. Every kind therefore carries both halves of the picture: which
+-- implementations are reachable, and which single one is active.
+--
+-- The active security-event provider is present but disabled and the active
+-- DNS-lookup provider is unavailable, so the screens have both degraded states
+-- to render while their kinds still have an active provider. The
+-- implementations this installation does not run are 'unavailable' -- a
+-- modelled state, not an absent row.
 -- ---------------------------------------------------------------------------
 UPDATE source_availability
-SET state = 'reachable', probe = 'GET /api/diagnostics/firewall/log', detail = NULL, checked_at = :now
-WHERE source = 'filter_log';
+SET state = 'reachable', probe = 'GET /api/diagnostics/firewall/log',
+    detail = NULL, checked_at = :now
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'firewall_log' AND is_active = 1);
 
 UPDATE source_availability
 SET state = 'present_but_disabled', probe = 'GET /api/ids/service/status',
     detail = 'status reported stopped', checked_at = :now
-WHERE source = 'suricata_eve';
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1);
 
 UPDATE source_availability
 SET state = 'reachable', probe = 'GET /api/diagnostics/netflow/is_enabled',
     detail = 'local collection enabled', checked_at = :now
-WHERE source = 'netflow_insight';
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'flow_volume' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'reachable', probe = 'GET /api/kea/service/status', detail = NULL, checked_at = :now
-WHERE source = 'dhcp_leases';
+SET state = 'reachable', probe = 'GET /api/kea/service/status',
+    detail = NULL, checked_at = :now
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'dhcp_lease' AND is_active = 1);
 
 UPDATE source_availability
 SET state = 'unavailable', probe = 'GET /api/unbound/overview/is_enabled',
     detail = 'query reporting is off', checked_at = :now
-WHERE source = 'resolver_dns';
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'dns_lookup' AND is_active = 1);
+
+UPDATE source_availability
+SET state = 'reachable', probe = 'local dataset file stat',
+    detail = NULL, checked_at = :now
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'geo_asn' AND is_active = 1);
+
+-- Every implementation this installation does not run: probed, not running.
+UPDATE source_availability
+SET state = 'unavailable', probe = 'service status endpoint',
+    detail = 'not installed on this firewall', checked_at = :now
+WHERE provider_id IN (SELECT id FROM provider WHERE is_active = 0);
 
 COMMIT;
