@@ -44,6 +44,48 @@ Five, all read through the OPNsense REST API:
 The Suricata and resolver rows read differently from the original plan: see
 the step-1 findings below.
 
+## Development and test environment
+
+No line of this project is built or tested on the host OS, and **no Go
+toolchain is installed on the host**. The toolchain lives in a Debian
+`trixie-slim` container defined by `Dockerfile` and `docker-compose.yml`, with
+the Go version pinned and checksum-verified. The production target is an
+unprivileged Debian LXC, and a Windows host masks exactly the bug classes
+`opnview` will hit: file mode and umask on the SQLite file and its `-wal` /
+`-shm` companions, filesystem case sensitivity, `SIGTERM` handling for the
+future systemd unit, and normalising the OPNsense filter-log timestamps, which
+carry neither year nor timezone.
+
+The four project commands — `gofmt -l .`, `go vet ./...`, `go build ./...`,
+`go test ./...` — run through a single canonical invocation, issued from the
+repository root:
+
+```
+docker compose run --rm checks
+```
+
+That string is **identical in PowerShell and in bash**: it carries no quoting,
+and it needs no knowledge of the host `PATH`. `docker compose run --rm dev
+bash` opens an interactive shell in the same environment, and
+`.devcontainer/devcontainer.json` reuses the same `dev` service so VS Code
+"Reopen in Container" gives the editor that toolchain too. The Go module cache,
+the Go build cache and the SQLite data directory live in named volumes mounted
+outside the bind-mounted working tree, so a database and its WAL companions
+never land in the repository and never suffer Windows bind-mount locking.
+
+**What this environment does not prove.** Docker provides the Debian userland
+and the Linux kernel, and nothing more. It does **not** exercise, and must
+never be read as evidence for:
+
+1. the systemd unit;
+2. service start ordering;
+3. unprivileged-LXC uid mapping;
+4. `ct/install.sh`;
+5. update by re-running the installer without data loss.
+
+All five belong to step 8 and can only be validated on a real LXC. A green
+container run says nothing about deployment.
+
 ## Steps
 
 |#|Step|Deliverable|Status|
@@ -167,7 +209,8 @@ empty panel.
 
 ### Step 4 — Backend: collection and storage
 
-Go, single binary. Prerequisite: **install Go**.
+Go, single binary. Prerequisite: the containerised toolchain described under
+**Development and test environment** above — nothing is installed on the host.
 
 - OPNsense API client: authentication, pagination, graceful degradation when a
   source is missing.

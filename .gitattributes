@@ -1,0 +1,5 @@
+# Shell scripts and the Dockerfile are executed inside the Linux development
+# container. A CRLF checkout fails there with a confusing interpreter error, so
+# their line endings are pinned regardless of the contributor's core.autocrlf.
+*.sh text eol=lf
+Dockerfile text eol=lf

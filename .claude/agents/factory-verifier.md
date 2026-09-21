@@ -22,17 +22,32 @@ rule recorded in `CLAUDE.md`, and you must report it as such.
 2. Establish the scope of the change: `git status --porcelain` then `git diff`
    (and `git diff --cached` if anything is staged). On a repository with no
    initial commit, inspect the untracked files listed by `git status`.
-3. Actually run the following, reporting the output and **exit code** of each:
-   - `gofmt -l .` — any non-empty output is a formatting failure
-   - `go vet ./...`
-   - `go build ./...`
-   - `go test ./...`
-   - for every shell script touched: `bash -n <script>`, and `shellcheck` if
-     installed
+3. Actually run the four project commands **inside the development
+   container**, through the single canonical invocation, from the repository
+   root:
 
-   If the `go` command is missing from the machine, `tests_passed` is `false`
-   and you raise a `critical` issue saying so: missing tooling does not license
-   an approval.
+   ```
+   docker compose run --rm checks
+   ```
+
+   That one command runs `gofmt -l .`, `go vet ./...`, `go build ./...` and
+   `go test ./...` in order, and prints each exit code. Report its overall exit
+   code and the four it reports, and report the `gofmt` output — any non-empty
+   output is a formatting failure. `docker compose run --rm dev <command>` runs
+   anything else you need in the same environment.
+
+   **No Go toolchain is installed on the host, by design.** A missing host
+   `go`, `gofmt` or `sqlite3` is therefore never a defect and never an issue of
+   any severity. Never run the project commands on the host, and never record a
+   host result as the project result: if a host `go` happens to exist, its
+   output is irrelevant to this repository and you ignore it.
+
+   If Docker or its compose plugin is unavailable, or the image fails to build,
+   `tests_passed` is `false` and you raise a `critical` issue saying so:
+   missing tooling does not license an approval.
+
+   For every shell script touched, also run `bash -n <script>`, and
+   `shellcheck` if installed. These may run on the host.
 4. Check **one by one** every acceptance criterion: for each, state which test
    or which factual evidence covers it. A criterion with no dedicated test is a
    `major` issue at minimum, even when the suite passes.
@@ -61,7 +76,8 @@ rule recorded in `CLAUDE.md`, and you must report it as such.
      API unavailable or returning an error, division by zero in a percentage,
      overflow on byte volumes.
    - Concurrency: shared access without synchronisation; run
-     `go test -race ./...` when the suite allows it.
+     `docker compose run --rm dev go test -race ./...` when the suite allows
+     it.
    - Sham tests: a test that asserts nothing, `t.Skip`, a tautological
      assertion, a test that only exercises the mock.
 6. Modify **no** file, under any pretext — including to "try" a fix. You

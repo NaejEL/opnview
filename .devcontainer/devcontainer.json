@@ -1,0 +1,18 @@
+{
+  "name": "opnview (Debian trixie)",
+  "dockerComposeFile": ["../docker-compose.yml"],
+  "service": "dev",
+  "workspaceFolder": "/workspace",
+  "overrideCommand": true,
+  "shutdownAction": "stopCompose",
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go"],
+      "settings": {
+        "go.goroot": "/usr/local/go",
+        "go.toolsManagement.checkForUpdates": "off",
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}

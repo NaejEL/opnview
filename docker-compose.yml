@@ -1,0 +1,70 @@
+# opnview — development environment.
+#
+# No line of this project is built or tested on the host OS: the production
+# target is an unprivileged Debian LXC, and Windows masks precisely the bug
+# classes opnview will hit (file mode and umask on the SQLite file and its
+# -wal / -shm companions, filesystem case sensitivity, SIGTERM handling,
+# timestamp normalisation).
+#
+# Canonical invocation for the four project commands, byte-for-byte identical
+# in PowerShell and in bash:
+#
+#     docker compose run --rm checks
+#
+# An interactive shell, or any other one-off command:
+#
+#     docker compose run --rm dev bash
+#
+# Step 8 will add a separate compose file for deploying opnview on a
+# non-Proxmox host. This file is the development environment and nothing else:
+# no published port, no environment file, no secret, no OPNsense URL, no
+# network configuration.
+
+x-dev-base: &dev-base
+  build:
+    context: .
+    dockerfile: Dockerfile
+    args:
+      # Overridable so the container user matches the host account owning the
+      # working tree, e.g. OPNVIEW_UID=1001 docker compose build. UID is
+      # read-only in bash, hence the prefixed names.
+      UID: ${OPNVIEW_UID:-1000}
+      GID: ${OPNVIEW_GID:-1000}
+  working_dir: /workspace
+  init: true
+  volumes:
+    # The repository, bind-mounted read-write. Sources reach the container this
+    # way rather than through a COPY, so the build context stays empty.
+    - .:/workspace
+    # The three named volumes below are mounted at paths outside the bind
+    # mount, deliberately:
+    #   - SQLite in WAL mode on a Windows bind mount has pathological locking
+    #     behaviour, so the database directory must not live in the working
+    #     tree;
+    #   - a database file, a -wal or a -shm companion on the bind mount would
+    #     also pollute the working tree and show up in git status;
+    #   - the Go caches are large, churn constantly, and are irrelevant to the
+    #     repository.
+    - go-mod-cache:/home/dev/go/pkg/mod
+    - go-build-cache:/home/dev/.cache/go-build
+    - data:/data
+
+services:
+  # Arbitrary commands inside the Debian toolchain.
+  dev:
+    <<: *dev-base
+    command: ["bash"]
+
+  # The four project commands. The command is baked in here, so the host
+  # invocation carries no quoting and is the same string in every shell.
+  # The script is run through bash rather than executed directly: Git on
+  # Windows records it without the executable bit, so a clone made there would
+  # otherwise produce a permission error on a Linux host.
+  checks:
+    <<: *dev-base
+    command: ["bash", "/workspace/ci/checks.sh"]
+
+volumes:
+  go-mod-cache:
+  go-build-cache:
+  data:

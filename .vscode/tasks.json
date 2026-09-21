@@ -35,6 +35,26 @@
       }
     },
     {
+      "label": "Container: project checks",
+      "type": "shell",
+      "command": "docker compose run --rm checks",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "Container: shell",
+      "type": "shell",
+      "command": "docker compose run --rm dev bash",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
       "label": "Factory: new spec (interactive session)",
       "type": "shell",
       "command": "echo 'Open Claude Code and type: /factory-run \"<your requirement>\"'",

@@ -1,0 +1,26 @@
+# The build context needs essentially nothing: the image installs a toolchain,
+# and the sources reach the container through the bind mount declared in
+# docker-compose.yml rather than through a COPY. Everything below is excluded
+# so no repository content, and above all no local runtime state, can ever be
+# baked into a layer.
+
+.git/
+.gitignore
+factory-logs/
+data/
+*.db
+*.db-wal
+*.db-shm
+*.mmdb
+geoip/
+.env
+config.local.*
+bin/
+dist/
+opnview
+opnview.exe
+.vscode/
+.devcontainer/
+docs/
+specs/
+*.md
