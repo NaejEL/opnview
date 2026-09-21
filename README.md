@@ -26,7 +26,8 @@ through its REST API, read-only.
 
 **Under construction.** Nothing is usable yet.
 Progress follows [ROADMAP.md](ROADMAP.md) — eight steps, validation after each
-one. Current step: 1, OPNsense API exploration.
+one. Step 1 is done: [docs/opnsense-api-survey.md](docs/opnsense-api-survey.md).
+Current step: 2, data model and SQLite schema.
 
 ## Data sources
 
@@ -35,31 +36,42 @@ Five, all read through the OPNsense REST API:
 |Source|Feeds|Required|
 |---|---|---|
 |Filter logs|the matrix, blocked traffic|yes|
-|Suricata `eve.json`|site names (primary), alerts|no|
-|NetFlow / Insight|volumes per address pair|yes|
+|Suricata `eve.json`|alerts|no|
+|NetFlow / Insight|volumes per address pair, daily|yes|
 |DHCP leases|hostnames and MACs|yes|
-|Resolver DNS lookups|site names (fallback)|yes|
+|Resolver DNS lookups|site names|yes|
 
 The resolver may be Unbound or Dnsmasq, and the DHCP server likewise —
 `opnview` detects which one is active. Suricata may be absent, installed but
 stopped, or running on only some interfaces; the UI states what is covered and
 what is not.
 
-### Site names: observed, or inferred
+### Site names are inferred, not observed
 
-With **Suricata** running in detection mode on the internal interfaces, site
-names are *observed*: its `tls` events carry the SNI and its `dns` events
-carry the query, both alongside the real pre-NAT source address. Nothing is
-guessed.
+`opnview` names sites by correlating a resolver lookup with the flow that
+follows it towards the resolved address. That is an inference, and the
+limitations section below says where it fails.
 
-Suricata logs only alerts by default. Enabling the `dns`, `tls` and `http`
-event types is a manual step — the procedure will be documented here, and
+It was meant to be a fallback. Suricata's `tls` events carry the SNI and its
+`dns` events the query, both alongside the real pre-NAT source address —
+*observed* names, nothing guessed. The step-1 API survey established that
+neither is available on OPNsense 26.7:
+
+- there is no `dns` event type to enable — the IDS model exposes only `http`
+  and `tls`;
+- `tls` and `http` events can be written to `eve.json`, but the only API
+  endpoint that reads that file returns alert records and silently discards
+  every other event type, and the generic log endpoint cannot open a file not
+  named `.log`.
+
+Suricata therefore contributes alerts and nothing else. Every attributed name
+still records the method that produced it, and the UI reports that no observed
+source is available. The evidence is in
+[docs/opnsense-api-survey.md](docs/opnsense-api-survey.md).
+
+For the heuristic to work at all the resolver has to be logging its queries.
+Turning that on is a manual step — the procedure will be documented here, and
 `opnview` never performs it for you: it only ever reads.
-
-Without Suricata, `opnview` falls back to a *heuristic*: correlating a
-resolver lookup with the flow that follows it towards the resolved address.
-Each attributed name records which of the two methods produced it, and the UI
-shows the active one.
 
 ## Alerts — what an internal IDS is actually for
 
@@ -89,17 +101,24 @@ and never reaches the firewall. A hypervisor hosting its virtual machines
 inside its own segment likewise hides all of their internal traffic. This is
 not a defect, it is a property of the observation point.
 
-**Without Suricata, domain attribution is a heuristic.** Correlating a DNS
-lookup with the flow that follows it fails on client-side DNS caching, on
-shared CDNs where a thousand domains sit behind one IP, and on encrypted DNS
-that bypasses the resolver. Where the fallback is in use, an attribution rate
-is displayed, and no domain is ever invented when the correlation fails — you
-get the IP, the country and the operator instead. With Suricata covering an
-interface, this limitation does not apply to that traffic.
+**Domain attribution is a heuristic, always.** Correlating a DNS lookup with
+the flow that follows it fails on client-side DNS caching, on shared CDNs where
+a thousand domains sit behind one IP, and on DNS-over-TLS or DNS-over-HTTPS,
+which bypasses the resolver entirely and leaves no lookup to correlate. An
+attribution rate is displayed per device, and no domain is ever invented when
+the correlation fails — you get the IP, the country and the operator instead.
+There is no observed-name path to fall back on: see
+[Site names](#site-names-are-inferred-not-observed).
 
-**Suricata coverage is per interface.** An installation where only some
-interfaces are monitored produces observed names for those and inferred names
-for the rest. The UI distinguishes them rather than blending them.
+**Alert coverage is per interface.** Suricata may be absent, installed but
+stopped, or running on only some interfaces. Alerts exist for the interfaces it
+monitors and for no others; the UI states per segment whether it is covered,
+rather than showing an empty panel.
+
+**Volumes per address pair are daily on the firewall.** OPNsense keeps
+per-address-pair traffic at a one-day resolution, for 62 days. Shorter periods
+are built from `opnview`'s own history, so the 1 h and 24 h views are only as
+deep as the time it has been running.
 
 ## Data
 

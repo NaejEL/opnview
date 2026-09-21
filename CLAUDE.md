@@ -27,11 +27,16 @@ OPNsense firewall. Single Go binary, local SQLite, frontend embedded in the
 binary and served by it.
 
 It reads five sources through the OPNsense REST API: filter logs, the Suricata
-`eve.json` event log (optional — primary source of site names and of IDS
-alerts), NetFlow/Insight, DHCP leases, and resolver DNS lookups (fallback
-source of site names).
+`eve.json` event log (optional — IDS alerts only), NetFlow/Insight, DHCP
+leases, and resolver DNS lookups (the sole source of site names).
 
-See `ROADMAP.md` for the seven-step plan and the cross-cutting engineering
+Suricata was planned as the primary source of site names. The step-1 API
+survey established that it cannot be: OPNsense exposes no `dns` event type,
+and `tls` / `http` events, though they can be written to `eve.json`, cannot be
+read back through the API. See `docs/opnsense-api-survey.md`. Site names are
+inferred from resolver lookups, unconditionally.
+
+See `ROADMAP.md` for the eight-step plan and the cross-cutting engineering
 rules (no hardcoded configuration, no secrets in the repo, read-only against
 the firewall, exactly two outbound calls, observation-point limit stated in
 the UI).
