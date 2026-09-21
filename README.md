@@ -64,9 +64,9 @@ neither is available on OPNsense 26.7:
   every other event type, and the generic log endpoint cannot open a file not
   named `.log`.
 
-Suricata therefore contributes alerts and nothing else. Every attributed name
-still records the method that produced it, and the UI reports that no observed
-source is available. The evidence is in
+Suricata therefore contributes alerts and nothing else. There is no second
+method to switch between, so the UI does not pretend there is one: it says
+that names are inferred, and shows the attribution rate. The evidence is in
 [docs/opnsense-api-survey.md](docs/opnsense-api-survey.md).
 
 For the heuristic to work at all the resolver has to be logging its queries.

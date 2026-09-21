@@ -24,8 +24,8 @@ so and amend this roadmap rather than quietly working around it.
 - **The observation limit is displayed, not hidden**: the application only
   sees what crosses the router.
 - **Degrade, never guess.** Suricata may be absent, installed but stopped, or
-  running on only some interfaces. The UI states what is covered and what is
-  not, and which site-name attribution method is currently active.
+  running on only some interfaces. The UI states which segments its alerts
+  cover and which they do not.
 - **Everything is written in English** — code, docs, UI, commits. See
   `CLAUDE.md`.
 
@@ -117,17 +117,19 @@ that the rows it gets back fall inside the window it asked for.
 ### Step 2 — Data model and SQLite schema
 
 Entities: segment (named zone, tunnels included), device, flow, blocked event,
-DNS resolution, TLS/HTTP observation, rule, domain attribution, alert, geo/ASN.
+DNS resolution, rule, domain attribution, alert, geo/ASN. There is no
+TLS/HTTP observation entity: no source feeds it (step 1, finding 2), and the
+schema carries nothing it cannot fill.
 
 - East-west / north-south classification carried by the model.
 - Manual segment labelling by the user, never inferred from a name.
 - Randomised MAC (second hex digit even) marked as an unstable identity, not
   merged into phantom devices.
-- **Provenance on every site-name attribution**: `observed` or `inferred`. The
-  field stays two-valued so a future OPNsense release exposing readable `tls`
-  events needs no migration, but on 26.7 every attribution is `inferred`, from
-  resolver-lookup correlation. The UI's "which method is active" indicator
-  must be able to say *no observed source available*.
+- **Every site-name attribution is inferred**, from resolver-lookup
+  correlation — there is no second method to tell it apart from (step 1,
+  finding 2). No provenance flag: a field with one possible value states
+  nothing. What the model does carry is the lookup the name came from and the
+  delay between that lookup and the flow, so an attribution can be judged.
 - Alerts: signature, severity, source, destination, timestamp, joined to the
   device and segment models.
 - Configurable retention, from a few hours to unlimited, with purge.
@@ -200,8 +202,8 @@ Go, single binary. Prerequisite: **install Go**.
 - Geo and ASN enrichment.
 - HTTP API for the screens, period selector everywhere.
 
-**Validation**: the numbers are correct, the active attribution method is
-reported per record, and the heuristic's attribution rate is honest.
+**Validation**: the numbers are correct, and the heuristic's attribution rate
+is honest.
 
 ### Step 6 — Backend: alerts and device correlation
 
@@ -233,9 +235,9 @@ scripts included in the binary.
 6. Alerts — timeline, by device, by segment, by signature.
 7. Map — destinations by country and operator, detail on click.
 
-Explicit in-UI statements: observation-point limit, which site-name method is
-active and what it covers, limits of the fallback heuristic when it is in use,
-randomised MACs.
+Explicit in-UI statements: observation-point limit, site names inferred by
+correlation and the limits of that heuristic, the attribution rate, which
+segments Suricata's alerts cover, randomised MACs.
 
 **Validation**: full walkthrough of the seven screens on real data.
 
