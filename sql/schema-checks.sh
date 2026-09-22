@@ -984,12 +984,28 @@ check_ge 'PN-AC20 a provider name does appear as a value, in the registry' 1 \
 # PN-AC26: nothing anywhere is named for a provider that is not installed and
 # surveyed today. The list is every security or visibility product the roadmap
 # discussion raised and the survey did not cover.
+#
+# Scope: the migrations, the SQL, and the two documents that describe the model
+# -- docs/data-model.md and docs/architecture.md. It deliberately does NOT scan
+# docs/ as a directory, and deliberately does not scan specs/ at all.
+#
+# The reason is that the property being asserted is a property of the *model*:
+# no table, column, index, CHECK value, registry row or provider key exists for
+# a product nobody has surveyed. Research documents and specifications
+# legitimately *name* surveyed products -- docs/ui-references.md studies ntopng
+# and Zenarmor as prior art, and the spec that commissioned it requires exactly
+# that -- and naming a product one is studying is the opposite of building an
+# abstraction for it. Widening the scope back to docs/ or to specs/ would make
+# the check assert a model property by grepping prose, which is what made it
+# fail on a document that violated nothing.
 : > "$WORK/speculative.txt"
 # This script is excluded from its own grep: it is the file that has to name
 # those strings in order to forbid them, and matching itself would make the
 # check unfalsifiable rather than strict.
 grep -rinE --exclude='schema-checks.sh' 'crowdsec|zenarmor|sensei|snort|wazuh|ntopng' \
-    "$REPO_ROOT/migrations" "$REPO_ROOT/sql" "$REPO_ROOT/docs" >> "$WORK/speculative.txt" 2>/dev/null
+    "$REPO_ROOT/migrations" "$REPO_ROOT/sql" \
+    "$REPO_ROOT/docs/data-model.md" "$REPO_ROOT/docs/architecture.md" \
+    >> "$WORK/speculative.txt" 2>/dev/null
 if [ -s "$WORK/speculative.txt" ]; then
     fail "PN-AC26 a provider nobody surveyed is named: $(head -n 3 "$WORK/speculative.txt")"
 else

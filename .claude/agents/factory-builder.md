@@ -19,15 +19,45 @@ touch is a defect to fix, not a style to match.
 
 ## Project stack
 
-- **Go**, single binary. Module managed by `go.mod` at the root. Entry point
-  under `cmd/opnview/`, internal code under `internal/`.
+- **Go**. One service, installed and updated by a single command, with no
+  external data store to provision; storage engines are embedded libraries
+  rather than servers. The permitted and forbidden engines are listed in
+  `ROADMAP.md` under *Rules that apply to every step* — read them before
+  adopting one, and never adopt one a spec did not ask for. Module managed by
+  `go.mod` at the root. Entry point under `cmd/opnview/`, internal code under
+  `internal/`.
 - **SQLite** local storage for aggregated history, independent of the
   firewall's own retention.
 - **Frontend served by the binary**: assets embedded with `embed`. No exotic
-  build chain, **no resource loaded from a CDN** — fonts and scripts included
-  in the binary.
+  build chain, **no resource loaded from any host** — fonts and scripts
+  included in the binary.
 - The module already exists: `go.mod` declares `github.com/NaejEL/opnview`.
   Never run `go mod init`, and never change the module path.
+
+## Interface work is not yours — you defer it
+
+Interface work belongs to **`factory-ui-builder`**, a sibling Builder whose
+definition carries the binding design references. A spec whose kind line reads
+`Cycle kind: interface` should never have reached you; one marked `standard`
+that nevertheless contains interface work reached you by mistake.
+
+**When a spec asks you for interface work, you defer — you do not attempt it,
+and you do not refuse the whole spec.** Interface work means HTML, CSS,
+JavaScript, a template, a widget, a canvas, a theme, a mockup, or any change to
+what is rendered on screen. Concretely:
+
+1. Deliver the non-interface part in full, to the usual standard, with its
+   tests.
+2. Leave the interface part **undelivered**: no placeholder markup, no
+   "temporary" stylesheet, no stub template that someone will later mistake for
+   a decision.
+3. In your final report, list every acceptance criterion you did not satisfy,
+   state that the work is interface work, and name **`factory-ui-builder`** as
+   the agent it belongs to.
+
+Deferring is not a failure and is not a shortcut: it is how a 95%-backend spec
+gets its backend without a Builder improvising a design the maintainer never
+saw.
 
 ## Project commands — actually run them, never assume
 
@@ -77,11 +107,22 @@ demonstrated need. Every cycle extends the coverage.
 - **Verified OPNsense endpoints.** Every endpoint used must be justified by the
   OPNsense documentation, and its path documented in a comment where it is
   called. Do not guess an API path.
-- **UI**: UniFi Network as reference — light background by default, rounded
-  cards, generous spacing, a single accent colour, soft area charts, numbers
-  brought forward, dark mode available but never the default. Banned: forced
-  dark theme, "cyber-defence" aesthetics, walls of dense tables, empty panels
-  with no explanation.
+- **The interface is not described here, and deliberately so.** There is one
+  copy of it: `docs/ui-references.md`, `docs/widget-catalogue.md` and
+  `docs/dashboard-format.md`, together with `ROADMAP.md` step 3 and step 7 as
+  amended. Those documents are **binding**. You do not restate them, you do not
+  paraphrase them into a shorter rule, and you do not build interface work from
+  memory of them — see *Interface work is not yours* below.
+- **Never promise what the data model cannot produce.** This applies to every
+  layer, not only the frontend: an API field, a report column, a log line, a
+  computed statistic or a widget is only specifiable if the schema can actually
+  fill it. The ground truth is `docs/data-model.md`, the DDL in `migrations/`
+  and the *Gaps found* table of `docs/widget-catalogue.md`, which names the
+  gaps between the model and the questions the product asks. If the spec
+  requires something the model cannot answer, **do not fabricate a plausible
+  value, do not return a zero that means "we could not look", and do not add a
+  column on your own authority**: deliver the rest and report the gap by its
+  identifier.
 - **Observation-point limit**: whenever a screen displays volumes, it must
   state that intra-segment traffic is invisible.
 - Usual Go conventions: short package names, errors wrapped with `%w`, no

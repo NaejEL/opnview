@@ -26,6 +26,22 @@ so and amend this roadmap rather than quietly working around it.
 - **Degrade, never guess.** Suricata may be absent, installed but stopped, or
   running on only some interfaces. The UI states which segments its alerts
   cover and which they do not.
+- **One service, installed and updated by a single command, with no external
+  data store to provision. Storage engines are embedded libraries, not
+  servers.** This replaces the earlier "single Go binary" rule, which was an
+  inherited assumption rather than a reasoned constraint and was on the point
+  of deciding the telemetry storage engine for no stated reason. What the old
+  rule actually protected is the install story, and that is what the new one
+  keeps. **Permitted**: SQLite, unchanged and still the store for everything
+  the current schema holds; DuckDB, which is a library rather than a server and
+  which OPNsense itself already ships behind the Unbound query report; and a
+  time-series store written in pure Go, on the same test. **Forbidden**:
+  PostgreSQL, TimescaleDB, InfluxDB, VictoriaMetrics — not on their merits, but
+  because each would make someone installing a network-visibility tool into an
+  unprivileged LXC administer a separate database. Several storage engines is
+  not several processes: the install, update, systemd and backup stories are
+  unchanged. `README.md` and `CLAUDE.md` point at this bullet rather than
+  restating it.
 - **Everything is written in English** — code, docs, UI, commits. See
   `CLAUDE.md`.
 
@@ -92,11 +108,11 @@ container run says nothing about deployment.
 |---|---|---|---|
 |1|OPNsense API exploration|Verified findings document|Done|
 |2|Data model and SQLite schema|Schema + model document|Done|
-|3|Static HTML mockup — overview|HTML file, fake data|To do|
+|3|Static HTML mockup — overview|HTML file for a representative canvas, fake data|To do|
 |4|Backend: collection and storage|Collectors + persistence + tests|To do|
 |5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|To do|
 |6|Backend: alerts and device correlation|Alert model + API + tests|To do|
-|7|Full frontend|7 screens served by the binary|To do|
+|7|Full frontend|Canvases, widgets, dashboard import/export|To do|
 |8|Install, packaging, documentation|`ct/install.sh`, compose, README|To do|
 
 ### Step 1 — OPNsense API exploration
@@ -190,26 +206,65 @@ schema carries nothing it cannot fill.
 **Validation**: the schema answers all seven screens without pathological
 queries.
 
-### Step 3 — Static HTML mockup of the overview
+**Outcome**: the migrations, `sql/seed.sql`, the seven representative queries
+in `sql/queries/screens.sql` and `docs/data-model.md`. Step 3's widget
+catalogue subsequently identified **ten gaps** between the model and the
+questions the widgets ask; they are tabulated in `docs/widget-catalogue.md`,
+and each is a future migration. The last two — G9 and G10, firewall health and
+telemetry — are a whole data category the model was never designed to hold and
+the step-1 survey never looked at, and they are deliberately left to their own
+research cycle after the mockup.
+
+### Step 3 — Static HTML mockup of a representative canvas
 
 A single file, fake data, **mandatory stop for validation before writing the
-frontend**.
+frontend**. Its subject is a **representative canvas** — a named board composed
+from widgets of `docs/widget-catalogue.md` — and not a fixed overview screen,
+because the product has no fixed screens.
 
-UniFi Network as the aesthetic reference: light background by default, rounded
-cards, generous spacing, a single accent colour, soft area charts, numbers
-brought forward. Dark mode available, never the default. Banned:
-"cyber-defence" aesthetics, walls of dense tables, empty panels with no
-explanation.
+**The visual language is angular, dense and high-contrast.** The maintainer's
+industrial palette is the reference: a `0.25rem` corner radius, system fonts
+only, and a layout of a fixed top bar, a collapsible sidebar and a centred main
+column. Cloudflare Radar is the compositional reference — a left rail, a scoped
+header carrying the selectors, and angular cards each with a one-line
+explanation under its title. Homarr is the structural reference for how tiles
+are arranged, moved and resized, **its rounding explicitly excepted**. Generous
+spacing, a single accent colour and numbers brought forward are retained from
+the original brief.
 
-The overview now carries recent alerts alongside recent blocked traffic, and
-must degrade cleanly when Suricata is absent — an explanatory state, not an
-empty panel.
+**Charts show the resolution the data actually has.** No curve smoothing, and
+no silent downsampling that can hide a single-sample spike — where a series is
+aggregated to fit the pixels available, the widget says so. Area fills survive
+only as a means of separating stacked series, and the line on top of a fill is
+drawn through its real points. A tooltip on a stacked chart lists the full
+breakdown at the hovered instant rather than the top series only. Grafana is
+the reference for this, and for the degree of per-series rendering control a
+widget should expose.
+
+**Theme.** On first launch the theme follows the operating system's preference.
+The user can override it afterwards, and the override persists. The industrial
+palette is the default; Tokyo Night, Dracula, Nord, Rosé Pine and Catppuccin
+are offered as named options at their official published values. Nord ships no
+light variant, so a light-preferring system with Nord selected falls back as
+the theme picker states.
+
+Banned, unchanged: "cyber-defence" aesthetics, walls of dense tables, and empty
+panels with no explanation.
+
+The canvas carries recent alerts alongside recent blocked traffic, and must
+degrade cleanly when Suricata is absent — an explanatory state, not an empty
+panel.
+
+The binding references for this step are `docs/ui-references.md`,
+`docs/widget-catalogue.md` and `docs/dashboard-format.md`.
 
 **Validation**: explicit sign-off on the mockup.
 
 ### Step 4 — Backend: collection and storage
 
-Go, single binary. Prerequisite: the containerised toolchain described under
+Go. One service, installed and updated by a single command, with no external
+data store to provision — see the storage rule under **Rules that apply to
+every step** above. Prerequisite: the containerised toolchain described under
 **Development and test environment** above — nothing is installed on the host.
 
 - OPNsense API client: authentication, pagination, graceful degradation when a
@@ -229,7 +284,9 @@ Go, single binary. Prerequisite: the containerised toolchain described under
 - **Extend `sql/seed.sql` to IPv6.** It currently produces IPv4 rows only.
   Nothing in the schema interprets an address family today, so step 2 passed,
   but no IPv6 row has ever been exercised through the seven screen queries.
-- First-run setup wizard: URL, API key/secret, MaxMind key.
+- First-run setup wizard: URL, API key/secret, MaxMind key, and the theme,
+  which defaults to following the operating system and can be changed at any
+  time from the interface rather than only in the wizard.
 - MaxMind GeoLite2 City and ASN databases: downloaded on first start,
   refreshed automatically, never embedded. Without a key the map is disabled
   with a clear message and everything else keeps working.
@@ -252,7 +309,16 @@ Go, single binary. Prerequisite: the containerised toolchain described under
   Never invent a domain: fall back to IP, country and operator.
 - Device resolution through DHCP leases.
 - Geo and ASN enrichment.
-- HTTP API for the screens, period selector everywhere.
+- HTTP API for the widget catalogue: **one endpoint per widget type**, taking
+  that widget's declared parameters — period, scope, segment, device and the
+  rest — as documented in `docs/widget-catalogue.md`, and returning both the
+  data and the source-availability state each widget must render. A canvas is
+  served by issuing one request per widget. **The period is a parameter of a
+  widget rather than a property of a screen**, because two widgets on one
+  canvas will legitimately show different periods. A multi-series endpoint
+  accepts a list of series and returns a list of series, each carrying its own
+  availability state, so one missing source degrades one line rather than the
+  whole chart.
 
 **Validation**: the numbers are correct, and the heuristic's attribution rate
 is honest.
@@ -274,24 +340,32 @@ right device and segment.
 
 ### Step 7 — Full frontend
 
-The seven screens, served by the binary, no exotic build chain, fonts and
-scripts included in the binary.
+The canvas frontend, served by the binary, no exotic build chain, fonts and
+scripts included in the binary. **There is no fixed screen list and no view
+reachable only through a menu inside a menu**: the user creates **named
+canvases**, composes each from widgets, and moves between them with **tabs
+rather than menus**.
 
-1. Overview — segments, matrix, east-west vs north-south, recent blocked
-   traffic and recent alerts.
-2. Matrix — full screen, clickable, filterable; each cell opens the detail
-   (IPs, ports, rules, timestamps).
-3. Segment — devices, destinations, denials.
-4. Device — volume over time, domains, countries, operators, denials, alerts.
-5. Blocked — timeline, by rule, by source.
-6. Alerts — timeline, by device, by segment, by signature.
-7. Map — destinations by country and operator, detail on click.
+- The widget catalogue of `docs/widget-catalogue.md`, implemented as placeable
+  widgets that can be added, moved and resized on a grid.
+- Named canvases with tabs, each carrying the widgets the user put on it.
+- The dashboard file format of `docs/dashboard-format.md`, with import, export
+  and the two repair surfaces — a highlighting JSON/YAML editor and a no-code
+  selector populated from what this installation actually has.
+- The theme system: the industrial palette by default, the five named palettes
+  as options, the theme following the operating system on first launch with a
+  persisting override.
+
+**The seven queries in `sql/queries/screens.sql` remain authoritative and are
+not deleted.** They are the query work this step was really carrying, and every
+widget states which of them it reuses, adapts or replaces.
 
 Explicit in-UI statements: observation-point limit, site names inferred by
 correlation and the limits of that heuristic, the attribution rate, which
 segments Suricata's alerts cover, randomised MACs.
 
-**Validation**: full walkthrough of the seven screens on real data.
+**Validation**: full walkthrough of a representative set of canvases on real
+data.
 
 ### Step 8 — Install, packaging, documentation
 
@@ -301,7 +375,10 @@ segments Suricata's alerts cover, randomised MACs.
   the end, update by re-running the same command without data loss. Asks
   **nothing** about OPNsense or MaxMind.
 - `docker-compose.yml` for non-Proxmox users.
-- README: problem solved, screenshots, one-line install, how to obtain the
+- README: problem solved, screenshots of **representative canvases with the
+  dashboard files that produced them committed as examples** — which has a
+  second benefit, since those files exercise import on every clone — one-line
+  install, how to obtain the
   OPNsense API and MaxMind keys, **how to enable the resolver query log**,
   what an internal-interface IDS is and is not for, an
   honest limitations section, a factual section on the data collected and what
@@ -313,6 +390,37 @@ segments Suricata's alerts cover, randomised MACs.
 ## Superseded decisions
 
 Recorded so they do not resurface.
+
+Revision of 2026-09-23, after the interface and dashboard-format research
+(`docs/ui-references.md`, `docs/widget-catalogue.md`,
+`docs/dashboard-format.md`), applied by
+`specs/SPEC-propagate-product-definition.md`:
+
+- **The seven fixed screens are replaced by named canvases.** Step 7 listed
+  Overview, Matrix, Segment, Device, Blocked, Alerts and Map as screens
+  reachable through a menu. The product has no fixed screens: the user composes
+  named canvases from widgets and moves between them with tabs. The seven
+  queries in `sql/queries/screens.sql` are untouched and stay authoritative.
+- **The rule that made a light theme the default, and dark merely available,
+  is replaced.** The theme follows the operating system on first launch, the
+  override persists, the industrial palette is the default and the five named
+  palettes are options. The old rule contradicted the default palette's own
+  code, which follows the OS and has no manual override at all.
+- **UniFi Network is no longer the aesthetic reference, and cards are not
+  rounded.** The language is angular: the industrial palette's `0.25rem`
+  radius and system fonts, Cloudflare Radar for composition, Homarr for
+  structure with its rounding excepted. The three bans survive unchanged.
+- **The softened, smoothed chart treatment step 3 used to ask for is
+  withdrawn.** The maintainer's charting reference is
+  Grafana, and his reason is that it is the only one without the over-smoothed
+  quality. Charts show the resolution the data actually has. Area fills survive
+  only to separate stacked series, with the line through real points.
+- **"HTTP API for the screens, period selector everywhere" is replaced** by one
+  endpoint per widget type, with the period as a widget parameter.
+- **"Single Go binary" is replaced** by one service installed and updated by a
+  single command, with no external data store to provision and storage engines
+  as embedded libraries. The permitted and forbidden lists are under *Rules
+  that apply to every step*.
 
 Revision of 2026-09-21, after the step-1 API survey
 (`docs/opnsense-api-survey.md`, OPNsense 26.7.3):

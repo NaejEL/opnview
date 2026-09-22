@@ -5,10 +5,25 @@ disable-model-invocation: true
 argument-hint: "<requirement | path to an approved spec>"
 ---
 
-You drive a full software-factory cycle for the **opnview** repository (Go,
-SQLite, single binary, embedded frontend). You orchestrate: you do not write
-the spec yourself, you do not implement yourself, you do not verify yourself.
-Each role runs in a subagent with its own context.
+You drive a full software-factory cycle for the **opnview** repository (Go, one
+service with SQLite, embedded frontend). You orchestrate: you do not write the
+spec yourself, you do not implement yourself, you do not verify yourself. Each
+role runs in a subagent with its own context.
+
+## Which agents this cycle uses
+
+**A spec declares its cycle kind**, on its own line under the title, beside the
+status line. You read that line and it decides the agents. There is no
+judgement call and no branching flow.
+
+|`Cycle kind:`|Build phase|Verify phase|
+|---|---|---|
+|`interface`|`factory-ui-builder`|`factory-verifier` **and** `factory-ergonomist`|
+|anything else|`factory-builder`|`factory-verifier`|
+
+Every other cycle keeps the current two agents, unchanged. If a spec carries no
+kind line, treat it as `standard`, and say so in the final report so the gap is
+visible rather than silently assumed.
 
 ## Language — absolute rule
 
@@ -47,6 +62,15 @@ pretext.
 
        Status: PROPOSED
 
+   and which carries, on its own line beside it, the cycle kind the Planner
+   determined:
+
+       Cycle kind: interface
+
+   or `Cycle kind: standard`. Do not decide the kind yourself: it comes from
+   the Planner, and if the draft lacks it, send the draft back rather than
+   filling it in.
+
 5. Present the spec to the user and ask for **explicit approval**.
 6. On approval: replace the status line with `Status: APPROVED`. Otherwise:
    collect the corrections, update the spec and ask again. Loop until approval
@@ -54,40 +78,71 @@ pretext.
 
 ## Step 3 — Build phase
 
-Launch the `factory-builder` subagent (fresh context) with the **path** to the
-approved spec and the instruction to read it in full. Do not pass it your own
-interpretation of the spec.
+Launch the Builder the kind line selects — `factory-ui-builder` on an
+`interface` cycle, `factory-builder` otherwise — in a fresh context, with the
+**path** to the approved spec and the instruction to read it in full. Do not
+pass it your own interpretation of the spec.
+
+`factory-builder` **defers** interface work: if it hands back reporting an
+interface part as undelivered and naming `factory-ui-builder`, that is correct
+behaviour, not a failure. Report it to the user and propose an interface cycle
+for the remainder; do not implement it yourself and do not relaunch
+`factory-builder` on the same work.
 
 ## Step 4 — Verify phase, correction loop (3 iterations maximum)
 
-Keep an iteration counter, initialised to 1.
+Keep an iteration counter, initialised to 1. **One counter for the whole
+cycle**, whatever the number of verifiers.
 
 1. Launch a **new** `factory-verifier` subagent (blank context, independent of
    the Builder; never reuse a previous Verifier through SendMessage) with the
-   path to the spec. Take the final JSON block from its reply.
-2. If `verdict` is `APPROVED` **and** `tests_passed` is `true`: leave the loop,
-   the cycle succeeded.
-3. Otherwise, if the counter is strictly below 3: relaunch `factory-builder`
-   with the path to the spec **and the complete list of `issues`** (file,
-   severity, description, none omitted, none summarised), plus the instruction
-   to fix every issue without regressing on acceptance criteria already
-   satisfied. Increment the counter and go back to sub-step 1 with a new
-   Verifier.
+   path to the spec. On an `interface` cycle, launch a **new**
+   `factory-ergonomist` in the same way, in addition to it, never instead of
+   it. Take the final JSON block from each reply.
+2. **Both verifiers must approve.** Leave the loop only when every verifier you
+   launched returned `verdict: APPROVED` with `tests_passed: true`. **Neither
+   verifier takes precedence over the other**: `factory-verifier` owns the
+   build, the tests and the acceptance criteria, `factory-ergonomist` owns
+   conformance to the written design references, and neither may overrule the
+   other's finding. A disagreement is therefore not a deadlock — a blocking
+   finding from either sends the cycle round again.
+3. Otherwise, if the counter is strictly below 3: relaunch the same Builder
+   with the path to the spec **and the complete list of `issues` from every
+   verifier merged into one list** (file, severity, description, none omitted,
+   none summarised, none dropped because the other verifier approved), plus the
+   instruction to fix every issue without regressing on acceptance criteria
+   already satisfied. Increment the counter and go back to sub-step 1 with new
+   verifiers.
 4. If the counter reaches 3 without approval: **fail explicitly**. Publish the
    remaining issues as they are, along with the state of the repository. Never
    approve out of exhaustion, never shrink the spec to make the verdict pass.
+
+## Proposals from any agent
+
+Any agent may return a **Proposals** section. A proposal is not a finding: it
+does not fail a cycle, it does not enter the issues list, it carries no
+severity and it blocks nothing.
+
+**Relay every proposal to the maintainer, verbatim and attributed to the agent
+that made it, and never act on one without his decision.** Do not fold a
+proposal into the spec, do not pass it to the Builder as an instruction, and do
+not treat an unanswered proposal as accepted — silence is not approval.
 
 ## Step 5 — Final report
 
 Close with a structured report:
 
-- path of the spec used and its status;
+- path of the spec used, its status and its cycle kind, and the agents that
+  kind selected;
 - files modified — output of `git status --porcelain`;
 - results of the project commands as reported by the Verifier — `gofmt -l .`,
   `go vet ./...`, `go build ./...`, `go test ./...`, run in the container
   through `docker compose run --rm checks` — with their exit codes. No Go
   toolchain is installed on the host: a missing host `go` is never a failure;
-- final verdict and the number of iterations consumed;
+- the verdict of **each** verifier that ran, and the number of iterations
+  consumed off the single shared counter;
 - remaining issues, if any;
+- every proposal returned by any agent, verbatim and attributed, marked as
+  awaiting the maintainer's decision;
 - suggested next action: **the user reviews the diff**. Do not commit on their
   behalf, do not push, do not create a branch.

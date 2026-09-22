@@ -13,14 +13,22 @@ leases, DNS lookups, the Suricata event log — but never cross-references it.
 - where the data goes, to which countries and which operators;
 - which machine is behaving abnormally.
 
-The central screen is a **segment × segment matrix**: volume exchanged,
-allowed connections, blocked connections, matching rules. It makes it obvious
-when a segment that is supposed to be isolated has started talking to another
-one.
+The widget everything else hangs off is the **segment × segment matrix**:
+volume exchanged, allowed connections, blocked connections, matching rules. It
+makes it obvious when a segment that is supposed to be isolated has started
+talking to another one.
 
-Single Go binary, local SQLite, frontend served by the binary. Nothing is
-installed on the firewall and nothing is changed on it: everything goes
-through its REST API, read-only.
+The interface is not a fixed set of screens. You create **named canvases** and
+fill each with the widgets you want, moving between them with tabs rather than
+menus; a canvas can be exported to a file and imported into another
+installation.
+
+**One service, installed and updated by a single command, with no external
+data store to provision.** Storage engines are embedded libraries, not servers
+— see the storage rule in [ROADMAP.md](ROADMAP.md), under *Rules that apply to
+every step*, for what that permits and forbids. Local SQLite, frontend served
+by the service. Nothing is installed on the firewall and nothing is changed on
+it: everything goes through its REST API, read-only.
 
 ## Status
 

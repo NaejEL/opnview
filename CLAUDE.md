@@ -23,8 +23,37 @@ fix, not a preference to debate.
 ## Project
 
 `opnview` gives inter-segment visibility on a VLAN-segmented network behind an
-OPNsense firewall. Single Go binary, local SQLite, frontend embedded in the
-binary and served by it.
+OPNsense firewall. **One service, installed and updated by a single command,
+with no external data store to provision; storage engines are embedded
+libraries, not servers** — the permitted and forbidden engines are listed in
+`ROADMAP.md` under *Rules that apply to every step*, and that bullet is the
+single place the rule is stated. Local SQLite, frontend embedded in the binary
+and served by it.
+
+## The interface
+
+**Named canvases, not fixed screens.** The user creates canvases and composes
+each from widgets, moving between them with **tabs rather than menus**. No view
+is reachable only through a menu inside a menu. Dashboards are describable as
+code, in JSON and/or YAML, and are portable between installations.
+
+**Palette and theme.** The maintainer's industrial palette is the default;
+Tokyo Night, Dracula, Nord, Rosé Pine and Catppuccin are offered as named
+options at their official published values. On first launch the theme follows
+the operating system's preference; the user can override it afterwards and the
+override persists.
+
+Three documents are **binding** on any interface work, and a design decision
+that contradicts one of them without saying so is a defect rather than a
+variation:
+
+- `docs/ui-references.md` — the visual language, the surveyed prior art and,
+  in its section *The maintainer's recorded preferences*, the per-question
+  preferences the mockup is judged against;
+- `docs/widget-catalogue.md` — every widget, its six fields, and the *Gaps
+  found* table naming what the model cannot yet answer;
+- `docs/dashboard-format.md` — the dashboard file format, its references, its
+  versioning and its import behaviour.
 
 It reads five sources through the OPNsense REST API: filter logs, the Suricata
 `eve.json` event log (optional — IDS alerts only), NetFlow/Insight, DHCP

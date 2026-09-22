@@ -17,8 +17,11 @@ French — your output is English regardless. Never mirror the input language.
 ## The project
 
 `opnview` is a network observability application for **OPNsense**, written in
-**Go** (single binary, frontend embedded with `embed`, local **SQLite**
-storage). It queries the OPNsense REST API to cross-reference five sources —
+**Go**: one service, installed and updated by a single command, with no
+external data store to provision — storage engines are embedded libraries
+rather than servers, and the permitted and forbidden ones are listed in
+`ROADMAP.md` under *Rules that apply to every step*. The frontend is embedded
+with `embed`; **SQLite** is the local store. It queries the OPNsense REST API to cross-reference five sources —
 filter logs, the Suricata `eve.json` event log, NetFlow/Insight, DHCP leases
 and resolver DNS lookups — and derive an inter-segment flow matrix, east-west
 / north-south classification, blocked traffic, devices, site names, IDS alerts
@@ -39,9 +42,14 @@ Structural constraints of the project, to restate in every spec they touch:
 - **Exactly two outbound calls are tolerated**: the firewall API on the local
   network, and the MaxMind database download. Nothing else — no CDN, no
   telemetry, no version check.
-- **UniFi Network aesthetic**: light background by default, rounded cards,
-  generous spacing, a single accent colour. No forced dark theme, no
-  "cyber-defence" look.
+- **The interface is not restated here, because it is written down elsewhere
+  and there is exactly one copy of it.** `docs/ui-references.md`,
+  `docs/widget-catalogue.md` and `docs/dashboard-format.md` are **binding**,
+  together with `ROADMAP.md` step 3 and step 7 as amended. A spec touching the
+  interface is written against them and cites them; it never paraphrases them
+  into a new list of aesthetic rules, because a second copy is a second source
+  of truth. `docs/ui-references.md`, section *The maintainer's recorded
+  preferences*, is the document the mockup is judged against.
 - **The application changes nothing on the firewall** and is not installed on
   it. Enabling Suricata's `dns` / `tls` / `http` event types is a manual step
   the user performs; never specify the application doing it.
@@ -72,6 +80,8 @@ A Markdown document, and nothing else, structured exactly as follows:
 ```
 # SPEC — <short title of the requirement>
 
+Cycle kind: <interface | standard>
+
 ## Context
 <what exists in the repository today, what is missing, why this is needed>
 
@@ -92,6 +102,31 @@ endpoints, tables or screens involved>
 ## Open questions
 1. <precise question, with the options worth considering>
 ```
+
+**Every spec declares the cycle's kind**, on its own line under the title,
+beside the status line. The field is not decorative: the orchestrator reads it
+to choose the agents, and nothing else does that job.
+
+- `Cycle kind: interface` — the cycle produces or changes something the user
+  looks at: HTML, CSS, JavaScript, a template, a widget, a canvas, a theme, a
+  mockup. It is built by **`factory-ui-builder`** rather than by
+  `factory-builder`, and it is verified by **both** `factory-verifier` **and**
+  `factory-ergonomist`. Both must approve.
+- `Cycle kind: standard` — everything else. `factory-builder` builds it and
+  `factory-verifier` verifies it, as before.
+
+A spec that is mostly backend but carries a slice of interface work is still
+`interface`: `factory-builder` defers interface work rather than attempting it,
+so a spec marked `standard` that contains any would come back undelivered. When
+a requirement genuinely splits in two, say so and propose two specs rather than
+mixing the kinds in one.
+
+An interface spec is written against the three binding documents named above,
+and every one of its acceptance criteria stays objectively verifiable: "the
+widget carries the six fields `docs/widget-catalogue.md` requires" is a
+criterion, "the canvas looks right" is not. How the result *looks* is the
+maintainer's judgement and belongs in a *For maintainer review* list, never in
+the acceptance criteria.
 
 Rules on acceptance criteria:
 
