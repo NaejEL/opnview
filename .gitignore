@@ -23,3 +23,10 @@ config.local.*
 
 # Machine-local Claude Code settings
 .claude/settings.local.json
+
+# UI reference screenshots: captured locally from public demos, vendor sites,
+# project repositories, blog posts and design galleries, referenced by
+# docs/ui-references.md and never committed. Provenance and capture date are
+# recorded next to each reference and in that document's complete image index,
+# so any reader can go and look; the files themselves do not survive a clone.
+docs/ui-references/screenshots/
