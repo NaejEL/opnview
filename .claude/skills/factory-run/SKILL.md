@@ -103,8 +103,9 @@ cycle**, whatever the number of verifiers.
    launched returned `verdict: APPROVED` with `tests_passed: true`. **Neither
    verifier takes precedence over the other**: `factory-verifier` owns the
    build, the tests and the acceptance criteria, `factory-ergonomist` owns
-   conformance to the written design references, and neither may overrule the
-   other's finding. A disagreement is therefore not a deadlock — a blocking
+   whether the result is usable, understandable and simple — with conformance
+   to the written design references as the floor beneath that judgement — and
+   neither may overrule the other's finding. A disagreement is therefore not a deadlock — a blocking
    finding from either sends the cycle round again.
 3. Otherwise, if the counter is strictly below 3: relaunch the same Builder
    with the path to the spec **and the complete list of `issues` from every

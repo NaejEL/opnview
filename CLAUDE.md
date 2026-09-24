@@ -20,9 +20,30 @@ conversation held in French still produces English output. If any file in this
 repository is found written in another language, translating it is a defect to
 fix, not a preference to debate.
 
+## Vocabulary — ABSOLUTE RULE
+
+**`opnview` uses the vocabulary of OPNsense and of the products it integrates
+with. It never invents a term for something those products already name.**
+
+When the right term is not known, it is researched — in
+`docs/opnsense-api-survey.md`, on `docs.opnsense.org`, or in the product's own
+documentation — or the maintainer is asked. It is never guessed, and never
+embroidered to save a lookup. Where a product genuinely has no word for
+something `opnview` needs, say so explicitly, choose the term deliberately, and
+record why next to it.
+
+**The reason this is written down: it was broken silently and nobody noticed
+for three steps.** `segment` was invented in the first commit, before any
+research existed, for the thing OPNsense calls an **interface** — while
+`docs/opnsense-api-survey.md` had been carrying `get_interface_names`, `descr`
+and `link_type` since step 1. `device` meant the network device in one place
+and a client machine in another. Both are fixed. The term-by-term mapping, and
+the three terms that are `opnview`'s own because OPNsense has none, are in
+`docs/data-model.md` under *Vocabulary*.
+
 ## Project
 
-`opnview` gives inter-segment visibility on a VLAN-segmented network behind an
+`opnview` gives inter-interface visibility on a VLAN-segmented network behind an
 OPNsense firewall. **One service, installed and updated by a single command,
 with no external data store to provision; storage engines are embedded
 libraries, not servers** — the permitted and forbidden engines are listed in
@@ -30,7 +51,7 @@ libraries, not servers** — the permitted and forbidden engines are listed in
 single place the rule is stated. Local SQLite, frontend embedded in the binary
 and served by it.
 
-## The interface
+## The user interface
 
 **Named canvases, not fixed screens.** The user creates canvases and composes
 each from widgets, moving between them with **tabs rather than menus**. No view
@@ -39,7 +60,10 @@ code, in JSON and/or YAML, and are portable between installations.
 
 **Palette and theme.** The maintainer's industrial palette is the default;
 Tokyo Night, Dracula, Nord, Rosé Pine and Catppuccin are offered as named
-options at their official published values. On first launch the theme follows
+options **at the values published on the maintainer's own site,
+https://lequellec.xyz**, reproduced in `docs/ui-references.md`. That site, not
+each palette's upstream project, is the authoritative source for what those
+five names mean here; the upstream values differ and must not be substituted. On first launch the theme follows
 the operating system's preference; the user can override it afterwards and the
 override persists.
 

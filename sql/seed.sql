@@ -4,16 +4,17 @@
 -- external generator, and no address literal: every address is synthesised
 -- from a counter at generation time and carries no addressing-plan meaning.
 -- Nothing in the schema or in the seven screen queries interprets an address;
--- segment membership is carried by foreign keys, never by an address range.
+-- interface membership is carried by foreign keys, never by an address range.
 --
 -- Bound parameters, all supplied by the caller. The row counts are parameters
 -- precisely so the checks can re-run the whole file against a different number
--- of segments, devices and flows and show that nothing assumes the defaults.
+-- of interfaces, clients and flows and show that nothing assumes the defaults.
 --
 --   :now          the instant the seed pretends to run, UTC epoch seconds
---   :segments     how many segments to discover        (must be >= 2)
---   :devices      how many devices to observe          (must be > :segments)
+--   :interfaces     how many interfaces to discover        (must be >= 2)
+--   :clients      how many clients to observe          (must be > :interfaces)
 --   :rules        how many firewall rules to discover  (must be >= 2)
+--   :owners       how many owners the user has created (must be >= 1)
 --   :flow_rows    rows in flow, the largest growing table
 --   :alerts       rows in security_event
 --   :pair_rows    logical pairs in pair_volume_observation; each one is
@@ -46,23 +47,23 @@ WHERE (kind, provider_key) IN (
 );
 
 -- ---------------------------------------------------------------------------
--- Segments. The last one is discovered as a tunnel, every other as a VLAN, so
--- both kinds are present whatever :segments is. link_kind is derived from the
+-- Interfaces. The last one is discovered as a tunnel, every other as a VLAN, so
+-- both kinds are present whatever :interfaces is. link_kind is derived from the
 -- discovered link type and from nothing else: no name is inspected anywhere.
 -- ---------------------------------------------------------------------------
 WITH RECURSIVE counter (n) AS (
     SELECT 1
     UNION ALL
-    SELECT n + 1 FROM counter WHERE n < :segments
+    SELECT n + 1 FROM counter WHERE n < :interfaces
 ),
 discovered AS (
     SELECT
         n,
-        CASE WHEN n = :segments THEN 'tunnel' ELSE 'vlan' END AS discovered_link_type
+        CASE WHEN n = :interfaces THEN 'tunnel' ELSE 'vlan' END AS link_type
     FROM counter
 )
-INSERT INTO segment (id, interface_identifier, device_name, discovered_description,
-                     user_label, discovered_link_type, link_kind, vlan_tag,
+INSERT INTO interface (id, identifier, device, description,
+                     user_label, status, enabled, link_type, link_kind, vlan_tag,
                      address_family, first_seen_at, last_seen_at)
 SELECT
     n,
@@ -70,8 +71,21 @@ SELECT
     printf('device-%d', n),
     printf('discovered-description-%d', n),
     NULL,
-    discovered_link_type,
-    CASE discovered_link_type
+    -- The link and administrative states, verbatim as the API reports them.
+    -- Synthesised tokens, for the reason the descriptions above are: the
+    -- survey establishes the two fields and not their encoding, so a token
+    -- shaped like an OPNsense value would be asserting one. What the seed has
+    -- to exercise is that an interface can carry a state other than the
+    -- common one, and that an interface discovered without one reads as not
+    -- reported rather than as switched off.
+    CASE WHEN n % 5 = 0 THEN NULL
+         WHEN n % 3 = 0 THEN 'link-state-alternative'
+         ELSE 'link-state-primary' END,
+    CASE WHEN n % 5 = 0 THEN NULL
+         WHEN n % 4 = 0 THEN 'admin-state-alternative'
+         ELSE 'admin-state-primary' END,
+    link_type,
+    CASE link_type
         WHEN 'tunnel' THEN 'tunnel'
         WHEN 'vlan' THEN 'vlan'
         ELSE 'other'
@@ -82,10 +96,10 @@ SELECT
     :now
 FROM discovered;
 
--- The interface map covers every discovered segment. Flows carrying a raw
+-- The interface map covers every discovered interface. Flows carrying a raw
 -- device name absent from this table exercise the "not found" state.
-INSERT INTO interface_map (device_name, description, segment_id, discovered_at)
-SELECT device_name, discovered_description, id, :now - 8640000 FROM segment;
+INSERT INTO interface_map (device, description, interface_id, discovered_at)
+SELECT device, description, id, :now - 8640000 FROM interface;
 
 -- ---------------------------------------------------------------------------
 -- Firewall rules.
@@ -95,19 +109,39 @@ WITH RECURSIVE counter (n) AS (
     UNION ALL
     SELECT n + 1 FROM counter WHERE n < :rules
 )
-INSERT INTO rule (id, pf_label, description, action, direction, is_automatic, discovered_at)
+INSERT INTO rule (id, pf_label, description, action, direction, logs_matches,
+                  is_automatic, discovered_at)
 SELECT
     n,
     printf('rule-label-%d', n),
     printf('rule-description-%d', n),
     CASE WHEN n % 4 = 0 THEN 'block' ELSE 'pass' END,
     CASE WHEN n % 2 = 0 THEN 'in' ELSE 'out' END,
+    -- All three states of the logging flag, because all three occur: a rule
+    -- that logs, a rule that does not -- whose traffic opnview can never see,
+    -- the second observation-point limit -- and a rule discovered from a
+    -- source that did not report the flag at all.
+    CASE WHEN n % 7 = 0 THEN 0 WHEN n % 11 = 0 THEN NULL ELSE 1 END,
     CASE WHEN n % 9 = 0 THEN 1 ELSE 0 END,
     :now - 8640000
 FROM counter;
 
 -- ---------------------------------------------------------------------------
--- Devices.
+-- Owners. A row per person the user told opnview about. The firewall knows
+-- nothing about any of them: ownership is entered in opnview and never
+-- inferred, so these rows stand for user input and for nothing observed.
+-- ---------------------------------------------------------------------------
+WITH RECURSIVE counter (n) AS (
+    SELECT 1
+    UNION ALL
+    SELECT n + 1 FROM counter WHERE n < :owners
+)
+INSERT INTO owner (id, display_name, created_at, updated_at)
+SELECT n, printf('owner-name-%d', n), :now - 8640000, :now - 86400
+FROM counter;
+
+-- ---------------------------------------------------------------------------
+-- Clients.
 --
 -- The first octet of the MAC is 0x10 plus twice a counter modulo 8, so the
 -- second hex digit walks 0, 2, 4, 6, 8, a, c, e. Four of those carry the IEEE
@@ -115,20 +149,20 @@ FROM counter;
 -- other four (0, 4, 8, c) are globally administered burned-in addresses and
 -- must NOT be marked unstable. Both halves are therefore present in every run.
 --
--- Every tenth device has no MAC at all: the filter log carries none, so a
--- device seen only in flows must still be representable. Its identity falls to
--- the last level of the cascade, the address within its segment over a
+-- Every tenth client has no MAC at all: the filter log carries none, so a
+-- client seen only in flows must still be representable. Its identity falls to
+-- the last level of the cascade, the address behind its interface over a
 -- validity interval.
 -- ---------------------------------------------------------------------------
 WITH RECURSIVE counter (n) AS (
     SELECT 1
     UNION ALL
-    SELECT n + 1 FROM counter WHERE n < :devices
+    SELECT n + 1 FROM counter WHERE n < :clients
 ),
 generated AS (
     SELECT
         n,
-        ((n - 1) % :segments) + 1 AS segment_id,
+        ((n - 1) % :interfaces) + 1 AS interface_id,
         CASE
             WHEN n % 10 = 0 THEN NULL
             ELSE printf('%02x:%02x:%02x:%02x:%02x:%02x',
@@ -140,21 +174,21 @@ generated AS (
                (n / 16777216) % 256, (n / 65536) % 256, (n / 256) % 256, n % 256) AS address
     FROM counter
 )
-INSERT INTO device (id, identity_kind, identity_key, segment_id, mac, hostname,
+INSERT INTO client (id, identity_kind, identity_key, interface_id, mac, hostname,
                     vendor_hint, last_address, first_seen_at, last_seen_at)
 SELECT
     n,
     CASE
-        WHEN mac IS NULL THEN 'address_in_segment'
+        WHEN mac IS NULL THEN 'address_in_interface'
         WHEN n % 3 = 1 THEN 'dhcp_client_id'
         ELSE 'mac'
     END,
     CASE
-        WHEN mac IS NULL THEN printf('%d|%s|%d', segment_id, address, :now - 8640000)
+        WHEN mac IS NULL THEN printf('%d|%s|%d', interface_id, address, :now - 8640000)
         WHEN n % 3 = 1 THEN printf('client-identity-%d', n)
         ELSE mac
     END,
-    segment_id,
+    interface_id,
     mac,
     CASE WHEN mac IS NULL THEN NULL ELSE printf('host-%d', n) END,
     printf('vendor-hint-%d', n % 17),
@@ -164,33 +198,47 @@ SELECT
 FROM generated;
 
 -- One address, reissued to a different machine after the first lease expired.
--- The two observations must stay two devices: the address level of the cascade
+-- The two observations must stay two clients: the address level of the cascade
 -- keys on the lease validity start, so the reissue produces a different
 -- identity_key and nothing merges.
 WITH reissued AS (
     SELECT printf('%d.%d.%d.%d',
-                  ((:devices + 1) / 16777216) % 256, ((:devices + 1) / 65536) % 256,
-                  ((:devices + 1) / 256) % 256, (:devices + 1) % 256) AS address
+                  ((:clients + 1) / 16777216) % 256, ((:clients + 1) / 65536) % 256,
+                  ((:clients + 1) / 256) % 256, (:clients + 1) % 256) AS address
 )
-INSERT INTO device (id, identity_kind, identity_key, segment_id, mac, hostname,
+INSERT INTO client (id, identity_kind, identity_key, interface_id, mac, hostname,
                     vendor_hint, last_address, first_seen_at, last_seen_at)
-SELECT :devices + 1, 'address_in_segment',
+SELECT :clients + 1, 'address_in_interface',
        printf('%d|%s|%d', 1, address, :now - 17280000),
        1, NULL, NULL, NULL, address, :now - 17280000, :now - 16416000
 FROM reissued
 UNION ALL
-SELECT :devices + 2, 'address_in_segment',
+SELECT :clients + 2, 'address_in_interface',
        printf('%d|%s|%d', 1, address, :now - 2592000),
        1, NULL, NULL, NULL, address, :now - 2592000, :now
 FROM reissued;
 
+-- The user has attributed every third client to an owner, and has left the
+-- rest unattributed, which is the normal state of a network: ownership is
+-- assigned by hand and is never derived from a hostname, a MAC prefix or a
+-- vendor hint. Each owner ends up holding several machines, so the per-person
+-- view has something to aggregate, and the majority of clients stay in the
+-- unassigned bucket the diagnostic query has to keep visible.
+--
+-- The reissued pair above is deliberately left unowned: it exists to show two
+-- identities behind one address, and attributing it would blur that.
+UPDATE client
+SET owner_id = (((id / 3) - 1) % :owners) + 1,
+    owner_assigned_at = :now - 86400
+WHERE id % 3 = 0 AND id <= :clients;
+
 -- ---------------------------------------------------------------------------
--- DHCP leases. One per device that has a MAC, spread back over five months so
+-- DHCP leases. One per client that has a MAC, spread back over five months so
 -- that a finite retention horizon has something to purge, plus the two leases
 -- of the reissued address above.
 -- ---------------------------------------------------------------------------
-INSERT INTO dhcp_lease (device_id, backend, address, mac, hostname, client_id, duid, iaid,
-                        vendor_hint, lease_state, segment_id, starts_at, expires_at, observed_at)
+INSERT INTO dhcp_lease (client_id, backend, address, mac, hostname, dhcp_client_id, duid, iaid,
+                        vendor_hint, lease_state, interface_id, starts_at, expires_at, observed_at)
 SELECT
     id,
     'kea',
@@ -202,22 +250,22 @@ SELECT
     NULL,
     vendor_hint,
     'active',
-    segment_id,
+    interface_id,
     :now - ((id % 8) * 1728000) - 3600,
     :now - ((id % 8) * 1728000) + 86400,
     :now - ((id % 8) * 1728000)
-FROM device
+FROM client
 WHERE mac IS NOT NULL;
 
-INSERT INTO dhcp_lease (device_id, backend, address, mac, hostname, client_id, duid, iaid,
-                        vendor_hint, lease_state, segment_id, starts_at, expires_at, observed_at)
+INSERT INTO dhcp_lease (client_id, backend, address, mac, hostname, dhcp_client_id, duid, iaid,
+                        vendor_hint, lease_state, interface_id, starts_at, expires_at, observed_at)
 SELECT id, 'kea', last_address, NULL, NULL, NULL, NULL, NULL, NULL,
-       'expired', segment_id, :now - 17280000, :now - 16416000, :now - 16416000
-FROM device WHERE id = :devices + 1
+       'expired', interface_id, :now - 17280000, :now - 16416000, :now - 16416000
+FROM client WHERE id = :clients + 1
 UNION ALL
 SELECT id, 'kea', last_address, NULL, NULL, NULL, NULL, NULL, NULL,
-       'active', segment_id, :now - 2592000, :now + 86400, :now
-FROM device WHERE id = :devices + 2;
+       'active', interface_id, :now - 2592000, :now + 86400, :now
+FROM client WHERE id = :clients + 2;
 
 -- ---------------------------------------------------------------------------
 -- Flows — the largest growing table, one row per filter-log record.
@@ -227,13 +275,13 @@ FROM device WHERE id = :devices + 2;
 -- 90-day retention horizon to bite.
 --
 -- Shape of the generated population:
---   i % 3 = 0   east-west: both endpoints sit in a discovered segment
---   i % 3 <> 0  north-south: the destination is outside every segment
+--   i % 3 = 0   east-west: both endpoints sit in a discovered interface
+--   i % 3 <> 0  north-south: the destination is outside every interface
 --   i % 3 = 2   the flow will also carry a site-name attribution
 --   i % 7 = 0   blocked
 --   i % 11 = 0  the rid matches no known rule  -> rule_lookup_state not_found
 --   i % 13 = 0  the raw device name is absent from the interface map
--- The moduli are coprime with :devices in the default run, so every device
+-- The moduli are coprime with :clients in the default run, so every client
 -- sees flows of every kind rather than one kind only.
 -- ---------------------------------------------------------------------------
 WITH RECURSIVE counter (i) AS (
@@ -245,8 +293,8 @@ chosen AS (
     SELECT
         i,
         :now - (i * 97)                                      AS observed_at,
-        ((i - 1) % :devices) + 1                             AS src_device_id,
-        CASE WHEN i % 3 = 0 THEN (i % :devices) + 1 END      AS dst_device_id,
+        ((i - 1) % :clients) + 1                             AS src_client_id,
+        CASE WHEN i % 3 = 0 THEN (i % :clients) + 1 END      AS dst_client_id,
         i % 7 = 0                                            AS is_blocked,
         i % 11 = 0                                           AS rule_missing,
         i % 13 = 0                                           AS interface_missing
@@ -254,19 +302,19 @@ chosen AS (
 ),
 placed AS (
     SELECT
-        i, observed_at, src_device_id, dst_device_id,
+        i, observed_at, src_client_id, dst_client_id,
         is_blocked, rule_missing, interface_missing,
-        ((src_device_id - 1) % :segments) + 1 AS src_segment_id,
-        CASE WHEN dst_device_id IS NOT NULL
-             THEN ((dst_device_id - 1) % :segments) + 1 END AS dst_segment_id,
+        ((src_client_id - 1) % :interfaces) + 1 AS src_interface_id,
+        CASE WHEN dst_client_id IS NOT NULL
+             THEN ((dst_client_id - 1) % :interfaces) + 1 END AS dst_interface_id,
         printf('%d.%d.%d.%d',
-               (src_device_id / 16777216) % 256, (src_device_id / 65536) % 256,
-               (src_device_id / 256) % 256, src_device_id % 256) AS src_address,
+               (src_client_id / 16777216) % 256, (src_client_id / 65536) % 256,
+               (src_client_id / 256) % 256, src_client_id % 256) AS src_address,
         CASE
-            WHEN dst_device_id IS NOT NULL THEN
+            WHEN dst_client_id IS NOT NULL THEN
                 printf('%d.%d.%d.%d',
-                       (dst_device_id / 16777216) % 256, (dst_device_id / 65536) % 256,
-                       (dst_device_id / 256) % 256, dst_device_id % 256)
+                       (dst_client_id / 16777216) % 256, (dst_client_id / 65536) % 256,
+                       (dst_client_id / 256) % 256, dst_client_id % 256)
             ELSE
                 printf('%d.%d.%d.%d',
                        ((1000000 + (i % 4000)) / 16777216) % 256,
@@ -277,10 +325,11 @@ placed AS (
     FROM chosen
 )
 INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device,
-                  interface_lookup_state, src_segment_id, dst_segment_id,
-                  src_device_id, dst_device_id, src_address, dst_address,
+                  interface_lookup_state, src_interface_id, dst_interface_id,
+                  src_client_id, dst_client_id, src_address, dst_address,
                   src_port, dst_port, protocol, ip_version, action, direction,
-                  packet_bytes, rid, rule_id, rule_lookup_state, traffic_scope)
+                  log_reason, packet_bytes, rid, rule_id, rule_lookup_state,
+                  traffic_scope)
 SELECT
     i,
     printf('log-digest-%d', i),
@@ -288,12 +337,12 @@ SELECT
     observed_at + 5,
     CASE WHEN interface_missing
          THEN printf('unmapped-device-%d', i)
-         ELSE printf('device-%d', src_segment_id) END,
+         ELSE printf('device-%d', src_interface_id) END,
     CASE WHEN interface_missing THEN 'not_found' ELSE 'resolved' END,
-    src_segment_id,
-    dst_segment_id,
-    src_device_id,
-    dst_device_id,
+    src_interface_id,
+    dst_interface_id,
+    src_client_id,
+    dst_client_id,
     src_address,
     dst_address,
     1024 + ((i * 17) % 64000),
@@ -302,15 +351,22 @@ SELECT
     4,
     CASE WHEN is_blocked THEN 'block' ELSE 'pass' END,
     CASE WHEN i % 2 = 0 THEN 'in' ELSE 'out' END,
+    -- The reason the record was logged. The survey establishes the field and
+    -- not its value set, so these tokens are synthesised here exactly as the
+    -- labels and descriptions above are, rather than asserting a vocabulary
+    -- OPNsense has not published. What the seed has to exercise is that two
+    -- distinct reasons are representable and queryable, and that a record
+    -- whose reason is not the common one is not thereby a rule denial.
+    CASE WHEN i % 11 = 0 THEN 'log-reason-alternative' ELSE 'log-reason-primary' END,
     40 + ((i * 37) % 1460),
     CASE WHEN rule_missing
          THEN printf('orphan-rule-label-%d', i)
          ELSE printf('rule-label-%d', ((i - 1) % :rules) + 1) END,
     CASE WHEN rule_missing THEN NULL ELSE ((i - 1) % :rules) + 1 END,
     CASE WHEN rule_missing THEN 'not_found' ELSE 'resolved' END,
-    -- Segment membership and nothing else. The CHECK on the column rejects any
+    -- Interface membership and nothing else. The CHECK on the column rejects any
     -- other value, so this expression cannot drift from the schema's.
-    CASE WHEN src_segment_id IS NOT NULL AND dst_segment_id IS NOT NULL
+    CASE WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
          THEN 'east_west' ELSE 'north_south' END
 FROM placed;
 
@@ -318,23 +374,29 @@ FROM placed;
 -- Resolver lookups, and the site names inferred from them.
 --
 -- Only the north-south flows with i % 3 = 2 get an attribution, so every
--- device also has unattributed flows: the Device screen must return those with
+-- client also has unattributed flows: the Client screen must return those with
 -- their address, country and operator and a null site name rather than
 -- dropping them, and the attribution rate must be below 100 per cent.
 -- ---------------------------------------------------------------------------
-INSERT INTO dns_resolution (id, lookup_uuid, client_address, device_id, domain,
+INSERT INTO dns_resolution (id, lookup_uuid, client_address, client_id, domain,
                             resolver, action, answer_source, rcode,
-                            looked_up_at, ingested_at)
+                            dnssec_status, looked_up_at, ingested_at)
 SELECT
     id,
     printf('lookup-uuid-%d', id),
     src_address,
-    src_device_id,
+    src_client_id,
     printf('name-%d.example-zone-%d.invalid', id % 997, id % 13),
     'unbound',
     'pass',
     CASE WHEN id % 5 = 0 THEN 'cache' ELSE 'recursion' END,
     'NOERROR',
+    -- The validation verdict. Synthesised, for the reason the flow reasons
+    -- above are: the survey establishes the field and not its value set. One
+    -- lookup in nine carries no verdict at all, which is "not reported" and
+    -- not "unvalidated" -- the distinction the nullable column exists for.
+    CASE WHEN id % 7 = 3 THEN NULL
+         ELSE printf('dnssec-status-%d', id % 3) END,
     observed_at - (1 + (id % 30)),
     observed_at
 FROM flow
@@ -348,9 +410,69 @@ FROM flow
 WHERE id % 3 = 2;
 
 -- ---------------------------------------------------------------------------
+-- The blocklists the resolver refused lookups against.
+--
+-- The NAME is observed: the endpoint returns it verbatim on every row. The
+-- PURPOSE is user input, so three of the four are classified and the fourth is
+-- left alone -- the normal state, and the one the "purpose not assigned"
+-- rendering exists for. Nothing derives a purpose from a name here or
+-- anywhere else; the names below are synthesised from a counter and carry no
+-- meaning a machine could read.
+-- ---------------------------------------------------------------------------
+WITH RECURSIVE counter (n) AS (
+    SELECT 1
+    UNION ALL
+    SELECT n + 1 FROM counter WHERE n < 4
+)
+INSERT INTO blocklist (id, name, purpose, purpose_assigned_at, first_seen_at, last_seen_at)
+SELECT
+    n,
+    printf('example-blocklist-%d', n),
+    CASE n WHEN 1 THEN 'advertising' WHEN 2 THEN 'threat' WHEN 3 THEN 'tracking' END,
+    CASE WHEN n <= 3 THEN :now - 86400 END,
+    :now - 2592000,
+    :now
+FROM counter;
+
+-- Blocked lookups, which the pass-only rows above do not exercise.
+--
+-- Four fifths name the list that refused them and one fifth does not: the
+-- endpoint does not attribute every block, and "blocked, list not recorded" is
+-- a modelled state rather than a silent merge into a bucket. Every one of the
+-- four lists is used, the unclassified one included, so a query grouping by
+-- purpose has an unassigned group to return.
+--
+-- These rows carry no attribution, deliberately: a blocked lookup produces no
+-- flow, so there is nothing to attribute and nothing to correlate.
+WITH RECURSIVE counter (n) AS (
+    SELECT 1
+    UNION ALL
+    SELECT n + 1 FROM counter WHERE n < 400
+)
+INSERT INTO dns_resolution (id, lookup_uuid, client_address, client_id, domain,
+                            resolver, action, answer_source, rcode, dnssec_status,
+                            blocklist_id, looked_up_at, ingested_at)
+SELECT
+    1000000000 + n,
+    printf('blocked-lookup-uuid-%d', n),
+    c.last_address,
+    c.id,
+    printf('blocked-name-%d.example-zone-%d.invalid', n % 211, n % 7),
+    'unbound',
+    CASE WHEN n % 8 = 0 THEN 'drop' ELSE 'block' END,
+    'local-data',
+    'NXDOMAIN',
+    CASE WHEN n % 6 = 0 THEN NULL ELSE printf('dnssec-status-%d', n % 3) END,
+    CASE WHEN n % 5 = 0 THEN NULL ELSE ((n - 1) % 4) + 1 END,
+    :now - ((n * 97) % 86400),
+    :now
+FROM counter
+JOIN client AS c ON c.id = ((n - 1) % :clients) + 1;
+
+-- ---------------------------------------------------------------------------
 -- Geo / ASN cache, one row per synthesised external address. Roughly one in
 -- thirty-seven is a modelled cache miss rather than an absent row, so the Map
--- and Device screens can show that the enrichment did not answer instead of
+-- and Client screens can show that the enrichment did not answer instead of
 -- silently dropping the volume.
 -- ---------------------------------------------------------------------------
 WITH RECURSIVE counter (j) AS (
@@ -414,7 +536,7 @@ generated AS (
         -- so the recent window is busy enough to exercise the Alerts screen
         -- and a finite retention horizon still has something to purge.
         :now - (m * 601) - (max(m - 250, 0) * 40000) AS occurred_at,
-        ((m - 1) % :devices) + 1                     AS src_device_id,
+        ((m - 1) % :clients) + 1                     AS src_client_id,
         -- Three rotated files whatever :alerts is, so the ingestion cursor
         -- always has a watermark per file to record.
         1 + (((m - 1) * 3) / :alerts)                AS file_number,
@@ -424,7 +546,7 @@ generated AS (
 INSERT INTO security_event (id, provider_id, provider_event_key, occurred_at, ingested_at,
                             rule_identity, signature, event_action, normalised_severity,
                             src_address, src_port, dst_address, dst_port, protocol,
-                            in_interface_device, src_device_id, src_segment_id, flow_ref)
+                            in_interface_device, src_client_id, src_interface_id, flow_ref)
 SELECT
     m,
     (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1),
@@ -438,8 +560,8 @@ SELECT
     CASE WHEN m % 4 = 0 THEN 'blocked' ELSE 'allowed' END,
     NULL,
     printf('%d.%d.%d.%d',
-           (src_device_id / 16777216) % 256, (src_device_id / 65536) % 256,
-           (src_device_id / 256) % 256, src_device_id % 256),
+           (src_client_id / 16777216) % 256, (src_client_id / 65536) % 256,
+           (src_client_id / 256) % 256, src_client_id % 256),
     1024 + ((m * 19) % 64000),
     printf('%d.%d.%d.%d',
            ((1000000 + (m % 4000)) / 16777216) % 256,
@@ -448,9 +570,9 @@ SELECT
            (1000000 + (m % 4000)) % 256),
     1 + ((m * 7) % 65000),
     CASE WHEN m % 2 = 0 THEN 'tcp' ELSE 'udp' END,
-    printf('device-%d', ((src_device_id - 1) % :segments) + 1),
-    src_device_id,
-    ((src_device_id - 1) % :segments) + 1,
+    printf('device-%d', ((src_client_id - 1) % :interfaces) + 1),
+    src_client_id,
+    ((src_client_id - 1) % :interfaces) + 1,
     NULL
 FROM generated;
 
@@ -529,10 +651,10 @@ pairs AS (
         p,
         (((:now / 86400) - (p % 120)) * 86400) AS day_start_at,
         printf('%d.%d.%d.%d',
-               ((((p - 1) % :devices) + 1) / 16777216) % 256,
-               ((((p - 1) % :devices) + 1) / 65536) % 256,
-               ((((p - 1) % :devices) + 1) / 256) % 256,
-               (((p - 1) % :devices) + 1) % 256) AS local_address,
+               ((((p - 1) % :clients) + 1) / 16777216) % 256,
+               ((((p - 1) % :clients) + 1) / 65536) % 256,
+               ((((p - 1) % :clients) + 1) / 256) % 256,
+               (((p - 1) % :clients) + 1) % 256) AS local_address,
         printf('%d.%d.%d.%d',
                ((1000000 + p) / 16777216) % 256, ((1000000 + p) / 65536) % 256,
                ((1000000 + p) / 256) % 256, (1000000 + p) % 256) AS peer_address
@@ -558,7 +680,7 @@ SELECT
     1000.0 + p,
     10.0 + (p % 50),
     observed_direction,
-    printf('device-%d', ((p - 1) % :segments) + 1),
+    printf('device-%d', ((p - 1) % :interfaces) + 1),
     day_start_at + 86399,
     :now
 FROM doubled
@@ -573,77 +695,157 @@ ORDER BY p, observed_direction;
 -- are kept one hour (survey, data source 3), so the 1 h and 24 h periods can
 -- only come from opnview's own history. computed_at is the freshness stamp.
 -- ---------------------------------------------------------------------------
-INSERT INTO volume_aggregate_1h (period_start_at, period_end_at, src_segment_id,
-                                 dst_segment_id, peer_address, traffic_scope,
+INSERT INTO volume_aggregate_1h (period_start_at, period_end_at, src_interface_id,
+                                 dst_interface_id, peer_address, traffic_scope,
                                  bytes, allowed_connections, blocked_connections, computed_at)
 SELECT
     (observed_at / 3600) * 3600,
     (observed_at / 3600) * 3600 + 3600,
-    src_segment_id,
-    dst_segment_id,
-    CASE WHEN dst_segment_id IS NULL THEN dst_address END,
+    src_interface_id,
+    dst_interface_id,
+    CASE WHEN dst_interface_id IS NULL THEN dst_address END,
     traffic_scope,
     sum(packet_bytes),
     sum(CASE WHEN action <> 'block' THEN 1 ELSE 0 END),
     sum(CASE WHEN action = 'block' THEN 1 ELSE 0 END),
     :now
 FROM flow
-WHERE src_segment_id IS NOT NULL
+WHERE src_interface_id IS NOT NULL
 GROUP BY 1, 2, 3, 4, 5, 6;
 
-INSERT INTO volume_aggregate_24h (period_start_at, period_end_at, src_segment_id,
-                                  dst_segment_id, peer_address, traffic_scope,
+INSERT INTO volume_aggregate_24h (period_start_at, period_end_at, src_interface_id,
+                                  dst_interface_id, peer_address, traffic_scope,
                                   bytes, allowed_connections, blocked_connections, computed_at)
 SELECT
     (observed_at / 86400) * 86400,
     (observed_at / 86400) * 86400 + 86400,
-    src_segment_id,
-    dst_segment_id,
-    CASE WHEN dst_segment_id IS NULL THEN dst_address END,
+    src_interface_id,
+    dst_interface_id,
+    CASE WHEN dst_interface_id IS NULL THEN dst_address END,
     traffic_scope,
     sum(packet_bytes),
     sum(CASE WHEN action <> 'block' THEN 1 ELSE 0 END),
     sum(CASE WHEN action = 'block' THEN 1 ELSE 0 END),
     :now
 FROM flow
-WHERE src_segment_id IS NOT NULL
+WHERE src_interface_id IS NOT NULL
 GROUP BY 1, 2, 3, 4, 5, 6;
 
-INSERT INTO volume_aggregate_7d (period_start_at, period_end_at, src_segment_id,
-                                 dst_segment_id, peer_address, traffic_scope,
+INSERT INTO volume_aggregate_7d (period_start_at, period_end_at, src_interface_id,
+                                 dst_interface_id, peer_address, traffic_scope,
                                  bytes, allowed_connections, blocked_connections, computed_at)
 SELECT
     (observed_at / 604800) * 604800,
     (observed_at / 604800) * 604800 + 604800,
-    src_segment_id,
-    dst_segment_id,
-    CASE WHEN dst_segment_id IS NULL THEN dst_address END,
+    src_interface_id,
+    dst_interface_id,
+    CASE WHEN dst_interface_id IS NULL THEN dst_address END,
     traffic_scope,
     sum(packet_bytes),
     sum(CASE WHEN action <> 'block' THEN 1 ELSE 0 END),
     sum(CASE WHEN action = 'block' THEN 1 ELSE 0 END),
     :now
 FROM flow
-WHERE src_segment_id IS NOT NULL
+WHERE src_interface_id IS NOT NULL
 GROUP BY 1, 2, 3, 4, 5, 6;
 
-INSERT INTO volume_aggregate_30d (period_start_at, period_end_at, src_segment_id,
-                                  dst_segment_id, peer_address, traffic_scope,
+INSERT INTO volume_aggregate_30d (period_start_at, period_end_at, src_interface_id,
+                                  dst_interface_id, peer_address, traffic_scope,
                                   bytes, allowed_connections, blocked_connections, computed_at)
 SELECT
     (observed_at / 2592000) * 2592000,
     (observed_at / 2592000) * 2592000 + 2592000,
-    src_segment_id,
-    dst_segment_id,
-    CASE WHEN dst_segment_id IS NULL THEN dst_address END,
+    src_interface_id,
+    dst_interface_id,
+    CASE WHEN dst_interface_id IS NULL THEN dst_address END,
     traffic_scope,
     sum(packet_bytes),
     sum(CASE WHEN action <> 'block' THEN 1 ELSE 0 END),
     sum(CASE WHEN action = 'block' THEN 1 ELSE 0 END),
     :now
 FROM flow
-WHERE src_segment_id IS NOT NULL
+WHERE src_interface_id IS NOT NULL
 GROUP BY 1, 2, 3, 4, 5, 6;
+
+-- ---------------------------------------------------------------------------
+-- The four per-owner aggregates.
+--
+-- Computed from opnview's own flows joined to client.owner_id, which is the
+-- only thing that carries a person: nothing here infers an owner, and the join
+-- is from flow so that a flow from an unowned client lands in the NULL slot
+-- rather than being dropped. That NULL slot is the unassigned bucket, and it
+-- is the majority of the network by design.
+--
+-- client_count is the distinct clients that contributed to that slot alone. It
+-- is not summable across slots and no query below sums it.
+-- ---------------------------------------------------------------------------
+INSERT INTO owner_volume_aggregate_1h (period_start_at, period_end_at, owner_id,
+                                       traffic_scope, bytes, allowed_connections,
+                                       blocked_connections, client_count, computed_at)
+SELECT
+    (f.observed_at / 3600) * 3600,
+    (f.observed_at / 3600) * 3600 + 3600,
+    c.owner_id,
+    f.traffic_scope,
+    sum(f.packet_bytes),
+    sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END),
+    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END),
+    count(DISTINCT f.src_client_id),
+    :now
+FROM flow AS f
+JOIN client AS c ON c.id = f.src_client_id
+GROUP BY 1, 2, 3, 4;
+
+INSERT INTO owner_volume_aggregate_24h (period_start_at, period_end_at, owner_id,
+                                        traffic_scope, bytes, allowed_connections,
+                                        blocked_connections, client_count, computed_at)
+SELECT
+    (f.observed_at / 86400) * 86400,
+    (f.observed_at / 86400) * 86400 + 86400,
+    c.owner_id,
+    f.traffic_scope,
+    sum(f.packet_bytes),
+    sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END),
+    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END),
+    count(DISTINCT f.src_client_id),
+    :now
+FROM flow AS f
+JOIN client AS c ON c.id = f.src_client_id
+GROUP BY 1, 2, 3, 4;
+
+INSERT INTO owner_volume_aggregate_7d (period_start_at, period_end_at, owner_id,
+                                       traffic_scope, bytes, allowed_connections,
+                                       blocked_connections, client_count, computed_at)
+SELECT
+    (f.observed_at / 604800) * 604800,
+    (f.observed_at / 604800) * 604800 + 604800,
+    c.owner_id,
+    f.traffic_scope,
+    sum(f.packet_bytes),
+    sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END),
+    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END),
+    count(DISTINCT f.src_client_id),
+    :now
+FROM flow AS f
+JOIN client AS c ON c.id = f.src_client_id
+GROUP BY 1, 2, 3, 4;
+
+INSERT INTO owner_volume_aggregate_30d (period_start_at, period_end_at, owner_id,
+                                        traffic_scope, bytes, allowed_connections,
+                                        blocked_connections, client_count, computed_at)
+SELECT
+    (f.observed_at / 2592000) * 2592000,
+    (f.observed_at / 2592000) * 2592000 + 2592000,
+    c.owner_id,
+    f.traffic_scope,
+    sum(f.packet_bytes),
+    sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END),
+    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END),
+    count(DISTINCT f.src_client_id),
+    :now
+FROM flow AS f
+JOIN client AS c ON c.id = f.src_client_id
+GROUP BY 1, 2, 3, 4;
 
 -- ---------------------------------------------------------------------------
 -- Provider availability. One row per registry row already exists, created by

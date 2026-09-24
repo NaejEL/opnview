@@ -23,7 +23,7 @@ maintainer's industrial palette by default with five named options; and the
 theme following the operating system on first launch. Nothing below reopens or
 contradicts one.
 
-**No interface name, VLAN name, segment name, CIDR or address of any real
+**No interface name, VLAN name, interface name, CIDR or address of any real
 network appears in this document.** The example values below come from the
 documentation ranges and from obviously invented labels, and are marked as
 examples. Every such value in a real dashboard file is a value the user's own
@@ -61,7 +61,7 @@ placed widgets. The whole document is one object with the following fields.
 | Field | Required | Type | Meaning |
 |---|---|---|---|
 | `id` | **yes** | string | Unique within its canvas, same slug shape as a canvas id. It is what a saved comment, a link or a deep-link URL points at. |
-| `type` | **yes** | string | The catalogue identifier of the widget — `segment_volume_ranking`, `destination_world_map`, `unified_blocked_feed` and so on, one per `###` entry in `docs/widget-catalogue.md`. An unknown `type` is an unresolved reference, not a parse error; see *Unresolved references*. |
+| `type` | **yes** | string | The catalogue identifier of the widget — `interface_volume_ranking`, `passed_traffic_world_map`, `unified_blocked_feed` and so on. Each `###` entry in `docs/widget-catalogue.md` declares exactly one, in its **Type** field; that document is the vocabulary and this one does not duplicate it. An unknown `type` is an unresolved reference, not a parse error; see *Unresolved references*. |
 | `title` | no | string | Overrides the catalogue's default heading for this instance. |
 | `placement` | **yes** | object | Where the widget sits. See below. |
 | `parameters` | no | object | The widget's settings. Keys are defined per `type` by the catalogue's **Parameters** field. Absent means "every parameter at its catalogue default", which is a valid and common case. |
@@ -110,7 +110,7 @@ accepted and what they mean; this document defines only the value shapes.
   it belongs to, how it renders and how it aggregates — and the order matters,
   because it is the draw order and the legend order. Each entry is itself a
   parameter object obeying the rules above, so a series may carry a reference
-  object of its own (a segment, a device, an interface) and that reference can
+  object of its own (an interface, a client, a rule) and that reference can
   fail to resolve independently of the rest of the chart. **This is the format's
   hardest case and it is in the worked example deliberately**: if a list of
   series cannot be written here, the format is wrong.
@@ -119,7 +119,7 @@ Nesting stops there. A parameter value is a scalar, an array of scalars, a
 reference object, or an array of objects each of which is a flat map of scalars
 and reference objects. **No deeper nesting is defined**, so a reader never has
 to recurse arbitrarily and a text editor's highlighting of a failed reference
-can always name a concrete path such as `series[1].segment`.
+can always name a concrete path such as `series[1].interface`.
 
 A key the local build does not recognise is **kept, not dropped**: it is carried
 through an import and written back on export, so a dashboard authored against a
@@ -180,27 +180,66 @@ Every reference is an object with the same four keys.
 
 | Key | Required | Meaning |
 |---|---|---|
-| `kind` | **yes** | What sort of thing is being referenced: `segment`, `device`, `rule`, `provider`, `country`, `operator`, `site`. Closed vocabulary; an unknown `kind` is an unresolved reference. |
+| `kind` | **yes** | What sort of thing is being referenced: `interface`, `client`, `rule`, `owner`, `provider`, `country`, `operator`, `site`. Closed vocabulary; an unknown `kind` is an unresolved reference. |
 | `by` | **yes** | Which natural key the `value` is expressed in. The accepted keys per kind are tabulated below. |
 | `value` | **yes** | The key's value, as the importing installation would have to match it. |
-| `label` | no | A human label from the **exporting** installation, carried purely so the repair UI can say *"this file was built against a segment labelled X"*. **It is never matched on.** A segment's nature is never inferred from what it is called, here or anywhere else in `opnview`. |
+| `label` | no | A human label from the **exporting** installation, carried purely so the repair UI can say *"this file was built against an interface labelled X"*. **It is never matched on.** An interface's nature is never inferred from what it is called, here or anywhere else in `opnview`. |
 
 | `kind` | Accepted `by` | Resolves against | Portable across installations? |
 |---|---|---|---|
-| `segment` | `interface_identifier`, `device_name`, `user_label` | `segment.interface_identifier`, `segment.device_name`, `segment.user_label` | **No.** These are per-installation values discovered at runtime. |
-| `device` | `mac`, `dhcp_client_id`, `hostname` | `device.identity_kind` + `device.identity_key`, `device.hostname` | **No**, and a `mac` reference additionally fails for a device whose MAC is randomised — such a device has no stable identity by design. |
+| `interface` | `identifier`, `device`, `user_label` | `interface.identifier`, `interface.device`, `interface.user_label` | **No.** These are per-installation values discovered at runtime. |
+| `client` | `mac`, `dhcp_client_id`, `hostname` | `client.identity_kind` + `client.identity_key`, `client.hostname` | **No**, and a `mac` reference additionally fails for a client whose MAC is randomised — such a client has no stable identity by design. |
 | `rule` | `pf_label`, `description` | `rule.pf_label`, `rule.description` | **No.** A pf label is local, and a rule can be deleted after it logged. |
+| `owner` | `display_name` | `owner.display_name` | **No, and worse than the three above.** See *Why `owner` travels worst*. |
 | `provider` | `kind_and_key` | `provider.kind` + `provider.provider_key` | **Yes.** `dns_lookup/unbound` means the same thing on every installation; this is the one reference kind that is genuinely universal, because it names an implementation rather than an instance. |
 | `country` | `iso_3166_1_alpha_2` | `geo_asn.country_code` | **Yes.** |
 | `operator` | `asn` | `geo_asn.asn` | **Yes.** An AS number is globally assigned. |
 | `site` | `domain` | `domain_attribution.site_name` | **Yes** as a string, though whether any traffic locally matches it is another matter. |
 
-Three of the seven kinds are globally meaningful and four are not. That
+Three of the eight kinds are globally meaningful and five are not. That
 asymmetry is the honest shape of the problem and the format does not paper over
 it. A dashboard built entirely from portable references — *"blocked lookups by
 list, everywhere"*, *"destinations by operator, everywhere"* — travels
-perfectly. A dashboard scoped to one installation's segments and devices does
-not, and cannot, and says so on arrival.
+perfectly. A dashboard scoped to one installation's interfaces, clients and
+people does not, and cannot, and says so on arrival.
+
+#### Why `owner` travels worst, and why it exists anyway
+
+The eighth kind is the one that makes *"Bob's card"* writable in a file. Without
+it a per-person widget can only render every person at once, because there is no
+value shape in which "this one person" can be said — and a dashboard the user
+cannot scope to one person is a dashboard that cannot answer the question the
+`owner` entity was added for.
+
+**The cost is real and is stated rather than softened.** The other seven kinds
+reference something the firewall knows about: an interface it terminates, a
+client it leased an address to, a rule it is running, an implementation, a
+country, an AS number, a domain. **An owner is none of those.** It is typed into
+`opnview` by one installation's user and exists nowhere else — the firewall has
+no notion of a person, and `docs/data-model.md` records `owner` as the one entity
+fed by no endpoint. So an `owner` reference does not merely fail to resolve on
+another installation, as an `interface` reference does; it has **no chance** of
+resolving, because the thing it names was invented locally and by hand. Even the
+`by` key is weak: `display_name` is the only natural key an owner has, and two
+installations agreeing on the string "Bob" would be a coincidence rather than a
+match — and a coincidence that resolved would be worse than a failure, because it
+would silently attribute one household's traffic to another household's person.
+
+**The answer is the mechanism the format already defines, not a refusal of the
+kind.** An unresolved reference keeps its widget, renders empty, names what is
+missing and offers repair. That path was built for exactly this: a reference
+whose target is local. An `owner` reference arriving on another installation
+takes it, and says *"This widget is scoped to a person this installation does not
+have: owner 'Bob', as named where the dashboard was built. Choose a local person
+to repair it."* The user repairs it by pointing at somebody who does exist, or
+removes the scope and gets every person. Nothing is guessed, nothing is silently
+mis-targeted, and the failure is visible on arrival.
+
+**It is never matched on loosely.** Resolution is an exact match on
+`owner.display_name` and nothing else — no case folding beyond what the column
+already enforces, no fuzzy match, no "did you mean". The rule the schema applies
+to ownership applies here too: a name is not evidence, and a near-match that
+resolved would be an inference nobody asked for.
 
 ### What actually travels
 
@@ -209,7 +248,8 @@ parameters, placement, widget types that both builds know, and every scalar
 parameter — periods, scopes, measures, limits, sort orders, severities, the
 provider/country/operator/site references above.
 
-**Does not travel, and is reported:** segment, device and rule references; a
+**Does not travel, and is reported:** interface, client, rule and owner
+references; a
 widget `type` the importing build does not implement; a parameter key it does
 not recognise; and a parameter *value* outside the vocabulary it knows, such as
 a period this build does not offer.
@@ -256,7 +296,7 @@ the "real" one.
 
 2. **The no-code selector.** The same widget in a form, where every field that
    holds a reference is a dropdown **populated from what this installation
-   actually has**: the segments the firewall discovered, the devices seen in
+   actually has**: the interfaces the firewall discovered, the clients seen in
    leases and flows, the rules in the running ruleset, the providers in the
    registry. The dropdown shows the unresolved value as the current selection,
    marked as not found, alongside the choices that do exist. Choosing one
@@ -275,7 +315,7 @@ discarded the next time the file changes.
 ### What repair does not do
 
 - **It does not rewrite references automatically.** No fuzzy matching on labels,
-  no "closest segment", no heuristic remap. A wrong automatic match is worse
+  no "closest interface", no heuristic remap. A wrong automatic match is worse
   than a visible failure, which is the whole lesson of Home Assistant's opaque
   ids.
 - **It does not discard the original value.** Until the user repairs it, the
@@ -358,7 +398,7 @@ field as well as the index. A partial import of a structurally broken file is
 never performed, because the user cannot then tell what they have.
 
 **Referential validity is fail-open.** Every unresolved reference — an unknown
-widget `type`, a `segment`/`device`/`rule` reference matching nothing locally, an
+widget `type`, an `interface`/`client`/`rule` reference matching nothing locally, an
 unrecognised parameter key, a parameter value outside the known vocabulary — is
 **collected and reported, and the import proceeds.** The result is a dashboard
 the user can see, with the broken parts visibly broken and repairable through
@@ -379,6 +419,15 @@ The fourth widget is there to exercise the hardest value shape the format
 supports: an ordered list of series objects, one of which carries a reference of
 its own.
 
+**Every `type` and every parameter key below is one the catalogue declares.**
+That is a constraint on this example rather than a remark about it: it is the
+first thing a reader copies, so a key invented here would propagate into files
+`opnview` then has to report as unknown. In particular the map widget is
+`passed_traffic_world_map`, one of the **pair** the catalogue defines — passed
+traffic and blocked traffic are two widgets by the maintainer's decision, not
+one map with two layers — so there is no `series` parameter selecting between
+them. A canvas wanting both places both, at whatever sizes it likes.
+
 The values in this example are invented for illustration. `main-floor` is a
 canvas slug, not a network; `opt3` is an example OPNsense interface identifier
 and `Workshop` an example user label, both of which a real file would carry
@@ -390,20 +439,20 @@ anywhere in `opnview`'s code, templates or defaults.
 ```json
 {
   "format_version": 1,
-  "title": "Segment review",
-  "description": "Weekly look at what leaves each segment and what was stopped.",
+  "title": "Interface review",
+  "description": "Weekly look at what leaves each interface and what was stopped.",
   "generated_by": "opnview 0.1",
   "generated_at": 1758499200,
   "canvases": [
     {
       "id": "main-floor",
       "title": "Main floor",
-      "description": "Volume, destinations and blocks for one segment.",
+      "description": "Volume, destinations and blocks for one interface.",
       "grid": { "columns": 12, "row_height": 40 },
       "widgets": [
         {
-          "id": "volume-by-segment",
-          "type": "segment_volume_ranking",
+          "id": "volume-by-interface",
+          "type": "interface_volume_ranking",
           "title": "Where the traffic is",
           "placement": { "x": 0, "y": 0, "w": 12, "h": 6 },
           "parameters": {
@@ -416,17 +465,17 @@ anywhere in `opnview`'s code, templates or defaults.
         },
         {
           "id": "world-map",
-          "type": "destination_world_map",
+          "type": "passed_traffic_world_map",
           "placement": { "x": 0, "y": 6, "w": 8, "h": 9 },
           "parameters": {
             "period": "7d",
-            "series": ["allowed", "blocked"],
-            "granularity": "country",
-            "show_unresolved": true,
-            "segments": [
+            "scope": "north_south",
+            "size_by": "bytes",
+            "show_unplaced": true,
+            "interfaces": [
               {
-                "kind": "segment",
-                "by": "interface_identifier",
+                "kind": "interface",
+                "by": "identifier",
                 "value": "opt3",
                 "label": "Workshop"
               }
@@ -483,9 +532,9 @@ anywhere in `opnview`'s code, templates or defaults.
                 "axis": "right",
                 "render": "area",
                 "aggregation": "mean",
-                "segment": {
-                  "kind": "segment",
-                  "by": "interface_identifier",
+                "interface": {
+                  "kind": "interface",
+                  "by": "identifier",
                   "value": "opt3",
                   "label": "Workshop"
                 }
@@ -507,20 +556,20 @@ anywhere in `opnview`'s code, templates or defaults.
 
 ```yaml
 format_version: 1
-title: Segment review
-description: Weekly look at what leaves each segment and what was stopped.
+title: Interface review
+description: Weekly look at what leaves each interface and what was stopped.
 generated_by: opnview 0.1
 generated_at: 1758499200
 canvases:
   - id: main-floor
     title: Main floor
-    description: Volume, destinations and blocks for one segment.
+    description: Volume, destinations and blocks for one interface.
     grid:
       columns: 12
       row_height: 40
     widgets:
-      - id: volume-by-segment
-        type: segment_volume_ranking
+      - id: volume-by-interface
+        type: interface_volume_ranking
         title: Where the traffic is
         placement: { x: 0, y: 0, w: 12, h: 6 }
         parameters:
@@ -531,16 +580,16 @@ canvases:
           include_unlabelled: true
 
       - id: world-map
-        type: destination_world_map
+        type: passed_traffic_world_map
         placement: { x: 0, y: 6, w: 8, h: 9 }
         parameters:
           period: 7d
-          series: [allowed, blocked]
-          granularity: country
-          show_unresolved: true
-          segments:
-            - kind: segment
-              by: interface_identifier
+          scope: north_south
+          size_by: bytes
+          show_unplaced: true
+          interfaces:
+            - kind: interface
+              by: identifier
               value: opt3
               label: Workshop
 
@@ -585,9 +634,9 @@ canvases:
               axis: right
               render: area
               aggregation: mean
-              segment:
-                kind: segment
-                by: interface_identifier
+              interface:
+                kind: interface
+                by: identifier
                 value: opt3
                 label: Workshop
           axes:
@@ -606,21 +655,21 @@ cannot be coerced rather than guessing.
 
 - **A portable widget and a non-portable one on the same canvas.**
   `what-was-blocked` carries only scalars and resolves anywhere.
-  `world-map` carries a `segment` reference and will not resolve on an
+  `world-map` carries an `interface` reference and will not resolve on an
   installation that has no interface identified as `opt3` — on arrival it keeps
-  its place, renders empty, and says *"This widget is scoped to a segment this
+  its place, renders empty, and says *"This widget is scoped to an interface this
   installation does not have: interface identifier `opt3`, labelled 'Workshop'
-  where the dashboard was built. Choose a local segment to repair it."*
+  where the dashboard was built. Choose a local interface to repair it."*
 - **Placement as an explicit contract.** Four widgets in a 12-column grid: one
   full-width band, an 8/4 split beneath it, then another full-width band.
 - **Absent optional fields.** `world-map` has no `title` and takes the
-  catalogue's; `what-was-blocked` has no `segments` and is therefore
+  catalogue's; `what-was-blocked` has no `interfaces` and is therefore
   network-wide.
 - **A list of series, with a reference inside one of them.** `load-against-
   throughput` carries three series across two axes, each an object with its own
-  label, render and aggregation, and the third scoped to a segment. That last
+  label, render and aggregation, and the third scoped to an interface. That last
   point matters for repair: **a reference nested inside a series can fail on its
-  own**, so the editor highlights `series[2].segment` and the chart renders its
+  own**, so the editor highlights `series[2].interface` and the chart renders its
   other two series normally with the third drawn as a labelled gap. A widget is
   not all-or-nothing.
 - **Two different periods on one canvas.** The first three widgets show seven

@@ -1,24 +1,24 @@
 # opnview
 
-Inter-segment visibility for a VLAN-segmented network behind an OPNsense
+Inter-interface visibility for a VLAN-segmented network behind an OPNsense
 firewall.
 
 OPNsense already collects the raw material — filter logs, NetFlow, DHCP
 leases, DNS lookups, the Suricata event log — but never cross-references it.
 `opnview` does, and answers five questions:
 
-- which segment talks to which segment, and for how much traffic;
+- which interface talks to which interface, and for how much traffic;
 - what is blocked, by which rule, and who tried;
-- what each device consumes, with site names instead of bare IPs;
+- what each client consumes, with site names instead of bare IPs;
 - where the data goes, to which countries and which operators;
 - which machine is behaving abnormally.
 
-The widget everything else hangs off is the **segment × segment matrix**:
+The widget everything else hangs off is the **interface × interface matrix**:
 volume exchanged, allowed connections, blocked connections, matching rules. It
-makes it obvious when a segment that is supposed to be isolated has started
+makes it obvious when an interface that is supposed to be isolated has started
 talking to another one.
 
-The interface is not a fixed set of screens. You create **named canvases** and
+The user interface is not a fixed set of screens. You create **named canvases** and
 fill each with the widgets you want, moving between them with tabs rather than
 menus; a canvas can be exported to a file and imported into another
 installation.
@@ -86,7 +86,7 @@ Turning that on is a manual step — the procedure will be documented here, and
 An IDS on internal interfaces, behind a router that is itself behind CGNAT,
 is not there to repel attacks coming from the Internet: almost none arrive.
 It is there to **detect a compromised machine inside your own network** — an
-IoT device reaching a command-and-control server, an exposed container
+IoT machine reaching a command-and-control server, an exposed container
 scanning the network, an exfiltration, DNS tunnelling.
 
 Read the alerts with that in mind, or you will be looking for the wrong thing.
@@ -104,23 +104,23 @@ No telemetry, no version check, no resource loaded from a CDN.
 ## Limitations, stated up front
 
 **The application only sees what crosses the router.** Two machines on the
-same segment talking to each other are invisible: their traffic is switched
+same interface talking to each other are invisible: their traffic is switched
 and never reaches the firewall. A hypervisor hosting its virtual machines
-inside its own segment likewise hides all of their internal traffic. This is
+behind its own interface likewise hides all of their internal traffic. This is
 not a defect, it is a property of the observation point.
 
 **Domain attribution is a heuristic, always.** Correlating a DNS lookup with
 the flow that follows it fails on client-side DNS caching, on shared CDNs where
 a thousand domains sit behind one IP, and on DNS-over-TLS or DNS-over-HTTPS,
 which bypasses the resolver entirely and leaves no lookup to correlate. An
-attribution rate is displayed per device, and no domain is ever invented when
+attribution rate is displayed per client, and no domain is ever invented when
 the correlation fails — you get the IP, the country and the operator instead.
 There is no observed-name path to fall back on: see
 [Site names](#site-names-are-inferred-not-observed).
 
 **Alert coverage is per interface.** Suricata may be absent, installed but
 stopped, or running on only some interfaces. Alerts exist for the interfaces it
-monitors and for no others; the UI states per segment whether it is covered,
+monitors and for no others; the UI states per interface whether it is covered,
 rather than showing an empty panel.
 
 **Volumes per address pair are daily on the firewall.** OPNsense keeps
@@ -130,9 +130,9 @@ deep as the time it has been running.
 
 ## Data
 
-The tool reconstructs per-device browsing history: that is its function, not a
+The tool reconstructs per-client browsing history: that is its function, not a
 side effect. It is complete by default. Configurable retention and aggregate
-mode — volumes, segments, countries, operators, without domain names — are
+mode — volumes, interfaces, countries, operators, without domain names — are
 options, not imposed guardrails.
 
 In a workplace setting, informing the people concerned is a legal obligation

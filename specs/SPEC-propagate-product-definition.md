@@ -2,6 +2,15 @@
 
 Status: APPROVED
 
+> **Amended after delivery, 2026-09-23.** This spec framed `factory-ergonomist`
+> as an agent that *verifies conformance to the written design references*, and
+> its criteria describe the Proposals section as a secondary requirement. The
+> maintainer has since corrected the role: the ergonomist **steers product
+> decisions toward something usable, understandable and simple**, conformance is
+> the floor beneath that judgement, and proposals are its main output. The agent
+> definition in `.claude/agents/factory-ergonomist.md` is authoritative. Do not
+> regenerate the agents from this spec without carrying that correction over.
+
 ## Context
 
 The interface research cycle delivered `docs/ui-references.md`,

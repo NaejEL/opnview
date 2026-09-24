@@ -14,11 +14,15 @@
 -- resolver lookup takes its attribution with it. After the purge,
 -- PRAGMA foreign_key_check returns no rows.
 --
--- What survives: segment, rule, interface_map, provider, provider_rule_info,
--- source_availability, eve_ingest_cursor and setting are bounded reference and
--- state tables and are never purged. The registry and the rule-info cache in
+-- What survives: interface, owner, blocklist, rule, interface_map, provider,
+-- provider_rule_info, source_availability, eve_ingest_cursor and setting are
+-- bounded reference and state tables and are never purged. owner and blocklist
+-- in particular carry user input rather than observations: purging a client
+-- removes the machine, never the person it was attributed to, and purging a
+-- lookup removes the lookup, never the purpose somebody assigned to the list
+-- that refused it. The registry and the rule-info cache in
 -- particular stay bounded: they hold one row per implementation and one per
--- rule identity seen at least once, not one per observation. The four
+-- rule identity seen at least once, not one per observation. The eight
 -- aggregates are purged by period_end_at, so every period whose window still
 -- lies inside the horizon stays queryable; only slots entirely older than the
 -- horizon go.
@@ -73,21 +77,22 @@ WHERE day_start_at < (
     WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
 );
 
--- A device is removed only once every observation that named it has gone:
+-- A client is removed only once every observation that named it has gone. Its
+-- owner, if it had one, is untouched: the person outlives the machine.
 -- purging an identity that a surviving flow still points at would leave that
 -- flow unable to name a machine. Every statement above runs first, so by the
 -- time this one runs the guards below see the purged state.
-DELETE FROM device
+DELETE FROM client
 WHERE last_seen_at < (
     SELECT :now - CAST(value AS INTEGER)
     FROM setting
     WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
 )
 AND NOT EXISTS (SELECT 1 FROM flow f
-                WHERE f.src_device_id = device.id OR f.dst_device_id = device.id)
-AND NOT EXISTS (SELECT 1 FROM security_event e WHERE e.src_device_id = device.id)
-AND NOT EXISTS (SELECT 1 FROM dhcp_lease l WHERE l.device_id = device.id)
-AND NOT EXISTS (SELECT 1 FROM dns_resolution r WHERE r.device_id = device.id);
+                WHERE f.src_client_id = client.id OR f.dst_client_id = client.id)
+AND NOT EXISTS (SELECT 1 FROM security_event e WHERE e.src_client_id = client.id)
+AND NOT EXISTS (SELECT 1 FROM dhcp_lease l WHERE l.client_id = client.id)
+AND NOT EXISTS (SELECT 1 FROM dns_resolution r WHERE r.client_id = client.id);
 
 DELETE FROM geo_asn
 WHERE looked_up_at < (
@@ -118,6 +123,37 @@ WHERE period_end_at < (
 );
 
 DELETE FROM volume_aggregate_30d
+WHERE period_end_at < (
+    SELECT :now - CAST(value AS INTEGER)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+);
+
+-- The per-owner aggregates purge by period_end_at like the four above. The
+-- owner rows they point at are untouched, here as everywhere else: the person
+-- outlives both the machine and the month.
+DELETE FROM owner_volume_aggregate_1h
+WHERE period_end_at < (
+    SELECT :now - CAST(value AS INTEGER)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+);
+
+DELETE FROM owner_volume_aggregate_24h
+WHERE period_end_at < (
+    SELECT :now - CAST(value AS INTEGER)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+);
+
+DELETE FROM owner_volume_aggregate_7d
+WHERE period_end_at < (
+    SELECT :now - CAST(value AS INTEGER)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+);
+
+DELETE FROM owner_volume_aggregate_30d
 WHERE period_end_at < (
     SELECT :now - CAST(value AS INTEGER)
     FROM setting

@@ -1,6 +1,6 @@
 # Roadmap — opnview
 
-Inter-segment visibility for a VLAN-segmented network behind an OPNsense
+Inter-interface visibility for a VLAN-segmented network behind an OPNsense
 firewall. Eight steps, **explicit validation after each one**. We never move to
 the next step without agreement. If an assumption turns out to be wrong, we say
 so and amend this roadmap rather than quietly working around it.
@@ -8,7 +8,7 @@ so and amend this roadmap rather than quietly working around it.
 ## Rules that apply to every step
 
 - **Zero hardcoded configuration.** No interface name, VLAN name, addressing
-  plan or segment count in the code, the templates or the default values.
+  plan or interface count in the code, the templates or the default values.
   Everything is discovered at runtime through the API.
 - **No secrets in the repository.** The OPNsense URL, API key/secret and
   MaxMind licence key are entered in the web setup wizard, never in a file to
@@ -24,7 +24,7 @@ so and amend this roadmap rather than quietly working around it.
 - **The observation limit is displayed, not hidden**: the application only
   sees what crosses the router.
 - **Degrade, never guess.** Suricata may be absent, installed but stopped, or
-  running on only some interfaces. The UI states which segments its alerts
+  running on only some interfaces. The UI states which interfaces its alerts
   cover and which they do not.
 - **One service, installed and updated by a single command, with no external
   data store to provision. Storage engines are embedded libraries, not
@@ -42,6 +42,28 @@ so and amend this roadmap rather than quietly working around it.
   not several processes: the install, update, systemd and backup stories are
   unchanged. `README.md` and `CLAUDE.md` point at this bullet rather than
   restating it.
+- **The vocabulary is OPNsense's, and that of every product `opnview` reads. It
+  never invents a term for something those products already name.** When the
+  right term is not known it is researched — in
+  `docs/opnsense-api-survey.md`, on `docs.opnsense.org`, or in the product's own
+  documentation — or the maintainer is asked. It is never guessed and never
+  embroidered to save a lookup. Where a product genuinely has no word for
+  something `opnview` needs, that is stated explicitly, the term is chosen
+  deliberately, and the reason is recorded next to it.
+
+  **This rule exists because it was broken silently and nobody noticed for
+  three steps.** `segment` was invented in the very first commit, before any
+  research existed, and was never reconciled with what OPNsense calls the
+  thing: an **interface**. The table gave itself away — `interface_identifier`,
+  `device_name`, `discovered_description`, three columns describing an
+  interface under a name OPNsense does not use — while
+  `docs/opnsense-api-survey.md` had been carrying the real vocabulary
+  (`get_interface_names`, `descr`, `link_type`) since step 1. `device` was worse
+  still: it meant the network device on one table and a client machine on
+  another, so one word carried two meanings and neither matched OPNsense's use
+  of it. Both are fixed; the term-by-term mapping, with the source establishing
+  each, is in `docs/data-model.md` under *Vocabulary*.
+
 - **Everything is written in English** — code, docs, UI, commits. See
   `CLAUDE.md`.
 
@@ -111,7 +133,7 @@ container run says nothing about deployment.
 |3|Static HTML mockup — overview|HTML file for a representative canvas, fake data|To do|
 |4|Backend: collection and storage|Collectors + persistence + tests|To do|
 |5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|To do|
-|6|Backend: alerts and device correlation|Alert model + API + tests|To do|
+|6|Backend: alerts and client correlation|Alert model + API + tests|To do|
 |7|Full frontend|Canvases, widgets, dashboard import/export|To do|
 |8|Install, packaging, documentation|`ct/install.sh`, compose, README|To do|
 
@@ -174,24 +196,30 @@ that the rows it gets back fall inside the window it asked for.
 
 ### Step 2 — Data model and SQLite schema
 
-Entities: segment (named zone, tunnels included), device, flow, blocked event,
+Entities: interface (a VLAN, a physical link or a tunnel the firewall
+terminates), client, owner, flow, blocked event,
 DNS resolution, rule, domain attribution, alert, geo/ASN. There is no
 TLS/HTTP observation entity: no source feeds it (step 1, finding 2), and the
 schema carries nothing it cannot fill.
 
 - East-west / north-south classification carried by the model.
-- Manual segment labelling by the user, never inferred from a name.
+- Manual interface labelling by the user, never inferred from a name.
+- **Ownership likewise: assigned by the user, never inferred.** A person is an
+  `owner` row and a machine points at one. The firewall does not know who owns
+  what, so nothing derives an owner from a hostname, a MAC prefix or a vendor
+  hint. A client with no owner assigned is the normal case and stays visible in
+  any per-person view, in an explicit unassigned bucket.
 - Randomised MAC (second hex digit even) marked as an unstable identity, not
-  merged into phantom devices.
+  merged into phantom clients.
 - **Every site-name attribution is inferred**, from resolver-lookup
   correlation — there is no second method to tell it apart from (step 1,
   finding 2). No provenance flag: a field with one possible value states
   nothing. What the model does carry is the lookup the name came from and the
   delay between that lookup and the flow, so an attribution can be judged.
 - Alerts: signature, severity, source, destination, timestamp, joined to the
-  device and segment models.
+  client and interface models.
 - Configurable retention, from a few hours to unlimited, with purge.
-- Aggregate mode: volumes, segments, countries, operators — without domain
+- Aggregate mode: volumes, interfaces, countries, operators — without domain
   names.
 - Pre-computed aggregates for the 1 h / 24 h / 7 d / 30 d periods. These are
   the **primary store, not a cache over Insight**: per-pair data on the
@@ -208,9 +236,16 @@ queries.
 
 **Outcome**: the migrations, `sql/seed.sql`, the seven representative queries
 in `sql/queries/screens.sql` and `docs/data-model.md`. Step 3's widget
-catalogue subsequently identified **ten gaps** between the model and the
+catalogue subsequently identified gaps between the model and the
 questions the widgets ask; they are tabulated in `docs/widget-catalogue.md`,
-and each is a future migration. The last two — G9 and G10, firewall health and
+and each is a future migration. **Two have since been closed in the migrations
+themselves**, which are edited in place because nothing is deployed: G1, the
+blocklist that refused a resolver lookup — its **name** observed from the API
+and its **purpose** assigned by the user, never inferred from the name — and
+G11, the per-person aggregates that let a per-person question outlive the
+`flow` horizon. **Eleven remain open**, two of them new: G12, that nothing in
+the model classifies a flow as an application, and G13, that no interface
+address and no address history is stored. G9 and G10 — firewall health and
 telemetry — are a whole data category the model was never designed to hold and
 the step-1 survey never looked at, and they are deliberately left to their own
 research cycle after the mockup.
@@ -244,9 +279,11 @@ widget should expose.
 **Theme.** On first launch the theme follows the operating system's preference.
 The user can override it afterwards, and the override persists. The industrial
 palette is the default; Tokyo Night, Dracula, Nord, Rosé Pine and Catppuccin
-are offered as named options at their official published values. Nord ships no
-light variant, so a light-preferring system with Nord selected falls back as
-the theme picker states.
+are offered as named options at the values published on the maintainer's own
+site, https://lequellec.xyz, reproduced in `docs/ui-references.md` — that site,
+not each palette's upstream project, is authoritative for these five names.
+Nord's upstream project publishes no light variant, but the maintainer's site
+defines one, so Nord is light-capable here and no fallback is to be built.
 
 Banned, unchanged: "cyber-defence" aesthetics, walls of dense tables, and empty
 panels with no explanation.
@@ -305,12 +342,12 @@ every step** above. Prerequisite: the containerised toolchain described under
   subsequent flows. Suricata cannot serve this (step 1, finding 2), so the
   heuristic is no longer a fallback — it is the only path. Its limits —
   client-side caching, shared CDNs, DNS-over-TLS and DNS-over-HTTPS — are
-  documented unconditionally, and an attribution rate is exposed per device.
+  documented unconditionally, and an attribution rate is exposed per client.
   Never invent a domain: fall back to IP, country and operator.
-- Device resolution through DHCP leases.
+- Client resolution through DHCP leases.
 - Geo and ASN enrichment.
 - HTTP API for the widget catalogue: **one endpoint per widget type**, taking
-  that widget's declared parameters — period, scope, segment, device and the
+  that widget's declared parameters — period, scope, interface, client and the
   rest — as documented in `docs/widget-catalogue.md`, and returning both the
   data and the source-availability state each widget must render. A canvas is
   served by issuing one request per widget. **The period is a parameter of a
@@ -323,20 +360,20 @@ every step** above. Prerequisite: the containerised toolchain described under
 **Validation**: the numbers are correct, and the heuristic's attribution rate
 is honest.
 
-### Step 6 — Backend: alerts and device correlation
+### Step 6 — Backend: alerts and client correlation
 
 - Ingest Suricata alerts: signature, source, destination, timestamp. The API
   flattens the nested alert object to the signature string, so severity and
   category are resolved separately through `get_rule_info/<sid>` and cached.
-- Join them to the device and segment models, so an alert names a machine
+- Join them to the client and interface models, so an alert names a machine
   rather than an address.
-- Aggregations for the Alerts screen: over time, by device, by segment, by
+- Aggregations for the Alerts screen: over time, by client, by interface, by
   signature.
 - Behave correctly with no Suricata at all: the feature is absent and says so,
   it does not fail.
 
 **Validation**: an alert raised on the firewall shows up attributed to the
-right device and segment.
+right client and interface.
 
 ### Step 7 — Full frontend
 
@@ -362,7 +399,7 @@ widget states which of them it reuses, adapts or replaces.
 
 Explicit in-UI statements: observation-point limit, site names inferred by
 correlation and the limits of that heuristic, the attribution rate, which
-segments Suricata's alerts cover, randomised MACs.
+interfaces Suricata's alerts cover, randomised MACs.
 
 **Validation**: full walkthrough of a representative set of canvases on real
 data.
@@ -391,13 +428,31 @@ data.
 
 Recorded so they do not resurface.
 
+Correction of 2026-09-23, applied directly by the maintainer rather than
+through a cycle, after inspection found the schema naming an OPNsense object
+with a word OPNsense does not use:
+
+- **`segment` is replaced by `interface`, everywhere.** The entity, its
+  columns, the queries, the seed, the purge, the schema checks and every
+  document. `segment` was invented before any research existed; OPNsense calls
+  the thing an interface and always did.
+- **`device` now means only the network device**, as OPNsense means it. The
+  machine on the network is a `client`, the word Kea, Dnsmasq and Unbound all
+  use for it. The DHCP option-61 identifier keeps its own name,
+  `dhcp_lease.dhcp_client_id`, so it cannot be confused with the foreign key.
+- **An `owner` entity is added**, because a per-person view needs a notion of a
+  person and the model had none. It is `opnview`'s own term, deliberately: no
+  product it reads has one.
+- Nothing was deployed, so both renames were made **in the migrations in
+  place**, exactly as the provider-neutral change was.
+
 Revision of 2026-09-23, after the interface and dashboard-format research
 (`docs/ui-references.md`, `docs/widget-catalogue.md`,
 `docs/dashboard-format.md`), applied by
 `specs/SPEC-propagate-product-definition.md`:
 
 - **The seven fixed screens are replaced by named canvases.** Step 7 listed
-  Overview, Matrix, Segment, Device, Blocked, Alerts and Map as screens
+  Overview, Matrix, Interface, Client, Blocked, Alerts and Map as screens
   reachable through a menu. The product has no fixed screens: the user composes
   named canvases from widgets and moves between them with tabs. The seven
   queries in `sql/queries/screens.sql` are untouched and stay authoritative.
@@ -444,8 +499,8 @@ Revision of 2026-09-21, after Suricata was added as a data source:
   section applies to it conditionally rather than unconditionally.
 - **Four data sources became five**, and the five-source list above replaces
   the earlier one.
-- **Six screens became seven**: the Alerts screen is new, and the Device
+- **Six screens became seven**: the Alerts screen is new, and the Client
   screen gains its alerts.
-- **Seven steps became eight**: alerts and device correlation are their own
+- **Seven steps became eight**: alerts and client correlation are their own
   backend step, between the matrix and the frontend. Step numbers shifted
   accordingly — the frontend is now step 7 and packaging step 8.

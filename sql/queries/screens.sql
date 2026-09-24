@@ -12,29 +12,30 @@
 -- Bound parameters, supplied by the caller:
 --   :window_start  inclusive lower bound of the period, UTC epoch seconds
 --   :window_end    exclusive upper bound of the period, UTC epoch seconds
---   :segment_id    the segment the Segment screen is showing
---   :device_id     the device the Device screen is showing
+--   :interface_id  the interface the Interface screen is showing
+--   :client_id     the client the Client screen is showing
 --
--- No address, CIDR, interface name, VLAN name or segment name appears below,
--- and no query assumes a segment count or an address family.
+-- No address, CIDR, interface identifier, device name, VLAN name or interface
+-- description appears below, and no query assumes an interface count or an
+-- address family.
 --
 -- Observation-point limit: every byte figure below counts only traffic that
--- crossed the firewall. Traffic between two devices inside one segment is
+-- crossed the firewall. Traffic between two clients behind one interface is
 -- invisible to all five sources, so every volume is a lower bound and the
 -- screen must say so.
 
 -- screen: Overview
--- Segments, totals for the period, and the east-west versus north-south
--- split. The classification comes from segment membership alone: a flow is
--- east-west exactly when both of its endpoints sit in a discovered segment.
+-- Every interface, totals for the period, and the east-west versus north-south
+-- split. The classification comes from interface membership alone: a flow is
+-- east-west exactly when both of its endpoints sit in a discovered interface.
 SELECT
     f.traffic_scope                                         AS traffic_scope,
     count(*)                                                AS flow_count,
     sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END)     AS blocked_count,
     sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END)    AS allowed_count,
     sum(f.packet_bytes)                                     AS observed_bytes,
-    count(DISTINCT f.src_segment_id)                        AS source_segment_count,
-    count(DISTINCT f.src_device_id)                         AS source_device_count
+    count(DISTINCT f.src_interface_id)                        AS source_interface_count,
+    count(DISTINCT f.src_client_id)                         AS source_client_count
 FROM flow AS f
 WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end
@@ -42,14 +43,14 @@ GROUP BY f.traffic_scope
 ORDER BY observed_bytes DESC;
 
 -- screen: Matrix
--- Source segment by destination segment: volume, allowed connections, blocked
--- connections and the rules that matched. A destination segment of NULL is the
+-- Source interface by destination interface: volume, allowed connections, blocked
+-- connections and the rules that matched. A destination interface of NULL is the
 -- north-south column.
 SELECT
-    f.src_segment_id                                                AS src_segment_id,
-    coalesce(ssrc.user_label, ssrc.discovered_description)          AS src_segment_label,
-    f.dst_segment_id                                                AS dst_segment_id,
-    coalesce(sdst.user_label, sdst.discovered_description)          AS dst_segment_label,
+    f.src_interface_id                                                AS src_interface_id,
+    coalesce(ssrc.user_label, ssrc.description)          AS src_interface_label,
+    f.dst_interface_id                                                AS dst_interface_id,
+    coalesce(sdst.user_label, sdst.description)          AS dst_interface_label,
     f.traffic_scope                                                 AS traffic_scope,
     sum(f.packet_bytes)                                             AS observed_bytes,
     sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END)            AS allowed_connections,
@@ -58,18 +59,18 @@ SELECT
     sum(CASE WHEN f.rule_lookup_state = 'not_found' THEN 1 ELSE 0 END) AS unknown_rule_connections
 FROM flow AS f
 LEFT JOIN rule AS r ON r.id = f.rule_id
-LEFT JOIN segment AS ssrc ON ssrc.id = f.src_segment_id
-LEFT JOIN segment AS sdst ON sdst.id = f.dst_segment_id
+LEFT JOIN interface AS ssrc ON ssrc.id = f.src_interface_id
+LEFT JOIN interface AS sdst ON sdst.id = f.dst_interface_id
 WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end
-  AND f.src_segment_id IS NOT NULL
-GROUP BY f.src_segment_id, src_segment_label, f.dst_segment_id, dst_segment_label, f.traffic_scope
+  AND f.src_interface_id IS NOT NULL
+GROUP BY f.src_interface_id, src_interface_label, f.dst_interface_id, dst_interface_label, f.traffic_scope
 ORDER BY observed_bytes DESC;
 
--- screen: Segment
--- The devices of one segment, with their destinations and their denials.
+-- screen: Interface
+-- The clients of one interface, with their destinations and their denials.
 SELECT
-    f.src_device_id                                         AS device_id,
+    f.src_client_id                                         AS client_id,
     d.hostname                                              AS hostname,
     d.last_address                                          AS last_address,
     d.identity_kind                                         AS identity_kind,
@@ -81,15 +82,15 @@ SELECT
     sum(CASE WHEN f.traffic_scope = 'east_west' THEN 1 ELSE 0 END) AS east_west_count,
     max(f.observed_at)                                      AS last_seen_at
 FROM flow AS f
-LEFT JOIN device AS d ON d.id = f.src_device_id
-WHERE f.src_segment_id = :segment_id
+LEFT JOIN client AS d ON d.id = f.src_client_id
+WHERE f.src_interface_id = :interface_id
   AND f.observed_at >= :window_start
   AND f.observed_at < :window_end
-GROUP BY f.src_device_id, d.hostname, d.last_address, d.identity_kind, d.unstable_identity
+GROUP BY f.src_client_id, d.hostname, d.last_address, d.identity_kind, d.unstable_identity
 ORDER BY observed_bytes DESC;
 
--- screen: Device
--- One device's traffic: destination, country, operator, and the site name when
+-- screen: Client
+-- One client's traffic: destination, country, operator, and the site name when
 -- one could be inferred. A flow with no attribution is returned with a null
 -- site name and its address, country and operator — never omitted.
 SELECT
@@ -112,8 +113,8 @@ SELECT
 FROM flow AS f
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
-LEFT JOIN interface_map AS im ON im.device_name = f.interface_device
-WHERE f.src_device_id = :device_id
+LEFT JOIN interface_map AS im ON im.device = f.interface_device
+WHERE f.src_client_id = :client_id
   AND f.observed_at >= :window_start
   AND f.observed_at < :window_end
 ORDER BY f.observed_at DESC;
@@ -126,8 +127,8 @@ ORDER BY f.observed_at DESC;
 -- missing.
 SELECT
     b.observed_at                                           AS observed_at,
-    b.src_segment_id                                        AS src_segment_id,
-    b.src_device_id                                         AS src_device_id,
+    b.src_interface_id                                        AS src_interface_id,
+    b.src_client_id                                         AS src_client_id,
     b.src_address                                           AS src_address,
     b.dst_address                                           AS dst_address,
     b.dst_port                                              AS dst_port,
@@ -141,13 +142,13 @@ SELECT
     CASE WHEN b.interface_lookup_state = 'resolved' THEN im.description END AS interface_description
 FROM blocked_event AS b
 LEFT JOIN rule AS r ON r.id = b.rule_id
-LEFT JOIN interface_map AS im ON im.device_name = b.interface_device
+LEFT JOIN interface_map AS im ON im.device = b.interface_device
 WHERE b.observed_at >= :window_start
   AND b.observed_at < :window_end
 ORDER BY b.observed_at DESC;
 
 -- screen: Alerts
--- Security events joined to the device and the segment, each naming the
+-- Security events joined to the client and the interface, each naming the
 -- provider that contributed it, with severity taken from the event itself when
 -- the provider ships one and otherwise resolved through the per-provider
 -- rule-info cache. A rule identity absent from that cache, and carrying no
@@ -172,24 +173,24 @@ SELECT
     se.dst_address                                          AS dst_address,
     se.dst_port                                             AS dst_port,
     se.protocol                                             AS protocol,
-    se.src_device_id                                        AS device_id,
+    se.src_client_id                                        AS client_id,
     d.hostname                                              AS hostname,
-    se.src_segment_id                                       AS segment_id,
-    coalesce(s.user_label, s.discovered_description)        AS segment_label
+    se.src_interface_id                                       AS interface_id,
+    coalesce(s.user_label, s.description)        AS interface_label
 FROM security_event AS se
 LEFT JOIN provider AS p ON p.id = se.provider_id
 LEFT JOIN provider_rule_info AS ri
        ON ri.provider_id = se.provider_id AND ri.rule_identity = se.rule_identity
-LEFT JOIN device AS d ON d.id = se.src_device_id
-LEFT JOIN segment AS s ON s.id = se.src_segment_id
+LEFT JOIN client AS d ON d.id = se.src_client_id
+LEFT JOIN interface AS s ON s.id = se.src_interface_id
 WHERE se.occurred_at >= :window_start
   AND se.occurred_at < :window_end
 ORDER BY se.occurred_at DESC;
 
 -- screen: Map
--- Destinations by country and by operator, per source segment, read from the
+-- Destinations by country and by operator, per source interface, read from the
 -- 24 h aggregate. This is also the aggregate-mode query the roadmap asks for:
--- volumes, segments, countries and operators, reading no table that holds a
+-- volumes, interfaces, countries and operators, reading no table that holds a
 -- domain name. A geo cache miss is a modelled row and is returned with its
 -- lookup_state rather than silently dropping the volume.
 SELECT
@@ -198,8 +199,8 @@ SELECT
     g.country_name                                          AS country_name,
     g.asn                                                   AS asn,
     g.operator                                              AS operator,
-    v.src_segment_id                                        AS src_segment_id,
-    coalesce(s.user_label, s.discovered_description)        AS segment_label,
+    v.src_interface_id                                        AS src_interface_id,
+    coalesce(s.user_label, s.description)        AS interface_label,
     sum(v.bytes)                                            AS observed_bytes,
     sum(v.allowed_connections)                              AS allowed_connections,
     sum(v.blocked_connections)                              AS blocked_connections,
@@ -208,9 +209,9 @@ SELECT
     max(g.dataset_build_at)                                 AS dataset_build_at
 FROM volume_aggregate_24h AS v
 JOIN geo_asn AS g ON g.address = v.peer_address
-LEFT JOIN segment AS s ON s.id = v.src_segment_id
+LEFT JOIN interface AS s ON s.id = v.src_interface_id
 WHERE v.period_start_at >= :window_start
   AND v.period_start_at < :window_end
 GROUP BY g.lookup_state, g.country_code, g.country_name, g.asn, g.operator,
-         v.src_segment_id, segment_label
+         v.src_interface_id, interface_label
 ORDER BY observed_bytes DESC;

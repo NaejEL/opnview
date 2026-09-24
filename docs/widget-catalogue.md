@@ -7,7 +7,7 @@ the product. Nothing here is closed, and the catalogue is expected to grow as
 the maintainer's questions sharpen.
 
 **It replaces the seven-screen structure of `ROADMAP.md` step 7.** Step 7 names
-seven fixed screens — Overview, Matrix, Segment, Device, Blocked, Alerts, Map —
+seven fixed screens — Overview, Matrix, Interface, Client, Blocked, Alerts, Map —
 reachable through a menu. The product as decided has no fixed screens: the user
 creates named canvases and fills them with the widgets below. There is
 therefore **no section in this document organising widgets into a screen list**,
@@ -25,9 +25,17 @@ operating system on first launch. Nothing below reopens or contradicts one.
 
 ## How to read an entry
 
-Every widget is a `###` heading whose body carries exactly six fields, in this
+Every widget is a `###` heading whose body carries exactly seven fields, in this
 order:
 
+- **Type** — the widget's identifier: the `snake_case` token a dashboard file
+  puts in `widget.type`, an HTTP API path segment or query value names it by,
+  and an export writes back. **This document is the vocabulary**, and every
+  consumer reads it here rather than deriving one from the heading:
+  `docs/dashboard-format.md` says so explicitly for `widget.type`. The
+  identifiers are stable — renaming one breaks every dashboard file that used
+  it, so a rename is a compatibility event and not an edit — and each is unique
+  across the catalogue.
 - **Question** — the question a user is asking when they place this widget.
 - **Shows** — what is drawn, and the UI copy the widget is required to carry.
 - **Parameters** — what the user can set, and what an exported dashboard file
@@ -42,17 +50,25 @@ order:
 **Marker convention.** The missing-from-model marker is the greppable string
 that opens each gap in a **Data** field below. It appears **exactly once per
 gap**, in the first widget entry where that gap arises; every later widget
-depending on the same gap refers to it by its identifier (`G1` … `G10`) without
+depending on the same gap refers to it by its identifier (`G2` … `G13`) without
 repeating the marker. The marker is therefore written out **only** inside a
 **Data** field — never in the prose of this section, never in the *Gaps found*
-table — so that a plain `grep -c` for it returns exactly the number of gaps,
-which is exactly the row count of that table. It is named rather than spelled
-here for that reason, and it is spelled in full ten times below.
+table — so that a plain `grep -c` for it returns exactly the number of **open**
+gaps, which is exactly the row count of that table. It is named rather than
+spelled here for that reason, and it is spelled in full eleven times below.
+
+**A closed gap loses its marker and keeps its identifier.** When a gap is
+closed, the marker is removed from the **Data** field that carried it, that
+field states the columns that now exist instead, and the gap moves to the *Gaps
+closed* table. **The identifier is retired and never reused**, so a reference to
+`G1` in an older document still means what it meant when it was written. That is
+why the open identifiers below are not contiguous, and the discontinuity is the
+record rather than an error.
 
 **Illustrative values.** Where an example address is needed below, it comes from
 the documentation ranges — `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`
 and `2001:db8::/32` — and is labelled as an example. **No interface name, VLAN
-name, segment name, CIDR or address of any real network appears anywhere in this
+name, interface name, CIDR or address of any real network appears anywhere in this
 document.** Every such value is discovered at runtime through the OPNsense API
 (`docs/opnsense-api-survey.md`, *Runtime discovery*) and is never hardcoded, in
 code, in a template, in a default value or in a widget definition.
@@ -70,11 +86,11 @@ Two sentences recur in the **Shows** field below, because two facts have to be
 on screen wherever the numbers they qualify are on screen.
 
 1. **The observation-point limit.** `opnview` sees only what crosses the
-   router. Traffic between two devices inside one segment never reaches the
+   router. Traffic between two clients behind one interface never reaches the
    firewall and is invisible to all five sources, so **every byte, packet and
    connection figure is a lower bound**. Required copy, or wording carrying the
    same content: *"Counts only traffic that crossed the firewall. Traffic
-   between two devices inside the same segment is not visible here, so this is a
+   between two clients behind the same interface is not visible here, so this is a
    lower bound."*
 
 2. **Site names are inferred.** On OPNsense 26.7 a site name comes from
@@ -83,44 +99,46 @@ on screen wherever the numbers they qualify are on screen.
    cannot be read back (`docs/opnsense-api-survey.md`, *Gaps and alternatives*,
    gaps 1 and 2). Required copy, or wording carrying the same content: *"Site
    names are inferred by correlating resolver lookups with the traffic that
-   followed them. They are not observed. A device using encrypted DNS, or a
+   followed them. They are not observed. A client using encrypted DNS, or a
    cached name, will be under-attributed."*
 
 ---
 
 ## Traffic and volume
 
-### Segment traffic matrix
+### Interface traffic matrix
 
-**Question** — Which segment talks to which, how much, and how much of it was
+**Type** — `interface_traffic_matrix`
+
+**Question** — Which interface talks to which, how much, and how much of it was
 blocked?
 
-**Shows** — A source-segment × destination-segment grid. Each cell carries the
+**Shows** — A source-interface × destination-interface grid. Each cell carries the
 observed byte volume, the allowed connection count, the blocked connection
 count and the distinct rule descriptions that matched; a cell is clickable and
 opens the underlying records. The right-hand column is north-south traffic,
-where the destination sits in no discovered segment. Segment labels are the
+where the destination sits in no discovered interface. Interface labels are the
 user's own label where one has been set and the firewall's discovered
-description otherwise — **never a name-based classification**: a segment's
+description otherwise — **never a name-based classification**: an interface's
 nature is never inferred from what it is called. Required UI copy: the
 observation-point limit sentence, verbatim or equivalent, beneath the grid.
 
 **Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `scope`
 (`all` | `east_west` | `north_south`); `measure` (`bytes` | `allowed` |
-`blocked`); `segments` (an optional list of segment references limiting the
-rows and columns; empty means every discovered segment); `show_rules`
+`blocked`); `interfaces` (an optional list of interface references limiting the
+rows and columns; empty means every discovered interface); `show_rules`
 (boolean).
 
-**Data** — `flow.src_segment_id`, `flow.dst_segment_id`, `flow.traffic_scope`,
+**Data** — `flow.src_interface_id`, `flow.dst_interface_id`, `flow.traffic_scope`,
 `flow.packet_bytes`, `flow.action`, `flow.observed_at`, `flow.rule_id`,
-`flow.rule_lookup_state`; `rule.description`; `segment.user_label`,
-`segment.discovered_description`. For the 7 d and 30 d periods the same shape is
+`flow.rule_lookup_state`; `rule.description`; `interface.user_label`,
+`interface.description`. For the 7 d and 30 d periods the same shape is
 read from `volume_aggregate_7d.bytes`,
 `volume_aggregate_7d.allowed_connections`,
 `volume_aggregate_7d.blocked_connections`,
-`volume_aggregate_7d.src_segment_id`, `volume_aggregate_7d.dst_segment_id`,
+`volume_aggregate_7d.src_interface_id`, `volume_aggregate_7d.dst_interface_id`,
 `volume_aggregate_7d.period_start_at` and the `_30d` twins. Source: filter logs,
-`docs/opnsense-api-survey.md`, *Data source 1 — Filter logs*; segment discovery,
+`docs/opnsense-api-survey.md`, *Data source 1 — Filter logs*; interface discovery,
 *Runtime discovery* (i); rule discovery, *Runtime discovery* (ii).
 
 **Existing query** — Reuses `-- screen: Matrix` unchanged for the `1h` and `24h`
@@ -141,22 +159,24 @@ network is still legible.
 
 ### Traffic over time by scope
 
+**Type** — `traffic_over_time_by_scope`
+
 **Question** — How much traffic left the network, entered it, and stayed between
-segments, over time?
+interfaces, over time?
 
 **Shows** — A soft area chart with one band per selected scope — outbound,
-inbound, inter-segment — over the chosen period, with the numbers brought
+inbound, inter-interface — over the chosen period, with the numbers brought
 forward as totals above the chart. Outbound and inbound derive from
-`flow.direction`; inter-segment is `traffic_scope = 'east_west'`. Required UI
+`flow.direction`; inter-interface is `traffic_scope = 'east_west'`. Required UI
 copy: the observation-point limit sentence.
 
 **Parameters** — `period`; `scopes` (any subset of `outbound`, `inbound`,
-`inter_segment`); `measure` (`bytes` | `connections`); `segments` (optional
-list of segment references); `stacked` (boolean).
+`inter_interface`); `measure` (`bytes` | `connections`); `interfaces` (optional
+list of interface references); `stacked` (boolean).
 
 **Data** — `flow.observed_at`, `flow.direction`, `flow.traffic_scope`,
-`flow.packet_bytes`, `flow.action`, `flow.src_segment_id`,
-`flow.dst_segment_id`. For the long periods: `MISSING FROM MODEL:` **G3 — the
+`flow.packet_bytes`, `flow.action`, `flow.src_interface_id`,
+`flow.dst_interface_id`. For the long periods: `MISSING FROM MODEL:` **G3 — the
 volume aggregates carry no direction.** `volume_aggregate_1h` … `_30d` carry
 `traffic_scope` but no `direction` column, so outbound and inbound cannot be
 told apart in any pre-computed period; only `east_west` versus `north_south`
@@ -178,96 +198,110 @@ System > Settings > Logging to populate this chart."* *Reachable and no rows*:
 *"No traffic crossed the firewall in this period."* The axes are drawn in every
 case; no zero line is synthesised for an unavailable source.
 
-### Segment volume ranking
+### Interface volume ranking
 
-**Question** — Which VLAN or segment is generating the traffic?
+**Type** — `interface_volume_ranking`
 
-**Shows** — A horizontal ranking of segments by observed volume for the period,
-each bar carrying the byte total, the device count behind it and the blocked
+**Question** — Which VLAN or interface is generating the traffic?
+
+**Shows** — A horizontal ranking of interfaces by observed volume for the period,
+each bar carrying the byte total, the client count behind it and the blocked
 connection count, with the east-west and north-south shares shown separately
-within the bar. Labels come from the user's own segment label, falling back to
+within the bar. Labels come from the user's own interface label, falling back to
 the firewall's discovered description. Required UI copy: the observation-point
 limit sentence.
 
-**Parameters** — `period`; `measure` (`bytes` | `connections` | `devices`);
-`scope` (`all` | `east_west` | `north_south`); `limit` (how many segments to
-show); `include_unlabelled` (boolean — whether segments the user has not
+**Parameters** — `period`; `measure` (`bytes` | `connections` | `clients`);
+`scope` (`all` | `east_west` | `north_south`); `limit` (how many interfaces to
+show); `include_unlabelled` (boolean — whether interfaces the user has not
 labelled are listed).
 
-**Data** — `flow.src_segment_id`, `flow.packet_bytes`, `flow.action`,
-`flow.traffic_scope`, `flow.observed_at`, `flow.src_device_id`;
-`segment.user_label`, `segment.discovered_description`, `segment.link_kind`,
-`segment.is_tunnel`, `segment.vlan_tag`. Long periods:
-`volume_aggregate_7d.src_segment_id`, `.bytes`, `.allowed_connections`,
+**Data** — `flow.src_interface_id`, `flow.packet_bytes`, `flow.action`,
+`flow.traffic_scope`, `flow.observed_at`, `flow.src_client_id`;
+`interface.user_label`, `interface.description`, `interface.link_kind`,
+`interface.is_tunnel`, `interface.vlan_tag`. Long periods:
+`volume_aggregate_7d.src_interface_id`, `.bytes`, `.allowed_connections`,
 `.blocked_connections` and the `_30d` twins. Source: filter logs,
-`docs/opnsense-api-survey.md`, *Data source 1 — Filter logs*; segment discovery,
+`docs/opnsense-api-survey.md`, *Data source 1 — Filter logs*; interface discovery,
 *Runtime discovery* (i).
 
 **Existing query** — Adapts `-- screen: Matrix`, collapsing its
-destination-segment dimension so one row per source segment remains. It does
-**not** reuse `-- screen: Segment`, which is scoped to a single segment by
-`:segment_id` and enumerates devices rather than segments.
+destination-interface dimension so one row per source interface remains. It does
+**not** reuse `-- screen: Interface`, which is scoped to a single interface by
+`:interface_id` and enumerates clients rather than interfaces.
 
 **Empty state** — *Source unavailable*: *"The firewall log is not reachable, so
-segments cannot be ranked."* *Source present but disabled*: *"Local logging is
-switched off, so there are no filter-log records to rank segments by."*
-*Reachable and no rows*: *"No segment carried traffic across the firewall in this
-period."* When segments are discovered but silent, they are listed with an empty
-bar rather than omitted, so a silent segment is visibly silent.
+interfaces cannot be ranked."* *Source present but disabled*: *"Local logging is
+switched off, so there are no filter-log records to rank interfaces by."*
+*Reachable and no rows*: *"No interface carried traffic across the firewall in this
+period."* When interfaces are discovered but silent, they are listed with an empty
+bar rather than omitted, so a silent interface is visibly silent.
 
-### Device volume ranking
+### Client volume ranking
+
+**Type** — `client_volume_ranking`
 
 **Question** — Which machine, by MAC or by address, is generating the traffic?
 
-**Shows** — A ranked list of devices with hostname where a lease supplied one,
-the MAC where one is known, the last observed address, the segment, the byte
+**Shows** — A ranked list of clients with hostname where a lease supplied one,
+the MAC where one is known, the last observed address, the interface, the byte
 total, the blocked connection count and the count of distinct destinations. A
-device whose MAC carries the IEEE locally-administered bit is badged **unstable
+client whose MAC carries the IEEE locally-administered bit is badged **unstable
 identity**, with the explanation that a randomised MAC does not identify a
 machine across sessions and has deliberately not been merged into a phantom
-device. Required UI copy: the observation-point limit sentence.
+client. Required UI copy: the observation-point limit sentence.
 
-**Parameters** — `period`; `segments` (optional list of segment references);
-`identity` (`any` | `dhcp_client_id` | `mac` | `address_in_segment` — which
+**Parameters** — `period`; `interfaces` (optional list of interface references);
+`identity` (`any` | `dhcp_client_id` | `mac` | `address_in_interface` — which
 identity levels to include); `limit`; `include_unstable` (boolean); `measure`
 (`bytes` | `connections` | `destinations`).
 
-**Data** — `flow.src_device_id`, `flow.src_segment_id`, `flow.packet_bytes`,
-`flow.action`, `flow.observed_at`, `flow.dst_address`; `device.hostname`,
-`device.mac`, `device.mac_is_randomised`, `device.unstable_identity`,
-`device.identity_kind`, `device.identity_key`, `device.last_address`,
-`device.segment_id`, `device.vendor_hint`. For any period longer than the
-`flow` retention horizon: `MISSING FROM MODEL:` **G4 — there is no per-device
+**Data** — `flow.src_client_id`, `flow.src_interface_id`, `flow.packet_bytes`,
+`flow.action`, `flow.observed_at`, `flow.dst_address`; `client.hostname`,
+`client.mac`, `client.mac_is_randomised`, `client.unstable_identity`,
+`client.identity_kind`, `client.identity_key`, `client.last_address`,
+`client.interface_id`, `client.vendor_hint`, `client.owner_id`. The ranking is
+**per machine, and that is a different question from the per-person one** — the
+per-person question has its own entry, *Per-person activity*, and its own
+aggregate family; that was gap G11 and it is closed. This widget stays per
+machine deliberately, because "which device is loudest" and "which person is
+loudest" are both worth asking and answering one with the other would be a
+substitution rather than an answer.
+
+For any period longer than the `flow` retention horizon:
+`MISSING FROM MODEL:` **G4 — there is no per-client
 volume aggregate.** The four `volume_aggregate_*` tables are keyed on
-`(period_start_at, src_segment_id, dst_segment_id, peer_address)` and carry no
-device dimension at all, so a 7 d or 30 d per-device total can only be computed
+`(period_start_at, src_interface_id, dst_interface_id, peer_address)` and carry no
+client dimension at all, so a 7 d or 30 d per-client total can only be computed
 by scanning `flow`, which the `retention_seconds` row of `setting` bounds. What would have to
-be added: a parallel `device_volume_aggregate_<period>` family keyed on
-`(period_start_at, src_device_id)` with `bytes`, `allowed_connections`,
+be added: a parallel `client_volume_aggregate_<period>` family keyed on
+`(period_start_at, src_client_id)` with `bytes`, `allowed_connections`,
 `blocked_connections` and `distinct_destinations`, refreshed on the same
-contract as the segment aggregates. Sources: filter logs,
-`docs/opnsense-api-survey.md`, *Data source 1 — Filter logs*; device identity
+contract as the interface aggregates. Sources: filter logs,
+`docs/opnsense-api-survey.md`, *Data source 1 — Filter logs*; client identity
 from leases, *Data source 4 — DHCP leases*.
 
-**Existing query** — Adapts `-- screen: Segment`. That query is the right
-projection — device, hostname, address, identity kind, unstable-identity flag,
-volume, blocked count, distinct destinations — but is pinned to one segment by
-`f.src_segment_id = :segment_id`. This widget generalises the predicate to a set
-of segments, or to all of them.
+**Existing query** — Adapts `-- screen: Interface`. That query is the right
+projection — client, hostname, address, identity kind, unstable-identity flag,
+volume, blocked count, distinct destinations — but is pinned to one interface by
+`f.src_interface_id = :interface_id`. This widget generalises the predicate to a set
+of interfaces, or to all of them.
 
 **Empty state** — *Source unavailable*: *"The firewall log is not reachable, so
-devices cannot be ranked by traffic."* If the `dhcp_lease` provider is
+clients cannot be ranked by traffic."* If the `dhcp_lease` provider is
 additionally unavailable, the widget adds: *"No DHCP source is reachable, so
-devices are named by address only."* *Source present but disabled*: *"Local
-logging is switched off, so no per-device traffic has been recorded."*
-*Reachable and no rows*: *"No device sent traffic across the firewall in this
+clients are named by address only."* *Source present but disabled*: *"Local
+logging is switched off, so no per-client traffic has been recorded."*
+*Reachable and no rows*: *"No client sent traffic across the firewall in this
 period."*
 
-### Device traffic detail
+### Client traffic detail
+
+**Type** — `client_traffic_detail`
 
 **Question** — Where did this one machine go, and what was allowed?
 
-**Shows** — One device's outbound records over the period: timestamp,
+**Shows** — One client's outbound records over the period: timestamp,
 destination address and port, protocol, action, traffic scope, byte count,
 country, operator, and the inferred site name where a resolver lookup could be
 correlated with the flow. A record with no attribution is shown with a null site
@@ -277,13 +311,13 @@ correlation delay is shown per attributed row, so a wide delay reads as a weak
 attribution. Required UI copy: the observation-point limit sentence and the
 site-names-are-inferred sentence.
 
-**Parameters** — `device` (a device reference — required); `period`; `action`
+**Parameters** — `client` (a client reference — required); `period`; `action`
 (`all` | `allowed` | `blocked`); `scope` (`all` | `east_west` |
 `north_south`); `columns` (which of the available columns to show); `limit`.
 
 **Data** — `flow.id`, `flow.observed_at`, `flow.dst_address`, `flow.dst_port`,
 `flow.protocol`, `flow.action`, `flow.traffic_scope`, `flow.packet_bytes`,
-`flow.src_device_id`, `flow.interface_device`, `flow.interface_lookup_state`;
+`flow.src_client_id`, `flow.interface_device`, `flow.interface_lookup_state`;
 `domain_attribution.site_name`,
 `domain_attribution.correlation_delay_seconds`; `geo_asn.lookup_state`,
 `geo_asn.country_code`, `geo_asn.operator`, `geo_asn.dataset_build_at`;
@@ -292,36 +326,270 @@ site-names-are-inferred sentence.
 *Data source 5 — Resolver DNS lookups*; geo and ASN enrichment, the second of the
 two outbound calls the project allows.
 
-**Existing query** — Reuses `-- screen: Device` unchanged. The bound parameter
-`:device_id` is exactly this widget's `device` parameter after local resolution.
+**Existing query** — Reuses `-- screen: Client` unchanged. The bound parameter
+`:client_id` is exactly this widget's `client` parameter after local resolution.
 
 **Empty state** — *Source unavailable*: *"The firewall log is not reachable, so
-this device's traffic cannot be listed."* *Source present but disabled*: *"Local
-logging is switched off, so no records exist for this device."* *Reachable and
-no rows*: *"This device sent no traffic across the firewall in this period.
-Traffic it exchanged with machines inside its own segment would not appear
+this client's traffic cannot be listed."* *Source present but disabled*: *"Local
+logging is switched off, so no records exist for this client."* *Reachable and
+no rows*: *"This client sent no traffic across the firewall in this period.
+Traffic it exchanged with machines behind its own interface would not appear
 here."* Separately, when the `dns_lookup` provider is unavailable or disabled the
 site-name column is rendered as a labelled column-level notice — *"No resolver
 source is available, so no site name can be inferred for any record"* — rather
 than as an empty column.
 
+### Traffic composition, now
+
+**Type** — `traffic_composition`
+
+**Question** — What is the traffic made of right now, and in what proportion?
+
+**Shows** — A donut with a ranked legend beside it, the period's total in the
+hole, and beneath it a rolling strip of the recent past. The strip is drawn **at
+the resolution the samples actually have** — every measured point as a point,
+newest at the right, oldest falling off the left — and applies no smoothing, for
+the reason recorded in *Custom chart*: `docs/ui-references.md` names Grafana's
+granularity as the reference precisely because it does not pretend to a
+resolution the data lacks.
+
+**The collapsed slice is mandatory and is named.** Everything past the slice
+limit is one explicit **Other** slice carrying its own count of what it merged
+— *"Other (N further groups)"* — and it is clickable, opening the full ranked
+list. A donut that silently dropped its tail would misstate every proportion
+drawn beside it, which is the whole point of drawing proportions.
+
+**The grouping dimension is always on screen**, in the card's subtitle, because
+"38 % of traffic" means four different things depending on whether the slices
+are clients, interfaces, protocols or service ports. Required UI copy: the
+observation-point limit sentence beneath the donut.
+
+**Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `group_by`
+(`client` | `interface` | `protocol` | `service_port`); `measure`
+(`bytes` | `connections`); `slices` (how many named slices before the collapsed
+one); `interfaces` (optional list of interface references); `clients`
+(optional); `scope` (`all` | `east_west` | `north_south`); `show_other`
+(boolean, default true and not recommended to disable).
+
+**Data** — `flow.packet_bytes`, `flow.observed_at`, `flow.protocol`,
+`flow.dst_port`, `flow.src_client_id`, `flow.src_interface_id`, `flow.action`,
+`flow.traffic_scope`; `client.hostname`, `client.last_address`;
+`interface.user_label`, `interface.description`. For the 7 d and 30 d periods
+the client and interface groupings read `volume_aggregate_7d.bytes`,
+`.allowed_connections`, `.blocked_connections`, `.src_interface_id`,
+`.peer_address`, `.period_start_at` and the `_30d` twins. The `service_port`
+grouping may additionally read `pair_volume_observation.service_port`,
+`.protocol`, `.octets` and `.day_start_at`, with the caveat the model already
+records: that column is `min(src_port, dst_port)` as Insight computes it, a
+heuristic rather than the real destination port, so the widget labels that
+grouping as approximate and prefers `flow.dst_port` wherever the period is
+inside the `flow` horizon. Sources: filter logs,
+`docs/opnsense-api-survey.md`, *Data source 1 — Filter logs*; per-pair volume,
+*Data source 3 — NetFlow / Insight*.
+
+There is a fifth grouping this widget does **not** offer.
+`MISSING FROM MODEL:` **G12 — nothing in the model classifies a flow as an
+application.** The schema knows a protocol number and a port, and stops there:
+`flow.protocol`, `flow.dst_port` and `pair_volume_observation.service_port` are
+the whole of it, and neither `domain_attribution` nor `security_event` carries
+an application name. So the dimension ntopng and Zenarmor both lead with —
+*"which app is this"* — cannot be offered, and this widget offers four groupings
+rather than five. Two ways exist to close it and **neither is implemented
+here**, deliberately. The first is a **port-and-SNI heuristic**: guess the
+application from the destination port, and from the TLS server name where one is
+visible. It is cheap, it is right for the easy cases, and it is wrong at exactly
+the edges that matter — a service on a non-standard port, a CDN fronting a dozen
+products behind one name, anything tunnelled over 443, and every client using
+encrypted DNS, which per *Data source 5* is already a documented blind spot. A
+heuristic labelled as a fact is the kind of lie this project refuses, and a
+heuristic labelled as a guess is a column no user can act on; so it is written
+down here and not built. The second is **deep packet inspection**, which is what
+those products actually do — and OPNsense exposes no DPI classification to a
+read-only API client. Suricata's own application-layer parsers feed detection
+rather than the alert feed, and the `tls` and `http` events that would carry a
+server name **cannot be read back at all** (`docs/opnsense-api-survey.md`, *Gaps
+and alternatives*, gap 2). Closing G12 properly therefore needs a source that
+does not exist yet, not a column.
+
+**Existing query** — Adapts `-- screen: Overview` for the totals and
+`-- screen: Interface` for the per-client grouping; both already aggregate
+`packet_bytes` over an indexed time range, and the change is the `GROUP BY`
+expression and a `LIMIT` with a remainder row. The 7 d and 30 d periods read a
+`volume_aggregate_*` table directly, as *Interface traffic matrix* does.
+
+**Empty state** — *Source unavailable*: *"The firewall log is not reachable, so
+the composition of traffic cannot be shown. This is not an absence of
+traffic."* *Source present but disabled*: *"Local logging is switched off on the
+firewall, so there are no records to break down. Turn on System > Settings >
+Logging to populate this widget."* *Reachable and no rows*: *"The firewall log
+is healthy and recorded no traffic in this period."* In the third case the
+donut's ring is drawn empty with the total reading zero, so the widget reads as
+measured rather than broken.
+
+### Connection tree
+
+**Type** — `connection_tree`
+
+**Question** — Which client is talking to what, and along which path?
+
+**Shows** — An expandable tree, one level per hop of the question: interface,
+then client, then destination — named by its site name where one was inferred
+and by its operator and country otherwise — then the service port and protocol.
+Every node carries its own rolled-up volume and connection count, and **a
+node's children sum exactly to the node**: an expansion that did not reconcile
+would teach the user to distrust every figure above it, so a level that is
+truncated by `limit_per_level` carries an explicit remainder child rather than
+quietly losing its tail. Blocked connections are drawn in the tree with their
+own mark rather than filtered out, so a branch that exists only because
+something was refused is visible as such.
+
+Required UI copy: the observation-point limit sentence, and — because the
+destination level shows inferred names — the site-names-are-inferred sentence.
+
+**Parameters** — `period`; `root` (`interface` | `client` | `owner` — which
+level the tree starts at); `depth` (how many levels are expanded on load);
+`interfaces` (optional list of interface references); `clients` (optional);
+`owners` (optional list of owner references); `measure`
+(`bytes` | `connections`); `limit_per_level`; `sort`
+(`volume` | `connections` | `name` | `recency`); `include_blocked` (boolean,
+default true).
+
+**Data** — `flow.src_interface_id`, `flow.dst_interface_id`,
+`flow.src_client_id`, `flow.dst_address`, `flow.dst_port`, `flow.protocol`,
+`flow.packet_bytes`, `flow.action`, `flow.observed_at`, `flow.traffic_scope`;
+`client.hostname`, `client.last_address`, `client.owner_id`,
+`client.mac_is_randomised`; `owner.display_name`; `interface.user_label`,
+`interface.description`; `domain_attribution.site_name`;
+`geo_asn.country_code`, `geo_asn.country_name`, `geo_asn.asn`,
+`geo_asn.operator`, `geo_asn.lookup_state`. A destination the geolocation cache
+could not place keeps its branch and is labelled with its `lookup_state`, never
+dropped. Rooting the tree at a person uses `client.owner_id`, and beyond the
+`flow` horizon the owner level reads `owner_volume_aggregate_*` — see
+*People*, below. Sources: filter logs, `docs/opnsense-api-survey.md`, *Data
+source 1 — Filter logs*; names, *Data source 5 — Resolver DNS lookups*.
+
+**Existing query** — Composes `-- screen: Interface` and `-- screen: Client`.
+The first already returns an interface's clients with their volume and their
+distinct destinations, which is the tree's first two levels; the second returns
+one client's flows with destination, country, operator and site name, which is
+the third and fourth. The widget issues one query per expanded level rather
+than one recursive query, so an unexpanded branch costs nothing.
+
+**Empty state** — *Source unavailable*: *"The firewall log is not reachable, so
+no connections can be listed. This is not an absence of connections."* *Source
+present but disabled*: *"Local logging is switched off on the firewall, so no
+connection record exists. Note that a rule with logging disabled produces no
+record even when the log itself is healthy."* *Reachable and no rows*: *"No
+connection crossed the firewall from this root in this period."* When the
+`dns_lookup` provider is unavailable the destination level still renders, by
+operator and country, with a level-wide notice that no site name could be
+inferred for any of them — never an empty level.
+
+---
+
+## People
+
+The per-person view the `owner` entity was added for. Everything else in this
+catalogue ranks and lists **machines**; this section is the one that asks the
+question in the form the maintainer asked it — *Bob's phone, tablet and laptop
+as one Bob* — and it is the widget half of what used to be gap **G11**.
+
+### Per-person activity
+
+**Type** — `owner_activity`
+
+**Question** — What did one person's machines do, taken together?
+
+**Shows** — One card per person, each naming the person, their total volume,
+their allowed and blocked connection counts, the machines behind the figure as a
+row of chips, and a timeline over the period. A chip carries its machine's own
+state, so a machine that sent nothing reads as *no data in this period* rather
+than as a zero the reader might take for an absence of the machine. A card is
+clickable and opens the underlying records for that person.
+
+**The unassigned card is mandatory and is not a footnote.** Ownership is
+assigned by hand and most machines on a network belong to nobody in particular,
+so a per-person view that showed only the claimed machines would under-report
+the network while looking complete. The unassigned card is rendered like any
+other, named **Unassigned**, and carries the same figures. `include_unassigned`
+can hide it, and when it is hidden the widget says so in the card header —
+*"Unassigned machines are hidden; totals below exclude them"* — because a
+narrowed total that does not announce itself is a wrong total.
+
+**Ownership is never inferred, and the widget says so where it matters.** A
+machine appears under a person because somebody said it does, and for no other
+reason: not a hostname, not a MAC prefix, not a vendor hint. The empty state of
+a fresh installation therefore invites the user to create people rather than
+proposing any. Required UI copy: the observation-point limit sentence.
+
+**Parameters** — `period`; `owners` (an optional list of **owner** references —
+the reference kind `docs/dashboard-format.md` adds for exactly this widget;
+empty means every person); `include_unassigned` (boolean, default true);
+`measure` (`bytes` | `allowed` | `blocked`); `scope`
+(`all` | `east_west` | `north_south`); `sort`
+(`volume` | `blocked` | `name` | `machines`); `clients_per_card` (how many chips
+before a collapsed remainder chip); `show_timeline` (boolean).
+
+**Data** — `owner.display_name`, `owner.id`; `client.owner_id`,
+`client.hostname`, `client.last_address`, `client.interface_id`,
+`client.last_seen_at`; `flow.src_client_id`, `flow.packet_bytes`,
+`flow.action`, `flow.observed_at`, `flow.traffic_scope`. For periods beyond the
+`flow` horizon — which is the `retention_seconds` row of `setting`, not a
+constant — the same shape is read from `owner_volume_aggregate_7d.owner_id`,
+`.bytes`, `.allowed_connections`, `.blocked_connections`, `.client_count`,
+`.traffic_scope`, `.period_start_at`, `.computed_at` and the `_1h`, `_24h` and
+`_30d` twins. **The model half of G11 is closed**: those four tables exist, they
+are keyed on the person with a NULL `owner_id` carrying the unassigned bucket,
+and `docs/data-model.md` states their refresh contract. One column has a rule
+attached: `client_count` is the distinct machines that contributed to **one
+slot** and must not be summed across slots, so a card covering several slots
+counts its machines from `client` rather than by adding that column up. Source:
+none, for the person — `owner` is the one entity in the schema fed by no
+endpoint, because the firewall has no notion of a human being; the traffic
+behind it comes from filter logs, `docs/opnsense-api-survey.md`, *Data source 1
+— Filter logs*.
+
+**Existing query** — Composes `-- diagnostic: Clients per owner`, which already
+returns the assigned and unassigned buckets with the guarantee that their client
+counts add up to every row of `client`, with the aggregation shape of
+`-- screen: Interface`. Beyond the `flow` horizon it reads a
+`owner_volume_aggregate_*` table directly and reconciles against
+`-- diagnostic: Owner aggregate coverage per period` for freshness.
+
+**Empty state** — Four conditions here rather than three, because this widget
+has a failure the others do not. *No person exists yet*: *"Nobody has been
+created yet. `opnview` cannot tell who owns a machine — the firewall does not
+know, and guessing from a hostname would be wrong — so people are created here
+and machines are assigned by hand."* with a control to create one. *Source
+unavailable*: *"The firewall log is not reachable, so per-person activity cannot
+be shown. This is not an absence of activity."* *Source present but disabled*:
+*"Local logging is switched off on the firewall, so there are no records to
+attribute to anybody."* *Reachable and no rows*: *"No machine attributed to
+anybody sent traffic across the firewall in this period."* In the last case the
+cards are still drawn, with their machines listed and their figures at zero
+beside an explicit *measured, and nothing happened* label — which is a different
+statement from *we could not look*, and the two are never rendered the same.
+
+---
 ---
 
 ## Sites and names
 
 ### Top sites
 
+**Type** — `top_sites`
+
 **Question** — Which sites is this network actually using?
 
 **Shows** — A ranked list of inferred site names with the number of flows
-attributed to each, the number of distinct devices that reached them, the byte
+attributed to each, the number of distinct clients that reached them, the byte
 volume, and the country and operator behind the address. Each row expands to the
-devices behind it. Required UI copy: the observation-point limit sentence and
+clients behind it. Required UI copy: the observation-point limit sentence and
 the site-names-are-inferred sentence, plus the network-wide attribution rate as
 a headline figure, so the list is read in the knowledge of how much traffic it
 does *not* cover.
 
-**Parameters** — `period`; `segments` (optional); `devices` (optional);
+**Parameters** — `period`; `interfaces` (optional); `clients` (optional);
 `limit`; `min_flows` (suppress names seen fewer than N times);
 `group_by_registrable_domain` (boolean — whether `a.example` and `b.example`
 collapse).
@@ -329,7 +597,7 @@ collapse).
 **Data** — `domain_attribution.site_name`, `domain_attribution.flow_id`,
 `domain_attribution.dns_resolution_id`,
 `domain_attribution.correlation_delay_seconds`; `flow.observed_at`,
-`flow.src_device_id`, `flow.src_segment_id`, `flow.packet_bytes`,
+`flow.src_client_id`, `flow.src_interface_id`, `flow.packet_bytes`,
 `flow.dst_address`; `dns_resolution.domain`, `dns_resolution.client_address`,
 `dns_resolution.looked_up_at`; `geo_asn.country_code`, `geo_asn.operator`. For
 any period longer than the `flow` retention horizon: `MISSING FROM MODEL:`
@@ -337,14 +605,14 @@ any period longer than the `flow` retention horizon: `MISSING FROM MODEL:`
 per-flow and is purged with its parents, so a 30 d "top sites" list cannot
 outlive the `retention_seconds` row of `setting`. What would have to be added: a
 `domain_volume_aggregate_<period>` family keyed on
-`(period_start_at, site_name, src_device_id)` carrying `flow_count`, `bytes` and
-`distinct_devices`, refreshed on the same contract as the segment aggregates.
+`(period_start_at, site_name, src_client_id)` carrying `flow_count`, `bytes` and
+`distinct_clients`, refreshed on the same contract as the interface aggregates.
 Sources: resolver lookups, `docs/opnsense-api-survey.md`, *Data source 5 —
 Resolver DNS lookups*; filter logs, *Data source 1 — Filter logs*.
 
 **Existing query** — **Replaces** nothing and reuses nothing: no query in
-`sql/queries/screens.sql` aggregates site names. `-- screen: Device` returns
-`a.site_name` per record for one device, which is the only place a site name
+`sql/queries/screens.sql` aggregates site names. `-- screen: Client` returns
+`a.site_name` per record for one client, which is the only place a site name
 appears, and it neither groups nor ranks. This is one of the two gaps the spec
 records as already known (see *Gaps found*, G2).
 
@@ -361,54 +629,58 @@ window was not honoured on the last poll, so lookups may be missing. This is a
 collection fault, not a quiet network."* (`docs/opnsense-api-survey.md`, *Gaps
 and alternatives*, gap 10.)
 
-### Sites by device
+### Sites by client
+
+**Type** — `sites_by_client`
 
 **Question** — Which site was used, and by whom?
 
 **Shows** — A two-level view answering the maintainer's question in one widget:
-devices down the side, their top inferred site names across, each cell carrying
-the flow count and the byte volume. A device with no attributed flows is listed
+clients down the side, their top inferred site names across, each cell carrying
+the flow count and the byte volume. A client with no attributed flows is listed
 with an explicit *"no site name could be inferred"* row rather than dropped, and
 its attribution rate is shown beside it. Required UI copy: the
 observation-point limit sentence and the site-names-are-inferred sentence.
 
-**Parameters** — `period`; `segments` (optional); `devices` (optional);
-`sites_per_device` (how many names per row); `min_flows`;
+**Parameters** — `period`; `interfaces` (optional); `clients` (optional);
+`sites_per_client` (how many names per row); `min_flows`;
 `show_attribution_rate` (boolean, default true).
 
 **Data** — `domain_attribution.site_name`, `domain_attribution.flow_id`;
-`flow.src_device_id`, `flow.src_segment_id`, `flow.observed_at`,
-`flow.packet_bytes`; `device.hostname`, `device.last_address`,
-`device.identity_kind`, `device.unstable_identity`; `dns_resolution.domain`,
-`dns_resolution.device_id`. Long periods depend on gap G5. A per-segment
+`flow.src_client_id`, `flow.src_interface_id`, `flow.observed_at`,
+`flow.packet_bytes`; `client.hostname`, `client.last_address`,
+`client.identity_kind`, `client.unstable_identity`; `dns_resolution.domain`,
+`dns_resolution.client_id`. Long periods depend on gap G5. A per-interface
 breakdown of *lookups* rather than of *flows* depends on gap G6, below.
 Sources: resolver lookups, `docs/opnsense-api-survey.md`, *Data source 5 —
-Resolver DNS lookups*; device identity from leases, *Data source 4 — DHCP
+Resolver DNS lookups*; client identity from leases, *Data source 4 — DHCP
 leases*.
 
-**Existing query** — **Replaces** the site-name half of `-- screen: Device`.
-That query answers "this device's records, with a name where one exists"; this
-widget answers "which names, by which device", which is a different
+**Existing query** — **Replaces** the site-name half of `-- screen: Client`.
+That query answers "this client's records, with a name where one exists"; this
+widget answers "which names, by which client", which is a different
 aggregation over the same join and has no counterpart in
 `sql/queries/screens.sql` (gap G2).
 
 **Empty state** — *Source unavailable*: *"No resolver source is reachable, so no
-site can be attributed to any device."* *Source present but disabled*: *"The
+site can be attributed to any client."* *Source present but disabled*: *"The
 resolver is running with reporting switched off, so no lookups are being
 recorded. The procedure is in the README; `opnview` never changes the setting."*
 *Reachable and no rows*: *"No lookup could be correlated with traffic from these
-devices in this period."* Devices are still listed in all three cases, so the
+clients in this period."* Clients are still listed in all three cases, so the
 widget degrades to "these machines, no names" rather than to blankness.
 
-### Attribution rate per device
+### Attribution rate per client
 
-**Question** — How much of this device's traffic can be named at all, and how
+**Type** — `attribution_rate_per_client`
+
+**Question** — How much of this client's traffic can be named at all, and how
 much should I therefore distrust the site lists?
 
-**Shows** — One row per device with the flow count, the attributed count, the
+**Shows** — One row per client with the flow count, the attributed count, the
 attribution rate as a percentage, and the mean and maximum correlation delay.
-Rows are ordered worst-first, so the devices whose site lists are least
-trustworthy are the ones the user sees. A device at or near zero is annotated
+Rows are ordered worst-first, so the clients whose site lists are least
+trustworthy are the ones the user sees. A client at or near zero is annotated
 with the likely cause — encrypted DNS (DNS-over-TLS or DNS-over-HTTPS), a
 client-side cache, or a resolver other than the firewall's — quoting
 `docs/opnsense-api-survey.md`, *Gaps and alternatives*, gap 8. Required UI copy:
@@ -416,17 +688,17 @@ the site-names-are-inferred sentence, and the honest statement that a low rate
 means *under-attributed*, never *mis-attributed*: `opnview` never invents a
 domain and falls back to address, country and operator.
 
-**Parameters** — `period`; `segments` (optional); `devices` (optional);
+**Parameters** — `period`; `interfaces` (optional); `clients` (optional);
 `limit`; `sort` (`worst_first` | `best_first` | `by_volume`).
 
-**Data** — `flow.src_device_id`, `flow.observed_at`, `flow.id`;
+**Data** — `flow.src_client_id`, `flow.observed_at`, `flow.id`;
 `domain_attribution.flow_id`,
-`domain_attribution.correlation_delay_seconds`; `device.hostname`,
-`device.last_address`, `device.identity_kind`. Sources: resolver lookups,
+`domain_attribution.correlation_delay_seconds`; `client.hostname`,
+`client.last_address`, `client.identity_kind`. Sources: resolver lookups,
 `docs/opnsense-api-survey.md`, *Data source 5 — Resolver DNS lookups*.
 
 **Existing query** — Reuses no screen query, and uses the diagnostic query
-`-- diagnostic: Attribution rate per device` in `sql/queries/diagnostics.sql`
+`-- diagnostic: Attribution rate per client` in `sql/queries/diagnostics.sql`
 unchanged. That query is executed by `sql/schema-checks.sh` today, so this
 widget rests on a projection the schema checks already exercise.
 
@@ -434,7 +706,7 @@ widget rests on a projection the schema checks already exercise.
 the attribution rate is undefined rather than zero. `opnview` will not show 0 %
 for a source that is not there."* *Source present but disabled*: *"Resolver
 query reporting is switched off, so nothing can be attributed and the rate is
-undefined."* *Reachable and no rows*: *"No traffic was observed for these devices
+undefined."* *Reachable and no rows*: *"No traffic was observed for these clients
 in this period, so there is nothing to attribute."* The distinction between an
 undefined rate and a zero rate is the whole point of this widget and must not be
 collapsed.
@@ -445,12 +717,14 @@ collapsed.
 
 ### Passed-traffic world map
 
+**Type** — `passed_traffic_world_map`
+
 **Question** — Where in the world did the traffic that was **allowed** actually
 go?
 
 **Shows** — A world map of destinations that traffic reached, as **point marks
 on a de-saturated basemap**, sized by volume, with the detail — address or
-operator, country, bytes, connection count, contributing segments — in a popup
+operator, country, bytes, connection count, contributing interfaces — in a popup
 rather than on the canvas. This rendering is not a free choice: it is the
 maintainer's recorded preference in `docs/ui-references.md`, *The maintainer's
 recorded preferences*, taken from ntopng — **no choropleth, no arcs, the map as
@@ -477,8 +751,8 @@ it is zero, so its absence never means "we forgot to check". A map that quietly
 drops what it cannot place lies about the total, and this widget is forbidden
 from doing that.
 
-**Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `segments` (optional
-list of segment references; empty means every discovered segment); `scope`
+**Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `interfaces` (optional
+list of interface references; empty means every discovered interface); `scope`
 (`north_south` — the default and only meaningful value for a world map, since
 east-west traffic has no remote endpoint to place — or `all`, which additionally
 counts east-west volume into the unplaced counter so the totals reconcile);
@@ -487,12 +761,12 @@ default true and not recommended to disable); `cluster` (boolean — whether
 nearby marks merge at low zoom, with the merged count shown inside the mark).
 
 **Data** — `volume_aggregate_24h.peer_address`, `.bytes`,
-`.allowed_connections`, `.src_segment_id`, `.traffic_scope`,
+`.allowed_connections`, `.src_interface_id`, `.traffic_scope`,
 `.period_start_at`, `.computed_at`, and the `_1h`, `_7d` and `_30d` twins;
 `geo_asn.address`, `geo_asn.lookup_state`, `geo_asn.country_code`,
 `geo_asn.country_name`, `geo_asn.latitude`, `geo_asn.longitude`, `geo_asn.asn`,
-`geo_asn.operator`, `geo_asn.dataset_build_at`; `segment.user_label`,
-`segment.discovered_description`. The allowed side needs no gap: the aggregates
+`geo_asn.operator`, `geo_asn.dataset_build_at`; `interface.user_label`,
+`interface.description`. The allowed side needs no gap: the aggregates
 already carry `allowed_connections` separately from `blocked_connections`, so
 one query over one table serves this widget. Sources: per-pair volume,
 `docs/opnsense-api-survey.md`, *Data source 3 — NetFlow / Insight*; the
@@ -519,11 +793,13 @@ per-destination volume cannot be read. This is not an absence of traffic."*
 *Source present but disabled*: *"NetFlow is enabled but local collection is
 switched off on the firewall, so Insight holds no data. Reporting > NetFlow is
 where a user turns that on; `opnview` never changes it."* *Reachable and no
-rows*: *"No allowed traffic reached an address outside a discovered segment in
+rows*: *"No allowed traffic reached an address outside a discovered interface in
 this period."* Without a MaxMind licence key the map is disabled with that
 stated plainly, and every other widget keeps working.
 
 ### Blocked-traffic world map
+
+**Type** — `blocked_traffic_world_map`
 
 **Question** — Where in the world was the traffic that was **stopped** trying to
 go, or coming from?
@@ -538,7 +814,7 @@ resolver refused never resolved to an address and there is therefore nothing to
 place — a fact about the world rather than a gap in the model. Required UI copy:
 the observation-point limit sentence; the unplaced-volume statement, below; the
 DNS statement just made; and, when the security engine contributes, the
-per-segment coverage statement (gap G8).
+per-interface coverage statement (gap G8).
 
 **The unplaced statement is mandatory here too**, and for the same reason: a
 blocked destination the geolocation dataset could not place is accounted for in
@@ -553,26 +829,26 @@ this widget is telling the truth.
 
 **Parameters** — `period`; `engines` (any subset of `firewall_rule`,
 `security_engine`; the two DNS engines are deliberately not offered here and the
-widget explains why); `segments` (optional); `endpoint` (`destination` — where
+widget explains why); `interfaces` (optional); `endpoint` (`destination` — where
 blocked traffic was heading — or `source` — where blocked inbound traffic came
 from; a genuine choice, because the interesting end differs between egress
 policy and inbound attack); `size_by` (`connections` | `bytes` | `events`);
 `min_count`; `show_unplaced` (boolean, default true); `cluster` (boolean).
 
 **Data** — For the firewall engine: `volume_aggregate_24h.peer_address`,
-`.blocked_connections`, `.src_segment_id`, `.period_start_at` and the period
+`.blocked_connections`, `.src_interface_id`, `.period_start_at` and the period
 twins, for the aggregated view; and, for the record-level view within the
 `flow` retention horizon, `flow.action`, `flow.observed_at`, `flow.src_address`,
-`flow.dst_address`, `flow.dst_port`, `flow.src_segment_id`, `flow.direction`,
+`flow.dst_address`, `flow.dst_port`, `flow.src_interface_id`, `flow.direction`,
 `flow.packet_bytes` through the `blocked_event` view. For the security engine:
 `security_event.occurred_at`, `security_event.src_address`,
 `security_event.dst_address`, `security_event.event_action`,
-`security_event.src_segment_id`, `security_event.provider_id`,
+`security_event.src_interface_id`, `security_event.provider_id`,
 `security_event.rule_identity`, `security_event.signature`. For both:
 `geo_asn.address`, `geo_asn.lookup_state`, `geo_asn.country_code`,
 `geo_asn.country_name`, `geo_asn.latitude`, `geo_asn.longitude`,
 `geo_asn.operator`, `geo_asn.dataset_build_at`. Two known gaps bear on this
-widget and neither is new: placing a security event by the segment it targeted
+widget and neither is new: placing a security event by the interface it targeted
 rather than the one it came from depends on gap G7, and the coverage statement
 depends on gap G8. No further gap is needed — the aggregates already separate
 `blocked_connections` from `allowed_connections`, and `security_event` already
@@ -609,26 +885,28 @@ nothing that could be placed on a map in this period"* — with the DNS counter
 still shown beside it, because DNS blocks may well be non-zero while this map is
 empty, and a user must not conclude from a blank map that nothing was blocked.
 Where the security engine contributes, all three states additionally carry the
-per-segment coverage statement.
+per-interface coverage statement.
 
 ### Destination countries
+
+**Type** — `destination_countries`
 
 **Question** — Which countries, ranked, and how much of that was blocked?
 
 **Shows** — A ranked table of countries with byte volume, allowed and blocked
-connection counts, the number of distinct peers, the contributing segments, and
+connection counts, the number of distinct peers, the contributing interfaces, and
 the build date of the geolocation dataset that answered, so a stale enrichment is
 visible. An address whose lookup state is `miss` or `pending` is carried in an
 explicit unresolved row. Required UI copy: the observation-point limit sentence.
 
-**Parameters** — `period`; `segments` (optional); `limit`; `series` (any subset
+**Parameters** — `period`; `interfaces` (optional); `limit`; `series` (any subset
 of `allowed`, `blocked`); `sort` (`bytes` | `blocked` | `peers`).
 
 **Data** — `geo_asn.country_code`, `geo_asn.country_name`,
 `geo_asn.lookup_state`, `geo_asn.dataset_build_at`;
 `volume_aggregate_24h.bytes`, `.allowed_connections`, `.blocked_connections`,
-`.peer_address`, `.src_segment_id`, `.period_start_at` and the period twins;
-`segment.user_label`, `segment.discovered_description`. Sources as for the world
+`.peer_address`, `.src_interface_id`, `.period_start_at` and the period twins;
+`interface.user_label`, `interface.description`. Sources as for the world
 map.
 
 **Existing query** — Reuses `-- screen: Map`, collapsing the operator and ASN
@@ -640,30 +918,32 @@ this widget is usable with the `aggregate_mode` row of `setting` set to `no_doma
 so destinations cannot be grouped by country. The volumes still exist and are
 shown unresolved."* *Source present but disabled*: *"NetFlow local collection is
 switched off on the firewall, so there is no per-destination volume to group."*
-*Reachable and no rows*: *"No traffic left a discovered segment in this period."*
+*Reachable and no rows*: *"No traffic left a discovered interface in this period."*
 
 ### Destination operators
+
+**Type** — `destination_operators`
 
 **Question** — Which operators and autonomous systems is this network's traffic
 actually reaching?
 
 **Shows** — A ranked table of ASN and operator name with byte volume, allowed
 and blocked connection counts, distinct peer count and the contributing
-segments, plus the dataset build date. This is the widget that survives
+interfaces, plus the dataset build date. This is the widget that survives
 encrypted DNS: when no site name can be inferred, the operator is usually still
-knowable, and this is the honest answer to "where did it go" for a device whose
+knowable, and this is the honest answer to "where did it go" for a client whose
 attribution rate is near zero. Required UI copy: the observation-point limit
 sentence, and a note that an operator is not a site — a single operator commonly
 fronts many unrelated sites.
 
-**Parameters** — `period`; `segments` (optional); `limit`; `series` (any subset
+**Parameters** — `period`; `interfaces` (optional); `limit`; `series` (any subset
 of `allowed`, `blocked`); `group` (`asn` | `operator`).
 
 **Data** — `geo_asn.asn`, `geo_asn.operator`, `geo_asn.lookup_state`,
 `geo_asn.country_code`, `geo_asn.dataset_build_at`;
 `volume_aggregate_24h.bytes`, `.allowed_connections`, `.blocked_connections`,
-`.peer_address`, `.src_segment_id`, `.period_start_at` and the period twins;
-`segment.user_label`, `segment.discovered_description`. Sources as for the world
+`.peer_address`, `.src_interface_id`, `.period_start_at` and the period twins;
+`interface.user_label`, `interface.description`. Sources as for the world
 map.
 
 **Existing query** — Reuses `-- screen: Map` with the country columns collapsed
@@ -674,20 +954,22 @@ domain name, so it is available in `no_domains` aggregate mode.
 operators cannot be named. Addresses and volumes are unaffected."* *Source
 present but disabled*: *"NetFlow local collection is switched off, so there is no
 per-destination volume to attribute to an operator."* *Reachable and no rows*:
-*"No traffic reached an address outside a discovered segment in this period."*
+*"No traffic reached an address outside a discovered interface in this period."*
 
 ---
 
 ### Traffic Sankey
 
-**Question** — Who talks to whom, at a glance — which segments send their volume
-to which other segments, and to which operators outside?
+**Type** — `traffic_sankey`
+
+**Question** — Who talks to whom, at a glance — which interfaces send their volume
+to which other interfaces, and to which operators outside?
 
 **Shows** — A Sankey diagram: sources down the left, destinations down the
 right, and a ribbon between each pair whose width is proportional to volume.
 Every end is **labelled with a resolved name rather than a number** — a
-segment's user label or discovered description on the left, and on the right
-either another segment (east-west) or the destination operator's AS number
+interface's user label or discovered description on the left, and on the right
+either another interface (east-west) or the destination operator's AS number
 *and* operator name (north-south). Ribbons below the `min_share` threshold
 collapse into a single explicit **"Other"** band carrying its own total, so a
 long tail cannot make the diagram unreadable while also not being hidden.
@@ -697,49 +979,49 @@ Akvorado's ASN Sankey specifically, and `docs/ui-references.md`, *The
 maintainer's recorded preferences*, records both the preference and what is
 worth taking from it — **the resolved operator name on the diagram itself, and
 an honest collapsed band for the tail**. It answers the same question as the
-*Segment traffic matrix* and answers it differently: **the matrix is precise and
+*Interface traffic matrix* and answers it differently: **the matrix is precise and
 the Sankey is legible**, so both are offered and the user places whichever suits
 the canvas. Required UI copy: the observation-point limit sentence.
 
-**Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `left` (`segment` —
-today the only source dimension that resolves for every flow — or `device`, whose
-limits the next field sets out); `right` (`segment` | `operator` | `country`); `scope` (`all` |
-`east_west` | `north_south`); `segments` (optional list of segment references
+**Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `left` (`interface` —
+today the only source dimension that resolves for every flow — or `client`, whose
+limits the next field sets out); `right` (`interface` | `operator` | `country`); `scope` (`all` |
+`east_west` | `north_south`); `interfaces` (optional list of interface references
 limiting the left-hand side); `measure` (`bytes` | `connections`); `max_nodes`
 (how many ribbons before the remainder collapses); `min_share` (the threshold
 below which a ribbon joins the "Other" band); `show_blocked` (boolean — whether
 ribbon colour additionally encodes the blocked share of each pair, which is
 available because the aggregates carry both counts).
 
-**Data** — `volume_aggregate_24h.src_segment_id`, `.dst_segment_id`,
+**Data** — `volume_aggregate_24h.src_interface_id`, `.dst_interface_id`,
 `.peer_address`, `.traffic_scope`, `.bytes`, `.allowed_connections`,
 `.blocked_connections`, `.period_start_at`, `.computed_at`, and the `_1h`,
-`_7d` and `_30d` twins; `segment.user_label`, `segment.discovered_description`,
-`segment.link_kind`; `geo_asn.address`, `geo_asn.asn`, `geo_asn.operator`,
+`_7d` and `_30d` twins; `interface.user_label`, `interface.description`,
+`interface.link_kind`; `geo_asn.address`, `geo_asn.asn`, `geo_asn.operator`,
 `geo_asn.country_code`, `geo_asn.lookup_state`. For a period inside the `flow`
 retention horizon the same shape can be read directly from
-`flow.src_segment_id`, `flow.dst_segment_id`, `flow.traffic_scope`,
+`flow.src_interface_id`, `flow.dst_interface_id`, `flow.traffic_scope`,
 `flow.packet_bytes`, `flow.action`, `flow.observed_at` and `flow.dst_address`.
 
 Two honest limits, neither of them a new gap. First, **`opnview` has no source
 autonomous system**: unlike Akvorado, which sees both ends of a transit flow,
-`opnview` observes a network whose local end is a segment and a device, so the
-faithful analogue of an AS-to-AS Sankey is **segment-to-operator**, not
-AS-to-AS. Second, setting `left` to `device` for any period longer than the
-`flow` retention horizon depends on gap **G4** — the aggregates carry no device
-dimension — so a 7 d or 30 d device-to-operator Sankey is unavailable until that
+`opnview` observes a network whose local end is an interface and a client, so the
+faithful analogue of an AS-to-AS Sankey is **interface-to-operator**, not
+AS-to-AS. Second, setting `left` to `client` for any period longer than the
+`flow` retention horizon depends on gap **G4** — the aggregates carry no client
+dimension — so a 7 d or 30 d client-to-operator Sankey is unavailable until that
 is added, and the widget says so in place rather than silently falling back to
-segments. Sources: per-pair volume, `docs/opnsense-api-survey.md`, *Data source
+interfaces. Sources: per-pair volume, `docs/opnsense-api-survey.md`, *Data source
 3 — NetFlow / Insight*; the allowed and blocked counts, *Data source 1 — Filter
-logs*; segment discovery, *Runtime discovery* (i); operator and country from the
+logs*; interface discovery, *Runtime discovery* (i); operator and country from the
 MaxMind GeoLite2 ASN and City databases.
 
-**Existing query** — Adapts `-- screen: Matrix` when `right` is `segment`: that
-query already projects exactly the source-segment, destination-segment, volume
+**Existing query** — Adapts `-- screen: Matrix` when `right` is `interface`: that
+query already projects exactly the source-interface, destination-interface, volume
 and allowed-versus-blocked tuple a Sankey needs, and the only change is that the
 result is rendered as ribbons rather than as cells. Adapts `-- screen: Map` when
 `right` is `operator` or `country`, which already groups peer volume by ASN,
-operator and country per source segment — with the same `LEFT JOIN` correction
+operator and country per source interface — with the same `LEFT JOIN` correction
 the two map widgets require, so that peers with no geolocation answer reach the
 "Other" band instead of disappearing.
 
@@ -747,70 +1029,76 @@ the two map widgets require, so that peers with no geolocation answer reach the
 no traffic relationships can be drawn. This is not an absence of traffic."* If
 the `geo_asn` provider is unavailable while `right` is `operator` or `country`,
 *"No ASN database is available, so destinations cannot be named. Switch the
-right-hand side to segments, or add a MaxMind licence key."* *Source present but
+right-hand side to interfaces, or add a MaxMind licence key."* *Source present but
 disabled*: *"Local logging is switched off on the firewall, so there are no
 records to relate. Turn it on under System > Settings > Logging; `opnview` never
 changes that setting."* *Reachable and no rows*: *"No traffic crossed between a
-discovered segment and anywhere else in this period."* In the third case the
-discovered segments are still drawn as unconnected nodes down the left, so a
+discovered interface and anywhere else in this period."* In the third case the
+discovered interfaces are still drawn as unconnected nodes down the left, so a
 silent network reads as silent rather than as absent.
 
 ## Blocked and denied
 
 ### Unified blocked feed
 
+**Type** — `unified_blocked_feed`
+
 **Question** — What was blocked, and **what blocked it** — a DNS advertising
 list, a DNS threat list, Suricata, or a firewall rule?
 
 **Shows** — One reverse-chronological feed unifying the blocking decisions of
-all four engines, each entry naming the engine, the device or client, the target
+all four engines, each entry naming the engine, the client or client, the target
 (a domain where the engine saw one, an address and port otherwise), and — the
 load-bearing column — **which named list, signature or rule produced the
 decision**. Entries are grouped and filterable by engine, so "show me only what
 the DNS threat lists stopped" is one click. Where an engine cannot name what it
 used, that is stated in the row rather than left blank. Required UI copy: the
 observation-point limit sentence for the connection counts, and, when Suricata
-contributes, the per-segment coverage statement described under *Security alerts
+contributes, the per-interface coverage statement described under *Security alerts
 over time*.
 
 **Parameters** — `period`; `engines` (any subset of `firewall_rule`,
-`dns_advertising_list`, `dns_threat_list`, `security_engine`); `segments`
-(optional); `devices` (optional); `limit`; `group_by` (`none` | `engine` |
-`device` | `target`).
+`dns_advertising_list`, `dns_threat_list`, `security_engine`); `interfaces`
+(optional); `clients` (optional); `limit`; `group_by` (`none` | `engine` |
+`client` | `target`).
 
 **Data** — For the firewall engine: `flow.action`, `flow.observed_at`,
 `flow.src_address`, `flow.dst_address`, `flow.dst_port`, `flow.protocol`,
-`flow.rid`, `flow.rule_id`, `flow.rule_lookup_state`, `flow.src_device_id`,
-`flow.src_segment_id`, `flow.interface_device`,
+`flow.rid`, `flow.rule_id`, `flow.rule_lookup_state`, `flow.src_client_id`,
+`flow.src_interface_id`, `flow.interface_device`,
 `flow.interface_lookup_state`, and the `blocked_event` view over them;
 `rule.description`, `rule.action`, `rule.pf_label`; `interface_map.description`.
 For the security engine: `security_event.event_action`,
 `security_event.occurred_at`, `security_event.signature`,
 `security_event.rule_identity`, `security_event.src_address`,
-`security_event.dst_address`, `security_event.src_device_id`,
-`security_event.src_segment_id`, `security_event.provider_id`;
+`security_event.dst_address`, `security_event.src_client_id`,
+`security_event.src_interface_id`, `security_event.provider_id`;
 `provider_rule_info.normalised_severity`, `provider_rule_info.category`. For the
 two DNS engines: `dns_resolution.action`, `dns_resolution.domain`,
-`dns_resolution.client_address`, `dns_resolution.device_id`,
+`dns_resolution.client_address`, `dns_resolution.client_id`,
 `dns_resolution.looked_up_at`, `dns_resolution.resolver`,
-`dns_resolution.answer_source`, `dns_resolution.rcode` — and then the gap.
-`MISSING FROM MODEL:` **G1 — `dns_resolution` has no `blocklist` column, so
-"blocked by which list" is unanswerable today.**
-`/api/unbound/overview/search_queries` returns a `blocklist` field in every row
-(`docs/opnsense-api-survey.md`, *Data source 5 — Resolver DNS lookups*, response
-shape), and the schema discards it. What would have to be added: a `blocklist`
-TEXT column on `dns_resolution`, populated verbatim from that field, plus a
-`block_list_kind` discriminator — advertising, threat, custom, unknown — because
-the endpoint reports the list's name and not its purpose, and the maintainer's
-question distinguishes the two. A second marker covers the same widget's other
-half: `MISSING FROM MODEL:` **G2 — there is no unified blocking vocabulary
+`dns_resolution.answer_source`, `dns_resolution.rcode`,
+`dns_resolution.blocklist_id`; `blocklist.name`, `blocklist.purpose`,
+`blocklist.purpose_assigned_at`. **The list that refused a lookup is now a
+column** — that was gap G1 and it is closed; `blocklist.name` is the value
+`/api/unbound/overview/search_queries` returns verbatim
+(`docs/opnsense-api-survey.md`, *Data source 5 — Resolver DNS lookups*,
+*Response shape*). Two consequences the feed must respect. First, the **purpose**
+— advertising against threat, which is what the maintainer's question turns on —
+is **assigned by the user and never inferred from the name**, so a list nobody
+has classified is rendered *"purpose not assigned"* and is never sorted into a
+category on the strength of what it is called. Second, a blocked lookup with a
+NULL `blocklist_id` is *"blocked, list not recorded"*, a state of its own: the
+resolver refused it and named nothing, which is not the same as the lookup
+having passed. What remains open is the same widget's other half:
+`MISSING FROM MODEL:` **G2 — there is no unified blocking vocabulary
 across the four engines.** A block lives in three tables with three different
 column names and three different value sets (`flow.action = 'block'`,
 `dns_resolution.action IN ('block','drop')`,
 `security_event.event_action = 'blocked'`), and nothing in the schema says which
 *kind* of engine produced a given decision. What would have to be added: a
 `blocked_decision` view unioning the three, projecting a common
-`(occurred_at, engine_kind, engine_reference, device_id, segment_id, target,
+`(occurred_at, engine_kind, engine_reference, client_id, interface_id, target,
 target_kind)` shape, with `engine_kind` constrained to `firewall_rule`,
 `dns_advertising_list`, `dns_threat_list` and `security_engine` — the
 maintainer's four categories, made explicit rather than inferred by a caller.
@@ -836,31 +1124,33 @@ but not running"* — each naming the OPNsense page where the user turns it on,
 and each stating that `opnview` never performs that change. *Reachable and no
 rows*: *"Every configured blocking engine is healthy and blocked nothing in this
 period."* Where Suricata contributes, the widget additionally states which
-segments its coverage includes and which it does not; see G8.
+interfaces its coverage includes and which it does not; see G8.
 
 ### Blocked by firewall rule
+
+**Type** — `blocked_by_firewall_rule`
 
 **Question** — Which firewall rules are actually firing, and against whom?
 
 **Shows** — A ranked list of rules by blocked-connection count, each row naming
-the rule's description, its pf label, the interface it fired on, the segments
-and devices it blocked, and a small timeline. A `rid` that matches no known rule
+the rule's description, its pf label, the interface it fired on, the interfaces
+and clients it blocked, and a small timeline. A `rid` that matches no known rule
 is a first-class row labelled **rule no longer exists** — normal, because a rule
-can be removed after it logged — and never a missing row. An interface device
+can be removed after it logged — and never a missing row. An interface client
 name absent from the interface map is labelled likewise. Required UI copy: the
 observation-point limit sentence.
 
-**Parameters** — `period`; `segments` (optional); `devices` (optional);
+**Parameters** — `period`; `interfaces` (optional); `clients` (optional);
 `limit`; `include_automatic` (boolean — whether auto-generated rules are
-listed); `sort` (`blocked` | `devices` | `recency`).
+listed); `sort` (`blocked` | `clients` | `recency`).
 
 **Data** — `flow.action`, `flow.observed_at`, `flow.rid`, `flow.rule_id`,
-`flow.rule_lookup_state`, `flow.src_segment_id`, `flow.src_device_id`,
+`flow.rule_lookup_state`, `flow.src_interface_id`, `flow.src_client_id`,
 `flow.src_address`, `flow.dst_address`, `flow.dst_port`,
 `flow.interface_device`, `flow.interface_lookup_state`, and the
 `blocked_event` view; `rule.description`, `rule.pf_label`, `rule.action`,
 `rule.direction`, `rule.is_automatic`; `interface_map.description`,
-`interface_map.segment_id`. Sources: filter logs,
+`interface_map.interface_id`. Sources: filter logs,
 `docs/opnsense-api-survey.md`, *Data source 1 — Filter logs*; rule discovery,
 *Runtime discovery* (ii).
 
@@ -878,11 +1168,13 @@ listed with a zero count on request, so "which rules are dead" is answerable.
 
 ### Blocked DNS lookups
 
+**Type** — `blocked_dns_lookups`
+
 **Question** — Which domains did the resolver refuse, and which list did the
 refusing?
 
-**Shows** — A ranked list of blocked domains with the count, the devices that
-asked, the segments they sit in, and the name of the blocklist that produced the
+**Shows** — A ranked list of blocked domains with the count, the clients that
+asked, the interfaces they sit in, and the name of the blocklist that produced the
 decision, with the advertising and threat categories separated. A lookup whose
 list cannot be named is carried explicitly as *"blocked, list not recorded"*,
 never merged into a generic bucket. Required UI copy: the
@@ -891,30 +1183,40 @@ an *observed* domain rather than an inferred one, and the widget says so
 explicitly, because that is the one place in the product where a domain is not a
 guess.
 
-**Parameters** — `period`; `categories` (any subset of `advertising`, `threat`,
-`custom`, `unknown`); `segments` (optional); `devices` (optional); `limit`;
-`min_count`.
+**Parameters** — `period`; `purposes` (any subset of `advertising`, `tracking`,
+`threat`, `parental`, `other`, plus `unassigned` for a list nobody has
+classified and `not_recorded` for a block the resolver attributed to no list —
+the last two being states rather than purposes, and selectable precisely so they
+cannot be quietly excluded); `blocklists` (optional — limit to named lists);
+`interfaces` (optional); `clients` (optional); `limit`; `min_count`.
 
 **Data** — `dns_resolution.domain`, `dns_resolution.action`,
-`dns_resolution.client_address`, `dns_resolution.device_id`,
+`dns_resolution.client_address`, `dns_resolution.client_id`,
 `dns_resolution.looked_up_at`, `dns_resolution.resolver`,
 `dns_resolution.answer_source`, `dns_resolution.rcode`,
-`dns_resolution.lookup_uuid`; `device.hostname`, `device.last_address`. The
-blocklist name and its category depend on gap G1. Grouping by segment depends
-on: `MISSING FROM MODEL:` **G6 — `dns_resolution` carries no segment.** It has
-`client_address` and a nullable `device_id`, so a lookup can only be placed in a
-segment by joining through `device.segment_id`; a client that has never appeared
-in a lease or a flow has no device row, and its lookups are therefore
-unplaceable. What would have to be added: a nullable `segment_id` column on
+`dns_resolution.lookup_uuid`, `dns_resolution.blocklist_id`; `blocklist.name`,
+`blocklist.purpose`; `client.hostname`, `client.last_address`. The list that
+refused the lookup is `blocklist.name`, observed verbatim from the endpoint, and
+what that list is **for** is `blocklist.purpose`, which a user assigned and no
+code derived — that was gap G1 and it is closed. The advertising and threat
+categories this widget separates are therefore separated by somebody's decision,
+not by a substring of a list name, and a list with no assigned purpose keeps its
+rows under an explicit *purpose not assigned* group. The query that does this is
+`-- diagnostic: Blocked lookups by list` in `sql/queries/diagnostics.sql`.
+Grouping by interface depends on: `MISSING FROM MODEL:` **G6 — `dns_resolution` carries no interface.** It has
+`client_address` and a nullable `client_id`, so a lookup can only be placed in a
+interface by joining through `client.interface_id`; a client that has never appeared
+in a lease or a flow has no client row, and its lookups are therefore
+unplaceable. What would have to be added: a nullable `interface_id` column on
 `dns_resolution`, resolved at ingest from the client address against the
-discovered segment addressing, plus a `segment_lookup_state` in the same
+discovered interface addressing, plus an `interface_lookup_state` in the same
 `resolved` / `not_found` / `pending` vocabulary `flow` already uses — so an
 unplaceable lookup is a modelled state rather than a null. Sources: resolver
 lookups, `docs/opnsense-api-survey.md`, *Data source 5 — Resolver DNS lookups*.
 
 **Existing query** — Reuses nothing. No query in `sql/queries/screens.sql` reads
 `dns_resolution` at all: the only route to that table in the seven is through
-`domain_attribution` in `-- screen: Device`, which selects attributed flows
+`domain_attribution` in `-- screen: Client`, which selects attributed flows
 rather than lookups and cannot see a blocked lookup, because a blocked lookup
 produces no flow to attribute.
 
@@ -935,6 +1237,8 @@ gap 6).
 
 ### Security alerts over time
 
+**Type** — `security_alerts_over_time`
+
 **Question** — What did the intrusion-detection engine see, and when?
 
 **Shows** — A timeline of security events over the period, banded by normalised
@@ -943,32 +1247,32 @@ contributed it. Severity is taken from the event when the provider ships one and
 resolved through the per-provider rule-info cache otherwise; a rule identity
 absent from that cache is drawn as an explicit **unknown severity** band rather
 than dropped, because a detection whose severity we could not look up is still a
-detection. Required UI copy: a per-segment coverage statement — *"Detection
-covers these segments: … It does not cover these: … An absence of alerts for an
-uncovered segment means nothing."* — which is the `ROADMAP.md` degrade-never-guess
+detection. Required UI copy: a per-interface coverage statement — *"Detection
+covers these interfaces: … It does not cover these: … An absence of alerts for an
+uncovered interface means nothing."* — which is the `ROADMAP.md` degrade-never-guess
 rule made concrete.
 
 **Parameters** — `period`; `severities` (any subset of `critical`, `high`,
-`medium`, `low`, `informational`, `unknown`); `segments` (optional); `devices`
+`medium`, `low`, `informational`, `unknown`); `interfaces` (optional); `clients`
 (optional); `bucket` (the time granularity); `providers` (optional, by provider
 kind and key).
 
 **Data** — `security_event.occurred_at`, `security_event.normalised_severity`,
 `security_event.rule_identity`, `security_event.signature`,
-`security_event.event_action`, `security_event.src_device_id`,
-`security_event.src_segment_id`, `security_event.provider_id`,
+`security_event.event_action`, `security_event.src_client_id`,
+`security_event.src_interface_id`, `security_event.provider_id`,
 `security_event.in_interface_device`; `provider_rule_info.normalised_severity`,
 `provider_rule_info.category`, `provider_rule_info.provider_severity`;
 `provider.provider_key`, `provider.display_name`. The coverage statement
-depends on: `MISSING FROM MODEL:` **G8 — the segments a security-event provider
+depends on: `MISSING FROM MODEL:` **G8 — the interfaces a security-event provider
 covers are not modelled.** `/api/ids/settings/get` exposes
 `ids.general.interfaces` as an object keyed by interface identifier with a
 `selected` flag (`docs/opnsense-api-survey.md`, *Runtime discovery* (v)), and
 nothing in the schema stores it: `source_availability` carries a free-text
-`detail` and no per-segment relation. What would have to be added: a
-`provider_segment_coverage` table keyed on `(provider_id, segment_id)` with an
+`detail` and no per-interface relation. What would have to be added: a
+`provider_interface_coverage` table keyed on `(provider_id, interface_id)` with an
 `is_covered` flag and a `determined_at` timestamp, so a UI statement about which
-segments are covered is a query rather than a string parse. Sources: security
+interfaces are covered is a query rather than a string parse. Sources: security
 events, `docs/opnsense-api-survey.md`, *Data source 2 — Suricata `eve.json`*;
 severity resolution, *Gaps and alternatives*, gap 3.
 
@@ -983,36 +1287,38 @@ The intrusion-detection module is absent or not permitted, so this is not an
 absence of threats."* *Source present but disabled*: *"Suricata is installed but
 not running, so nothing is being detected. An empty chart here would be a lie."*
 *Reachable and no rows*: *"Suricata is running and raised no alerts in this
-period on the segments it covers."* All three states additionally carry the
+period on the interfaces it covers."* All three states additionally carry the
 coverage statement, because an alert count of zero means something very different
-on a covered segment than on an uncovered one.
+on a covered interface than on an uncovered one.
 
 ### Alerts by signature
+
+**Type** — `alerts_by_signature`
 
 **Question** — Which detections are firing, how often, and how serious are they?
 
 **Shows** — A ranked list of rule identities with the signature text, the
-normalised severity, the category, the count, the devices and segments
+normalised severity, the category, the count, the clients and interfaces
 involved, and the provider that contributed them. The raw severity the provider
 reported is shown alongside `opnview`'s normalised value, so the normalisation
 stays auditable. A rule identity with no cache entry is shown with severity
 **unknown** and the reason — the API destroys the nested alert object before
 `opnview` can read it, so severity has to be fetched separately and this one has
-not been fetched yet. Required UI copy: the per-segment coverage statement.
+not been fetched yet. Required UI copy: the per-interface coverage statement.
 
-**Parameters** — `period`; `severities`; `segments` (optional); `devices`
+**Parameters** — `period`; `severities`; `interfaces` (optional); `clients`
 (optional); `limit`; `providers` (optional); `sort` (`count` | `severity` |
 `recency`).
 
 **Data** — `security_event.rule_identity`, `security_event.signature`,
 `security_event.occurred_at`, `security_event.event_action`,
-`security_event.normalised_severity`, `security_event.src_device_id`,
-`security_event.src_segment_id`, `security_event.provider_id`;
+`security_event.normalised_severity`, `security_event.src_client_id`,
+`security_event.src_interface_id`, `security_event.provider_id`;
 `provider_rule_info.normalised_severity`, `provider_rule_info.provider_severity`,
 `provider_rule_info.category`, `provider_rule_info.rule_source`,
 `provider_rule_info.fetched_at`; `provider.provider_key`,
-`provider.display_name`; `segment.user_label`,
-`segment.discovered_description`; `device.hostname`. Coverage statement depends
+`provider.display_name`; `interface.user_label`,
+`interface.description`; `client.hostname`. Coverage statement depends
 on gap G8. Sources: security events, `docs/opnsense-api-survey.md`, *Data source
 2 — Suricata `eve.json`*; rule metadata, *Gaps and alternatives*, gap 3.
 
@@ -1024,54 +1330,146 @@ aggregation.
 **Empty state** — *Source unavailable*: *"No security-event source is reachable,
 so no signature can be ranked."* *Source present but disabled*: *"Suricata is
 installed but not running."* *Reachable and no rows*: *"No signature fired in
-this period on the covered segments."* Plus the coverage statement in all three
+this period on the covered interfaces."* Plus the coverage statement in all three
 cases.
 
-### Alerts by device and segment
+### Alerts by client and interface
 
-**Question** — Which machine, and in which segment, is the detection engine
+**Type** — `alerts_by_client_and_interface`
+
+**Question** — Which machine, and in which interface, is the detection engine
 complaining about?
 
-**Shows** — Alerts attributed to a device and a segment rather than to an
-address: one row per device with the alert count, the worst severity seen, the
-segment, and the top signatures. A source address that could not be resolved to
-a device is a first-class row labelled **address not matched to a device**, with
+**Shows** — Alerts attributed to a client and an interface rather than to an
+address: one row per client with the alert count, the worst severity seen, the
+interface, and the top signatures. A source address that could not be resolved to
+a client is a first-class row labelled **address not matched to a client**, with
 its address shown, because dropping it would under-report. Required UI copy: the
-per-segment coverage statement, and a note that only the *source* side of an
-alert is currently placed in a segment.
+per-interface coverage statement, and a note that only the *source* side of an
+alert is currently placed in an interface.
 
-**Parameters** — `period`; `severities`; `segments` (optional); `limit`;
+**Parameters** — `period`; `severities`; `interfaces` (optional); `limit`;
 `sort` (`count` | `worst_severity`); `include_unmatched` (boolean, default
 true).
 
-**Data** — `security_event.src_device_id`, `security_event.src_segment_id`,
+**Data** — `security_event.src_client_id`, `security_event.src_interface_id`,
 `security_event.src_address`, `security_event.dst_address`,
 `security_event.occurred_at`, `security_event.rule_identity`,
 `security_event.signature`, `security_event.normalised_severity`;
 `provider_rule_info.normalised_severity`, `provider_rule_info.category`;
-`device.hostname`, `device.last_address`, `device.unstable_identity`;
-`segment.user_label`, `segment.discovered_description`. The destination side is
+`client.hostname`, `client.last_address`, `client.unstable_identity`;
+`interface.user_label`, `interface.description`. The destination side is
 unavailable: `MISSING FROM MODEL:` **G7 — `security_event` carries no
-destination segment or device.** It has `src_device_id` and `src_segment_id` and
-no counterpart for `dst_address`, so "which segment was the target" cannot be
-asked, and an alert about traffic *into* a segment is placed by its source only.
-What would have to be added: `dst_device_id` and `dst_segment_id` columns
+destination interface or client.** It has `src_client_id` and `src_interface_id` and
+no counterpart for `dst_address`, so "which interface was the target" cannot be
+asked, and an alert about traffic *into* an interface is placed by its source only.
+What would have to be added: `dst_client_id` and `dst_interface_id` columns
 mirroring the source pair, resolved at ingest the same way, together with an
-index on `(dst_segment_id, occurred_at)` so the inverse aggregation is an index
+index on `(dst_interface_id, occurred_at)` so the inverse aggregation is an index
 search. Coverage statement depends on gap G8. Sources: security events,
-`docs/opnsense-api-survey.md`, *Data source 2 — Suricata `eve.json`*; device
+`docs/opnsense-api-survey.md`, *Data source 2 — Suricata `eve.json`*; client
 identity, *Data source 4 — DHCP leases*.
 
 **Existing query** — Reuses `-- screen: Alerts`, grouped by
-`src_device_id` and `src_segment_id`. The index
-`idx_security_event_device_occurred_at` exists for this aggregation.
+`src_client_id` and `src_interface_id`. The index
+`idx_security_event_client_occurred_at` exists for this aggregation.
 
 **Empty state** — *Source unavailable*: *"No security-event source is reachable,
-so no device can be implicated."* *Source present but disabled*: *"Suricata is
-installed but not running, so no device has been flagged."* *Reachable and no
-rows*: *"No covered device raised an alert in this period."* Plus the coverage
-statement, naming the segments where a device could not raise an alert because
+so no client can be implicated."* *Source present but disabled*: *"Suricata is
+installed but not running, so no client has been flagged."* *Reachable and no
+rows*: *"No covered client raised an alert in this period."* Plus the coverage
+statement, naming the interfaces where a client could not raise an alert because
 nothing is watching it.
+
+---
+
+## The installation itself
+
+One entry, about the firewall's own identity on the network rather than about
+the traffic crossing it. It sits outside *Firewall health and telemetry* on
+purpose: unlike everything in that section, its endpoint **is** surveyed.
+
+### Public address
+
+**Type** — `public_address`
+
+**Question** — What address does this installation present to the internet, on
+which gateway, and when did it last change?
+
+**Shows** — One row per gateway the firewall routes through, each naming the
+gateway, the interface behind it, the address currently assigned to that
+interface, its address family, and when `opnview` first saw that address on that
+interface. A recent change is marked, and the previous address is shown beside
+it, because *"it changed four hours ago"* is usually the answer a firewall
+operator is actually looking for.
+
+**The distinction this widget must not blur.** What the API reports is **the
+address configured on the upstream interface**. On a firewall connected
+directly to the internet that is the public address. On a firewall behind a
+modem or router doing its own NAT, or behind carrier-grade NAT, it is a private
+address and the real public address is **a different number the firewall cannot
+see**. The widget states which case it is in — it can tell, because a private
+range is arithmetic on the address rather than a guess about a name — and where
+it cannot know, it says *"This is the address on the upstream interface. This
+installation is behind another NAT, so the address the internet sees is not
+visible from the firewall and `opnview` does not guess it."* It never labels a
+private address as public, and it never fetches the answer from an external
+echo service: the project allows exactly two outbound calls, the firewall API
+and the MaxMind download, and a third one is not added for a convenience. The
+observation-point limit sentence does **not** apply here and must not be shown;
+this widget describes the firewall, not traffic crossing it.
+
+**Parameters** — `families` (any subset of `ipv4`, `ipv6`); `gateways`
+(optional — limit to named gateways; empty means all); `show_history` (boolean —
+whether the previous addresses are listed beneath the current one);
+`history_limit`.
+
+**Data** — The endpoint is established, and this is the one entry in the
+catalogue whose source was surveyed and whose storage was not.
+`/api/interfaces/overview/interfaces_info` returns, per interface, `addr4` and
+`addr6` in `address/prefix` form, the `ipv4[]` and `ipv6[]` arrays whose entries
+each carry an `ipaddr` in the same form, and `gateways[]` — all cited in
+`docs/opnsense-api-survey.md`, *Runtime discovery* (i). Which interface is the
+upstream one follows from which carries a gateway, never from what it is called.
+`/api/routes/gateway/status` may additionally name the gateways and their state,
+and is listed in *Endpoint candidates, cited rather than asserted* below with
+`UNVERIFIED:` against its response shape.
+
+Then the model.
+`MISSING FROM MODEL:` **G13 — the schema stores no interface address, and no
+address history.** `interface` carries `identifier`, `device`, `description`,
+`user_label`, `link_type`, `link_kind`, `vlan_tag`, `address_family` and the two
+`_seen_at` instants, and **no address column at all**: addresses live on
+observations (`flow.src_address`, `client.last_address`, `geo_asn.address`) and
+never on the interface itself. So the current address has nowhere to be stored,
+and the question *when did it last change* is worse than unstored — **no
+endpoint answers it.** The API reports the address the interface has now and
+keeps no history of the ones it had, so a change can only be known by `opnview`
+having looked before and recorded what it saw. What would have to be added: an
+`interface_address` table keyed on `(interface_id, address)` carrying the
+prefix length, the address family, whether a gateway sits behind it, and
+`first_seen_at` / `last_seen_at`, so a change is a new row rather than an
+overwrite and the history is the table; plus a nullable `gateway_name`, since a
+gateway is what makes an address the upstream one. Until then this widget can
+show the current address and **must not show a change time**, because a
+fabricated *"changed recently"* is exactly the zero-that-means-we-could-not-look
+this catalogue forbids everywhere else. What would have to be **surveyed** is
+narrower than G10: the response shape and field names of
+`/api/routes/gateway/status`, and nothing else — the address fields themselves
+are already established above.
+
+**Existing query** — Reuses nothing. No query in `sql/queries/screens.sql` reads
+an interface address, because no table holds one.
+
+**Empty state** — *Source unavailable*: *"The firewall's interface list is not
+reachable, so this installation's addresses cannot be read. This is not an
+absence of connectivity."* *Source present but disabled*: does not arise —
+interface discovery is not a feature a user switches off, and the widget does
+not invent a third state to look symmetrical. *Reachable and no rows*: *"No
+interface on this firewall carries a gateway, so no upstream address could be
+identified."* Until G13 is closed the change column renders as *"not recorded —
+`opnview` has kept no address history yet"*, which is a stated limitation rather
+than a blank.
 
 ---
 
@@ -1163,6 +1561,8 @@ than that API.
 
 ### Firewall health overview
 
+**Type** — `firewall_health_overview`
+
 **Question** — Is the firewall itself healthy right now?
 
 **Shows** — A compact panel of current values with their trend: uptime, CPU
@@ -1223,6 +1623,8 @@ unknown CPU percentage are different facts.
 
 ### Interface throughput
 
+**Type** — `interface_throughput`
+
 **Question** — How much traffic is each interface carrying, and is anything
 saturated or erroring?
 
@@ -1236,20 +1638,20 @@ traffic the filter log never recorded because no logging rule matched it. That
 makes this the one traffic figure in the catalogue that is *not* a lower bound
 for the same reason as the others, and the copy says so rather than pasting the
 observation-point sentence: *"Counted at the interface, so this includes traffic
-no logging rule matched. Traffic between two devices inside one segment still
+no logging rule matched. Traffic between two clients behind one interface still
 never reaches the firewall and is still invisible."*
 
-**Parameters** — `interfaces` (optional list of segment references; empty means
+**Parameters** — `interfaces` (optional list of interface references; empty means
 every discovered interface); `period`; `direction` (`both` | `in` | `out`);
 `measure` (`bits_per_second` | `bytes` | `packets` | `errors`); `stacked`
 (boolean); `per_interface_axis` (boolean — one shared axis, or one small chart
 per interface).
 
 **Data** — Depends on gaps **G9** and **G10**, above. The join back to a named
-segment uses columns that do exist: `interface_map.device_name`,
-`interface_map.description`, `interface_map.segment_id`;
-`segment.user_label`, `segment.discovered_description`,
-`segment.interface_identifier`, `segment.device_name`. Candidate endpoints:
+interface uses columns that do exist: `interface_map.device`,
+`interface_map.description`, `interface_map.interface_id`;
+`interface.user_label`, `interface.description`,
+`interface.identifier`, `interface.device`. Candidate endpoints:
 `/api/diagnostics/interface/get_interface_statistics` and
 `/api/diagnostics/traffic/_interface`, both cited in the candidate table.
 Interface discovery is already surveyed:
@@ -1268,6 +1670,8 @@ carrying nothing is drawn as a flat line at zero **only when a sample actually
 says zero**; when there is no sample the line is a gap.
 
 ### Custom chart
+
+**Type** — `custom_chart`
 
 **Question** — Whatever the user wants to ask by putting two or more series on
 the same chart.
@@ -1294,7 +1698,7 @@ is a function of which series the user chose, not a fixed footer.
 
 **Parameters** — `period`; `series` — an ordered **list**, each entry naming
 `source` (which catalogue data a series is drawn from), `metric` or `measure`,
-an optional reference scoping it (a segment, a device, an interface, a
+an optional reference scoping it (an interface, a client, a rule, a
 provider), `axis` (`left` | `right`), `label`, `render` (`line` | `area` |
 `bars` | `points`) and `aggregation` (`mean` | `min` | `max` | `sum` | `last`,
 for the bucket a pixel covers); `axes` (per axis, unit, scale and an optional
@@ -1314,10 +1718,10 @@ be discovered.
 **Data** — Whatever its series name. A telemetry series depends on gaps **G9**
 and **G10**. A traffic series reads columns that already exist —
 `flow.observed_at`, `flow.packet_bytes`, `flow.action`, `flow.traffic_scope`,
-`flow.src_segment_id`, `flow.direction`, and the `volume_aggregate_*` family's
+`flow.src_interface_id`, `flow.direction`, and the `volume_aggregate_*` family's
 `period_start_at`, `bytes`, `allowed_connections` and `blocked_connections`. A
 detection series reads `security_event.occurred_at`,
-`security_event.normalised_severity` and `security_event.src_segment_id`. A DNS
+`security_event.normalised_severity` and `security_event.src_interface_id`. A DNS
 series reads `dns_resolution.looked_up_at` and `dns_resolution.action`. **Mixing
 a telemetry series with a traffic series on one chart requires both families to
 share a time axis and a bucketing rule**, which the roll-up design in G9 must
@@ -1347,6 +1751,8 @@ still drawn, so the chart's shape is legible even with nothing in it.
 ## Health and honesty
 
 ### Source availability
+
+**Type** — `source_availability`
 
 **Question** — Which of my sources is actually working, and what am I therefore
 not seeing?
@@ -1388,6 +1794,8 @@ healthy.
 
 ### Aggregate freshness
 
+**Type** — `aggregate_freshness`
+
 **Question** — Are the pre-computed numbers I am looking at actually current?
 
 **Shows** — One row per pre-computed period — 1 h, 24 h, 7 d, 30 d — with the
@@ -1424,26 +1832,28 @@ showing no slots is a normal condition, stated as such, and never a zero.
 
 ### Unresolved joins
 
+**Type** — `unresolved_joins`
+
 **Question** — How much of what I am looking at could not be joined to a name?
 
 **Shows** — Four counters with their trends: flows whose interface device name
 matched no entry in the interface map; flows whose `rid` matched no known rule;
-devices identified only by address within a segment rather than by a DHCP client
+clients identified only by address behind an interface rather than by a DHCP client
 identity or a MAC; and addresses whose geolocation lookup is a `miss` or still
 `pending`. Each counter links to the records behind it. This widget exists so the
 quality of every other widget is visible rather than assumed. Required UI copy: a
 statement that an unresolved join is normal — a rule can be deleted after it
-logged, an interface can be renamed, a device can appear before its lease is read
+logged, an interface can be renamed, a client can appear before its lease is read
 — and is a labelled condition rather than a defect.
 
 **Parameters** — `period`; `counters` (any subset of `interface`, `rule`,
-`device_identity`, `geo`); `segments` (optional); `show_records` (boolean).
+`client_identity`, `geo`); `interfaces` (optional); `show_records` (boolean).
 
 **Data** — `flow.interface_lookup_state`, `flow.rule_lookup_state`,
-`flow.interface_device`, `flow.rid`, `flow.observed_at`, `flow.src_segment_id`;
-`interface_map.device_name`, `interface_map.description`; `rule.pf_label`;
-`device.identity_kind`, `device.identity_key`, `device.mac`,
-`device.unstable_identity`; `geo_asn.lookup_state`, `geo_asn.looked_up_at`,
+`flow.interface_device`, `flow.rid`, `flow.observed_at`, `flow.src_interface_id`;
+`interface_map.device`, `interface_map.description`; `rule.pf_label`;
+`client.identity_kind`, `client.identity_key`, `client.mac`,
+`client.unstable_identity`; `geo_asn.lookup_state`, `geo_asn.looked_up_at`,
 `geo_asn.address`. Sources: the two first-class join keys,
 `docs/opnsense-api-survey.md`, *Runtime discovery* (i) and (ii); geo enrichment
 from the MaxMind databases.
@@ -1470,31 +1880,60 @@ entry answers a question only partially, the gap blocking the rest is named.
 
 | Named question | Entries answering it | Complete today? |
 |---|---|---|
-| Site used, and by whom | *Sites by device* (primary), *Top sites*, *Device traffic detail*, *Attribution rate per device* | Partial — needs G5 for periods beyond `flow` retention; the attribution rate is exposed unconditionally so the coverage is honest |
+| Site used, and by whom | *Sites by client* (primary), *Top sites*, *Client traffic detail*, *Attribution rate per client* | Partial — needs G5 for periods beyond `flow` retention; the attribution rate is exposed unconditionally so the coverage is honest |
 | World map of passed **and** blocked traffic | *Passed-traffic world map* and *Blocked-traffic world map* — **two widgets, by the maintainer's decision, not one map with two layers**; plus *Destination countries* and *Destination operators* | Yes for both maps — the aggregates already carry `allowed_connections` and `blocked_connections` separately, and `security_event.dst_address` covers the detection engine. One honest limit, stated in the blocked map rather than hidden: a **DNS**-blocked lookup resolves to no address and therefore cannot appear on any map, so it is carried as a counter beside it |
-| Who talks to whom, legibly rather than precisely | *Traffic Sankey* (primary), *Segment traffic matrix* | Yes for segment-to-segment and segment-to-operator; a **device**-to-operator Sankey beyond the `flow` retention horizon needs G4 |
-| Blocked content unified across DNS advertising lists, DNS threat lists, Suricata and firewall rules | *Unified blocked feed* (primary), *Blocked DNS lookups*, *Blocked by firewall rule*, *Alerts by signature* | No — needs G1 (which list) and G2 (one vocabulary across the four engines) |
-| Traffic by VLAN | *Segment volume ranking* (primary), *Segment traffic matrix*, *Traffic over time by scope* | Yes — segment membership is modelled and never inferred from a name |
-| Traffic by MAC or IP | *Device volume ranking* (primary), *Device traffic detail*, *Alerts by device and segment* | Partial — needs G4 for periods beyond `flow` retention |
-| Outbound / inbound / inter-VLAN as selectable scopes | *Traffic over time by scope* (primary), *Segment traffic matrix*, *Segment volume ranking* | Partial — inter-VLAN is complete from `flow.traffic_scope`; outbound and inbound need G3 for any pre-computed period |
+| Who talks to whom, legibly rather than precisely | *Traffic Sankey* (primary), *Interface traffic matrix* | Yes for interface-to-interface and interface-to-operator; a **client**-to-operator Sankey beyond the `flow` retention horizon needs G4 |
+| Blocked content unified across DNS advertising lists, DNS threat lists, Suricata and firewall rules | *Unified blocked feed* (primary), *Blocked DNS lookups*, *Blocked by firewall rule*, *Alerts by signature* | Partial — **which list** is answerable now that `blocklist` exists (G1 closed), with the list's *purpose* assigned by the user rather than guessed from its name; what remains is G2, one vocabulary across the four engines |
+| Traffic by VLAN | *Interface volume ranking* (primary), *Interface traffic matrix*, *Traffic over time by scope* | Yes — interface membership is modelled and never inferred from a name |
+| Traffic by MAC or IP | *Client volume ranking* (primary), *Client traffic detail*, *Alerts by client and interface* | Partial — needs G4 for periods beyond `flow` retention |
+| Outbound / inbound / inter-VLAN as selectable scopes | *Traffic over time by scope* (primary), *Interface traffic matrix*, *Interface volume ranking* | Partial — inter-VLAN is complete from `flow.traffic_scope`; outbound and inbound need G3 for any pre-computed period |
 | **Firewall health and telemetry** — uptime, CPU, RAM, disk, temperature, per-interface bandwidth, latency. *Not one of the six originally named; added by the maintainer after reviewing this cycle's captures.* | *Firewall health overview* (primary), *Interface throughput*, *Custom chart* | **No — and not partially.** The model holds no telemetry (G9) and no telemetry source has been surveyed (G10). This is a new data category rather than a missing column |
+| **The per-person view** — Bob's phone, tablet and laptop as one Bob rather than three cards, the way Firewalla presents a household. *Added by the maintainer with the `owner` entity.* | *Per-person activity* (primary), and the `connection_tree` rooted at a person | **Yes — G11 closed.** The model carries the person (`owner`, `client.owner_id`), the `owner_volume_aggregate_*` family carries the long periods, and the widget carries the explicit **unassigned** card that keeps the unowned majority of a network visible. One honest limit, stated in the widget rather than hidden: a person exists only because somebody typed them in, so a fresh installation's per-person view is empty until it is told who there is |
+| **Which blocklist refused a lookup, and what that list is for** — *added by the maintainer with G1* | *Blocked DNS lookups* (primary), *Unified blocked feed* | Yes for the **name**, which the endpoint reports and `blocklist.name` stores verbatim. The **purpose** is answerable only for lists the user has classified, by design: the API does not report it and a name is not evidence, so an unclassified list reads *purpose not assigned* rather than being sorted into a category by a heuristic |
+| **The installation's public address** — what it is, on which gateway, when it last changed — *added by the maintainer* | *Public address* | Partial — the address is readable from an endpoint the survey established, and **when it last changed is not**: no endpoint keeps a history, and the model has nowhere to store one either (G13). The widget shows the address and says plainly that it has no change history rather than inventing one |
 | **Arbitrary combinations of series on one chart** — the maintainer's example being temperature and CPU against WAN bandwidth, explicitly as an example rather than a specification | *Custom chart* (primary) | Structurally yes, once G9 and G10 are closed: the widget's `series` parameter is a list, so the combination is authored by the user rather than enumerated here |
+
+## Gaps closed
+
+Two of the gaps this catalogue named have since been closed in the schema, and
+they are recorded here rather than deleted, so that a reader meeting `G1` or
+`G11` in an older document can find out what happened to it. **Their
+identifiers are retired and are never reused.** Neither carries a
+missing-from-model marker any more; the **Data** fields that used to carry them
+now name the columns that exist.
+
+| Id | Gap, as it was named | How it was closed |
+|---|---|---|
+| G1 | `dns_resolution` has no `blocklist` column, so "blocked by which list" is unanswerable | A `blocklist` table holding the list's **name**, stored verbatim from the `blocklist` field of `/api/unbound/overview/search_queries` (`docs/opnsense-api-survey.md`, *Data source 5*, *Response shape*), plus `dns_resolution.blocklist_id`. The list's **purpose** is a separate column on that table, **assigned by the user and never inferred**, because the endpoint reports what a list is called and nothing about what it is for — the same rule `interface.user_label` and `client.owner_id` obey. A list nobody has classified reads *purpose not assigned*; a blocked lookup naming no list reads *list not recorded*. See `docs/data-model.md`, the `blocklist` entity |
+| G11 | No widget and no aggregate answers the per-person question | The `owner_volume_aggregate_1h` / `_24h` / `_7d` / `_30d` family, keyed on `(period_start_at, owner_id, traffic_scope)` with a NULL `owner_id` carrying the mandatory **unassigned** bucket; and the *Per-person activity* entry above, plus `connection_tree` rooted at a person. See `docs/data-model.md`, the per-person volume store |
 
 ## Gaps found
 
-Ten gaps, two of them already known before this cycle and recorded here rather
-than presented as discoveries, and eight turned up by mapping the widgets onto
-the schema. **Each carries exactly one missing-from-model marker in a Data field
-above, so a grep for that marker returns ten and this table has ten rows.** None
-is fixed here: this cycle names gaps and a later cycle implements them, which is
-what `specs/SPEC-ui-and-dashboard-format-research.md` puts out of scope.
+Eleven gaps remain open: two were known before this cycle, eight turned up by
+mapping the widgets onto the schema, and two — G12 and G13 — arrived with the
+entries added for the traffic-composition donut and the public address. Two
+others, G1 and G11, were open when this list was first written and are now in
+*Gaps closed* above, which is why the identifiers below are not contiguous.
+**Each open gap carries exactly one missing-from-model marker in a Data field
+above, so a grep for that marker returns eleven and this table has eleven
+rows.** None is fixed here: this document names gaps and a later cycle
+implements them.
 
-The last two are of a different order from the rest. G1 through G8 are columns
-and tables missing from a model that otherwise has the right shape. **G9 and G10
-are a whole data category the model was never designed to hold and the step-1
+G9 and G10 are of a different order from the rest. G2 through G8, G12 and G13,
+are columns
+and tables, and widget entries, missing from a model that otherwise has the
+right shape. **G9 and G10 are a whole data category the model was never designed to hold and the step-1
 survey never looked at** — firewall health and telemetry — and closing them means
 a new table family, a seventh provider kind and a sixth surveyed data source,
 not a migration adding columns.
+
+G12 is of a third kind again, and the distinction matters because it decides
+what closing it would mean. It is not a column the model forgot and not a
+source nobody surveyed: it is a **classification that does not exist in the
+data at all**. No amount of schema work produces an application name from a
+port number, and the only two routes to one — a heuristic, or deep packet
+inspection — are respectively dishonest and unavailable to a read-only API
+client. It is recorded so that nobody closes it by guessing.
 
 **G9 and G10 are deliberately left open here.** The maintainer has decided that
 telemetry gets **its own research cycle, after the mockup**, covering the API
@@ -1509,16 +1948,17 @@ taken here.
 
 | Id | Gap | Known before this cycle? | Fix it needs | Cited to |
 |---|---|---|---|---|
-| G1 | `dns_resolution` has no `blocklist` column, so "blocked by which list" is unanswerable | **Yes** | Add `blocklist` TEXT, populated verbatim from the endpoint's `blocklist` field, plus a `block_list_kind` discriminator (advertising / threat / custom / unknown), because the endpoint names the list and not its purpose | `docs/opnsense-api-survey.md`, *Data source 5 — Resolver DNS lookups*, *Response shape* |
-| G2 | No unified blocking vocabulary across the four engines; a block lives in three tables under three column names | **Yes** (as "no query aggregates the unified blocked view"; the mapping shows it is a model gap as well as a query gap) | A `blocked_decision` view over `flow`, `dns_resolution` and `security_event` projecting `(occurred_at, engine_kind, engine_reference, device_id, segment_id, target, target_kind)`, `engine_kind` constrained to the four categories | `docs/opnsense-api-survey.md`, *Data source 1*, *Data source 2*, *Data source 5*; and `sql/queries/screens.sql`, which has no such query |
+| G2 | No unified blocking vocabulary across the four engines; a block lives in three tables under three column names | **Yes** (as "no query aggregates the unified blocked view"; the mapping shows it is a model gap as well as a query gap) | A `blocked_decision` view over `flow`, `dns_resolution` and `security_event` projecting `(occurred_at, engine_kind, engine_reference, client_id, interface_id, target, target_kind)`, `engine_kind` constrained to the four categories | `docs/opnsense-api-survey.md`, *Data source 1*, *Data source 2*, *Data source 5*; and `sql/queries/screens.sql`, which has no such query |
 | G3 | The four volume aggregates carry `traffic_scope` but no `direction`, so outbound and inbound cannot be told apart in any pre-computed period | No | A `direction` column on all four aggregate tables in the `in` / `out` / `unknown` vocabulary `flow.direction` uses, included in each slot's uniqueness index | `docs/opnsense-api-survey.md`, *Data source 1 — Filter logs*, *Response shape* (`dir`) |
-| G4 | No per-device volume aggregate; the aggregates are keyed on segments and peer addresses only | No | A `device_volume_aggregate_<period>` family keyed on `(period_start_at, src_device_id)` carrying bytes, allowed, blocked and distinct destinations | `docs/opnsense-api-survey.md`, *Data source 3 — NetFlow / Insight*, *Retention on the firewall* (why `opnview`'s own aggregates are the primary store) |
-| G5 | No per-domain volume aggregate; `domain_attribution` is per flow and purged with its parents | No | A `domain_volume_aggregate_<period>` family keyed on `(period_start_at, site_name, src_device_id)` | `docs/opnsense-api-survey.md`, *Data source 5 — Resolver DNS lookups*, *Retention on the firewall* (the 7-day ceiling on the firewall side) |
-| G6 | `dns_resolution` carries no segment, so a lookup from a client with no device row cannot be placed | No | A nullable `segment_id` plus a `segment_lookup_state` in the `resolved` / `not_found` / `pending` vocabulary | `docs/opnsense-api-survey.md`, *Data source 5 — Resolver DNS lookups*, *Response shape* (`client`); *Runtime discovery* (i) for the addressing to resolve against |
-| G7 | `security_event` carries no destination device or segment, so "which segment was the target" is unanswerable | No | `dst_device_id` and `dst_segment_id` mirroring the source pair, with an index on `(dst_segment_id, occurred_at)` | `docs/opnsense-api-survey.md`, *Data source 2 — Suricata `eve.json`*, *Response shape* (`dest_ip`) |
-| G8 | The segments a security-event provider covers are not modelled; `source_availability.detail` is free text | No | A `provider_segment_coverage` table keyed on `(provider_id, segment_id)` with `is_covered` and `determined_at` | `docs/opnsense-api-survey.md`, *Runtime discovery* (v) (`ids.general.interfaces`, keys whose `selected` is truthy) |
+| G4 | No per-client volume aggregate; the aggregates are keyed on interfaces and peer addresses only | No | A `client_volume_aggregate_<period>` family keyed on `(period_start_at, src_client_id)` carrying bytes, allowed, blocked and distinct destinations | `docs/opnsense-api-survey.md`, *Data source 3 — NetFlow / Insight*, *Retention on the firewall* (why `opnview`'s own aggregates are the primary store) |
+| G5 | No per-domain volume aggregate; `domain_attribution` is per flow and purged with its parents | No | A `domain_volume_aggregate_<period>` family keyed on `(period_start_at, site_name, src_client_id)` | `docs/opnsense-api-survey.md`, *Data source 5 — Resolver DNS lookups*, *Retention on the firewall* (the 7-day ceiling on the firewall side) |
+| G6 | `dns_resolution` carries no interface, so a lookup from a client address with no client row cannot be placed | No | A nullable `interface_id` plus an `interface_lookup_state` in the `resolved` / `not_found` / `pending` vocabulary | `docs/opnsense-api-survey.md`, *Data source 5 — Resolver DNS lookups*, *Response shape* (`client`); *Runtime discovery* (i) for the addressing to resolve against |
+| G7 | `security_event` carries no destination client or interface, so "which interface was the target" is unanswerable | No | `dst_client_id` and `dst_interface_id` mirroring the source pair, with an index on `(dst_interface_id, occurred_at)` | `docs/opnsense-api-survey.md`, *Data source 2 — Suricata `eve.json`*, *Response shape* (`dest_ip`) |
+| G8 | The interfaces a security-event provider covers are not modelled; `source_availability.detail` is free text | No | A `provider_interface_coverage` table keyed on `(provider_id, interface_id)` with `is_covered` and `determined_at` | `docs/opnsense-api-survey.md`, *Runtime discovery* (v) (`ids.general.interfaces`, keys whose `selected` is truthy) |
 | G9 | **The model holds no system telemetry at all**; every table holds event records or summed volume, and none can store a sampled gauge such as a percentage or a temperature | No | A `metric` registry of `(id, provider_id, metric_key, display_name, unit, value_kind)`; a `metric_sample` table keyed on `(metric_id, sampled_at)` with a `value REAL` and an explicit collection-gap marker; and a roll-up family carrying `min`, `max`, `mean` and `sample_count` per bucket rather than a sum, on bucket boundaries matching the volume aggregates so the two can share a chart | No OPNsense citation is possible: the survey does not cover this material. The shape requirement is argued in *Why this data is a different shape from everything else in the model**, above |
 | G10 | **No source of system telemetry has been surveyed.** `docs/opnsense-api-survey.md` establishes five sources and none of them is telemetry, so the endpoints that would feed G9 have no established response shape, retention, polling frequency or degradation behaviour | No | A sixth data source in the survey, done to the same standard as the five; and a seventh value in the `provider.kind` CHECK, since that column is constrained to exactly six kinds and registering a telemetry provider is therefore a migration rather than an INSERT | Endpoint **candidates** only, cited at https://docs.opnsense.org/development/api/core/diagnostics.html and https://docs.opnsense.org/development/api/core/routes.html; their response shapes are marked `UNVERIFIED:` in *Endpoint candidates, cited rather than asserted*, above |
+| G12 | **Nothing in the model classifies a flow as an application.** The schema knows a protocol number and a port and stops there, so the dimension ntopng and Zenarmor both lead with — which app is this — cannot be offered by the composition donut or by anything else | No — it appeared with the *Traffic composition, now* entry | Neither of the two available routes, and that is the finding. A **port-and-SNI heuristic** is cheap and wrong at exactly the edges that matter (a service on a non-standard port, a CDN fronting a dozen products, anything tunnelled over 443), and a heuristic presented as a fact is the kind of lie this project refuses. **Deep packet inspection** is what those products actually do, and OPNsense exposes none of it to a read-only API client: Suricata's application-layer parsers feed detection rather than the alert feed, and the `tls` and `http` events that would carry a server name cannot be read back at all. Closing this needs a source that does not exist, not a column, and neither route is to be implemented | `docs/opnsense-api-survey.md`, *Gaps and alternatives*, gaps 2 and 8; and `flow.protocol`, `flow.dst_port`, `pair_volume_observation.service_port`, which are the whole of what the model knows about what a flow carries |
+| G13 | **The schema stores no interface address, and no address history**, so the installation's own public address has nowhere to live and "when did it last change" is unanswerable twice over — the model cannot hold it and no endpoint reports it | No — it appeared with the *Public address* entry | An `interface_address` table keyed on `(interface_id, address)` with the prefix length, the address family, whether a gateway sits behind it, a nullable gateway name, and `first_seen_at` / `last_seen_at` — so a change is a new row and the history is the table. The change time can only ever come from `opnview` having looked before, because the API reports the address an interface has now and keeps no history of the ones it had. Separately, and not fixable at all: a firewall behind an upstream NAT cannot see the address the internet sees, and finding it would need a third outbound call the project does not allow | The address fields **are** established: `/api/interfaces/overview/interfaces_info` returns `addr4`, `addr6`, `ipv4[]`, `ipv6[]` and `gateways[]` (`docs/opnsense-api-survey.md`, *Runtime discovery* (i)). What would still have to be surveyed is narrow: the response shape of `/api/routes/gateway/status`, marked `UNVERIFIED:` in *Endpoint candidates, cited rather than asserted* |
 
 **One candidate was raised and withdrawn**, recorded here so it is not
 rediscovered: `security_event.flow_ref` is an unconstrained `INTEGER` with no

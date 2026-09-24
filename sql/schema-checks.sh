@@ -4,10 +4,13 @@
 # Applies the migrations to a fresh database, seeds it, runs the seven screen
 # queries and their query plans, and asserts the acceptance criteria of
 # specs/SPEC-data-model-sqlite-schema.md (labelled AC*) and of
-# specs/SPEC-provider-neutral-schema.md (labelled PN-AC*). A criterion of the
-# first spec that names an object this cycle renamed is RESTATED against the
-# new name, never removed and never relaxed. This script is the schema entry
-# point
+# specs/SPEC-provider-neutral-schema.md (labelled PN-AC*). A criterion of a
+# spec that names an object a later pass renamed is RESTATED against the new
+# name, never removed and never relaxed. The VOC-AC* criteria come from no
+# spec: they are the maintainer's direct correction of the vocabulary --
+# segment became interface, device became client, the owner entity was added --
+# and they pin the result so it cannot drift back. This script is the schema
+# entry point
 # and is meant to run inside the development container, never on the host: no
 # sqlite3 is installed on the host.
 #
@@ -41,18 +44,20 @@ REGISTER_DB="$DATA_DIR/schema-checks-register.db"
 SCALE_DB="$DATA_DIR/schema-checks-scale.db"
 
 # Seed parameters. The default run and the alternative run below differ in
-# every count, so nothing may assume a segment, device or interface count.
+# every count, so nothing may assume an interface, client, owner or rule count.
 NOW=1750000000
-SEGMENTS=6
-DEVICES=40
+INTERFACES=6
+CLIENTS=40
 RULES=12
+OWNERS=3
 FLOW_ROWS=100000
 ALERTS=500
 PAIR_ROWS=2000
 
-ALT_SEGMENTS=3
-ALT_DEVICES=17
+ALT_INTERFACES=3
+ALT_CLIENTS=17
 ALT_RULES=5
+ALT_OWNERS=2
 ALT_FLOW_ROWS=4000
 ALT_ALERTS=60
 ALT_PAIR_ROWS=300
@@ -63,8 +68,8 @@ SCALE_FLOW_ROWS=1000000
 
 WINDOW_END=$NOW
 WINDOW_START=$((NOW - 86400))
-SEGMENT_ID=1
-DEVICE_ID=3
+INTERFACE_ID=1
+CLIENT_ID=3
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -164,19 +169,20 @@ apply_migrations() {
     return 0
 }
 
-# seed_database <db> <segments> <devices> <rules> <flow_rows> <alerts> <pair_rows>
+# seed_database <db> <interfaces> <clients> <rules> <flow_rows> <alerts> <pair_rows> <owners>
 seed_database() {
     local db="$1"
     {
         printf -- '.bail on\n'
         printf -- '.param init\n'
         printf -- '.param set :now %s\n' "$NOW"
-        printf -- '.param set :segments %s\n' "$2"
-        printf -- '.param set :devices %s\n' "$3"
+        printf -- '.param set :interfaces %s\n' "$2"
+        printf -- '.param set :clients %s\n' "$3"
         printf -- '.param set :rules %s\n' "$4"
         printf -- '.param set :flow_rows %s\n' "$5"
         printf -- '.param set :alerts %s\n' "$6"
         printf -- '.param set :pair_rows %s\n' "$7"
+        printf -- '.param set :owners %s\n' "$8"
         printf -- '.read %s\n' "$REPO_ROOT/sql/seed.sql"
     } | sqlite3 "$db"
 }
@@ -208,8 +214,8 @@ run_query() {
         printf -- '.param init\n'
         printf -- '.param set :window_start %s\n' "$WINDOW_START"
         printf -- '.param set :window_end %s\n' "$WINDOW_END"
-        printf -- '.param set :segment_id %s\n' "$SEGMENT_ID"
-        printf -- '.param set :device_id %s\n' "$DEVICE_ID"
+        printf -- '.param set :interface_id %s\n' "$INTERFACE_ID"
+        printf -- '.param set :client_id %s\n' "$CLIENT_ID"
         printf -- '.read %s\n' "$file"
     } | sqlite3 "$db"
 }
@@ -288,9 +294,9 @@ fi
 # ===========================================================================
 section 'AC7 — deterministic seed, and the baseline row count'
 # ===========================================================================
-seed_database "$MAIN_DB" "$SEGMENTS" "$DEVICES" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS"
+seed_database "$MAIN_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"
 apply_migrations "$REPEAT_DB" "$WORK/migrate3.err" || fail 'AC7 repeat database migration failed'
-seed_database "$REPEAT_DB" "$SEGMENTS" "$DEVICES" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS"
+seed_database "$REPEAT_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"
 
 table_counts() {
     local db="$1" t
@@ -318,16 +324,16 @@ section 'AC2, AC3 — integrity and foreign keys'
 # ===========================================================================
 check 'AC2 PRAGMA integrity_check' 'ok' "$(q "$MAIN_DB" 'PRAGMA integrity_check;')"
 check 'AC2 PRAGMA foreign_key_check returns no rows' '' "$(q "$MAIN_DB" 'PRAGMA foreign_key_check;')"
-expect_sql_failure 'AC3 a flow whose segment does not exist is rejected' "$MAIN_DB" \
+expect_sql_failure 'AC3 a flow whose interface does not exist is rejected' "$MAIN_DB" \
     "INSERT INTO flow (log_digest, observed_at, ingested_at, interface_device,
-        interface_lookup_state, src_segment_id, src_address, dst_address, protocol,
+        interface_lookup_state, src_interface_id, src_address, dst_address, protocol,
         ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope)
      VALUES ('ac3-orphan-flow', $NOW, $NOW, 'ac3-device', 'resolved', 999999999,
              'ac3-src', 'ac3-dst', 'tcp', 4, 'pass', 'in', 100, 'pending',
              'north_south');"
-expect_sql_failure 'AC3 a security event whose device does not exist is rejected' "$MAIN_DB" \
+expect_sql_failure 'AC3 a security event whose client does not exist is rejected' "$MAIN_DB" \
     "INSERT INTO security_event (provider_id, provider_event_key, occurred_at, ingested_at,
-        rule_identity, signature, event_action, src_address, dst_address, src_device_id)
+        rule_identity, signature, event_action, src_address, dst_address, src_client_id)
      SELECT id, 'ac3-key', $NOW, $NOW, '1', 'ac3', 'allowed', 'a', 'b', 999999999
      FROM provider WHERE kind = 'security_event' LIMIT 1;"
 expect_sql_failure 'AC3 a security event whose provider does not exist is rejected' "$MAIN_DB" \
@@ -379,8 +385,8 @@ SCREEN_COUNT="$(wc -l < "$WORK/screens/names.txt" | tr -d ' ')"
 check 'AC8 screens.sql holds exactly seven queries' '7' "$SCREEN_COUNT"
 EXPECTED_SCREENS='Overview
 Matrix
-Segment
-Device
+Interface
+Client
 Blocked
 Alerts
 Map'
@@ -465,17 +471,17 @@ MATRIX_COMPLETE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/02_Matrix.s
 check_ge 'AC12 a matrix cell carries bytes, allowed, blocked and the matching rules' 1 "$MATRIX_COMPLETE"
 
 # ===========================================================================
-section 'AC13, AC14, AC15 — segments, classification and tunnels'
+section 'AC13, AC14, AC15 — interfaces, classification and tunnels'
 # ===========================================================================
 SCOPES="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
     "SELECT group_concat(traffic_scope, ',') FROM (SELECT traffic_scope FROM (" \
     ") ORDER BY traffic_scope);")")"
 check 'AC13 the Overview query classifies flows east-west and north-south' 'east_west,north_south' "$SCOPES"
-check 'AC13 every stored traffic_scope agrees with segment membership' '0' \
+check 'AC13 every stored traffic_scope agrees with interface membership' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE traffic_scope <> (CASE
-        WHEN src_segment_id IS NOT NULL AND dst_segment_id IS NOT NULL
+        WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
         THEN 'east_west' ELSE 'north_south' END);")"
-expect_sql_failure 'AC13 a traffic_scope disagreeing with segment membership is rejected' "$MAIN_DB" \
+expect_sql_failure 'AC13 a traffic_scope disagreeing with interface membership is rejected' "$MAIN_DB" \
     "UPDATE flow SET traffic_scope = 'east_west' WHERE traffic_scope = 'north_south';"
 
 if grep -inE '\b(like|glob|regexp)\b' "$REPO_ROOT"/migrations/*.sql > "$WORK/namematch.txt"; then
@@ -485,55 +491,55 @@ else
 fi
 cp "$MAIN_DB" "$WORK/label.db"
 sqlite3 "$WORK/label.db" \
-    "UPDATE segment SET user_label = 'a label the maintainer chose' WHERE id = 1;" > /dev/null
+    "UPDATE interface SET user_label = 'a label the maintainer chose' WHERE id = 1;" > /dev/null
 check 'AC14 relabelling leaves the discovered description untouched' \
-    "$(q "$MAIN_DB" 'SELECT discovered_description FROM segment WHERE id = 1;')" \
-    "$(q "$WORK/label.db" 'SELECT discovered_description FROM segment WHERE id = 1;')"
+    "$(q "$MAIN_DB" 'SELECT description FROM interface WHERE id = 1;')" \
+    "$(q "$WORK/label.db" 'SELECT description FROM interface WHERE id = 1;')"
 check 'AC14 a query returns the user label and the discovered description together' \
     'a label the maintainer chose|discovered-description-1' \
-    "$(q "$WORK/label.db" "SELECT user_label || '|' || discovered_description FROM segment WHERE id = 1;")"
+    "$(q "$WORK/label.db" "SELECT user_label || '|' || description FROM interface WHERE id = 1;")"
 
-check_ge 'AC15 at least one seeded segment is a tunnel' 1 \
-    "$(q "$MAIN_DB" 'SELECT count(*) FROM segment WHERE is_tunnel = 1;')"
-check_ge 'AC15 at least one seeded segment is a VLAN' 1 \
-    "$(q "$MAIN_DB" "SELECT count(*) FROM segment WHERE is_tunnel = 0 AND link_kind = 'vlan';")"
-check 'AC15 is_tunnel agrees with the discovered link type on every segment' '0' \
-    "$(q "$MAIN_DB" "SELECT count(*) FROM segment
-        WHERE is_tunnel <> (CASE WHEN discovered_link_type = 'tunnel' THEN 1 ELSE 0 END);")"
+check_ge 'AC15 at least one seeded interface is a tunnel' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM interface WHERE is_tunnel = 1;')"
+check_ge 'AC15 at least one seeded interface is a VLAN' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM interface WHERE is_tunnel = 0 AND link_kind = 'vlan';")"
+check 'AC15 is_tunnel agrees with the discovered link type on every interface' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM interface
+        WHERE is_tunnel <> (CASE WHEN link_type = 'tunnel' THEN 1 ELSE 0 END);")"
 
 # ===========================================================================
-section 'AC16, AC17 — device identity and randomised MACs'
+section 'AC16, AC17 — client identity and randomised MACs'
 # ===========================================================================
-check 'AC16 the lease and the flows of one device resolve to a single device row' '1' \
-    "$(q "$MAIN_DB" "SELECT count(DISTINCT d.id) FROM device d
-        JOIN dhcp_lease l ON l.device_id = d.id
-        JOIN flow f ON f.src_device_id = d.id
+check 'AC16 the lease and the flows of one client resolve to a single client row' '1' \
+    "$(q "$MAIN_DB" "SELECT count(DISTINCT d.id) FROM client d
+        JOIN dhcp_lease l ON l.client_id = d.id
+        JOIN flow f ON f.src_client_id = d.id
         WHERE d.identity_kind = 'dhcp_client_id' AND d.id = 1;")"
-check_ge 'AC16 a device seen only in flows, with no MAC, is representable and queryable' 1 \
-    "$(q "$MAIN_DB" "SELECT count(*) FROM device d
-        WHERE d.mac IS NULL AND d.identity_kind = 'address_in_segment'
-          AND EXISTS (SELECT 1 FROM flow f WHERE f.src_device_id = d.id)
-          AND NOT EXISTS (SELECT 1 FROM dhcp_lease l WHERE l.device_id = d.id);")"
-REUSED_ADDRESS="$(q "$MAIN_DB" "SELECT last_address FROM device WHERE id = $((DEVICES + 1));")"
-check 'AC16 an address reissued after a lease expiry stays two devices' '2' \
-    "$(q "$MAIN_DB" "SELECT count(*) FROM device WHERE last_address = '$REUSED_ADDRESS';")"
+check_ge 'AC16 a client seen only in flows, with no MAC, is representable and queryable' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM client d
+        WHERE d.mac IS NULL AND d.identity_kind = 'address_in_interface'
+          AND EXISTS (SELECT 1 FROM flow f WHERE f.src_client_id = d.id)
+          AND NOT EXISTS (SELECT 1 FROM dhcp_lease l WHERE l.client_id = d.id);")"
+REUSED_ADDRESS="$(q "$MAIN_DB" "SELECT last_address FROM client WHERE id = $((CLIENTS + 1));")"
+check 'AC16 an address reissued after a lease expiry stays two clients' '2' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM client WHERE last_address = '$REUSED_ADDRESS';")"
 check 'AC16 the two reissued identities differ' '2' \
-    "$(q "$MAIN_DB" "SELECT count(DISTINCT identity_key) FROM device WHERE last_address = '$REUSED_ADDRESS';")"
+    "$(q "$MAIN_DB" "SELECT count(DISTINCT identity_key) FROM client WHERE last_address = '$REUSED_ADDRESS';")"
 
 check 'AC17 every MAC whose second hex digit is 2, 6, a or e is an unstable identity' '0' \
-    "$(q "$MAIN_DB" "SELECT count(*) FROM device
+    "$(q "$MAIN_DB" "SELECT count(*) FROM client
         WHERE mac IS NOT NULL AND instr('26ae', substr(mac, 2, 1)) > 0
           AND unstable_identity <> 1;")"
 check 'AC17 no MAC whose second hex digit is 0, 4, 8 or c is an unstable identity' '0' \
-    "$(q "$MAIN_DB" "SELECT count(*) FROM device
+    "$(q "$MAIN_DB" "SELECT count(*) FROM client
         WHERE mac IS NOT NULL AND instr('048c', substr(mac, 2, 1)) > 0
           AND unstable_identity <> 0;")"
 check_ge 'AC17 the seed contains globally administered MACs to test the negative direction' 1 \
-    "$(q "$MAIN_DB" "SELECT count(*) FROM device WHERE mac IS NOT NULL AND instr('048c', substr(mac, 2, 1)) > 0;")"
-check_ge 'AC17 two randomised observations with different MACs remain two devices' 2 \
-    "$(q "$MAIN_DB" 'SELECT count(DISTINCT id) FROM device WHERE unstable_identity = 1;')"
-check 'AC17 every randomised device has its own identity_key' '0' \
-    "$(q "$MAIN_DB" "SELECT count(*) - count(DISTINCT identity_key) FROM device WHERE unstable_identity = 1;")"
+    "$(q "$MAIN_DB" "SELECT count(*) FROM client WHERE mac IS NOT NULL AND instr('048c', substr(mac, 2, 1)) > 0;")"
+check_ge 'AC17 two randomised observations with different MACs remain two clients' 2 \
+    "$(q "$MAIN_DB" 'SELECT count(DISTINCT id) FROM client WHERE unstable_identity = 1;')"
+check 'AC17 every randomised client has its own identity_key' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) - count(DISTINCT identity_key) FROM client WHERE unstable_identity = 1;")"
 
 # ===========================================================================
 section 'AC18, AC19 — site-name attribution'
@@ -548,18 +554,18 @@ check 'AC18 domain_attribution carries no provenance or method column' '' \
     "$(q "$MAIN_DB" "SELECT name FROM pragma_table_info('domain_attribution')
         WHERE lower(name) GLOB '*provenance*' OR lower(name) GLOB '*method*';")"
 
-DEVICE_ROWS_NO_SITE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/04_Device.sql" \
+CLIENT_ROWS_NO_SITE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/04_Client.sql" \
     'SELECT count(*) FROM (' \
     ') WHERE site_name IS NULL AND dst_address IS NOT NULL
         AND country_code IS NOT NULL AND operator IS NOT NULL;')")"
-check_ge 'AC19 the Device query returns an unattributed flow with its address, country and operator' \
-    1 "$DEVICE_ROWS_NO_SITE"
+check_ge 'AC19 the Client query returns an unattributed flow with its address, country and operator' \
+    1 "$CLIENT_ROWS_NO_SITE"
 
 split_queries "$REPO_ROOT/sql/queries/diagnostics.sql" 'diagnostic' "$WORK/diag"
-DIAG_ATTR="$WORK/diag/01_Attribution_rate_per_device.sql"
+DIAG_ATTR="$WORK/diag/01_Attribution_rate_per_client.sql"
 ATTR_ROWS="$(run_query "$MAIN_DB" "$DIAG_ATTR" | wc -l | tr -d ' ')"
 check_ge 'AC19 the documented attribution-rate query runs and returns rows' 1 "$ATTR_ROWS"
-printf -- '  attribution rate, first five devices:\n'
+printf -- '  attribution rate, first five clients:\n'
 run_query "$MAIN_DB" "$DIAG_ATTR" | head -n 5 | sed 's/^/    /'
 PARTIAL_ATTR="$(run_query "$MAIN_DB" "$(wrap_query "$DIAG_ATTR" \
     'SELECT count(*) FROM (' \
@@ -573,8 +579,8 @@ ALERT_COMPLETE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/06_Alerts.sq
     'SELECT count(*) FROM (' \
     ") WHERE signature IS NOT NULL AND severity IS NOT NULL AND severity_state = 'resolved'
         AND src_address IS NOT NULL AND dst_address IS NOT NULL
-        AND occurred_at IS NOT NULL AND device_id IS NOT NULL AND segment_id IS NOT NULL;")")"
-check_ge 'AC20 a security event joins to a device and a segment and carries signature, severity, endpoints and time' \
+        AND occurred_at IS NOT NULL AND client_id IS NOT NULL AND interface_id IS NOT NULL;")")"
+check_ge 'AC20 a security event joins to a client and an interface and carries signature, severity, endpoints and time' \
     1 "$ALERT_COMPLETE"
 # AC20 restated for the provider-neutral core: the assertion is no longer "the
 # table has no severity column at all" but the behaviour that assertion
@@ -615,6 +621,248 @@ BLOCKED_UNKNOWN_IFACE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/05_Bl
         AND interface_device IS NOT NULL;")")"
 check_ge 'AC22 a flow whose raw interface name is unmapped is returned with an unknown-interface state' \
     1 "$BLOCKED_UNKNOWN_IFACE"
+
+# ===========================================================================
+section 'VOC-AC1, VOC-AC2 — the vocabulary comes from OPNsense, not from us'
+# ===========================================================================
+# VOC-AC1: nothing in the live schema is called a "segment". OPNsense names the
+# thing an INTERFACE -- /api/interfaces/overview/interfaces_info, menu
+# Interfaces > Assignments -- and the schema now says so.
+check 'VOC-AC1 no table, view, index or column is named for a segment' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(m.name || '.' || ifnull(i.name, '(object)'), ',')
+        FROM sqlite_master m LEFT JOIN pragma_table_info(m.name) i
+        WHERE lower(m.name) GLOB '*segment*' OR lower(i.name) GLOB '*segment*';")"
+if grep -rniE '\bsegments?\b' "$REPO_ROOT/migrations" "$REPO_ROOT/sql/queries" \
+        "$REPO_ROOT/sql/seed.sql" "$REPO_ROOT/sql/purge.sql" > "$WORK/segment_word.txt"; then
+    fail "VOC-AC1 the word segment survives in the schema or its queries: $(head -n 3 "$WORK/segment_word.txt")"
+else
+    pass 'VOC-AC1 the word segment appears nowhere in the migrations, the queries, the seed or the purge'
+fi
+check 'VOC-AC1 the interface table carries the endpoint field names verbatim' '5' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('interface')
+        WHERE name IN ('identifier', 'device', 'description', 'link_type', 'vlan_tag');")"
+
+# VOC-AC2: "device" now has exactly one meaning, the network device OPNsense
+# reports. The machine on the network is a client. No table is named device,
+# and every column called device belongs to an interface-shaped table.
+check 'VOC-AC2 no table or view is named device' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM sqlite_master
+        WHERE type IN ('table', 'view') AND lower(name) = 'device';")"
+check 'VOC-AC2 every column named device belongs to an interface, never to a machine' \
+    'interface,interface_map' \
+    "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM (
+        SELECT m.name AS name FROM sqlite_master m JOIN pragma_table_info(m.name) i
+        WHERE m.type = 'table' AND i.name = 'device' ORDER BY m.name);")"
+check 'VOC-AC2 the machine on the network is the client table' 'table' \
+    "$(q "$MAIN_DB" "SELECT type FROM sqlite_master WHERE name = 'client';")"
+check 'VOC-AC2 the DHCP client identifier no longer collides with the client foreign key' '1' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('dhcp_lease')
+        WHERE name = 'dhcp_client_id';")"
+check 'VOC-AC2 dhcp_lease.client_id is the foreign key to client' '1' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_foreign_key_list('dhcp_lease')
+        WHERE \"table\" = 'client' AND \"from\" = 'client_id';")"
+for f in "$REPO_ROOT/ROADMAP.md" "$REPO_ROOT/CLAUDE.md"; do
+    if grep -qF 'never invents a term for something those products already name' "$f"; then
+        pass "VOC-AC2 $(basename "$f") states the vocabulary rule"
+    else
+        fail "VOC-AC2 $(basename "$f") does not state the vocabulary rule"
+    fi
+done
+
+# ===========================================================================
+section 'VOC-AC3, VOC-AC4, VOC-AC5 — the owner entity'
+# ===========================================================================
+# VOC-AC3: one person, several machines, one row per person.
+check 'VOC-AC3 the owner table exists' 'table' \
+    "$(q "$MAIN_DB" "SELECT type FROM sqlite_master WHERE name = 'owner';")"
+check 'VOC-AC3 the seed created exactly the owners it was asked for' "$OWNERS" \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM owner;')"
+check_ge 'VOC-AC3 at least one owner holds three machines, so a person aggregates' 3 \
+    "$(q "$MAIN_DB" 'SELECT max(n) FROM (SELECT count(*) AS n FROM client
+        WHERE owner_id IS NOT NULL GROUP BY owner_id);')"
+expect_sql_failure 'VOC-AC3 two owners with the same display name are rejected' "$MAIN_DB" \
+    "INSERT INTO owner (id, display_name, created_at, updated_at)
+     SELECT NULL, display_name, $NOW, $NOW FROM owner LIMIT 1;"
+expect_sql_failure 'VOC-AC3 a client owned by an owner that does not exist is rejected' "$MAIN_DB" \
+    "UPDATE client SET owner_id = 999999999, owner_assigned_at = $NOW WHERE id = 1;"
+expect_sql_failure 'VOC-AC3 an owner assigned with no assignment instant is rejected' "$MAIN_DB" \
+    "UPDATE client SET owner_id = (SELECT min(id) FROM owner), owner_assigned_at = NULL
+     WHERE id = 1;"
+
+# VOC-AC4: ownership is assigned by the user and never inferred. The enforceable
+# form: no DEFAULT, no generated expression and no trigger can put a value in
+# owner_id, so only a statement somebody wrote can.
+check 'VOC-AC4 owner_id carries no DEFAULT, so nothing fills it on its own' '' \
+    "$(q "$MAIN_DB" "SELECT ifnull(dflt_value, '') FROM pragma_table_info('client')
+        WHERE name = 'owner_id' AND dflt_value IS NOT NULL;")"
+check 'VOC-AC4 no trigger exists anywhere that could derive an owner' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM sqlite_master WHERE type = 'trigger';")"
+check 'VOC-AC4 owner_id is a plain column, not a generated one' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_xinfo('client')
+        WHERE name = 'owner_id' AND hidden IN (2, 3);")"
+
+# VOC-AC5: a client with no owner is normal and stays visible.
+UNOWNED="$(q "$MAIN_DB" 'SELECT count(*) FROM client WHERE owner_id IS NULL;')"
+check_ge 'VOC-AC5 unowned clients exist, which is the normal state of a network' 1 "$UNOWNED"
+DIAG_OWNER="$WORK/diag/04_Clients_per_owner.sql"
+run_query "$MAIN_DB" "$DIAG_OWNER" > "$WORK/owners.txt"
+printf -- '  clients per owner:\n'
+sed 's/^/    /' "$WORK/owners.txt"
+check_ge 'VOC-AC5 the per-owner diagnostic returns rows' 1 \
+    "$(wc -l < "$WORK/owners.txt" | tr -d ' ')"
+check 'VOC-AC5 the unassigned bucket is a row of its own, not an omission' "$UNOWNED" \
+    "$(awk -F'|' '$3 == "unassigned" { print $4 }' "$WORK/owners.txt")"
+check 'VOC-AC5 every client is counted by the per-owner view, owned or not' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM client;')" \
+    "$(awk -F'|' '{ n += $4 } END { print n + 0 }' "$WORK/owners.txt")"
+check 'VOC-AC5 the per-owner view reports both an assigned and an unassigned bucket' \
+    'assigned,unassigned' \
+    "$(awk -F'|' '{ print $3 }' "$WORK/owners.txt" | sort -u | paste -sd, -)"
+
+# ===========================================================================
+section 'G1-AC1 .. G1-AC5 — the blocklist, observed by name and assigned by purpose'
+# ===========================================================================
+# G1 was the maintainer's first named gap: /api/unbound/overview/search_queries
+# returns a `blocklist` field (docs/opnsense-api-survey.md, data source 5,
+# "Response shape") and the schema discarded it, so "blocked by which list" was
+# unanswerable. The criteria below are the correction, and they pin BOTH halves
+# of it: the name is observed data, the purpose is user input, and nothing may
+# derive the second from the first.
+check 'G1-AC1 the blocklist table exists' 'table' \
+    "$(q "$MAIN_DB" "SELECT type FROM sqlite_master WHERE name = 'blocklist';")"
+check 'G1-AC1 a lookup carries the list that refused it' '1' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('dns_resolution')
+        WHERE name = 'blocklist_id';")"
+expect_sql_failure 'G1-AC1 two lists with the same observed name are rejected' "$MAIN_DB" \
+    "INSERT INTO blocklist (id, name, first_seen_at, last_seen_at)
+     SELECT NULL, name, $NOW, $NOW FROM blocklist LIMIT 1;"
+expect_sql_failure 'G1-AC1 a lookup refused by a list that does not exist is rejected' "$MAIN_DB" \
+    "UPDATE dns_resolution SET blocklist_id = 999999999
+     WHERE id = (SELECT min(id) FROM dns_resolution);"
+
+# G1-AC2: the purpose is assigned, never inferred. Same enforceable form as
+# VOC-AC4 for owner_id -- no DEFAULT, no generated column, no trigger.
+check 'G1-AC2 purpose carries no DEFAULT, so nothing fills it on its own' '' \
+    "$(q "$MAIN_DB" "SELECT dflt_value FROM pragma_table_info('blocklist')
+        WHERE name = 'purpose' AND dflt_value IS NOT NULL;")"
+check 'G1-AC2 purpose is a plain column, not a generated one' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_xinfo('blocklist')
+        WHERE name = 'purpose' AND hidden IN (2, 3);")"
+check 'G1-AC2 no trigger exists anywhere that could derive a purpose' '' \
+    "$(q "$MAIN_DB" "SELECT name FROM sqlite_master WHERE type = 'trigger';")"
+expect_sql_failure 'G1-AC2 a purpose outside the vocabulary is rejected' "$MAIN_DB" \
+    "UPDATE blocklist SET purpose = 'whatever-the-name-suggests', purpose_assigned_at = $NOW
+     WHERE id = (SELECT min(id) FROM blocklist);"
+expect_sql_failure 'G1-AC2 a purpose assigned with no assignment instant is rejected' "$MAIN_DB" \
+    "UPDATE blocklist SET purpose = 'threat', purpose_assigned_at = NULL
+     WHERE id = (SELECT min(id) FROM blocklist);"
+
+# G1-AC3: a list nobody has classified is normal and stays visible, and a
+# blocked lookup the resolver did not attribute to any list is its own state.
+check_ge 'G1-AC3 a list with no assigned purpose exists, which is the normal state' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM blocklist WHERE purpose IS NULL;')"
+check_ge 'G1-AC3 a blocked lookup naming no list exists, and is a modelled state' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM dns_resolution
+        WHERE action IN ('block', 'drop') AND blocklist_id IS NULL;")"
+check_ge 'G1-AC3 a blocked lookup naming a list exists' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM dns_resolution
+        WHERE action IN ('block', 'drop') AND blocklist_id IS NOT NULL;")"
+check 'G1-AC3 a blocked lookup has no attribution, because it produced no flow' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM domain_attribution a
+        JOIN dns_resolution r ON r.id = a.dns_resolution_id
+        WHERE r.action IN ('block', 'drop');")"
+
+# G1-AC4: the diagnostic that answers "blocked by which list".
+DIAG_BLOCKLIST="$WORK/diag/05_Blocked_lookups_by_list.sql"
+run_query "$MAIN_DB" "$DIAG_BLOCKLIST" > "$WORK/blocklists.txt"
+printf -- '  blocked lookups by list:\n'
+sed 's/^/    /' "$WORK/blocklists.txt"
+check_ge 'G1-AC4 the blocked-lookups-by-list diagnostic returns rows' 1 \
+    "$(wc -l < "$WORK/blocklists.txt" | tr -d ' ')"
+check 'G1-AC4 every blocked lookup in the window is counted, attributed or not' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM dns_resolution
+        WHERE action IN ('block', 'drop')
+          AND looked_up_at >= $WINDOW_START AND looked_up_at < $WINDOW_END;")" \
+    "$(awk -F'|' '{ n += $5 } END { print n + 0 }' "$WORK/blocklists.txt")"
+check_ge 'G1-AC4 the diagnostic reports the list-not-recorded state as a row of its own' 1 \
+    "$(awk -F'|' '$3 == "list not recorded" { c += 1 } END { print c + 0 }' "$WORK/blocklists.txt")"
+check_ge 'G1-AC4 the diagnostic reports an unassigned purpose as a state, not a guess' 1 \
+    "$(awk -F'|' '$4 == "unassigned" { c += 1 } END { print c + 0 }' "$WORK/blocklists.txt")"
+
+# G1-AC5: no predicate anywhere reads a list's name. Classifying a list by what
+# it is called is the same defect as classifying an interface by its
+# description, and the enforceable form is that no SQL this cycle ships
+# compares blocklist.name to anything but an equality on a supplied value.
+if grep -nE 'blocklist[._]?name[[:space:]]*(LIKE|GLOB|REGEXP)|b\.name[[:space:]]*(LIKE|GLOB|REGEXP)' \
+        "$REPO_ROOT/migrations/0001_core.sql" \
+        "$REPO_ROOT/migrations/0002_aggregates_and_defaults.sql" \
+        "$REPO_ROOT/sql/queries/screens.sql" \
+        "$REPO_ROOT/sql/queries/diagnostics.sql" > "$WORK/name_predicates.txt"; then
+    fail "G1-AC5 a predicate matches on a blocklist name: $(cat "$WORK/name_predicates.txt")"
+else
+    pass 'G1-AC5 no predicate anywhere matches on what a blocklist is called'
+fi
+
+# ===========================================================================
+section 'G11-AC1 .. G11-AC5 — the per-owner aggregates'
+# ===========================================================================
+# G11: the owner entity existed and no aggregate was keyed on it, so a
+# per-person question could only be answered inside the flow horizon. The four
+# tables below are the correction, and the unassigned bucket is part of it:
+# ownership is assigned by hand, so a per-person aggregate that dropped the
+# unowned clients would under-report the network while looking complete.
+OWNER_AGGREGATES='owner_volume_aggregate_1h owner_volume_aggregate_24h
+owner_volume_aggregate_7d owner_volume_aggregate_30d'
+for t in $OWNER_AGGREGATES; do
+    check "G11-AC1 $t exists" 'table' \
+        "$(q "$MAIN_DB" "SELECT type FROM sqlite_master WHERE name = '$t';")"
+    check "G11-AC2 every $t row carries a freshness timestamp" '0' \
+        "$(q "$MAIN_DB" "SELECT count(*) FROM $t WHERE computed_at IS NULL;")"
+    check_ge "G11-AC3 $t holds an unassigned slot" 1 \
+        "$(q "$MAIN_DB" "SELECT count(*) FROM $t WHERE owner_id IS NULL;")"
+    check_ge "G11-AC3 $t holds an assigned slot" 1 \
+        "$(q "$MAIN_DB" "SELECT count(*) FROM $t WHERE owner_id IS NOT NULL;")"
+done
+# G11-AC4: the slot is unique, and the unassigned slot participates in that
+# uniqueness rather than escaping it through a NULL.
+expect_sql_failure 'G11-AC4 a duplicate assigned slot is rejected' "$MAIN_DB" \
+    "INSERT INTO owner_volume_aggregate_24h (period_start_at, period_end_at, owner_id,
+        traffic_scope, bytes, allowed_connections, blocked_connections, client_count, computed_at)
+     SELECT period_start_at, period_end_at, owner_id, traffic_scope, 0, 0, 0, 0, $NOW
+     FROM owner_volume_aggregate_24h WHERE owner_id IS NOT NULL LIMIT 1;"
+expect_sql_failure 'G11-AC4 a duplicate unassigned slot is rejected too' "$MAIN_DB" \
+    "INSERT INTO owner_volume_aggregate_24h (period_start_at, period_end_at, owner_id,
+        traffic_scope, bytes, allowed_connections, blocked_connections, client_count, computed_at)
+     SELECT period_start_at, period_end_at, NULL, traffic_scope, 0, 0, 0, 0, $NOW
+     FROM owner_volume_aggregate_24h WHERE owner_id IS NULL LIMIT 1;"
+expect_sql_failure 'G11-AC4 a slot attributed to an owner that does not exist is rejected' "$MAIN_DB" \
+    "UPDATE owner_volume_aggregate_24h SET owner_id = 999999999
+     WHERE id = (SELECT min(id) FROM owner_volume_aggregate_24h);"
+expect_sql_failure 'G11-AC4 a negative byte count in a per-owner slot is rejected' "$MAIN_DB" \
+    "UPDATE owner_volume_aggregate_24h SET bytes = -1
+     WHERE id = (SELECT min(id) FROM owner_volume_aggregate_24h);"
+
+# G11-AC5: the aggregate agrees with the flows it was computed from, so a
+# per-person card reading it does not contradict a per-person card reading
+# flow. The 24 h family is checked; the arithmetic is the same for all four.
+DIAG_OWNER_AGG="$WORK/diag/06_Owner_aggregate_coverage_per_period.sql"
+run_query "$MAIN_DB" "$DIAG_OWNER_AGG" > "$WORK/owner_coverage.txt"
+printf -- '  per-owner aggregate coverage:\n'
+sed 's/^/    /' "$WORK/owner_coverage.txt"
+check 'G11-AC5 the per-owner coverage diagnostic returns one row per period' '4' \
+    "$(wc -l < "$WORK/owner_coverage.txt" | tr -d ' ')"
+check 'G11-AC5 every one of the four per-owner periods is non-empty' '' \
+    "$(awk -F'|' '$2 + 0 == 0 { print $1 }' "$WORK/owner_coverage.txt")"
+check 'G11-AC5 every one of the four per-owner periods carries an unassigned slot' '' \
+    "$(awk -F'|' '$7 + 0 == 0 { print $1 }' "$WORK/owner_coverage.txt")"
+check 'G11-AC5 the per-owner aggregate totals agree with the flows behind them' \
+    "$(q "$MAIN_DB" 'SELECT sum(f.packet_bytes) FROM flow f
+        JOIN client c ON c.id = f.src_client_id;')" \
+    "$(q "$MAIN_DB" 'SELECT sum(bytes) FROM owner_volume_aggregate_24h;')"
+check 'G11-AC5 an unowned client lands in the unassigned slot rather than being dropped' \
+    "$(q "$MAIN_DB" 'SELECT sum(f.packet_bytes) FROM flow f
+        JOIN client c ON c.id = f.src_client_id WHERE c.owner_id IS NULL;')" \
+    "$(q "$MAIN_DB" 'SELECT sum(bytes) FROM owner_volume_aggregate_24h WHERE owner_id IS NULL;')"
 
 # ===========================================================================
 section 'AC23, AC24 — source availability and the eve.json cursor'
@@ -751,10 +999,12 @@ sqlite3 "$PURGE_DB" "UPDATE setting SET value = '7776000' WHERE key = 'retention
 
 CUTOFF=$((NOW - 7776000))
 PURGEABLE='flow:observed_at dns_resolution:looked_up_at security_event:occurred_at
-dhcp_lease:observed_at device:last_seen_at pair_volume_observation:day_start_at
+dhcp_lease:observed_at client:last_seen_at pair_volume_observation:day_start_at
 geo_asn:looked_up_at domain_attribution:attributed_at
 volume_aggregate_1h:period_end_at volume_aggregate_24h:period_end_at
-volume_aggregate_7d:period_end_at volume_aggregate_30d:period_end_at'
+volume_aggregate_7d:period_end_at volume_aggregate_30d:period_end_at
+owner_volume_aggregate_1h:period_end_at owner_volume_aggregate_24h:period_end_at
+owner_volume_aggregate_7d:period_end_at owner_volume_aggregate_30d:period_end_at'
 for t in $PURGEABLE; do
     tbl="${t%%:*}"
     col="${t##*:}"
@@ -779,6 +1029,14 @@ check 'AC31 the purge removed no flow newer than the horizon' "$BEFORE_NEW_FLOW"
     "$(q "$PURGE_DB" "SELECT count(*) FROM flow WHERE observed_at >= $CUTOFF;")"
 check 'AC31 the purge removed no security event newer than the horizon' "$BEFORE_NEW_ALERT" \
     "$(q "$PURGE_DB" "SELECT count(*) FROM security_event WHERE occurred_at >= $CUTOFF;")"
+check 'VOC-AC3 the purge left the owner table untouched' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM owner;')" \
+    "$(q "$PURGE_DB" 'SELECT count(*) FROM owner;')"
+# G1-AC6: a blocklist purpose is user input, exactly like an owner. Purging the
+# lookups that named a list must not discard the classification behind it.
+check 'G1-AC6 the purge left the blocklist table untouched' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM blocklist;')" \
+    "$(q "$PURGE_DB" 'SELECT count(*) FROM blocklist;')"
 check 'AC31 the purge left the registry and the rule-info cache untouched' \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM provider;')|$(q "$MAIN_DB" 'SELECT count(*) FROM provider_rule_info;')" \
     "$(q "$PURGE_DB" 'SELECT count(*) FROM provider;')|$(q "$PURGE_DB" 'SELECT count(*) FROM provider_rule_info;')"
@@ -846,16 +1104,18 @@ check 'AC34 every seeded address was synthesised from a counter at generation ti
     "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE src_address IS NULL OR dst_address IS NULL;")"
 
 # ===========================================================================
-section 'AC35 — no assumed segment, device or interface count'
+section 'AC35 — no assumed interface, client or interface count'
 # ===========================================================================
 apply_migrations "$ALT_DB" "$WORK/migrate_alt.err" || fail 'AC35 the alternative database failed to migrate'
-seed_database "$ALT_DB" "$ALT_SEGMENTS" "$ALT_DEVICES" "$ALT_RULES" "$ALT_FLOW_ROWS" \
-    "$ALT_ALERTS" "$ALT_PAIR_ROWS"
-check 'AC35 the alternative seed has a different segment count' "$ALT_SEGMENTS" \
-    "$(q "$ALT_DB" 'SELECT count(*) FROM segment;')"
+seed_database "$ALT_DB" "$ALT_INTERFACES" "$ALT_CLIENTS" "$ALT_RULES" "$ALT_FLOW_ROWS" \
+    "$ALT_ALERTS" "$ALT_PAIR_ROWS" "$ALT_OWNERS"
+check 'AC35 the alternative seed has a different interface count' "$ALT_INTERFACES" \
+    "$(q "$ALT_DB" 'SELECT count(*) FROM interface;')"
+check 'AC35 the alternative seed has a different owner count' "$ALT_OWNERS" \
+    "$(q "$ALT_DB" 'SELECT count(*) FROM owner;')"
 check 'AC35 the alternative database is consistent' '' "$(q "$ALT_DB" 'PRAGMA foreign_key_check;')"
-ALT_SEGMENT_ID=$SEGMENT_ID
-ALT_DEVICE_ID=$DEVICE_ID
+ALT_INTERFACE_ID=$INTERFACE_ID
+ALT_CLIENT_ID=$CLIENT_ID
 for f in "$WORK"/screens/[0-9]*.sql; do
     name="$(head -n 1 "$f" | sed 's/^-- screen: //')"
     rows="$(run_query "$ALT_DB" "$f" | wc -l | tr -d ' ')"
@@ -865,8 +1125,9 @@ for f in "$WORK"/screens/[0-9]*.sql; do
         fail "AC35 the $name query returned no rows against the alternative seed"
     fi
 done
-printf -- '  alternative seed used segments=%s devices=%s rules=%s flows=%s (segment_id=%s device_id=%s)\n' \
-    "$ALT_SEGMENTS" "$ALT_DEVICES" "$ALT_RULES" "$ALT_FLOW_ROWS" "$ALT_SEGMENT_ID" "$ALT_DEVICE_ID"
+printf -- '  alternative seed used interfaces=%s clients=%s rules=%s owners=%s flows=%s (interface_id=%s client_id=%s)\n' \
+    "$ALT_INTERFACES" "$ALT_CLIENTS" "$ALT_RULES" "$ALT_OWNERS" "$ALT_FLOW_ROWS" \
+    "$ALT_INTERFACE_ID" "$ALT_CLIENT_ID"
 
 # ===========================================================================
 section 'AC36, AC37, AC42 — the model document'
@@ -1030,6 +1291,8 @@ expect_sql_failure 'PN-AC10 an availability row for a provider that does not exi
     "INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
      VALUES (999999999, 'reachable', 'pn-ac10', NULL, $NOW);"
 
+check 'VOC-AC4 a freshly migrated database attributes nothing to anybody' '0' \
+    "$(q "$FRESH_DB" 'SELECT count(*) FROM owner;')"
 check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
     "$(q "$FRESH_DB" 'SELECT count(*) FROM provider WHERE is_active = 1;')"
 
@@ -1096,12 +1359,12 @@ expect_sql_success 'PN-AC8 registering a second security-event provider needs no
      INSERT INTO security_event (provider_id, provider_event_key, occurred_at, ingested_at,
          rule_identity, signature, event_action, normalised_severity,
          src_address, src_port, dst_address, dst_port, protocol,
-         src_device_id, src_segment_id)
+         src_client_id, src_interface_id)
        SELECT p.id, 'pn-ac8-event-' || k.n, $WINDOW_END - 60, $WINDOW_END - 30,
               'named-rule-identity-alpha', 'second provider signature', 'blocked',
               CASE WHEN k.n = 1 THEN 'critical' END,
               e.src_address, e.src_port, e.dst_address, e.dst_port,
-              e.protocol, e.src_device_id, e.src_segment_id
+              e.protocol, e.src_client_id, e.src_interface_id
        FROM provider p, security_event e, (SELECT 1 AS n UNION ALL SELECT 2) k
        WHERE p.provider_key = 'second-event-provider' AND e.id = 1;
      INSERT INTO provider_rule_info (provider_id, rule_identity, normalised_severity,
@@ -1363,7 +1626,7 @@ awk '
             rest = substr(rest, RSTART + RLENGTH)
         }
         screens = ""
-        n = split("Overview Matrix Segment Device Blocked Alerts Map", names, " ")
+        n = split("Overview Matrix Interface Client Blocked Alerts Map", names, " ")
         for (i = 1; i <= n; i++) {
             if (match(cell[3], "[^A-Za-z]" names[i] "[^A-Za-z]")) {
                 screens = screens (screens == "" ? "" : ",") names[i]
@@ -1417,7 +1680,7 @@ section 'PN-AC30 — the scale run: 1 000 000 rows in the largest growing table'
 # ===========================================================================
 apply_migrations "$SCALE_DB" "$WORK/migrate_scale.err" || fail 'PN-AC30 the scale database failed to migrate'
 printf -- '  seeding %s flow rows, this takes a while...\n' "$SCALE_FLOW_ROWS"
-seed_database "$SCALE_DB" "$SEGMENTS" "$DEVICES" "$RULES" "$SCALE_FLOW_ROWS" "$ALERTS" "$PAIR_ROWS"
+seed_database "$SCALE_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$SCALE_FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"
 SCALE_COUNT="$(q "$SCALE_DB" 'SELECT count(*) FROM flow;')"
 check_ge 'PN-AC30 the scale database holds 1 000 000 rows in flow' 1000000 "$SCALE_COUNT"
 check 'PN-AC30 the scale database is consistent' '' "$(q "$SCALE_DB" 'PRAGMA foreign_key_check;')"
@@ -1463,6 +1726,149 @@ while read -r cname cindex; do
         fail "PN-AC29 the $cname plan stopped being covered at 1 000 000 rows"
     fi
 done < "$WORK/covering.txt"
+
+# ===========================================================================
+section 'FC-AC1 to FC-AC5 — the API field coverage table stays honest'
+# ===========================================================================
+# The "API field coverage" table of docs/data-model.md sweeps every field the
+# survey says an endpoint returns and gives each of them one of three verdicts:
+# stored, not stored, or dropped. It exists because the same defect -- a field
+# the API returns and the schema silently discards -- was found twice by
+# accident.
+#
+# WHAT THIS HARNESS CAN AND CANNOT DO, stated plainly rather than implied. It
+# CANNOT detect a newly dropped field: the survey is prose, and no machine can
+# tell that a documented response gained a key nobody wrote down. What it CAN
+# do, and does below, is stop the table drifting away from the schema -- a row
+# claiming a field is stored must name a column that actually exists -- and
+# stop a row being written with no verdict at all, which is how a field goes
+# back to being dropped by accident.
+parse_coverage() {
+    awk '
+        index($0, "<!-- api-field-coverage:begin -->") == 1 { inside = 1; next }
+        index($0, "<!-- api-field-coverage:end -->") == 1 { inside = 0 }
+        inside && substr($0, 1, 1) == "|" {
+            n = split($0, cell, "|")
+            if (n < 6) next
+            if (cell[2] ~ /^ *:?-+:? *$/) next
+            if (cell[2] ~ /^ *API field *$/) next
+            verdict = "none"
+            if (cell[5] ~ /^ \*\*not stored\*\*/) { verdict = "not_stored" }
+            else if (cell[5] ~ /^ \*\*stored\*\*/) { verdict = "stored" }
+            else if (cell[5] ~ /^ \*\*dropped\*\*/) { verdict = "dropped" }
+            cols = ""
+            rest = cell[5]
+            while (match(rest, /`[^`]*`/)) {
+                token = substr(rest, RSTART + 1, RLENGTH - 2)
+                if (token ~ /^[a-z][a-z0-9_]*\.[a-z][a-z0-9_]*$/) {
+                    cols = cols (cols == "" ? "" : ",") token
+                }
+                rest = substr(rest, RSTART + RLENGTH)
+            }
+            field = cell[2]
+            gsub(/^ +| +$/, "", field)
+            survey = cell[4]
+            gsub(/^ +| +$/, "", survey)
+            print verdict "\t" cols "\t" field "\t" survey
+        }
+    ' "$1"
+}
+parse_coverage "$DOC" > "$WORK/coverage_rows.txt"
+COVERAGE_ROWS="$(wc -l < "$WORK/coverage_rows.txt" | tr -d ' ')"
+check_ge 'FC-AC1 the coverage table sweeps every surveyed response, not a sample' \
+    100 "$COVERAGE_ROWS"
+for source_name in 'Data source 1' 'Data source 2' 'Data source 3' \
+                   'Data source 4' 'Data source 5' 'Runtime discovery'; do
+    check_ge "FC-AC1 the coverage table reaches $source_name" 1 \
+        "$(awk -F'\t' -v s="$source_name" 'index($4, s) > 0' \
+           "$WORK/coverage_rows.txt" | wc -l | tr -d ' ')"
+done
+
+# FC-AC2: every row carries one of the three verdicts. A row with none is a
+# field nobody decided about, which is exactly the state the table exists to
+# make impossible.
+check 'FC-AC2 every coverage row carries one of the three verdicts' '' \
+    "$(awk -F'\t' '$1 == "none" { print $3 }' "$WORK/coverage_rows.txt" | tr '\n' ' ')"
+check_ge 'FC-AC2 the table records fields that are deliberately not stored' 20 \
+    "$(awk -F'\t' '$1 == "not_stored"' "$WORK/coverage_rows.txt" | wc -l | tr -d ' ')"
+check_ge 'FC-AC2 the table records the fields that are stored' 50 \
+    "$(awk -F'\t' '$1 == "stored"' "$WORK/coverage_rows.txt" | wc -l | tr -d ' ')"
+
+# FC-AC3: a stored row must name a column that exists. This is the assertion
+# that keeps the table and the schema from drifting apart.
+column_missing() {
+    local token="$1" tname="${1%%.*}" cname="${1#*.}"
+    # table_xinfo rather than table_info: the latter omits generated columns,
+    # and interface.is_tunnel is one. A column review that could not see a
+    # generated column would report it missing and be wrong.
+    [ "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_xinfo('$tname')
+         WHERE name = '$cname';")" = '0' ]
+}
+MISSING_COLUMNS=''
+CLAIMED_COLUMNS=0
+while IFS="$(printf '\t')" read -r verdict cols field survey; do
+    [ "$verdict" = 'stored' ] || continue
+    [ -n "$cols" ] || continue
+    for token in $(printf -- '%s' "$cols" | tr ',' ' '); do
+        CLAIMED_COLUMNS=$((CLAIMED_COLUMNS + 1))
+        if column_missing "$token"; then
+            MISSING_COLUMNS="$MISSING_COLUMNS $field->$token"
+        fi
+    done
+done < "$WORK/coverage_rows.txt"
+check_ge 'FC-AC3 the stored rows name columns to verify' 50 "$CLAIMED_COLUMNS"
+check 'FC-AC3 every column a stored row names exists in the live schema' '' \
+    "$MISSING_COLUMNS"
+
+# FC-AC4: the assertion above has teeth. The same resolver is run against a
+# column that deliberately does not exist, and must report it; a checker that
+# passes on anything would pass on a table that had drifted.
+if column_missing 'flow.this_column_does_not_exist'; then
+    pass 'FC-AC4 the column resolver reports a column that does not exist'
+else
+    fail 'FC-AC4 the column resolver accepted a column that does not exist'
+fi
+if column_missing 'flow.log_reason'; then
+    fail 'FC-AC4 the column resolver rejected a column that does exist'
+else
+    pass 'FC-AC4 the column resolver accepts a column that does exist'
+fi
+
+# FC-AC5: the fields this sweep closed are stored, and the columns are there.
+# Each separates "nothing happened" from "we could not see", which is the
+# distinction the whole project is built on.
+for closed in 'dns_resolution.dnssec_status' 'flow.log_reason' \
+              'rule.logs_matches' 'interface.status' 'interface.enabled'; do
+    if column_missing "$closed"; then
+        fail "FC-AC5 the closed field $closed has no column"
+    else
+        pass "FC-AC5 the closed field is stored in $closed"
+    fi
+done
+check_ge 'FC-AC5 the resolver validation verdict is queryable and is reported for most lookups' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM dns_resolution WHERE dnssec_status IS NOT NULL;')"
+check_ge 'FC-AC5 a lookup whose verdict was not reported stays distinguishable' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM dns_resolution WHERE dnssec_status IS NULL;')"
+check_ge 'FC-AC5 two distinct log reasons are representable, so a denial and a drop differ' 2 \
+    "$(q "$MAIN_DB" 'SELECT count(DISTINCT log_reason) FROM flow;')"
+check_ge 'FC-AC5 the blocked projection carries the reason the record was logged' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM blocked_event WHERE log_reason IS NOT NULL;')"
+check_ge 'FC-AC5 a rule that does not log is representable' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM rule WHERE logs_matches = 0;')"
+check_ge 'FC-AC5 a rule whose logging flag was not reported stays distinguishable' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM rule WHERE logs_matches IS NULL;')"
+expect_sql_failure 'FC-AC5 a logging flag outside the two states is rejected' "$MAIN_DB" \
+    'UPDATE rule SET logs_matches = 2 WHERE id = 1;'
+check_ge 'FC-AC5 an interface whose link state differs from the common one is representable' 1 \
+    "$(q "$MAIN_DB" "SELECT count(DISTINCT status) FROM interface WHERE status IS NOT NULL;")"
+check_ge 'FC-AC5 an interface discovered without a state reads as not reported' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM interface WHERE status IS NULL AND enabled IS NULL;')"
+# The two interface state columns and the two verbatim text columns carry no
+# CHECK, deliberately: the survey establishes those fields and not their value
+# sets, and a vocabulary written here would be invented rather than discovered.
+check 'FC-AC5 no invented vocabulary constrains a field whose value set the survey does not establish' \
+    '' "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM pragma_table_info('interface')
+         WHERE name IN ('status', 'enabled') AND type <> 'TEXT';")"
 
 # ===========================================================================
 section 'PN-AC28 — shellcheck'

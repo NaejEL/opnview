@@ -155,7 +155,10 @@ does not reopen them, and no section below contradicts one.
    never a fabricated zero.
 4. **Palettes.** The maintainer's industrial palette is the default. Tokyo
    Night, Dracula, Nord, Rosé Pine and Catppuccin are offered as named options
-   at their official published values.
+   **at the values published on the maintainer's own site,
+   https://lequellec.xyz** — that site, not each palette's upstream project, is
+   the authoritative source for what those five names mean in `opnview`. See
+   *The five named palettes* below, which records both and says which governs.
 5. **Theme on first launch follows the operating system**, user-overridable
    afterwards. This replaces the ROADMAP's "light by default, dark never the
    default"; see *Proposed ROADMAP amendment*.
@@ -1668,7 +1671,7 @@ over time, no VLAN matrix.
 columns, saveable custom views. That is the right shape, and it is the shape
 `opnview`'s canvases should make cheap — "blocked" and "IDS alert" as *filters*
 rather than as separate pages, so a user goes from "everything" to "what this
-segment sent abroad and got blocked for" without changing screens. Second, the
+interface sent abroad and got blocked for" without changing screens. Second, the
 **drill-down-to-action loop on a named detection**: from an alert you can
 suppress the signature, exclude the source address or block the connection, and
 that materialises as a real firewall rule (IDS/IPS page).
@@ -2806,11 +2809,57 @@ each other rather than in tension.
 
 ### The five named palettes
 
-Each at its official published values, with at least one URL to the palette's
-own source. Where a value could only be read from a generated artefact rather
-than a hand-authored one, that is stated. **These are records of external
-sources, reproduced so `opnview` never has to fetch anything at runtime** — which
-is the whole reason for reproducing them rather than linking them.
+**Which source governs.** `opnview` takes these five palettes from the
+maintainer's own site, **https://lequellec.xyz**, where they are already
+implemented as a seven-token set per palette — `--bg`, `--panel`, `--fg`,
+`--fg-strong`, `--fg-muted`, `--accent`, `--line` — in a light and a dark
+variant. Those are the values the product uses, and they are authoritative.
+
+The upstream tables that follow are **not** those values. They are the record of
+where each name comes from, kept because a palette's own project is the right
+place to check a name, a role or a disputed hex. They are reference, not
+implementation. The two differ — the site's Tokyo Night puts `#16161e` at the
+ground and `#1a1b26` at the surface, where the upstream tables invite the
+opposite — and substituting the upstream values produced a washed-out rendering
+that the maintainer caught and rejected. Do not take these tables as the
+palette.
+
+#### The values `opnview` uses
+
+Read from the maintainer's site. Seven tokens carry the interface; `--vif` is
+the site's accent-of-last-resort and is recorded with them because the mockup
+uses it for the one series that must not be mistaken for another.
+
+| Palette | Mode | `--bg` | `--panel` | `--fg` | `--fg-strong` | `--fg-muted` | `--accent` | `--line` | `--vif` |
+|---|---|---|---|---|---|---|---|---|---|
+| Tokyo Night | dark | `#16161e` | `#1a1b26` | `#c0caf5` | `#e6ebff` | `#8b93ba` | `#7aa2f7` | `#2a2e42` | `#f7768e` |
+| Tokyo Night | light | `#e1e2e7` | `#d8d9df` | `#343b58` | `#1c2033` | `#565a6e` | `#2a54c0` | `#bcbec9` | `#8c1f4f` |
+| Dracula | dark | `#21222c` | `#282a36` | `#f8f8f2` | `#ffffff` | `#a9aed0` | `#bd93f9` | `#3b3d4d` | `#ff79c6` |
+| Dracula | light | `#fffbeb` | `#f6f0d8` | `#2a2823` | `#1f1f1f` | `#5f5940` | `#5a3fc0` | `#ddd6bd` | `#a3144d` |
+| Nord | dark | `#2e3440` | `#3b4252` | `#d8dee9` | `#eceff4` | `#a9b4c6` | `#88c0d0` | `#4c566a` | `#c9a3c4` |
+| Nord | light | `#eceff4` | `#e5e9f0` | `#3b4252` | `#2e3440` | `#4c566a` | `#2f5f88` | `#d0d6e0` | `#94357f` |
+| Rosé Pine | dark | `#191724` | `#1f1d2e` | `#e0def4` | `#f2f0ff` | `#a9a4c9` | `#c4a7e7` | `#302c48` | `#eb6f92` |
+| Rosé Pine | light | `#faf4ed` | `#f2e9e1` | `#575279` | `#3d3a55` | `#68647a` | `#7a4d94` | `#dfd6cd` | `#a03a58` |
+| Catppuccin | dark | `#181825` | `#1e1e2e` | `#cdd6f4` | `#eff1f5` | `#a6adc8` | `#cba6f7` | `#313244` | `#f38ba8` |
+| Catppuccin | light | `#eff1f5` | `#e6e9ef` | `#4c4f69` | `#3a3c52` | `#5c5f77` | `#7c2fd4` | `#ccd0da` | `#a02a45` |
+
+Two consequences, both of which contradict something written elsewhere before
+this table existed and both of which this table settles:
+
+- **Ground and surface are ordered.** `--bg` is the page, `--panel` is the card,
+  and `--bg` is the darker of the two in every dark variant. Inverting them is
+  what produced the rejected rendering.
+- **Nord has a light variant here.** Upstream Nord publishes none, and the
+  earlier text therefore specified a fallback for a light-preferring system with
+  Nord selected. The maintainer's site defines Nord light, so no fallback is
+  needed and none should be built.
+
+Each upstream entry below is at its official published values, with at least one
+URL to the palette's own source. Where a value could only be read from a
+generated artefact rather than a hand-authored one, that is stated. **These are
+records of external sources, reproduced so `opnview` never has to fetch anything
+at runtime** — which is the whole reason for reproducing them rather than
+linking them.
 
 #### Dracula
 
@@ -3638,13 +3687,13 @@ commit.
 expressed in, and that key's value — never a local database id, and never a
 generated universal identifier.**
 
-Concretely, `{"kind": "segment", "by": "interface_identifier", "value": …}`,
+Concretely, `{"kind": "interface", "by": "identifier", "value": …}`,
 with the full vocabulary and the per-kind key list in
 `docs/dashboard-format.md`. Seven kinds exist. Three of them —
 `provider` (the pair of a provider kind and a provider key, such as a resolver
 implementation), `country` (an ISO 3166-1 alpha-2 code) and `operator` (an AS
 number) — are **globally meaningful and travel intact**. Four of them —
-`segment`, `device`, `rule` and `site` — name things that exist on one
+`interface`, `client`, `rule` and `site` — name things that exist on one
 installation and may not exist on another, and `opnview` **does not pretend
 otherwise**.
 
@@ -3664,7 +3713,7 @@ A silent wrong answer about a firewall is worse than a visible failure, so
 
 A reference may also carry a `label` — the exporting installation's own name for
 the thing — **for display only.** It is never matched on. `opnview` never infers
-a segment's nature from what it is called, and that rule holds in the dashboard
+an interface's nature from what it is called, and that rule holds in the dashboard
 format exactly as it holds in the schema.
 
 ### What happens when a reference cannot be resolved locally
@@ -3689,8 +3738,8 @@ neither is the "real" one.**
    highlight clears when the reference resolves.
 
 2. **A no-code selector whose dropdowns are populated from what this
-   installation actually has** — the segments the firewall discovered, the
-   devices seen in leases and flows, the rules in the running ruleset, the
+   installation actually has** — the interfaces the firewall discovered, the
+   clients seen in leases and flows, the rules in the running ruleset, the
    providers in the registry. The unresolved value is shown as the current
    selection, marked as not found, beside the choices that do exist.
 
@@ -3773,7 +3822,7 @@ naming the field as well as the index. A partial import of a structurally broken
 file is never performed.
 
 **Referential validity is fail-open.** Every unresolved reference — an unknown
-widget type, a `segment`, `device` or `rule` reference matching nothing locally,
+widget type, an `interface`, `client` or `rule` reference matching nothing locally,
 an unrecognised parameter key, a parameter value outside the known vocabulary —
 is **collected and reported, and the import proceeds**. The result is a
 dashboard the user can see, with the broken parts visibly broken and repairable.
@@ -3969,9 +4018,10 @@ own code.
 **Proposed replacement.** *"On first launch the theme follows the operating
 system's preference. The user can override it afterwards, and the override
 persists. The maintainer's industrial palette is the default; Tokyo Night,
-Dracula, Nord, Rosé Pine and Catppuccin are offered as named options at their
-official published values. Nord ships no light variant, so a light-preferring
-system with Nord selected falls back as the theme picker states."*
+Dracula, Nord, Rosé Pine and Catppuccin are offered as named options at the
+values published on the maintainer's own site, https://lequellec.xyz. Nord's upstream
+project publishes no light variant, but the maintainer's site defines one, so
+Nord is light-capable here."*
 
 ### 3. Step 3's UniFi aesthetic brief
 
@@ -4047,8 +4097,8 @@ a *widget parameter* carried in the dashboard file rather than a global control,
 because two widgets on one canvas will legitimately show different periods.
 
 **Proposed replacement.** *"HTTP API for the widget catalogue: one endpoint per
-widget type, taking that widget's declared parameters — period, scope, segment,
-device and the rest — as documented in `docs/widget-catalogue.md`, and returning
+widget type, taking that widget's declared parameters — period, scope,
+interface, client and the rest — as documented in `docs/widget-catalogue.md`, and returning
 both the data and the source-availability state each widget must render. A
 canvas is served by issuing one request per widget. The period is a parameter of
 a widget rather than a property of a screen."*

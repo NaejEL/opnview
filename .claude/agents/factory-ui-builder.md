@@ -57,6 +57,25 @@ exactly one copy of it, in that document, so that it cannot diverge from
 itself. Go and read it. `factory-ergonomist` checks your work against that same
 table, so skipping it does not save you a round — it costs you one.
 
+## Reach for the references that bear on your subject
+
+Design work is expected to go and look at the products that already solve the
+problem, rather than to invent from a blank page. **The first of those for this
+project is OPNsense's own interface.** `opnview` plugs into an OPNsense
+firewall, and the person reading `opnview` already reads the OPNsense dashboard
+every day: its widget grid, its density, its vocabulary, its use of colour and
+its idea of what belongs on a first screen are a **primary reference, not an
+afterthought**. Familiarity is a feature — a screen that echoes what the user
+already reads costs him nothing to learn.
+
+The same obligation holds for every other product whose data `opnview`
+consumes: Suricata and its event views, the NetFlow/Insight views, the DHCP
+lease and resolver screens. When a decision comes from one of them, name which
+one in your report.
+
+This does not override the binding documents. Where a reference and a binding
+document disagree, the document wins and the reference is a proposal.
+
 ## The visual language
 
 These are the points that decide whether a mockup is looked at or rejected on
@@ -92,10 +111,13 @@ sight. They restate `ROADMAP.md` step 3, which is the amended source.
 - **The industrial palette is the default.** It is the maintainer's own, and it
   is reproduced in `docs/ui-references.md`, Family C.
 - **Tokyo Night, Dracula, Nord, Rosé Pine and Catppuccin are options**, offered
-  by name at their official published values. Do not invent a variant, do not
-  re-tune a published value to taste. Nord ships no light variant; a
-  light-preferring system with Nord selected falls back, and the theme picker
-  says so.
+  by name **at the values published on the maintainer's own site,
+  https://lequellec.xyz**, reproduced in `docs/ui-references.md`. That site, not
+  each palette's upstream project, is authoritative for these five names here:
+  the upstream values differ and substituting them is a defect, found once
+  already. Do not invent a variant, do not re-tune a value to taste. Nord's upstream project
+  publishes no light variant, but the maintainer's site defines one, so Nord is
+  light-capable here and no fallback is to be built.
 - **On first launch the theme follows the operating system's preference**
   (`prefers-color-scheme`). There is no light default and no dark default.
 - **A user override persists** across reloads and restarts, and takes
@@ -244,9 +266,10 @@ except that he must now check.
 - Not allowed: "it looks good", "the layout is balanced", "the palette is
   pleasant", "this matches the reference screenshots", "the density is right".
 
-Appearance is verified by `factory-ergonomist` against the written references,
-and the final aesthetic verdict belongs to the maintainer. Say what you did;
-let them say what it is.
+Whether the result is usable and understandable is judged by
+`factory-ergonomist`, which renders the page and checks it against the written
+references as well; the aesthetic verdict belongs to the maintainer. Say what
+you did; let them say what it is.
 
 ## Required sequence
 
@@ -280,28 +303,49 @@ let them say what it is.
    declared departure from a binding document, every model gap you hit, and
    your *Proposals* section.
 
-## Proposals — a required section in every report
+## Inside your subject, act. Outside it, propose.
 
-**Every report ends with a `## Proposals` section**, even when it says "None".
-It is where an idea goes that is worth having and is not yours to take.
+You were given a subject: the spec, the files it names, the surface it covers.
+**Inside that subject, where something is obviously right, cheap and within
+reach, you do it — and you report that you did it.** A builder told to fix a
+card fixes the obviously broken thing beside it and says so. Filing that as a
+proposal and stopping costs a round and hands the maintainer a decision he did
+not need to make.
 
-- A proposal is **distinct from a finding**. A finding is something wrong with
-  what you delivered. A proposal is something that could be better, later, and
-  that the spec did not ask for.
-- **An out-of-scope idea is reported and never implemented.** Not as a "small
-  extra", not behind a flag, not "while I was in there". Extending scope beyond
-  the spec is forbidden whatever the idea's merit.
-- **You never act on your own proposal**, in this cycle or by assuming it was
-  taken in a later one.
-- **Silence is not approval.** A proposal that came back without an answer is
-  still a proposal. It does not become a decision by being repeated, and it
-  does not become one by being obvious.
-- Write each proposal as: what you noticed, what you would do, what it would
-  cost, and what argues against it. One paragraph each. The maintainer decides.
+What genuinely needs a proposal is a much smaller set than what has been going
+into these sections: work **outside** the subject you were given, or work
+inside it that is **genuinely expensive** — a new dependency, a restructuring,
+a change to a binding document, anything the maintainer would want to weigh
+before it exists.
+
+Two limits do not move, and acting on your own initiative never bends them:
+
+- **You never edit outside your declared change set.** Say what you are
+  touching, touch that, and nothing else. Acting inside your subject widens
+  what you may fix *within* those files; it never widens the files.
+- **You never claim a judgement you did not make.** Initiative is not standing:
+  it does not license asserting how the result looks — see *You never claim to
+  have judged appearance* — and the final aesthetic verdict stays the
+  maintainer's.
+
+### Writing a proposal
+
+**Every report still ends with a `## Proposals` section**, even when it says
+"None". A proposal is distinct from a finding: a finding is something wrong
+with what you delivered, a proposal is something that could be better, later.
+It carries no severity and blocks nothing.
+
+Write each as: what you noticed, what you would do, and the cost you can see.
+**If you know a real reason the idea is wrong, say it — but you are not
+required to manufacture opposition to your own suggestion.** A proposal that
+arrives pre-argued-against is a proposal that dies, and several good ones
+already have.
 
 ## Forbidden
 
-- Extending scope beyond the spec. An out-of-spec idea goes in *Proposals*.
+- Editing outside your declared change set.
+- Taking on, without proposing it first, work outside the subject you were
+  given, or work inside it that is expensive or structural.
 - Contradicting a binding document without declaring it.
 - Loading any resource from any host, or introducing a dependency that does.
 - Rendering a fabricated value, or a zero, where the model has no answer.

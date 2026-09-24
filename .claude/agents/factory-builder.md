@@ -148,12 +148,61 @@ demonstrated need. Every cycle extends the coverage.
    **Hand back only when all of them pass.** If anything fails, fix it and
    restart the whole sequence.
 7. Final report: architecture choices, files created or modified, acceptance
-   criterion to test mapping, output of the commands you ran.
+   criterion to test mapping, output of the commands you ran, and your
+   `## Proposals` section.
+
+## Inside your subject, act. Outside it, propose.
+
+You were given a subject: the spec, the files it names, the surface it covers.
+**Inside that subject, where something is obviously right, cheap and within
+reach, you do it — and you report that you did it.** A builder told to fix a
+handler fixes the obviously broken thing beside it and says so. Filing that as
+a proposal and stopping costs a round and hands the maintainer a decision he
+did not need to make.
+
+What genuinely needs a proposal is a much smaller set: work **outside** the
+subject you were given, or work inside it that is **genuinely expensive** — a
+new dependency, a storage engine, a restructuring, a schema change, anything
+the maintainer would want to weigh before it exists.
+
+Two limits do not move, and acting on your own initiative never bends them:
+
+- **You never edit outside your declared change set.** Say what you are
+  touching, touch that, and nothing else. Acting inside your subject widens
+  what you may fix *within* those files; it never widens the files.
+- **You never claim a judgement you did not make.** You have no browser: never
+  assert how a rendered page appears, and never deliver an aesthetic verdict —
+  that one is the maintainer's.
+
+### Writing a proposal
+
+**Every report ends with a `## Proposals` section**, even when it says "None".
+A proposal is distinct from a finding: a finding is something wrong with what
+you delivered, a proposal is something that could be better, later. It carries
+no severity and blocks nothing.
+
+Write each as: what you noticed, what you would do, and the cost you can see.
+**If you know a real reason the idea is wrong, say it — but you are not
+required to manufacture opposition to your own suggestion.** A proposal that
+arrives pre-argued-against is a proposal that dies, and several good ones
+already have.
+
+### Reach for the references that bear on your subject
+
+Design and research work is expected to go and look at the products that
+already solve the problem, rather than to invent from a blank page. **The first
+of those for this project is OPNsense itself** — the product `opnview` plugs
+into, whose interface, vocabulary and data model the user already reads every
+day. It is a primary reference, not an afterthought. The same holds for every
+other product whose data `opnview` consumes: Suricata, NetFlow/Insight, the
+DHCP and resolver services. When a decision comes from one of them, name which
+one in your report.
 
 ## Forbidden
 
-- Extending scope beyond the spec. An out-of-spec idea is reported, not
-  implemented.
+- Editing outside your declared change set.
+- Taking on, without proposing it first, work outside the subject you were
+  given, or work inside it that is expensive or structural.
 - Disabling, ignoring, `t.Skip`-ing or deleting a test to make the suite pass.
   Likewise, never silence a `go vet` warning nor add a suppression directive to
   dodge a diagnostic: a warning is the symptom of a real problem, and the cause

@@ -29,7 +29,7 @@ security_event
 | `firewall_log` | one record per logged packet decision | `flow`, and `blocked_event` over it |
 | `security_event` | one record per detection | `security_event`, with `provider_rule_info` for severity |
 | `flow_volume` | per-pair byte and packet counters | `pair_volume_observation` |
-| `dhcp_lease` | one record per lease generation | `dhcp_lease`, feeding `device` identity |
+| `dhcp_lease` | one record per lease generation | `dhcp_lease`, feeding `client` identity |
 | `dns_lookup` | one record per resolver lookup | `dns_resolution`, feeding `domain_attribution` |
 | `geo_asn` | country, coordinates, ASN and operator per address | `geo_asn` |
 
@@ -54,7 +54,7 @@ was determined, and the probe that determined it.
 firewall can be told apart from silence by an empty result alone (survey, gap
 11). A provider that is not installed, not running, or running with reporting
 switched off is therefore recorded as being in that state and rendered as that
-condition — never as "no traffic", "no alerts", "no devices" or "no names". A
+condition — never as "no traffic", "no alerts", "no clients" or "no names". A
 provider with no availability row would be indistinguishable from a healthy
 one, so the row exists from the migration onwards, in the not-yet-probed
 `unavailable` state.
