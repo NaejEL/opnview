@@ -21,11 +21,11 @@ so and amend this roadmap rather than quietly working around it.
 - **Two outbound calls, not one more**: the firewall API (local network) and
   the MaxMind database download. No telemetry, no version check, no resource
   loaded from a CDN.
-- **The observation limit is displayed, not hidden**: the application only
-  sees what crosses the router.
+- **The observation limit is documented, not printed**: the application only
+  sees what crosses the router, so every figure is a lower bound.
 - **Degrade, never guess.** Suricata may be absent, installed but stopped, or
-  running on only some interfaces. The UI states which interfaces its alerts
-  cover and which they do not.
+  running on only some interfaces. Which interfaces its alerts cover is a fact
+  about the data, documented here; the interface does not recite it.
 - **One service, installed and updated by a single command, with no external
   data store to provision. Storage engines are embedded libraries, not
   servers.** This replaces the earlier "single Go binary" rule, which was an
@@ -383,23 +383,92 @@ reachable only through a menu inside a menu**: the user creates **named
 canvases**, composes each from widgets, and moves between them with **tabs
 rather than menus**.
 
+#### The frontend is modular, and that is a requirement, not a preference
+
+The step-3 mockup is a single file, which is acceptable for a mockup and is
+**not** acceptable for the product. The real frontend is composed of parts a
+person who is not us can add:
+
+- **a language is a file** — every user-visible string comes from a catalogue,
+  none is a literal in a template, a handler or a script, and the user switches
+  language in the interface;
+- **a theme is a file** — the palettes ship as data of the same kind a third
+  party can add, not as blocks in a stylesheet;
+- **a widget is a directory** — its manifest, its query and its renderer live
+  together, and adding one is dropping a directory in, not editing the product.
+
+The test this rule has to pass: **somebody who has never seen the source can add
+a language, a theme or a widget easily and naturally**, from the documentation
+alone. If adding one means editing a file that ships with the product, the rule
+is not met.
+
+Two consequences to design rather than discover:
+
+- The service reads these parts **from a data directory at runtime**, beside the
+  defaults embedded in the binary. That does not weaken *one service, installed
+  and updated by a single command, with no external data store to provision* —
+  the parts are files the service reads, not a store to provision — but the
+  directory, its precedence over the embedded defaults and its reload behaviour
+  are part of this step.
+- `docs/widget-catalogue.md`'s six fields per entry stop being prose for a human
+  and become **the widget manifest's schema**. That is what makes a widget a
+  directory rather than a patch.
+
 - The widget catalogue of `docs/widget-catalogue.md`, implemented as placeable
   widgets that can be added, moved and resized on a grid.
+- **The connection tree answers where a chosen subject goes preferentially** —
+  an interface, a client or an owner, picked by the reader, with what it reaches
+  ranked. The step-3 mockup rooted it at the firewall instead, which is true of
+  everything on the page and so tells the reader nothing; that root came from a
+  research document's reading of a screenshot, not from any requirement.
 - Named canvases with tabs, each carrying the widgets the user put on it.
 - The dashboard file format of `docs/dashboard-format.md`, with import, export
   and the two repair surfaces — a highlighting JSON/YAML editor and a no-code
   selector populated from what this installation actually has.
 - The theme system: the industrial palette by default, the five named palettes
   as options, the theme following the operating system on first launch with a
-  persisting override.
+  persisting override — each palette a file of the same kind a third party adds.
+- The string catalogue and the language picker, with English as the source
+  language and no user-visible literal anywhere in the code.
 
 **The seven queries in `sql/queries/screens.sql` remain authoritative and are
 not deleted.** They are the query work this step was really carrying, and every
 widget states which of them it reuses, adapts or replaces.
 
-Explicit in-UI statements: observation-point limit, site names inferred by
-correlation and the limits of that heuristic, the attribution rate, which
-interfaces Suricata's alerts cover, randomised MACs.
+**No explanatory copy in the interface.** A title names, a figure states, a unit
+qualifies, a degraded state is named in a word. Nothing explains the interface to
+its reader.
+
+#### What the step-3 mockup proved the interface has to be
+
+Each of these was found by using that mockup, and each was a defect in it. They
+are requirements here, not observations:
+
+- **The page does not rebuild under the reader's hands.** A live view refreshes
+  by reconciling, never by replacing, and never touches a subtree holding the
+  focus or a selection. In the mockup a two-second rebuild meant a name could not
+  be typed at ordinary speed, a MAC could not be selected and copied, and an
+  unapplied edit was silently discarded — three critical failures, one cause.
+- **Inspecting is not editing.** Every name and every figure — a client row, a
+  rule, a domain, a matrix cell, a signature, a tree node — opens a detail, and
+  that detail is a pivot rather than a dead end. In the mockup the only way to
+  look at a machine was to repoint a widget's reference, which was permanent and
+  had no undo.
+- **Scope belongs to the canvas, beside the period.** Interface, client and
+  owner, with a per-widget override that says so. Scoping through a gear, one
+  widget at a time, is not a filter.
+- **Navigation stays on screen.** Tabs and the rail do not scroll away from a
+  page that is several screens tall.
+- **A destructive action confirms, or can be undone.** Removing a person took
+  four dated assignments with it, on one click, with neither.
+- **Every control offered changes what is drawn**, or it is not offered. More
+  than half the mockup's declared parameter surface was decoration.
+- **A chooser may explain; a widget may not.** The copy rule above governs the
+  canvas. A picker that lists twenty-four widget names and nothing else gives the
+  reader nothing to choose on.
+- **A figure the interface cannot show is not shown as a fragment.** No truncated
+  address, no clipped label, no drawing whose names are dropped — a shortened
+  address reads as a different address.
 
 **Validation**: full walkthrough of a representative set of canvases on real
 data.
@@ -448,8 +517,7 @@ with a word OPNsense does not use:
 
 Revision of 2026-09-23, after the interface and dashboard-format research
 (`docs/ui-references.md`, `docs/widget-catalogue.md`,
-`docs/dashboard-format.md`), applied by
-`specs/SPEC-propagate-product-definition.md`:
+`docs/dashboard-format.md`):
 
 - **The seven fixed screens are replaced by named canvases.** Step 7 listed
   Overview, Matrix, Interface, Client, Blocked, Alerts and Map as screens

@@ -11,7 +11,9 @@ This covers, without being limited to:
 - `README.md`, `ROADMAP.md`, and every other document;
 - specifications under `specs/`, and their status lines;
 - agent prompts, skills, CI scripts, their log output and error messages;
-- the web UI: every label, heading, tooltip, empty state and error message;
+- the web UI: every label, heading, tooltip, empty state and error message —
+  English is the **source language**, not the only one the product speaks; see
+  *The user interface* below;
 - API payloads, field names, enum values;
 - the GitHub repository description, topics, issues and pull requests.
 
@@ -52,6 +54,16 @@ single place the rule is stated. Local SQLite, frontend embedded in the binary
 and served by it.
 
 ## The user interface
+
+**The frontend is modular, and a third party can extend it.** A language is a
+file, a theme is a file, a widget is a directory holding its manifest, its query
+and its renderer. Somebody who has never read the source must be able to add any
+of the three easily and naturally, from the documentation alone; if adding one
+means editing a file that ships with the product, the rule is not met. **No
+user-visible string is a literal** — every one comes from the string catalogue,
+English is the source language, and the user switches language in the interface.
+The step-3 mockup is a single file and is exempt, being a mockup. `ROADMAP.md`
+step 7 carries the detail.
 
 **Named canvases, not fixed screens.** The user creates canvases and composes
 each from widgets, moving between them with **tabs rather than menus**. No view
@@ -107,5 +119,5 @@ list of what this environment does *not* prove, are in `ROADMAP.md` under
 
 See `ROADMAP.md` for the eight-step plan and the cross-cutting engineering
 rules (no hardcoded configuration, no secrets in the repo, read-only against
-the firewall, exactly two outbound calls, observation-point limit stated in
-the UI).
+the firewall, exactly two outbound calls, the observation-point limit
+documented rather than printed on screen).

@@ -1454,8 +1454,7 @@ query, and that is where the drop is demonstrated.
 
 `sql/schema-checks.sh` applies the migrations to a fresh database under
 `/data`, seeds it, runs every query and every plan, and asserts each acceptance
-criterion of `specs/SPEC-data-model-sqlite-schema.md`. It exits non-zero on any
-failure.
+assertion it carries. It exits non-zero on any failure.
 
 `sql/seed.sql` is deterministic, takes its row counts as parameters, and
 produces at least 100 000 rows in `flow`. It contains no address literal: every

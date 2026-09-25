@@ -624,14 +624,6 @@ alternative in this document involves reading a file on the firewall, SSH, or an
 - **The scheduler runs at five intervals** — 10 s, 60 s, 300 s/900 s, 300 s, 60 s — each with its own failure isolation, so one unavailable
   source never stalls the others.
 
-## Project commands
-
-`gofmt -l .` — **N/A** for this cycle. `go vet ./...` — **N/A** for this cycle. `go build ./...` — **N/A** for this cycle. `go test ./...` —
-**N/A** for this cycle. All four are N/A because the repository contains no Go module and this cycle creates none. **The Verifier must
-record these four commands as N/A, not as failures**, and must not treat a missing Go toolchain as a defect of this cycle. The check that
-does apply: the acceptance criteria of `specs/SPEC-opnsense-api-survey.md` are verified by **reading `docs/opnsense-api-survey.md`**, plus
-`git status --porcelain` to confirm only this document and the step-1 status cell of `ROADMAP.md` changed.
-
 ## References
 
 Documentation — `docs.opnsense.org`:

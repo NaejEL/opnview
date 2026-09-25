@@ -2,11 +2,10 @@
 # opnview — schema checks.
 #
 # Applies the migrations to a fresh database, seeds it, runs the seven screen
-# queries and their query plans, and asserts the acceptance criteria of
-# specs/SPEC-data-model-sqlite-schema.md (labelled AC*) and of
-# specs/SPEC-provider-neutral-schema.md (labelled PN-AC*). A criterion of a
-# spec that names an object a later pass renamed is RESTATED against the new
-# name, never removed and never relaxed. The VOC-AC* criteria come from no
+# queries and their query plans, and asserts the criteria the data model and
+# the provider-neutral pass established (labelled AC* and PN-AC*). A criterion
+# naming an object a later pass renamed is RESTATED against the new name, never
+# removed and never relaxed. The VOC-AC* criteria come from no
 # spec: they are the maintainer's direct correction of the vocabulary --
 # segment became interface, device became client, the owner entity was added --
 # and they pin the result so it cannot drift back. This script is the schema
@@ -1206,9 +1205,9 @@ DB_LOCATION="$(find "$DATA_DIR" -maxdepth 1 -name 'schema-checks-*.db' | wc -l |
 check_ge 'AC45 every database a check created lives under the data directory' 1 "$DB_LOCATION"
 
 # ===========================================================================
-# The criteria of specs/SPEC-provider-neutral-schema.md follow, labelled
-# PN-AC*. The criteria above are those of specs/SPEC-data-model-sqlite-schema.md,
-# restated against the renamed objects where this cycle renamed one.
+# The provider-neutral criteria follow, labelled PN-AC*. Those above are the
+# data model's own, restated against the renamed objects where a later pass
+# renamed one.
 # ===========================================================================
 
 ARCH_DOC="$REPO_ROOT/docs/architecture.md"

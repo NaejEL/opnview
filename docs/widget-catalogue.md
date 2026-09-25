@@ -80,27 +80,21 @@ changing a setting on the firewall: where a source has to be switched on, that
 is a manual operation the user performs in the OPNsense web UI, documented in
 the README at step 8.
 
-## Two standing UI statements
+## Two standing facts — documented, never printed on screen
 
-Two sentences recur in the **Shows** field below, because two facts have to be
-on screen wherever the numbers they qualify are on screen.
+They bind the *model*: they govern what a figure means. They are **not** UI copy,
+and any **Shows** clause below asking for them is withdrawn.
 
 1. **The observation-point limit.** `opnview` sees only what crosses the
    router. Traffic between two clients behind one interface never reaches the
    firewall and is invisible to all five sources, so **every byte, packet and
-   connection figure is a lower bound**. Required copy, or wording carrying the
-   same content: *"Counts only traffic that crossed the firewall. Traffic
-   between two clients behind the same interface is not visible here, so this is a
-   lower bound."*
+   connection figure is a lower bound**.
 
 2. **Site names are inferred.** On OPNsense 26.7 a site name comes from
    correlating a resolver lookup with a flow that followed it, and from nothing
    else: Suricata exposes no `dns` event type and its `tls` / `http` events
    cannot be read back (`docs/opnsense-api-survey.md`, *Gaps and alternatives*,
-   gaps 1 and 2). Required copy, or wording carrying the same content: *"Site
-   names are inferred by correlating resolver lookups with the traffic that
-   followed them. They are not observed. A client using encrypted DNS, or a
-   cached name, will be under-attributed."*
+   gaps 1 and 2).
 
 ---
 
@@ -120,8 +114,7 @@ opens the underlying records. The right-hand column is north-south traffic,
 where the destination sits in no discovered interface. Interface labels are the
 user's own label where one has been set and the firewall's discovered
 description otherwise — **never a name-based classification**: an interface's
-nature is never inferred from what it is called. Required UI copy: the
-observation-point limit sentence, verbatim or equivalent, beneath the grid.
+nature is never inferred from what it is called.
 
 **Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `scope`
 (`all` | `east_west` | `north_south`); `measure` (`bytes` | `allowed` |
@@ -208,8 +201,7 @@ case; no zero line is synthesised for an unavailable source.
 each bar carrying the byte total, the client count behind it and the blocked
 connection count, with the east-west and north-south shares shown separately
 within the bar. Labels come from the user's own interface label, falling back to
-the firewall's discovered description. Required UI copy: the observation-point
-limit sentence.
+the firewall's discovered description.
 
 **Parameters** — `period`; `measure` (`bytes` | `connections` | `clients`);
 `scope` (`all` | `east_west` | `north_south`); `limit` (how many interfaces to
@@ -249,7 +241,7 @@ total, the blocked connection count and the count of distinct destinations. A
 client whose MAC carries the IEEE locally-administered bit is badged **unstable
 identity**, with the explanation that a randomised MAC does not identify a
 machine across sessions and has deliberately not been merged into a phantom
-client. Required UI copy: the observation-point limit sentence.
+client.
 
 **Parameters** — `period`; `interfaces` (optional list of interface references);
 `identity` (`any` | `dhcp_client_id` | `mac` | `address_in_interface` — which
@@ -308,8 +300,7 @@ correlated with the flow. A record with no attribution is shown with a null site
 name and its address, country and operator — never omitted, because an
 unattributed destination is a fact rather than a gap in the table. The
 correlation delay is shown per attributed row, so a wide delay reads as a weak
-attribution. Required UI copy: the observation-point limit sentence and the
-site-names-are-inferred sentence.
+attribution.
 
 **Parameters** — `client` (a client reference — required); `period`; `action`
 (`all` | `allowed` | `blocked`); `scope` (`all` | `east_west` |
@@ -361,8 +352,7 @@ drawn beside it, which is the whole point of drawing proportions.
 
 **The grouping dimension is always on screen**, in the card's subtitle, because
 "38 % of traffic" means four different things depending on whether the slices
-are clients, interfaces, protocols or service ports. Required UI copy: the
-observation-point limit sentence beneath the donut.
+are clients, interfaces, protocols or service ports.
 
 **Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `group_by`
 (`client` | `interface` | `protocol` | `service_port`); `measure`
@@ -443,9 +433,6 @@ quietly losing its tail. Blocked connections are drawn in the tree with their
 own mark rather than filtered out, so a branch that exists only because
 something was refused is visible as such.
 
-Required UI copy: the observation-point limit sentence, and — because the
-destination level shows inferred names — the site-names-are-inferred sentence.
-
 **Parameters** — `period`; `root` (`interface` | `client` | `owner` — which
 level the tree starts at); `depth` (how many levels are expanded on load);
 `interfaces` (optional list of interface references); `clients` (optional);
@@ -520,7 +507,7 @@ narrowed total that does not announce itself is a wrong total.
 machine appears under a person because somebody said it does, and for no other
 reason: not a hostname, not a MAC prefix, not a vendor hint. The empty state of
 a fresh installation therefore invites the user to create people rather than
-proposing any. Required UI copy: the observation-point limit sentence.
+proposing any.
 
 **Parameters** — `period`; `owners` (an optional list of **owner** references —
 the reference kind `docs/dashboard-format.md` adds for exactly this widget;
@@ -584,10 +571,7 @@ statement from *we could not look*, and the two are never rendered the same.
 **Shows** — A ranked list of inferred site names with the number of flows
 attributed to each, the number of distinct clients that reached them, the byte
 volume, and the country and operator behind the address. Each row expands to the
-clients behind it. Required UI copy: the observation-point limit sentence and
-the site-names-are-inferred sentence, plus the network-wide attribution rate as
-a headline figure, so the list is read in the knowledge of how much traffic it
-does *not* cover.
+clients behind it.
 
 **Parameters** — `period`; `interfaces` (optional); `clients` (optional);
 `limit`; `min_flows` (suppress names seen fewer than N times);
@@ -639,8 +623,7 @@ and alternatives*, gap 10.)
 clients down the side, their top inferred site names across, each cell carrying
 the flow count and the byte volume. A client with no attributed flows is listed
 with an explicit *"no site name could be inferred"* row rather than dropped, and
-its attribution rate is shown beside it. Required UI copy: the
-observation-point limit sentence and the site-names-are-inferred sentence.
+its attribution rate is shown beside it.
 
 **Parameters** — `period`; `interfaces` (optional); `clients` (optional);
 `sites_per_client` (how many names per row); `min_flows`;
@@ -683,10 +666,7 @@ Rows are ordered worst-first, so the clients whose site lists are least
 trustworthy are the ones the user sees. A client at or near zero is annotated
 with the likely cause — encrypted DNS (DNS-over-TLS or DNS-over-HTTPS), a
 client-side cache, or a resolver other than the firewall's — quoting
-`docs/opnsense-api-survey.md`, *Gaps and alternatives*, gap 8. Required UI copy:
-the site-names-are-inferred sentence, and the honest statement that a low rate
-means *under-attributed*, never *mis-attributed*: `opnview` never invents a
-domain and falls back to address, country and operator.
+`docs/opnsense-api-survey.md`, *Gaps and alternatives*, gap 8.
 
 **Parameters** — `period`; `interfaces` (optional); `clients` (optional);
 `limit`; `sort` (`worst_first` | `best_first` | `by_volume`).
@@ -728,8 +708,7 @@ operator, country, bytes, connection count, contributing interfaces — in a pop
 rather than on the canvas. This rendering is not a free choice: it is the
 maintainer's recorded preference in `docs/ui-references.md`, *The maintainer's
 recorded preferences*, taken from ntopng — **no choropleth, no arcs, the map as
-background and the data as foreground**. Required UI copy: the
-observation-point limit sentence, and an **unplaced-volume statement**, below.
+background and the data as foreground**.
 
 **This is one of a pair.** Blocked traffic has its own widget rather than a
 second layer here. The decision is the maintainer's, and it follows the
@@ -811,10 +790,7 @@ blocked traffic only. Two engines contribute and the popup names which: the
 **security engine**, whose events carry a peer address. **The DNS engines
 contribute nothing to this map, and the widget says so**, because a lookup the
 resolver refused never resolved to an address and there is therefore nothing to
-place — a fact about the world rather than a gap in the model. Required UI copy:
-the observation-point limit sentence; the unplaced-volume statement, below; the
-DNS statement just made; and, when the security engine contributes, the
-per-interface coverage statement (gap G8).
+place — a fact about the world rather than a gap in the model.
 
 **The unplaced statement is mandatory here too**, and for the same reason: a
 blocked destination the geolocation dataset could not place is accounted for in
@@ -897,7 +873,7 @@ per-interface coverage statement.
 connection counts, the number of distinct peers, the contributing interfaces, and
 the build date of the geolocation dataset that answered, so a stale enrichment is
 visible. An address whose lookup state is `miss` or `pending` is carried in an
-explicit unresolved row. Required UI copy: the observation-point limit sentence.
+explicit unresolved row.
 
 **Parameters** — `period`; `interfaces` (optional); `limit`; `series` (any subset
 of `allowed`, `blocked`); `sort` (`bytes` | `blocked` | `peers`).
@@ -932,9 +908,7 @@ and blocked connection counts, distinct peer count and the contributing
 interfaces, plus the dataset build date. This is the widget that survives
 encrypted DNS: when no site name can be inferred, the operator is usually still
 knowable, and this is the honest answer to "where did it go" for a client whose
-attribution rate is near zero. Required UI copy: the observation-point limit
-sentence, and a note that an operator is not a site — a single operator commonly
-fronts many unrelated sites.
+attribution rate is near zero.
 
 **Parameters** — `period`; `interfaces` (optional); `limit`; `series` (any subset
 of `allowed`, `blocked`); `group` (`asn` | `operator`).
@@ -981,7 +955,7 @@ worth taking from it — **the resolved operator name on the diagram itself, and
 an honest collapsed band for the tail**. It answers the same question as the
 *Interface traffic matrix* and answers it differently: **the matrix is precise and
 the Sankey is legible**, so both are offered and the user places whichever suits
-the canvas. Required UI copy: the observation-point limit sentence.
+the canvas.
 
 **Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `left` (`interface` —
 today the only source dimension that resolves for every flow — or `client`, whose
@@ -1052,10 +1026,7 @@ all four engines, each entry naming the engine, the client or client, the target
 load-bearing column — **which named list, signature or rule produced the
 decision**. Entries are grouped and filterable by engine, so "show me only what
 the DNS threat lists stopped" is one click. Where an engine cannot name what it
-used, that is stated in the row rather than left blank. Required UI copy: the
-observation-point limit sentence for the connection counts, and, when Suricata
-contributes, the per-interface coverage statement described under *Security alerts
-over time*.
+used, that is stated in the row rather than left blank.
 
 **Parameters** — `period`; `engines` (any subset of `firewall_rule`,
 `dns_advertising_list`, `dns_threat_list`, `security_engine`); `interfaces`
@@ -1137,8 +1108,7 @@ the rule's description, its pf label, the interface it fired on, the interfaces
 and clients it blocked, and a small timeline. A `rid` that matches no known rule
 is a first-class row labelled **rule no longer exists** — normal, because a rule
 can be removed after it logged — and never a missing row. An interface client
-name absent from the interface map is labelled likewise. Required UI copy: the
-observation-point limit sentence.
+name absent from the interface map is labelled likewise.
 
 **Parameters** — `period`; `interfaces` (optional); `clients` (optional);
 `limit`; `include_automatic` (boolean — whether auto-generated rules are
@@ -1177,11 +1147,7 @@ refusing?
 asked, the interfaces they sit in, and the name of the blocklist that produced the
 decision, with the advertising and threat categories separated. A lookup whose
 list cannot be named is carried explicitly as *"blocked, list not recorded"*,
-never merged into a generic bucket. Required UI copy: the
-site-names-are-inferred sentence does **not** apply here — a resolver lookup is
-an *observed* domain rather than an inferred one, and the widget says so
-explicitly, because that is the one place in the product where a domain is not a
-guess.
+never merged into a generic bucket.
 
 **Parameters** — `period`; `purposes` (any subset of `advertising`, `tracking`,
 `threat`, `parental`, `other`, plus `unassigned` for a list nobody has
@@ -1247,10 +1213,7 @@ contributed it. Severity is taken from the event when the provider ships one and
 resolved through the per-provider rule-info cache otherwise; a rule identity
 absent from that cache is drawn as an explicit **unknown severity** band rather
 than dropped, because a detection whose severity we could not look up is still a
-detection. Required UI copy: a per-interface coverage statement — *"Detection
-covers these interfaces: … It does not cover these: … An absence of alerts for an
-uncovered interface means nothing."* — which is the `ROADMAP.md` degrade-never-guess
-rule made concrete.
+detection.
 
 **Parameters** — `period`; `severities` (any subset of `critical`, `high`,
 `medium`, `low`, `informational`, `unknown`); `interfaces` (optional); `clients`
@@ -1304,7 +1267,7 @@ reported is shown alongside `opnview`'s normalised value, so the normalisation
 stays auditable. A rule identity with no cache entry is shown with severity
 **unknown** and the reason — the API destroys the nested alert object before
 `opnview` can read it, so severity has to be fetched separately and this one has
-not been fetched yet. Required UI copy: the per-interface coverage statement.
+not been fetched yet.
 
 **Parameters** — `period`; `severities`; `interfaces` (optional); `clients`
 (optional); `limit`; `providers` (optional); `sort` (`count` | `severity` |
@@ -1344,9 +1307,7 @@ complaining about?
 address: one row per client with the alert count, the worst severity seen, the
 interface, and the top signatures. A source address that could not be resolved to
 a client is a first-class row labelled **address not matched to a client**, with
-its address shown, because dropping it would under-report. Required UI copy: the
-per-interface coverage statement, and a note that only the *source* side of an
-alert is currently placed in an interface.
+its address shown, because dropping it would under-report.
 
 **Parameters** — `period`; `severities`; `interfaces` (optional); `limit`;
 `sort` (`count` | `worst_severity`); `include_unmatched` (boolean, default
@@ -1570,12 +1531,7 @@ percentage, memory used against total, swap used, disk used per filesystem,
 temperature per sensor, and per-gateway latency and loss. Each value carries a
 sparkline of its recent history and its own threshold colouring, and each states
 when it was last sampled — so a stale panel reads as stale rather than as
-current. Required UI copy: **a sampling statement** — *"These are samples taken
-every N seconds. A gap in a trend line means `opnview` was not collecting, not
-that the value was zero."* The observation-point limit sentence does **not**
-apply here and must not be shown: this widget describes the firewall itself
-rather than traffic crossing it, and repeating a caveat where it is untrue
-teaches the user to ignore it.
+current.
 
 **Parameters** — `metrics` (any subset of `uptime`, `cpu`, `memory`, `swap`,
 `disk`, `temperature`, `gateway_latency`, `gateway_loss`); `period` (the window
@@ -1803,9 +1759,7 @@ slot count, the earliest and latest period covered, the last computation
 timestamp and the total bytes held. A period whose slot count is zero, or whose
 `computed_at` has fallen behind the refresh contract in `docs/data-model.md`, is
 flagged **stale**, and every widget reading that period shows the same flag
-inline rather than presenting a stale number as current. Required UI copy: the
-observation-point limit sentence, because the byte totals shown here are the same
-lower bounds.
+inline rather than presenting a stale number as current.
 
 **Parameters** — `periods` (any subset of `1h`, `24h`, `7d`, `30d`);
 `show_bytes` (boolean); `compact` (boolean).
@@ -1841,10 +1795,7 @@ matched no entry in the interface map; flows whose `rid` matched no known rule;
 clients identified only by address behind an interface rather than by a DHCP client
 identity or a MAC; and addresses whose geolocation lookup is a `miss` or still
 `pending`. Each counter links to the records behind it. This widget exists so the
-quality of every other widget is visible rather than assumed. Required UI copy: a
-statement that an unresolved join is normal — a rule can be deleted after it
-logged, an interface can be renamed, a client can appear before its lease is read
-— and is a labelled condition rather than a defect.
+quality of every other widget is visible rather than assumed.
 
 **Parameters** — `period`; `counters` (any subset of `interface`, `rule`,
 `client_identity`, `geo`); `interfaces` (optional); `show_records` (boolean).

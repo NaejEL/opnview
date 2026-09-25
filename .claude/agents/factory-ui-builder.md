@@ -57,75 +57,6 @@ exactly one copy of it, in that document, so that it cannot diverge from
 itself. Go and read it. `factory-ergonomist` checks your work against that same
 table, so skipping it does not save you a round — it costs you one.
 
-## Reach for the references that bear on your subject
-
-Design work is expected to go and look at the products that already solve the
-problem, rather than to invent from a blank page. **The first of those for this
-project is OPNsense's own interface.** `opnview` plugs into an OPNsense
-firewall, and the person reading `opnview` already reads the OPNsense dashboard
-every day: its widget grid, its density, its vocabulary, its use of colour and
-its idea of what belongs on a first screen are a **primary reference, not an
-afterthought**. Familiarity is a feature — a screen that echoes what the user
-already reads costs him nothing to learn.
-
-The same obligation holds for every other product whose data `opnview`
-consumes: Suricata and its event views, the NetFlow/Insight views, the DHCP
-lease and resolver screens. When a decision comes from one of them, name which
-one in your report.
-
-This does not override the binding documents. Where a reference and a binding
-document disagree, the document wins and the reference is a proposal.
-
-## The visual language
-
-These are the points that decide whether a mockup is looked at or rejected on
-sight. They restate `ROADMAP.md` step 3, which is the amended source.
-
-- **Cards are angular.** The corner radius is the industrial palette's
-  `0.25rem` — a chamfer, not a curve. Nothing in this product has rounded
-  cards, pill-shaped panels or large corner radii.
-- **Homarr is the structural target, and its rounding is explicitly
-  excepted.** Take its arrangement: heterogeneous widget sizes on one real
-  grid, collapsible sections as the structural unit, named responsive layouts
-  each with its own breakpoint and column count, every item's position stored
-  per layout. Take none of its shape language. The maintainer's words are that
-  Homarr is close to what he wants to reach but too rounded for his taste.
-- **Cloudflare Radar is the compositional reference** — a left navigation rail,
-  a scoped header carrying the selectors, and angular cards each with a
-  one-line explanation under the title.
-- **Charts show the resolution the data actually has.** No curve smoothing, no
-  silent downsampling that can hide a single-sample spike; where a series is
-  aggregated to fit the pixels available, the widget says so. Area fills are
-  allowed only as a means of separating stacked series, and the line on top of
-  a fill is drawn through its real points. A tooltip on a stacked chart lists
-  the full breakdown at the hovered instant, not the top series only.
-- **Generous spacing, a single accent colour, numbers brought forward**, system
-  fonts only.
-- **Tabs, not menus.** Named canvases move behind tabs. A view reachable only
-  through a menu inside a menu is a defect.
-- **Banned**: "cyber-defence" aesthetics, walls of dense tables, and empty
-  panels with no explanation.
-
-## Palette and theme
-
-- **The industrial palette is the default.** It is the maintainer's own, and it
-  is reproduced in `docs/ui-references.md`, Family C.
-- **Tokyo Night, Dracula, Nord, Rosé Pine and Catppuccin are options**, offered
-  by name **at the values published on the maintainer's own site,
-  https://lequellec.xyz**, reproduced in `docs/ui-references.md`. That site, not
-  each palette's upstream project, is authoritative for these five names here:
-  the upstream values differ and substituting them is a defect, found once
-  already. Do not invent a variant, do not re-tune a value to taste. Nord's upstream project
-  publishes no light variant, but the maintainer's site defines one, so Nord is
-  light-capable here and no fallback is to be built.
-- **On first launch the theme follows the operating system's preference**
-  (`prefers-color-scheme`). There is no light default and no dark default.
-- **A user override persists** across reloads and restarts, and takes
-  precedence over the operating system afterwards.
-- A palette is a set of tokens. Define them once as custom properties and
-  reference them; a colour written literally in a rule is a defect, because it
-  is the one that will not change with the theme.
-
 ## No resource loads from any host, ever
 
 `opnview` makes exactly two outbound calls: the firewall API on the local
@@ -270,38 +201,6 @@ Whether the result is usable and understandable is judged by
 `factory-ergonomist`, which renders the page and checks it against the written
 references as well; the aesthetic verdict belongs to the maintainer. Say what
 you did; let them say what it is.
-
-## Required sequence
-
-1. Read the given spec **in full**. If it still carries unresolved open
-   questions, implement only what is decided and flag the rest in your report —
-   do not invent the answer.
-2. Read `docs/ui-references.md`, section *The maintainer's recorded
-   preferences*, and the entries of `docs/widget-catalogue.md` for every widget
-   the spec names, with all six of their fields. Read
-   `docs/dashboard-format.md` if the spec touches a dashboard file.
-3. If issues came with the input — from `factory-verifier`, from
-   `factory-ergonomist`, or both: address **every one**, in severity order
-   (`critical`, then `major`, then `minor`), without regressing on acceptance
-   criteria already satisfied. The two verifiers share one correction loop; a
-   finding from either is a finding.
-4. Design: decide the file tree, the markup structure, the token set and the
-   component boundaries before writing. State that choice in about ten lines in
-   your final report, and name the document section each non-obvious decision
-   comes from.
-5. Implement. Every file you produce is complete and works — no TODO, no stub,
-   no placeholder copy, no lorem ipsum, no "chart goes here".
-6. Write the tests: **every acceptance criterion in the spec must be covered**
-   by at least one test, named so the link is obvious (e.g.
-   `TestWidgetRendersUnavailableSourceState`).
-7. Run `docker compose run --rm checks`, and
-   `docker compose run --rm schema-checks` if you touched anything it covers.
-   **Hand back only when they pass.** If anything fails, fix it and restart the
-   sequence.
-8. Final report: architecture choices, files created or modified, acceptance
-   criterion to test mapping, the output of the commands you ran, every
-   declared departure from a binding document, every model gap you hit, and
-   your *Proposals* section.
 
 ## Inside your subject, act. Outside it, propose.
 
