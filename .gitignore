@@ -30,3 +30,9 @@ config.local.*
 # recorded next to each reference and in that document's complete image index,
 # so any reader can go and look; the files themselves do not survive a clone.
 docs/ui-references/screenshots/
+
+# Probe output: raw API responses from a real firewall. Never committed —
+# they carry that installation's addresses, hostnames, MAC addresses and
+# interface labels.
+opnsense-probe*/
+dig.json

@@ -565,6 +565,132 @@ https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OP
 
 Each interval is the one justified in that source's *Sustainable polling frequency* subsection.
 
+## Verified against a live firewall, 2026-09-27
+
+Everything above this section was read from documentation and source. On
+2026-09-27 the maintainer ran read-only probes against his own OPNsense
+**26.7.3_11** — the exact version this document is pinned to, so nothing below
+is version drift. **Where this section contradicts a claim above, this section
+is right**: it was measured, the other was inferred.
+
+### Wrong paths
+
+| This document says | Reality on 26.7.3_11 |
+|---|---|
+| `/api/diagnostics/netflow/top` | **404.** The per-pair data is at `/api/diagnostics/traffic/top/<interface names>` |
+| `/api/diagnostics/netflow/get_metadata` | **404** |
+| `/api/dhcpv4/leases/searchLease` | **404** — ISC is gone |
+| `/api/ids/service/get_rule_info/<sid>` | **404** — step 6 depends on this and must find the real path |
+| `/api/diagnostics/netflow/aggregate`, `get_providers`, `settings/get` | **404** |
+
+`/api/diagnostics/traffic/top/` takes **interface names** — `lan`, `wan`,
+`opt1`, `opt2`, `opt3`. A device name (`igb0`, `vlan01`) returns `[]` with HTTP 200,
+which is the trap: a wrong argument looks like an absence of traffic.
+
+### The per-pair data is a live snapshot, not history
+
+`traffic/top` returns, per interface, a `records[]` of local addresses each with
+`rate_bits_in`/`out`, `cumulative_bytes_in`/`out` and a `details[]` of the peers
+it talked to. Measured cumulative values were hundreds of bytes: this is the
+live top-talkers view, and there is no endpoint exposing the flow aggregate over
+an arbitrary past window — `netflow/aggregate` does not exist.
+
+**Consequence, and it is architectural rather than a collector detail:
+`opnview` builds its own per-pair history by sampling this endpoint.** Nothing
+upstream will answer "what did these two talk about last Tuesday".
+
+### The resolver window is not honoured at all
+
+Not "sometimes truncated" — **ignored**. Measured: a 5-minute window and a
+24-hour window both returned the same ~410-second span; `total` is `1000`
+whatever is asked; pages 2 and 5 walk further back (290 s, 202 s). It is a ring
+buffer of the last 1000 lookups, paginated, and `timeStart`/`timeEnd` do
+nothing.
+
+**And `uuid` is `null` on every row**, so the de-duplication key this document
+assumed does not exist. De-duplication must be composed from the row's own
+content.
+
+The JSON-body POST form is confirmed correct.
+
+### The filter log's digest is not a server-side cursor
+
+Measured twice: `?digest=<a digest from the current response>` returns byte-
+identical output to the same call without it, and the supplied digest does not
+appear in the response. Whether the parameter is ignored or honoured-but-scrolled
+could not be separated, and for the product it does not matter.
+
+**What works instead**, and the measurement that makes it safe: the log runs at
+a few lines per second on an ordinary home network, so a 10-second poll at
+`limit=500` leaves an order of magnitude of headroom. Measure it per
+installation rather than assuming this one. Pull the most recent
+N, discard what `__digest__` says has been seen — the uniqueness the schema
+already has — and declare a gap when the oldest line returned is newer than the
+newest line stored. The gap is then detected rather than assumed.
+
+`__timestamp__` came back as `2026-09-26T23:51:06` — the ISO form, not the
+year-less syslog form. Both remain possible per the syslog format in use, so
+normalisation still needs to handle both; only one was exercised.
+
+### Dnsmasq serves leases as structured JSON
+
+`/api/dnsmasq/leases/search` returns rows carrying `hwaddr`, `address`,
+`hostname`, `client_id`, `expire`, `is_reserved`, the vendor as `mac_info`, and
+the interface under **all three of its names at once** — the device, the
+`optN` identifier and the description. This document's claim that Dnsmasq
+requires parsing a free-text log is wrong for leases. No parser is needed.
+
+On the probed firewall Kea is `disabled` and Dnsmasq is `running`, and both
+Unbound and Dnsmasq are running as resolvers — the provider-ambiguity case is
+not hypothetical.
+
+### Two client-identity sources this document did not name
+
+- `/api/diagnostics/interface/get_arp` — one row per neighbour, each with `mac`, `ip`,
+  `intf`, `intf_description`, `manufacturer`, `expired`, `permanent`.
+- `/api/diagnostics/interface/get_ndp` — the IPv6 equivalent.
+
+Both matter: without them, a firewall whose DHCP is unreadable has no client
+identity at all.
+
+### The telemetry the data model calls gaps G9 and G10 exists
+
+All answered: `/api/diagnostics/system/systemResources`, `systemTemperature`,
+`systemTime`, `systemDisk`, `/api/diagnostics/activity/getActivity`, and
+`/api/diagnostics/traffic/interface` — the last giving per-interface packet and
+byte counters, errors, link state and line rate. **The gap is in the schema,
+which has no table for a sampled gauge, not in the API.**
+
+### Suricata, on that firewall
+
+`enabled: 1`, running on two internal interfaces and not on WAN —
+with `eve.json` present and recently modified, and `query_alerts` returning `[]`
+for any window up to seven days.
+
+Five rulesets are enabled and current, and all five are **abuse.ch indicator
+feeds** (Feodo tracker, SSL blacklist, SSL IP blacklist, ThreatFox, URLhaus):
+they fire only on contact with infrastructure already known to be malicious. The
+ET Open signature categories are present and not enabled. So the empty result is
+a true reading of a correctly working source, not a fault.
+
+**The collector must not treat it as one.** A reachable IDS with a narrow
+ruleset and nothing to report is a normal state, and distinguishing it from
+"stopped", "no rules at all" and "we could not ask" is the whole point of
+`source_availability`.
+
+### On scale, without describing anyone's network
+
+Two shapes matter to the design and neither needs an installation's figures.
+The filter log runs fast enough that a 10-second poll must be sized per
+installation rather than fixed. And a DNS blocklist can be large while blocking
+almost nothing — a product built against the mockup's invented data expects a
+busy blocked-DNS view, and a real install may have a handful of rows. Neither
+the widget nor the collector may treat that as a fault.
+
+**Nothing in this document records a real installation's interface labels,
+device names, addresses or counts.** The probes that produced these findings
+were run by the maintainer and their output was never committed.
+
 ## Gaps and alternatives
 
 Not everything the roadmap assumed is reachable. Each gap is followed by an alternative that stays inside the project rules. **No

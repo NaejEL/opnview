@@ -11,8 +11,27 @@ so and amend this roadmap rather than quietly working around it.
   plan or interface count in the code, the templates or the default values.
   Everything is discovered at runtime through the API.
 - **No secrets in the repository.** The OPNsense URL, API key/secret and
-  MaxMind licence key are entered in the web setup wizard, never in a file to
-  edit before starting.
+  MaxMind licence key are entered in the interface, never in a file to edit
+  before starting.
+- **`opnview` has its own accounts.** On first start the user creates a login
+  and a password; everything else, including the firewall's URL and key, is
+  configured from the interface once signed in.
+  - A **password** is hashed with Argon2id, a per-user salt, and the algorithm
+    parameters stored beside the hash so they can be raised later. It is never
+    read back.
+  - The **OPNsense secret and the MaxMind key are not passwords.** They are
+    sent to those services on every call, so they are encrypted at rest with
+    authenticated encryption and decrypted to be used. Hashing them would make
+    the product unable to work.
+  - The **encryption key is a file beside the database**, created on first
+    start with restrictive permissions. **The limit is stated rather than
+    dressed up:** this protects a database that is copied, backed up, sent by
+    mistake or committed by accident, because the key file does not travel with
+    it. It does not protect against someone who already has the machine, who
+    reads both. No scheme can, while the service starts and collects without a
+    human — which it must, or collection stops at every reboot until somebody
+    signs in. That trade was taken deliberately. The README's limitations
+    section says so in those words.
 - **Read-only against the firewall.** No writes, no file read on the host:
   the authenticated REST API and nothing else. Where a firewall setting has to
   be turned on for a source to exist — the resolver query log, for instance —
@@ -321,9 +340,11 @@ every step** above. Prerequisite: the containerised toolchain described under
 - **Extend `sql/seed.sql` to IPv6.** It currently produces IPv4 rows only.
   Nothing in the schema interprets an address family today, so step 2 passed,
   but no IPv6 row has ever been exercised through the seven screen queries.
-- First-run setup wizard: URL, API key/secret, MaxMind key, and the theme,
-  which defaults to following the operating system and can be changed at any
-  time from the interface rather than only in the wizard.
+- First-run setup: creating the first account, then the firewall URL, the API
+  key/secret, the MaxMind key and the theme — the theme defaulting to the
+  operating system's preference and changeable at any time from the interface
+  rather than only at setup. **This is where credentials enter the product, so
+  nothing before it can collect from a real firewall.**
 - MaxMind GeoLite2 City and ASN databases: downloaded on first start,
   refreshed automatically, never embedded. Without a key the map is disabled
   with a clear message and everything else keeps working.
