@@ -22,15 +22,41 @@ import (
 // a rotation state on the watermark, and as a gap row — and the watermark is NOT reset,
 // because a reset would make the loss look like a successful read of nothing.
 
-// CollectSecurityEvent runs one pass of the active implementation of the security_event kind.
+// CollectSecurityEvent runs one pass of every active implementation of the security_event kind.
+//
+// SEVERAL ARE NORMAL HERE, and this kind is the reason the one-active-provider-per-kind rule
+// went: people run Suricata, CrowdSec and Zenarmor together, and the how-to corpus is people
+// stacking them. Event identity is (provider_id, provider_event_key), so two sources reporting
+// the same intrusion are two attributed rows rather than one doubled count, and a screen can
+// show them per provider. One failing source does not stop the others.
 func (c *Collector) CollectSecurityEvent(ctx context.Context) error {
-	providerKey, providerID, active, err := c.activeSourceKey(ctx, KindSecurityEvent)
+	sources, err := c.activeSources(ctx, KindSecurityEvent)
 	if err != nil {
 		return err
 	}
-	if !active {
-		return nil
+	var failures []error
+	for _, active := range sources {
+		if err := c.collectSecurityEventFrom(ctx, active); err != nil {
+			failures = append(failures, err)
+		}
 	}
+	if len(failures) > 0 {
+		return fmt.Errorf("collect: the security-event pass was incomplete: %w",
+			joinErrors(failures))
+	}
+	return nil
+}
+
+// collectSecurityEventFrom runs one pass of one implementation.
+//
+// The ingestion watermark it reads is NOT keyed by provider, and that is the recorded
+// provisional shape rather than an oversight: eve_ingest_cursor names a file format, and the
+// schema says in as many words that it is rewritten when a second INGESTING provider is
+// surveyed. Today exactly one implementation of this kind exists, so the watermarks belong to
+// it; a second one that also resumed from a file offset would need the cursor keyed by provider
+// first, and surveying its shape is what that cycle would begin with.
+func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeSource) error {
+	providerKey, providerID := active.providerKey, active.providerID
 	source, registered := securityEventSources[providerKey]
 	if !registered {
 		return fmt.Errorf("collect: the active security_event provider %q has no implementation",

@@ -14,11 +14,16 @@ import (
 // Availability probes and provider activation, written once for every kind.
 //
 // PROVIDER SELECTION READS THE FIREWALL'S OWN CONFIGURATION, never a preference order
-// invented here. For each kind, every registered implementation is probed; the ones the
-// firewall's own configuration marks as serving clients are the candidates; if exactly one
-// qualifies it becomes active, and if two do, NEITHER is activated and the ambiguity is
-// recorded on both rows. Choosing in that case would be opnview deciding which of two working
-// sources is the truth, which is not opnview's decision to make.
+// invented here. For each kind, every registered implementation is probed, and the ones the
+// firewall's own configuration marks as serving clients are the candidates.
+//
+// What happens then depends on whether the kind admits several active providers, which is a
+// property of the schema and not of this file (see internal/store/kinds.go). For an EXCLUSIVE
+// kind, exactly one candidate becomes active, and if two qualify NEITHER is activated and the
+// ambiguity is recorded on both rows: choosing would be opnview deciding which of two working
+// sources is the truth, which is not opnview's decision to make. For a CONCURRENT kind there is
+// nothing to decide — every row carries the provider that reported it — so every candidate is
+// activated, and a firewall running Suricata beside CrowdSec is read as the two sources it is.
 //
 // Availability is reachability, and is a different question from activeness: a machine may
 // have two reachable implementations of one kind. The firewall the survey probed has exactly
@@ -50,7 +55,7 @@ func securityEventProbeables() []probeable {
 	return sortedProbeables(probeables)
 }
 
-// measurementProbeables returns the registered implementations of the flow_volume kind.
+// measurementProbeables returns the registered implementations of the measurement_sample kind.
 func measurementProbeables() []probeable {
 	probeables := make([]probeable, 0, len(measurementSources))
 	for key, source := range measurementSources {
@@ -93,14 +98,17 @@ func sortedProbeables(probeables []probeable) []probeable {
 
 // ProbeAll runs one probe round over every kind this cycle reads.
 //
-// geo_asn is not probed: acquiring the dataset is cycle 4C, and no second outbound destination
-// exists in this cycle's code.
+// Three kinds are not probed, each for its own recorded reason. geo_asn: acquiring the dataset
+// is cycle 4C, and no second outbound destination exists in this cycle's code. flow_volume: its
+// destination is DERIVED from flow by step 5, so no implementation of it is registered.
+// reconciled_state: the kind gives the surveyed state-shaped sources a destination, and writing
+// a connector for one of them is not this cycle's work.
 func (c *Collector) ProbeAll(ctx context.Context) error {
 	var failures []error
 	for _, probe := range []func(context.Context) error{
 		c.probeFirewallLog,
 		c.probeSecurityEvent,
-		c.probeFlowVolume,
+		c.probeMeasurement,
 		c.probeDHCPLease,
 		c.probeDNSLookup,
 	} {
@@ -124,9 +132,9 @@ func (c *Collector) probeSecurityEvent(ctx context.Context) error {
 	return c.resolveKind(ctx, KindSecurityEvent, securityEventProbeables())
 }
 
-// probeFlowVolume probes every implementation of the flow_volume kind.
-func (c *Collector) probeFlowVolume(ctx context.Context) error {
-	return c.resolveKind(ctx, KindFlowVolume, measurementProbeables())
+// probeMeasurement probes every implementation of the measurement_sample kind.
+func (c *Collector) probeMeasurement(ctx context.Context) error {
+	return c.resolveKind(ctx, KindMeasurementSample, measurementProbeables())
 }
 
 // probeDHCPLease probes every implementation of the dhcp_lease kind.
@@ -176,8 +184,15 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 		}
 	}
 
+	// Two qualifying implementations are an AMBIGUITY only where the kind is exclusive. Where
+	// the kind admits several — a firewall running Suricata beside CrowdSec, two measurement
+	// sources reporting different subjects — there is nothing to choose between: every row
+	// carries the provider that reported it, so both are read and neither figure is doubled.
+	// That is the whole behavioural consequence of dropping the one-active-provider-per-kind
+	// index, and it lives here rather than in a comment about the index.
+	concurrent := store.KindAdmitsSeveralActiveProviders(kind)
 	ambiguity := ""
-	if len(separable) > 1 {
+	if len(separable) > 1 && !concurrent {
 		ambiguity = "two implementations of this kind are both reachable and configured (" +
 			joinWithComma(separable) + "), and the firewall's own configuration does not say " +
 			"which serves clients, so opnview reads neither"
@@ -202,11 +217,11 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 		}
 	}
 
-	active := ""
-	if len(separable) == 1 {
-		active = separable[0]
+	active := separable
+	if len(separable) > 1 && !concurrent {
+		active = nil
 	}
-	if err := c.store.SetActiveProvider(ctx, kind, active); err != nil {
+	if err := c.store.SetActiveProviders(ctx, kind, active...); err != nil {
 		return err
 	}
 
@@ -217,22 +232,52 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 	return nil
 }
 
-// activeSourceKey returns the provider key of the implementation opnview reads for one kind,
-// its registry id, and whether there is one.
+// activeSource is one implementation opnview reads for a kind: its registry key and its
+// registry id.
+type activeSource struct {
+	providerKey string
+	providerID  int64
+}
+
+// activeSources returns every implementation opnview reads for one kind.
 //
-// None active is a normal state: the probe round may have found nothing reachable, or two
-// reachable implementations the firewall's own configuration does not separate, and in both
-// cases nothing is collected for that kind rather than a guess being made.
-func (c *Collector) activeSourceKey(ctx context.Context, kind string) (string, int64, bool, error) {
-	providerID, active, err := c.store.ActiveProviderID(ctx, kind)
-	if err != nil || !active {
-		return "", 0, false, err
-	}
-	key, err := c.store.ProviderKey(ctx, providerID)
+// For an exclusive kind the answer holds at most one. For a kind that admits several — the
+// security_event stack, the measurement sources — it holds every one the probe round
+// activated, and the caller runs a pass per source. NONE ACTIVE IS A NORMAL STATE: the probe
+// round may have found nothing reachable, or, for an exclusive kind, two reachable
+// implementations the firewall's own configuration does not separate, and in both cases nothing
+// is collected for that kind rather than a guess being made.
+func (c *Collector) activeSources(ctx context.Context, kind string) ([]activeSource, error) {
+	ids, err := c.store.ActiveProviderIDs(ctx, kind)
 	if err != nil {
+		return nil, err
+	}
+	sources := make([]activeSource, 0, len(ids))
+	for _, id := range ids {
+		key, err := c.store.ProviderKey(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		sources = append(sources, activeSource{providerKey: key, providerID: id})
+	}
+	return sources, nil
+}
+
+// activeSourceKey returns the provider key of the implementation opnview reads for one
+// EXCLUSIVE kind, its registry id, and whether there is one. A kind that admits several active
+// providers has no single answer, and asking for one here is a programming error rather than a
+// state to report, so it is refused.
+func (c *Collector) activeSourceKey(ctx context.Context, kind string) (string, int64, bool, error) {
+	if store.KindAdmitsSeveralActiveProviders(kind) {
+		return "", 0, false, fmt.Errorf(
+			"collect: the %s kind admits several active providers, so it has no single active "+
+				"source; the pass has to walk activeSources", kind)
+	}
+	sources, err := c.activeSources(ctx, kind)
+	if err != nil || len(sources) == 0 {
 		return "", 0, false, err
 	}
-	return key, providerID, true, nil
+	return sources[0].providerKey, sources[0].providerID, true, nil
 }
 
 // serviceState probes a service status endpoint and reports whether it is running, along with

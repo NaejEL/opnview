@@ -71,7 +71,7 @@ ORDER BY p.kind, p.provider_key;
 
 -- diagnostic: Clients per owner
 -- The per-person view, and the honest consequence of it. Ownership is assigned
--- by the user and never inferred (migrations/0001_core.sql, the owner table),
+-- by the user and never inferred (internal/store/schema.sql, the owner table),
 -- so most clients on a normal network have no owner at all. They are returned
 -- here as an explicit 'unassigned' bucket rather than dropped: a per-person
 -- screen that quietly omitted every unowned machine would under-report the
@@ -149,3 +149,46 @@ UNION ALL
 SELECT '30d', count(*), min(period_start_at), max(period_end_at), max(computed_at), sum(bytes),
        sum(CASE WHEN owner_id IS NULL THEN 1 ELSE 0 END)
 FROM owner_volume_aggregate_30d;
+
+-- diagnostic: Leases per client and issuing server
+-- One client's leases, each naming the DHCP server that issued it.
+--
+-- It exists because the dhcp_lease kind admits several concurrently active
+-- providers: one server issues on one VLAN and another on a second, so a machine
+-- can legitimately hold two leases at once and "which server gave this machine
+-- its address" becomes a real question. A machine leased by both servers is ONE
+-- client with TWO leases -- the identity cascade keys on the DHCP client
+-- identifier and then on the MAC, neither scoped to an interface -- and this
+-- query is what makes that visible rather than merely true.
+--
+-- The server's name is READ, not reconstructed: provider.display_name comes off
+-- the join, so nothing parses a composite key or infers a server from a backend
+-- token. The backend is returned beside it because they are different facts --
+-- which server issued the lease, and which response shape it was read from.
+--
+-- The lease's own interface is returned rather than the client's: a client that
+-- holds leases on two VLANs has one client.interface_id, the most recently
+-- observed, and the per-lease value is the one that is true of each lease.
+--
+-- A lease whose validity start is null is a backend that does not report one,
+-- which is a state and not a gap; the generation key beside it says what the row's
+-- identity actually rests on.
+SELECT
+    l.observed_at                                AS observed_at,
+    p.provider_key                               AS provider_key,
+    p.display_name                               AS issuing_server,
+    l.backend                                    AS backend,
+    l.address                                    AS address,
+    l.mac                                        AS mac,
+    l.hostname                                   AS hostname,
+    l.lease_state                                AS lease_state,
+    l.starts_at                                  AS starts_at,
+    l.generation_key                             AS generation_key,
+    l.expires_at                                 AS expires_at,
+    l.interface_id                               AS interface_id,
+    coalesce(s.user_label, s.description)        AS interface_label
+FROM dhcp_lease AS l
+JOIN provider AS p ON p.id = l.provider_id
+LEFT JOIN interface AS s ON s.id = l.interface_id
+WHERE l.client_id = :client_id
+ORDER BY l.observed_at DESC, p.provider_key;

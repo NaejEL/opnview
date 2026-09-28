@@ -8,11 +8,21 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 )
 
-// The flow_volume kind, whose material on OPNsense 26.7 has to be sampled.
+// The measurement_sample kind, whose material on OPNsense 26.7 has to be sampled.
 //
-// What is true of any volume source, and is therefore here: writing the readings, and recording
-// what did not answer. How the readings are obtained — which endpoint, which argument, which
-// field names — is in flowvolume_insight.go.
+// THE KIND IT ANSWERS FOR CHANGED, AND THE COLLECTOR DID NOT. This pass was registered under
+// flow_volume because measurement_sample was a table with no kind: no provider_key, no
+// availability row, no place in provider.kind. It is a kind now — the one eight of the ten
+// surveyed sources that fit an existing shape fit — so the pass answers for it, and flow_volume
+// is left with no implementation because its own destination is DERIVED from flow by step 5.
+//
+// It admits several concurrently active providers, so the pass walks them: a firewall reporting
+// UPS volts beside its own gauges is two sources, and every reading carries the provider that
+// took it.
+//
+// What is true of any measurement source, and is therefore here: writing the readings, and
+// recording what did not answer. How the readings are obtained — which endpoint, which argument,
+// which field names — is in flowvolume_insight.go.
 //
 // THE READINGS ARE A SAMPLE AND NOT A CACHE. No endpoint exposes a per-pair aggregate over a
 // past window: the per-pair data is a live snapshot, measured on a live firewall. So opnview's
@@ -23,18 +33,35 @@ import (
 // processor is idle" and "this endpoint did not tell us" is the difference the whole product is
 // built on, and the second is recorded in the availability detail by name.
 
-// CollectMeasurement runs one pass of the active implementation of the flow_volume kind.
+// CollectMeasurement runs one pass of every active implementation of the
+// measurement_sample kind.
+//
+// One failing source does not stop the others: they are separate providers reading separate
+// endpoints, and letting the first failure end the pass would turn one unreadable source into
+// several.
 func (c *Collector) CollectMeasurement(ctx context.Context) error {
-	providerKey, providerID, active, err := c.activeSourceKey(ctx, KindFlowVolume)
+	sources, err := c.activeSources(ctx, KindMeasurementSample)
 	if err != nil {
 		return err
 	}
-	if !active {
-		return nil
+	var failures []error
+	for _, active := range sources {
+		if err := c.collectMeasurementFrom(ctx, active); err != nil {
+			failures = append(failures, err)
+		}
 	}
+	if len(failures) > 0 {
+		return fmt.Errorf("collect: the measurement pass was incomplete: %w", joinErrors(failures))
+	}
+	return nil
+}
+
+// collectMeasurementFrom runs one pass of one implementation.
+func (c *Collector) collectMeasurementFrom(ctx context.Context, active activeSource) error {
+	providerKey, providerID := active.providerKey, active.providerID
 	source, registered := measurementSources[providerKey]
 	if !registered {
-		return fmt.Errorf("collect: the active flow_volume provider %q has no implementation",
+		return fmt.Errorf("collect: the active measurement_sample provider %q has no implementation",
 			providerKey)
 	}
 

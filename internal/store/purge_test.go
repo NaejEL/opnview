@@ -52,6 +52,25 @@ func TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer(t *testing.T) {
 				table, remainingFresh, fresh[table])
 		}
 	}
+
+	// A set member has no instant of its own: it belongs to the snapshot that asserted the
+	// set complete, and it goes with it through ON DELETE CASCADE. An orphaned member would
+	// be a set member with no set and no instant, which is the one thing this kind exists to
+	// prevent, so the purge is checked for it directly rather than through the loop above.
+	var orphans int
+	if err := database.DB().QueryRowContext(ctx,
+		`SELECT count(*) FROM state_item AS i
+		 WHERE NOT EXISTS (SELECT 1 FROM state_snapshot AS s WHERE s.id = i.snapshot_id)`).
+		Scan(&orphans); err != nil {
+		t.Fatalf("counting orphaned set members: %v", err)
+	}
+	if orphans != 0 {
+		t.Errorf("%d set members survive their snapshot", orphans)
+	}
+	if remaining := count(t, database, "state_item"); remaining != 1 {
+		t.Errorf("state_item holds %d rows after the purge, want the one member of the "+
+			"surviving snapshot", remaining)
+	}
 }
 
 // TestAnUnlimitedHorizonPurgesNothing is the documented meaning of zero, and it is the
@@ -181,6 +200,7 @@ func purgeableTables() map[string]string {
 		"geo_asn":            "looked_up_at",
 		"collection_gap":     "detected_at",
 		"measurement_sample": "sampled_at",
+		"state_snapshot":     "captured_at",
 	}
 }
 
@@ -204,6 +224,10 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 	geoProviderID, err := database.ProviderID(ctx, "geo_asn", "maxmind_geolite2")
 	if err != nil {
 		t.Fatalf("looking up the geo provider: %v", err)
+	}
+	leaseProviderID, err := database.ProviderID(ctx, "dhcp_lease", "dnsmasq")
+	if err != nil {
+		t.Fatalf("looking up the DHCP server: %v", err)
 	}
 
 	for index, instant := range []int64{old, fresh} {
@@ -237,9 +261,11 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 			t.Fatalf("seeding a security event: %v", err)
 		}
 
-		if err := database.InsertDHCPLease(ctx, DHCPLease{
+		if err := database.InsertDHCPLease(ctx, leaseProviderID, DHCPLease{
 			Backend: "dnsmasq", Address: "example-address-" + string(suffix),
-			LeaseState: "active", StartsAt: instant, ObservedAt: instant,
+			LeaseState: "active", StartsAt: nil,
+			GenerationKey: GenerationKeyOf(nil, &instant, instant),
+			ExpiresAt:     &instant, ObservedAt: instant,
 		}); err != nil {
 			t.Fatalf("seeding a lease: %v", err)
 		}
@@ -273,6 +299,15 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 			Unit: UnitSecond, Value: float64(instant), SampledAt: instant,
 		}); err != nil {
 			t.Fatalf("seeding a measurement: %v", err)
+		}
+
+		// A reconciled set, with a member, so the purge has both the snapshot and the
+		// cascade to remove.
+		if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+			ProviderID: providerID, SetKey: "example-set", CapturedAt: instant,
+			Items: []StateItem{{ItemKey: "example-item-" + string(suffix)}},
+		}); err != nil {
+			t.Fatalf("seeding a reconciled set: %v", err)
 		}
 	}
 

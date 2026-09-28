@@ -58,6 +58,12 @@ INDEX_DB="$DATA_DIR/schema-checks-noindex.db"
 FRESH_DB="$DATA_DIR/schema-checks-fresh.db"
 REGISTER_DB="$DATA_DIR/schema-checks-register.db"
 SCALE_DB="$DATA_DIR/schema-checks-scale.db"
+# Two copies of the seeded database for the checks that have to WRITE: a check
+# whose statement is expected to succeed must not leave its rows behind for every
+# later count to trip over.
+MEAS_DB="$DATA_DIR/schema-checks-measurement.db"
+STATE_DB="$DATA_DIR/schema-checks-state.db"
+LEASE_DB="$DATA_DIR/schema-checks-lease.db"
 
 # Seed parameters. The default run and the alternative run below differ in
 # every count, so nothing may assume an interface, client, owner or rule count.
@@ -235,6 +241,22 @@ run_query() {
         printf -- '.param set :window_end %s\n' "$WINDOW_END"
         printf -- '.param set :interface_id %s\n' "$INTERFACE_ID"
         printf -- '.param set :client_id %s\n' "$CLIENT_ID"
+        printf -- '.read %s\n' "$file"
+    } | sqlite3 "$db"
+}
+
+# run_query_for_client <db> <query file> <client id> — one query with :client_id
+# bound to something other than the harness default, so a query can be run against a
+# row the seed identified rather than against a fixed id.
+run_query_for_client() {
+    local db="$1" file="$2" client="$3"
+    {
+        printf -- '.bail on\n'
+        printf -- '.param init\n'
+        printf -- '.param set :window_start %s\n' "$WINDOW_START"
+        printf -- '.param set :window_end %s\n' "$WINDOW_END"
+        printf -- '.param set :interface_id %s\n' "$INTERFACE_ID"
+        printf -- '.param set :client_id %s\n' "$client"
         printf -- '.read %s\n' "$file"
     } | sqlite3 "$db"
 }
@@ -417,7 +439,13 @@ check 'AC6 no entity is a TLS or HTTP observation record' '' \
 extract_block "$DOC" '<!-- growing-tables:begin -->' '<!-- growing-tables:end -->' | sort > "$WORK/growing.txt"
 extract_block "$DOC" '<!-- bounded-tables:begin -->' '<!-- bounded-tables:end -->' | sort > "$WORK/bounded.txt"
 sort -u "$WORK/growing.txt" "$WORK/bounded.txt" > "$WORK/classified.txt"
-grep -v '^blocked_event$' "$WORK/db_entities.txt" | sort > "$WORK/db_tables.txt"
+# The classification is over TABLES: a view holds no rows of its own, so it is
+# neither growing nor bounded. The exclusion asks sqlite_master which entities
+# are views rather than naming the one that existed when this check was written,
+# which is stricter: a second view added without being documented would have
+# slipped past a hardcoded name and now cannot.
+q "$MAIN_DB" "SELECT name FROM sqlite_master WHERE type = 'table'
+              AND name NOT LIKE 'sqlite_%' ORDER BY name;" | sort > "$WORK/db_tables.txt"
 if diff -u "$WORK/db_tables.txt" "$WORK/classified.txt" > "$WORK/classified.diff"; then
     pass 'AC10 every table is classified growing or bounded in the document'
 else
@@ -777,22 +805,50 @@ check_ge 'MEAS-AC2 a sampled per-pair volume round-trips' 1 \
         WHERE subject_kind = 'endpoint_pair' AND measure = 'cumulative_bytes_in'
           AND unit = 'byte';")"
 
-# MEAS-AC3: the vocabularies are closed, and the reason they may be is that they
-# are opnview's OWN -- the survey establishes the telemetry endpoints and not
-# their field names, so a measure named after a response key nobody has read
-# would be the invented vocabulary this project refuses.
-expect_sql_failure 'MEAS-AC3 a subject kind outside the vocabulary is rejected' "$MAIN_DB" \
-    "UPDATE measurement_sample SET subject_kind = 'something-else'
+# MEAS-AC3, RESTATED. The three vocabularies were closed CHECKs and are not any
+# more, because the property changed rather than stopped mattering: this table is
+# now a KIND, and the eight surveyed sources that fit its shape share no
+# vocabulary at all -- a UPS reports volts, SMART reports reallocated sectors,
+# HAProxy's subject is a backend. A closed CHECK would have made every one of them
+# a schema change, which is the plugin-hostile design the promotion removes.
+#
+# What is asserted instead is the SHAPE of a term rather than its membership of a
+# list: a term that is empty, upper-cased or spaced would let two spellings of one
+# measure coexist, and a screen grouping by measure would then show one reading
+# twice under two names. The mandatory unit is unchanged, verbatim. The
+# extensibility this replaces closedness with is MEAS-AC6 below, which proves a
+# provider's own term is accepted AND that accepting it changed no DDL.
+expect_sql_failure 'MEAS-AC3 a subject kind that is empty is rejected' "$MAIN_DB" \
+    "UPDATE measurement_sample SET subject_kind = ''
      WHERE id = (SELECT min(id) FROM measurement_sample);"
-expect_sql_failure 'MEAS-AC3 a measure outside the vocabulary is rejected' "$MAIN_DB" \
-    "UPDATE measurement_sample SET measure = 'something-else'
+expect_sql_failure 'MEAS-AC3 a subject kind that is not a lower-case token is rejected' "$MAIN_DB" \
+    "UPDATE measurement_sample SET subject_kind = 'Something Else'
      WHERE id = (SELECT min(id) FROM measurement_sample);"
-expect_sql_failure 'MEAS-AC3 a unit outside the vocabulary is rejected' "$MAIN_DB" \
-    "UPDATE measurement_sample SET unit = 'furlongs'
+expect_sql_failure 'MEAS-AC3 a measure that is empty is rejected' "$MAIN_DB" \
+    "UPDATE measurement_sample SET measure = ''
+     WHERE id = (SELECT min(id) FROM measurement_sample);"
+expect_sql_failure 'MEAS-AC3 a measure that is not a lower-case token is rejected' "$MAIN_DB" \
+    "UPDATE measurement_sample SET measure = 'Something Else'
+     WHERE id = (SELECT min(id) FROM measurement_sample);"
+expect_sql_failure 'MEAS-AC3 a unit that is empty is rejected' "$MAIN_DB" \
+    "UPDATE measurement_sample SET unit = ''
+     WHERE id = (SELECT min(id) FROM measurement_sample);"
+expect_sql_failure 'MEAS-AC3 a unit that is not a lower-case token is rejected' "$MAIN_DB" \
+    "UPDATE measurement_sample SET unit = 'Furlongs Per Fortnight'
      WHERE id = (SELECT min(id) FROM measurement_sample);"
 expect_sql_failure 'MEAS-AC3 a reading with no unit is rejected' "$MAIN_DB" \
     "UPDATE measurement_sample SET unit = NULL
      WHERE id = (SELECT min(id) FROM measurement_sample);"
+# And the vocabularies opnview's OWN sampler uses are still exactly the shipped
+# ones: extension is additive, and a drift in what the firewall's own readings are
+# stored under would show up here rather than in a screen.
+check 'MEAS-AC3 the firewall readings still use only the shipped subject terms' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(DISTINCT subject_kind) FROM measurement_sample
+        WHERE subject_kind NOT IN ('firewall', 'interface', 'endpoint_pair');")"
+check 'MEAS-AC3 the firewall readings still use only the shipped units' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(DISTINCT unit) FROM measurement_sample
+        WHERE unit NOT IN ('ratio', 'celsius', 'second', 'packet', 'byte',
+                           'bit_per_second', 'dimensionless');")"
 
 # MEAS-AC4: re-reading the same instant is a no-op, which is what a sampler
 # restarting inside one interval needs.
@@ -808,7 +864,7 @@ check 'MEAS-AC4 the pair subject is canonically ordered, so one pair is one subj
               substr(subject_key, instr(subject_key, ' ') + 1);")"
 
 # MEAS-AC5: the firewall's own telemetry names no provider, because it implements
-# none of the six kinds. Attributing it to the volume provider would say the
+# no external contract. Attributing it to the volume provider would say the
 # volume source measured the temperature.
 check 'MEAS-AC5 no firewall gauge is attributed to a provider' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
@@ -820,6 +876,71 @@ check 'MEAS-AC5 no measurement names a provider that does not exist' '0' \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM measurement_sample m
         WHERE m.provider_id IS NOT NULL
           AND NOT EXISTS (SELECT 1 FROM provider p WHERE p.id = m.provider_id);')"
+
+# MEAS-AC6: measurement_sample IS A KIND. It used to be a table with no kind: no
+# provider_key, no availability row, no place in the provider.kind CHECK, so none
+# of the eight surveyed sources that fit its shape had anywhere to announce itself.
+check 'MEAS-AC6 the measurement_sample kind has a registry row' '1' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'measurement_sample';")"
+check 'MEAS-AC6 that registry row has an availability row' '1' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM source_availability a
+        JOIN provider p ON p.id = a.provider_id
+        WHERE p.kind = 'measurement_sample';")"
+check 'MEAS-AC6 the sampled pair volume is attributed to the measurement provider' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample m
+        WHERE m.subject_kind = 'endpoint_pair'
+          AND m.provider_id NOT IN (SELECT id FROM provider WHERE kind = 'measurement_sample');")"
+
+# MEAS-AC6, the extensibility that replaced closedness: a provider introduces a
+# subject, a measure and a unit the schema did not ship with, WITHOUT a schema
+# change, and reads it back. The DDL is compared before and after, because "no
+# schema change" is the half of the claim that a successful insert alone would not
+# prove.
+cp "$MAIN_DB" "$MEAS_DB"
+MEAS_DDL_BEFORE="$(q "$MEAS_DB" "SELECT group_concat(type || ' ' || name || ' ' || ifnull(sql, ''), '
+') FROM sqlite_master ORDER BY type, name;")"
+expect_sql_success 'MEAS-AC6 a provider may introduce a subject, a measure and a unit' "$MEAS_DB" \
+    "INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
+         unit, value, sampled_at)
+     SELECT id, 'example-power-supply', 'example-unit-one', 'example_input_volts',
+            'example_volt', 231.5, $NOW
+     FROM provider WHERE kind = 'measurement_sample' LIMIT 1;"
+check 'MEAS-AC6 the introduced reading reads back under its own terms' '231.5' \
+    "$(q "$MEAS_DB" "SELECT value FROM measurement_sample
+        WHERE subject_kind = 'example-power-supply' AND measure = 'example_input_volts'
+          AND unit = 'example_volt';")"
+check 'MEAS-AC6 introducing a term changed no DDL at all' "$MEAS_DDL_BEFORE" \
+    "$(q "$MEAS_DB" "SELECT group_concat(type || ' ' || name || ' ' || ifnull(sql, ''), '
+') FROM sqlite_master ORDER BY type, name;")"
+
+# MEAS-AC7: the provider is part of a reading's identity, because this kind admits
+# several concurrently active providers -- and the firewall's own gauges carry a
+# NULL provider, which SQLite treats as distinct from every other NULL. So the
+# index wraps the column in ifnull, and both halves are asserted: two providers
+# reading one subject at one instant are two readings, and a provider-less gauge
+# offered twice is still one row.
+expect_sql_success 'MEAS-AC7 a second provider may report the same subject at the same instant' "$MEAS_DB" \
+    "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
+       VALUES ('measurement_sample', 'meas-ac7-second', 'MEAS-AC7 second sampler', 1, $NOW);
+     INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
+       SELECT id, 'reachable', 'meas-ac7-probe', NULL, $NOW
+       FROM provider WHERE provider_key = 'meas-ac7-second';
+     INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
+         unit, value, sampled_at)
+     SELECT (SELECT id FROM provider WHERE provider_key = 'meas-ac7-second'),
+            m.subject_kind, m.subject_key, m.measure, m.unit, m.value, m.sampled_at
+     FROM measurement_sample m
+     WHERE m.subject_kind = 'endpoint_pair' LIMIT 1;"
+expect_sql_failure 'MEAS-AC7 one provider cannot report the same reading twice' "$MEAS_DB" \
+    "INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
+         unit, value, sampled_at)
+     SELECT provider_id, subject_kind, subject_key, measure, unit, value, sampled_at
+     FROM measurement_sample WHERE provider_id IS NOT NULL LIMIT 1;"
+expect_sql_failure 'MEAS-AC7 a provider-less gauge cannot be stored twice either' "$MEAS_DB" \
+    "INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
+         unit, value, sampled_at)
+     SELECT provider_id, subject_kind, subject_key, measure, unit, value, sampled_at
+     FROM measurement_sample WHERE provider_id IS NULL LIMIT 1;"
 
 # ===========================================================================
 section 'V6-AC1 .. V6-AC4 — both address families, in every screen query'
@@ -1307,6 +1428,7 @@ PURGEABLE='flow:observed_at dns_resolution:looked_up_at security_event:occurred_
 dhcp_lease:observed_at client:last_seen_at pair_volume_observation:day_start_at
 geo_asn:looked_up_at domain_attribution:attributed_at
 collection_gap:detected_at measurement_sample:sampled_at
+state_snapshot:captured_at
 volume_aggregate_1h:period_end_at volume_aggregate_24h:period_end_at
 volume_aggregate_7d:period_end_at volume_aggregate_30d:period_end_at
 owner_volume_aggregate_1h:period_end_at owner_volume_aggregate_24h:period_end_at
@@ -1601,12 +1723,12 @@ check 'VOC-AC4 a freshly migrated database attributes nothing to anybody' '0' \
 check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
     "$(q "$FRESH_DB" 'SELECT count(*) FROM provider WHERE is_active = 1;')"
 
-expect_sql_failure 'PN-AC9 a registry row whose kind is outside the six is rejected' "$FRESH_DB" \
+expect_sql_failure 'PN-AC9 a registry row whose kind is outside the eight is rejected' "$FRESH_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
      VALUES ('telepathy', 'pn-ac9', 'PN-AC9', 0, $NOW);"
 extract_block "$ARCH_DOC" '<!-- provider-kinds:begin -->' '<!-- provider-kinds:end -->' |
     sort > "$WORK/doc_kinds.txt"
-check 'PN-AC9 the document lists exactly six kinds' '6' \
+check 'PN-AC9 the document lists exactly eight kinds' '8' \
     "$(wc -l < "$WORK/doc_kinds.txt" | tr -d ' ')"
 q "$MAIN_DB" 'SELECT DISTINCT kind FROM provider ORDER BY kind;' | sort > "$WORK/db_kinds.txt"
 if diff -u "$WORK/doc_kinds.txt" "$WORK/db_kinds.txt" > "$WORK/kinds.diff"; then
@@ -1627,16 +1749,68 @@ q "$MAIN_DB" 'SELECT kind, provider_key, is_active FROM provider ORDER BY kind, 
     sed 's/^/    /'
 
 KIND_COUNT="$(q "$MAIN_DB" 'SELECT count(DISTINCT kind) FROM provider;')"
-check 'PN-AC12 the seed makes exactly one provider active per kind' "$KIND_COUNT" \
-    "$(q "$MAIN_DB" 'SELECT count(*) FROM provider WHERE is_active = 1;')"
-check 'PN-AC12 no kind has two active providers' '0' \
-    "$(q "$MAIN_DB" 'SELECT count(*) FROM (SELECT kind FROM provider WHERE is_active = 1
-        GROUP BY kind HAVING count(*) > 1);')"
-expect_sql_failure 'PN-AC12 marking a second provider of the same kind active is rejected' "$MAIN_DB" \
+# PN-AC12, RESTATED AGAINST THE RULE THAT REPLACED UNIVERSAL EXCLUSIVITY. These
+# assertions named a property the model deliberately changed, not one that stopped
+# mattering, so they are restated and not removed. The rule:
+#
+#   A KIND ADMITS SEVERAL CONCURRENTLY ACTIVE PROVIDERS EXACTLY WHEN THE IDENTITY
+#   OF ITS DESTINATION ROWS INCLUDES THE PROVIDER.
+#
+# Four kinds qualify -- security_event, dhcp_lease, measurement_sample and
+# reconciled_state -- and the rest are exclusive. What changed is which kinds are
+# exempt, and what the seed's active set looks like now that one of them is a kind
+# this installation really runs two of: the seed used to activate exactly one
+# provider per kind and now activates two dhcp_lease providers, so the active set
+# is asserted by name below rather than as a count.
+EXCLUSIVE_PREDICATE="p.kind NOT IN ('security_event', 'dhcp_lease', 'measurement_sample',
+                                    'reconciled_state')"
+check 'PN-AC12 the registry holds a provider of every one of the eight kinds' '8' "$KIND_COUNT"
+# The active set is asserted as a SET rather than as a count derived from the kind
+# count, and that is the restatement: the seed used to activate exactly one provider
+# per kind, and it now models a two-DHCP-server estate, so a count alone would no
+# longer say which shape it is in. Written out, it fails loudly whichever way it
+# drifts -- a server that stopped being read, or one that started.
+EXPECTED_ACTIVE='dhcp_lease/dnsmasq
+dhcp_lease/kea
+dns_lookup/unbound
+firewall_log/pf
+geo_asn/maxmind_geolite2
+measurement_sample/insight
+reconciled_state/example-state-source
+security_event/suricata'
+check 'PN-AC12 the seed activates exactly the providers it names' "$EXPECTED_ACTIVE"     "$(q "$MAIN_DB" "SELECT kind || '/' || provider_key FROM provider
+        WHERE is_active = 1 ORDER BY kind, provider_key;")"
+ACTIVE_PROVIDER_COUNT="$(printf -- '%s
+' "$EXPECTED_ACTIVE" | wc -l | tr -d ' ')"
+# flow_volume is not activated: nothing collects it, because its destination is
+# derived from flow.
+check 'PN-AC12 the kind nothing collects has no active provider' '0'     "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'flow_volume' AND is_active = 1;")"
+check 'PN-AC12 no EXCLUSIVE kind has two active providers' '0'     "$(q "$MAIN_DB" "SELECT count(*) FROM (SELECT p.kind FROM provider AS p
+        WHERE p.is_active = 1 AND $EXCLUSIVE_PREDICATE
+        GROUP BY p.kind HAVING count(*) > 1);")"
+check 'PN-AC12 the seed models a two-server DHCP estate, which is why the kind is concurrent' '2'     "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'dhcp_lease' AND is_active = 1;")"
+expect_sql_failure 'PN-AC12 marking a second provider of an EXCLUSIVE kind active is rejected' "$MAIN_DB" \
     "UPDATE provider SET is_active = 1
      WHERE id = (SELECT p.id FROM provider p
                  JOIN provider q ON q.kind = p.kind AND q.is_active = 1
-                 WHERE p.is_active = 0 LIMIT 1);"
+                 WHERE p.is_active = 0 AND $EXCLUSIVE_PREDICATE LIMIT 1);"
+# And the index that enforces it says which kinds it exempts, in its own
+# definition, so the rule cannot be documented one way and enforced another.
+check 'PN-AC12 the exclusivity index exists under its new name' '1' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM sqlite_master
+        WHERE type = 'index' AND name = 'uq_provider_active_per_exclusive_kind';")"
+check 'PN-AC12 the index that admitted one provider per kind is gone' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM sqlite_master
+        WHERE type = 'index' AND name = 'uq_provider_active_per_kind';")"
+for exempt in security_event dhcp_lease measurement_sample reconciled_state; do
+    if q "$MAIN_DB" "SELECT sql FROM sqlite_master
+            WHERE name = 'uq_provider_active_per_exclusive_kind';" |
+            grep -qF "'$exempt'"; then
+        pass "PN-AC12 the index exempts the $exempt kind, whose rows carry their provider"
+    else
+        fail "PN-AC12 the index does not exempt the $exempt kind, so its second active provider would be rejected"
+    fi
+done
 
 DIAG_AVAIL="$WORK/diag/03_Source_availability.sql"
 run_query "$MAIN_DB" "$DIAG_AVAIL" > "$WORK/availability.txt"
@@ -1647,8 +1821,16 @@ check 'PN-AC13 the diagnostic returns one row per registry row' "$PROVIDER_COUNT
 check 'PN-AC13 every diagnostic row carries a kind, a key, a state, a probe and an active flag' '0' \
     "$(awk -F'|' 'NF < 8 || $1 == "" || $2 == "" || $4 == "" || $5 == "" || $8 == "" { n++ }
                   END { print n + 0 }' "$WORK/availability.txt")"
-check 'PN-AC13 the diagnostic names the active provider of every kind' "$KIND_COUNT" \
+check 'PN-AC13 the diagnostic names every active provider, two DHCP servers included' \
+    "$ACTIVE_PROVIDER_COUNT" \
     "$(awk -F'|' '$8 == 1 { n++ } END { print n + 0 }' "$WORK/availability.txt")"
+# And each of the two DHCP servers carries ITS OWN probe: one service-status
+# endpoint informing two registry rows would be the smear the seam exists to
+# prevent, and with two servers active it would now be invisible in a total.
+check 'PN-AC13 the two active DHCP servers carry two different probes' '2' \
+    "$(q "$MAIN_DB" "SELECT count(DISTINCT a.probe) FROM source_availability a
+        JOIN provider p ON p.id = a.provider_id
+        WHERE p.kind = 'dhcp_lease' AND p.is_active = 1;")"
 
 # ===========================================================================
 section 'PN-AC8, PN-AC18 — registering a second provider of an existing kind'
@@ -1706,6 +1888,402 @@ SEVERITIES_BY_PROVIDER="$(run_query "$REGISTER_DB" "$(wrap_query "$WORK/screens/
 check 'PN-AC18 each event resolves its severity through its own provider entry' \
     'second-event-provider=critical,second-event-provider=informational,suricata=low' \
     "$SEVERITIES_BY_PROVIDER"
+
+# ===========================================================================
+section 'EX-AC1 .. EX-AC4 — two active providers of one kind, which is the normal case'
+# ===========================================================================
+# The registry now holds two implementations of the security_event kind, so this
+# is where the rule that replaced universal exclusivity is exercised rather than
+# merely read out of an index definition.
+#
+# THE CASE: people run several detection engines side by side, and the how-to
+# corpus is people stacking them (survey, "Four findings that bear on the
+# collectors already written"). Event identity is (provider_id,
+# provider_event_key), so two engines reporting one intrusion are two attributed
+# rows and no figure is doubled -- which is exactly the condition under which the
+# rule permits two active providers.
+expect_sql_success 'EX-AC1 two providers of the security_event kind can both be active' "$REGISTER_DB" \
+    "UPDATE provider SET is_active = 1 WHERE kind = 'security_event';"
+check 'EX-AC1 and both stay active' '2' \
+    "$(q "$REGISTER_DB" "SELECT count(*) FROM provider
+        WHERE kind = 'security_event' AND is_active = 1;")"
+check 'EX-AC1 the two active providers are distinguishable by key' 'second-event-provider|suricata' \
+    "$(q "$REGISTER_DB" "SELECT group_concat(provider_key, '|') FROM
+        (SELECT provider_key FROM provider WHERE kind = 'security_event' AND is_active = 1
+         ORDER BY provider_key);")"
+
+# EX-AC2: the same event key under two active providers is two rows, because the
+# identity carries the provider. This is the property that makes concurrency safe,
+# and it is asserted rather than assumed.
+expect_sql_success 'EX-AC2 one event key under two active providers is two rows' "$REGISTER_DB" \
+    "INSERT INTO security_event (provider_id, provider_event_key, occurred_at, ingested_at,
+         rule_identity, signature, event_action, src_address, dst_address)
+     SELECT id, 'ex-ac2-shared-event-key', $WINDOW_END - 120, $WINDOW_END - 60,
+            'named-rule-identity-alpha', 'ex-ac2 signature', 'blocked',
+            'ex-ac2-source', 'ex-ac2-destination'
+     FROM provider WHERE kind = 'security_event' AND is_active = 1;"
+check 'EX-AC2 both rows are stored and attributed' '2' \
+    "$(q "$REGISTER_DB" "SELECT count(*) FROM security_event
+        WHERE provider_event_key = 'ex-ac2-shared-event-key';")"
+check 'EX-AC2 each names a different provider' '2' \
+    "$(q "$REGISTER_DB" "SELECT count(DISTINCT provider_id) FROM security_event
+        WHERE provider_event_key = 'ex-ac2-shared-event-key';")"
+check 'EX-AC2 the Alerts screen returns both events of the shared key' '2' \
+    "$(run_query "$REGISTER_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
+        'SELECT count(*) FROM (' \
+        ") WHERE signature = 'ex-ac2 signature';")")"
+check 'EX-AC2 and attributes them to the two different providers' '2' \
+    "$(run_query "$REGISTER_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
+        'SELECT count(DISTINCT provider_key) FROM (' \
+        ") WHERE signature = 'ex-ac2 signature';")")"
+# Each resolves its severity through its OWN provider's cache entry, which is what
+# keeps two concurrent engines from borrowing each other's classification.
+check 'EX-AC2 each of the two resolves its severity through its own provider entry' \
+    'informational,low' \
+    "$(run_query "$REGISTER_DB" "$(wrap_query "$WORK/screens/06_Alerts.sql" \
+        "SELECT group_concat(severity, ',') FROM (SELECT DISTINCT severity FROM (" \
+        ") WHERE signature = 'ex-ac2 signature' ORDER BY severity);")")"
+
+# EX-AC3, RESTATED. This assertion named dhcp_lease as the exclusive kind, and the
+# maintainer moved that kind into the concurrent set: one server issuing on one VLAN
+# and another on a second is an ordinary deployment, not a misconfiguration. So it is
+# restated in BOTH directions rather than deleted -- the kind that moved is asserted
+# to permit two, and the kinds that did not move still refuse them, on the same
+# database, which keeps the rule a discrimination rather than a blanket permission.
+expect_sql_success 'EX-AC3 two providers of the dhcp_lease kind CAN both be active' "$REGISTER_DB" \
+    "UPDATE provider SET is_active = 1 WHERE kind = 'dhcp_lease';"
+check 'EX-AC3 and all of them stay active' '3' \
+    "$(q "$REGISTER_DB" "SELECT count(*) FROM provider
+        WHERE kind = 'dhcp_lease' AND is_active = 1;")"
+expect_sql_failure 'EX-AC3 two providers of the dns_lookup kind cannot both be active' "$REGISTER_DB" \
+    "UPDATE provider SET is_active = 1 WHERE kind = 'dns_lookup';"
+
+# EX-AC4: the concurrency is still bounded by the registry. A kind that admits
+# several active providers does not admit an unregistered one.
+expect_sql_failure 'EX-AC4 an active provider of a kind outside the eight is still rejected' "$REGISTER_DB" \
+    "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
+     VALUES ('telepathy', 'ex-ac4', 'EX-AC4', 1, $NOW);"
+
+# ===========================================================================
+section 'ST-AC1 .. ST-AC6 — the reconciled-state kind, and the departure it exists for'
+# ===========================================================================
+# THE SHAPE: here is the complete set of things of this type, as of now. Ten of
+# the eleven surveyed sources that fit no other kind produce it (survey, "Shapes
+# the model has no room for"), and the question it answers is what has LEFT.
+check 'ST-AC1 the reconciled-state kind has a snapshot table and a member table' '2' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM sqlite_master
+        WHERE type = 'table' AND name IN ('state_snapshot', 'state_item');")"
+check 'ST-AC1 a snapshot carries a provider, a set and the instant it was complete' '3' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('state_snapshot')
+        WHERE name IN ('provider_id', 'set_key', 'captured_at');")"
+check 'ST-AC1 a member carries an identity, its attributes and an optional validity end' '3' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('state_item')
+        WHERE name IN ('item_key', 'attributes', 'valid_until_at');")"
+# ST-AC1, the negative half, and the one the risk section of the spec asks for:
+# the kind carries NOTHING the examined sources do not need. No status, no
+# category, no severity, no enabled flag, no display name.
+check 'ST-AC1 the member table carries no invented status, category or severity' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM pragma_table_info('state_item')
+        WHERE name IN ('status', 'state', 'category', 'severity', 'enabled',
+                       'display_name', 'kind', 'type', 'origin', 'reason');")"
+check 'ST-AC1 the member table is exactly five columns wide' '5' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('state_item');")"
+check 'ST-AC1 the snapshot table is exactly four columns wide' '4' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('state_snapshot');")"
+
+# ST-AC2: the seed holds several complete captures of two sets, each capture
+# holding one fewer thing than its predecessor, so a departure exists to find.
+check_ge 'ST-AC2 the seed holds several complete captures' 2 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM state_snapshot;')"
+check_ge 'ST-AC2 one provider reports more than one set' 2 \
+    "$(q "$MAIN_DB" 'SELECT count(DISTINCT set_key) FROM state_snapshot;')"
+check 'ST-AC2 every capture names a provider that exists' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM state_snapshot s
+        WHERE NOT EXISTS (SELECT 1 FROM provider p WHERE p.id = s.provider_id);')"
+check 'ST-AC2 every member belongs to a capture that exists' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM state_item i
+        WHERE NOT EXISTS (SELECT 1 FROM state_snapshot s WHERE s.id = i.snapshot_id);')"
+
+# ST-AC3: A DEPARTURE IS DETECTABLE. This is the criterion the whole kind exists
+# for: a thing in the previous complete capture and not in the latest one has LEFT,
+# and the model says so rather than silently keeping it or silently dropping it.
+check_ge 'ST-AC3 a departure is reported for every set whose membership shrank' 2 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM state_item_departure;')"
+check 'ST-AC3 a departure is dated: last present, and absent since' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM state_item_departure
+        WHERE last_present_at IS NULL OR absent_since_at IS NULL
+           OR absent_since_at <= last_present_at;')"
+check 'ST-AC3 nothing still in the latest capture is reported as having left' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM state_item_departure d
+        JOIN state_snapshot s ON s.provider_id = d.provider_id AND s.set_key = d.set_key
+                             AND s.captured_at = d.absent_since_at
+        JOIN state_item i ON i.snapshot_id = s.id AND i.item_key = d.item_key;')"
+check 'ST-AC3 nothing is silently dropped: the departed thing is still readable where it was' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM state_item_departure d
+        WHERE NOT EXISTS (
+            SELECT 1 FROM state_snapshot s
+            JOIN state_item i ON i.snapshot_id = s.id
+            WHERE s.provider_id = d.provider_id AND s.set_key = d.set_key
+              AND s.captured_at = d.last_present_at AND i.item_key = d.item_key);')"
+
+# ST-AC4: the constraints that make a set a set rather than a bag of rows.
+cp "$MAIN_DB" "$STATE_DB"
+expect_sql_failure 'ST-AC4 a member with no identity is rejected' "$STATE_DB" \
+    "INSERT INTO state_item (snapshot_id, item_key) SELECT id, '' FROM state_snapshot LIMIT 1;"
+expect_sql_failure 'ST-AC4 one capture cannot report one thing twice' "$STATE_DB" \
+    "INSERT INTO state_item (snapshot_id, item_key, attributes, valid_until_at)
+     SELECT snapshot_id, item_key, attributes, valid_until_at FROM state_item LIMIT 1;"
+expect_sql_failure 'ST-AC4 attributes that are not a JSON object are rejected' "$STATE_DB" \
+    "INSERT INTO state_item (snapshot_id, item_key, attributes)
+     SELECT id, 'st-ac4-item', '\"a bare string\"' FROM state_snapshot LIMIT 1;"
+expect_sql_failure 'ST-AC4 a capture with no set name is rejected' "$STATE_DB" \
+    "INSERT INTO state_snapshot (provider_id, set_key, captured_at)
+     SELECT id, '', $NOW FROM provider WHERE kind = 'reconciled_state' LIMIT 1;"
+expect_sql_failure 'ST-AC4 one set cannot be captured twice at one instant' "$STATE_DB" \
+    "INSERT INTO state_snapshot (provider_id, set_key, captured_at)
+     SELECT provider_id, set_key, captured_at FROM state_snapshot LIMIT 1;"
+expect_sql_failure 'ST-AC4 a capture attributed to no provider is rejected' "$STATE_DB" \
+    "INSERT INTO state_snapshot (provider_id, set_key, captured_at)
+     VALUES (999999999, 'st-ac4-set', $NOW);"
+
+# ST-AC5: an optional validity end, because the surveyed ban list carries a TTL
+# and no timestamp at all -- and it is NOT how a departure is detected.
+check_ge 'ST-AC5 some members carry a validity end and some do not' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM state_item WHERE valid_until_at IS NOT NULL;')"
+check_ge 'ST-AC5 a member with no validity end is a normal row' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM state_item WHERE valid_until_at IS NULL;')"
+check_ge 'ST-AC5 some members carry attributes and some carry none' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM state_item WHERE attributes IS NOT NULL;')"
+check 'ST-AC5 every stored attribute set is a JSON object' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM state_item
+        WHERE attributes IS NOT NULL AND json_type(attributes) <> 'object';")"
+
+# ST-AC6: removing a capture removes its members, because a member with no capture
+# would be a set member with no set and no instant -- the one thing this kind
+# exists to prevent.
+STATE_MEMBERS_BEFORE="$(q "$STATE_DB" 'SELECT count(*) FROM state_item;')"
+sqlite3 "$STATE_DB" "PRAGMA foreign_keys = ON;
+    DELETE FROM state_snapshot WHERE id = (SELECT min(id) FROM state_snapshot);" > /dev/null
+check 'ST-AC6 removing a capture removed its members with it' '0' \
+    "$(q "$STATE_DB" 'SELECT count(*) FROM state_item i
+        WHERE NOT EXISTS (SELECT 1 FROM state_snapshot s WHERE s.id = i.snapshot_id);')"
+if [ "$(q "$STATE_DB" 'SELECT count(*) FROM state_item;')" -lt "$STATE_MEMBERS_BEFORE" ]; then
+    pass 'ST-AC6 the cascade actually removed something, so the check is not vacuous'
+else
+    fail 'ST-AC6 removing a capture removed no member, so nothing was cascaded'
+fi
+
+# ===========================================================================
+section 'DL-AC1 .. DL-AC4 — the lease start stops meaning two things'
+# ===========================================================================
+# The finding is unchanged: Kea reports valid_lifetime, so `expire` minus it is a
+# REAL validity start. What changed is what the backends that report none do.
+# starts_at is nullable now, so such a backend says so instead of storing its
+# expiry in a column named for a start, and generation_key is what keeps a re-poll
+# idempotent.
+check 'DL-AC1 the lease validity start is nullable' '0' \
+    "$(q "$MAIN_DB" "SELECT \"notnull\" FROM pragma_table_info('dhcp_lease')
+        WHERE name = 'starts_at';")"
+check 'DL-AC1 the generation key is not' '1' \
+    "$(q "$MAIN_DB" "SELECT \"notnull\" FROM pragma_table_info('dhcp_lease')
+        WHERE name = 'generation_key';")"
+check_ge 'DL-AC2 a backend that reports a real start stores it' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM dhcp_lease
+        WHERE backend = 'kea' AND starts_at IS NOT NULL
+          AND generation_key = 'start:' || starts_at;")"
+check_ge 'DL-AC2 a backend that reports none stores null' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM dhcp_lease
+        WHERE backend = 'dnsmasq' AND starts_at IS NULL;")"
+check 'DL-AC2 no lease stores its expiry as its validity start' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM dhcp_lease
+        WHERE starts_at IS NOT NULL AND starts_at = expires_at;')"
+check_ge 'DL-AC3 a lease with no start is keyed on its expiry' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM dhcp_lease
+        WHERE starts_at IS NULL AND expires_at IS NOT NULL
+          AND generation_key = 'expiry:' || expires_at;")"
+check_ge 'DL-AC3 a standing reservation is keyed on the day it was observed' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM dhcp_lease
+        WHERE starts_at IS NULL AND expires_at IS NULL
+          AND generation_key = 'observed_day:' || (observed_at / 86400 * 86400);")"
+# DL-AC4: the generation key keeps a re-poll idempotent, INCLUDING for the leases
+# whose start is null -- which a key on starts_at could not have done, because a
+# null in a uniqueness constraint is distinct from every other null.
+expect_sql_failure 'DL-AC4 re-polling a lease with a real start inserts nothing' "$MAIN_DB" \
+    "INSERT INTO dhcp_lease (client_id, backend, address, mac, hostname, lease_state,
+         interface_id, starts_at, generation_key, expires_at, observed_at)
+     SELECT client_id, backend, address, mac, hostname, lease_state, interface_id,
+            starts_at, generation_key, expires_at, observed_at + 60
+     FROM dhcp_lease WHERE starts_at IS NOT NULL LIMIT 1;"
+expect_sql_failure 'DL-AC4 re-polling a lease with NO start inserts nothing either' "$MAIN_DB" \
+    "INSERT INTO dhcp_lease (client_id, backend, address, mac, hostname, lease_state,
+         interface_id, starts_at, generation_key, expires_at, observed_at)
+     SELECT client_id, backend, address, mac, hostname, lease_state, interface_id,
+            starts_at, generation_key, expires_at, observed_at + 60
+     FROM dhcp_lease WHERE starts_at IS NULL LIMIT 1;"
+# DL-AC4, RESTATED: the identity names the PROVIDER and not the backend. `backend`
+# is a normalised vocabulary of response shapes, and two providers could report the
+# same one -- a second implementation reading a Kea running somewhere else would --
+# so keying on it satisfied the letter of the concurrency rule and not its substance.
+# The rule is stated in terms of the provider, and now so is the key.
+check 'DL-AC4 the lease identity is (address, generation_key, provider_id)' '3' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_index_list('dhcp_lease') il
+        JOIN pragma_index_info(il.name) ii WHERE il.origin = 'u'
+          AND ii.name IN ('address', 'generation_key', 'provider_id');")"
+check 'DL-AC4 the identity is exactly those three columns' '3' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_index_list('dhcp_lease') il
+        JOIN pragma_index_info(il.name) ii WHERE il.origin = 'u';")"
+check 'DL-AC4 and it names neither the validity start nor the backend' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_index_list('dhcp_lease') il
+        JOIN pragma_index_info(il.name) ii WHERE il.origin = 'u'
+          AND ii.name IN ('starts_at', 'backend');")"
+check 'DL-AC4 no lease is unattributed: the issuing server is mandatory' '1' \
+    "$(q "$MAIN_DB" "SELECT \"notnull\" FROM pragma_table_info('dhcp_lease')
+        WHERE name = 'provider_id';")"
+expect_sql_failure 'DL-AC4 a lease attributed to a server that does not exist is rejected' "$MAIN_DB" \
+    "INSERT INTO dhcp_lease (provider_id, backend, address, lease_state, generation_key,
+         observed_at)
+     VALUES (999999999, 'kea', 'dl-ac4-address', 'active', 'start:1', $NOW);"
+
+# ===========================================================================
+section 'DL-AC5 — one machine, two servers, two VLANs: one client, two leases'
+# ===========================================================================
+# THIS IS THE CLAIM THE CONCURRENCY DECISION RESTS ON, so it is asserted directly
+# rather than left to follow from the key.
+#
+# The objection to making dhcp_lease concurrent was that two active lease providers
+# would put one machine on the screen twice under two names. The client identity
+# cascade is what answers it: it keys on the DHCP client identifier first and on the
+# MAC second, and NEITHER is scoped to an interface, so one machine leased on two
+# VLANs by two servers resolves to one client holding two leases. The duplication the
+# objection feared needs two servers issuing on the SAME scope, which is a
+# misconfiguration of the firewall rather than a shape this model absorbs.
+#
+# The seed models the deployment explicitly: one client, a lease from each server, on
+# two different interfaces. The cascade itself is exercised in Go, in
+# internal/collect, where the two backends' reports of one MAC actually meet.
+cp "$MAIN_DB" "$LEASE_DB"
+check_ge 'DL-AC5 a machine holds leases from two different servers' 1 \
+    "$(q "$LEASE_DB" "SELECT count(*) FROM (
+        SELECT l.client_id FROM dhcp_lease AS l
+        WHERE l.client_id IS NOT NULL
+        GROUP BY l.client_id
+        HAVING count(DISTINCT l.provider_id) >= 2);")"
+check_ge 'DL-AC5 and it is ONE client row, not two' 1 \
+    "$(q "$LEASE_DB" "SELECT count(*) FROM client AS c
+        WHERE (SELECT count(DISTINCT l.provider_id) FROM dhcp_lease AS l
+               WHERE l.client_id = c.id) >= 2;")"
+check_ge 'DL-AC5 one machine holds leases on two different interfaces' 1 \
+    "$(q "$LEASE_DB" "SELECT count(*) FROM (
+        SELECT l.client_id FROM dhcp_lease AS l
+        WHERE l.client_id IS NOT NULL AND l.interface_id IS NOT NULL
+        GROUP BY l.client_id
+        HAVING count(DISTINCT l.provider_id) >= 2
+           AND count(DISTINCT l.interface_id) >= 2);")"
+check 'DL-AC5 every lease names a server that exists' '0' \
+    "$(q "$LEASE_DB" "SELECT count(*) FROM dhcp_lease AS l
+        WHERE NOT EXISTS (SELECT 1 FROM provider p WHERE p.id = l.provider_id);")"
+# The SAME address leased by two different servers is two leases, not one contested
+# row -- the direct consequence of the provider joining the identity, and a case a key
+# on the backend allowed only by accident, for as long as one backend meant one server.
+expect_sql_success 'DL-AC5 one address leased by two servers is two leases' "$LEASE_DB" \
+    "INSERT INTO dhcp_lease (provider_id, backend, address, lease_state, generation_key,
+         observed_at)
+     SELECT id, 'kea', 'dl-ac5-two-servers', 'active', 'start:1', $NOW
+     FROM provider WHERE kind = 'dhcp_lease' AND is_active = 1;"
+check 'DL-AC5 both of them are stored' '2' \
+    "$(q "$LEASE_DB" "SELECT count(*) FROM dhcp_lease WHERE address = 'dl-ac5-two-servers';")"
+expect_sql_failure 'DL-AC5 and one server still cannot report it twice' "$LEASE_DB" \
+    "INSERT INTO dhcp_lease (provider_id, backend, address, lease_state, generation_key,
+         observed_at)
+     SELECT provider_id, backend, address, lease_state, generation_key, observed_at + 60
+     FROM dhcp_lease WHERE address = 'dl-ac5-two-servers' LIMIT 1;"
+
+# The addendum: the server is READABLE per lease, not merely a key component. The
+# diagnostic is that read, and it names the server rather than reconstructing it.
+DIAG_LEASES="$WORK/diag/07_Leases_per_client_and_issuing_server.sql"
+TWO_SERVER_CLIENT="$(q "$MAIN_DB" "SELECT l.client_id FROM dhcp_lease AS l
+    WHERE l.client_id IS NOT NULL
+    GROUP BY l.client_id
+    HAVING count(DISTINCT l.provider_id) >= 2
+    ORDER BY l.client_id LIMIT 1;")"
+LEASES_OF_ONE="$(run_query_for_client "$MAIN_DB" "$DIAG_LEASES" "$TWO_SERVER_CLIENT")"
+printf -- '  the leases of one machine, per issuing server:\n'
+printf -- '%s\n' "$LEASES_OF_ONE" | sed 's/^/    /'
+check_ge 'DL-AC5 the diagnostic returns both leases of that machine' 2 \
+    "$(printf -- '%s\n' "$LEASES_OF_ONE" | grep -c .)"
+check 'DL-AC5 the diagnostic names two different issuing servers' '2' \
+    "$(printf -- '%s\n' "$LEASES_OF_ONE" | cut -d'|' -f3 | sort -u | grep -c .)"
+check 'DL-AC5 every returned lease names its server in words' '0' \
+    "$(printf -- '%s\n' "$LEASES_OF_ONE" | awk -F'|' 'NF > 1 && $3 == "" { n++ } END { print n + 0 }')"
+if grep -q 'p.display_name  *AS issuing_server' "$REPO_ROOT/sql/queries/diagnostics.sql"; then
+    pass 'DL-AC5 the diagnostic reads the server name rather than reconstructing it'
+else
+    fail 'DL-AC5 the diagnostic does not read provider.display_name, so a screen would have to guess'
+fi
+
+# ===========================================================================
+section 'PV-AC1, PV-AC2 — the per-pair volume is derived, not collected'
+# ===========================================================================
+# The maintainer's ruling: the only per-pair endpoint carries neither a port nor a
+# protocol, and `flow` carries both exactly, so these rows are step 5's to compute
+# from `flow`. The de-duplication above (AC25) still holds, because the derivation
+# has to respect it; what is asserted here is that nothing COLLECTS them.
+#
+# The test sources are excluded, and deliberately: the test that asserts the
+# derivation's de-duplication contract has to write the table in order to assert
+# it, and matching itself would make this check unfalsifiable rather than strict.
+# What is forbidden is a COLLECTOR, which is non-test code.
+#
+# The scan NORMALISES EACH FILE WHOLE before matching, and that is not cosmetic: a
+# long SQL statement in Go is ordinarily wrapped, either as a raw literal spanning
+# lines or as quoted fragments joined with +, so a collector that put the table
+# name on the line after INSERT INTO would have passed a line-by-line grep while
+# writing the table. Newlines, tabs, quotes, backticks, brackets and + all become
+# spaces, the schema qualifier is dropped, and runs of spaces collapse, so every
+# wrapping reads as the one statement it is -- and none of those characters can
+# occur inside an SQL identifier, so the normalisation cannot invent a match.
+#
+# EVERY WRITING VERB IS ENUMERATED BELOW, NOT ONLY INSERT, and the reason is worth
+# recording because an earlier revision of this check got it wrong: it enumerated
+# the six INSERT conflict clauses and claimed that covered the statement, which is
+# true of conflict clauses and false of the statement. REPLACE INTO is SQLite's own
+# alias for INSERT OR REPLACE and is the most natural way to re-derive a day's slot
+# -- precisely what step 5 will be doing -- so a check blind to it was blind to the
+# likeliest write there is. UPDATE and DELETE are writes too.
+: > "$WORK/pair_writers.txt"
+while IFS= read -r source_file; do
+    normalised="$(tr '\n\t"\140+[]' '        ' < "$source_file" | tr -s ' ' |
+        tr '[:upper:]' '[:lower:]' | sed 's/main\.//g')"
+    case "$normalised" in
+        *'insert into pair_volume_observation'* | \
+        *'insert or ignore into pair_volume_observation'* | \
+        *'insert or replace into pair_volume_observation'* | \
+        *'insert or abort into pair_volume_observation'* | \
+        *'insert or fail into pair_volume_observation'* | \
+        *'insert or rollback into pair_volume_observation'* | \
+        *'replace into pair_volume_observation'* | \
+        *'delete from pair_volume_observation'* | \
+        *'update pair_volume_observation set'*)
+            printf -- '%s\n' "$source_file" >> "$WORK/pair_writers.txt"
+            ;;
+    esac
+done <<EOF
+$(find "$REPO_ROOT/internal" "$REPO_ROOT/cmd" -name '*.go' ! -name '*_test.go' | sort)
+EOF
+if [ -s "$WORK/pair_writers.txt" ]; then
+    fail "PV-AC1 a code path writes the derived per-pair table: $(head -n 3 "$WORK/pair_writers.txt")"
+else
+    pass 'PV-AC1 no Go code path writes the derived per-pair table'
+fi
+check 'PV-AC2 the kind whose destination is derived has no active provider' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'flow_volume' AND is_active = 1;")"
+for needle in 'DERIVED, NOT COLLECTED' "step 5's to COMPUTE from"; do
+    if grep -qF "$needle" "$SCHEMA_FILE"; then
+        pass "PV-AC2 the schema records the ruling: $needle"
+    else
+        fail "PV-AC2 the schema does not record the ruling: $needle"
+    fi
+done
 
 # ===========================================================================
 section 'PN-AC14, PN-AC15, PN-AC16, PN-AC17, PN-AC19 — the security-event core'
@@ -1840,7 +2418,8 @@ while read -r kind; do
 done < "$WORK/db_kinds.txt"
 for needle in 'declares its own availability' \
               'modelled state, not an absence of rows' \
-              'at most one provider per kind is active' \
+              'admits several concurrently active providers exactly when' \
+              'still exclusive' \
               'surveyed exactly as the OPNsense API was surveyed'; do
     if grep -qiF "$needle" "$ARCH_DOC"; then
         pass "PN-AC24 the architecture document states: $needle"

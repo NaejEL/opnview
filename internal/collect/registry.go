@@ -43,7 +43,7 @@ func registerLookupSource(source lookupSource) {
 	lookupSources[source.providerKey()] = source
 }
 
-// registerMeasurementSource adds one implementation of the flow_volume kind.
+// registerMeasurementSource adds one implementation of the measurement_sample kind.
 func registerMeasurementSource(source measurementSource) {
 	measurementSources[source.providerKey()] = source
 }

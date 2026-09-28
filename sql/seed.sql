@@ -66,7 +66,7 @@ CREATE TEMP TABLE synth_address (
 WITH RECURSIVE local_slot (slot) AS (
     SELECT 1
     UNION ALL
-    SELECT slot + 1 FROM local_slot WHERE slot < :clients + 2
+    SELECT slot + 1 FROM local_slot WHERE slot < :clients + 3
 ),
 external_slot (slot) AS (
     SELECT 1000000
@@ -91,22 +91,61 @@ SELECT
 FROM every_slot;
 
 -- ---------------------------------------------------------------------------
--- The provider registry already holds one row per surveyed implementation,
--- created by migration 0002 with none active. A probe round has now run, so
--- the seed marks exactly one provider active per kind -- the one this
--- pretend-installation reads. The partial unique index rejects a second.
+-- The provider registry already holds one row per surveyed implementation, with
+-- none active. A probe round has now run, so the seed marks the providers this
+-- pretend-installation reads.
+--
+-- ONE PER EXCLUSIVE KIND, AND THAT IS THE RULE RATHER THAN A HABIT. The partial
+-- unique index rejects a second active provider of a kind whose destination rows
+-- do not carry their provider; it deliberately does not govern security_event,
+-- dhcp_lease, measurement_sample or reconciled_state, where two active providers
+-- are two attributed sets of rows rather than one doubled figure.
+--
+-- THIS INSTALLATION RUNS TWO DHCP SERVERS, because that is the deployment the
+-- concurrency was decided for: one issuing on one VLAN and another on a second,
+-- two scopes with no overlap. Both are active, both contribute leases below, and
+-- one machine is leased by both -- which is ONE client holding TWO leases, because
+-- the identity cascade keys on the DHCP client identifier and then on the MAC,
+-- neither of them scoped to an interface. The concurrent security_event case is
+-- exercised where a second implementation is registered, further down in
+-- sql/schema-checks.sh.
+--
+-- flow_volume is NOT activated, and that is the ruling rather than an omission:
+-- pair_volume_observation is derived from flow by step 5, so nothing collects
+-- that kind and nothing probes it. Its rows below are seeded directly, as the
+-- derivation would write them.
 --
 -- Everything below that needs a provider looks it up by kind and activeness,
--- never by name: no other statement in this file tests a provider key.
+-- never by name, with ONE deliberate exception: the lease blocks name the two DHCP
+-- servers by key, because the whole point of this installation is that two of them
+-- are running and every lease row has to say which one issued it. Naming them is
+-- what the fixture is FOR; nothing in the schema, in a query or in an index tests
+-- those strings.
 -- ---------------------------------------------------------------------------
+-- A source of the reconciled_state kind. The schema registers none -- a registry
+-- row is a claim that an implementation exists, and no connector for a
+-- state-shaped source is written yet -- so this pretend-installation registers
+-- the one it pretends to run, which is the INSERT such a connector's cycle would
+-- add. The name is an example value in a fixture and matches no product.
+INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
+VALUES ('reconciled_state', 'example-state-source', 'Example state source', 0, :now)
+ON CONFLICT (kind, provider_key) DO NOTHING;
+
+INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
+SELECT p.id, 'unavailable', 'not_yet_probed', NULL, 0
+FROM provider AS p
+WHERE NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);
+
 UPDATE provider SET is_active = 1
 WHERE (kind, provider_key) IN (
     VALUES ('firewall_log', 'pf'),
            ('security_event', 'suricata'),
-           ('flow_volume', 'insight'),
+           ('measurement_sample', 'insight'),
            ('dhcp_lease', 'kea'),
+           ('dhcp_lease', 'dnsmasq'),
            ('dns_lookup', 'unbound'),
-           ('geo_asn', 'maxmind_geolite2')
+           ('geo_asn', 'maxmind_geolite2'),
+           ('reconciled_state', 'example-state-source')
 );
 
 -- ---------------------------------------------------------------------------
@@ -306,10 +345,21 @@ WHERE id % 3 = 0 AND id <= :clients;
 -- DHCP leases. One per client that has a MAC, spread back over five months so
 -- that a finite retention horizon has something to purge, plus the two leases
 -- of the reissued address above.
+--
+-- BOTH BACKEND BEHAVIOURS APPEAR, because the model now distinguishes them. A
+-- Kea lease carries a REAL validity start, `expire` minus `valid_lifetime`, and
+-- its generation key rests on that start. A Dnsmasq lease carries NO start at
+-- all -- the backend reports none, so the column is NULL rather than holding a
+-- substitute -- and its generation key rests on the expiry, which is what keeps a
+-- re-poll from inserting a second row. A standing reservation reports neither and
+-- is keyed on the day it was observed.
 -- ---------------------------------------------------------------------------
-INSERT INTO dhcp_lease (client_id, backend, address, mac, hostname, dhcp_client_id, duid, iaid,
-                        vendor_hint, lease_state, interface_id, starts_at, expires_at, observed_at)
+INSERT INTO dhcp_lease (provider_id, client_id, backend, address, mac, hostname,
+                        dhcp_client_id, duid, iaid,
+                        vendor_hint, lease_state, interface_id, starts_at, generation_key,
+                        expires_at, observed_at)
 SELECT
+    (SELECT id FROM provider WHERE kind = 'dhcp_lease' AND provider_key = 'kea'),
     id,
     'kea',
     last_address,
@@ -322,20 +372,118 @@ SELECT
     'active',
     interface_id,
     :now - ((id % 8) * 1728000) - 3600,
+    'start:' || (:now - ((id % 8) * 1728000) - 3600),
     :now - ((id % 8) * 1728000) + 86400,
     :now - ((id % 8) * 1728000)
 FROM client
 WHERE mac IS NOT NULL;
 
-INSERT INTO dhcp_lease (client_id, backend, address, mac, hostname, dhcp_client_id, duid, iaid,
-                        vendor_hint, lease_state, interface_id, starts_at, expires_at, observed_at)
-SELECT id, 'kea', last_address, NULL, NULL, NULL, NULL, NULL, NULL,
-       'expired', interface_id, :now - 17280000, :now - 16416000, :now - 16416000
+INSERT INTO dhcp_lease (provider_id, client_id, backend, address, mac, hostname,
+                        dhcp_client_id, duid, iaid,
+                        vendor_hint, lease_state, interface_id, starts_at, generation_key,
+                        expires_at, observed_at)
+SELECT (SELECT id FROM provider WHERE kind = 'dhcp_lease' AND provider_key = 'kea'), id, 'kea', last_address, NULL, NULL, NULL, NULL, NULL, NULL,
+       'expired', interface_id, :now - 17280000, 'start:' || (:now - 17280000),
+       :now - 16416000, :now - 16416000
 FROM client WHERE id = :clients + 1
 UNION ALL
-SELECT id, 'kea', last_address, NULL, NULL, NULL, NULL, NULL, NULL,
-       'active', interface_id, :now - 2592000, :now + 86400, :now
+SELECT (SELECT id FROM provider WHERE kind = 'dhcp_lease' AND provider_key = 'kea'), id, 'kea', last_address, NULL, NULL, NULL, NULL, NULL, NULL,
+       'active', interface_id, :now - 2592000, 'start:' || (:now - 2592000),
+       :now + 86400, :now
 FROM client WHERE id = :clients + 2;
+
+-- The Dnsmasq half: a backend that reports no validity start. Every one of these
+-- rows carries a NULL start and a generation key resting on the expiry, and the
+-- last one is a standing reservation, which reports neither and is keyed on the
+-- day it was seen. They are spread over the same five months so the purge has
+-- both something to remove and something to leave alone.
+INSERT INTO dhcp_lease (provider_id, client_id, backend, address, mac, hostname,
+                        dhcp_client_id, duid, iaid,
+                        vendor_hint, lease_state, interface_id, starts_at, generation_key,
+                        expires_at, observed_at)
+SELECT
+    (SELECT id FROM provider WHERE kind = 'dhcp_lease' AND provider_key = 'dnsmasq'),
+    id,
+    'dnsmasq',
+    last_address,
+    mac,
+    hostname,
+    NULL,
+    NULL,
+    NULL,
+    vendor_hint,
+    'active',
+    interface_id,
+    NULL,
+    'expiry:' || (:now - ((id % 8) * 1728000) + 43200),
+    :now - ((id % 8) * 1728000) + 43200,
+    :now - ((id % 8) * 1728000)
+FROM client
+WHERE mac IS NOT NULL AND id % 4 = 0
+UNION ALL
+SELECT
+    (SELECT id FROM provider WHERE kind = 'dhcp_lease' AND provider_key = 'dnsmasq'),
+    id,
+    'dnsmasq',
+    last_address,
+    mac,
+    hostname,
+    NULL,
+    NULL,
+    NULL,
+    vendor_hint,
+    'reserved',
+    interface_id,
+    NULL,
+    'observed_day:' || ((:now - ((id % 8) * 1728000)) / 86400 * 86400),
+    NULL,
+    :now - ((id % 8) * 1728000)
+FROM client
+WHERE mac IS NOT NULL AND id % 7 = 0;
+
+-- ---------------------------------------------------------------------------
+-- ONE MACHINE, TWO SERVERS, TWO VLANs. This is the deployment the dhcp_lease
+-- kind was made concurrent for, and it is seeded explicitly rather than left to
+-- fall out of the blocks above, because it is the claim the decision rests on.
+--
+-- The client below already holds a lease from the first server, on the interface
+-- it was discovered behind. This adds a lease from the SECOND server, at a
+-- different address, on a DIFFERENT interface. It is ONE client row with TWO
+-- leases, and that is the truth rather than a collapse: the identity cascade keys
+-- on the DHCP client identifier and then on the MAC, neither of them scoped to an
+-- interface, so the same machine reported by two servers is the same machine.
+--
+-- The second interface is derived arithmetically from the first, so nothing here
+-- assumes how many interfaces exist or which one anything sits behind; the
+-- expression cannot yield the interface the client is already on.
+-- ---------------------------------------------------------------------------
+INSERT INTO dhcp_lease (provider_id, client_id, backend, address, mac, hostname,
+                        dhcp_client_id, duid, iaid,
+                        vendor_hint, lease_state, interface_id, starts_at, generation_key,
+                        expires_at, observed_at)
+SELECT
+    (SELECT id FROM provider WHERE kind = 'dhcp_lease' AND provider_key = 'dnsmasq'),
+    c.id,
+    'dnsmasq',
+    a.address_v4,
+    c.mac,
+    c.hostname,
+    NULL,
+    NULL,
+    NULL,
+    c.vendor_hint,
+    'active',
+    1 + (c.interface_id % :interfaces),
+    NULL,
+    'expiry:' || (:now + 43200),
+    :now + 43200,
+    :now
+FROM client AS c
+JOIN synth_address AS a ON a.slot = :clients + 3
+WHERE c.mac IS NOT NULL
+  AND c.interface_id IS NOT NULL
+  AND c.id = (SELECT min(id) FROM client
+              WHERE mac IS NOT NULL AND interface_id IS NOT NULL);
 
 -- ---------------------------------------------------------------------------
 -- Flows — the largest growing table, one row per filter-log record.
@@ -703,13 +851,17 @@ FROM watermarks
 GROUP BY file_number;
 
 -- ---------------------------------------------------------------------------
--- NetFlow per-pair volume.
+-- Daily per-pair volume, DERIVED rather than collected.
 --
--- Insight writes each flow once per interface and once per direction, with
--- source and destination swapped on the outbound one, so the seed offers every
--- pair twice — exactly the direction doubling the survey describes. The
--- de-duplication key collapses them to one logical volume: after this
--- statement the table holds :pair_rows rows, not twice that.
+-- No collector writes this table and none will: the only per-pair endpoint
+-- carries neither a port nor a protocol, and `flow` carries both, so these rows
+-- are step 5's to compute from `flow`. The seed writes them as that derivation
+-- will, which is why this block names no provider.
+--
+-- The de-duplication it has to respect is unchanged, and the seed still exercises
+-- it: a per-pair figure is direction-free, so the seed offers every pair twice
+-- with the endpoints swapped and the key collapses them to one logical volume.
+-- After this statement the table holds :pair_rows rows, not twice that.
 -- ---------------------------------------------------------------------------
 WITH RECURSIVE counter (p) AS (
     SELECT 1
@@ -920,9 +1072,9 @@ GROUP BY 1, 2, 3, 4;
 
 -- ---------------------------------------------------------------------------
 -- Provider availability. One row per registry row already exists, created by
--- migration 0002 in the "not yet probed" state; the seed records what a probe
--- round found. Every kind therefore carries both halves of the picture: which
--- implementations are reachable, and which single one is active.
+-- the schema in the "not yet probed" state; the seed records what a probe round
+-- found. Every kind therefore carries both halves of the picture: which
+-- implementations are reachable, and which of them are active.
 --
 -- The active security-event provider is present but disabled and the active
 -- DNS-lookup provider is unavailable, so the screens have both degraded states
@@ -940,15 +1092,35 @@ SET state = 'present_but_disabled', probe = 'GET /api/ids/service/status',
     detail = 'status reported stopped', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1);
 
+-- The measurement source. Its probe is the firewall's own NetFlow configuration,
+-- which is what governs whether the per-pair snapshot it samples holds anything;
+-- the probe moved here from the flow_volume row with the sampler, because this is
+-- the row whose material it governs.
 UPDATE source_availability
 SET state = 'reachable', probe = 'GET /api/diagnostics/netflow/is_enabled',
     detail = 'local collection enabled', checked_at = :now
-WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'flow_volume' AND is_active = 1);
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active = 1);
 
+UPDATE source_availability
+SET state = 'reachable', probe = 'example state source probe',
+    detail = NULL, checked_at = :now
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'reconciled_state' AND is_active = 1);
+
+-- The two DHCP servers, each with ITS OWN probe endpoint. One availability row per
+-- server, and neither borrows the other's conclusion: that is what the seam is for,
+-- and a single statement covering both active rows would have written the first
+-- server's probe onto the second server's row.
 UPDATE source_availability
 SET state = 'reachable', probe = 'GET /api/kea/service/status',
     detail = NULL, checked_at = :now
-WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'dhcp_lease' AND is_active = 1);
+WHERE provider_id IN (SELECT id FROM provider
+                      WHERE kind = 'dhcp_lease' AND provider_key = 'kea' AND is_active = 1);
+
+UPDATE source_availability
+SET state = 'reachable', probe = 'GET /api/dnsmasq/service/status',
+    detail = 'serving a range on its own interface', checked_at = :now
+WHERE provider_id IN (SELECT id FROM provider
+                      WHERE kind = 'dhcp_lease' AND provider_key = 'dnsmasq' AND is_active = 1);
 
 UPDATE source_availability
 SET state = 'unavailable', probe = 'GET /api/unbound/overview/is_enabled',
@@ -1006,9 +1178,9 @@ JOIN reasons AS r ON r.n = ((k - 1) % 3) + 1;
 --
 -- One table carries both because they are the same five facts -- a subject, a
 -- measure, a unit, a value and an instant. The firewall's own telemetry names
--- no provider, because it implements none of the six provider kinds; the
--- per-pair readings name the volume provider, because that volume is its
--- material. The pair subject is the two addresses in lexicographic order joined
+-- no provider, because the machine reporting on itself implements no external
+-- contract; the per-pair readings name the measurement provider, because that
+-- volume is its material. The pair subject is the two addresses in lexicographic order joined
 -- by a space, the same canonical ordering pair_volume_observation enforces, and
 -- both address families appear among them.
 --
@@ -1040,7 +1212,7 @@ FROM counter
 JOIN interface AS i ON i.id = ((s - 1) % :interfaces) + 1
 UNION ALL
 SELECT
-    (SELECT id FROM provider WHERE kind = 'flow_volume' AND is_active = 1),
+    (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active = 1),
     'endpoint_pair',
     min(CASE WHEN s % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END,
         CASE WHEN s % :ipv6_every = 0 THEN peer.address_v6 ELSE peer.address_v4 END)
@@ -1052,6 +1224,64 @@ SELECT
 FROM counter
 JOIN synth_address AS local ON local.slot = ((s - 1) % :clients) + 1
 JOIN synth_address AS peer ON peer.slot = 1000000 + s;
+
+-- ---------------------------------------------------------------------------
+-- Reconciled state: complete sets of things, each asserted complete at an
+-- instant, so that a departure is detectable.
+--
+-- Two sets from one provider, because one source commonly reports several and a
+-- poll of one must not read as a departure of everything in the other. Each set
+-- is captured several times, at 3600-second steps, walking back over the same
+-- five months as everything else so the purge has rows to remove and rows to
+-- leave alone.
+--
+-- THE MEMBERSHIP SHRINKS BY ONE EACH POLL, and that is the point rather than a
+-- flourish: the newest capture of each set omits a thing its predecessor held, so
+-- the departure view has something to report and a check has something to fail
+-- on. The item keys are synthesised from the counter and name nothing real; the
+-- attributes are a JSON object, which is the only shape that column accepts,
+-- because it is read on a detail screen as fields and never aggregated.
+-- ---------------------------------------------------------------------------
+WITH RECURSIVE capture (k) AS (
+    SELECT 1
+    UNION ALL
+    SELECT k + 1 FROM capture WHERE k < 12
+),
+sets AS (
+    SELECT 'example-set-alpha' AS set_key
+    UNION ALL SELECT 'example-set-beta'
+)
+INSERT INTO state_snapshot (provider_id, set_key, captured_at)
+SELECT
+    (SELECT id FROM provider WHERE kind = 'reconciled_state' AND is_active = 1),
+    sets.set_key,
+    :now - ((k - 1) * 3600) - ((k % 6) * 8640000)
+FROM capture, sets;
+
+-- The members. A capture holds one member for itself plus one for every capture
+-- of the same set that came after it, so each successive capture holds one FEWER
+-- than its predecessor: the thing whose number is highest is the one that left.
+-- The count is derived from the captures' own ordering rather than from the
+-- counter, so it stays correct however the instants above are spread.
+WITH RECURSIVE member (n) AS (
+    SELECT 1
+    UNION ALL
+    SELECT n + 1 FROM member WHERE n < 12
+)
+INSERT INTO state_item (snapshot_id, item_key, attributes, valid_until_at)
+SELECT
+    s.id,
+    printf('example-item-%d', m.n),
+    CASE WHEN m.n % 3 = 0
+         THEN printf('{"example-field":"example-value-%d"}', m.n) END,
+    CASE WHEN m.n % 4 = 0 THEN s.captured_at + 3600 END
+FROM state_snapshot AS s, member AS m
+WHERE m.n <= 1 + (
+    SELECT count(*) FROM state_snapshot AS newer
+    WHERE newer.provider_id = s.provider_id
+      AND newer.set_key = s.set_key
+      AND newer.captured_at > s.captured_at
+);
 
 DROP TABLE synth_address;
 

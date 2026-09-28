@@ -2,6 +2,10 @@ package store
 
 import (
 	"context"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -73,28 +77,42 @@ func TestIngestingTheSameSecurityEventTwiceProducesTheSameCount(t *testing.T) {
 }
 
 // TestTheTwoDirectionsOfOnePairCollapseToOneVolume is the de-duplication the firewall's
-// own aggregate makes necessary.
+// own aggregate made necessary, restated against the derivation that now fills the table.
 //
-// It writes each flow once per interface AND once per direction, with the endpoints
-// swapped on the outbound one, so a key that carried the direction would double every
-// volume. The write path sorts the two addresses before the insert, which is what makes
-// both observations the same row.
+// The property has not stopped mattering — a per-pair figure is direction-free whether it
+// came from the firewall's aggregate or from opnview's own flow records — but the actor
+// has changed: pair_volume_observation is DERIVED from `flow` by step 5, so there is no
+// write path to exercise. What is asserted here is therefore the contract that derivation
+// must respect: offered under canonical ordering, the two directions of one pair are one
+// row, and the schema rejects a row stored the other way round.
 func TestTheTwoDirectionsOfOnePairCollapseToOneVolume(t *testing.T) {
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
-	outbound := PairVolumeObservation{
-		DayStartAt: 1749945600, EndpointA: "example-endpoint-b", EndpointB: "example-endpoint-a",
-		ServicePort: 443, Protocol: "tcp", Octets: 1000, Packets: 10,
-		ObservedDirection: "out", LastSeenAt: 1750000000, IngestedAt: 1750000000,
+	insert := func(endpointA, endpointB, direction string) error {
+		low, high := endpointA, endpointB
+		if low > high {
+			low, high = high, low
+		}
+		_, err := database.DB().ExecContext(ctx,
+			`INSERT INTO pair_volume_observation (day_start_at, endpoint_low, endpoint_high,
+			     service_port, protocol, octets, packets, observed_direction,
+			     observed_interface_device, last_seen_at, ingested_at)
+			 VALUES (1749945600, ?, ?, 443, 'tcp', 1000, 10, ?, NULL, 1750000000, 1750000000)
+			 ON CONFLICT (day_start_at, endpoint_low, endpoint_high, service_port, protocol)
+			 DO NOTHING`,
+			low, high, direction)
+		return err
 	}
-	inbound := outbound
-	inbound.EndpointA, inbound.EndpointB = outbound.EndpointB, outbound.EndpointA
-	inbound.ObservedDirection = "in"
 
-	for _, observation := range []PairVolumeObservation{outbound, inbound, outbound, inbound} {
-		if err := database.InsertPairVolumeObservation(ctx, observation); err != nil {
-			t.Fatalf("writing a pair volume: %v", err)
+	for _, offered := range []struct{ a, b, direction string }{
+		{"example-endpoint-b", "example-endpoint-a", "out"},
+		{"example-endpoint-a", "example-endpoint-b", "in"},
+		{"example-endpoint-b", "example-endpoint-a", "out"},
+		{"example-endpoint-a", "example-endpoint-b", "in"},
+	} {
+		if err := insert(offered.a, offered.b, offered.direction); err != nil {
+			t.Fatalf("deriving a pair volume: %v", err)
 		}
 	}
 	if stored := count(t, database, "pair_volume_observation"); stored != 1 {
@@ -110,6 +128,91 @@ func TestTheTwoDirectionsOfOnePairCollapseToOneVolume(t *testing.T) {
 	}
 	if low > high {
 		t.Fatalf("the stored pair is (%q, %q), which is not in lexicographic order", low, high)
+	}
+	if _, err := database.DB().ExecContext(ctx,
+		`INSERT INTO pair_volume_observation (day_start_at, endpoint_low, endpoint_high,
+		     service_port, protocol, octets, packets, observed_direction,
+		     observed_interface_device, last_seen_at, ingested_at)
+		 VALUES (1749945600, 'example-endpoint-z', 'example-endpoint-a', 80, 'tcp',
+		         1, 1, 'in', NULL, 1750000000, 1750000000)`); err == nil {
+		t.Fatal("a pair stored in the wrong order was accepted, so the canonical ordering " +
+			"the derivation has to apply is not enforced")
+	}
+}
+
+// TestNoCodePathWritesThePairVolumeTable is the other half of the same ruling, and it is the
+// assertion that makes the ruling durable rather than a comment.
+//
+// pair_volume_observation is derived from `flow` and collected from nowhere: the only per-pair
+// endpoint the survey found carries neither a port nor a protocol, and the filter log carries
+// both exactly. So no collector fills it, and this test fails the day one appears — which is
+// what makes step 5's derivation a deliberate change rather than a drift. The test's own
+// statements are excluded by construction: it scans the non-test sources.
+//
+// The scan NORMALISES EACH FILE WHOLE rather than reading it line by line, and that is what
+// makes it as strict as the ruling: a long SQL statement in Go is ordinarily wrapped, either as
+// a raw literal spanning lines or as quoted fragments joined with +, so a collector that put
+// the table name on the line after INSERT INTO would have written the derived table and passed
+// a per-line match. Both wrappings collapse here.
+//
+// EVERY WRITING VERB IS ENUMERATED, NOT ONLY INSERT, and the reason is worth recording because
+// an earlier revision of this guard got it wrong: it enumerated the six INSERT conflict clauses
+// and claimed that covered the statement, which is true of conflict clauses and false of the
+// statement. REPLACE INTO is SQLite's own alias for INSERT OR REPLACE and is the most natural
+// way to re-derive a day's slot -- precisely what step 5 will be doing -- so a guard blind to
+// it was blind to the likeliest write there is. UPDATE and DELETE are writes too.
+func TestNoCodePathWritesThePairVolumeTable(t *testing.T) {
+	// The characters a Go source file puts between two halves of one wrapped SQL statement, and
+	// which no SQL identifier contains: the quote and backtick that end and begin a literal, and
+	// the + that joins them. Removing them lets `"INSERT INTO " + "pair_volume_observation"` read
+	// as the one statement it is.
+	// The characters and qualifiers a Go source file can put between a verb and its table, none
+	// of which can occur inside an SQL identifier: the quote, backtick and bracket that delimit
+	// a literal or a quoted name, the + that joins two fragments, and the schema qualifier.
+	sqlLiteralNoise := strings.NewReplacer(
+		"\"", " ", "`", " ", "+", " ", "[", " ", "]", " ", "main.", "")
+	const table = "pair_volume_observation"
+	writeContexts := []string{
+		"insert into " + table,
+		"insert or ignore into " + table,
+		"insert or replace into " + table,
+		"insert or abort into " + table,
+		"insert or fail into " + table,
+		"insert or rollback into " + table,
+		"replace into " + table,
+		"delete from " + table,
+		"update " + table + " set",
+	}
+	var offenders []string
+	for _, root := range []string{"../../cmd", "../../internal"} {
+		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") ||
+				strings.HasSuffix(entry.Name(), "_test.go") {
+				return nil
+			}
+			source, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			normalised := strings.Join(strings.Fields(sqlLiteralNoise.Replace(
+				strings.ToLower(string(source)))), " ")
+			for _, context := range writeContexts {
+				if strings.Contains(normalised, context) {
+					offenders = append(offenders, path+": "+context)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("scanning %s: %v", root, err)
+		}
+	}
+	if len(offenders) > 0 {
+		t.Errorf("pair_volume_observation is derived from flow and collected from nowhere, "+
+			"and these lines write it: %s", strings.Join(offenders, "; "))
 	}
 }
 
@@ -207,7 +310,7 @@ func TestAMeasurementOfEachKindRoundTrips(t *testing.T) {
 	samples := []MeasurementSample{
 		{
 			// The firewall-health half. provider_id is NULL: the firewall's own
-			// telemetry implements none of the six provider kinds.
+			// telemetry implements no external contract.
 			SubjectKind: SubjectFirewall, SubjectKey: "", Measure: MeasureUptimeSeconds,
 			Unit: UnitSecond, Value: 987654, SampledAt: 1750000000,
 		},
@@ -268,17 +371,27 @@ func TestAMeasurementOfEachKindRoundTrips(t *testing.T) {
 	}
 }
 
-// TestAMeasureOutsideTheVocabularyIsRejected keeps the closed vocabulary closed. It is
-// opnview's own, because the survey establishes the telemetry endpoints and not their
-// field names, and an open column would let a sampler invent a measure nothing can read.
-func TestAMeasureOutsideTheVocabularyIsRejected(t *testing.T) {
+// TestAMalformedMeasureTermIsRejected is the restatement of the assertion that used to be
+// TestAMeasureOutsideTheVocabularyIsRejected, because the property that one named is one the
+// promotion deliberately changed rather than one that stopped mattering. A measure outside the
+// vocabulary is now ACCEPTED, by design; what is still refused is a malformed term.
+//
+// The vocabulary was closed for exactly one provider: the survey establishes the telemetry
+// endpoints and not their field names, so 4A's list was opnview's own and complete. It cannot
+// stay closed now that measurement_sample is a kind eight surveyed sources fit, none of which
+// shares a vocabulary with the others. What the column still refuses is a term that is not a
+// well-formed token — a spaced or upper-cased spelling would let two names for one measure
+// coexist, and a screen grouping by measure would then show one reading twice. Extensibility is
+// asserted in measurement_test.go, and the full shape table with it; this is the one direction
+// worth keeping here, where the vocabulary assertion used to live.
+func TestAMalformedMeasureTermIsRejected(t *testing.T) {
 	database, _ := openTestStore(t)
 	err := database.InsertMeasurementSample(context.Background(), MeasurementSample{
-		SubjectKind: SubjectFirewall, Measure: Measure("example-measure-nobody-declared"),
+		SubjectKind: SubjectFirewall, Measure: Measure("example measure nobody declared"),
 		Unit: UnitRatio, Value: 1, SampledAt: 1750000000,
 	})
 	if err == nil {
-		t.Fatal("a measure outside the vocabulary was accepted")
+		t.Fatal("a measure that is not a well-formed token was accepted")
 	}
 }
 

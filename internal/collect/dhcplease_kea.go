@@ -78,13 +78,16 @@ func (keaLeases) leases(ctx context.Context, host session) (
 		if !ok {
 			continue
 		}
-		// The only backend that reports a real validity start.
+		// The only backend that reports a real validity start. Where `valid_lifetime` is
+		// absent the start stays nil rather than falling back to the expiry: the lease table
+		// now carries a nullable start, so "this row does not know" is expressible.
 		if observation.ExpiresAt != nil {
 			if lifetime, present := decode.Int(row, "valid_lifetime"); present && lifetime > 0 {
-				observation.StartsAt = *observation.ExpiresAt - lifetime
-				if observation.StartsAt < 0 {
-					observation.StartsAt = 0
+				startsAt := *observation.ExpiresAt - lifetime
+				if startsAt < 0 {
+					startsAt = 0
 				}
+				observation.StartsAt = &startsAt
 			}
 		}
 		observations = append(observations, observation)

@@ -7,10 +7,10 @@ stops there. It is a seam document, not a plugin specification.
 The authority on the schema is `internal/store/schema.sql`; on the sources,
 `docs/opnsense-api-survey.md`; on the entities, `docs/data-model.md`.
 
-## Six kinds
+## Eight kinds
 
 A **kind** is a contract `opnview` implements: a shape of material, with a
-normalised destination in the schema. Exactly six exist, and the `provider`
+normalised destination in the schema. Exactly eight exist, and the `provider`
 table constrains its `kind` column to them.
 
 <!-- provider-kinds:begin -->
@@ -20,6 +20,8 @@ dns_lookup
 firewall_log
 flow_volume
 geo_asn
+measurement_sample
+reconciled_state
 security_event
 ```
 <!-- provider-kinds:end -->
@@ -28,10 +30,29 @@ security_event
 |---|---|---|
 | `firewall_log` | one record per logged packet decision | `flow`, and `blocked_event` over it |
 | `security_event` | one record per detection | `security_event`, with `provider_rule_info` for severity |
-| `flow_volume` | per-pair byte and packet counters | `pair_volume_observation` |
-| `dhcp_lease` | one record per lease generation | `dhcp_lease`, feeding `client` identity |
+| `flow_volume` | per-pair byte and packet counters | `pair_volume_observation`, **derived from `flow` and collected from nowhere** |
+| `dhcp_lease` | one record per lease generation | `dhcp_lease`, naming the server that issued each one, feeding `client` identity |
 | `dns_lookup` | one record per resolver lookup | `dns_resolution`, feeding `domain_attribution` |
 | `geo_asn` | country, coordinates, ASN and operator per address | `geo_asn` |
+| `measurement_sample` | one numeric reading of one subject at one instant | `measurement_sample` |
+| `reconciled_state` | the complete set of things of one type, as of one instant | `state_snapshot` and `state_item`, with `state_item_departure` over them |
+
+**The last two are the survey's finding rather than a design instinct.** Of the
+~34 data-producing sources the plugin ecosystem exposes, **eight of the ten that
+fit an existing shape fit `measurement_sample`** — per-peer transfer counters,
+frontend and backend counters, per-interface volume, UPS, SMART and sensor
+readings — and it was not a kind: a table with no `provider_key`, no availability
+row and no place in `provider.kind`. **Ten of the eleven that fit nothing at all
+are one single shape**, the reconciled set. Counting only the log-shaped kinds,
+two sources in the whole ecosystem add to them. See
+`docs/opnsense-api-survey.md`, *What the plugin ecosystem actually exposes*.
+
+`flow_volume` keeps its registry row and has no implementation, deliberately:
+its destination is **computed from `flow`** by step 5, because the only per-pair
+endpoint carries neither a port nor a protocol and the filter log carries both
+exactly. `reconciled_state` has **no registry row at all**: a row is a claim that
+an implementation exists, and no connector for a state-shaped source is written
+yet.
 
 A **provider** is one implementation of one kind. It is a row in the `provider`
 registry, identified by `(kind, provider_key)`. Several providers of one kind
@@ -59,20 +80,76 @@ provider with no availability row would be indistinguishable from a healthy
 one, so the row exists from the first apply of the schema onwards, in the not-yet-probed
 `unavailable` state.
 
-## At most one provider per kind is active
+## Activeness, and what is still exclusive
 
 Reachability and use are two different facts. A machine may have two
 implementations of a kind installed and reachable at once, and the model must
-say which one `opnview` actually read. That is `provider.is_active`, and **at
-most one provider per kind is active**, enforced by a partial unique index over
-`kind` where `is_active = 1`.
+say which one `opnview` actually read. That is `provider.is_active`.
 
-On a freshly migrated database **no provider is active**. Activeness is
-determined by runtime detection at step 4, never by the schema: a schema file
-has no way to know what is installed and must not pretend to.
+**One active provider per kind was the wrong universal rule.** People run
+several detection engines side by side, and the how-to corpus is people stacking
+them (survey, *Four findings that bear on the collectors already written*), so
+three concurrent providers of the detection kind is the normal installation.
+The partial unique index over `kind WHERE is_active = 1` is gone. What replaces
+it is derived from the schema rather than chosen kind by kind:
 
-How step 4 chooses which provider to activate — the selection policy — is not
-decided here. This cycle models the marker.
+> **A kind admits several concurrently active providers exactly when the
+> identity of its destination rows includes the provider.**
+
+Where the identity includes it, two active providers can neither collide nor
+double-count: every row says who reported it, so one fact reported twice is two
+attributed rows and a screen can show them per provider or side by side. Where
+it does not, the second provider's rows are indistinguishable from the first's
+by origin, so it would either collide with them or silently double a figure
+nobody could decompose.
+
+| Kind | Destination identity | Several active? |
+|---|---|---|
+| `firewall_log` | `flow.log_digest` | no |
+| `security_event` | `(provider_id, provider_event_key)` | **yes** |
+| `flow_volume` | `(day_start_at, endpoints, port, protocol)` | no |
+| `dhcp_lease` | `(address, generation_key, provider_id)` | **yes** |
+| `dns_lookup` | `dns_resolution.lookup_key` | no |
+| `geo_asn` | `geo_asn.address` | no |
+| `measurement_sample` | `(subject, measure, sampled_at, provider)` | **yes** |
+| `reconciled_state` | `(provider_id, set_key, captured_at)` | **yes** |
+
+**`dhcp_lease` is concurrent, and the deployment is the ordinary one:** one
+server issuing on one VLAN and another on a second, two scopes with no overlap.
+The objection to it was that two active lease providers would put one machine on
+the screen twice under two names, and the **client identity cascade** is what
+answers it — the cascade keys on the DHCP client identifier first and on the MAC
+second, and *neither is scoped to an interface*, so a machine leased on two VLANs
+by two servers resolves to **one client holding two leases**, which is the truth.
+The duplication the objection feared needs two servers issuing on the *same*
+scope, and that is a misconfiguration of the firewall rather than a shape this
+model should contort itself to absorb.
+
+Its identity names the **provider** and not the backend, and the distinction is
+load-bearing rather than pedantic: `backend` is a normalised vocabulary of
+response *shapes*, and two providers could report the same one — a second
+implementation reading a Kea running elsewhere would — so keying on it satisfied
+the letter of the rule above and not its substance. The rule is stated in terms of
+the provider, and so is the key.
+
+`geo_asn` is exclusive because its row is one cache entry per address, and a
+second provider would overwrite the first's answer rather than add to it.
+`dns_lookup` is exclusive because `dns_resolution.lookup_key` carries no provider:
+a lookup that transited two resolvers would be two records nothing could tell
+apart from two lookups.
+
+It is enforced by a partial unique index over `kind` where `is_active = 1` **and
+the kind is not one of the four**, and mirrored in `internal/store/kinds.go` so
+the probe round can activate every qualifying provider of a concurrent kind
+instead of discovering the constraint by failing. The database is the authority,
+and a test reads the index's own definition back and asserts the two agree.
+
+On a freshly applied schema **no provider is active**. Activeness is determined
+by runtime detection, never by the schema: a schema file has no way to know what
+is installed and must not pretend to. For an exclusive kind, two candidates the
+firewall's own configuration does not separate activate **neither**, and the
+ambiguity is recorded on both rows; for a concurrent kind there is nothing to
+decide, so every candidate is activated.
 
 ## A future provider's event shape will be surveyed, not guessed
 

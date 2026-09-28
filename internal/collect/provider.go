@@ -255,9 +255,12 @@ type leaseObservation struct {
 	// is discovered authoritatively elsewhere.
 	InterfaceIdentifier string
 	InterfaceDevice     string
-	// StartsAt is the validity start, or the substitute the implementation had to use when
-	// its backend reports none. Which it is, and why, is recorded at each implementation.
-	StartsAt  int64
+	// StartsAt is the validity start, and nil when the backend reports none. It is a pointer
+	// rather than a zero so that "the lease began at this instant" and "this backend cannot
+	// say" are two different values: only Kea reports one, through `valid_lifetime`, and an
+	// implementation that substituted anything here would be asserting a figure it read
+	// nowhere. What keeps a re-poll idempotent is dhcp_lease.generation_key instead.
+	StartsAt  *int64
 	ExpiresAt *int64
 }
 
@@ -302,12 +305,14 @@ type lookupSource interface {
 	requestedSpanSeconds() int64
 }
 
-// measurementSource is one implementation of the flow_volume kind.
+// measurementSource is one implementation of the measurement_sample kind.
 //
-// The kind's material is volume, and on OPNsense 26.7 no endpoint answers for a past
-// window: the per-pair data is a live snapshot, so the implementation samples and opnview
-// keeps the history. The same pass reads the firewall's own gauges, because a gauge and a
-// sampled pair volume are the same five facts and one table carries both.
+// The kind's material is a numeric reading of a subject at an instant. On OPNsense 26.7 no
+// endpoint answers for a past window: the per-pair data is a live snapshot, so the
+// implementation samples and opnview keeps the history. The same pass reads the firewall's own
+// gauges, because a gauge and a sampled pair volume are the same five facts and one table
+// carries both — which is why the kind exists and why eight of the ten surveyed sources that
+// fit an existing shape fit this one.
 type measurementSource interface {
 	providerKey() string
 	probe(ctx context.Context, host session) (probeResult, error)

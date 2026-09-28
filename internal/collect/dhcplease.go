@@ -22,16 +22,18 @@ import (
 // registered in the schema today; on the firewall the survey probed, Dnsmasq serves DHCP and
 // Kea is disabled, and somebody else's firewall is the other way round.
 //
-// THE VALIDITY START IS A SUBSTITUTE ON EVERY BACKEND BUT KEA, and that is a finding rather
-// than a detail. dhcp_lease.starts_at is NOT NULL and is half of the key that makes a reissue a
-// second row. Kea reports `valid_lifetime`, so the start is `expire` minus it — a real figure.
-// Dnsmasq reports only `expire`, so there is no start to read: the expiry is used as the
-// generation discriminator, which keeps a re-poll idempotent and makes a renewal a new
-// generation, and it is NOT a claim about when the lease began. A reserved lease reports no
-// expiry either, and its discriminator is the day it was observed, because a reservation is
-// standing configuration rather than a generation. What the model actually wants is a nullable
-// start plus an explicit generation key, and that is a schema decision rather than something to
-// add in passing.
+// THE VALIDITY START IS REPORTED BY KEA AND BY NO OTHER BACKEND, and the model now says so
+// instead of substituting. Kea reports `valid_lifetime`, so the start is `expire` minus it — a
+// real figure, stored. Dnsmasq reports only `expire` and a reserved lease reports neither, so
+// both store a NULL start: a backend that cannot know says so.
+//
+// What makes a re-poll idempotent is a column of its own, dhcp_lease.generation_key, composed by
+// store.GenerationKeyOf from the most specific instant the backend supplied and carrying the
+// name of what it rests on — `start:`, `expiry:` or `observed_day:`. The expiry still
+// discriminates a Dnsmasq generation, and a renewal is still a new one, but the column that says
+// so no longer pretends to be a validity start. A reservation's key is the day it was observed,
+// because a reservation is standing configuration rather than a generation, and it therefore
+// yields one row per day rather than one per poll.
 //
 // THE NEIGHBOUR TABLES ARE READ WHETHER OR NOT ANY LEASE BACKEND IS. get_arp and get_ndp carry
 // a MAC, an address, the interface and a vendor string, and the survey's inferred text named
@@ -41,7 +43,7 @@ import (
 // weakest level of the cascade.
 //
 // They belong to no provider kind: they are the firewall's own view of its neighbours rather
-// than an implementation of one of the six contracts, so no availability row moves for them.
+// than an implementation of one of the eight contracts, so no availability row moves for them.
 // What a failure costs is client identity, which the cascade already degrades for explicitly,
 // and what it must not do is stop the lease pass.
 
@@ -66,15 +68,35 @@ func (c *Collector) CollectDHCPLease(ctx context.Context) error {
 	return nil
 }
 
-// collectLeases reads the active backend's lease table.
+// collectLeases reads every active backend's lease table.
+//
+// SEVERAL ARE NORMAL, and the deployment is the ordinary one: one server issuing on
+// one VLAN and another on a second, two scopes with no overlap. A machine leased by
+// both is ONE client holding TWO leases, because the identity cascade keys on the
+// DHCP client identifier and then on the MAC, neither of them scoped to an
+// interface. One failing backend does not stop the others: they are separate
+// servers behind separate endpoints, and letting the first failure end the pass
+// would turn one unreadable server into two.
 func (c *Collector) collectLeases(ctx context.Context) error {
-	providerKey, providerID, active, err := c.activeSourceKey(ctx, KindDHCPLease)
+	sources, err := c.activeSources(ctx, KindDHCPLease)
 	if err != nil {
 		return err
 	}
-	if !active {
-		return nil
+	var failures []error
+	for _, active := range sources {
+		if err := c.collectLeasesFrom(ctx, active); err != nil {
+			failures = append(failures, err)
+		}
 	}
+	if len(failures) > 0 {
+		return fmt.Errorf("collect: the lease read was incomplete: %w", joinErrors(failures))
+	}
+	return nil
+}
+
+// collectLeasesFrom reads one backend's lease table.
+func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource) error {
+	providerKey, providerID := active.providerKey, active.providerID
 	source, registered := leaseSources[providerKey]
 	if !registered {
 		return fmt.Errorf("collect: the active dhcp_lease provider %q has no implementation",
@@ -98,7 +120,7 @@ func (c *Collector) collectLeases(ctx context.Context) error {
 	snapshot := c.Discovery()
 	now := c.now()
 	for _, observation := range observations {
-		if err := c.ingestLease(ctx, observation, snapshot, providerKey, now); err != nil {
+		if err := c.ingestLease(ctx, observation, snapshot, providerID, providerKey, now); err != nil {
 			return err
 		}
 	}
@@ -106,8 +128,15 @@ func (c *Collector) collectLeases(ctx context.Context) error {
 }
 
 // ingestLease turns one lease observation into a machine and a lease generation.
+//
+// The provider and the backend are both passed, and they are not the same thing: the
+// provider is WHICH SERVER issued the lease, which the row records so a screen can
+// name it, and the backend is WHICH RESPONSE SHAPE it was read from. Today one
+// implementation has one backend; the row keeps both so that a second
+// implementation reading the same shape somewhere else does not collapse into the
+// first.
 func (c *Collector) ingestLease(ctx context.Context, observation leaseObservation,
-	snapshot Discovery, backend string, now int64) error {
+	snapshot Discovery, providerID int64, backend string, now int64) error {
 	// The lease endpoints report the interface under up to three names. Only two of them are
 	// join keys opnview already holds — the configuration key and the device — so both are
 	// tried against the maps discovery built, and never the description, which is a name.
@@ -121,13 +150,10 @@ func (c *Collector) ingestLease(ctx context.Context, observation leaseObservatio
 		}
 	}
 
-	startsAt := observation.StartsAt
-	if startsAt <= 0 {
-		// The backend reported neither a validity start nor an expiry, which is what a standing
-		// reservation looks like. The day it was observed is the discriminator, so a
-		// reservation is one row per day rather than one row per poll.
-		startsAt = DayStart(now)
-	}
+	// The generation key, and the start, which is stored only when the backend reported one.
+	// Composed by the store so that every backend composes it the same way: the idempotence of
+	// the lease table rests on that and on nothing else.
+	generationKey := store.GenerationKeyOf(observation.StartsAt, observation.ExpiresAt, DayStart(now))
 
 	identity := leaseIdentity(observation, interfaceID, now)
 	clientID, err := c.store.UpsertClient(ctx, store.Client{
@@ -142,25 +168,45 @@ func (c *Collector) ingestLease(ctx context.Context, observation leaseObservatio
 		return err
 	}
 
-	return c.store.InsertDHCPLease(ctx, store.DHCPLease{
-		ClientID:     &clientID,
-		Backend:      backend,
-		Address:      observation.Address,
-		MAC:          observation.MAC,
-		Hostname:     observation.Hostname,
-		DHCPClientID: observation.DHCPClientID,
-		DUID:         observation.DUID,
-		IAID:         observation.IAID,
-		VendorHint:   observation.VendorHint,
-		LeaseState:   observation.LeaseState,
-		InterfaceID:  interfaceID,
-		StartsAt:     startsAt,
-		ExpiresAt:    observation.ExpiresAt,
-		ObservedAt:   now,
+	return c.store.InsertDHCPLease(ctx, providerID, store.DHCPLease{
+		ClientID:      &clientID,
+		Backend:       backend,
+		Address:       observation.Address,
+		MAC:           observation.MAC,
+		Hostname:      observation.Hostname,
+		DHCPClientID:  observation.DHCPClientID,
+		DUID:          observation.DUID,
+		IAID:          observation.IAID,
+		VendorHint:    observation.VendorHint,
+		LeaseState:    observation.LeaseState,
+		InterfaceID:   interfaceID,
+		StartsAt:      observation.StartsAt,
+		GenerationKey: generationKey,
+		ExpiresAt:     observation.ExpiresAt,
+		ObservedAt:    now,
 	})
 }
 
 // leaseIdentity picks the most stable level of the cascade the observation supports.
+//
+// TWO SERVERS REPORTING ONE MACHINE RESOLVE TO ONE CLIENT, and that is what makes the
+// dhcp_lease kind safe to run several providers of. Neither of the top two levels is scoped to
+// an interface: a DHCP client identifier is a property of the CLIENT — it is what the machine
+// itself sent in option 61, so both servers report the same one — and a MAC is a property of
+// its network adapter. So a machine leased on one VLAN by one server and on another by a second
+// is one client holding two leases. The survey establishes that both current backends report
+// `client_id`, so neither level is available to only one of them.
+//
+// THE ONE CASE THAT STILL SPLITS A MACHINE IN TWO is an ASYMMETRIC report: if one server
+// supplies a DHCP client identifier for a machine and the other supplies none, the first lease
+// resolves at the `dhcp_client_id` level and the second falls to `mac`, and the two identities
+// are different rows. It is worth being precise about what that is and is not. It is NOT
+// introduced by running two servers: the same split already happens in sequence when a firewall
+// switches backends, because the level a lease resolves at is a property of what the source
+// reported. And it is not reachable through a client behaving consistently, because option 61 is
+// the machine's own to send. It is reachable if a backend stops reporting a field the other
+// reports. Closing it would mean merging identities across cascade levels on a shared MAC, which
+// is a change to the cascade rather than to this kind, and it is not attempted here.
 func leaseIdentity(observation leaseObservation, interfaceID *int64,
 	now int64) store.ClientIdentity {
 	for _, candidate := range []*string{
@@ -290,8 +336,11 @@ func readLeaseRows(ctx context.Context, host session, endpoint opnsense.Endpoint
 
 // decodeLease reads the fields the two current backends and the legacy plugin share, with the
 // field-name differences normalised — `hwaddr` against `mac`, `state` against `lease_type` and
-// `is_reserved` — and applies the generation discriminator a backend that reports no validity
-// start needs.
+// `is_reserved`.
+//
+// IT DOES NOT INVENT A VALIDITY START. What the shared envelope carries is an expiry; the start
+// is left nil here, and only a backend that genuinely reports one — Kea, through
+// `valid_lifetime` — fills it in its own file.
 func decodeLease(row decode.Object) (leaseObservation, bool) {
 	address, present := decode.String(row, "address")
 	if !present {
@@ -323,9 +372,6 @@ func decodeLease(row decode.Object) (leaseObservation, bool) {
 		InterfaceIdentifier: decode.RawString(row, "if_name"),
 		InterfaceDevice:     decode.RawString(row, "device"),
 		ExpiresAt:           expiresAt,
-	}
-	if expiresAt != nil {
-		observation.StartsAt = *expiresAt
 	}
 	return observation, true
 }

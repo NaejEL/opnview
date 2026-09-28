@@ -55,15 +55,17 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 )
 
-// The provider kinds, which are the six the schema constrains `provider.kind` to.
+// The provider kinds, which are the eight the schema constrains `provider.kind` to.
 const (
 	// KindFirewallLog is data source 1.
 	KindFirewallLog = "firewall_log"
-	// KindSecurityEvent is data source 2.
+	// KindSecurityEvent is data source 2. It admits several concurrently active
+	// providers: people run Suricata, CrowdSec and Zenarmor together.
 	KindSecurityEvent = "security_event"
-	// KindFlowVolume is data source 3, and in this cycle also the owner of the
-	// sampled-measurement collector: the per-pair volume it samples is flow
-	// volume, and no aggregate of it exists upstream.
+	// KindFlowVolume is data source 3, and nothing collects it. Its destination,
+	// pair_volume_observation, is DERIVED from flow by step 5: the only per-pair
+	// endpoint carries neither a port nor a protocol and the filter log carries
+	// both. No implementation of it is registered here, deliberately.
 	KindFlowVolume = "flow_volume"
 	// KindDHCPLease is data source 4.
 	KindDHCPLease = "dhcp_lease"
@@ -72,6 +74,17 @@ const (
 	// KindGeoASN is the MaxMind dataset. This cycle neither probes nor reads it:
 	// acquisition is cycle 4C, and no second outbound destination exists here.
 	KindGeoASN = "geo_asn"
+	// KindMeasurementSample is the sampled reading: the firewall's own gauges and
+	// the live per-pair traffic snapshot, and the kind eight of the ten surveyed
+	// sources that fit an existing shape fit. It owns the sampler this package
+	// already had, which was registered under flow_volume only because the kind
+	// did not exist. It admits several concurrently active providers.
+	KindMeasurementSample = "measurement_sample"
+	// KindReconciledState is the complete set of things of one type as of one
+	// instant — the shape ten of the eleven sources that fit nothing else produce.
+	// No implementation is registered for it: the kind gives such a source a
+	// destination, and writing a connector for one is not this cycle's work.
+	KindReconciledState = "reconciled_state"
 )
 
 // The provider keys the schema registers. They are data, not configuration:
@@ -82,7 +95,10 @@ const (
 	ProviderPf = "pf"
 	// ProviderSuricata is the IDS alert feed.
 	ProviderSuricata = "suricata"
-	// ProviderInsight is the NetFlow / Insight volume source.
+	// ProviderInsight is the firewall's own sampler: the live per-pair traffic
+	// snapshot and the system gauges, whose activeness the firewall's NetFlow
+	// configuration governs. It keeps the key it was registered under in 4A; the
+	// kind it answers for is measurement_sample.
 	ProviderInsight = "insight"
 	// ProviderKea is the Kea DHCP backend.
 	ProviderKea = "kea"
@@ -262,15 +278,6 @@ func (c *Collector) writeAvailability(ctx context.Context, providerID int64,
 		return fmt.Errorf("collect: recording availability: %w", err)
 	}
 	return nil
-}
-
-// activeProvider returns the provider of a kind opnview reads, and whether there
-// is one. None active is a normal state: the probe round may have found nothing
-// reachable, or two reachable implementations the firewall's own configuration
-// does not separate, and in both cases nothing is collected for that kind rather
-// than a guess being made.
-func (c *Collector) activeProvider(ctx context.Context, kind string) (int64, bool, error) {
-	return c.store.ActiveProviderID(ctx, kind)
 }
 
 // joinErrors folds several failures into one error without losing any of them.

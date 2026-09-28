@@ -34,10 +34,10 @@ func arrangeMeasurementCollection(t *testing.T) *probeHarness {
 	harness.fake.answerFixture(opnsense.SystemTime, "system_time.json")
 	harness.fake.answerFixture(opnsense.SystemDisk, "system_disk.json")
 	harness.fake.answerFixture(opnsense.Activity, "activity.json")
-	if err := harness.collector.probeFlowVolume(context.Background()); err != nil {
+	if err := harness.collector.probeMeasurement(context.Background()); err != nil {
 		t.Fatalf("probing the volume source: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindFlowVolume); key != ProviderInsight {
+	if key := harness.activeKeyOf(t, KindMeasurementSample); key != ProviderInsight {
 		t.Fatalf("the volume kind activated %q", key)
 	}
 	return harness
@@ -146,11 +146,11 @@ func TestASamplerRefusalIsRecordedRatherThanLookingLikeSilence(t *testing.T) {
 	if err := harness.collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	state, _, _ := harness.availabilityOf(t, KindFlowVolume, ProviderInsight)
+	state, _, _ := harness.availabilityOf(t, KindMeasurementSample, ProviderInsight)
 	if state != store.StateUnavailable {
 		t.Errorf("a refused sample left the volume source reading %q", state)
 	}
-	detail := harness.detailOf(t, KindFlowVolume, ProviderInsight)
+	detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight)
 	if !strings.Contains(detail, "device name") {
 		t.Errorf("the detail is %q, which does not say why the sample was refused", detail)
 	}
@@ -220,7 +220,7 @@ func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'firewall' AND provider_id IS NOT NULL"); attributed != 0 {
 		t.Errorf("%d firewall readings name a provider", attributed)
 	}
-	// The pair readings do name one: that volume is the flow_volume kind's material.
+	// The pair readings do name one: that volume is the measurement_sample kind's material.
 	if unattributed := scalarCount(t, harness.store,
 		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'endpoint_pair' AND provider_id IS NULL"); unattributed != 0 {
 		t.Errorf("%d pair readings name no provider", unattributed)
@@ -265,7 +265,7 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 	// whole of what it says.
 	harness.fake.answerJSON(opnsense.SystemTemperature, []any{})
 
-	before := harness.availabilityInstant(t, KindFlowVolume, ProviderInsight)
+	before := harness.availabilityInstant(t, KindMeasurementSample, ProviderInsight)
 	// The clock is advanced so "the row moved" is an observable fact rather than an
 	// identical rewrite: a state recorded at the same instant is indistinguishable from one
 	// that was never re-examined.
@@ -280,11 +280,11 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 		t.Errorf("%d temperature readings were written for a firewall that reports no sensor",
 			temperatures)
 	}
-	after := harness.availabilityInstant(t, KindFlowVolume, ProviderInsight)
+	after := harness.availabilityInstant(t, KindMeasurementSample, ProviderInsight)
 	if after == before {
 		t.Error("the availability row did not move, so the absent sensor was recorded nowhere")
 	}
-	detail := harness.detailOf(t, KindFlowVolume, ProviderInsight)
+	detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight)
 	if !strings.Contains(detail, "temperature") ||
 		!strings.Contains(detail, "not written as zeroes") {
 		t.Errorf("the detail is %q, which does not record that the temperature reading did not "+
@@ -341,7 +341,7 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 				"can read", stored, measure)
 		}
 	}
-	detail := harness.detailOf(t, KindFlowVolume, ProviderInsight)
+	detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight)
 	for _, phrase := range []string{"memory", "processor", "uptime", "disk", "interface counters"} {
 		if !strings.Contains(detail, phrase) {
 			t.Errorf("the detail is %q, which does not name the %s reading as absent", detail, phrase)
@@ -359,7 +359,7 @@ func TestAnEmptyTrafficSnapshotIsNotReportedAsAnAbsenceOfTraffic(t *testing.T) {
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	detail := harness.detailOf(t, KindFlowVolume, ProviderInsight)
+	detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight)
 	if !strings.Contains(detail, "not an absence of traffic") ||
 		!strings.Contains(detail, "wrong interface argument") {
 		t.Errorf("the detail is %q, which does not say that an empty snapshot is not an "+

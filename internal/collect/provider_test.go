@@ -42,15 +42,27 @@ func TestEveryRegisteredImplementationHasARegistryRow(t *testing.T) {
 // probed by nothing, so its availability would stay at "not yet probed" for ever and a screen
 // would show a source nobody is looking at.
 //
-// geo_asn is excluded deliberately: acquiring the MaxMind dataset is cycle 4C, and this cycle
-// neither probes nor reads it. An implementation for it now would be a seam justified by a step
-// nobody has specified.
+// Three kinds are excluded deliberately, each for a recorded reason, and the exclusions are
+// named here rather than in a comment on the registry so that adding a fourth has to be argued
+// for in a test file somebody reads.
+//
+//   - geo_asn: acquiring the MaxMind dataset is cycle 4C, and this cycle neither probes nor
+//     reads it. An implementation for it now would be a seam justified by a step nobody has
+//     specified.
+//   - flow_volume: its destination, pair_volume_observation, is DERIVED from `flow` by step 5 —
+//     the maintainer's ruling — so nothing collects the kind. Its registry row records that the
+//     implementation exists on the firewall; the netflow probe that used to answer for it moved
+//     with the sampler to the measurement_sample row, which is the row whose material it
+//     governs.
+//   - reconciled_state: the kind exists so the ten surveyed state-shaped sources have a
+//     destination, and it has NO registry row at all, precisely so that this test does not have
+//     to be told to ignore one. It is listed here only to say that the absence is deliberate.
 func TestEveryRegistryRowOfACollectedKindHasAnImplementation(t *testing.T) {
 	database := newTestStore(t)
 	registered := registeredKeysByKind()
 
 	for _, provider := range everyProvider(t, database) {
-		if provider.kind == KindGeoASN {
+		if provider.kind == KindGeoASN || provider.kind == KindFlowVolume {
 			continue
 		}
 		found := false
@@ -81,7 +93,7 @@ func TestTheKindsWithSeveralImplementationsReallyHaveSeveral(t *testing.T) {
 		}
 	}
 	// And the kinds with one are not pretending otherwise.
-	for _, kind := range []string{KindFirewallLog, KindSecurityEvent, KindFlowVolume} {
+	for _, kind := range []string{KindFirewallLog, KindSecurityEvent, KindMeasurementSample} {
 		if got := len(registered[kind]); got != 1 {
 			t.Errorf("the %s kind has %d implementations, want exactly the one that exists",
 				kind, got)
@@ -144,13 +156,13 @@ func TestAnImplementationThatCannotBeReadReportsWhyRatherThanFailingThePass(t *t
 		call func(context.Context) error
 	}{
 		{KindDHCPLease, ProviderISC, func(ctx context.Context) error {
-			if err := harness.store.SetActiveProvider(ctx, KindDHCPLease, ProviderISC); err != nil {
+			if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, ProviderISC); err != nil {
 				return err
 			}
 			return harness.collector.collectLeases(ctx)
 		}},
 		{KindDNSLookup, ProviderDnsmasq, func(ctx context.Context) error {
-			if err := harness.store.SetActiveProvider(ctx, KindDNSLookup, ProviderDnsmasq); err != nil {
+			if err := harness.store.SetActiveProviders(ctx, KindDNSLookup, ProviderDnsmasq); err != nil {
 				return err
 			}
 			return harness.collector.CollectDNSLookup(ctx)
@@ -204,7 +216,7 @@ func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testi
 		string(store.StateUnavailable), "an-unimplemented-backend"); err != nil {
 		t.Fatalf("giving it an availability row: %v", err)
 	}
-	if err := harness.store.SetActiveProvider(ctx, KindDHCPLease, "an-unimplemented-backend"); err != nil {
+	if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, "an-unimplemented-backend"); err != nil {
 		t.Fatalf("activating it: %v", err)
 	}
 
@@ -223,7 +235,7 @@ func registeredKeysByKind() map[string][]string {
 		registered[KindSecurityEvent] = append(registered[KindSecurityEvent], key)
 	}
 	for key := range measurementSources {
-		registered[KindFlowVolume] = append(registered[KindFlowVolume], key)
+		registered[KindMeasurementSample] = append(registered[KindMeasurementSample], key)
 	}
 	for key := range leaseSources {
 		registered[KindDHCPLease] = append(registered[KindDHCPLease], key)

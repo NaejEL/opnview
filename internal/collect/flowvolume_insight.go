@@ -293,7 +293,7 @@ func canonicalPairKey(first, second string) string {
 // the returned list records.
 //
 // The readings carry NO provider. The firewall's own telemetry is not an implementation of any
-// of the six provider kinds — it is the machine reporting on itself — and attributing it to
+// external contract — it is the machine reporting on itself — and attributing it to
 // the volume provider would say the volume source measured the temperature. That the model has
 // no kind for it is a gap worth recording rather than papering over with a foreign key that
 // means something else.

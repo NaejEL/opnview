@@ -190,12 +190,16 @@ func TestAFreshDatabaseHasNoActiveProvider(t *testing.T) {
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
+	// Every kind, including the three that admit several active providers — which are read
+	// through the plural accessor, because asking those for THE active one is refused.
 	for _, kind := range []string{"firewall_log", "security_event", "flow_volume",
-		"dhcp_lease", "dns_lookup", "geo_asn"} {
-		if _, active, err := database.ActiveProviderID(ctx, kind); err != nil {
-			t.Fatalf("reading the active %s provider: %v", kind, err)
-		} else if active {
-			t.Errorf("the %s kind has an active provider on a fresh database", kind)
+		"dhcp_lease", "dns_lookup", "geo_asn", "measurement_sample", "reconciled_state"} {
+		ids, err := database.ActiveProviderIDs(ctx, kind)
+		if err != nil {
+			t.Fatalf("reading the active %s providers: %v", kind, err)
+		}
+		if len(ids) != 0 {
+			t.Errorf("the %s kind has %d active providers on a fresh database", kind, len(ids))
 		}
 	}
 }
@@ -224,35 +228,44 @@ func TestEveryRegisteredProviderHasExactlyOneAvailabilityRow(t *testing.T) {
 }
 
 // TestActivatingASecondProviderOfOneKindReplacesTheFirst exercises the partial unique
-// index over kind: at most one provider per kind is active, and the switch is one
-// transaction so it cannot leave two.
+// index over kind, restated twice over against the rule that replaced universal exclusivity:
+// at most one provider per EXCLUSIVE kind is active, and the switch is one transaction so it
+// cannot leave two.
+//
+// The kind it exercises MOVED. It used to be dhcp_lease, and the maintainer put that kind in
+// the concurrent set: one server issuing on one VLAN and another on a second is an ordinary
+// deployment, and a machine leased by both is one client with two leases because the identity
+// cascade keys on the client identifier and then the MAC, neither scoped to an interface. So
+// the exclusive example here is now dns_lookup, where two active resolvers would be a genuine
+// problem: a lookup that transits both would be counted twice, and dns_resolution.lookup_key
+// carries no provider to tell the two records apart.
 func TestActivatingASecondProviderOfOneKindReplacesTheFirst(t *testing.T) {
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
-	if err := database.SetActiveProvider(ctx, "dhcp_lease", "kea"); err != nil {
-		t.Fatalf("activating the first backend: %v", err)
+	if err := database.SetActiveProviders(ctx, "dns_lookup", "unbound"); err != nil {
+		t.Fatalf("activating the first resolver: %v", err)
 	}
-	if err := database.SetActiveProvider(ctx, "dhcp_lease", "dnsmasq"); err != nil {
-		t.Fatalf("activating the second backend: %v", err)
+	if err := database.SetActiveProviders(ctx, "dns_lookup", "dnsmasq"); err != nil {
+		t.Fatalf("activating the second resolver: %v", err)
 	}
-	id, active, err := database.ActiveProviderID(ctx, "dhcp_lease")
+	id, active, err := database.ActiveProviderID(ctx, "dns_lookup")
 	if err != nil || !active {
-		t.Fatalf("reading the active backend: active %v err %v", active, err)
+		t.Fatalf("reading the active resolver: active %v err %v", active, err)
 	}
 	key, err := database.ProviderKey(ctx, id)
 	if err != nil {
-		t.Fatalf("reading the active backend's key: %v", err)
+		t.Fatalf("reading the active resolver's key: %v", err)
 	}
 	if key != "dnsmasq" {
-		t.Fatalf("the active backend is %q, want dnsmasq", key)
+		t.Fatalf("the active resolver is %q, want dnsmasq", key)
 	}
 
 	// And none is a state of its own, which is what an ambiguous kind ends up in.
-	if err := database.SetActiveProvider(ctx, "dhcp_lease", ""); err != nil {
+	if err := database.SetActiveProviders(ctx, "dns_lookup", ""); err != nil {
 		t.Fatalf("leaving the kind with no active provider: %v", err)
 	}
-	if _, active, err := database.ActiveProviderID(ctx, "dhcp_lease"); err != nil {
+	if _, active, err := database.ActiveProviderID(ctx, "dns_lookup"); err != nil {
 		t.Fatalf("reading back: %v", err)
 	} else if active {
 		t.Fatal("the kind still has an active provider after being cleared")
@@ -263,7 +276,7 @@ func TestActivatingASecondProviderOfOneKindReplacesTheFirst(t *testing.T) {
 // kind with nothing active.
 func TestActivatingAnUnregisteredProviderIsRefused(t *testing.T) {
 	database, _ := openTestStore(t)
-	err := database.SetActiveProvider(context.Background(), "dhcp_lease", "not-a-registered-backend")
+	err := database.SetActiveProviders(context.Background(), "dhcp_lease", "not-a-registered-backend")
 	if err == nil {
 		t.Fatal("activating an unregistered provider succeeded")
 	}

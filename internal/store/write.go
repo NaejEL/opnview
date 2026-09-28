@@ -14,8 +14,8 @@ import (
 //     uniqueness constraint and every insert names it in ON CONFLICT;
 //   - flow.traffic_scope is written from interface membership alone, through
 //     ScopeOf, which is the one expression the schema's CHECK pins;
-//   - a pair volume is stored under its canonical ordering, so the firewall's
-//     direction doubling collapses instead of doubling the volume;
+//   - a reconciled set lands whole or not at all, because a half-written snapshot
+//     would state that every member missing from it had left;
 //   - a discovery refresh never overwrites a user's own label, and a user's own
 //     label never overwrites discovery.
 
@@ -42,10 +42,19 @@ func (s *Store) ProviderKey(ctx context.Context, providerID int64) (string, erro
 	return key, nil
 }
 
-// ActiveProviderID returns the active provider of one kind, and whether there is
-// one. None is active on a fresh database: activeness is decided by the probe
-// round, never by the schema.
+// ActiveProviderID returns the active provider of one EXCLUSIVE kind, and whether
+// there is one. None is active on a fresh database: activeness is decided by the
+// probe round, never by the schema.
+//
+// It refuses a kind that admits several active providers, rather than returning
+// the first row and letting a caller read one source where there are three. Such a
+// caller wants ActiveProviderIDs.
 func (s *Store) ActiveProviderID(ctx context.Context, kind string) (int64, bool, error) {
+	if KindAdmitsSeveralActiveProviders(kind) {
+		return 0, false, fmt.Errorf(
+			"store: the %s kind admits several active providers, so asking for THE active one "+
+				"would read one source where there may be several", kind)
+	}
 	var id int64
 	err := s.db.QueryRowContext(ctx,
 		"SELECT id FROM provider WHERE kind = ? AND is_active = 1", kind).Scan(&id)
@@ -58,13 +67,47 @@ func (s *Store) ActiveProviderID(ctx context.Context, kind string) (int64, bool,
 	return id, true, nil
 }
 
-// SetActiveProvider makes one implementation of a kind the active one, or, when
-// providerKey is empty, leaves the kind with no active provider at all.
+// ActiveProviderIDs returns every active provider of one kind, in registry order.
+// For an exclusive kind the answer holds at most one id; for a concurrent one it
+// is the whole stack the firewall is running.
+func (s *Store) ActiveProviderIDs(ctx context.Context, kind string) ([]int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		"SELECT id FROM provider WHERE kind = ? AND is_active = 1 ORDER BY provider_key", kind)
+	if err != nil {
+		return nil, fmt.Errorf("store: looking up the active %s providers: %w", kind, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("store: looking up the active %s providers: %w", kind, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: looking up the active %s providers: %w", kind, err)
+	}
+	return ids, nil
+}
+
+// SetActiveProviders records which implementations of a kind opnview reads. An
+// empty list leaves the kind with no active provider at all, which is a normal
+// state.
 //
-// The deactivation runs first because the schema carries a partial unique index
-// over kind where is_active = 1: setting a second one active fails, which is the
-// guarantee, so the switch has to be two statements in one transaction.
-func (s *Store) SetActiveProvider(ctx context.Context, kind, providerKey string) error {
+// The deactivation runs first, in one transaction with the activation, because for
+// an EXCLUSIVE kind the schema carries a partial unique index over kind where
+// is_active = 1 and setting a second one active fails — which is the guarantee, so
+// the switch cannot be two separate statements. For a concurrent kind there is no
+// such index and the whole list is activated; passing several keys for an
+// exclusive kind is refused here rather than left to the index, so the caller gets
+// a sentence instead of a constraint violation.
+func (s *Store) SetActiveProviders(ctx context.Context, kind string, providerKeys ...string) error {
+	if len(providerKeys) > 1 && !KindAdmitsSeveralActiveProviders(kind) {
+		return fmt.Errorf("store: the %s kind admits one active provider and %d were given",
+			kind, len(providerKeys))
+	}
 	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: starting the provider activation: %w", err)
@@ -75,7 +118,10 @@ func (s *Store) SetActiveProvider(ctx context.Context, kind, providerKey string)
 		"UPDATE provider SET is_active = 0 WHERE kind = ?", kind); err != nil {
 		return fmt.Errorf("store: deactivating the %s providers: %w", kind, err)
 	}
-	if providerKey != "" {
+	for _, providerKey := range providerKeys {
+		if providerKey == "" {
+			continue
+		}
 		result, err := transaction.ExecContext(ctx,
 			"UPDATE provider SET is_active = 1 WHERE kind = ? AND provider_key = ?", kind, providerKey)
 		if err != nil {
@@ -270,18 +316,30 @@ func (s *Store) ClientRefByAddressSince(ctx context.Context, address string, not
 	return id, interfaceID, true, nil
 }
 
-// InsertDHCPLease writes one lease generation. A reissue is a second row rather
-// than an overwrite, so ON CONFLICT DO NOTHING is the whole of the idempotence.
-func (s *Store) InsertDHCPLease(ctx context.Context, lease DHCPLease) error {
+// InsertDHCPLease writes one lease generation, attributed to the server that issued
+// it. A reissue is a second row rather than an overwrite, so ON CONFLICT DO NOTHING
+// is the whole of the idempotence, and the conflict is on
+// (address, generation_key, provider_id).
+//
+// Two of those three are there for reasons worth keeping together. The GENERATION
+// KEY rather than the validity start, because the start is null on every backend
+// that cannot report one and a null in a uniqueness constraint is distinct from
+// every other null — keying on it would have made a re-poll of such a lease insert
+// a row every time. The PROVIDER, because this kind admits several concurrently
+// active servers, so one address legitimately leased on two scopes is two leases
+// and not one contested row. The provider is a parameter rather than a field of the
+// struct so that a caller cannot leave it out of a sixteen-field literal and
+// discover it from a foreign-key violation.
+func (s *Store) InsertDHCPLease(ctx context.Context, providerID int64, lease DHCPLease) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO dhcp_lease (client_id, backend, address, mac, hostname, dhcp_client_id,
-		                         duid, iaid, vendor_hint, lease_state, interface_id,
-		                         starts_at, expires_at, observed_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (address, starts_at, backend) DO NOTHING`,
-		lease.ClientID, lease.Backend, lease.Address, lease.MAC, lease.Hostname,
+		`INSERT INTO dhcp_lease (provider_id, client_id, backend, address, mac, hostname,
+		                         dhcp_client_id, duid, iaid, vendor_hint, lease_state,
+		                         interface_id, starts_at, generation_key, expires_at, observed_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (address, generation_key, provider_id) DO NOTHING`,
+		providerID, lease.ClientID, lease.Backend, lease.Address, lease.MAC, lease.Hostname,
 		lease.DHCPClientID, lease.DUID, lease.IAID, lease.VendorHint, lease.LeaseState,
-		lease.InterfaceID, lease.StartsAt, lease.ExpiresAt, lease.ObservedAt)
+		lease.InterfaceID, lease.StartsAt, lease.GenerationKey, lease.ExpiresAt, lease.ObservedAt)
 	if err != nil {
 		return fmt.Errorf("store: writing a lease: %w", err)
 	}
@@ -504,48 +562,149 @@ func (s *Store) MarkEveFileLost(ctx context.Context, fileID string, now int64) e
 	return nil
 }
 
-// InsertPairVolumeObservation writes one daily per-pair volume under its
-// canonical ordering.
-//
-// The ordering is applied here and not by the caller, which is what makes the
-// firewall's direction doubling collapse: the aggregate writes each flow once per
-// interface and once per direction with the endpoints swapped, so sorting the two
-// addresses before the insert turns both observations into the same key.
-func (s *Store) InsertPairVolumeObservation(ctx context.Context, pair PairVolumeObservation) error {
-	low, high := pair.EndpointA, pair.EndpointB
-	if low > high {
-		low, high = high, low
-	}
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO pair_volume_observation (day_start_at, endpoint_low, endpoint_high,
-		                                      service_port, protocol, octets, packets,
-		                                      observed_direction, observed_interface_device,
-		                                      last_seen_at, ingested_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (day_start_at, endpoint_low, endpoint_high, service_port, protocol)
-		 DO NOTHING`,
-		pair.DayStartAt, low, high, pair.ServicePort, pair.Protocol, pair.Octets, pair.Packets,
-		pair.ObservedDirection, pair.ObservedInterfaceDevice, pair.LastSeenAt, pair.IngestedAt)
-	if err != nil {
-		return fmt.Errorf("store: writing a pair volume observation: %w", err)
-	}
-	return nil
-}
+// THERE IS NO WRITE PATH FOR pair_volume_observation, and that is the ruling
+// rather than an omission: the table is DERIVED from `flow` by step 5, because the
+// only per-pair endpoint carries neither a port nor a protocol and `flow` carries
+// both. A test asserts that no INSERT into it appears anywhere in this repository's
+// Go code, so the day one does it is a deliberate change and not a drift.
 
 // InsertMeasurementSample writes one reading. Re-reading the same instant is a
 // no-op, which is what a sampler restarting inside one interval needs.
+//
+// The conflict target names ifnull(provider_id, -1) because the uniqueness of a
+// reading includes the provider — this kind admits several concurrently active
+// providers, and two of them reading one subject at one instant are two readings —
+// and because the firewall's own gauges carry a null provider, which a bare column
+// in a uniqueness constraint would make distinct from every other null.
 func (s *Store) InsertMeasurementSample(ctx context.Context, sample MeasurementSample) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
 		                                 unit, value, sampled_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (subject_kind, subject_key, measure, sampled_at) DO NOTHING`,
+		 ON CONFLICT (subject_kind, subject_key, measure, sampled_at, ifnull(provider_id, -1))
+		 DO NOTHING`,
 		sample.ProviderID, string(sample.SubjectKind), sample.SubjectKey,
 		string(sample.Measure), string(sample.Unit), sample.Value, sample.SampledAt)
 	if err != nil {
 		return fmt.Errorf("store: writing a %s measurement: %w", sample.Measure, err)
 	}
 	return nil
+}
+
+// InsertStateSnapshot writes one complete set and its members, in one transaction.
+//
+// THE TRANSACTION IS THE POINT, not a precaution. A snapshot asserts that the set
+// was complete at one instant, and a departure is computed by comparing one
+// snapshot's members against the next one's; a half-written snapshot would
+// therefore not be a slightly incomplete row, it would be a false statement that
+// every member missing from it had LEFT. So either the whole set lands or none of
+// it does.
+//
+// Re-reading the same instant is a no-op, which is what a poller restarting inside
+// one interval needs: the snapshot identity is (provider, set, instant).
+func (s *Store) InsertStateSnapshot(ctx context.Context, snapshot StateSnapshot) error {
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: starting the %s snapshot: %w", snapshot.SetKey, err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+
+	if _, err := transaction.ExecContext(ctx,
+		`INSERT INTO state_snapshot (provider_id, set_key, captured_at) VALUES (?, ?, ?)
+		 ON CONFLICT (provider_id, set_key, captured_at) DO NOTHING`,
+		snapshot.ProviderID, snapshot.SetKey, snapshot.CapturedAt); err != nil {
+		return fmt.Errorf("store: writing the %s snapshot: %w", snapshot.SetKey, err)
+	}
+
+	var snapshotID int64
+	if err := transaction.QueryRowContext(ctx,
+		`SELECT id FROM state_snapshot
+		 WHERE provider_id = ? AND set_key = ? AND captured_at = ?`,
+		snapshot.ProviderID, snapshot.SetKey, snapshot.CapturedAt).Scan(&snapshotID); err != nil {
+		return fmt.Errorf("store: reading back the %s snapshot: %w", snapshot.SetKey, err)
+	}
+
+	for _, item := range snapshot.Items {
+		if _, err := transaction.ExecContext(ctx,
+			`INSERT INTO state_item (snapshot_id, item_key, attributes, valid_until_at)
+			 VALUES (?, ?, ?, ?)
+			 ON CONFLICT (snapshot_id, item_key) DO UPDATE SET
+			     attributes     = excluded.attributes,
+			     valid_until_at = excluded.valid_until_at`,
+			snapshotID, item.ItemKey, item.Attributes, item.ValidUntilAt); err != nil {
+			return fmt.Errorf("store: writing a member of the %s set: %w", snapshot.SetKey, err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("store: committing the %s snapshot: %w", snapshot.SetKey, err)
+	}
+	return nil
+}
+
+// StateItemsAt returns the members of one snapshot, by set and instant.
+func (s *Store) StateItemsAt(ctx context.Context, providerID int64, setKey string,
+	capturedAt int64) ([]StateItem, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT i.item_key, i.attributes, i.valid_until_at
+		 FROM state_snapshot AS s
+		 JOIN state_item AS i ON i.snapshot_id = s.id
+		 WHERE s.provider_id = ? AND s.set_key = ? AND s.captured_at = ?
+		 ORDER BY i.item_key`,
+		providerID, setKey, capturedAt)
+	if err != nil {
+		return nil, fmt.Errorf("store: reading the %s set: %w", setKey, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var items []StateItem
+	for rows.Next() {
+		var item StateItem
+		if err := rows.Scan(&item.ItemKey, &item.Attributes, &item.ValidUntilAt); err != nil {
+			return nil, fmt.Errorf("store: reading the %s set: %w", setKey, err)
+		}
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: reading the %s set: %w", setKey, err)
+	}
+	return items, nil
+}
+
+// StateDepartures returns what was in the previous complete snapshot of a set and
+// is not in the latest one.
+//
+// It reads the state_item_departure view rather than composing the comparison
+// here, so the statement a screen reads and the statement a test asserts are the
+// same one. A set observed only once yields nothing, which is correct: nothing can
+// be said to have left a set seen once.
+func (s *Store) StateDepartures(ctx context.Context, providerID int64, setKey string) (
+	[]StateDeparture, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT provider_id, set_key, item_key, attributes, valid_until_at,
+		        last_present_at, absent_since_at
+		 FROM state_item_departure
+		 WHERE provider_id = ? AND set_key = ?
+		 ORDER BY item_key`,
+		providerID, setKey)
+	if err != nil {
+		return nil, fmt.Errorf("store: reading the departures from the %s set: %w", setKey, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var departures []StateDeparture
+	for rows.Next() {
+		var departure StateDeparture
+		if err := rows.Scan(&departure.ProviderID, &departure.SetKey, &departure.ItemKey,
+			&departure.Attributes, &departure.ValidUntilAt,
+			&departure.LastPresentAt, &departure.AbsentSinceAt); err != nil {
+			return nil, fmt.Errorf("store: reading the departures from the %s set: %w", setKey, err)
+		}
+		departures = append(departures, departure)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: reading the departures from the %s set: %w", setKey, err)
+	}
+	return departures, nil
 }
 
 // RecordCollectionGap writes one interval opnview knows it did not cover. It is

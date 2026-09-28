@@ -275,12 +275,12 @@ themselves**, which are edited in place because nothing is deployed: G1, the
 blocklist that refused a resolver lookup — its **name** observed from the API
 and its **purpose** assigned by the user, never inferred from the name — and
 G11, the per-person aggregates that let a per-person question outlive the
-`flow` horizon. **Eleven remain open**, two of them new: G12, that nothing in
+`flow` horizon. **Nine remain open** — `docs/widget-catalogue.md`, *Gaps found*, is the count
+— two of them new: G12, that nothing in
 the model classifies a flow as an application, and G13, that no interface
-address and no address history is stored. G9 and G10 — firewall health and
-telemetry — are a whole data category the model was never designed to hold and
-the step-1 survey never looked at, and they are deliberately left to their own
-research cycle after the mockup.
+address and no address history is stored. **G9 and G10 — firewall health and telemetry — are closed**: the live-firewall
+survey found every telemetry endpoint answering, and `measurement_sample` is a
+provider kind that holds a sampled gauge.
 
 ### Step 3 — Static HTML mockup of a representative canvas
 

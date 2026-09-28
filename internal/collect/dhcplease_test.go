@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -85,7 +86,11 @@ func TestALeasePassStoresEachGenerationAndResolvesTheIdentityCascade(t *testing.
 }
 
 // TestALeasePassRepeatedStoresNothingNew is idempotence on the lease table. A generation is
-// keyed by (address, start, backend), so a re-poll is a no-op and a renewal is a new row.
+// keyed by (address, generation_key, backend), so a re-poll is a no-op and a renewal is a new
+// row. The key is a column of its own rather than the validity start, because the start is now
+// null on every backend that cannot report one — and a null in a uniqueness constraint is
+// distinct from every other null, so keying on it would have made every one of those leases
+// insert a fresh row on every pass. This test is what would catch that.
 func TestALeasePassRepeatedStoresNothingNew(t *testing.T) {
 	harness := arrangeLeaseCollection(t)
 	ctx := context.Background()
@@ -108,15 +113,17 @@ func TestALeasePassRepeatedStoresNothingNew(t *testing.T) {
 	}
 }
 
-// TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsUseASubstitute is the
-// substitute this collector has to make, and the reason it is a reported finding.
+// TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsStoreNone is the restatement
+// of the substitute this collector used to make, against the columns that replaced it.
 //
-// dhcp_lease.starts_at is NOT NULL and is half of the key that makes a reissue a second
-// row. Kea reports valid_lifetime, so the start is the expiry minus it — a real figure.
-// Dnsmasq reports only the expiry, so there is no start to read: the expiry is used as the
-// generation discriminator, which keeps a re-poll idempotent and is NOT a claim about when
-// the lease began.
-func TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsUseASubstitute(t *testing.T) {
+// The finding has not changed: Kea reports valid_lifetime, so the start is the expiry minus it, a
+// real figure. What changed is what the other backends do with the fact that they report none.
+// starts_at is nullable now, so a backend that cannot know stores NULL instead of writing the
+// expiry into a column named for a start; and what keeps a re-poll idempotent is
+// generation_key, which says in its own prefix what it rests on. Both directions are asserted,
+// because storing a null where a figure belongs and storing a figure where a null belongs are
+// both defects and only one of them used to be visible.
+func TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsStoreNone(t *testing.T) {
 	ctx := context.Background()
 
 	// Kea, where the figure is real.
@@ -138,17 +145,46 @@ func TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsUseASubstit
 		"SELECT count(*) FROM dhcp_lease WHERE expires_at - starts_at = 3600"); realStarts == 0 {
 		t.Error("no Kea lease carries a start computed from its valid_lifetime")
 	}
+	// And the key of such a lease says that it rests on a real start.
+	if keyed := scalarCount(t, keaHarness.store,
+		"SELECT count(*) FROM dhcp_lease WHERE generation_key = 'start:' || starts_at"); keyed == 0 {
+		t.Error("no Kea lease is keyed on the validity start it actually knows")
+	}
 
-	// Dnsmasq, where it is the substitute.
+	// Dnsmasq, which reports no start at all and now says so.
 	harness := arrangeLeaseCollection(t)
 	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("collecting the Dnsmasq leases: %v", err)
 	}
-	substituted := scalarCount(t, harness.store,
-		"SELECT count(*) FROM dhcp_lease WHERE expires_at IS NOT NULL AND starts_at = expires_at")
-	if substituted == 0 {
-		t.Error("no Dnsmasq lease uses its expiry as the generation discriminator, so the " +
-			"substitute this backend needs is not being applied")
+	unknownStarts := scalarCount(t, harness.store,
+		"SELECT count(*) FROM dhcp_lease WHERE expires_at IS NOT NULL AND starts_at IS NULL")
+	if unknownStarts == 0 {
+		t.Error("no Dnsmasq lease records its validity start as unknown, so the substitute this " +
+			"schema change removed is still being written")
+	}
+	// The expiry still discriminates the generation — a renewal is still a new row — but the
+	// column that says so no longer pretends to be a start.
+	keyedOnExpiry := scalarCount(t, harness.store,
+		"SELECT count(*) FROM dhcp_lease WHERE generation_key = 'expiry:' || expires_at")
+	if keyedOnExpiry == 0 {
+		t.Error("no Dnsmasq lease is keyed on its expiry, so the discriminator that keeps a " +
+			"re-poll idempotent is not being applied")
+	}
+	// A standing reservation reports neither, and is one row per day rather than one per poll.
+	if reserved := scalarCount(t, harness.store,
+		"SELECT count(*) FROM dhcp_lease WHERE expires_at IS NULL"); reserved > 0 {
+		if keyedOnDay := scalarCount(t, harness.store,
+			`SELECT count(*) FROM dhcp_lease
+			 WHERE expires_at IS NULL AND generation_key LIKE 'observed_day:%'`); keyedOnDay != reserved {
+			t.Errorf("%d leases report no expiry and %d of them are keyed on the day they were "+
+				"observed", reserved, keyedOnDay)
+		}
+	}
+	// Nothing anywhere stores a start it did not read: no lease carries a start equal to its
+	// expiry, which is precisely what the removed substitute produced.
+	if substituted := scalarCount(t, harness.store,
+		"SELECT count(*) FROM dhcp_lease WHERE starts_at IS NOT NULL AND starts_at = expires_at"); substituted != 0 {
+		t.Errorf("%d leases carry their expiry as their validity start", substituted)
 	}
 }
 
@@ -240,3 +276,295 @@ func containsColon(address string) bool {
 	}
 	return false
 }
+
+// TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases is the claim the dhcp_lease kind's
+// concurrency rests on, and it is asserted here because this is where the identity cascade runs.
+//
+// THE DEPLOYMENT: one DHCP server issuing on one VLAN, another on a second, two scopes with no
+// overlap. THE OBJECTION it had to answer: two active lease providers would put one machine on
+// the screen twice under two names. THE ANSWER: the cascade keys on the DHCP client identifier
+// first and on the MAC second, and NEITHER is scoped to an interface, so the same machine
+// reported by two servers on two VLANs resolves to ONE client holding TWO leases — which is the
+// truth rather than a collapse. The duplication the objection feared needs two servers issuing
+// on the SAME scope, and that is a misconfiguration of the firewall rather than a shape this
+// model absorbs.
+//
+// Both routes through the cascade are exercised, because a machine may or may not send a DHCP
+// client identifier and the answer has to hold either way.
+func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
+	ctx := context.Background()
+
+	for _, shape := range []struct {
+		name     string
+		clientID *string
+	}{
+		{"a machine that sends a DHCP client identifier", stringPointer("example-client-identifier-shared")},
+		{"a machine that sends none, so the cascade falls to its MAC", nil},
+	} {
+		t.Run(shape.name, func(t *testing.T) {
+			harness := newProbeHarness(t)
+			arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
+
+			first, err := harness.store.ProviderID(ctx, KindDHCPLease, ProviderKea)
+			if err != nil {
+				t.Fatalf("looking up the first server: %v", err)
+			}
+			second, err := harness.store.ProviderID(ctx, KindDHCPLease, ProviderDnsmasq)
+			if err != nil {
+				t.Fatalf("looking up the second server: %v", err)
+			}
+
+			// One machine: one MAC, one client identifier if it sends one. Two servers, two
+			// VLANs, two addresses. The interface identifiers are read out of the discovery
+			// fixture rather than assumed.
+			snapshot := harness.collector.Discovery()
+			identifiers := make([]string, 0, len(snapshot.Identifiers))
+			for _, name := range snapshot.Identifiers {
+				identifiers = append(identifiers, string(name))
+			}
+			if len(identifiers) < 2 {
+				t.Fatalf("discovery found %d interfaces, and this test needs two VLANs",
+					len(identifiers))
+			}
+
+			mac := "0a:11:22:33:44:aa"
+			expiry := referenceEpoch() + 3600
+			for index, lease := range []leaseObservation{
+				{
+					Address: "example-address-on-the-first-vlan", MAC: &mac,
+					DHCPClientID: shape.clientID, LeaseState: "active",
+					InterfaceIdentifier: identifiers[0], ExpiresAt: &expiry,
+				},
+				{
+					Address: "example-address-on-the-second-vlan", MAC: &mac,
+					DHCPClientID: shape.clientID, LeaseState: "active",
+					InterfaceIdentifier: identifiers[1], ExpiresAt: &expiry,
+				},
+			} {
+				providerID, backend := first, "kea"
+				if index == 1 {
+					providerID, backend = second, "dnsmasq"
+				}
+				if err := harness.collector.ingestLease(ctx, lease, snapshot,
+					providerID, backend, referenceEpoch()); err != nil {
+					t.Fatalf("ingesting the lease from server %d: %v", providerID, err)
+				}
+			}
+
+			// ONE client. This is the whole claim.
+			if clients := countRows(t, harness.store, "client"); clients != 1 {
+				t.Fatalf("one machine leased by two servers produced %d clients, want 1", clients)
+			}
+			// TWO leases, both attributed to that one machine.
+			if leases := countRows(t, harness.store, "dhcp_lease"); leases != 2 {
+				t.Fatalf("one machine leased by two servers produced %d leases, want 2", leases)
+			}
+			if attributed := scalarCount(t, harness.store,
+				"SELECT count(*) FROM dhcp_lease WHERE client_id IS NULL"); attributed != 0 {
+				t.Errorf("%d leases name no machine", attributed)
+			}
+			// Each naming a different server, which is what makes the two rows readable rather
+			// than merely distinct.
+			if servers := scalarCount(t, harness.store,
+				"SELECT count(DISTINCT provider_id) FROM dhcp_lease"); servers != 2 {
+				t.Errorf("the two leases name %d servers, want 2", servers)
+			}
+			// And sitting on two different interfaces, which is the deployment rather than an
+			// incidental detail: the machine is on two VLANs.
+			if interfaces := scalarCount(t, harness.store,
+				"SELECT count(DISTINCT interface_id) FROM dhcp_lease"); interfaces != 2 {
+				t.Errorf("the two leases sit on %d interfaces, want 2", interfaces)
+			}
+			// Re-polling both servers changes nothing: the generation key still carries the
+			// idempotence, per server.
+			for pass := 0; pass < 2; pass++ {
+				for index, lease := range []leaseObservation{
+					{
+						Address: "example-address-on-the-first-vlan", MAC: &mac,
+						DHCPClientID: shape.clientID, LeaseState: "active",
+						InterfaceIdentifier: identifiers[0], ExpiresAt: &expiry,
+					},
+					{
+						Address: "example-address-on-the-second-vlan", MAC: &mac,
+						DHCPClientID: shape.clientID, LeaseState: "active",
+						InterfaceIdentifier: identifiers[1], ExpiresAt: &expiry,
+					},
+				} {
+					providerID, backend := first, "kea"
+					if index == 1 {
+						providerID, backend = second, "dnsmasq"
+					}
+					if err := harness.collector.ingestLease(ctx, lease, snapshot,
+						providerID, backend, referenceEpoch()); err != nil {
+						t.Fatalf("re-polling: %v", err)
+					}
+				}
+			}
+			if leases := countRows(t, harness.store, "dhcp_lease"); leases != 2 {
+				t.Fatalf("re-polling both servers produced %d leases, want the same 2", leases)
+			}
+			if clients := countRows(t, harness.store, "client"); clients != 1 {
+				t.Fatalf("re-polling both servers produced %d clients, want the same 1", clients)
+			}
+		})
+	}
+}
+
+// TestTwoDHCPServersBothServingAreBothActivated is the behavioural consequence of the kind
+// becoming concurrent, at the probe round rather than in the schema.
+//
+// A firewall running both servers used to activate NEITHER, because two candidates the
+// firewall's own configuration did not separate was an ambiguity opnview refused to resolve.
+// For a concurrent kind there is nothing to resolve: every lease says which server issued it,
+// so both are read.
+func TestTwoDHCPServersBothServingAreBothActivated(t *testing.T) {
+	harness := newProbeHarness(t)
+	ctx := context.Background()
+	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
+
+	// Both servers running and serving a range.
+	harness.fake.answerFixture(opnsense.KeaStatus, "kea_status_running.json")
+	harness.fake.answerFixture(opnsense.KeaDHCPv4, "kea_dhcpv4_get.json")
+	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+
+	if err := harness.collector.probeDHCPLease(ctx); err != nil {
+		t.Logf("the lease probe reported: %v", err)
+	}
+
+	keys := harness.activeKeysOf(t, KindDHCPLease)
+	if len(keys) != 2 {
+		t.Fatalf("a firewall running two DHCP servers activated %d of them: %v", len(keys), keys)
+	}
+	// And neither row carries the ambiguity detail, because there is no ambiguity to record:
+	// that sentence belongs to a kind where opnview would have to choose.
+	for _, key := range keys {
+		if detail := harness.detailOf(t, KindDHCPLease, key); strings.Contains(detail, "reads neither") {
+			t.Errorf("%s records an ambiguity that no longer applies: %q", key, detail)
+		}
+	}
+}
+
+// TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients PINS A KNOWN LIMIT. It records
+// today's answer so that a change to the identity cascade cannot flip it unnoticed; it does not
+// endorse the answer, and two clients is not the outcome anybody wants.
+//
+// THE CASE: one machine, one MAC, leased by two servers, and only one of the two supplies the
+// DHCP client identifier the machine sent. The first lease resolves at the `dhcp_client_id`
+// level of the cascade and the second falls to `mac`, so the two identities are different rows
+// and one machine reads as two clients.
+//
+// WHY IT IS PINNED RATHER THAN FIXED: the split is a property of what a source reported, not of
+// running two sources — the same thing already happened in sequence when a firewall switched
+// backends — and closing it means merging identities across cascade levels on a shared MAC,
+// which is a change to the cascade. The reasoning in full, and what closing it would take, is
+// in the doc comment on `leaseIdentity` in dhcplease.go, under "THE ONE CASE THAT STILL SPLITS A
+// MACHINE IN TWO". What making the kind concurrent changed is only that the disagreement is now
+// simultaneous rather than sequential, which is why it needs an assertion under it.
+//
+// IF THIS TEST FAILS because the cascade was changed deliberately, the expectation below is what
+// records the new answer — and the paragraph in dhcplease.go has to move with it.
+func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
+	ctx := context.Background()
+	harness := newProbeHarness(t)
+	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
+
+	first, err := harness.store.ProviderID(ctx, KindDHCPLease, ProviderKea)
+	if err != nil {
+		t.Fatalf("looking up the first server: %v", err)
+	}
+	second, err := harness.store.ProviderID(ctx, KindDHCPLease, ProviderDnsmasq)
+	if err != nil {
+		t.Fatalf("looking up the second server: %v", err)
+	}
+
+	snapshot := harness.collector.Discovery()
+	identifiers := make([]string, 0, len(snapshot.Identifiers))
+	for _, name := range snapshot.Identifiers {
+		identifiers = append(identifiers, string(name))
+	}
+	if len(identifiers) < 2 {
+		t.Fatalf("discovery found %d interfaces, and this test needs two VLANs", len(identifiers))
+	}
+
+	mac := "0a:11:22:33:44:bb"
+	identifier := "example-client-identifier-only-one-server-reports"
+	expiry := referenceEpoch() + 3600
+	// The asymmetry: the same machine, reported WITH its DHCP client identifier by one server
+	// and WITHOUT it by the other.
+	leases := []struct {
+		observation leaseObservation
+		providerID  int64
+		backend     string
+	}{
+		{leaseObservation{
+			Address: "example-address-from-the-reporting-server", MAC: &mac,
+			DHCPClientID: &identifier, LeaseState: "active",
+			InterfaceIdentifier: identifiers[0], ExpiresAt: &expiry,
+		}, first, "kea"},
+		{leaseObservation{
+			Address: "example-address-from-the-silent-server", MAC: &mac,
+			DHCPClientID: nil, LeaseState: "active",
+			InterfaceIdentifier: identifiers[1], ExpiresAt: &expiry,
+		}, second, "dnsmasq"},
+	}
+	for _, lease := range leases {
+		if err := harness.collector.ingestLease(ctx, lease.observation, snapshot,
+			lease.providerID, lease.backend, referenceEpoch()); err != nil {
+			t.Fatalf("ingesting the lease from %s: %v", lease.backend, err)
+		}
+	}
+
+	// TODAY'S ANSWER, recorded: two clients, because the two leases resolved at two levels.
+	if clients := countRows(t, harness.store, "client"); clients != 2 {
+		t.Fatalf("the asymmetric report produced %d clients; this test pins the known limit at 2, "+
+			"so a change here is a change to the identity cascade and has to be deliberate",
+			clients)
+	}
+	// One at each level, which is the mechanism rather than the symptom: asserting only the
+	// count would keep passing if both leases fell to the same wrong level.
+	for _, level := range []struct {
+		kind  string
+		label string
+	}{
+		{store.IdentityDHCPClientID, "the server that reported the identifier"},
+		{store.IdentityMAC, "the server that reported none"},
+	} {
+		if resolved := scalarCount(t, harness.store,
+			"SELECT count(*) FROM client WHERE identity_kind = ?", level.kind); resolved != 1 {
+			t.Errorf("%s resolved %d clients at the %s level, want 1", level.label, resolved,
+				level.kind)
+		}
+	}
+	// Both leases are still stored and still attributed to a machine. The limit is that they
+	// name two machines; it is not that either lease is lost or orphaned.
+	if stored := countRows(t, harness.store, "dhcp_lease"); stored != 2 {
+		t.Errorf("the asymmetric report stored %d leases, want 2", stored)
+	}
+	if orphaned := scalarCount(t, harness.store,
+		"SELECT count(*) FROM dhcp_lease WHERE client_id IS NULL"); orphaned != 0 {
+		t.Errorf("%d leases name no machine, which is a defect rather than the pinned limit",
+			orphaned)
+	}
+
+	// And the split is stable across a re-poll: it neither heals nor compounds. A cascade that
+	// produced a fresh client per pass would be a much worse defect hiding behind the same count.
+	for pass := 0; pass < 2; pass++ {
+		for _, lease := range leases {
+			if err := harness.collector.ingestLease(ctx, lease.observation, snapshot,
+				lease.providerID, lease.backend, referenceEpoch()); err != nil {
+				t.Fatalf("re-polling %s: %v", lease.backend, err)
+			}
+		}
+	}
+	if clients := countRows(t, harness.store, "client"); clients != 2 {
+		t.Errorf("re-polling produced %d clients, want the same 2", clients)
+	}
+	if stored := countRows(t, harness.store, "dhcp_lease"); stored != 2 {
+		t.Errorf("re-polling produced %d leases, want the same 2", stored)
+	}
+}
+
+// stringPointer returns a pointer to a value, so a test can express "the backend reported this
+// field" and "the backend did not report it" as two different values rather than as a zero.
+func stringPointer(value string) *string { return &value }

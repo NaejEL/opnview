@@ -25,7 +25,7 @@ baseline and the first real migration is the one after it. `internal/store`
 also holds `purge.sql`, for one reason: Go's embed directive cannot reach
 outside its own package directory, and a second copy elsewhere would be a
 second truth. This document explains them; it does not restate
-them, so the two cannot drift. `docs/architecture.md` names the six provider
+them, so the two cannot drift. `docs/architecture.md` names the eight provider
 kinds and the seam a provider plugs into; this document is where each entity
 is written down.
 
@@ -88,7 +88,7 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | why a filter-log line was written | `reason` | `flow.log_reason` | `/api/diagnostics/firewall/log`, field `reason` (survey, data source 1, *Response shape*); prefixed because `reason` alone would read as the reason for the decision, which is the rule |
 | the resolver's validation verdict on a lookup | `dnssec_status` | `dns_resolution.dnssec_status` | `/api/unbound/overview/search_queries`, field `dnssec_status` (survey, data source 5, *Response shape*) |
 
-**Six terms are `opnview`'s own, because OPNsense has no word for them.**
+**Ten terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -99,8 +99,11 @@ vocabulary read off an endpoint:
 | `owner` | no product `opnview` reads has any notion of a person; a lease names a host, not a human | the entity answers "whose machine is this", and the word is taken from that question |
 | `blocklist.purpose` | the endpoint reports what a list is **called** and nothing about what it is **for**; OPNsense publishes no classification of a subscribed list | the column answers "advertising or threat", which is the maintainer's question, and it is assigned by the user for the same reason `owner` is: `hagezi-pro` and `oisd-small` tell a machine nothing |
 | `collection_gap` | no product `opnview` reads has a notion of the data it failed to deliver: every source returns what it has and says nothing about what it did not (survey, gap 11) | the word is taken from the question the row answers — what is missing from this history — and the row exists because a gap is read by a screen rather than by a log reader |
-| `measurement_sample` | OPNsense answers for processor, memory, temperature, disk, uptime and per-interface counters and publishes no collective noun for them; nor does it have a word for a per-pair volume `opnview` has to sample because no aggregate of it exists upstream | the two turned out to be the same five facts — a subject, a measure, a unit, a value and an instant — so one term names one table, and `measure` and `unit` are closed vocabularies of `opnview`'s own because the survey establishes those endpoints and not their field names |
+| `measurement_sample` | OPNsense answers for processor, memory, temperature, disk, uptime and per-interface counters and publishes no collective noun for them; nor does it have a word for a per-pair volume `opnview` has to sample because no aggregate of it exists upstream | the two turned out to be the same five facts — a subject, a measure, a unit, a value and an instant — so one term names one table, and `subject_kind`, `measure` and `unit` are vocabularies of `opnview`'s own because the survey establishes those endpoints and **not their field names**. Whether their value sets are open or closed is a property of the schema and is stated there, beside the `CHECK`s that do or do not enumerate them |
 | `dns_resolution.lookup_key` | the resolver returns a `uuid` field and it is null on every row, so the endpoint supplies no identity for a lookup at all | the column holds an identity `opnview` composes from the row's own content, so it is named for what it **is** — a key — rather than for the uuid it is not, and not `digest` either, because a provider that does supply a stable identifier stores that here unchanged |
+| `reconciled_state`, and with it `state_snapshot`, `state_item` and their `set_key` / `item_key` / `captured_at` | the shape is real and unnamed: ten of the eleven surveyed sources that fit no other kind report **the complete current set of things of one type**, and each of them names only its own contents — decisions, peers, neighbours, routes, circuits. None of them, and no OPNsense endpoint, has a word for the shape itself | the word is taken from what those ten have in common: the set is **reconciled** against the previous one rather than appended to. `captured_at` is named for the claim it makes — the set was complete at that instant — because that claim is the only thing that makes a departure detectable; `set_key` and `item_key` follow the `provider_key` / `subject_key` pattern already in the schema |
+| `state_item_departure` | no source reports a departure. Every one of them reports only what it currently holds, and says nothing at all about what it used to hold (the same finding as survey gap 11, arriving from a different direction) | the view is named for the question it answers — what has left this set — and it is a view rather than a column because a departure is a fact about two snapshots, and a stored copy could disagree with them |
+| `dhcp_lease.generation_key` | OPNsense's lease endpoints report an expiry, and only Kea reports a validity start. None of them reports an identity for a lease **generation**, which is the thing `opnview` needs one row per | the column is named for what it identifies — one generation of one lease — and its value carries the name of what it rests on (`start:`, `expiry:`, `observed_day:`), so a reader can tell a real start from a substitute without consulting the backend. It exists because `starts_at` was doing this job as well as its own, and was honest only because a comment beside it said so |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
@@ -166,6 +169,9 @@ rule
 security_event
 setting
 source_availability
+state_item
+state_item_departure
+state_snapshot
 volume_aggregate_1h
 volume_aggregate_24h
 volume_aggregate_30d
@@ -176,6 +182,12 @@ volume_aggregate_7d
 **There is no TLS or HTTP observation entity**, and there will not be one until
 a release of OPNsense makes those records readable. The schema carries nothing
 no source can fill.
+
+**`blocked_event` and `state_item_departure` are views**, and both for the same
+reason: each states something derivable from rows that already exist, and a
+stored copy could disagree with them. A blocked event is a `flow` with a
+different action; a departure is a fact about two consecutive snapshots of one
+set.
 
 ### Growing and bounded
 
@@ -202,6 +214,8 @@ owner_volume_aggregate_30d
 owner_volume_aggregate_7d
 pair_volume_observation
 security_event
+state_item
+state_snapshot
 volume_aggregate_1h
 volume_aggregate_24h
 volume_aggregate_30d
@@ -233,7 +247,7 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `blocklist` | one row per distinct list name the resolver has reported; a resolver subscribes to tens of lists, not millions |
 | `interface_map` | one row per raw device name the firewall reports |
 | `rule` | one row per rule in the running ruleset |
-| `provider` | one row per implementation the project knows of; nine today, and a new one is an `INSERT`, not a stream |
+| `provider` | one row per implementation the project knows of; ten today, and a new one is an `INSERT`, not a stream |
 | `provider_rule_info` | one row per (provider, rule identity) seen at least once; a rule set holds tens of thousands at most, and the table only ever holds the ones actually observed |
 | `source_availability` | exactly one row per `provider` row, for the life of the database |
 | `eve_ingest_cursor` | one watermark per rotated `eve.json` file; the firewall keeps the current file plus four archives |
@@ -257,7 +271,7 @@ Registering a provider is an `INSERT` into `provider` plus an `INSERT` into
 `CHECK` on the registry constrains `kind`, because a kind is code `opnview`
 ships and not data a deployment supplies.
 
-The nine rows the schema registers, with the survey section that established
+The ten rows the schema registers, with the survey section that established
 each one. **Each is one IMPLEMENTATION of a kind, and the kind is the seam:**
 `dhcp_lease` has three and `dns_lookup` has two, and on the firewall the survey
 probed Dnsmasq serves DHCP with Kea disabled while Unbound and Dnsmasq are both
@@ -276,6 +290,23 @@ below, so adding a backend is one file plus one row here.
 | `dns_lookup` | `unbound` | `/api/unbound/overview/search_queries` | data source 5 |
 | `dns_lookup` | `dnsmasq` | `/api/diagnostics/log/core/dnsmasq` | data source 5, `UNVERIFIED:` |
 | `geo_asn` | `maxmind_geolite2` | the GeoLite2 City and ASN databases | the second of the two outbound calls the project allows |
+| `measurement_sample` | `insight` | `/api/diagnostics/traffic/top/<interface names>` and the six system-gauge endpoints | *The telemetry the data model calls gaps G9 and G10 exists*, and *The per-pair data is a live snapshot, not history* |
+
+**Two kinds have no implementation, each for its own recorded reason, and
+neither absence is an oversight.**
+
+`flow_volume` keeps its registry row and is collected by nothing:
+`pair_volume_observation` is **derived from `flow`** by step 5 — the maintainer's
+ruling — so there is no pass to run and nothing to probe. The netflow
+`is_enabled` probe that used to answer for it did not disappear; it moved with
+the sampler to the `measurement_sample` row, which is the row whose material it
+actually governs.
+
+`reconciled_state` has **no registry row at all**. A row is a claim that an
+implementation exists and can be probed; a row with none would read "not yet
+probed" for ever, and a screen would show a source nobody is looking at. The
+kind exists so the ten surveyed state-shaped sources have a destination, and
+writing a connector for one of them is a later cycle's work.
 
 **Two kinds have several providers**, and that is what makes the registry real
 rather than notional: `dns_lookup` has Unbound and Dnsmasq, `dhcp_lease` has
@@ -342,18 +373,29 @@ vocabulary's adequacy for a second provider is unproven until one is surveyed.
 ### `provider` — the registry
 
 One row per implementation that can feed `opnview`, keyed
-`(kind, provider_key)`. `kind` is constrained to the six above.
+`(kind, provider_key)`. `kind` is constrained to the eight above.
 
 **`is_active` is not reachability.** It says which implementation `opnview`
 actually reads for that kind; `source_availability.state` says which ones can
-be reached. A machine may have two reachable implementations of one kind. At
-most one provider per kind is active, enforced by the partial unique index
-`uq_provider_active_per_kind` over `kind` where `is_active = 1`; marking a
-second one active fails.
+be reached. A machine may have two reachable implementations of one kind.
 
-On a freshly migrated database **no provider is active**. Activeness is
-determined by step-4 detection against a live firewall. Provider selection
-policy — how step 4 chooses — is not modelled here.
+**Exclusivity is per kind only where two providers would be
+indistinguishable.** One active provider per kind was the wrong universal rule:
+people run several detection engines side by side, and two DHCP servers on two
+VLANs is an ordinary estate rather than a misconfiguration. The rule that
+replaced it — *a kind admits several concurrently active providers exactly when
+the identity of its destination rows includes the provider* — is stated, kind by
+kind, in `docs/architecture.md` under *Activeness, and what is still exclusive*,
+and it is enforced by the partial unique index
+`uq_provider_active_per_exclusive_kind` over `kind` where `is_active = 1` and the
+kind is not one of the four the rule exempts. Marking a second provider of an
+**exclusive** kind active fails; marking a second provider of a concurrent kind
+active succeeds, and both are read.
+
+On a freshly applied schema **no provider is active**. Activeness is determined
+by detection against a live firewall. For an exclusive kind, two candidates the
+firewall's own configuration does not separate activate **neither**; for a
+concurrent kind, every candidate is activated.
 
 **Retention:** never purged. **Indexes:** the primary key, the uniqueness
 constraint on `(kind, provider_key)`, and the partial unique index above.
@@ -549,13 +591,67 @@ purging a client leaves its owner alone.
 only normalisation needed: `hwaddr` on Kea and Dnsmasq, `mac` on the legacy ISC
 plugin.
 
-**Identity:** `(address, starts_at, backend)`, unique — one row per lease
-generation, so a reissue is a second row rather than an overwrite.
+**A lease names the DHCP server that issued it.** `provider_id` is `NOT NULL` and
+joins to `provider.display_name`, so clicking a machine can tell you *which*
+server gave it its address. That is a fact a reader is entitled to rather than an
+implementation detail of de-duplication, and it became a question worth asking
+when this kind became concurrent: a client can hold leases from two servers at
+once. The read is written down and executed — the diagnostic *Leases per client
+and issuing server* in `sql/queries/diagnostics.sql` — and it takes the name off
+the join rather than reconstructing it from a key or inferring it from a backend
+token.
+
+`backend` is kept beside it and is a different fact: it is the normalised
+vocabulary of **response shapes**, which says which field-name normalisation
+produced the row. It is not an identity for a server.
+
+**Identity:** `(address, generation_key, provider_id)`, unique — one row per lease
+generation per server, so a reissue is a second row rather than an overwrite, and
+the same address legitimately leased by two servers on two scopes is two leases
+rather than one contested row.
+
+**This kind admits several concurrently active providers**, and the deployment is
+the ordinary one: one server on one VLAN, another on a second. The reasoning, and
+why the client identity cascade makes a machine leased by both *one* client with
+*two* leases, is in `docs/architecture.md` under *Activeness, and what is still
+exclusive*. The identity names the provider rather than the backend because the
+rule is stated in terms of the provider and `backend` is a vocabulary two
+providers could share.
+
+**The validity start is nullable, and the generation key is a column of its
+own.** The two used to be one column meaning two things. Kea reports
+`valid_lifetime`, so `expire` minus it is a real start; Dnsmasq reports no start
+at all, and a standing reservation reports neither a start nor an expiry. The
+earlier schema stored the expiry — or the day of observation — in a `NOT NULL`
+`starts_at`, and was honest only because a comment beside it said so. Now a
+backend that cannot know stores `NULL`, and what keeps a second poll of one lease
+from inserting a second row is `generation_key`.
+
+`generation_key` is composed by the collector, in
+`store.GenerationKeyOf`, from the most specific instant the backend supplied, and
+it carries the name of what it rests on:
+
+| Value | What the backend reported |
+|---|---|
+| `start:<epoch>` | a validity start — Kea, through `valid_lifetime` |
+| `expiry:<epoch>` | only an expiry. The expiry still discriminates a generation, and a renewal is still a new row; the column that says so no longer pretends to be a start |
+| `observed_day:<epoch>` | neither, which is what a standing reservation looks like. One row per day rather than one per poll, because a reservation is configuration rather than a generation |
+
+Nothing parses it or matches on it: it is opaque to every query, and it is the
+term recorded as `opnview`'s own in *Vocabulary*. **Keying on `starts_at` would
+now be a defect rather than a style choice**: SQLite treats nulls in a uniqueness
+constraint as distinct from each other, so every lease of a backend that reports
+no start would insert a fresh row on every pass.
 
 **Retention:** purged by `observed_at`.
 
 **Indexes:** `idx_dhcp_lease_observed_at` for the purge and for recency,
-`idx_dhcp_lease_client` for a client's lease history.
+`idx_dhcp_lease_client` for a client's lease history — keyed on `observed_at`
+rather than on `starts_at`, because an index leading on a column that is null for
+a whole backend would order that backend's leases arbitrarily. It is what makes
+"this machine's leases, per issuing server" an index search rather than a scan of
+a growing table, which matters more now that a machine can hold leases from two
+servers at once.
 
 ### `flow` — one filter-log record
 
@@ -986,12 +1082,28 @@ both, one row per registered provider.
 
 **Retention:** never purged. **Indexes:** the primary key.
 
-### `pair_volume_observation` — daily per-pair volume from Insight
+### `pair_volume_observation` — daily per-pair volume, derived from `flow`
 
-**Source:** `/api/diagnostics/networkinsight/top/FlowSourceAddrDetails/...`
+**IT IS DERIVED, NOT COLLECTED, AND THAT IS THE MAINTAINER'S RULING.** No
+collector writes this table and none will. The only per-pair endpoint the survey
+found carries **neither a port nor a protocol**, and `flow` carries both exactly,
+from the filter log — so these rows are **step 5's to compute from `flow`**, and
+nobody should go looking for the collector that fills them. A test fails if an
+`INSERT` into it appears in the Go sources.
+
+The **sampled** per-pair volume is a different thing and lives elsewhere: it is a
+live rate snapshot rather than a period total, and it is in `measurement_sample`,
+where 4A already puts it. `flow_volume` is therefore a kind with a registry row
+and no implementation; see *Providers*.
+
+**Origin of the shape:**
+`/api/diagnostics/networkinsight/top/FlowSourceAddrDetails/...`
 with a field list containing both `src_addr` and `dst_addr`, data source 3. The
 row carries the requested key fields plus `total` — the octets or packets
-measure — and `last_seen`.
+measure — and `last_seen`. The key below is kept exactly as surveyed **because
+the derivation must produce the same key**: a per-pair figure summed over a day is
+direction-free whether it came from the firewall's own aggregate or from
+`opnview`'s own records.
 
 **The de-duplication key is explicit, and this is the point of the entity.**
 Insight writes each flow once per interface **and** once per direction, with
@@ -1004,9 +1116,10 @@ interface-free:
 ```
 
 where `endpoint_low` and `endpoint_high` are the two addresses in lexicographic
-order, enforced by a `CHECK`. Collectors insert with `ON CONFLICT DO NOTHING`;
+order, enforced by a `CHECK`. The derivation inserts with `ON CONFLICT DO NOTHING`;
 the interface and direction of the observation that won are kept for provenance
-only and are not part of the key. Step 4 must use this key, or volumes double.
+only and are not part of the key. Step 5's derivation must use this key, or
+volumes double.
 
 Two further consequences of the survey, recorded so the columns are not
 over-read: `service_port` is `min(src_port, dst_port)` as Insight computes it,
@@ -1190,6 +1303,16 @@ volume, and `/api/diagnostics/system/systemResources`,
 `/api/diagnostics/traffic/interface` for the firewall's own gauges. Survey,
 *Verified against a live firewall, 2026-09-27*.
 
+**IT IS A PROVIDER KIND, and it is the kind most of the ecosystem fits.** Of the
+~34 data-producing sources surveyed in the plugin ecosystem, **eight of the ten
+that fit a shape this model already had fit this one**: per-peer transfer
+counters, frontend and backend counters, per-interface volume, and the UPS, SMART
+and sensor readings of the monitoring plugins (survey, *What does produce data,
+and in what shape*). It was a table with **no kind** — no `provider_key`, no
+availability row, no place in the `provider.kind` CHECK — so none of them had
+anywhere to announce itself, and the connector protocol could not have been
+designed around it. It has all three now.
+
 **It exists because two different needs turned out to have one shape.** The
 telemetry the earlier passes recorded as gaps **G9** and **G10** is answerable:
 those six endpoints exist, so the gap was never in the API and was always in
@@ -1219,32 +1342,152 @@ subject. For the firewall it names the part measured when there is one, a
 temperature sensor or a mounted filesystem, and is empty for a reading of the
 whole machine.
 
-**`measure` and `unit` are `opnview`'s own closed vocabularies**, and they are
-allowed to be: the survey establishes those six endpoints and **not their field
-names**, so a measure named after a response key nobody has read would be an
-assertion about a shape nobody has seen. Which response key each reading is
-taken from is a candidate list marked `UNVERIFIED:` in `internal/collect`, and
-a reading none of the candidates matches is recorded as **absent** rather than
-written as a zero — the difference between "the processor is idle" and "this
-endpoint did not tell us".
+**`subject_kind`, `measure` and `unit` are `opnview`'s own vocabularies, and they
+are EXTENSIBLE BY A PROVIDER without a schema change.** They are `opnview`'s own
+because the survey establishes those six endpoints and **not their field names**,
+so a measure named after a response key nobody has read would be an assertion
+about a shape nobody has seen. Which response key each reading is taken from is a
+candidate list marked `UNVERIFIED:` in `internal/collect`, and a reading none of
+the candidates matches is recorded as **absent** rather than written as a zero —
+the difference between "the processor is idle" and "this endpoint did not tell
+us".
+
+They were three closed `CHECK`s, and that was correct for exactly one provider.
+The eight sources this kind absorbs share no vocabulary at all: a UPS reports
+volts, SMART reports reallocated sectors, and HAProxy's subject is a backend
+rather than an interface or a client. A closed `CHECK` would have made every one of
+them a schema change, which is the plugin-hostile design the promotion exists to
+remove. What the columns still enforce is the **shape** of a term rather than its
+membership of a list — non-empty, lower-case, no space — so a typo, a
+free-text sentence, or two spellings of one measure are still rejected. The terms
+`opnview`'s own sampler uses are the named constants in
+`internal/store/rows.go`; a provider's term is an ordinary value beside them, and
+a test adds one and reads it back while asserting that no DDL moved.
+
+This is still **not** an entity-attribute-value table. The tier-1 rule of *The
+attribute rule* is about a provider's arbitrary fields; a declared measure with a
+unit and a typed `REAL` value is one kind of thing recorded over time, and the
+screens filter on `(subject_kind, subject_key, measure)` over a range of
+`sampled_at`, which is what the index serves.
 
 **`provider_id` is nullable and is `NULL` on every firewall gauge.** The
-firewall's own telemetry implements none of the six provider kinds — it is the
-machine reporting on itself — and attributing it to the volume provider would
-say the volume source measured the temperature. That the model has no kind for
-it is recorded here rather than papered over with a foreign key that means
-something else. The per-pair readings do name the `flow_volume` provider,
-because that volume is its material.
+firewall's own telemetry implements **no external contract** — it is the machine
+reporting on itself — and attributing it to a source would say that source
+measured the temperature. That is recorded here rather than papered over with a
+foreign key that means something else. The per-pair readings **do** name the
+`measurement_sample` provider, because that volume is its material.
 
-**Identity:** `(subject_kind, subject_key, measure, sampled_at)`. Re-reading
-the same instant is a no-op, which is what a sampler restarting inside one
-interval needs.
+**Identity:** `(subject_kind, subject_key, measure, sampled_at, provider)`.
+Re-reading the same instant is a no-op, which is what a sampler restarting inside
+one interval needs. The provider is part of it because this kind **admits several
+concurrently active providers** — see *Providers* — so two of them reading one
+subject at one instant are two readings and not a collision.
+
+It is a unique **index** over `ifnull(provider_id, -1)` rather than a table
+constraint, and that detail is load-bearing: SQLite treats nulls in a `UNIQUE`
+constraint as distinct from one another, so a bare `provider_id` in the key would
+have made **every firewall gauge non-idempotent** — the exact opposite of what
+the identity is for. It is the same `ifnull` wrapper the volume aggregates
+already use, for the same reason.
 
 **Retention:** purged by `sampled_at`.
 
 **Indexes:** `idx_measurement_sample_subject`, which is what makes "this
 subject's readings of this measure over this period" an index search, and
 `idx_measurement_sample_sampled_at` for the purge.
+
+### `state_snapshot`, `state_item` — a complete set of things, as of one instant
+
+**Source: none yet, and that is the point.** These two tables are the
+destination of the `reconciled_state` kind, and no connector for it is written.
+The shape is the survey's finding rather than a design instinct: **ten of the
+eleven sources that fit no other kind produce one single shape** — the current
+things of type X, each with attributes and sometimes a TTL, replaced wholesale on
+each poll rather than appended to (survey, *Shapes the model has no room for*).
+
+**Why it is not another append-only kind.** Every other kind here records events:
+a row arrives, it is stored, it is never contradicted. These sources record the
+opposite. The surveyed ban-list endpoint runs its own tool with no limit and no
+`since`, so **every poll re-dumps the whole set**, and a decision carries a TTL
+and no timestamp at all. Storing such a dump as events would either insert the
+whole set again on every poll, or — with de-duplication on content — keep a thing
+that has gone for ever.
+
+**A DEPARTURE IS THE WHOLE POINT, AND IT IS WHAT THE INSTANT IS FOR.** Because a
+snapshot asserts that the set was **complete** at `captured_at`, a key present in
+one snapshot and absent from the next has **left**: the ban expired, the peer was
+removed, the neighbour went away. The model can therefore say so, rather than
+silently keeping the item or silently dropping it — which are the two failures an
+append-only table and an overwrite-in-place table respectively produce.
+
+`state_item_departure` is that statement, as a view: what was in the previous
+complete snapshot of a set and is not in the latest one, with the instant it was
+last present, the instant it was first absent, and the attributes it carried while
+it was there. It is the **latest pair** and not every pair, deliberately: "what
+has just left" is the question a screen asks, and a view over every consecutive
+pair would grow with the history for no reader. A set observed once yields no
+rows, which is the honest answer — nothing can be said to have left a set seen
+once.
+
+**What it deliberately does not carry.** No status, no category, no severity, no
+enabled flag, no display name. This is the one part of the model designed from
+research rather than from a working collector, and this project has twice been
+caught building against a document, so it holds exactly what the examined sources
+need: a set, an instant, an identity within the set, the attributes, and an
+optional validity end. A field a screen turns out to want is added when a real
+provider's shape has been surveyed, in the same way `security_event` will be
+extended.
+
+| Column | What it is |
+|---|---|
+| `state_snapshot.provider_id` | the provider that reported the set; mandatory, because an unattributed set could not be compared with anything |
+| `state_snapshot.set_key` | **which** set, because one provider commonly reports several — one surveyed engine reports decisions and alerts, and a tunnel reports its peers. Without it, a poll of one would read as a departure of everything in the other |
+| `state_snapshot.captured_at` | the instant at which the set was complete. The load-bearing column: without it a set is a bag of rows and a departure is undetectable |
+| `state_item.item_key` | the identity within the set, supplied by the provider and stored verbatim — the banned address, the peer's public key, the neighbour's chassis id. `TEXT`, because a provider whose things are named rather than numbered has to fit |
+| `state_item.attributes` | the provider's own fields, as a JSON object. Tier 2 of *The attribute rule*: displayed on a detail screen, never aggregated, never filtered on, never joined. `NULL` is a thing with no attributes, which is normal |
+| `state_item.valid_until_at` | the end of the thing's own validity when the provider states one, which the surveyed ban decision does and nothing else does. It is **not** how a departure is detected: an item is gone when the next complete snapshot omits it, which is the only signal every one of these sources gives |
+
+**Identity:** `(provider_id, set_key, captured_at)` for a snapshot, and
+`(snapshot_id, item_key)` for a member. Re-reading one poll is a no-op, and one
+poll cannot report one thing twice.
+
+**A snapshot is written whole or not at all.** A half-written snapshot is not a
+slightly incomplete row: because the snapshot asserts completeness, every member
+missing from it reads as a departure. `store.InsertStateSnapshot` is therefore one
+transaction, and a test proves that a set whose second member is rejected leaves
+no snapshot behind.
+
+**An empty set is a legitimate snapshot and is written as one.** A ban list that
+is now empty has not stopped reporting; it has reported that every ban is gone.
+Skipping the write would leave the previous set reading as current for ever.
+
+**Retention:** purged by `captured_at`, and the members go with their snapshot
+through `ON DELETE CASCADE`. **Indexes:** `idx_state_snapshot_captured_at` for the
+purge, `idx_state_snapshot_set` so "the latest snapshots of this set" is an index
+search, and the two uniqueness constraints.
+
+### `interface` and `dhcp_lease` are the same shape, modelled twice
+
+Both are reconciled state: the firewall reports the complete current set of
+interfaces, and each DHCP server reports the complete current lease table of its
+own scope, replaced wholesale on every poll. They are bespoke tables rather than rows of the
+`reconciled_state` kind, and **they were deliberately left that way**.
+
+The reason is not that the duplication is invisible — it is written here so that
+it is not mistaken for an oversight — but that they work, they are verified by the
+assertions in `sql/schema-checks.sh`, and the point of adding the kind was to let
+**other** sources supply that shape rather than to re-plumb the two that already
+do. Migrating them would trade a working, typed, indexed, screen-queried model for
+a generic one, and it would do it in the cycle whose whole purpose is to make the
+generic one exist. They also earn their typed columns under tier 1 of *The
+attribute rule*: every screen filters and aggregates on an interface's
+`link_kind`, on a lease's `lease_state`, on a client's identity cascade — none of
+which a JSON attribute bag could serve.
+
+If a later cycle does migrate them, the thing to keep is what the bespoke tables
+have that the generic one does not: `interface.user_label` and
+`client.owner_id` are **user input**, and a reconciled set replaced on every poll
+must never be able to overwrite them.
 
 ## API field coverage
 
@@ -1492,8 +1735,10 @@ every 300 s and no table holds it.
 horizon from `setting`, and removes rows older than it from every growing table:
 `flow`, `dns_resolution`, `domain_attribution`, `security_event`, `dhcp_lease`,
 `client`, `pair_volume_observation`, `geo_asn`, `collection_gap`,
-`measurement_sample` and the eight aggregates — the four keyed on interfaces and
-the four keyed on owners.
+`measurement_sample`, `state_snapshot` and the eight aggregates — the four keyed
+on interfaces and the four keyed on owners. `state_item` needs no statement of
+its own: its rows go with their snapshot through `ON DELETE CASCADE`, and a
+member without its snapshot would be a set member with no set and no instant.
 Bounded tables are never purged, so a surviving observation always joins to an
 interface, a client, a rule and an interface-map entry — and, for a security
 event, to the provider that contributed it and to the rule-info entry that

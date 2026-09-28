@@ -126,22 +126,42 @@ func (h *probeHarness) rowsInState(t *testing.T, state store.AvailabilityState) 
 	return count
 }
 
-// activeKeyOf returns the provider key opnview reads for a kind, or the empty string.
-func (h *probeHarness) activeKeyOf(t *testing.T, kind string) string {
+// activeKeysOf returns every provider key opnview reads for a kind, in registry order. It
+// reads the plural accessor whatever the kind, because a kind that admits several active
+// providers has no single answer and asking for one is refused.
+func (h *probeHarness) activeKeysOf(t *testing.T, kind string) []string {
 	t.Helper()
 	ctx := context.Background()
-	id, active, err := h.store.ActiveProviderID(ctx, kind)
+	ids, err := h.store.ActiveProviderIDs(ctx, kind)
 	if err != nil {
-		t.Fatalf("reading the active %s provider: %v", kind, err)
+		t.Fatalf("reading the active %s providers: %v", kind, err)
 	}
-	if !active {
+	keys := make([]string, 0, len(ids))
+	for _, id := range ids {
+		key, err := h.store.ProviderKey(ctx, id)
+		if err != nil {
+			t.Fatalf("reading an active %s provider's key: %v", kind, err)
+		}
+		keys = append(keys, key)
+	}
+	return keys
+}
+
+// activeKeyOf returns the one provider key opnview reads for a kind, or the empty string. It
+// fails the test if a kind has several active providers, which is what makes it safe to call
+// on the kinds whose contract is exclusive.
+func (h *probeHarness) activeKeyOf(t *testing.T, kind string) string {
+	t.Helper()
+	keys := h.activeKeysOf(t, kind)
+	switch len(keys) {
+	case 0:
+		return ""
+	case 1:
+		return keys[0]
+	default:
+		t.Fatalf("the %s kind has %d active providers: %v", kind, len(keys), keys)
 		return ""
 	}
-	key, err := h.store.ProviderKey(ctx, id)
-	if err != nil {
-		t.Fatalf("reading the active %s provider's key: %v", kind, err)
-	}
-	return key
 }
 
 // TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoData is the
@@ -192,11 +212,11 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 			arrange: func(fake *fakeFirewall) {
 				fake.answerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_export_only.json")
 			},
-			kind: KindFlowVolume, key: ProviderInsight,
+			kind: KindMeasurementSample, key: ProviderInsight,
 			wantState:          store.StatePresentButDisabled,
 			wantProbe:          opnsense.NetflowIsEnabled.Path,
 			wantDetailContains: "local collection is off",
-			wantMoved:          []string{"flow_volume/insight"},
+			wantMoved:          []string{"measurement_sample/insight"},
 			wantStateTotal:     1,
 		},
 		{
@@ -304,7 +324,8 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 
 			// And no data row exists anywhere. A probe reads a state; it never ingests.
 			for _, table := range []string{"flow", "security_event", "dns_resolution",
-				"dhcp_lease", "pair_volume_observation", "measurement_sample", "collection_gap"} {
+				"dhcp_lease", "pair_volume_observation", "measurement_sample", "collection_gap",
+				"state_snapshot", "state_item"} {
 				if stored := countRows(t, harness.store, table); stored != 0 {
 					t.Errorf("the probe round wrote %d rows into %s", stored, table)
 				}
@@ -336,7 +357,7 @@ func TestASourceThatAnswers404IsUnavailableAndNotActivated(t *testing.T) {
 				provider.kind, provider.key, state)
 		}
 	}
-	for _, kind := range []string{KindFirewallLog, KindSecurityEvent, KindFlowVolume,
+	for _, kind := range []string{KindFirewallLog, KindSecurityEvent, KindMeasurementSample,
 		KindDHCPLease, KindDNSLookup} {
 		if key := harness.activeKeyOf(t, kind); key != "" {
 			t.Errorf("the %s kind activated %q against a firewall that answers 404", kind, key)
@@ -376,35 +397,92 @@ func TestAReachableSourceWithNothingToSayStaysReachable(t *testing.T) {
 	}
 }
 
-// TestTwoBackendsTheFirewallDoesNotSeparateActivateNeitherAndRecordTheAmbiguity is
-// decision 6.
+// TestTwoProvidersOfAnExclusiveKindTheFirewallDoesNotSeparateActivateNeitherAndRecordTheAmbiguity
+// is decision 6, restated against an EXCLUSIVE kind.
 //
-// Provider selection reads the firewall's own configuration and never a preference order
-// invented here. When two implementations of one kind are both running and both
-// configured, the firewall has not said which serves clients — so opnview reads neither
-// and says why, rather than choosing for the user.
-func TestTwoBackendsTheFirewallDoesNotSeparateActivateNeitherAndRecordTheAmbiguity(t *testing.T) {
+// The rule has not changed: provider selection reads the firewall's own configuration and never
+// a preference order invented here, so when two implementations of one kind are both running and
+// both configured, opnview reads NEITHER and says why rather than choosing for the user.
+//
+// What changed is the kind it used to be demonstrated on. This test drove it through the two
+// DHCP backends, and dhcp_lease is now CONCURRENT — one server issuing on one VLAN and another
+// on a second is an ordinary deployment, and every lease says which server issued it, so there
+// is nothing for opnview to choose. That case is now asserted as the positive one, in
+// TestTwoDHCPServersBothServingAreBothActivated.
+//
+// So the ambiguity rule is driven here at the seam where it lives, with two probeables of an
+// exclusive kind, rather than through whichever product happens to be ambiguously configured.
+// That is stricter as well as still true: it no longer depends on a fixture's configuration, and
+// it keeps working when no shipped implementation can present the ambiguity at all.
+func TestTwoProvidersOfAnExclusiveKindTheFirewallDoesNotSeparateActivateNeitherAndRecordTheAmbiguity(t *testing.T) {
 	harness := newProbeHarness(t)
-	harness.fake.answerFixture(opnsense.KeaStatus, "kea_status_running.json")
-	harness.fake.answerFixture(opnsense.KeaDHCPv4, "kea_dhcpv4_get.json")
-	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	ctx := context.Background()
 
-	if err := harness.collector.ProbeAll(context.Background()); err != nil {
-		t.Logf("the probe round reported: %v", err)
+	// dns_lookup is exclusive, and for a reason about the rows rather than the deployment:
+	// dns_resolution.lookup_key carries no provider, so a lookup that transited two resolvers
+	// would be two records nothing could tell apart from two lookups.
+	separable := func(key string) probeable {
+		return probeable{providerKey: key, run: func(context.Context, session) (probeResult, error) {
+			return probeResult{
+				state:     store.StateReachable,
+				probe:     opnsense.UnboundIsEnabled,
+				separable: true,
+			}, nil
+		}}
+	}
+	if err := harness.collector.resolveKind(ctx, KindDNSLookup,
+		[]probeable{separable(ProviderUnbound), separable(ProviderDnsmasq)}); err != nil {
+		t.Fatalf("resolving an ambiguous exclusive kind: %v", err)
 	}
 
-	if key := harness.activeKeyOf(t, KindDHCPLease); key != "" {
-		t.Fatalf("the DHCP kind activated %q although the firewall separates neither backend", key)
+	if key := harness.activeKeyOf(t, KindDNSLookup); key != "" {
+		t.Fatalf("an exclusive kind activated %q although the firewall separates neither provider",
+			key)
 	}
-	for _, key := range []string{ProviderKea, ProviderDnsmasq} {
-		state, _, _ := harness.availabilityOf(t, KindDHCPLease, key)
+	for _, key := range []string{ProviderUnbound, ProviderDnsmasq} {
+		state, _, _ := harness.availabilityOf(t, KindDNSLookup, key)
 		if state != store.StateReachable {
-			t.Errorf("%s reads %q, and both backends are running", key, state)
+			t.Errorf("%s reads %q, and both are running", key, state)
 		}
-		detail := harness.detailOf(t, KindDHCPLease, key)
+		detail := harness.detailOf(t, KindDNSLookup, key)
 		if !strings.Contains(detail, "does not say") {
 			t.Errorf("the detail for %s is %q, which does not record the ambiguity", key, detail)
+		}
+	}
+}
+
+// TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity is the same seam, the
+// other rule, and the reason the test above had to move off dhcp_lease.
+//
+// Where a kind's rows carry the provider that reported them, two qualifying providers are not an
+// ambiguity: both are read, and neither row carries the sentence about opnview reading neither,
+// because that sentence would be false.
+func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *testing.T) {
+	harness := newProbeHarness(t)
+	ctx := context.Background()
+
+	separable := func(key string) probeable {
+		return probeable{providerKey: key, run: func(context.Context, session) (probeResult, error) {
+			return probeResult{
+				state:     store.StateReachable,
+				probe:     opnsense.KeaStatus,
+				separable: true,
+			}, nil
+		}}
+	}
+	if err := harness.collector.resolveKind(ctx, KindDHCPLease,
+		[]probeable{separable(ProviderKea), separable(ProviderDnsmasq)}); err != nil {
+		t.Fatalf("resolving a concurrent kind: %v", err)
+	}
+
+	keys := harness.activeKeysOf(t, KindDHCPLease)
+	if len(keys) != 2 {
+		t.Fatalf("a concurrent kind with two qualifying providers activated %d: %v", len(keys), keys)
+	}
+	for _, key := range keys {
+		if detail := harness.detailOf(t, KindDHCPLease, key); strings.Contains(detail, "reads neither") {
+			t.Errorf("%s records an ambiguity that does not apply to a concurrent kind: %q",
+				key, detail)
 		}
 	}
 }

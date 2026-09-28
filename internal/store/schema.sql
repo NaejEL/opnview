@@ -13,11 +13,11 @@
 -- that applies it. sql/schema-checks.sh applies the same file to a throwaway
 -- database under /data and asserts every criterion the data model carries.
 --
--- Every entity here is fed by a provider of one of the six kinds surveyed in
+-- Every entity here is fed by a provider of one of the eight kinds surveyed in
 -- docs/opnsense-api-survey.md, or by the runtime discovery described in that
 -- document's "Runtime discovery" section. docs/data-model.md maps each table
 -- and each column to its endpoint and API field, and docs/architecture.md
--- names the six kinds and the seam a provider plugs into.
+-- names the eight kinds and the seam a provider plugs into.
 --
 -- No provider name appears as a table name or as a column name anywhere in
 -- this file. A provider is a row in the `provider` registry and a foreign key
@@ -54,7 +54,7 @@ CREATE TABLE IF NOT EXISTS setting (
 --
 -- Registering an implementation is an INSERT, never a migration: nothing here
 -- enumerates provider names in a CHECK. What is constrained is the `kind`, the
--- six seams docs/architecture.md names, because a kind is a contract opnview
+-- eight seams docs/architecture.md names, because a kind is a contract opnview
 -- implements and not data a deployment supplies.
 --
 -- Endpoints, one citation per kind, all in docs/opnsense-api-survey.md:
@@ -68,19 +68,89 @@ CREATE TABLE IF NOT EXISTS setting (
 --                   /api/diagnostics/log/core/dnsmasq        (data source 5)
 --   geo_asn         the MaxMind GeoLite2 City and ASN databases, the second of
 --                   the two outbound calls the project allows
+--   measurement_sample
+--                   /api/diagnostics/system/systemResources,
+--                   /api/diagnostics/system/systemTemperature,
+--                   /api/diagnostics/system/systemTime,
+--                   /api/diagnostics/system/systemDisk,
+--                   /api/diagnostics/activity/getActivity,
+--                   /api/diagnostics/traffic/interface and
+--                   /api/diagnostics/traffic/top/<interface names>
+--                   ("The telemetry the data model calls gaps G9 and G10
+--                   exists", and "The per-pair data is a live snapshot, not
+--                   history")
+--   reconciled_state
+--                   no endpoint is read for it yet. It is the shape ten of the
+--                   eleven surveyed sources that fit no kind at all produce:
+--                   the current ban list of an intrusion-prevention engine, the
+--                   peers of a tunnel, LLDP neighbours, FRR routes,
+--                   certificates, Monit services, UPnP mappings and Tor
+--                   circuits ("Shapes the model has no room for"). The kind
+--                   exists so that such a source has a destination; no
+--                   connector for any of them is written here.
 --
 -- is_active separates "opnview reads this one" from "this one is reachable".
 -- A machine may have two implementations of a kind installed and running; the
--- model must say which one the data came from. At most one provider per kind
--- is active, enforced by the partial unique index below. On a freshly migrated
--- database none is active: activeness is decided by step-4 detection, never by
--- a migration.
+-- model must say which one the data came from. On a freshly applied database
+-- none is active: activeness is decided by the probe round, never by this file.
+--
+-- ACTIVENESS IS EXCLUSIVE PER KIND ONLY WHERE TWO PROVIDERS WOULD BE
+-- INDISTINGUISHABLE, and that rule replaces the one-active-provider-per-kind
+-- index this file used to carry. People run several intrusion-detection and
+-- filtering engines at once, and the how-to corpus is people stacking them
+-- (survey, "Four findings that bear on the collectors already written"), so
+-- universal exclusivity was wrong. What replaces it is derived from this schema rather
+-- than chosen kind by kind:
+--
+--   A KIND ADMITS SEVERAL CONCURRENTLY ACTIVE PROVIDERS EXACTLY WHEN THE
+--   IDENTITY OF ITS DESTINATION ROWS INCLUDES THE PROVIDER.
+--
+-- Where the identity includes it, two active providers can neither collide nor
+-- double-count: every row says who reported it, so one fact reported twice is
+-- two attributed rows and a screen can show them per provider or side by side.
+-- Where it does not, the second provider's rows are indistinguishable from the
+-- first's by origin, so it would either collide with them or silently double a
+-- figure nobody could decompose. Kind by kind:
+--
+--   kind                destination identity                        several?
+--   firewall_log        flow.log_digest                             no
+--   security_event      (provider_id, provider_event_key)           YES
+--   flow_volume         (day_start_at, endpoints, port, protocol)   no
+--   dhcp_lease          (address, generation_key, provider_id)      YES
+--   dns_lookup          dns_resolution.lookup_key                   no
+--   geo_asn             geo_asn.address                             no
+--   measurement_sample  (subject, measure, sampled_at, provider)    YES
+--   reconciled_state    (provider_id, set_key, captured_at)         YES
+--
+-- dhcp_lease IS CONCURRENT, AND THE DEPLOYMENT IS THE ORDINARY ONE: one server
+-- issuing on one VLAN and another on a second, two scopes with no overlap. The
+-- objection to it was that two lease providers would put one machine on the
+-- screen twice under two names, and the client identity cascade is what answers
+-- it -- the cascade keys on the DHCP client identifier first and on the MAC
+-- second, neither of which is scoped to an interface, so a machine leased on two
+-- VLANs by two servers resolves to ONE client holding TWO leases, which is the
+-- truth. The duplication the objection feared needs two servers issuing on the
+-- SAME scope, and that is a misconfiguration of the firewall rather than a shape
+-- this model should contort itself to absorb.
+--
+-- Its identity therefore names the PROVIDER and not the backend. `backend` is a
+-- normalised vocabulary of response shapes, not a provider key: two providers
+-- could report the same backend -- a second implementation reading a Kea running
+-- somewhere else would -- and the rule above is stated in terms of the provider,
+-- so keying on the backend would have satisfied the letter of it and not the
+-- substance. No `ifnull` wrapper is needed here, unlike measurement_sample: a
+-- lease with no provider is not reachable, because a lease is issued by a server,
+-- and the column is NOT NULL.
+--
+-- geo_asn is exclusive because its row is one cache entry per address and a
+-- second provider would overwrite the first's answer rather than add to it.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS provider (
     id            INTEGER PRIMARY KEY,
     kind          TEXT NOT NULL
                   CHECK (kind IN ('firewall_log', 'security_event', 'flow_volume',
-                                  'dhcp_lease', 'dns_lookup', 'geo_asn')),
+                                  'dhcp_lease', 'dns_lookup', 'geo_asn',
+                                  'measurement_sample', 'reconciled_state')),
     provider_key  TEXT NOT NULL,
     display_name  TEXT NOT NULL,
     is_active     INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
@@ -88,9 +158,24 @@ CREATE TABLE IF NOT EXISTS provider (
     UNIQUE (kind, provider_key)
 );
 
--- At most one active provider per kind. A partial index, so the many inactive
--- rows of one kind do not collide with each other.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_active_per_kind ON provider (kind) WHERE is_active = 1;
+-- The index that admitted one active provider per kind, dropped by name.
+--
+-- It is named here rather than merely deleted because this file is applied on
+-- every start: an object the file no longer declares would otherwise survive in
+-- a database that already carries it, and the old index would then reject the
+-- second concurrent activation that is now the normal case.
+-- Naming a removal is the only form of removal an idempotent single-file schema
+-- can express, and it is not a migration runner arriving by the back door.
+DROP INDEX IF EXISTS uq_provider_active_per_kind;
+
+-- At most one active provider per EXCLUSIVE kind, by the rule above. A partial
+-- index, so the many inactive rows of one kind do not collide with each other,
+-- and so the four kinds whose rows carry their provider are left alone.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_active_per_exclusive_kind
+    ON provider (kind)
+    WHERE is_active = 1
+      AND kind NOT IN ('security_event', 'dhcp_lease', 'measurement_sample',
+                       'reconciled_state');
 
 -- ---------------------------------------------------------------------------
 -- Interface — one interface as OPNsense defines it: a VLAN, a physical link or
@@ -292,10 +377,53 @@ CREATE INDEX IF NOT EXISTS idx_client_owner ON client (owner_id, id);
 -- best-effort ISC plugin endpoint. Survey: data source 4. The MAC field is
 -- hwaddr on the two current backends and mac on the legacy plugin; it is
 -- normalised here.
+--
+-- starts_at IS NULLABLE, AND generation_key IS WHAT MAKES A RE-POLL IDEMPOTENT.
+-- The two were one column and meant two things. Kea reports `valid_lifetime`,
+-- so `expire` minus it is a real validity start. Dnsmasq reports no start at
+-- all, and a reserved lease reports neither a start nor an expiry; the earlier
+-- schema stored the expiry, or the day of observation, in a NOT NULL starts_at
+-- and was honest only because a comment beside it said so. A backend that
+-- cannot know now says so by storing NULL, and the discriminator that keeps a
+-- second poll of one lease from inserting a second row is its own column.
+--
+-- Identity is (address, generation_key, provider_id): one row per lease
+-- generation per server. The server is in it because this kind admits several
+-- concurrently active providers (see the registry above), so the SAME address can
+-- legitimately be leased by two servers on two scopes, and those are two leases
+-- rather than one contested row.
+--
+-- generation_key is composed by the collector and carries the name of what it
+-- rests on, so a reader can tell a real start from a substitute without
+-- consulting the backend: `start:<epoch>` when the backend reported a validity
+-- start, `expiry:<epoch>` when it reported only an expiry, and
+-- `observed_day:<epoch>` for a standing reservation, which is one row per day
+-- rather than one per poll. The term is opnview's own and is recorded as such in
+-- docs/data-model.md, Vocabulary; nothing in this file parses it or matches on
+-- it, and it is opaque to every query.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS dhcp_lease (
     id             INTEGER PRIMARY KEY,
     client_id      INTEGER REFERENCES client (id),
+    -- provider_id NAMES THE SERVER THAT ISSUED THIS LEASE, and it is a fact a
+    -- reader is entitled to rather than a component of a de-duplication key.
+    -- This kind admits several concurrently active providers -- one server on one
+    -- VLAN, another on a second -- so a client can hold leases from two servers
+    -- at once, and "which server gave this machine its address" is then a real
+    -- question with a per-lease answer. It joins to provider.display_name, so a
+    -- screen prints the server's name without reconstructing it from an index or
+    -- parsing a composite; the diagnostic query "Leases per client and issuing
+    -- server" in sql/queries/diagnostics.sql is that read, written down and
+    -- executed.
+    --
+    -- NOT NULL, because a lease is issued by a server: there is no provider-less
+    -- lease to model, which is also why the identity below needs no ifnull
+    -- wrapper where measurement_sample's does.
+    provider_id    INTEGER NOT NULL REFERENCES provider (id),
+    -- backend is the normalised vocabulary of RESPONSE SHAPES, and it is kept
+    -- beside provider_id rather than replaced by it: it is what says which
+    -- field-name normalisation produced the row. It is NOT an identity for the
+    -- server, and it is not in the uniqueness constraint any more.
     backend        TEXT NOT NULL CHECK (backend IN ('kea', 'dnsmasq', 'isc')),
     address        TEXT NOT NULL,
     mac            TEXT CHECK (mac IS NULL OR (length(mac) = 17 AND mac = lower(mac))),
@@ -307,14 +435,20 @@ CREATE TABLE IF NOT EXISTS dhcp_lease (
     lease_state    TEXT NOT NULL
                    CHECK (lease_state IN ('active', 'expired', 'reserved', 'unknown')),
     interface_id   INTEGER REFERENCES interface (id),
-    starts_at      INTEGER NOT NULL CHECK (starts_at >= 0 AND starts_at < 4102444800),
+    starts_at      INTEGER CHECK (starts_at IS NULL
+                                  OR (starts_at >= 0 AND starts_at < 4102444800)),
+    generation_key TEXT NOT NULL CHECK (length(generation_key) > 0),
     expires_at     INTEGER CHECK (expires_at IS NULL OR (expires_at >= 0 AND expires_at < 4102444800)),
     observed_at    INTEGER NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
-    UNIQUE (address, starts_at, backend)
+    UNIQUE (address, generation_key, provider_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_dhcp_lease_observed_at ON dhcp_lease (observed_at);
-CREATE INDEX IF NOT EXISTS idx_dhcp_lease_client ON dhcp_lease (client_id, starts_at);
+-- A client's lease history, ordered by the instant opnview read the lease rather
+-- than by the validity start: the start is now NULL on every backend that cannot
+-- report one, and an index leading on a column that is null for a whole backend
+-- would order that backend's leases arbitrarily.
+CREATE INDEX IF NOT EXISTS idx_dhcp_lease_client ON dhcp_lease (client_id, observed_at);
 
 -- ---------------------------------------------------------------------------
 -- Flow — one filter-log record, allowed or blocked. The blocked events are a
@@ -741,10 +875,23 @@ CREATE TABLE IF NOT EXISTS source_availability (
 );
 
 -- ---------------------------------------------------------------------------
--- Pair volume observation — the daily per-address-pair volume Insight keeps,
--- de-duplicated.
--- Source: /api/diagnostics/networkinsight/top/FlowSourceAddrDetails/... with
--- a field list containing src_addr and dst_addr; the row carries total (the
+-- Pair volume observation — the daily per-address-pair volume, de-duplicated.
+--
+-- IT IS DERIVED, NOT COLLECTED, AND THAT IS THE MAINTAINER'S RULING. No
+-- collector writes this table and none will: the only per-pair endpoint the
+-- survey found carries neither a port nor a protocol, and `flow` carries both
+-- exactly, from the filter log. So these rows are step 5's to COMPUTE from
+-- `flow`, and nobody should look for the collector that fills them. The SAMPLED
+-- per-pair volume, which is a different thing — a live rate snapshot rather than
+-- a period total — stays in measurement_sample, where 4A already puts it.
+--
+-- The de-duplication key below is kept exactly as surveyed, because the
+-- derivation must produce the same key: a per-pair figure summed over a day is
+-- direction-free whether it came from the firewall's own aggregate or from
+-- opnview's own records.
+--
+-- Origin of the shape: /api/diagnostics/networkinsight/top/FlowSourceAddrDetails/...
+-- with a field list containing src_addr and dst_addr; the row carries total (the
 -- octets or packets measure) and last_seen. Survey: data source 3.
 --
 -- Insight writes each flow once per interface AND once per direction, with
@@ -754,7 +901,7 @@ CREATE TABLE IF NOT EXISTS source_availability (
 -- protocol), where endpoint_low and endpoint_high are the two addresses in
 -- lexicographic order. The interface and direction of the observation that
 -- won the insert are kept for provenance only and are NOT part of the key.
--- Collectors insert with ON CONFLICT DO NOTHING.
+-- The derivation inserts with ON CONFLICT DO NOTHING.
 --
 -- service_port is min(src_port, dst_port) as computed by Insight — a heuristic
 -- and not the real destination port, which the filter log carries exactly.
@@ -1026,6 +1173,14 @@ CREATE INDEX IF NOT EXISTS idx_collection_gap_interval
 -- ---------------------------------------------------------------------------
 -- Measurement sample — one numeric reading of one subject at one instant.
 --
+-- IT IS A PROVIDER KIND, and it is the kind most of the ecosystem fits. Of the
+-- ten surveyed sources that fit a shape this model already had, eight fit this
+-- one (survey, "What does produce data, and in what shape"): WireGuard's
+-- per-peer transfer counters, HAProxy's frontend and backend counters, vnStat's
+-- per-interface volume, and the UPS, SMART and sensor readings of NUT, apcupsd
+-- and LLDPd. It was a table with no kind, so none of them had a provider_key, an
+-- availability row or a place in provider.kind; it has all three now.
+--
 -- THE TERM IS OPNVIEW'S OWN, and the reason is that two different needs turned
 -- out to have one shape. OPNsense answers for CPU, memory, temperature, disk,
 -- uptime and per-interface packet and byte counters
@@ -1045,14 +1200,16 @@ CREATE INDEX IF NOT EXISTS idx_collection_gap_interval
 -- because docs/data-model.md forbids one. An EAV table stores attributes of
 -- heterogeneous entities as untyped name/value pairs, losing every type and
 -- every constraint. This table stores ONE kind of thing — a numeric reading
--- over time — with a typed REAL value, a mandatory unit, a closed subject
--- vocabulary and a closed measure vocabulary, and the screens that read it
--- filter on (subject_kind, subject_key, measure) over a range of sampled_at,
+-- over time — with a typed REAL value, a mandatory unit, and a subject and a
+-- measure that are declared terms rather than free text, and the screens that
+-- read it filter on (subject_kind, subject_key, measure) over a range of sampled_at,
 -- which is exactly what the index below serves. It is the shape every
 -- time-series store uses, including the aggregate tables OPNsense itself keeps
 -- under /var/netflow.
 --
--- subject_kind and subject_key together name what was measured:
+-- subject_kind and subject_key together name what was measured. The three terms
+-- opnview's own sampler uses, and a provider may declare a fourth — HAProxy's
+-- subject is a backend, and a UPS is neither an interface nor a pair:
 --   'firewall'      the firewall itself. subject_key names the PART measured
 --                   when the reading is of a part -- a temperature sensor, a
 --                   mounted filesystem -- and is the empty string when the
@@ -1068,39 +1225,55 @@ CREATE INDEX IF NOT EXISTS idx_collection_gap_interval
 --                   pair_volume_observation enforces with endpoint_low and
 --                   endpoint_high
 --
--- measure and unit are opnview's own closed vocabularies. The survey
--- establishes the telemetry endpoints and NOT their field names, so the names
--- below are deliberately opnview's own rather than an assertion about a
--- response shape nobody has read; which response key each one is read from is
--- marked UNVERIFIED in internal/collect and is for the end of 4B to confirm.
+-- THE THREE VOCABULARIES ARE OPNVIEW'S OWN AND ARE EXTENSIBLE BY A PROVIDER,
+-- WITHOUT A SCHEMA CHANGE. They used to be three CHECKs enumerating what 4A's
+-- own sampler reads, and that was correct for exactly one provider. The kind now
+-- absorbs eight surveyed sources that share no vocabulary at all: a UPS reports
+-- volts, SMART reports reallocated sectors, and HAProxy's subject is a backend
+-- rather than an interface or a client (survey, "What does produce data, and in
+-- what shape"). A closed CHECK would have made every one of them a schema
+-- change, which is precisely the plugin-hostile design this promotion exists to
+-- remove.
 --
--- Identity is (subject_kind, subject_key, measure, sampled_at): re-reading the
--- same instant is idempotent, which is what a sampler restarting inside one
--- interval needs.
+-- What is still enforced is the SHAPE of a term rather than its membership of a
+-- list: a term is non-empty, lower-case and carries no space, so a typo or a
+-- free-text sentence is rejected and two spellings of one measure cannot both
+-- exist. What opnview's own sampler uses is the vocabulary listed above, and
+-- that list is in internal/store/rows.go as named constants; a provider's own
+-- term is an ordinary value beside them.
+--
+-- Identity is (subject_kind, subject_key, measure, sampled_at, provider):
+-- re-reading the same instant is idempotent, which is what a sampler restarting
+-- inside one interval needs, and the provider is part of it because this kind
+-- admits several concurrently active providers — two of them reading one subject
+-- at one instant are two readings, not a collision. It is a unique INDEX over
+-- ifnull(provider_id, -1) rather than a table constraint, because SQLite treats
+-- NULLs in a UNIQUE constraint as distinct and the firewall's own gauges carry a
+-- null provider: a bare UNIQUE would have made every gauge non-idempotent. The
+-- same ifnull wrapper the volume aggregates already use, for the same reason.
 --
 -- Growing: one row per reading. Purged by sampled_at.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS measurement_sample (
     id           INTEGER PRIMARY KEY,
     provider_id  INTEGER REFERENCES provider (id),
-    subject_kind TEXT NOT NULL
-                 CHECK (subject_kind IN ('firewall', 'interface', 'endpoint_pair')),
+    subject_kind TEXT NOT NULL CHECK (length(subject_kind) > 0
+                                      AND subject_kind = lower(subject_kind)
+                                      AND instr(subject_kind, ' ') = 0),
     subject_key  TEXT NOT NULL,
-    measure      TEXT NOT NULL
-                 CHECK (measure IN ('cpu_use_ratio', 'memory_use_ratio',
-                                    'temperature_celsius', 'disk_use_ratio',
-                                    'uptime_seconds', 'load_average',
-                                    'packets_in', 'packets_out',
-                                    'bytes_in', 'bytes_out',
-                                    'cumulative_bytes_in', 'cumulative_bytes_out',
-                                    'rate_bits_in', 'rate_bits_out')),
-    unit         TEXT NOT NULL
-                 CHECK (unit IN ('ratio', 'celsius', 'second', 'packet', 'byte',
-                                 'bit_per_second', 'dimensionless')),
+    measure      TEXT NOT NULL CHECK (length(measure) > 0
+                                      AND measure = lower(measure)
+                                      AND instr(measure, ' ') = 0),
+    unit         TEXT NOT NULL CHECK (length(unit) > 0
+                                      AND unit = lower(unit)
+                                      AND instr(unit, ' ') = 0),
     value        REAL NOT NULL,
-    sampled_at   INTEGER NOT NULL CHECK (sampled_at >= 0 AND sampled_at < 4102444800),
-    UNIQUE (subject_kind, subject_key, measure, sampled_at)
+    sampled_at   INTEGER NOT NULL CHECK (sampled_at >= 0 AND sampled_at < 4102444800)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_measurement_sample_reading
+    ON measurement_sample (subject_kind, subject_key, measure, sampled_at,
+                           ifnull(provider_id, -1));
 
 -- "This subject's readings of this measure over this period" is an index
 -- search rather than a scan of a growing table.
@@ -1108,6 +1281,143 @@ CREATE INDEX IF NOT EXISTS idx_measurement_sample_subject
     ON measurement_sample (subject_kind, subject_key, measure, sampled_at, value);
 CREATE INDEX IF NOT EXISTS idx_measurement_sample_sampled_at
     ON measurement_sample (sampled_at);
+
+-- ---------------------------------------------------------------------------
+-- Reconciled state — the complete set of things of one type a provider reports,
+-- as of one instant, plus the things in it.
+--
+-- THE TERM IS OPNVIEW'S OWN, and it names a SHAPE rather than a thing. No
+-- product opnview reads has a word for "the current set, replaced wholesale on
+-- each poll": each of them names only its own contents — decisions, peers,
+-- neighbours, routes, circuits. The survey found that ten of the eleven sources
+-- fitting no existing kind are this one shape (survey, "Shapes the model has no
+-- room for"), so the word is taken from what those ten have in common: the set
+-- is reconciled against the previous one rather than appended to.
+--
+-- WHY IT IS NOT ANOTHER APPEND-ONLY KIND. Every other kind here records events:
+-- a row arrives, it is stored, it is never contradicted. These sources record
+-- the opposite — the surveyed ban-list endpoint runs its own tool with no limit
+-- and no `since`, so every poll re-dumps the whole list, and a decision carries
+-- a TTL and no timestamp at all (survey, "What does produce data, and in what
+-- shape"). Storing such a dump as events would
+-- either insert the whole set again on every poll or, with de-duplication on
+-- content, keep a thing that has gone for ever.
+--
+-- A DEPARTURE IS THE WHOLE POINT, AND IT IS WHAT THE INSTANT IS FOR. Because a
+-- snapshot is asserted COMPLETE at captured_at, a key present in one snapshot
+-- and absent from the next has LEFT — the ban expired, the peer was removed, the
+-- neighbour went away — and the model can say so rather than silently keeping the
+-- item or silently dropping it. The state_item_departure view below is that
+-- statement, computed and not stored: a departure is a fact about two snapshots
+-- and duplicating it into a column would let the column and the snapshots
+-- disagree.
+--
+-- WHAT IT DELIBERATELY DOES NOT CARRY. No status, no category, no severity, no
+-- enabled flag, no display name. This kind is the one piece of the model designed
+-- from research rather than from a working collector, and this project has twice
+-- been caught building against a document, so it holds exactly what the examined
+-- sources need and nothing a screen might one day want: a set, an instant, an
+-- identity within the set, the attributes, and an optional validity end.
+--
+-- Growing: one snapshot per poll per set. Purged by captured_at, and the items
+-- go with their snapshot through ON DELETE CASCADE.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS state_snapshot (
+    id          INTEGER PRIMARY KEY,
+    provider_id INTEGER NOT NULL REFERENCES provider (id),
+    -- set_key names WHICH set, because one provider commonly reports several:
+    -- one surveyed engine reports decisions and alerts, and a tunnel reports
+    -- its peers. It is a
+    -- term the provider declares, constrained in shape and not in membership,
+    -- for the same reason measurement_sample's vocabularies are. Nothing here
+    -- parses it or branches on its text.
+    set_key     TEXT NOT NULL CHECK (length(set_key) > 0
+                                     AND set_key = lower(set_key)
+                                     AND instr(set_key, ' ') = 0),
+    -- captured_at is the instant at which the set was COMPLETE. It is the
+    -- load-bearing column: without it a set is a bag of rows and a departure is
+    -- undetectable.
+    captured_at INTEGER NOT NULL CHECK (captured_at >= 0 AND captured_at < 4102444800),
+    UNIQUE (provider_id, set_key, captured_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_state_snapshot_captured_at ON state_snapshot (captured_at);
+
+-- "The latest snapshots of this set" is an index search rather than a scan of a
+-- growing table, which is what the departure view walks.
+CREATE INDEX IF NOT EXISTS idx_state_snapshot_set
+    ON state_snapshot (provider_id, set_key, captured_at, id);
+
+CREATE TABLE IF NOT EXISTS state_item (
+    id             INTEGER PRIMARY KEY,
+    snapshot_id    INTEGER NOT NULL REFERENCES state_snapshot (id) ON DELETE CASCADE,
+    -- item_key is the identity WITHIN the set, supplied by the provider: the
+    -- banned address, the peer's public key, the neighbour's chassis id. It is
+    -- unique per snapshot, so one poll cannot report one thing twice, and it is
+    -- the token a departure is computed on. It is TEXT because a provider whose
+    -- things are named rather than numbered has to fit, and it is stored verbatim.
+    item_key       TEXT NOT NULL CHECK (length(item_key) > 0),
+    -- attributes is the provider's own fields, as a JSON object, and it obeys
+    -- tier 2 of the attribute rule in docs/data-model.md: displayed on a detail
+    -- screen, never aggregated, never filtered on, never joined. A field a screen
+    -- needs to aggregate or filter on earns a typed column, after that provider's
+    -- shape has been surveyed rather than guessed. NULL is a thing with no
+    -- attributes at all, which is a normal state.
+    attributes     TEXT CHECK (attributes IS NULL OR json_type(attributes) = 'object'),
+    -- valid_until_at is the end of the thing's own validity when the provider
+    -- states one — a surveyed ban decision carries a TTL and nothing else. It is NOT
+    -- how a departure is detected: an item is gone when the next complete
+    -- snapshot omits it, which is the only signal every one of these sources
+    -- gives. An expiry that has passed while the item is still reported is the
+    -- provider's business, and opnview reports both rather than choosing.
+    valid_until_at INTEGER CHECK (valid_until_at IS NULL
+                                  OR (valid_until_at >= 0 AND valid_until_at < 4102444800)),
+    UNIQUE (snapshot_id, item_key)
+);
+
+-- The departure statement: what was in the previous complete snapshot of a set
+-- and is not in the latest one.
+--
+-- It is the latest pair and not every pair, deliberately: "what has just left"
+-- is the question a screen asks, and a view over every consecutive pair would
+-- grow with the history for no reader. A set with only one snapshot yields no
+-- rows, which is correct — nothing can be said to have left a set observed once.
+CREATE VIEW IF NOT EXISTS state_item_departure AS
+WITH latest AS (
+    SELECT provider_id, set_key, max(captured_at) AS captured_at
+    FROM state_snapshot
+    GROUP BY provider_id, set_key
+),
+previous AS (
+    SELECT s.provider_id, s.set_key, max(s.captured_at) AS captured_at
+    FROM state_snapshot AS s
+    JOIN latest AS l ON l.provider_id = s.provider_id AND l.set_key = s.set_key
+    WHERE s.captured_at < l.captured_at
+    GROUP BY s.provider_id, s.set_key
+)
+SELECT
+    p.provider_id                AS provider_id,
+    p.set_key                    AS set_key,
+    i.item_key                   AS item_key,
+    i.attributes                 AS attributes,
+    i.valid_until_at             AS valid_until_at,
+    p.captured_at                AS last_present_at,
+    l.captured_at                AS absent_since_at
+FROM previous AS p
+JOIN latest AS l ON l.provider_id = p.provider_id AND l.set_key = p.set_key
+JOIN state_snapshot AS ps ON ps.provider_id = p.provider_id
+                         AND ps.set_key = p.set_key
+                         AND ps.captured_at = p.captured_at
+JOIN state_item AS i ON i.snapshot_id = ps.id
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM state_snapshot AS ls
+    JOIN state_item AS li ON li.snapshot_id = ls.id
+    WHERE ls.provider_id = p.provider_id
+      AND ls.set_key = p.set_key
+      AND ls.captured_at = l.captured_at
+      AND li.item_key = i.item_key
+);
 
 -- ---------------------------------------------------------------------------
 -- The defaults the model guarantees exist.
@@ -1160,8 +1470,34 @@ INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at
     ('dhcp_lease',     'isc',               'ISC dhcpd',            0, CAST(strftime('%s', 'now') AS INTEGER)),
     ('dns_lookup',     'unbound',           'Unbound',              0, CAST(strftime('%s', 'now') AS INTEGER)),
     ('dns_lookup',     'dnsmasq',           'Dnsmasq resolver',     0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('geo_asn',        'maxmind_geolite2',  'MaxMind GeoLite2',     0, CAST(strftime('%s', 'now') AS INTEGER))
+    ('geo_asn',        'maxmind_geolite2',  'MaxMind GeoLite2',     0, CAST(strftime('%s', 'now') AS INTEGER)),
+    -- The measurement_sample kind's first implementation is the sampler 4A
+    -- already wrote: the live per-pair traffic snapshot and the firewall's own
+    -- gauges. It was registered under flow_volume because the kind did not exist,
+    -- and it moves here with the key it already has. The firewall's OWN gauges
+    -- still carry a null provider_id, because the machine reporting on itself
+    -- implements no external contract; what this row accounts for is the sampled
+    -- per-pair volume, which is a source's material.
+    ('measurement_sample', 'insight',       'NetFlow / Insight sampling',
+                                                                    0, CAST(strftime('%s', 'now') AS INTEGER))
 ON CONFLICT (kind, provider_key) DO NOTHING;
+
+-- THE reconciled_state KIND HAS NO REGISTRY ROW, AND THAT IS NOT AN OMISSION.
+-- Registering a provider means there is an implementation to probe: a row with
+-- none would be probed by nothing, so its availability would read "not yet
+-- probed" for ever and a screen would show a source nobody is looking at. The
+-- kind exists so that the ten surveyed sources of that shape have a destination;
+-- writing a connector for any of them is not this cycle's work, and inventing
+-- rows for one of those products now would be exactly the speculative
+-- registration this comment refuses. The kind is a contract; a row is a claim
+-- that something implements it.
+--
+-- flow_volume keeps its row and has no implementation either, for the opposite
+-- reason: pair_volume_observation is now DERIVED from flow (see its own section),
+-- so nothing collects that kind. The row records that the implementation exists;
+-- the netflow probe that used to answer for it did not disappear, it moved with
+-- the sampler to the measurement_sample row above, which is the row whose
+-- material it actually governs.
 
 -- Availability is a modelled state, so exactly one row exists per registry row
 -- from the first apply onwards. Until a probe has run, each provider is
