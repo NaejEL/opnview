@@ -101,7 +101,7 @@ Eleven settled without the maintainer, each from a rule already written down:
 
 ## The package layout
 
-Six packages, `internal/buildinfo` included. Nothing exists for a later step.
+Seven packages, `internal/buildinfo` included. Nothing exists for a later step.
 
 | Package | Responsibility |
 |---|---|
@@ -110,6 +110,7 @@ Six packages, `internal/buildinfo` included. Nothing exists for a later step.
 | `internal/store` | opening SQLite, applying the embedded schema, and the typed write paths |
 | `internal/opnsense` | the HTTP client, the endpoint registry with its survey citations, and the refusal to issue a mutating command |
 | `internal/collect` | discovery, availability probes, provider activation, the five collectors, the cursor, the scheduler, the purge |
+| `internal/decode` | the tolerant field readers and timestamp normalisation, knowing nothing of kinds, providers or the store |
 | `internal/buildinfo` | unchanged |
 
 Not created: `internal/web`, `internal/api`, `internal/geo`, `internal/auth`,
@@ -126,7 +127,17 @@ inspection of a named file. **None assumes a live firewall or a host Go.**
 
 - [ ] **AC1** — `checks` exits 0 (`gofmt -l .` silent, vet, build, test) and
       `schema-checks` exits 0 with no assertion removed or relaxed.
-- [ ] **AC2** — `go list ./...` prints exactly the six packages above.
+- [ ] **AC2** — `go list ./...` prints exactly the seven packages above, the
+      seventh being `internal/decode`: the tolerant field readers and timestamp
+      normalisation, extracted from `internal/collect` so they are tested
+      directly against the shapes the survey records rather than incidentally
+      through whichever implementation exercises one, and named for the
+      operation rather than for the collector because a connector in another
+      process needs the same layer.
+
+      *Amended 2026-09-28: six became seven. The extraction paid for itself
+      immediately — its first tests found a comment describing behaviour the
+      function had never had.*
 - [ ] **AC3** — `go.mod` still declares `go 1.27.0` with no `toolchain`
       directive, so `GOTOOLCHAIN=local` cannot trigger a download.
 - [ ] **AC4** — after a full run, `git status --porcelain` prints nothing: no

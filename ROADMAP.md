@@ -13,6 +13,19 @@ so and amend this roadmap rather than quietly working around it.
 - **No secrets in the repository.** The OPNsense URL, API key/secret and
   MaxMind licence key are entered in the interface, never in a file to edit
   before starting.
+- **Modularity is a product property, at every layer, and it is not a step's
+  concern to grant or withhold.** The user's installation is not ours: a
+  resolver we do not run, a DHCP server we do not use, a plugin nobody here has
+  installed are all the normal case. So a *kind* of thing — a lease source, a
+  lookup source, a language, a theme, a widget — is a seam, and an
+  implementation of that kind is a file or a directory behind it, chosen at
+  runtime by what the installation actually has. **The test: adding a second
+  implementation is adding a file and a registry row, and touches nothing
+  else.** Where the schema already models a kind with several implementations,
+  the code has no licence to collapse them into one; a data model that is
+  provider-neutral and a backend shaped around one maintainer's configuration
+  is the worst of both.
+
 - **`opnview` has its own accounts.** On first start the user creates a login
   and a password; everything else, including the firewall's URL and key, is
   configured from the interface once signed in.
@@ -331,12 +344,12 @@ every step** above. Prerequisite: the containerised toolchain described under
 - Collection scheduler at the frequencies established in step 1.
 - Continuous incremental ingestion of `eve.json` with a durable cursor.
 - SQLite persistence, own history independent of the firewall's retention.
-- **The migration runner wraps each migration file in its own transaction.**
-  The step-2 DDL files carry no `BEGIN` / `COMMIT`: verified at step 2, a file
-  interrupted halfway leaves a half-created schema with no `schema_version`
-  row, and re-running it then aborts on an object that already exists — a
-  database unrecoverable without manual intervention. The runner, not the SQL,
-  owns that guarantee.
+- **The schema is one file, applied idempotently on every start, and there are
+  no migrations.** Nothing is deployed and nobody has data, so numbered files, a
+  `schema_version` table and a runner are machinery for a problem that does not
+  exist. **Migrations begin the day the product runs somewhere with data worth
+  keeping**: that file becomes the baseline and the first real migration is the
+  one after it.
 - **Extend `sql/seed.sql` to IPv6.** It currently produces IPv4 rows only.
   Nothing in the schema interprets an address family today, so step 2 passed,
   but no IPv6 row has ever been exercised through the seven screen queries.

@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 # opnview — schema checks.
 #
-# Applies the migrations to a fresh database, seeds it, runs the seven screen
+# Applies the schema to a fresh database, seeds it, runs the seven screen
 # queries and their query plans, and asserts the criteria the data model and
 # the provider-neutral pass established (labelled AC* and PN-AC*). A criterion
 # naming an object a later pass renamed is RESTATED against the new name, never
-# removed and never relaxed. The VOC-AC* criteria come from no
+# removed and never relaxed. The same rule has now been applied to the criteria
+# that named the MIGRATION MACHINERY: there are no migrations, by the
+# maintainer's decision -- nothing is deployed and nobody has data, so numbered
+# files, a schema_version table and a runner were machinery for a problem that
+# does not exist. Those criteria are restated against what replaces them, which
+# is a single file that is idempotent and applied on every start, and the
+# restatement is STRICTER than what it replaces: where the old check asserted
+# that a second apply added no schema_version row, the new one asserts that a
+# second apply changes no row count in any table at all. The VOC-AC* criteria come from no
 # spec: they are the maintainer's direct correction of the vocabulary --
 # segment became interface, device became client, the owner entity was added --
 # and they pin the result so it cannot drift back. This script is the schema
@@ -29,6 +37,15 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${OPNVIEW_DATA_DIR:-/data}"
+
+# The schema and the purge live beside the code that applies them, in
+# internal/store, and they are embedded into the binary from there. Go's embed
+# directive cannot reach outside its own package directory and a second copy
+# under sql/ would be a second truth, so there is one copy and it is where the
+# only code that applies it can read it. This harness reads those same two files,
+# so what is checked here is what ships.
+SCHEMA_FILE="$REPO_ROOT/internal/store/schema.sql"
+PURGE_FILE="$REPO_ROOT/internal/store/purge.sql"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -53,6 +70,13 @@ FLOW_ROWS=100000
 ALERTS=500
 PAIR_ROWS=2000
 
+# Every Nth slot of the seed's address pool is IPv6. It is a seed PARAMETER, and
+# the alternative run below uses a different value, so nothing may assume how
+# much of a network is v6 -- and because it changes which FAMILY a row carries
+# and never how many rows exist, the counts above and their determinism
+# comparisons are unaffected.
+IPV6_EVERY=11
+
 ALT_INTERFACES=3
 ALT_CLIENTS=17
 ALT_RULES=5
@@ -60,6 +84,7 @@ ALT_OWNERS=2
 ALT_FLOW_ROWS=4000
 ALT_ALERTS=60
 ALT_PAIR_ROWS=300
+ALT_IPV6_EVERY=7
 
 # The scale run. The baseline above is a test size; this one is the check that
 # the plans hold at a production-ish volume in the largest growing table.
@@ -150,27 +175,21 @@ expect_sql_success() {
 }
 
 # --------------------------------------------------------------------------
-# Migration runner. A migration whose filename is already recorded in
-# schema_version is skipped, which is what makes re-applying a no-op.
+# The schema applier. There is no runner and nothing to skip: every statement in
+# the file is idempotent, which is what makes applying it on every start safe and
+# what replaces the schema_version bookkeeping.
 # --------------------------------------------------------------------------
-apply_migrations() {
-    local db="$1" errfile="$2" f name applied
+apply_schema() {
+    local db="$1" errfile="$2"
     : > "$errfile"
-    for f in "$REPO_ROOT"/migrations/*.sql; do
-        name="$(basename "$f")"
-        applied="$(sqlite3 "$db" "SELECT count(*) FROM schema_version WHERE filename = '$name';" 2>/dev/null)"
-        if [ "$applied" = "1" ]; then
-            continue
-        fi
-        printf -- '.bail on\nPRAGMA foreign_keys = ON;\n.read %s\n' "$f" |
-            sqlite3 "$db" 2>>"$errfile" || return 1
-    done
+    printf -- '.bail on\nPRAGMA foreign_keys = ON;\n.read %s\n' "$SCHEMA_FILE" |
+        sqlite3 "$db" 2>>"$errfile" || return 1
     return 0
 }
 
-# seed_database <db> <interfaces> <clients> <rules> <flow_rows> <alerts> <pair_rows> <owners>
+# seed_database <db> <interfaces> <clients> <rules> <flow_rows> <alerts> <pair_rows> <owners> [ipv6_every]
 seed_database() {
-    local db="$1"
+    local db="$1" ipv6="${9:-$IPV6_EVERY}"
     {
         printf -- '.bail on\n'
         printf -- '.param init\n'
@@ -182,6 +201,7 @@ seed_database() {
         printf -- '.param set :alerts %s\n' "$6"
         printf -- '.param set :pair_rows %s\n' "$7"
         printf -- '.param set :owners %s\n' "$8"
+        printf -- '.param set :ipv6_every %s\n' "$ipv6"
         printf -- '.read %s\n' "$REPO_ROOT/sql/seed.sql"
     } | sqlite3 "$db"
 }
@@ -251,50 +271,78 @@ mkdir -p "$DATA_DIR"
 rm -f "$DATA_DIR"/schema-checks-*.db "$DATA_DIR"/schema-checks-*.db-wal "$DATA_DIR"/schema-checks-*.db-shm
 
 # ===========================================================================
-section 'AC1, AC4 — migrations apply cleanly, and re-applying is a no-op'
+section 'AC1, AC4 — the schema applies cleanly, and re-applying changes nothing'
 # ===========================================================================
 sqlite3 "$MAIN_DB" 'PRAGMA journal_mode = WAL;' > /dev/null
-if apply_migrations "$MAIN_DB" "$WORK/migrate1.err"; then
+if apply_schema "$MAIN_DB" "$WORK/apply1.err"; then
     pass 'AC1 first apply exited 0'
 else
     fail 'AC1 first apply exited non-zero'
 fi
-if [ -s "$WORK/migrate1.err" ]; then
-    fail "AC1 first apply wrote to stderr: $(cat "$WORK/migrate1.err")"
+if [ -s "$WORK/apply1.err" ]; then
+    fail "AC1 first apply wrote to stderr: $(cat "$WORK/apply1.err")"
 else
     pass 'AC1 first apply wrote nothing to stderr'
 fi
 
 OBJECTS_BEFORE="$(q "$MAIN_DB" "SELECT count(*) FROM sqlite_master;")"
-VERSIONS_BEFORE="$(q "$MAIN_DB" 'SELECT count(*) FROM schema_version;')"
-if apply_migrations "$MAIN_DB" "$WORK/migrate2.err"; then
+table_row_counts() {
+    local db="$1" t
+    for t in $(q "$db" "SELECT name FROM sqlite_master WHERE type = 'table'
+                        AND name NOT LIKE 'sqlite_%' ORDER BY name;"); do
+        printf -- '%s %s\n' "$t" "$(q "$db" "SELECT count(*) FROM \"$t\";")"
+    done
+}
+table_row_counts "$MAIN_DB" > "$WORK/rows_before_reapply.txt"
+if apply_schema "$MAIN_DB" "$WORK/apply2.err"; then
     pass 'AC1 second apply exited 0'
 else
     fail 'AC1 second apply exited non-zero'
 fi
-if [ -s "$WORK/migrate2.err" ]; then
-    fail "AC1 second apply wrote to stderr: $(cat "$WORK/migrate2.err")"
+if [ -s "$WORK/apply2.err" ]; then
+    fail "AC1 second apply wrote to stderr: $(cat "$WORK/apply2.err")"
 else
     pass 'AC1 second apply wrote nothing to stderr'
 fi
 check 'AC1 second apply changed no schema object' \
     "$OBJECTS_BEFORE" "$(q "$MAIN_DB" 'SELECT count(*) FROM sqlite_master;')"
-check 'AC1 second apply added no schema_version row' \
-    "$VERSIONS_BEFORE" "$(q "$MAIN_DB" 'SELECT count(*) FROM schema_version;')"
-
-q "$MAIN_DB" 'SELECT filename FROM schema_version ORDER BY filename;' > "$WORK/versions.txt"
-find "$REPO_ROOT/migrations" -maxdepth 1 -name '*.sql' -printf '%f\n' | sort > "$WORK/migration_files.txt"
-if diff -u "$WORK/migration_files.txt" "$WORK/versions.txt" > "$WORK/versions.diff"; then
-    pass 'AC4 schema_version matches the files in migrations/'
+# The restatement, and it is stricter than the schema_version check it replaces:
+# a second apply must change no row count in ANY table. That is what stops a
+# restart from re-inserting a default over a setting somebody changed, or
+# resetting a probed availability row to "not yet probed".
+table_row_counts "$MAIN_DB" > "$WORK/rows_after_reapply.txt"
+if diff -u "$WORK/rows_before_reapply.txt" "$WORK/rows_after_reapply.txt" > "$WORK/reapply.diff"; then
+    pass 'AC1 second apply changed no row count in any table'
 else
-    fail "AC4 schema_version does not match migrations/: $(cat "$WORK/versions.diff")"
+    fail "AC1 second apply changed a row count: $(cat "$WORK/reapply.diff")"
+fi
+
+# AC4 restated. It used to assert that schema_version matched the files in
+# migrations/; both are gone by decision, so what it asserts now is the decision
+# itself, in the only form that can fail: there is no migrations directory, no
+# numbered file anywhere, and no schema_version table in the applied schema.
+if [ -e "$REPO_ROOT/migrations" ]; then
+    fail 'AC4 a migrations directory exists, and there are deliberately no migrations'
+else
+    pass 'AC4 there is no migrations directory'
+fi
+NUMBERED="$(find "$REPO_ROOT" -name '0[0-9][0-9][0-9]_*.sql' -not -path '*/.git/*' | head -n 3)"
+check 'AC4 no numbered migration file exists anywhere' '' "$NUMBERED"
+check 'AC4 the applied schema carries no schema_version table' '' \
+    "$(q "$MAIN_DB" "SELECT name FROM sqlite_master WHERE name = 'schema_version';")"
+check 'AC4 the schema is exactly one file' '1' \
+    "$(find "$REPO_ROOT/internal/store" -maxdepth 1 -name 'schema*.sql' | wc -l | tr -d ' ')"
+if [ -f "$SCHEMA_FILE" ] && [ -f "$PURGE_FILE" ]; then
+    pass 'AC4 the schema and the purge are where the code that applies them can read them'
+else
+    fail 'AC4 the schema or the purge is missing from internal/store'
 fi
 
 # ===========================================================================
 section 'AC7 — deterministic seed, and the baseline row count'
 # ===========================================================================
 seed_database "$MAIN_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"
-apply_migrations "$REPEAT_DB" "$WORK/migrate3.err" || fail 'AC7 repeat database migration failed'
+apply_schema "$REPEAT_DB" "$WORK/apply3.err" || fail 'AC7 repeat database schema apply failed'
 seed_database "$REPEAT_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"
 
 table_counts() {
@@ -483,7 +531,7 @@ check 'AC13 every stored traffic_scope agrees with interface membership' '0' \
 expect_sql_failure 'AC13 a traffic_scope disagreeing with interface membership is rejected' "$MAIN_DB" \
     "UPDATE flow SET traffic_scope = 'east_west' WHERE traffic_scope = 'north_south';"
 
-if grep -inE '\b(like|glob|regexp)\b' "$REPO_ROOT"/migrations/*.sql > "$WORK/namematch.txt"; then
+if grep -inE '\b(like|glob|regexp)\b' "$SCHEMA_FILE" > "$WORK/namematch.txt"; then
     fail "AC14 the DDL contains a name-matching predicate: $(cat "$WORK/namematch.txt")"
 else
     pass 'AC14 the DDL contains no LIKE, GLOB or REGEXP predicate at all'
@@ -622,6 +670,265 @@ check_ge 'AC22 a flow whose raw interface name is unmapped is returned with an u
     1 "$BLOCKED_UNKNOWN_IFACE"
 
 # ===========================================================================
+section 'GAP-AC1 .. GAP-AC5 — the collection-gap table'
+# ===========================================================================
+# A gap is a row because a gap is read by a SCREEN. A byte total over a window
+# that contains one is not a lower bound for the usual physical reason; it is a
+# lower bound because opnview was not looking, and those are two different
+# sentences to put next to a figure.
+check 'GAP-AC1 the collection_gap table exists' 'table' \
+    "$(q "$MAIN_DB" "SELECT type FROM sqlite_master WHERE name = 'collection_gap';")"
+check 'GAP-AC1 it records the source, the interval, the reason and when it was detected' '5' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('collection_gap')
+        WHERE name IN ('provider_id', 'interval_start_at', 'interval_end_at', 'reason',
+                       'detected_at');")"
+check 'GAP-AC1 the source is a foreign key to the registry, not a name' '1' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_foreign_key_list('collection_gap')
+        WHERE \"table\" = 'provider' AND \"from\" = 'provider_id';")"
+expect_sql_failure 'GAP-AC1 a gap attributed to a provider that does not exist is rejected' "$MAIN_DB" \
+    "INSERT INTO collection_gap (provider_id, interval_start_at, interval_end_at, reason, detected_at)
+     VALUES (999999999, $NOW - 60, $NOW, 'digest_outside_returned_window', $NOW);"
+
+# GAP-AC2: the three reasons are the three MEASURED failure modes, and the
+# vocabulary is closed because these are opnview's own detections rather than
+# values any endpoint reports -- so enumerating them invents nothing.
+check 'GAP-AC2 all three measured failure modes are represented in the seed' \
+    'digest_outside_returned_window|eve_rotation_lost|resolver_window_not_honoured' \
+    "$(q "$MAIN_DB" "SELECT group_concat(reason, '|') FROM
+        (SELECT DISTINCT reason FROM collection_gap ORDER BY reason);")"
+expect_sql_failure 'GAP-AC2 a reason outside the vocabulary is rejected' "$MAIN_DB" \
+    "UPDATE collection_gap SET reason = 'something-went-wrong'
+     WHERE id = (SELECT min(id) FROM collection_gap);"
+expect_sql_failure 'GAP-AC2 an interval that ends before it starts is rejected' "$MAIN_DB" \
+    "UPDATE collection_gap SET interval_end_at = interval_start_at - 1
+     WHERE id = (SELECT min(id) FROM collection_gap);"
+
+# GAP-AC3: a gap carries an interval a screen can put next to a figure, and it
+# says why in words.
+check 'GAP-AC3 every seeded gap carries a bounded interval' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM collection_gap
+        WHERE interval_end_at < interval_start_at;')"
+check_ge 'GAP-AC3 every seeded gap says why, in words' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM collection_gap WHERE detail IS NOT NULL;')"
+check 'GAP-AC3 a gap is attributed to a provider that exists' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM collection_gap g
+        WHERE NOT EXISTS (SELECT 1 FROM provider p WHERE p.id = g.provider_id);')"
+
+# GAP-AC4: no other table was added for this. A capability 4A does not have gets
+# no table, and the accounts and secrets the sign-in decision implies are not
+# here either -- they arrive with the cycle that has a sign-in.
+check 'GAP-AC4 no table exists for a capability this cycle does not have' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM sqlite_master
+        WHERE type = 'table'
+          AND (lower(name) GLOB '*account*' OR lower(name) GLOB '*user*'
+               OR lower(name) GLOB '*secret*' OR lower(name) GLOB '*credential*'
+               OR lower(name) GLOB '*session*' OR lower(name) GLOB '*password*'
+               OR lower(name) GLOB '*dashboard*' OR lower(name) GLOB '*canvas*'
+               OR lower(name) GLOB '*widget*' OR lower(name) GLOB '*theme*');")"
+
+# GAP-AC5: the two tables this cycle added are classified growing and are purged,
+# because each accumulates one row per pass and would otherwise grow without
+# bound from the first day.
+for t in collection_gap measurement_sample; do
+    if grep -qx "$t" "$WORK/growing.txt"; then
+        pass "GAP-AC5 $t is classified growing in the document"
+    else
+        fail "GAP-AC5 $t is not classified growing, and it accumulates one row per pass"
+    fi
+    if grep -q "DELETE FROM $t" "$PURGE_FILE"; then
+        pass "GAP-AC5 the purge removes old rows from $t"
+    else
+        fail "GAP-AC5 the purge does not touch $t, which therefore grows without bound"
+    fi
+done
+
+# ===========================================================================
+section 'MEAS-AC1 .. MEAS-AC5 — the sampled-measurement table'
+# ===========================================================================
+# One table for a subject, a measure, a unit, a value and an instant. It carries
+# both the firewall's own gauges and the per-pair volume, because the second has
+# to be SAMPLED: no endpoint exposes a flow aggregate over a past window, so
+# nothing upstream can answer "what did these two talk about last Tuesday".
+check 'MEAS-AC1 the measurement_sample table exists' 'table' \
+    "$(q "$MAIN_DB" "SELECT type FROM sqlite_master WHERE name = 'measurement_sample';")"
+check 'MEAS-AC1 it carries a subject, a measure, a unit, a value and an instant' '6' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('measurement_sample')
+        WHERE name IN ('subject_kind', 'subject_key', 'measure', 'unit', 'value', 'sampled_at');")"
+check 'MEAS-AC1 exactly one table was added for the sampled measurement' '1' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM sqlite_master WHERE type = 'table'
+        AND (lower(name) GLOB '*measurement*' OR lower(name) GLOB '*sample*'
+             OR lower(name) GLOB '*gauge*' OR lower(name) GLOB '*metric*'
+             OR lower(name) GLOB '*telemetry*');")"
+
+# MEAS-AC2: both kinds of reading round-trip, which is the whole claim that one
+# table serves both.
+check_ge 'MEAS-AC2 a firewall gauge round-trips' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
+        WHERE subject_kind = 'firewall' AND measure = 'uptime_seconds' AND unit = 'second';")"
+check_ge 'MEAS-AC2 a per-sensor gauge round-trips under its own subject key' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
+        WHERE subject_kind = 'firewall' AND subject_key <> ''
+          AND measure = 'temperature_celsius' AND unit = 'celsius';")"
+check_ge 'MEAS-AC2 a per-interface counter round-trips' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
+        WHERE subject_kind = 'interface' AND measure = 'bytes_in' AND unit = 'byte';")"
+check_ge 'MEAS-AC2 a sampled per-pair volume round-trips' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
+        WHERE subject_kind = 'endpoint_pair' AND measure = 'cumulative_bytes_in'
+          AND unit = 'byte';")"
+
+# MEAS-AC3: the vocabularies are closed, and the reason they may be is that they
+# are opnview's OWN -- the survey establishes the telemetry endpoints and not
+# their field names, so a measure named after a response key nobody has read
+# would be the invented vocabulary this project refuses.
+expect_sql_failure 'MEAS-AC3 a subject kind outside the vocabulary is rejected' "$MAIN_DB" \
+    "UPDATE measurement_sample SET subject_kind = 'something-else'
+     WHERE id = (SELECT min(id) FROM measurement_sample);"
+expect_sql_failure 'MEAS-AC3 a measure outside the vocabulary is rejected' "$MAIN_DB" \
+    "UPDATE measurement_sample SET measure = 'something-else'
+     WHERE id = (SELECT min(id) FROM measurement_sample);"
+expect_sql_failure 'MEAS-AC3 a unit outside the vocabulary is rejected' "$MAIN_DB" \
+    "UPDATE measurement_sample SET unit = 'furlongs'
+     WHERE id = (SELECT min(id) FROM measurement_sample);"
+expect_sql_failure 'MEAS-AC3 a reading with no unit is rejected' "$MAIN_DB" \
+    "UPDATE measurement_sample SET unit = NULL
+     WHERE id = (SELECT min(id) FROM measurement_sample);"
+
+# MEAS-AC4: re-reading the same instant is a no-op, which is what a sampler
+# restarting inside one interval needs.
+expect_sql_failure 'MEAS-AC4 a duplicate reading of one subject at one instant is rejected' "$MAIN_DB" \
+    "INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
+         unit, value, sampled_at)
+     SELECT provider_id, subject_kind, subject_key, measure, unit, value, sampled_at
+     FROM measurement_sample LIMIT 1;"
+check 'MEAS-AC4 the pair subject is canonically ordered, so one pair is one subject' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
+        WHERE subject_kind = 'endpoint_pair'
+          AND substr(subject_key, 1, instr(subject_key, ' ') - 1) >
+              substr(subject_key, instr(subject_key, ' ') + 1);")"
+
+# MEAS-AC5: the firewall's own telemetry names no provider, because it implements
+# none of the six kinds. Attributing it to the volume provider would say the
+# volume source measured the temperature.
+check 'MEAS-AC5 no firewall gauge is attributed to a provider' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
+        WHERE subject_kind = 'firewall' AND provider_id IS NOT NULL;")"
+check 'MEAS-AC5 every sampled pair volume names the provider whose material it is' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
+        WHERE subject_kind = 'endpoint_pair' AND provider_id IS NULL;")"
+check 'MEAS-AC5 no measurement names a provider that does not exist' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM measurement_sample m
+        WHERE m.provider_id IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM provider p WHERE p.id = m.provider_id);')"
+
+# ===========================================================================
+section 'V6-AC1 .. V6-AC4 — both address families, in every screen query'
+# ===========================================================================
+# The seed produces both families from a counter, with no address literal and no
+# addressing-plan meaning. flow.ip_version is the only column from which a
+# v4-against-v6 split is answerable: an address column alone cannot be
+# classified, and the project forbids inferring an addressing plan.
+check 'V6-AC1 flow carries both address families' '4|6' \
+    "$(q "$MAIN_DB" "SELECT group_concat(ip_version, '|') FROM
+        (SELECT DISTINCT ip_version FROM flow ORDER BY ip_version);")"
+for pair in 'dns_resolution:client_address' 'security_event:src_address' \
+            'client:last_address' 'pair_volume_observation:endpoint_low'; do
+    tbl="${pair%%:*}"
+    col="${pair##*:}"
+    check_ge "V6-AC1 $tbl carries an IPv6 address" 1 \
+        "$(q "$MAIN_DB" "SELECT count(*) FROM $tbl WHERE $col LIKE '%:%';")"
+    check_ge "V6-AC1 $tbl carries an IPv4 address" 1 \
+        "$(q "$MAIN_DB" "SELECT count(*) FROM $tbl WHERE $col NOT LIKE '%:%';")"
+done
+check 'V6-AC1 every flow of one family carries both endpoints of that family' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM flow
+        WHERE (src_address LIKE '%:%') <> (dst_address LIKE '%:%');")"
+check 'V6-AC1 the family a flow reports agrees with the addresses it carries' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM flow
+        WHERE (ip_version = 6) <> (src_address LIKE '%:%');")"
+
+# V6-AC2: the seed still contains no address literal. The IPv6 form is eight
+# hexadecimal groups derived from a counter, deliberately not a documentation
+# prefix, because a recognisable prefix would be a literal about somebody's
+# addressing.
+if grep -nE '[0-9a-f]{1,4}:[0-9a-f]{1,4}:[0-9a-f]{1,4}:' "$REPO_ROOT/sql/seed.sql" \
+        > "$WORK/v6_literals.txt"; then
+    fail "V6-AC2 an IPv6 literal was found in the seed: $(cat "$WORK/v6_literals.txt")"
+else
+    pass 'V6-AC2 no IPv6 literal appears in the seed'
+fi
+check 'V6-AC2 the family split is a bound parameter rather than a constant' '1' \
+    "$(grep -c ':ipv6_every' "$REPO_ROOT/sql/seed.sql" > /dev/null && echo 1 || echo 0)"
+
+# V6-AC3: every screen query answers with both families present.
+#
+# Five of the seven project an address, and for those the assertion is direct: a
+# row derived from each family. Overview and Matrix aggregate and project no
+# address at all, so for those the assertion is COVERAGE -- the query's own
+# totals equal the totals over the flows in its window, computed with both
+# families present, which is what proves neither family was dropped. Map
+# aggregates too, and its coverage is asserted the same way against the rows the
+# geo join actually reaches.
+family_both() {
+    local name="$1" file="$2" column="$3" v6 v4
+    v6="$(run_query "$MAIN_DB" "$(wrap_query "$file" 'SELECT count(*) FROM (' \
+        ") WHERE $column LIKE '%:%';")")"
+    v4="$(run_query "$MAIN_DB" "$(wrap_query "$file" 'SELECT count(*) FROM (' \
+        ") WHERE $column NOT LIKE '%:%';")")"
+    check_ge "V6-AC3 the $name query returns a row derived from IPv6" 1 "$v6"
+    check_ge "V6-AC3 the $name query returns a row derived from IPv4" 1 "$v4"
+}
+family_both 'Interface' "$WORK/screens/03_Interface.sql" 'last_address'
+family_both 'Client' "$WORK/screens/04_Client.sql" 'dst_address'
+family_both 'Blocked' "$WORK/screens/05_Blocked.sql" 'src_address'
+family_both 'Alerts' "$WORK/screens/06_Alerts.sql" 'src_address'
+
+WINDOW_FLOWS="$(q "$MAIN_DB" "SELECT count(*) FROM flow
+    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END;")"
+WINDOW_FLOWS_V6="$(q "$MAIN_DB" "SELECT count(*) FROM flow
+    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND ip_version = 6;")"
+check_ge 'V6-AC3 the Overview window holds flows of both families to count' 1 "$WINDOW_FLOWS_V6"
+check 'V6-AC3 the Overview query counts every flow in the window, both families included' \
+    "$WINDOW_FLOWS" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
+        'SELECT sum(flow_count) FROM (' ');')")"
+
+WINDOW_BYTES="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM flow
+    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END
+      AND src_interface_id IS NOT NULL;")"
+WINDOW_BYTES_V6="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM flow
+    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END
+      AND src_interface_id IS NOT NULL AND ip_version = 6;")"
+check_ge 'V6-AC3 the Matrix window holds IPv6 bytes to sum' 1 "$WINDOW_BYTES_V6"
+check 'V6-AC3 the Matrix query sums every byte in the window, both families included' \
+    "$WINDOW_BYTES" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/02_Matrix.sql" \
+        'SELECT sum(observed_bytes) FROM (' ');')")"
+
+MAP_BYTES="$(q "$MAIN_DB" "SELECT sum(v.bytes) FROM volume_aggregate_24h AS v
+    JOIN geo_asn AS g ON g.address = v.peer_address
+    WHERE v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END;")"
+MAP_BYTES_V6="$(q "$MAIN_DB" "SELECT sum(v.bytes) FROM volume_aggregate_24h AS v
+    JOIN geo_asn AS g ON g.address = v.peer_address
+    WHERE v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END
+      AND v.peer_address LIKE '%:%';")"
+check_ge 'V6-AC3 the Map window reaches IPv6 destinations' 1 "$MAP_BYTES_V6"
+check 'V6-AC3 the Map query sums every enriched destination, both families included' \
+    "$MAP_BYTES" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/07_Map.sql" \
+        'SELECT sum(observed_bytes) FROM (' ');')")"
+
+# V6-AC4: an IPv6 destination is enriched rather than being a permanent cache
+# miss, which is what would happen if the seed had been extended in one family
+# only -- and it would look like a dataset problem rather than a seed problem.
+check_ge 'V6-AC4 an IPv6 destination carries a resolved geo enrichment' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM geo_asn
+        WHERE address LIKE '%:%' AND lookup_state = 'resolved';")"
+check_ge 'V6-AC4 an IPv6 destination also exercises the modelled cache miss' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM geo_asn
+        WHERE address LIKE '%:%' AND lookup_state = 'miss';")"
+
+# ===========================================================================
 section 'VOC-AC1, VOC-AC2 — the vocabulary comes from OPNsense, not from us'
 # ===========================================================================
 # VOC-AC1: nothing in the live schema is called a "segment". OPNsense names the
@@ -631,11 +938,11 @@ check 'VOC-AC1 no table, view, index or column is named for a segment' '' \
     "$(q "$MAIN_DB" "SELECT group_concat(m.name || '.' || ifnull(i.name, '(object)'), ',')
         FROM sqlite_master m LEFT JOIN pragma_table_info(m.name) i
         WHERE lower(m.name) GLOB '*segment*' OR lower(i.name) GLOB '*segment*';")"
-if grep -rniE '\bsegments?\b' "$REPO_ROOT/migrations" "$REPO_ROOT/sql/queries" \
-        "$REPO_ROOT/sql/seed.sql" "$REPO_ROOT/sql/purge.sql" > "$WORK/segment_word.txt"; then
+if grep -rniE '\bsegments?\b' "$SCHEMA_FILE" "$PURGE_FILE" "$REPO_ROOT/sql/queries" \
+        "$REPO_ROOT/sql/seed.sql" > "$WORK/segment_word.txt"; then
     fail "VOC-AC1 the word segment survives in the schema or its queries: $(head -n 3 "$WORK/segment_word.txt")"
 else
-    pass 'VOC-AC1 the word segment appears nowhere in the migrations, the queries, the seed or the purge'
+    pass 'VOC-AC1 the word segment appears nowhere in the schema, the queries, the seed or the purge'
 fi
 check 'VOC-AC1 the interface table carries the endpoint field names verbatim' '5' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('interface')
@@ -793,8 +1100,7 @@ check_ge 'G1-AC4 the diagnostic reports an unassigned purpose as a state, not a 
 # description, and the enforceable form is that no SQL this cycle ships
 # compares blocklist.name to anything but an equality on a supplied value.
 if grep -nE 'blocklist[._]?name[[:space:]]*(LIKE|GLOB|REGEXP)|b\.name[[:space:]]*(LIKE|GLOB|REGEXP)' \
-        "$REPO_ROOT/migrations/0001_core.sql" \
-        "$REPO_ROOT/migrations/0002_aggregates_and_defaults.sql" \
+        "$SCHEMA_FILE" \
         "$REPO_ROOT/sql/queries/screens.sql" \
         "$REPO_ROOT/sql/queries/diagnostics.sql" > "$WORK/name_predicates.txt"; then
     fail "G1-AC5 a predicate matches on a blocklist name: $(cat "$WORK/name_predicates.txt")"
@@ -973,7 +1279,7 @@ check 'AC30 the retention horizon is stored in the database and defaults to 90 d
     '7776000' "$(q "$MAIN_DB" "SELECT value FROM setting WHERE key = 'retention_seconds';")"
 if grep -nE '7776000|\b90[[:space:]]*days?\b' \
         "$REPO_ROOT/sql/queries/screens.sql" "$REPO_ROOT/sql/queries/diagnostics.sql" \
-        "$REPO_ROOT/sql/purge.sql" > "$WORK/retention_literals.txt"; then
+        "$PURGE_FILE" > "$WORK/retention_literals.txt"; then
     fail "AC30 a retention duration appears as a literal: $(cat "$WORK/retention_literals.txt")"
 else
     pass 'AC30 no retention duration appears as a literal in any query or in the purge'
@@ -985,7 +1291,7 @@ run_purge() {
         printf -- '.bail on\n'
         printf -- '.param init\n'
         printf -- '.param set :now %s\n' "$NOW"
-        printf -- '.read %s\n' "$REPO_ROOT/sql/purge.sql"
+        printf -- '.read %s\n' "$PURGE_FILE"
     } | sqlite3 "$db"
 }
 
@@ -1000,6 +1306,7 @@ CUTOFF=$((NOW - 7776000))
 PURGEABLE='flow:observed_at dns_resolution:looked_up_at security_event:occurred_at
 dhcp_lease:observed_at client:last_seen_at pair_volume_observation:day_start_at
 geo_asn:looked_up_at domain_attribution:attributed_at
+collection_gap:detected_at measurement_sample:sampled_at
 volume_aggregate_1h:period_end_at volume_aggregate_24h:period_end_at
 volume_aggregate_7d:period_end_at volume_aggregate_30d:period_end_at
 owner_volume_aggregate_1h:period_end_at owner_volume_aggregate_24h:period_end_at
@@ -1079,12 +1386,11 @@ check_ge 'AC33 the Map query returns the cache miss rather than dropping its vol
 # ===========================================================================
 section 'AC34 — no address, CIDR or discovered name as a literal'
 # ===========================================================================
-CYCLE_FILES="$REPO_ROOT/migrations/0001_core.sql
-$REPO_ROOT/migrations/0002_aggregates_and_defaults.sql
+CYCLE_FILES="$SCHEMA_FILE
+$PURGE_FILE
 $REPO_ROOT/sql/queries/screens.sql
 $REPO_ROOT/sql/queries/diagnostics.sql
 $REPO_ROOT/sql/seed.sql
-$REPO_ROOT/sql/purge.sql
 $REPO_ROOT/sql/schema-checks.sh
 $REPO_ROOT/docs/data-model.md
 $REPO_ROOT/docs/architecture.md"
@@ -1105,9 +1411,9 @@ check 'AC34 every seeded address was synthesised from a counter at generation ti
 # ===========================================================================
 section 'AC35 — no assumed interface, client or interface count'
 # ===========================================================================
-apply_migrations "$ALT_DB" "$WORK/migrate_alt.err" || fail 'AC35 the alternative database failed to migrate'
+apply_schema "$ALT_DB" "$WORK/apply_alt.err" || fail 'AC35 the alternative database failed to take the schema'
 seed_database "$ALT_DB" "$ALT_INTERFACES" "$ALT_CLIENTS" "$ALT_RULES" "$ALT_FLOW_ROWS" \
-    "$ALT_ALERTS" "$ALT_PAIR_ROWS" "$ALT_OWNERS"
+    "$ALT_ALERTS" "$ALT_PAIR_ROWS" "$ALT_OWNERS" "$ALT_IPV6_EVERY"
 check 'AC35 the alternative seed has a different interface count' "$ALT_INTERFACES" \
     "$(q "$ALT_DB" 'SELECT count(*) FROM interface;')"
 check 'AC35 the alternative seed has a different owner count' "$ALT_OWNERS" \
@@ -1263,7 +1569,7 @@ check_ge 'PN-AC20 a provider name does appear as a value, in the registry' 1 \
 # those strings in order to forbid them, and matching itself would make the
 # check unfalsifiable rather than strict.
 grep -rinE --exclude='schema-checks.sh' 'crowdsec|zenarmor|sensei|snort|wazuh|ntopng' \
-    "$REPO_ROOT/migrations" "$REPO_ROOT/sql" \
+    "$SCHEMA_FILE" "$PURGE_FILE" "$REPO_ROOT/sql" \
     "$REPO_ROOT/docs/data-model.md" "$REPO_ROOT/docs/architecture.md" \
     >> "$WORK/speculative.txt" 2>/dev/null
 if [ -s "$WORK/speculative.txt" ]; then
@@ -1275,7 +1581,7 @@ fi
 # ===========================================================================
 section 'PN-AC9, PN-AC10, PN-AC12 — a freshly migrated, unseeded database'
 # ===========================================================================
-apply_migrations "$FRESH_DB" "$WORK/migrate_fresh.err" || fail 'PN-AC10 the fresh database failed to migrate'
+apply_schema "$FRESH_DB" "$WORK/apply_fresh.err" || fail 'PN-AC10 the fresh database failed to take the schema'
 FRESH_PROVIDERS="$(q "$FRESH_DB" 'SELECT count(*) FROM provider;')"
 check_ge 'PN-AC10 the fresh database registers every provider surveyed today' 9 "$FRESH_PROVIDERS"
 check 'PN-AC10 every registry row has exactly one availability row' "$FRESH_PROVIDERS" \
@@ -1492,14 +1798,29 @@ check_ge 'PN-AC21 a seeded cache miss still exists' 1 \
 check_ge 'PN-AC21 the Map query still returns the cache miss' 1 "$MAP_MISS"
 
 # ===========================================================================
-section 'PN-AC22 — migration discipline'
+section 'PN-AC22 — schema discipline'
 # ===========================================================================
-check 'PN-AC22 migrations/ holds exactly two .sql files' '2' \
-    "$(find "$REPO_ROOT/migrations" -maxdepth 1 -name '*.sql' | wc -l | tr -d ' ')"
-check 'PN-AC22 no 0003 migration exists' '' \
-    "$(find "$REPO_ROOT/migrations" -maxdepth 1 -name '0003*' | head -n 1)"
-check 'PN-AC22 schema_version holds exactly two rows after a fresh apply' '2' \
-    "$(q "$FRESH_DB" 'SELECT count(*) FROM schema_version;')"
+# PN-AC22 restated. It counted migration files and schema_version rows, and both
+# are gone by decision. What it was protecting was that the schema does not
+# sprawl, and the decision makes that stronger rather than weaker: there is one
+# file, it is idempotent, and it is the file the binary embeds. Migrations begin
+# the day the product runs somewhere with data worth keeping, and that file
+# becomes the baseline.
+check 'PN-AC22 the schema is one file and it is the one the code embeds' '1' \
+    "$(grep -c 'go:embed schema.sql purge.sql' "$REPO_ROOT/internal/store/store.go")"
+if grep -qF 'THERE ARE NO MIGRATIONS' "$SCHEMA_FILE"; then
+    pass 'PN-AC22 the schema states that there are no migrations, and why'
+else
+    fail 'PN-AC22 the schema does not state the no-migrations decision'
+fi
+if grep -qF 'Migrations begin the day' "$SCHEMA_FILE"; then
+    pass 'PN-AC22 the schema states when migrations begin'
+else
+    fail 'PN-AC22 the schema does not say when migrations begin'
+fi
+check 'PN-AC22 a fresh apply creates no version-tracking table' '' \
+    "$(q "$FRESH_DB" "SELECT group_concat(name, ',') FROM sqlite_master
+        WHERE lower(name) GLOB '*schema_version*' OR lower(name) GLOB '*migration*';")"
 
 # ===========================================================================
 section 'PN-AC24 — the architecture document'
@@ -1546,7 +1867,7 @@ section 'PN-AC25 — the restructured tables cite their endpoints'
 # ===========================================================================
 for needle in 'query_alerts' 'get_rule_info' 'leases4/search' 'search_queries' \
               'firewall/log' 'networkinsight'; do
-    if grep -qF "$needle" "$REPO_ROOT/migrations/0001_core.sql"; then
+    if grep -qF "$needle" "$SCHEMA_FILE"; then
         pass "PN-AC25 the DDL cites $needle where it is consumed"
     else
         fail "PN-AC25 the DDL does not cite $needle"
@@ -1677,7 +1998,7 @@ done
 # ===========================================================================
 section 'PN-AC30 — the scale run: 1 000 000 rows in the largest growing table'
 # ===========================================================================
-apply_migrations "$SCALE_DB" "$WORK/migrate_scale.err" || fail 'PN-AC30 the scale database failed to migrate'
+apply_schema "$SCALE_DB" "$WORK/apply_scale.err" || fail 'PN-AC30 the scale database failed to take the schema'
 printf -- '  seeding %s flow rows, this takes a while...\n' "$SCALE_FLOW_ROWS"
 seed_database "$SCALE_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$SCALE_FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"
 SCALE_COUNT="$(q "$SCALE_DB" 'SELECT count(*) FROM flow;')"

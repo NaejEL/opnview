@@ -1,0 +1,52 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Data source 4 - Response shape",
+    "field_list_from": "hostname, hwaddr, address, prefix_len, state, expire, valid_lifetime, if_name, if_descr, client_id, duid, iaid, mac_info, plus the envelope stats",
+    "why_these_values": "Two leases with a valid_lifetime, so the validity start is a real figure rather than the substitute the other backends need.",
+    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "total": 2,
+    "rowCount": 2,
+    "current": 1,
+    "stats": {
+      "active": 2,
+      "inactive": 0,
+      "total": 2
+    },
+    "interfaces": {
+      "example_if_a": "example description A"
+    },
+    "rows": [
+      {
+        "hostname": "example-host-four",
+        "hwaddr": "0a:11:22:33:44:88",
+        "address": "198.51.100.13",
+        "prefix_len": 24,
+        "state": "active",
+        "expire": 1750003600,
+        "valid_lifetime": 3600,
+        "client_id": "example-client-identifier-four",
+        "duid": "example-duid",
+        "iaid": "1",
+        "mac_info": "example vendor string",
+        "if_name": "example_if_a",
+        "if_descr": "example description A"
+      },
+      {
+        "hostname": "example-host-five",
+        "hwaddr": "0c:11:22:33:44:99",
+        "address": "198.51.100.14",
+        "state": "expired",
+        "expire": 1749900000,
+        "valid_lifetime": 3600,
+        "mac_info": "example vendor string",
+        "if_name": "example_if_a",
+        "if_descr": "example description A"
+      }
+    ]
+  }
+}

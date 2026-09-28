@@ -7,8 +7,24 @@ how retention treats it, and which indexes it carries.
 The authority on the sources is `docs/opnsense-api-survey.md`, pinned to
 OPNsense 26.7.3. Every endpoint named below is cited there, with its URL; the
 citation is not repeated here. The authority on the schema is
-`migrations/*.sql`, and the authority on the queries is
-`sql/queries/screens.sql`. This document explains them; it does not restate
+`internal/store/schema.sql`, and the authority on the queries is
+`sql/queries/screens.sql`.
+
+**There are no migrations, and that is a decision rather than an omission.**
+Nothing is deployed and nobody has data, so numbered files, a `schema_version`
+table and a runner would be machinery for a problem that does not exist. The
+schema is one file, edited in place, embedded into the binary by
+`internal/store` and applied on every start; every statement in it is
+idempotent, which is what makes that safe and what replaces the
+`schema_version` bookkeeping. `sql/schema-checks.sh` asserts the idempotence in
+a stricter form than the old check it replaces: a second apply must change no
+row count in any table, so a restart cannot re-insert a default over a setting
+somebody changed or reset a probed availability row. **Migrations begin the day
+the product runs somewhere with data worth keeping** — that file becomes the
+baseline and the first real migration is the one after it. `internal/store`
+also holds `purge.sql`, for one reason: Go's embed directive cannot reach
+outside its own package directory, and a second copy elsewhere would be a
+second truth. This document explains them; it does not restate
 them, so the two cannot drift. `docs/architecture.md` names the six provider
 kinds and the seam a provider plugs into; this document is where each entity
 is written down.
@@ -72,7 +88,7 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | why a filter-log line was written | `reason` | `flow.log_reason` | `/api/diagnostics/firewall/log`, field `reason` (survey, data source 1, *Response shape*); prefixed because `reason` alone would read as the reason for the decision, which is the rule |
 | the resolver's validation verdict on a lookup | `dnssec_status` | `dns_resolution.dnssec_status` | `/api/unbound/overview/search_queries`, field `dnssec_status` (survey, data source 5, *Response shape*) |
 
-**Four terms are `opnview`'s own, because OPNsense has no word for them.**
+**Six terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -82,13 +98,16 @@ vocabulary read off an endpoint:
 | `interface.link_kind` | OPNsense publishes the raw `link_type` and no normalised class of it | `opnview` needs a closed vocabulary to derive `is_tunnel` from something other than a name |
 | `owner` | no product `opnview` reads has any notion of a person; a lease names a host, not a human | the entity answers "whose machine is this", and the word is taken from that question |
 | `blocklist.purpose` | the endpoint reports what a list is **called** and nothing about what it is **for**; OPNsense publishes no classification of a subscribed list | the column answers "advertising or threat", which is the maintainer's question, and it is assigned by the user for the same reason `owner` is: `hagezi-pro` and `oisd-small` tell a machine nothing |
+| `collection_gap` | no product `opnview` reads has a notion of the data it failed to deliver: every source returns what it has and says nothing about what it did not (survey, gap 11) | the word is taken from the question the row answers — what is missing from this history — and the row exists because a gap is read by a screen rather than by a log reader |
+| `measurement_sample` | OPNsense answers for processor, memory, temperature, disk, uptime and per-interface counters and publishes no collective noun for them; nor does it have a word for a per-pair volume `opnview` has to sample because no aggregate of it exists upstream | the two turned out to be the same five facts — a subject, a measure, a unit, a value and an instant — so one term names one table, and `measure` and `unit` are closed vocabularies of `opnview`'s own because the survey establishes those endpoints and not their field names |
+| `dns_resolution.lookup_key` | the resolver returns a `uuid` field and it is null on every row, so the endpoint supplies no identity for a lookup at all | the column holds an identity `opnview` composes from the row's own content, so it is named for what it **is** — a key — rather than for the uuid it is not, and not `digest` either, because a provider that does supply a stable identifier stores that here unchanged |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
 is `interface`. `device` meant two things at once — the network device on an
 interface, and a machine on the network — and now means only the first; the
 second is `client`. Nothing is deployed, so both renames were made in the
-migrations in place rather than added as a third one.
+schema in place rather than added as a migration.
 
 ## Conventions
 
@@ -106,8 +125,8 @@ normalised by the collector at the boundary:
 
 **Identifiers.** No interface identifier, interface description, VLAN name,
 address or CIDR
-appears as a literal anywhere in the migrations, their defaults, their
-constraints, their indexes, the seven screen queries or the seed. There is no
+appears as a literal anywhere in the schema, its defaults, its
+constraints, its indexes, the seven screen queries or the seed. There is no
 `LIKE`, `GLOB` or `REGEXP` predicate in the DDL at all, so nothing can classify
 an interface, a client or a rule by what it is called.
 
@@ -125,6 +144,7 @@ table.
 blocked_event
 blocklist
 client
+collection_gap
 dhcp_lease
 dns_resolution
 domain_attribution
@@ -133,6 +153,7 @@ flow
 geo_asn
 interface
 interface_map
+measurement_sample
 owner
 owner_volume_aggregate_1h
 owner_volume_aggregate_24h
@@ -142,7 +163,6 @@ pair_volume_observation
 provider
 provider_rule_info
 rule
-schema_version
 security_event
 setting
 source_availability
@@ -169,11 +189,13 @@ bounded table.
 <!-- growing-tables:begin -->
 ```
 client
+collection_gap
 dhcp_lease
 dns_resolution
 domain_attribution
 flow
 geo_asn
+measurement_sample
 owner_volume_aggregate_1h
 owner_volume_aggregate_24h
 owner_volume_aggregate_30d
@@ -197,7 +219,6 @@ owner
 provider
 provider_rule_info
 rule
-schema_version
 setting
 source_availability
 ```
@@ -217,7 +238,6 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `source_availability` | exactly one row per `provider` row, for the life of the database |
 | `eve_ingest_cursor` | one watermark per rotated `eve.json` file; the firewall keeps the current file plus four archives |
 | `setting` | one row per configuration key |
-| `schema_version` | one row per applied migration |
 
 `client` is classified as growing, not bounded: an address reissued to another
 machine creates a new identity rather than updating an existing one, so the
@@ -237,8 +257,13 @@ Registering a provider is an `INSERT` into `provider` plus an `INSERT` into
 `CHECK` on the registry constrains `kind`, because a kind is code `opnview`
 ships and not data a deployment supplies.
 
-The nine rows migration 0002 seeds, with the survey section that established
-each one:
+The nine rows the schema registers, with the survey section that established
+each one. **Each is one IMPLEMENTATION of a kind, and the kind is the seam:**
+`dhcp_lease` has three and `dns_lookup` has two, and on the firewall the survey
+probed Dnsmasq serves DHCP with Kea disabled while Unbound and Dnsmasq are both
+running as resolvers. `internal/collect` carries one interface per kind and one
+file per implementation, each registering itself against the `provider_key`
+below, so adding a backend is one file plus one row here.
 
 | Kind | `provider_key` | Endpoint | Survey |
 |---|---|---|---|
@@ -724,8 +749,32 @@ diagnostic. For a Dnsmasq resolver there is no structured endpoint at all and
 the rows come from parsing the free-text `line` of the generic log endpoint,
 whose grammar the survey marks `UNVERIFIED:`.
 
-**Identity:** `lookup_uuid`, unique — the row `uuid` the endpoint returns, which
-is what deduplicates a re-requested window.
+**Identity: `lookup_key`, unique — and `opnview` composes it, because the
+endpoint's own identifier does not exist.** `search_queries` returns a `uuid`
+field and it is **null on every row**, measured against a live firewall on
+2026-09-27 (survey, *Verified against a live firewall*). The column was called
+`lookup_uuid`; it is renamed because a name that says uuid while holding a hash
+is worse than a comment that says it — the comment is next to the column, the
+name travels into every query somebody writes.
+
+For the Unbound provider the value is `content:` followed by the SHA-256 of the
+resolver name, the lookup instant, and the row's own `client`, `domain`,
+`action`, `source`, `rcode`, `dnssec_status` and `blocklist`, joined by a unit
+separator. It has to be content-addressed because the endpoint is a **ring
+buffer with no cursor and no working window**: every pass re-reads rows already
+stored, and without this each pass would insert them again and multiply every
+per-client lookup count by the number of passes that saw it.
+
+**The trade, which is a real loss and is chosen deliberately.** Two genuinely
+distinct lookups by the same client, for the same domain, with the same verdict,
+in the *same second* collapse into one row, and such a pair is under-counted by
+one. The endpoint returns nothing that could tell them apart — no identifier, no
+sub-second instant, no sequence — so the only alternative is a key that is not
+stable across passes, which would over-count *every* row on *every* poll instead
+of under-counting a rare coincidence. An under-count of identical lookups is
+also the direction that cannot invent traffic. A provider that does supply a
+stable row identifier stores it here unchanged, which is why the column says
+`key` and not `digest`.
 
 **The list that refused it.** `blocklist_id` is a nullable foreign key to
 `blocklist`, resolved at ingest from the row's `blocklist` field. It is NULL for
@@ -905,7 +954,7 @@ constraint.
 
 ### `source_availability` — the health of each registered provider
 
-Exactly one row per `provider` row, created by migration 0002 in the
+Exactly one row per `provider` row, created by the schema in the
 `unavailable` state with the probe recorded as not yet run, because an absent
 row is something a screen could not tell apart from a healthy provider. No
 source can be distinguished from silence by an empty result alone (survey, gap
@@ -914,9 +963,8 @@ that determined it. A `CHECK` rejects any state outside `reachable`,
 `present_but_disabled` and `unavailable`, and the primary key is a foreign key,
 so an availability row for a provider that does not exist cannot be inserted.
 
-There is no `CHECK` enumerating provider names here, and that is the change
-this cycle makes: registering a provider is an `INSERT` into two tables, never
-a migration.
+There is no `CHECK` enumerating provider names here: registering a provider is
+an `INSERT` into two tables, never a schema change.
 
 Per kind, the probe and what an unavailable answer means. In every case the
 condition is stored as an **availability state** and rendered as its own
@@ -1089,7 +1137,7 @@ they point at are never purged.
 purge horizon in seconds, so it is as easy to set to a few hours as to months.
 It defaults to `7776000` — 90 days — and `0` means unlimited, which purges
 nothing. No retention duration appears as a literal in any query, in any index,
-or in `sql/purge.sql`: every statement reads the horizon from this row through
+or in `internal/store/purge.sql`: every statement reads the horizon from this row through
 a scalar subquery that yields `NULL` when the horizon is unlimited, so every
 comparison is `NULL` and nothing is deleted.
 
@@ -1097,12 +1145,106 @@ comparison is `NULL` and nothing is deleted.
 
 **Retention:** never purged. **Indexes:** the primary key.
 
-### `schema_version` — the applied migrations
+### `collection_gap` — an interval opnview knows it did not cover
 
-One row per applied migration file, inserted by the migration itself. The
-runner skips a file already recorded, which is what makes re-applying the
-migrations a no-op. The checks assert that the rows and the files in
-`migrations/` match in both directions.
+**Source: none.** This is the second entity in the schema fed by no endpoint,
+and the reason is the finding the whole product rests on: every source returns
+what it has and says nothing about what it did not return (survey, gap 11). The
+term is `opnview`'s own, taken from the question the row answers — what is
+missing from this history — and recorded as such in *Vocabulary*.
+
+**Why it is a row rather than a log line.** A gap is read by a screen. A byte
+total over a window that contains one is not a lower bound for the usual
+physical reason; it is a lower bound because `opnview` was not looking, and
+those are two different sentences to put next to a figure.
+
+**The three reasons are measured failure modes, not suppositions.**
+
+| `reason` | What was measured |
+|---|---|
+| `digest_outside_returned_window` | the filter log's `digest` is a de-duplication key and **not** a server-side cursor: passing it returned byte-identical output twice on a live firewall. So a poll whose oldest returned line is newer than the newest line stored has missed everything between them, and nothing can recover it |
+| `eve_rotation_lost` | rotation discarded the `eve.json` file a watermark pointed at. Detectable because `get_alert_logs` no longer lists it; permanent, and recorded as `rotation_state = 'lost'` as well |
+| `resolver_window_not_honoured` | `search_queries` ignores `timeStart` and `timeEnd` outright — a 5-minute and a 24-hour request returned the same span — so it is a ring buffer of the most recent lookups and a pass whose oldest row is newer than the newest stored one lost what was between them |
+
+The vocabulary is closed, and it may be because these are `opnview`'s own
+detections rather than values any endpoint reports: enumerating them invents
+nothing. `detail` carries the free text, and the collector writes into it what
+the reader should do about it — for the filter log, that the page size has to be
+sized for this installation.
+
+**Retention:** purged by `detected_at`. A gap describing a window whose
+observations would themselves have gone says nothing a screen can use, and
+keeping it would make the oldest edge of the history read as permanently broken.
+
+**Indexes:** the primary key, `idx_collection_gap_detected_at` for the purge,
+and `idx_collection_gap_interval` so "was this window covered" is an index
+search per provider.
+
+### `measurement_sample` — one numeric reading of one subject at one instant
+
+**Sources:** `/api/diagnostics/traffic/top/<interface names>` for the per-pair
+volume, and `/api/diagnostics/system/systemResources`,
+`/api/diagnostics/system/systemTemperature`,
+`/api/diagnostics/system/systemTime`, `/api/diagnostics/system/systemDisk`,
+`/api/diagnostics/activity/getActivity` and
+`/api/diagnostics/traffic/interface` for the firewall's own gauges. Survey,
+*Verified against a live firewall, 2026-09-27*.
+
+**It exists because two different needs turned out to have one shape.** The
+telemetry the earlier passes recorded as gaps **G9** and **G10** is answerable:
+those six endpoints exist, so the gap was never in the API and was always in
+the schema, which had nowhere to put a gauge. Separately, `traffic/top` is a
+**live rate snapshot** and no endpoint exposes a flow aggregate over a past
+window — `netflow/aggregate` answered 404 — so per-pair volume has to be
+sampled too. A gauge and a sampled pair volume are the same five facts: a
+subject, a measure, a unit, a value and an instant. One table carries both.
+
+**This is not an entity-attribute-value table**, and the distinction matters
+because this document forbids one. An EAV table stores attributes of
+heterogeneous entities as untyped name/value pairs, losing every type and every
+constraint. This stores **one** kind of thing — a numeric reading over time —
+with a typed `REAL` value, a mandatory unit, a closed subject vocabulary and a
+closed measure vocabulary, and the screens that read it filter on
+`(subject_kind, subject_key, measure)` over a range of `sampled_at`, which is
+exactly what its index serves. It is the shape every time-series store uses,
+including the aggregates OPNsense itself keeps under `/var/netflow`.
+
+**The subject.** `subject_kind` is `firewall`, `interface` or `endpoint_pair`.
+For an interface the key is the network **device** name, the token
+`interface_map` keys by, so a reading joins to an interface without a foreign
+key a discovery refresh could break. For a pair it is the two addresses in
+lexicographic order joined by a space — the same canonical ordering
+`pair_volume_observation` enforces, so a pair sampled from either end is one
+subject. For the firewall it names the part measured when there is one, a
+temperature sensor or a mounted filesystem, and is empty for a reading of the
+whole machine.
+
+**`measure` and `unit` are `opnview`'s own closed vocabularies**, and they are
+allowed to be: the survey establishes those six endpoints and **not their field
+names**, so a measure named after a response key nobody has read would be an
+assertion about a shape nobody has seen. Which response key each reading is
+taken from is a candidate list marked `UNVERIFIED:` in `internal/collect`, and
+a reading none of the candidates matches is recorded as **absent** rather than
+written as a zero — the difference between "the processor is idle" and "this
+endpoint did not tell us".
+
+**`provider_id` is nullable and is `NULL` on every firewall gauge.** The
+firewall's own telemetry implements none of the six provider kinds — it is the
+machine reporting on itself — and attributing it to the volume provider would
+say the volume source measured the temperature. That the model has no kind for
+it is recorded here rather than papered over with a foreign key that means
+something else. The per-pair readings do name the `flow_volume` provider,
+because that volume is its material.
+
+**Identity:** `(subject_kind, subject_key, measure, sampled_at)`. Re-reading
+the same instant is a no-op, which is what a sampler restarting inside one
+interval needs.
+
+**Retention:** purged by `sampled_at`.
+
+**Indexes:** `idx_measurement_sample_subject`, which is what makes "this
+subject's readings of this measure over this period" an index search, and
+`idx_measurement_sample_sampled_at` for the purge.
 
 ## API field coverage
 
@@ -1284,7 +1426,7 @@ The three backend lease endpoints, survey *Data source 4*, *Response shape*.
 | `rcode` | `/api/unbound/overview/search_queries` | Data source 5, Response shape | **stored** — `dns_resolution.rcode` |
 | `dnssec_status` | `/api/unbound/overview/search_queries` | Data source 5, Response shape | **stored** — `dns_resolution.dnssec_status`. Dropped until this pass; closed here. It is the resolver's own validation verdict, reached and then discarded, and it is stored verbatim with no `CHECK` because the survey establishes the field and not its value set |
 | `blocklist` | `/api/unbound/overview/search_queries` | Data source 5, Response shape | **stored** — `blocklist.name`, referenced by `dns_resolution.blocklist_id`. This is the gap **G1** closed in an earlier pass, and the accident that started this sweep |
-| `uuid` | `/api/unbound/overview/search_queries` | Data source 5, Response shape | **stored** — `dns_resolution.lookup_uuid`, which deduplicates a re-requested window |
+| `uuid` | `/api/unbound/overview/search_queries` | Data source 5, Response shape | **not stored** — *and it cannot be: it is null on every row a live firewall returns, measured 2026-09-27.* The identity the model needs is composed instead, into `dns_resolution.lookup_key`, from the row's own content; the composition and the under-count it accepts are recorded on that column and in its entity section. This row is **not** a `dropped` field: there is nothing there to store |
 | `status` | `/api/unbound/overview/search_queries` | Data source 5, Response shape | **not stored** — a value the backend derives from `action`, which is stored. A derived twin of a stored column can only ever disagree with it |
 | category metadata | `/api/unbound/overview/search_queries` | Data source 5, Response shape | **not stored** — *the survey names it only as "category metadata" and gives neither a field name nor a shape.* It is marked here rather than closed: a column for a field nobody has read would be an invented name holding an invented type. Re-surveying this response is the fix, and it is a survey task, not a migration |
 | `enabled` | `/api/unbound/overview/is_enabled` | Data source 5, Degradation | **stored** — `source_availability.state`, as the `present_but_disabled` value that tells *reporting is switched off* apart from *the resolver is down* |
@@ -1346,11 +1488,12 @@ every 300 s and no table holds it.
 
 ## Purge
 
-`sql/purge.sql` is the documented purge. It takes `:now`, reads the horizon
-from `setting`, and removes rows older than it from every growing table:
+`internal/store/purge.sql` is the documented purge. It takes `:now`, reads the
+horizon from `setting`, and removes rows older than it from every growing table:
 `flow`, `dns_resolution`, `domain_attribution`, `security_event`, `dhcp_lease`,
-`client`, `pair_volume_observation`, `geo_asn` and the eight aggregates — the
-four keyed on interfaces and the four keyed on owners.
+`client`, `pair_volume_observation`, `geo_asn`, `collection_gap`,
+`measurement_sample` and the eight aggregates — the four keyed on interfaces and
+the four keyed on owners.
 Bounded tables are never purged, so a surviving observation always joins to an
 interface, a client, a rule and an interface-map entry — and, for a security
 event, to the provider that contributed it and to the rule-info entry that
@@ -1452,15 +1595,28 @@ query, and that is where the drop is demonstrated.
 
 ## Verification
 
-`sql/schema-checks.sh` applies the migrations to a fresh database under
-`/data`, seeds it, runs every query and every plan, and asserts each acceptance
-assertion it carries. It exits non-zero on any failure.
+`sql/schema-checks.sh` applies `internal/store/schema.sql` to a fresh database
+under `/data` — twice, because applying it again must change nothing — seeds it,
+runs every query and every plan, and asserts each acceptance assertion it
+carries. It exits non-zero on any failure.
 
 `sql/seed.sql` is deterministic, takes its row counts as parameters, and
 produces at least 100 000 rows in `flow`. It contains no address literal: every
 address is synthesised from a counter at generation time and carries no
 addressing-plan meaning, because nothing in the schema or in the queries
 interprets an address.
+
+**It produces both address families**, and how much of the network is IPv6 is
+itself a bound parameter, so nothing may assume a proportion any more than it
+may assume a count. `flow.ip_version` takes 4 and 6, and `client`,
+`dns_resolution`, `security_event` and `pair_volume_observation` each carry
+addresses of both. Both endpoints of a flow are always of one family, as a real
+record is. The IPv6 form is eight hexadecimal groups derived from the counter
+and deliberately **not** a documentation prefix: a recognisable prefix would be
+a literal about somebody's addressing. Each of the seven screen queries is
+asserted to answer with both families present — directly, for the five that
+project an address, and by coverage for the two that only aggregate, where the
+query's own totals are compared with the totals over its window.
 
 Databases live in the `data` named volume mounted at `/data`, outside the
 bind-mounted working tree. SQLite in WAL mode on a Windows bind mount locks

@@ -1,0 +1,66 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Verified against a live firewall, 2026-09-27",
+    "field_list_from": "client, domain, time, action, source, rcode, dnssec_status, blocklist, uuid, plus a derived status and category metadata",
+    "why_these_values": "THE FIXTURE REPRODUCES THE MEASURED BEHAVIOUR, NOT THE DOCUMENTED ONE. uuid is null on every row, because it is null on every row a real firewall returns. The instants deliberately fall OUTSIDE any plausible requested window, because the endpoint ignores timeStart and timeEnd and returns the most recent lookups whatever is asked. total is 1000 whatever is asked, which is also what was measured. Four rows: a passed lookup, a blocked one naming a list, a dropped one naming none, and one with no dnssec verdict.",
+    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "total": 1000,
+    "rowCount": 4,
+    "current": 1,
+    "rows": [
+      {
+        "client": "198.51.100.10",
+        "domain": "example-name-one.invalid",
+        "time": 1749990000,
+        "action": "pass",
+        "source": "recursion",
+        "rcode": "NOERROR",
+        "dnssec_status": "example-dnssec-verdict",
+        "blocklist": "",
+        "uuid": null,
+        "status": "0"
+      },
+      {
+        "client": "198.51.100.11",
+        "domain": "example-name-two.invalid",
+        "time": 1749989990,
+        "action": "block",
+        "source": "local-data",
+        "rcode": "NXDOMAIN",
+        "dnssec_status": "example-dnssec-verdict",
+        "blocklist": "example-blocklist-name",
+        "uuid": null,
+        "status": "1"
+      },
+      {
+        "client": "198.51.100.11",
+        "domain": "example-name-three.invalid",
+        "time": 1749989980,
+        "action": "drop",
+        "source": "local",
+        "rcode": "NXDOMAIN",
+        "dnssec_status": null,
+        "blocklist": "",
+        "uuid": null,
+        "status": "1"
+      },
+      {
+        "client": "2001:db8::10",
+        "domain": "example-name-four.invalid",
+        "time": 1749989970,
+        "action": "pass",
+        "source": "cache",
+        "rcode": "NOERROR",
+        "dnssec_status": null,
+        "blocklist": "",
+        "uuid": null,
+        "status": "0"
+      }
+    ]
+  }
+}

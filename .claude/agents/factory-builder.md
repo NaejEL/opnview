@@ -116,7 +116,7 @@ demonstrated need. Every cycle extends the coverage.
 - **Never promise what the data model cannot produce.** This applies to every
   layer, not only the frontend: an API field, a report column, a log line, a
   computed statistic or a widget is only specifiable if the schema can actually
-  fill it. The ground truth is `docs/data-model.md`, the DDL in `migrations/`
+  fill it. The ground truth is `docs/data-model.md`, the DDL in `internal/store/schema.sql`
   and the *Gaps found* table of `docs/widget-catalogue.md`, which names the
   gaps between the model and the questions the product asks. If the spec
   requires something the model cannot answer, **do not fabricate a plausible

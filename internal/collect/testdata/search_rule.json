@@ -1,0 +1,51 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Runtime discovery (ii)",
+    "field_list_from": "uuid, description, enabled, action, direction, interface, ipprotocol, protocol, source_net, source_port, destination_net, destination_port, categories, log, sort_order, legacy, is_automatic, %action, %direction, %protocol, %ipprotocol",
+    "why_these_values": "Four rules. One is a legacy row whose human-facing action is localised and whose %-prefixed twin carries the raw value, so a test can prove the raw twin is what is read. One reports no log flag at all, which must read as not reported rather than as does not log. One carries an action outside the vocabulary, which must become unknown rather than being folded into pass.",
+    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "total": 4,
+    "rowCount": 4,
+    "current": 1,
+    "rows": [
+      {
+        "uuid": "example-rule-label-1",
+        "description": "example rule description 1",
+        "action": "pass",
+        "direction": "in",
+        "log": "1",
+        "is_automatic": "0"
+      },
+      {
+        "uuid": "example-rule-label-2",
+        "description": "example rule description 2",
+        "action": "block",
+        "direction": "out",
+        "log": "0",
+        "is_automatic": "0"
+      },
+      {
+        "uuid": "example-rule-label-3",
+        "description": "example rule description 3",
+        "action": "Passer",
+        "%action": "pass",
+        "direction": "Entrant",
+        "%direction": "in",
+        "legacy": "1",
+        "is_automatic": "1"
+      },
+      {
+        "uuid": "example-rule-label-4",
+        "description": "example rule description 4",
+        "action": "example-action-outside-the-vocabulary",
+        "log": "1",
+        "is_automatic": "0"
+      }
+    ]
+  }
+}

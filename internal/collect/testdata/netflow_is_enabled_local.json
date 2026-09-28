@@ -1,0 +1,15 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Data source 3 - Degradation",
+    "field_list_from": "netflow, local",
+    "why_these_values": "Local collection on, which is the only state in which the firewall keeps volume data itself.",
+    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "netflow": 1,
+    "local": 1
+  }
+}

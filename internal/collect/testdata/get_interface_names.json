@@ -1,0 +1,18 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Runtime discovery (i)",
+    "field_list_from": "a flat map from raw device name to description",
+    "why_these_values": "The four devices interfaces_info reports, plus one device the interfaces endpoint does not know, so the map can hold an entry with no interface row behind it.",
+    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "exdev0": "example description A",
+    "exdev1": "example description B",
+    "exdev2": "example description C",
+    "exdev3": "example description D",
+    "exdev9": "example description of a device with no interface row"
+  }
+}

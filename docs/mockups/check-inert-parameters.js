@@ -53,6 +53,24 @@
  * method, and it does not produce the same number.
  * ==================================================================== */
 
+
+/* A MISINVOCATION MUST SAY SO, NOT THROW.
+ *
+ * This file needs the page's own globals. Run under `node` it used to die
+ * on a ReferenceError, which three separate readers took for a failing
+ * check — one of them built a git worktree to date the failure. A stack
+ * trace is not a message. */
+if (typeof window === "undefined" || typeof CATALOGUE === "undefined") {
+  var how = [
+    "This is a browser-console harness, not a node script.",
+    "Open docs/mockups/canvas-mockup.html, open the console, paste this file.",
+    "Nothing is wrong: it simply has no page to read."
+  ].join(" ");
+  if (typeof console !== "undefined") { console.log(how); }
+  if (typeof process !== "undefined" && process.exit) { process.exit(0); }
+  throw new Error(how);
+}
+
 (function () {
   "use strict";
 

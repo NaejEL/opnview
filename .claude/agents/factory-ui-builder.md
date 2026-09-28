@@ -80,7 +80,7 @@ A widget that displays a number the schema cannot fill is a lie with a chart on
 it. The ground truth, in this order:
 
 1. `docs/data-model.md` — the entities and what each carries;
-2. `migrations/` — the DDL, which is what actually exists;
+2. `internal/store/schema.sql` — the DDL, which is what actually exists;
 3. the ***Gaps found*** table of `docs/widget-catalogue.md` — the identified
    gaps between the model and the questions the widgets ask, `G1` to `G10`.
 
@@ -171,7 +171,7 @@ docker compose run --rm checks
 That string is identical in PowerShell and in bash. `docker compose run --rm
 dev <command>` runs anything else in the same environment, and
 `docker compose run --rm schema-checks` runs the schema harness when your
-change touches `migrations/`, `sql/` or the model documents.
+change touches `internal/store/schema.sql`, `sql/` or the model documents.
 
 **Never run `go`, `gofmt` or `sqlite3` on the host, and never report a host
 result as the project result.** A missing host `go` is not a defect and is

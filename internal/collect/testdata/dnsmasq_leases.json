@@ -1,0 +1,54 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Verified against a live firewall, 2026-09-27",
+    "field_list_from": "hwaddr, address, hostname, client_id, expire, is_reserved, mac_info, and the interface under all three of its names",
+    "why_these_values": "Structured JSON, which is the verified correction to this document: no free-text parser is needed for leases. Three leases - one with a client identifier, one identified only by its MAC, one reserved with no expiry - so all three levels of the identity cascade and both substitutes for the missing validity start are exercised. One MAC carries the IEEE locally-administered bit and one does not.",
+    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "total": 3,
+    "rowCount": 3,
+    "current": 1,
+    "interfaces": {
+      "example_if_a": "example description A"
+    },
+    "rows": [
+      {
+        "hwaddr": "0a:11:22:33:44:55",
+        "address": "198.51.100.10",
+        "hostname": "example-host-one",
+        "client_id": "example-client-identifier-one",
+        "expire": 1750003600,
+        "is_reserved": "0",
+        "mac_info": "example vendor string",
+        "if_name": "example_if_a",
+        "device": "exdev0",
+        "if_descr": "example description A"
+      },
+      {
+        "hwaddr": "08:11:22:33:44:66",
+        "address": "198.51.100.11",
+        "hostname": "example-host-two",
+        "expire": 1750003600,
+        "is_reserved": "0",
+        "mac_info": "example vendor string",
+        "if_name": "example_if_a",
+        "device": "exdev0",
+        "if_descr": "example description A"
+      },
+      {
+        "hwaddr": "0e:11:22:33:44:77",
+        "address": "198.51.100.12",
+        "hostname": "example-host-three",
+        "is_reserved": "1",
+        "mac_info": "example vendor string",
+        "if_name": "example_if_b",
+        "device": "exdev1",
+        "if_descr": "example description B"
+      }
+    ]
+  }
+}

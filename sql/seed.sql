@@ -19,6 +19,14 @@
 --   :alerts       rows in security_event
 --   :pair_rows    logical pairs in pair_volume_observation; each one is
 --                 offered twice, once per direction, and must collapse to one
+--   :ipv6_every   every Nth slot of the address pool below is IPv6 rather than
+--                 IPv4 (must be >= 2). It is a PARAMETER and not a proportion
+--                 written into this file, for the same reason the counts are:
+--                 the checks re-run the whole seed with a different value, so
+--                 nothing may assume how much of a network is v6 -- and because
+--                 it changes which FAMILY a row carries and never HOW MANY rows
+--                 exist, the row counts and their determinism comparisons stay
+--                 legible against the counts above.
 --
 -- Running the file twice against the same fresh database produces identical
 -- row counts per table.
@@ -26,6 +34,61 @@
 PRAGMA foreign_keys = ON;
 
 BEGIN IMMEDIATE;
+
+-- ---------------------------------------------------------------------------
+-- The address pool: one row per numbered slot, carrying that slot's address in
+-- both families.
+--
+-- WHY BOTH FAMILIES PER SLOT rather than one family per slot: a filter-log
+-- record reports a single ipversion, so both of its endpoints are of one family.
+-- Holding both addresses for every slot lets a generated flow pick its family
+-- and then take both endpoints from that family, which is what a real record
+-- looks like. A client, meanwhile, carries ONE last_address, and a dual-stack
+-- machine really does appear in flows of both families -- so the client's own
+-- family and its flows' families are decided separately and deliberately.
+--
+-- NEITHER ADDRESS IS A LITERAL. Both are synthesised from the slot number, and
+-- neither carries any addressing-plan meaning: nothing in the schema or in the
+-- seven screen queries interprets an address, and interface membership is
+-- carried by foreign keys. The IPv6 form is eight hexadecimal groups derived
+-- from the slot, deliberately NOT a documentation prefix, because a recognisable
+-- prefix would be a literal about somebody's addressing.
+--
+-- It is a TEMP table, so it lives for this connection only and appears in no
+-- entity list: it is a generator, not part of the model.
+-- ---------------------------------------------------------------------------
+CREATE TEMP TABLE synth_address (
+    slot       INTEGER PRIMARY KEY,
+    address_v4 TEXT NOT NULL,
+    address_v6 TEXT NOT NULL
+);
+
+WITH RECURSIVE local_slot (slot) AS (
+    SELECT 1
+    UNION ALL
+    SELECT slot + 1 FROM local_slot WHERE slot < :clients + 2
+),
+external_slot (slot) AS (
+    SELECT 1000000
+    UNION ALL
+    SELECT slot + 1 FROM external_slot
+    WHERE slot < 1000000 + max(3999, :pair_rows)
+),
+every_slot (slot) AS (
+    SELECT slot FROM local_slot
+    UNION
+    SELECT slot FROM external_slot
+)
+INSERT INTO synth_address (slot, address_v4, address_v6)
+SELECT
+    slot,
+    printf('%d.%d.%d.%d',
+           (slot / 16777216) % 256, (slot / 65536) % 256, (slot / 256) % 256, slot % 256),
+    printf('%x:%x:%x:%x:%x:%x:%x:%x',
+           (slot * 7) % 65536, (slot * 11) % 65536, (slot * 13) % 65536,
+           (slot * 17) % 65536, (slot * 19) % 65536, (slot * 23) % 65536,
+           (slot * 29) % 65536, slot % 65536)
+FROM every_slot;
 
 -- ---------------------------------------------------------------------------
 -- The provider registry already holds one row per surveyed implementation,
@@ -170,9 +233,16 @@ generated AS (
                         (n * 7) % 256, (n * 13) % 256,
                         (n * 29) % 256, (n * 37) % 256, n % 256)
         END AS mac,
-        printf('%d.%d.%d.%d',
-               (n / 16777216) % 256, (n / 65536) % 256, (n / 256) % 256, n % 256) AS address
+        -- The client's own family. It is keyed on the client's POSITION WITHIN
+        -- ITS INTERFACE rather than on its id, so every interface holds at least
+        -- one IPv6 client whatever the interface count is -- an id-keyed rule
+        -- aliases with the interface stride and can leave a whole interface
+        -- single-family, which would make a per-interface screen untestable for
+        -- one of the two.
+        CASE WHEN ((n - 1) / :interfaces) % :ipv6_every = 0
+             THEN a.address_v6 ELSE a.address_v4 END AS address
     FROM counter
+    JOIN synth_address AS a ON a.slot = n
 )
 INSERT INTO client (id, identity_kind, identity_key, interface_id, mac, hostname,
                     vendor_hint, last_address, first_seen_at, last_seen_at)
@@ -297,32 +367,26 @@ chosen AS (
         CASE WHEN i % 3 = 0 THEN (i % :clients) + 1 END      AS dst_client_id,
         i % 7 = 0                                            AS is_blocked,
         i % 11 = 0                                           AS rule_missing,
-        i % 13 = 0                                           AS interface_missing
+        i % 13 = 0                                           AS interface_missing,
+        -- The record's address family. A filter-log record reports ONE
+        -- ipversion, so both endpoints below are taken from the same family.
+        i % :ipv6_every = 0                                  AS is_ipv6,
+        CASE WHEN i % 3 = 0 THEN (i % :clients) + 1
+             ELSE 1000000 + (i % 4000) END                   AS dst_slot
     FROM counter
 ),
 placed AS (
     SELECT
         i, observed_at, src_client_id, dst_client_id,
-        is_blocked, rule_missing, interface_missing,
+        is_blocked, rule_missing, interface_missing, is_ipv6,
         ((src_client_id - 1) % :interfaces) + 1 AS src_interface_id,
         CASE WHEN dst_client_id IS NOT NULL
              THEN ((dst_client_id - 1) % :interfaces) + 1 END AS dst_interface_id,
-        printf('%d.%d.%d.%d',
-               (src_client_id / 16777216) % 256, (src_client_id / 65536) % 256,
-               (src_client_id / 256) % 256, src_client_id % 256) AS src_address,
-        CASE
-            WHEN dst_client_id IS NOT NULL THEN
-                printf('%d.%d.%d.%d',
-                       (dst_client_id / 16777216) % 256, (dst_client_id / 65536) % 256,
-                       (dst_client_id / 256) % 256, dst_client_id % 256)
-            ELSE
-                printf('%d.%d.%d.%d',
-                       ((1000000 + (i % 4000)) / 16777216) % 256,
-                       ((1000000 + (i % 4000)) / 65536) % 256,
-                       ((1000000 + (i % 4000)) / 256) % 256,
-                       (1000000 + (i % 4000)) % 256)
-        END AS dst_address
+        CASE WHEN is_ipv6 THEN src.address_v6 ELSE src.address_v4 END AS src_address,
+        CASE WHEN is_ipv6 THEN dst.address_v6 ELSE dst.address_v4 END AS dst_address
     FROM chosen
+    JOIN synth_address AS src ON src.slot = src_client_id
+    JOIN synth_address AS dst ON dst.slot = dst_slot
 )
 INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device,
                   interface_lookup_state, src_interface_id, dst_interface_id,
@@ -348,7 +412,10 @@ SELECT
     1024 + ((i * 17) % 64000),
     1 + ((i * 13) % 65000),
     CASE WHEN i % 2 = 0 THEN 'tcp' ELSE 'udp' END,
-    4,
+    -- The family the filter log reported. It is the only column from which a
+    -- v4-against-v6 split is answerable: an address column alone cannot be
+    -- classified, and the project forbids inferring an addressing plan.
+    CASE WHEN is_ipv6 THEN 6 ELSE 4 END,
     CASE WHEN is_blocked THEN 'block' ELSE 'pass' END,
     CASE WHEN i % 2 = 0 THEN 'in' ELSE 'out' END,
     -- The reason the record was logged. The survey establishes the field and
@@ -378,7 +445,7 @@ FROM placed;
 -- their address, country and operator and a null site name rather than
 -- dropping them, and the attribution rate must be below 100 per cent.
 -- ---------------------------------------------------------------------------
-INSERT INTO dns_resolution (id, lookup_uuid, client_address, client_id, domain,
+INSERT INTO dns_resolution (id, lookup_key, client_address, client_id, domain,
                             resolver, action, answer_source, rcode,
                             dnssec_status, looked_up_at, ingested_at)
 SELECT
@@ -449,7 +516,7 @@ WITH RECURSIVE counter (n) AS (
     UNION ALL
     SELECT n + 1 FROM counter WHERE n < 400
 )
-INSERT INTO dns_resolution (id, lookup_uuid, client_address, client_id, domain,
+INSERT INTO dns_resolution (id, lookup_key, client_address, client_id, domain,
                             resolver, action, answer_source, rcode, dnssec_status,
                             blocklist_id, looked_up_at, ingested_at)
 SELECT
@@ -475,20 +542,26 @@ JOIN client AS c ON c.id = ((n - 1) % :clients) + 1;
 -- and Client screens can show that the enrichment did not answer instead of
 -- silently dropping the volume.
 -- ---------------------------------------------------------------------------
+-- Every external slot is enriched in BOTH families, because a flow of either
+-- family can name it and the Map and Client screens join geo_asn on the address
+-- the flow actually carried. Enriching one family only would make every IPv6
+-- destination a cache miss, which would look like a dataset problem rather than
+-- a seed that had not been extended.
 WITH RECURSIVE counter (j) AS (
     SELECT 0
     UNION ALL
-    SELECT j + 1 FROM counter WHERE j < 3999
+    SELECT j + 1 FROM counter WHERE j < max(3999, :pair_rows)
 ),
 generated AS (
     SELECT
         j,
-        printf('%d.%d.%d.%d',
-               ((1000000 + j) / 16777216) % 256, ((1000000 + j) / 65536) % 256,
-               ((1000000 + j) / 256) % 256, (1000000 + j) % 256) AS address,
+        family,
+        CASE WHEN family = 6 THEN a.address_v6 ELSE a.address_v4 END AS address,
         char(65 + (j % 26), 65 + ((j / 26) % 26)) AS country_code,
         j % 37 = 0 AS is_miss
     FROM counter
+    JOIN synth_address AS a ON a.slot = 1000000 + j
+    CROSS JOIN (SELECT 4 AS family UNION ALL SELECT 6) AS families
 )
 INSERT INTO geo_asn (address, provider_id, lookup_state, country_code, country_name,
                      latitude, longitude, asn, operator, dataset_build_at, looked_up_at)
@@ -540,7 +613,8 @@ generated AS (
         -- Three rotated files whatever :alerts is, so the ingestion cursor
         -- always has a watermark per file to record.
         1 + (((m - 1) * 3) / :alerts)                AS file_number,
-        m * 4096                                     AS byte_position
+        m * 4096                                     AS byte_position,
+        m % :ipv6_every = 0                          AS is_ipv6
     FROM counter
 )
 INSERT INTO security_event (id, provider_id, provider_event_key, occurred_at, ingested_at,
@@ -559,22 +633,18 @@ SELECT
     printf('signature-text-%d', m % 50),
     CASE WHEN m % 4 = 0 THEN 'blocked' ELSE 'allowed' END,
     NULL,
-    printf('%d.%d.%d.%d',
-           (src_client_id / 16777216) % 256, (src_client_id / 65536) % 256,
-           (src_client_id / 256) % 256, src_client_id % 256),
+    (SELECT CASE WHEN g.is_ipv6 THEN a.address_v6 ELSE a.address_v4 END
+     FROM synth_address AS a WHERE a.slot = g.src_client_id),
     1024 + ((m * 19) % 64000),
-    printf('%d.%d.%d.%d',
-           ((1000000 + (m % 4000)) / 16777216) % 256,
-           ((1000000 + (m % 4000)) / 65536) % 256,
-           ((1000000 + (m % 4000)) / 256) % 256,
-           (1000000 + (m % 4000)) % 256),
+    (SELECT CASE WHEN g.is_ipv6 THEN a.address_v6 ELSE a.address_v4 END
+     FROM synth_address AS a WHERE a.slot = 1000000 + (m % 4000)),
     1 + ((m * 7) % 65000),
     CASE WHEN m % 2 = 0 THEN 'tcp' ELSE 'udp' END,
     printf('device-%d', ((src_client_id - 1) % :interfaces) + 1),
     src_client_id,
     ((src_client_id - 1) % :interfaces) + 1,
     NULL
-FROM generated;
+FROM generated AS g;
 
 -- The cache. normalised_severity is opnview's ordered vocabulary;
 -- provider_severity keeps the raw numeric string the provider reported, so the
@@ -650,15 +720,16 @@ pairs AS (
     SELECT
         p,
         (((:now / 86400) - (p % 120)) * 86400) AS day_start_at,
-        printf('%d.%d.%d.%d',
-               ((((p - 1) % :clients) + 1) / 16777216) % 256,
-               ((((p - 1) % :clients) + 1) / 65536) % 256,
-               ((((p - 1) % :clients) + 1) / 256) % 256,
-               (((p - 1) % :clients) + 1) % 256) AS local_address,
-        printf('%d.%d.%d.%d',
-               ((1000000 + p) / 16777216) % 256, ((1000000 + p) / 65536) % 256,
-               ((1000000 + p) / 256) % 256, (1000000 + p) % 256) AS peer_address
+        -- The pair's family. Both ends are of one family, as a real conversation
+        -- is, and the canonical ordering below is lexicographic over whichever
+        -- form that produced.
+        CASE WHEN p % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END
+            AS local_address,
+        CASE WHEN p % :ipv6_every = 0 THEN peer.address_v6 ELSE peer.address_v4 END
+            AS peer_address
     FROM counter
+    JOIN synth_address AS local ON local.slot = ((p - 1) % :clients) + 1
+    JOIN synth_address AS peer ON peer.slot = 1000000 + p
 ),
 doubled AS (
     SELECT p, day_start_at, local_address AS a, peer_address AS b, 'out' AS observed_direction
@@ -894,5 +965,94 @@ UPDATE source_availability
 SET state = 'unavailable', probe = 'service status endpoint',
     detail = 'not installed on this firewall', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE is_active = 0);
+
+-- ---------------------------------------------------------------------------
+-- Collection gaps: the intervals opnview knows it did not cover.
+--
+-- All three reasons are seeded, because all three are measured failure modes
+-- rather than hypotheses: the filter log has no server-side cursor, an eve.json
+-- rotation can discard a watermarked file, and the resolver query endpoint
+-- ignores the window it is given. Some are older than a 90-day horizon so the
+-- purge has something to remove, and some are recent so it has something to
+-- leave alone.
+--
+-- A gap is attributed to the provider whose data is missing, looked up by kind
+-- and activeness -- never by name.
+-- ---------------------------------------------------------------------------
+WITH RECURSIVE counter (k) AS (
+    SELECT 1
+    UNION ALL
+    SELECT k + 1 FROM counter WHERE k < 30
+),
+reasons AS (
+    SELECT 1 AS n, 'digest_outside_returned_window' AS reason, 'firewall_log' AS kind
+    UNION ALL SELECT 2, 'eve_rotation_lost', 'security_event'
+    UNION ALL SELECT 3, 'resolver_window_not_honoured', 'dns_lookup'
+)
+INSERT INTO collection_gap (provider_id, interval_start_at, interval_end_at,
+                            reason, detail, detected_at)
+SELECT
+    (SELECT id FROM provider WHERE kind = r.kind AND is_active = 1),
+    :now - ((k % 5) * 3600) - ((k % 6) * 8640000) - 600,
+    :now - ((k % 5) * 3600) - ((k % 6) * 8640000),
+    r.reason,
+    printf('gap-detail-%d', k),
+    :now - ((k % 5) * 3600) - ((k % 6) * 8640000)
+FROM counter
+JOIN reasons AS r ON r.n = ((k - 1) % 3) + 1;
+
+-- ---------------------------------------------------------------------------
+-- Sampled measurements: the gauges and the sampled per-pair volume.
+--
+-- One table carries both because they are the same five facts -- a subject, a
+-- measure, a unit, a value and an instant. The firewall's own telemetry names
+-- no provider, because it implements none of the six provider kinds; the
+-- per-pair readings name the volume provider, because that volume is its
+-- material. The pair subject is the two addresses in lexicographic order joined
+-- by a space, the same canonical ordering pair_volume_observation enforces, and
+-- both address families appear among them.
+--
+-- Spread back over five months so a finite retention horizon has something to
+-- remove and something to keep.
+-- ---------------------------------------------------------------------------
+WITH RECURSIVE counter (s) AS (
+    SELECT 1
+    UNION ALL
+    SELECT s + 1 FROM counter WHERE s < 200
+)
+INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
+                                unit, value, sampled_at)
+SELECT NULL, 'firewall', '', 'uptime_seconds', 'second', 3600.0 * s,
+       :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter
+UNION ALL
+SELECT NULL, 'firewall', '', 'memory_use_ratio', 'ratio', ((s % 90) + 5) / 100.0,
+       :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter
+UNION ALL
+SELECT NULL, 'firewall', printf('sensor-%d', s % 3), 'temperature_celsius', 'celsius',
+       30.0 + (s % 20), :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter
+UNION ALL
+SELECT NULL, 'interface', i.device, 'bytes_in', 'byte', 1000.0 * s,
+       :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter
+JOIN interface AS i ON i.id = ((s - 1) % :interfaces) + 1
+UNION ALL
+SELECT
+    (SELECT id FROM provider WHERE kind = 'flow_volume' AND is_active = 1),
+    'endpoint_pair',
+    min(CASE WHEN s % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END,
+        CASE WHEN s % :ipv6_every = 0 THEN peer.address_v6 ELSE peer.address_v4 END)
+    || ' ' ||
+    max(CASE WHEN s % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END,
+        CASE WHEN s % :ipv6_every = 0 THEN peer.address_v6 ELSE peer.address_v4 END),
+    'cumulative_bytes_in', 'byte', 100.0 * s,
+    :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter
+JOIN synth_address AS local ON local.slot = ((s - 1) % :clients) + 1
+JOIN synth_address AS peer ON peer.slot = 1000000 + s;
+
+DROP TABLE synth_address;
 
 COMMIT;

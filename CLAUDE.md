@@ -40,7 +40,7 @@ research existed, for the thing OPNsense calls an **interface** — while
 `docs/opnsense-api-survey.md` had been carrying `get_interface_names`, `descr`
 and `link_type` since step 1. `device` meant the network device in one place
 and a client machine in another. Both are fixed. The term-by-term mapping, and
-the three terms that are `opnview`'s own because OPNsense has none, are in
+the terms that are `opnview`'s own because OPNsense has none, are in
 `docs/data-model.md` under *Vocabulary*.
 
 ## Project
@@ -54,6 +54,14 @@ single place the rule is stated. Local SQLite, frontend embedded in the binary
 and served by it.
 
 ## The user interface
+
+**Modular at every layer, not only the frontend.** A kind of thing is a seam
+and an implementation is a file behind it, selected at runtime by what the
+installation has — a lease source, a lookup source, a language, a theme, a
+widget. Adding a second implementation is adding a file and a registry row and
+touching nothing else. The maintainer's own configuration is one installation
+among many and never the shape of the code. `ROADMAP.md`, *Rules that apply to
+every step*, carries this in full.
 
 **The frontend is modular, and a third party can extend it.** A language is a
 file, a theme is a file, a widget is a directory holding its manifest, its query

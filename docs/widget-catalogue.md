@@ -40,7 +40,7 @@ order:
 - **Shows** — what is drawn, and the UI copy the widget is required to carry.
 - **Parameters** — what the user can set, and what an exported dashboard file
   therefore has to record.
-- **Data** — the `table.column` pairs in `migrations/*.sql` that feed it, or the
+- **Data** — the `table.column` pairs in `internal/store/schema.sql` that feed it, or the
   missing-from-model marker and what would have to be added.
 - **Existing query** — which of the seven queries in `sql/queries/screens.sql`
   it reuses, adapts or replaces, or why none applies.
@@ -1160,7 +1160,7 @@ cannot be quietly excluded); `blocklists` (optional — limit to named lists);
 `dns_resolution.client_address`, `dns_resolution.client_id`,
 `dns_resolution.looked_up_at`, `dns_resolution.resolver`,
 `dns_resolution.answer_source`, `dns_resolution.rcode`,
-`dns_resolution.lookup_uuid`, `dns_resolution.blocklist_id`; `blocklist.name`,
+`dns_resolution.lookup_key`, `dns_resolution.blocklist_id`; `blocklist.name`,
 `blocklist.purpose`; `client.hostname`, `client.last_address`. The list that
 refused the lookup is `blocklist.name`, observed verbatim from the endpoint, and
 what that list is **for** is `blocklist.purpose`, which a user assigned and no
@@ -1541,26 +1541,20 @@ sensible temperature or disk figure depends on the hardware and assuming one
 would be a hardcoded assumption about the installation); `layout` (`tiles` |
 `rows`); `show_last_sampled` (boolean, default true).
 
-**Data** — `MISSING FROM MODEL:` **G9 — the model holds no system telemetry at
-all.** There is no table in `migrations/*.sql` that can store a sampled value:
-every existing table holds event records or derived volume, and the four
-`volume_aggregate_*` tables sum and count rather than averaging, so they cannot
-hold a percentage or a temperature. What would have to be added, per *Why this
-data is a different shape* above: a `metric` registry of
-`(id, provider_id, metric_key, display_name, unit, value_kind)` where
-`value_kind` distinguishes a gauge from a counter; a `metric_sample` table keyed
-on `(metric_id, sampled_at)` carrying `value REAL` and a collection-gap marker,
-so a missing sample is a modelled state rather than an absent row; and a
-roll-up family carrying `min`, `max`, `mean` and `sample_count` per bucket
-rather than a sum. A second, independent gap applies to every widget in this
-section: `MISSING FROM MODEL:` **G10 — no source of system telemetry has been
-surveyed.** `docs/opnsense-api-survey.md` covers five sources and none of them
-is telemetry, so the endpoints in the candidate table above have no established
-response shape, retention, polling frequency or degradation behaviour. What
-would have to be added: a sixth data source in that survey, and a seventh
-provider kind in `docs/architecture.md` — today the `provider.kind` CHECK
-constrains the column to exactly six values, so registering a telemetry provider
-is a migration rather than an INSERT.
+**Data** — `measurement_sample`, one row per reading: a subject, a measure, a
+unit, a value and an instant. **G9 and G10 are closed**, on 2026-09-27 and by
+step 4A. The telemetry was probed against a live OPNsense 26.7.3_11 and every
+endpoint answers — CPU, memory, temperature, disk, uptime and per-interface
+packet and byte counters — so the gap was never in the API, only in a schema
+that had nowhere to put a sampled gauge. The table serves the per-pair volume
+sampler as well, because both are the same shape.
+
+What remains open is narrower and is recorded in
+`docs/opnsense-api-survey.md`: the telemetry responses' **field names** are not
+established, so each reading tries a candidate list and is recorded as *absent*
+when none answers — never as a zero. A widget must therefore expect a reading
+to be missing on a given installation and say so, which is the same discipline
+as any other degraded source.
 
 **Existing query** — None of the seven queries in `sql/queries/screens.sql`
 applies, and none can be adapted: all seven read event or aggregate tables that
@@ -1906,8 +1900,8 @@ taken here.
 | G6 | `dns_resolution` carries no interface, so a lookup from a client address with no client row cannot be placed | No | A nullable `interface_id` plus an `interface_lookup_state` in the `resolved` / `not_found` / `pending` vocabulary | `docs/opnsense-api-survey.md`, *Data source 5 — Resolver DNS lookups*, *Response shape* (`client`); *Runtime discovery* (i) for the addressing to resolve against |
 | G7 | `security_event` carries no destination client or interface, so "which interface was the target" is unanswerable | No | `dst_client_id` and `dst_interface_id` mirroring the source pair, with an index on `(dst_interface_id, occurred_at)` | `docs/opnsense-api-survey.md`, *Data source 2 — Suricata `eve.json`*, *Response shape* (`dest_ip`) |
 | G8 | The interfaces a security-event provider covers are not modelled; `source_availability.detail` is free text | No | A `provider_interface_coverage` table keyed on `(provider_id, interface_id)` with `is_covered` and `determined_at` | `docs/opnsense-api-survey.md`, *Runtime discovery* (v) (`ids.general.interfaces`, keys whose `selected` is truthy) |
-| G9 | **The model holds no system telemetry at all**; every table holds event records or summed volume, and none can store a sampled gauge such as a percentage or a temperature | No | A `metric` registry of `(id, provider_id, metric_key, display_name, unit, value_kind)`; a `metric_sample` table keyed on `(metric_id, sampled_at)` with a `value REAL` and an explicit collection-gap marker; and a roll-up family carrying `min`, `max`, `mean` and `sample_count` per bucket rather than a sum, on bucket boundaries matching the volume aggregates so the two can share a chart | No OPNsense citation is possible: the survey does not cover this material. The shape requirement is argued in *Why this data is a different shape from everything else in the model**, above |
-| G10 | **No source of system telemetry has been surveyed.** `docs/opnsense-api-survey.md` establishes five sources and none of them is telemetry, so the endpoints that would feed G9 have no established response shape, retention, polling frequency or degradation behaviour | No | A sixth data source in the survey, done to the same standard as the five; and a seventh value in the `provider.kind` CHECK, since that column is constrained to exactly six kinds and registering a telemetry provider is therefore a migration rather than an INSERT | Endpoint **candidates** only, cited at https://docs.opnsense.org/development/api/core/diagnostics.html and https://docs.opnsense.org/development/api/core/routes.html; their response shapes are marked `UNVERIFIED:` in *Endpoint candidates, cited rather than asserted*, above |
+| G9 | ~~The model holds no system telemetry at all~~ — **closed 2026-09-27 by step 4A.** `measurement_sample` stores a subject, a measure, a unit, a value and an instant, and carries both the firewall's gauges and the sampled per-pair volume | Closed | — | Probed against a live OPNsense 26.7.3_11; recorded in `docs/opnsense-api-survey.md`, *Verified against a live firewall* |
+| G10 | ~~No source of system telemetry has been surveyed~~ — **closed 2026-09-27.** Every telemetry endpoint answers and the survey now records them. What stays open is smaller and is not a gap in the model: the responses' **field names** are unestablished, so a reading that does not answer is recorded as absent rather than as a zero | Closed | — | Same section of the survey |
 | G12 | **Nothing in the model classifies a flow as an application.** The schema knows a protocol number and a port and stops there, so the dimension ntopng and Zenarmor both lead with — which app is this — cannot be offered by the composition donut or by anything else | No — it appeared with the *Traffic composition, now* entry | Neither of the two available routes, and that is the finding. A **port-and-SNI heuristic** is cheap and wrong at exactly the edges that matter (a service on a non-standard port, a CDN fronting a dozen products, anything tunnelled over 443), and a heuristic presented as a fact is the kind of lie this project refuses. **Deep packet inspection** is what those products actually do, and OPNsense exposes none of it to a read-only API client: Suricata's application-layer parsers feed detection rather than the alert feed, and the `tls` and `http` events that would carry a server name cannot be read back at all. Closing this needs a source that does not exist, not a column, and neither route is to be implemented | `docs/opnsense-api-survey.md`, *Gaps and alternatives*, gaps 2 and 8; and `flow.protocol`, `flow.dst_port`, `pair_volume_observation.service_port`, which are the whole of what the model knows about what a flow carries |
 | G13 | **The schema stores no interface address, and no address history**, so the installation's own public address has nowhere to live and "when did it last change" is unanswerable twice over — the model cannot hold it and no endpoint reports it | No — it appeared with the *Public address* entry | An `interface_address` table keyed on `(interface_id, address)` with the prefix length, the address family, whether a gateway sits behind it, a nullable gateway name, and `first_seen_at` / `last_seen_at` — so a change is a new row and the history is the table. The change time can only ever come from `opnview` having looked before, because the API reports the address an interface has now and keeps no history of the ones it had. Separately, and not fixable at all: a firewall behind an upstream NAT cannot see the address the internet sees, and finding it would need a third outbound call the project does not allow | The address fields **are** established: `/api/interfaces/overview/interfaces_info` returns `addr4`, `addr6`, `ipv4[]`, `ipv6[]` and `gateways[]` (`docs/opnsense-api-survey.md`, *Runtime discovery* (i)). What would still have to be surveyed is narrow: the response shape of `/api/routes/gateway/status`, marked `UNVERIFIED:` in *Endpoint candidates, cited rather than asserted* |
 

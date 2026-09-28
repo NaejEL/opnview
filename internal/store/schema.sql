@@ -1,4 +1,17 @@
--- opnview migration 0001 — core entities.
+-- opnview — the schema. One file, applied in place.
+--
+-- THERE ARE NO MIGRATIONS, AND THAT IS A DECISION RATHER THAN AN OMISSION.
+-- Nothing is deployed and nobody has data, so numbered files, a
+-- `schema_version` table and a runner would be machinery for a problem that
+-- does not exist. This file is edited in place, and it is applied on every
+-- start: every statement below is idempotent, so applying it to a database
+-- that already carries it changes nothing. Migrations begin the day the
+-- product runs somewhere with data worth keeping — this file becomes the
+-- baseline and the first real migration is the one after it.
+--
+-- It is embedded into the binary by internal/store, which is the only code
+-- that applies it. sql/schema-checks.sh applies the same file to a throwaway
+-- database under /data and asserts every criterion the data model carries.
 --
 -- Every entity here is fed by a provider of one of the six kinds surveyed in
 -- docs/opnsense-api-survey.md, or by the runtime discovery described in that
@@ -25,15 +38,10 @@
 -- The upper timestamp bound below is 2100-01-01T00:00:00Z. It rejects a
 -- millisecond value mistakenly stored as seconds, and a negative instant.
 
-CREATE TABLE IF NOT EXISTS schema_version (
-    filename   TEXT PRIMARY KEY,
-    applied_at INTEGER NOT NULL CHECK (applied_at >= 0 AND applied_at < 4102444800)
-);
-
 -- ---------------------------------------------------------------------------
 -- Configuration. Bounded: one row per setting key.
 -- ---------------------------------------------------------------------------
-CREATE TABLE setting (
+CREATE TABLE IF NOT EXISTS setting (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
     updated_at INTEGER NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
@@ -68,7 +76,7 @@ CREATE TABLE setting (
 -- database none is active: activeness is decided by step-4 detection, never by
 -- a migration.
 -- ---------------------------------------------------------------------------
-CREATE TABLE provider (
+CREATE TABLE IF NOT EXISTS provider (
     id            INTEGER PRIMARY KEY,
     kind          TEXT NOT NULL
                   CHECK (kind IN ('firewall_log', 'security_event', 'flow_volume',
@@ -82,7 +90,7 @@ CREATE TABLE provider (
 
 -- At most one active provider per kind. A partial index, so the many inactive
 -- rows of one kind do not collide with each other.
-CREATE UNIQUE INDEX uq_provider_active_per_kind ON provider (kind) WHERE is_active = 1;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_active_per_kind ON provider (kind) WHERE is_active = 1;
 
 -- ---------------------------------------------------------------------------
 -- Interface — one interface as OPNsense defines it: a VLAN, a physical link or
@@ -126,7 +134,7 @@ CREATE UNIQUE INDEX uq_provider_active_per_kind ON provider (kind) WHERE is_acti
 -- link_kind is the normalised class of link_type; is_tunnel derives from
 -- link_kind alone and from nothing that carries a name.
 -- ---------------------------------------------------------------------------
-CREATE TABLE interface (
+CREATE TABLE IF NOT EXISTS interface (
     id             INTEGER PRIMARY KEY,
     identifier     TEXT NOT NULL UNIQUE,
     device         TEXT NOT NULL UNIQUE,
@@ -168,7 +176,7 @@ CREATE TABLE interface (
 -- diagnostic query "Clients per owner" in sql/queries/diagnostics.sql is that
 -- guarantee, written down and executed.
 -- ---------------------------------------------------------------------------
-CREATE TABLE owner (
+CREATE TABLE IF NOT EXISTS owner (
     id           INTEGER PRIMARY KEY,
     display_name TEXT NOT NULL UNIQUE,
     created_at   INTEGER NOT NULL CHECK (created_at >= 0 AND created_at < 4102444800),
@@ -182,7 +190,7 @@ CREATE TABLE owner (
 -- discovery" (i). A device name absent from this table is the modelled
 -- "not found" state carried on flow.interface_lookup_state.
 -- ---------------------------------------------------------------------------
-CREATE TABLE interface_map (
+CREATE TABLE IF NOT EXISTS interface_map (
     device        TEXT PRIMARY KEY,
     description   TEXT NOT NULL,
     interface_id  INTEGER REFERENCES interface (id),
@@ -205,7 +213,7 @@ CREATE TABLE interface_map (
 -- nullable, because a rule discovered from a source that did not report the
 -- flag must read as "not reported" rather than as "does not log".
 -- ---------------------------------------------------------------------------
-CREATE TABLE rule (
+CREATE TABLE IF NOT EXISTS rule (
     id            INTEGER PRIMARY KEY,
     pf_label      TEXT NOT NULL UNIQUE,
     description   TEXT NOT NULL,
@@ -237,7 +245,7 @@ CREATE TABLE rule (
 -- mac column is constrained to 17 lowercase characters so the digit test is
 -- total.
 -- ---------------------------------------------------------------------------
-CREATE TABLE client (
+CREATE TABLE IF NOT EXISTS client (
     id                INTEGER PRIMARY KEY,
     identity_kind     TEXT NOT NULL
                       CHECK (identity_kind IN ('dhcp_client_id', 'mac', 'address_in_interface')),
@@ -271,12 +279,12 @@ CREATE TABLE client (
     CHECK ((owner_id IS NULL) = (owner_assigned_at IS NULL))
 );
 
-CREATE INDEX idx_client_interface ON client (interface_id, id);
+CREATE INDEX IF NOT EXISTS idx_client_interface ON client (interface_id, id);
 
 -- An owner's machines. owner_id is NULL-bearing, and SQLite keeps the
 -- unassigned clients at the head of this index rather than omitting them, so
 -- the index serves the unassigned bucket as well as the assigned ones.
-CREATE INDEX idx_client_owner ON client (owner_id, id);
+CREATE INDEX IF NOT EXISTS idx_client_owner ON client (owner_id, id);
 
 -- ---------------------------------------------------------------------------
 -- DHCP lease — one observed lease generation.
@@ -285,7 +293,7 @@ CREATE INDEX idx_client_owner ON client (owner_id, id);
 -- hwaddr on the two current backends and mac on the legacy plugin; it is
 -- normalised here.
 -- ---------------------------------------------------------------------------
-CREATE TABLE dhcp_lease (
+CREATE TABLE IF NOT EXISTS dhcp_lease (
     id             INTEGER PRIMARY KEY,
     client_id      INTEGER REFERENCES client (id),
     backend        TEXT NOT NULL CHECK (backend IN ('kea', 'dnsmasq', 'isc')),
@@ -305,8 +313,8 @@ CREATE TABLE dhcp_lease (
     UNIQUE (address, starts_at, backend)
 );
 
-CREATE INDEX idx_dhcp_lease_observed_at ON dhcp_lease (observed_at);
-CREATE INDEX idx_dhcp_lease_client ON dhcp_lease (client_id, starts_at);
+CREATE INDEX IF NOT EXISTS idx_dhcp_lease_observed_at ON dhcp_lease (observed_at);
+CREATE INDEX IF NOT EXISTS idx_dhcp_lease_client ON dhcp_lease (client_id, starts_at);
 
 -- ---------------------------------------------------------------------------
 -- Flow — one filter-log record, allowed or blocked. The blocked events are a
@@ -327,7 +335,7 @@ CREATE INDEX idx_dhcp_lease_client ON dhcp_lease (client_id, starts_at);
 -- survey establishes the field but not its value set, so no CHECK enumerates
 -- one here — that would be inventing a vocabulary OPNsense has not published.
 -- ---------------------------------------------------------------------------
-CREATE TABLE flow (
+CREATE TABLE IF NOT EXISTS flow (
     id                     INTEGER PRIMARY KEY,
     log_digest             TEXT NOT NULL UNIQUE,
     observed_at            INTEGER NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
@@ -387,16 +395,16 @@ CREATE TABLE flow (
 -- There is exactly one index leading on observed_at alone, deliberately: it is
 -- the load-bearing index of the Overview and Matrix queries, and a second one
 -- with the same leading column would hide its loss.
-CREATE INDEX idx_flow_observed_at ON flow
+CREATE INDEX IF NOT EXISTS idx_flow_observed_at ON flow
     (observed_at, traffic_scope, action, packet_bytes,
      src_interface_id, dst_interface_id, src_client_id, rule_id, rule_lookup_state);
-CREATE INDEX idx_flow_src_interface_observed_at ON flow
+CREATE INDEX IF NOT EXISTS idx_flow_src_interface_observed_at ON flow
     (src_interface_id, observed_at, src_client_id, packet_bytes, action,
      traffic_scope, dst_address);
-CREATE INDEX idx_flow_src_client_observed_at ON flow (src_client_id, observed_at);
-CREATE INDEX idx_flow_blocked_observed_at ON flow (observed_at) WHERE action = 'block';
+CREATE INDEX IF NOT EXISTS idx_flow_src_client_observed_at ON flow (src_client_id, observed_at);
+CREATE INDEX IF NOT EXISTS idx_flow_blocked_observed_at ON flow (observed_at) WHERE action = 'block';
 
-CREATE VIEW blocked_event AS
+CREATE VIEW IF NOT EXISTS blocked_event AS
 SELECT
     id AS flow_id,
     observed_at,
@@ -454,7 +462,7 @@ WHERE action = 'block';
 -- purged: a purpose is user input, as an owner is, and purging a lookup must
 -- not discard the classification work behind it.
 -- ---------------------------------------------------------------------------
-CREATE TABLE blocklist (
+CREATE TABLE IF NOT EXISTS blocklist (
     id                  INTEGER PRIMARY KEY,
     name                TEXT NOT NULL UNIQUE,
     purpose             TEXT CHECK (purpose IS NULL OR purpose IN
@@ -470,8 +478,38 @@ CREATE TABLE blocklist (
 -- DNS resolution — one resolver lookup, the sole source of site names on
 -- OPNsense 26.7.
 -- Source: /api/unbound/overview/search_queries (client, domain, time, action,
--- source, rcode, dnssec_status, blocklist, uuid), or the free-text dnsmasq
--- query log. Survey: data source 5. The uuid deduplicates.
+-- source, rcode, dnssec_status, blocklist), or the free-text dnsmasq query log.
+-- Survey: data source 5.
+--
+-- lookup_key IS THE IDENTITY, AND IT IS COMPOSED BY opnview RATHER THAN READ.
+-- The endpoint returns a `uuid` field and it is NULL ON EVERY ROW, measured
+-- against a live firewall on 2026-09-27, so the identity this table was first
+-- designed around does not exist. The column was called lookup_uuid and is now
+-- called lookup_key, because a name that says uuid while holding a hash is worse
+-- than a comment that says it: the comment is at least next to the column, and
+-- the name travels into every query somebody writes.
+--
+-- WHAT COMPOSES IT. For the Unbound provider: the string "content:" followed by
+-- the SHA-256 of the resolver name, the lookup instant, and the row's own
+-- client, domain, action, source, rcode, dnssec_status and blocklist fields,
+-- joined by a unit separator. The endpoint is a ring buffer with no cursor and
+-- no working window, so every pass re-reads rows already stored; without a
+-- content-addressed identity each pass would insert them again and multiply
+-- every per-client lookup count by the number of passes that saw it.
+--
+-- THE TRADE, RECORDED HERE BECAUSE IT IS A REAL LOSS. Two genuinely distinct
+-- lookups by the same client, for the same domain, with the same verdict, in the
+-- same second collapse into one row, so such a pair is under-counted by one.
+-- That direction is chosen deliberately: the endpoint returns nothing that could
+-- tell those two apart -- no identifier, no sub-second instant, no sequence --
+-- so the only alternative is a key that is not stable across passes, which would
+-- over-count every row on every poll instead of under-counting a rare
+-- coincidence. An under-count of identical lookups is also the direction that
+-- cannot invent traffic. The composition is opnview's own and the term is
+-- recorded as such in docs/data-model.md, Vocabulary.
+--
+-- A provider that does supply a stable row identifier stores it here unchanged;
+-- the column says "key" and not "digest" for that reason.
 --
 -- dnssec_status is the validation verdict the resolver reached for the lookup.
 -- It is stored verbatim and is never parsed or matched on: the survey
@@ -487,9 +525,9 @@ CREATE TABLE blocklist (
 -- case as "blocked, list not recorded" rather than merging it into a bucket;
 -- the action column is what tells the two apart.
 -- ---------------------------------------------------------------------------
-CREATE TABLE dns_resolution (
+CREATE TABLE IF NOT EXISTS dns_resolution (
     id             INTEGER PRIMARY KEY,
-    lookup_uuid    TEXT NOT NULL UNIQUE,
+    lookup_key     TEXT NOT NULL UNIQUE,
     client_address TEXT NOT NULL,
     client_id      INTEGER REFERENCES client (id),
     domain         TEXT NOT NULL,
@@ -503,14 +541,14 @@ CREATE TABLE dns_resolution (
     ingested_at    INTEGER NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800)
 );
 
-CREATE INDEX idx_dns_resolution_looked_up_at ON dns_resolution (looked_up_at);
-CREATE INDEX idx_dns_resolution_client ON dns_resolution (client_address, looked_up_at);
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_looked_up_at ON dns_resolution (looked_up_at);
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_client ON dns_resolution (client_address, looked_up_at);
 
 -- "Which list refused what, over this period" is an index search rather than a
 -- scan of a growing table. The NULL-bearing leading column keeps the
 -- unattributed blocked lookups at the head of the index instead of omitting
 -- them, so the "list not recorded" rows are served by it too.
-CREATE INDEX idx_dns_resolution_blocklist ON dns_resolution (blocklist_id, looked_up_at);
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_blocklist ON dns_resolution (blocklist_id, looked_up_at);
 
 -- ---------------------------------------------------------------------------
 -- Domain attribution — the site name carried by a flow, and the lookup it was
@@ -525,7 +563,7 @@ CREATE INDEX idx_dns_resolution_blocklist ON dns_resolution (blocklist_id, looke
 -- without it — and the delay between that lookup and the flow, so the
 -- attribution can be judged.
 -- ---------------------------------------------------------------------------
-CREATE TABLE domain_attribution (
+CREATE TABLE IF NOT EXISTS domain_attribution (
     flow_id                   INTEGER PRIMARY KEY
                               REFERENCES flow (id) ON DELETE CASCADE,
     dns_resolution_id         INTEGER NOT NULL
@@ -535,7 +573,7 @@ CREATE TABLE domain_attribution (
     attributed_at             INTEGER NOT NULL CHECK (attributed_at >= 0 AND attributed_at < 4102444800)
 );
 
-CREATE INDEX idx_domain_attribution_resolution ON domain_attribution (dns_resolution_id);
+CREATE INDEX IF NOT EXISTS idx_domain_attribution_resolution ON domain_attribution (dns_resolution_id);
 
 -- ---------------------------------------------------------------------------
 -- Geo / ASN — the geo and ASN enrichment of one address.
@@ -549,7 +587,7 @@ CREATE INDEX idx_domain_attribution_resolution ON domain_attribution (dns_resolu
 -- GeoLite2 City and ASN databases, the second and last of the two outbound
 -- calls the project allows. Acquisition is step 4.
 -- ---------------------------------------------------------------------------
-CREATE TABLE geo_asn (
+CREATE TABLE IF NOT EXISTS geo_asn (
     address          TEXT PRIMARY KEY,
     provider_id      INTEGER REFERENCES provider (id),
     lookup_state     TEXT NOT NULL CHECK (lookup_state IN ('resolved', 'miss', 'pending')),
@@ -569,7 +607,7 @@ CREATE TABLE geo_asn (
                AND provider_id IS NOT NULL))
 );
 
-CREATE INDEX idx_geo_asn_looked_up_at ON geo_asn (looked_up_at);
+CREATE INDEX IF NOT EXISTS idx_geo_asn_looked_up_at ON geo_asn (looked_up_at);
 
 -- ---------------------------------------------------------------------------
 -- Rule-info cache — the normalised severity and category of one rule identity,
@@ -591,7 +629,7 @@ CREATE INDEX idx_geo_asn_looked_up_at ON geo_asn (looked_up_at);
 -- stays auditable. docs/data-model.md gives the vocabulary, its order and the
 -- mapping from the Suricata numeric scale.
 -- ---------------------------------------------------------------------------
-CREATE TABLE provider_rule_info (
+CREATE TABLE IF NOT EXISTS provider_rule_info (
     provider_id         INTEGER NOT NULL REFERENCES provider (id),
     rule_identity       TEXT NOT NULL,
     normalised_severity TEXT NOT NULL
@@ -624,7 +662,7 @@ CREATE TABLE provider_rule_info (
 -- (survey, gap 3): its severity is resolved through provider_rule_info. The
 -- column exists for a provider that ships severity inside its event.
 -- ---------------------------------------------------------------------------
-CREATE TABLE security_event (
+CREATE TABLE IF NOT EXISTS security_event (
     id                  INTEGER PRIMARY KEY,
     provider_id         INTEGER NOT NULL REFERENCES provider (id),
     provider_event_key  TEXT NOT NULL,
@@ -649,9 +687,9 @@ CREATE TABLE security_event (
     UNIQUE (provider_id, provider_event_key)
 );
 
-CREATE INDEX idx_security_event_occurred_at ON security_event (occurred_at);
-CREATE INDEX idx_security_event_client_occurred_at ON security_event (src_client_id, occurred_at);
-CREATE INDEX idx_security_event_rule_occurred_at
+CREATE INDEX IF NOT EXISTS idx_security_event_occurred_at ON security_event (occurred_at);
+CREATE INDEX IF NOT EXISTS idx_security_event_client_occurred_at ON security_event (src_client_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_security_event_rule_occurred_at
     ON security_event (provider_id, rule_identity, occurred_at);
 
 -- ---------------------------------------------------------------------------
@@ -663,7 +701,7 @@ CREATE INDEX idx_security_event_rule_occurred_at
 -- unstable, so (file_id, byte_offset) is the only durable resume point; it is
 -- unique, and a duplicate insert fails.
 -- ---------------------------------------------------------------------------
-CREATE TABLE eve_ingest_cursor (
+CREATE TABLE IF NOT EXISTS eve_ingest_cursor (
     id             INTEGER PRIMARY KEY,
     file_id        TEXT NOT NULL,
     byte_offset    INTEGER NOT NULL CHECK (byte_offset >= 0),
@@ -693,7 +731,7 @@ CREATE TABLE eve_ingest_cursor (
 -- Probe endpoints per kind are tabulated in docs/data-model.md, each cited in
 -- docs/opnsense-api-survey.md.
 -- ---------------------------------------------------------------------------
-CREATE TABLE source_availability (
+CREATE TABLE IF NOT EXISTS source_availability (
     provider_id INTEGER PRIMARY KEY REFERENCES provider (id),
     state       TEXT NOT NULL
                 CHECK (state IN ('reachable', 'present_but_disabled', 'unavailable')),
@@ -723,7 +761,7 @@ CREATE TABLE source_availability (
 -- octets and packets are REAL because Insight pro-rates flows spanning a slice
 -- boundary.
 -- ---------------------------------------------------------------------------
-CREATE TABLE pair_volume_observation (
+CREATE TABLE IF NOT EXISTS pair_volume_observation (
     id                        INTEGER PRIMARY KEY,
     day_start_at              INTEGER NOT NULL CHECK (day_start_at >= 0 AND day_start_at < 4102444800),
     endpoint_low              TEXT NOT NULL,
@@ -741,7 +779,398 @@ CREATE TABLE pair_volume_observation (
     UNIQUE (day_start_at, endpoint_low, endpoint_high, service_port, protocol)
 );
 
-CREATE INDEX idx_pair_volume_day ON pair_volume_observation (day_start_at);
+CREATE INDEX IF NOT EXISTS idx_pair_volume_day ON pair_volume_observation (day_start_at);
 
-INSERT INTO schema_version (filename, applied_at)
-VALUES ('0001_core.sql', CAST(strftime('%s', 'now') AS INTEGER));
+CREATE TABLE IF NOT EXISTS volume_aggregate_1h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    src_interface_id    INTEGER NOT NULL REFERENCES interface (id),
+    dst_interface_id    INTEGER REFERENCES interface (id),
+    peer_address        TEXT,
+    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_1h_slot
+    ON volume_aggregate_1h (period_start_at, src_interface_id,
+                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''));
+
+CREATE TABLE IF NOT EXISTS volume_aggregate_24h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    src_interface_id    INTEGER NOT NULL REFERENCES interface (id),
+    dst_interface_id    INTEGER REFERENCES interface (id),
+    peer_address        TEXT,
+    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_24h_slot
+    ON volume_aggregate_24h (period_start_at, src_interface_id,
+                             ifnull(dst_interface_id, -1), ifnull(peer_address, ''));
+
+CREATE TABLE IF NOT EXISTS volume_aggregate_7d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    src_interface_id    INTEGER NOT NULL REFERENCES interface (id),
+    dst_interface_id    INTEGER REFERENCES interface (id),
+    peer_address        TEXT,
+    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_7d_slot
+    ON volume_aggregate_7d (period_start_at, src_interface_id,
+                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''));
+
+CREATE TABLE IF NOT EXISTS volume_aggregate_30d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    src_interface_id    INTEGER NOT NULL REFERENCES interface (id),
+    dst_interface_id    INTEGER REFERENCES interface (id),
+    peer_address        TEXT,
+    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_30d_slot
+    ON volume_aggregate_30d (period_start_at, src_interface_id,
+                             ifnull(dst_interface_id, -1), ifnull(peer_address, ''));
+
+-- ---------------------------------------------------------------------------
+-- The per-owner aggregates — the same four periods, keyed on the person
+-- rather than on the interface pair.
+--
+-- Why they exist: the four tables above carry interfaces and peer addresses
+-- and no owner dimension at all, so "how much did Bob's machines move this
+-- month" had nothing to read once the question left the flow horizon, which is
+-- bounded by the retention_seconds row of setting. That was gap G11 in
+-- docs/widget-catalogue.md and this family closes it.
+--
+-- Keyed as the four above are: the slot is (period_start_at, owner, scope),
+-- with the same ifnull wrapper on the NULL-bearing column, because SQLite
+-- treats NULLs in a UNIQUE index as distinct. One difference is deliberate and
+-- is not a drift: traffic_scope is part of the key here, where above it is
+-- derivable from whether dst_interface_id is set. A per-owner slot has no
+-- destination interface to derive it from, so it is keyed explicitly.
+--
+-- owner_id IS NULL IS THE UNASSIGNED BUCKET, AND IT IS NOT OPTIONAL. Ownership
+-- is assigned by hand and most machines on a network belong to nobody in
+-- particular, so a per-person aggregate that dropped the unowned clients would
+-- under-report the network while looking complete. The column is therefore
+-- NULL-bearing by design and the unassigned slot is an ordinary row --
+-- the same guarantee the "Clients per owner" diagnostic already carries.
+--
+-- Nothing here infers an owner. These rows are computed from flow joined to
+-- client.owner_id, which only a statement somebody wrote can fill.
+--
+-- client_count is the number of distinct clients that contributed to THIS
+-- slot. It is a per-slot figure and MUST NOT be summed across slots: the same
+-- machine active in two hours would be counted twice. Summing bytes, allowed
+-- and blocked across slots is correct; summing client_count is not.
+--
+-- Refresh contract: identical to the four above, and written down once in
+-- docs/data-model.md. A slot is recomputed when a flow inside its window is
+-- ingested; the current slot is recomputed on every pass; computed_at against
+-- the newest ingested_at inside the window is the staleness rule; a closed
+-- slot is left alone. One addition specific to this family: reassigning a
+-- client to another owner, or clearing its owner, invalidates every slot whose
+-- window holds a flow from that client, because ownership is an attribute of
+-- the person and not of the flow.
+--
+-- Observation-point limit applies here exactly as above: these are lower
+-- bounds, and a per-person screen must say so.
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS owner_volume_aggregate_1h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    owner_id            INTEGER REFERENCES owner (id),
+    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    client_count        INTEGER NOT NULL CHECK (client_count >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_1h_slot
+    ON owner_volume_aggregate_1h (period_start_at, ifnull(owner_id, -1), traffic_scope);
+
+CREATE TABLE IF NOT EXISTS owner_volume_aggregate_24h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    owner_id            INTEGER REFERENCES owner (id),
+    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    client_count        INTEGER NOT NULL CHECK (client_count >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_24h_slot
+    ON owner_volume_aggregate_24h (period_start_at, ifnull(owner_id, -1), traffic_scope);
+
+CREATE TABLE IF NOT EXISTS owner_volume_aggregate_7d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    owner_id            INTEGER REFERENCES owner (id),
+    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    client_count        INTEGER NOT NULL CHECK (client_count >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_7d_slot
+    ON owner_volume_aggregate_7d (period_start_at, ifnull(owner_id, -1), traffic_scope);
+
+CREATE TABLE IF NOT EXISTS owner_volume_aggregate_30d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    owner_id            INTEGER REFERENCES owner (id),
+    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    client_count        INTEGER NOT NULL CHECK (client_count >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_30d_slot
+    ON owner_volume_aggregate_30d (period_start_at, ifnull(owner_id, -1), traffic_scope);
+
+-- ---------------------------------------------------------------------------
+-- Collection gap — one interval opnview knows it did not cover.
+--
+-- THE TERM IS OPNVIEW'S OWN. No product opnview reads has a notion of "the
+-- data I failed to collect": every source returns what it has and says nothing
+-- about what it did not return (survey, gap 11). The word is taken from the
+-- question the row answers — what is missing from this history — and it is
+-- recorded as opnview's own in docs/data-model.md, Vocabulary.
+--
+-- Why it is a row rather than a log line: a gap is read by a screen. A byte
+-- total over a window that contains a gap is not a lower bound for the usual
+-- physical reason, it is a lower bound because opnview was not looking, and
+-- those are two different sentences to put next to a figure. The three
+-- detections that write here are all measured findings rather than
+-- suppositions:
+--   * the filter log's __digest__ is not a server-side cursor, so a poll whose
+--     newest stored line is older than the oldest line the page returned has
+--     missed everything in between (survey, "The filter log's digest is not a
+--     server-side cursor");
+--   * an eve.json rotation that discarded the file a watermark pointed at is a
+--     permanent loss (survey, data source 2 (c));
+--   * the resolver query window is ignored outright — a 5-minute and a 24-hour
+--     request return the same ~410-second span — so what came back is the most
+--     recent 1000 lookups and never the window that was asked for (survey,
+--     "The resolver window is not honoured at all").
+--
+-- reason is a CLOSED vocabulary and it is opnview's own, legitimately: these
+-- are opnview's own detections, not values an endpoint reports, so enumerating
+-- them invents nothing. detail carries the free text.
+--
+-- Growing: one row per detected gap. Purged by detected_at, because a gap
+-- describing a window whose data would itself have been purged says nothing.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS collection_gap (
+    id                INTEGER PRIMARY KEY,
+    provider_id       INTEGER NOT NULL REFERENCES provider (id),
+    interval_start_at INTEGER NOT NULL
+                      CHECK (interval_start_at >= 0 AND interval_start_at < 4102444800),
+    interval_end_at   INTEGER NOT NULL
+                      CHECK (interval_end_at >= 0 AND interval_end_at < 4102444800),
+    reason            TEXT NOT NULL
+                      CHECK (reason IN ('digest_outside_returned_window',
+                                        'eve_rotation_lost',
+                                        'resolver_window_not_honoured')),
+    detail            TEXT,
+    detected_at       INTEGER NOT NULL CHECK (detected_at >= 0 AND detected_at < 4102444800),
+    CHECK (interval_end_at >= interval_start_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_collection_gap_detected_at ON collection_gap (detected_at);
+CREATE INDEX IF NOT EXISTS idx_collection_gap_interval
+    ON collection_gap (provider_id, interval_start_at, interval_end_at);
+
+-- ---------------------------------------------------------------------------
+-- Measurement sample — one numeric reading of one subject at one instant.
+--
+-- THE TERM IS OPNVIEW'S OWN, and the reason is that two different needs turned
+-- out to have one shape. OPNsense answers for CPU, memory, temperature, disk,
+-- uptime and per-interface packet and byte counters
+-- (/api/diagnostics/system/systemResources,
+-- /api/diagnostics/system/systemTemperature,
+-- /api/diagnostics/system/systemTime, /api/diagnostics/system/systemDisk,
+-- /api/diagnostics/activity/getActivity, /api/diagnostics/traffic/interface —
+-- survey, "The telemetry the data model calls gaps G9 and G10 exists"), and it
+-- publishes no collective noun for them. Separately,
+-- /api/diagnostics/traffic/top/<interface names> is a LIVE RATE SNAPSHOT and no
+-- endpoint exposes a flow aggregate over a past window (survey, "The per-pair
+-- data is a live snapshot, not history"), so per-pair volume has to be sampled
+-- too. A gauge and a sampled pair volume are the same five facts: a subject, a
+-- measure, a unit, a value and an instant. One table carries both.
+--
+-- THIS IS NOT AN ENTITY-ATTRIBUTE-VALUE TABLE, and the distinction matters
+-- because docs/data-model.md forbids one. An EAV table stores attributes of
+-- heterogeneous entities as untyped name/value pairs, losing every type and
+-- every constraint. This table stores ONE kind of thing — a numeric reading
+-- over time — with a typed REAL value, a mandatory unit, a closed subject
+-- vocabulary and a closed measure vocabulary, and the screens that read it
+-- filter on (subject_kind, subject_key, measure) over a range of sampled_at,
+-- which is exactly what the index below serves. It is the shape every
+-- time-series store uses, including the aggregate tables OPNsense itself keeps
+-- under /var/netflow.
+--
+-- subject_kind and subject_key together name what was measured:
+--   'firewall'      the firewall itself. subject_key names the PART measured
+--                   when the reading is of a part -- a temperature sensor, a
+--                   mounted filesystem -- and is the empty string when the
+--                   reading is of the whole machine, as uptime and load are.
+--                   It never carries the firewall's URL, which is configuration
+--                   held elsewhere. The value is a label and nothing branches
+--                   on its text.
+--   'interface'     subject_key is the network DEVICE name, the same token
+--                   interface_map keys by, so the reading joins to an interface
+--                   without a foreign key that a discovery refresh could break
+--   'endpoint_pair' subject_key is the two addresses in lexicographic order
+--                   joined by a space, the same canonical ordering
+--                   pair_volume_observation enforces with endpoint_low and
+--                   endpoint_high
+--
+-- measure and unit are opnview's own closed vocabularies. The survey
+-- establishes the telemetry endpoints and NOT their field names, so the names
+-- below are deliberately opnview's own rather than an assertion about a
+-- response shape nobody has read; which response key each one is read from is
+-- marked UNVERIFIED in internal/collect and is for the end of 4B to confirm.
+--
+-- Identity is (subject_kind, subject_key, measure, sampled_at): re-reading the
+-- same instant is idempotent, which is what a sampler restarting inside one
+-- interval needs.
+--
+-- Growing: one row per reading. Purged by sampled_at.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS measurement_sample (
+    id           INTEGER PRIMARY KEY,
+    provider_id  INTEGER REFERENCES provider (id),
+    subject_kind TEXT NOT NULL
+                 CHECK (subject_kind IN ('firewall', 'interface', 'endpoint_pair')),
+    subject_key  TEXT NOT NULL,
+    measure      TEXT NOT NULL
+                 CHECK (measure IN ('cpu_use_ratio', 'memory_use_ratio',
+                                    'temperature_celsius', 'disk_use_ratio',
+                                    'uptime_seconds', 'load_average',
+                                    'packets_in', 'packets_out',
+                                    'bytes_in', 'bytes_out',
+                                    'cumulative_bytes_in', 'cumulative_bytes_out',
+                                    'rate_bits_in', 'rate_bits_out')),
+    unit         TEXT NOT NULL
+                 CHECK (unit IN ('ratio', 'celsius', 'second', 'packet', 'byte',
+                                 'bit_per_second', 'dimensionless')),
+    value        REAL NOT NULL,
+    sampled_at   INTEGER NOT NULL CHECK (sampled_at >= 0 AND sampled_at < 4102444800),
+    UNIQUE (subject_kind, subject_key, measure, sampled_at)
+);
+
+-- "This subject's readings of this measure over this period" is an index
+-- search rather than a scan of a growing table.
+CREATE INDEX IF NOT EXISTS idx_measurement_sample_subject
+    ON measurement_sample (subject_kind, subject_key, measure, sampled_at, value);
+CREATE INDEX IF NOT EXISTS idx_measurement_sample_sampled_at
+    ON measurement_sample (sampled_at);
+
+-- ---------------------------------------------------------------------------
+-- The defaults the model guarantees exist.
+--
+-- Every statement below is written so that applying this file again inserts
+-- nothing: the schema is applied on every start, and a default that reappeared
+-- would silently undo a setting the user changed.
+-- ---------------------------------------------------------------------------
+
+-- retention_seconds: the purge horizon, in seconds, so it can be set to a few
+-- hours as easily as to months. 7776000 is 90 days, the documented default; 0
+-- means unlimited and purges nothing. No retention duration appears anywhere
+-- else: every query and every index reads the horizon from this row.
+--
+-- aggregate_mode: 'full' shows everything; 'no_domains' is the aggregate mode
+-- the roadmap asks for — volumes, interfaces, countries and operators, with no
+-- domain name read at all. The Map screen query is that query, and it reads
+-- neither dns_resolution nor domain_attribution.
+INSERT INTO setting (key, value, updated_at) VALUES
+    ('retention_seconds', '7776000', CAST(strftime('%s', 'now') AS INTEGER)),
+    ('aggregate_mode', 'full', CAST(strftime('%s', 'now') AS INTEGER))
+ON CONFLICT (key) DO NOTHING;
+
+-- The provider registry, seeded with the implementations that exist and have
+-- been surveyed today — one row per IMPLEMENTATION, not one per kind. Unbound
+-- and Dnsmasq are two providers of the dns_lookup kind; Kea, Dnsmasq and ISC
+-- dhcpd are three of the dhcp_lease kind. Step-1 detection already tells them
+-- apart, so "two providers of one kind" is exercised by real rows.
+--
+-- These names are DATA, not configuration. A firewall with no Suricata still
+-- gets a Suricata row, in the 'unavailable' state: that is the modelled-state
+-- design working, not a hardcoded assumption about the installation. Nothing
+-- in the DDL, in a query or in an index tests any of these strings. ISC dhcpd
+-- keeps its row although /api/dhcpv4/leases/searchLease answered 404 on the
+-- firewall the survey probed: a 404 says the end-of-life plugin is not
+-- installed THERE, which is the 'unavailable' state working, not a reason to
+-- forget the implementation exists.
+--
+-- No provider is active. Activeness says which implementation opnview reads,
+-- and it is decided by the probe round in internal/collect against a live
+-- firewall; this file has no way to know and must not pretend to. Every
+-- citation below is in docs/opnsense-api-survey.md, and docs/data-model.md
+-- tabulates them.
+INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) VALUES
+    ('firewall_log',   'pf',                'pf filter log',        0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('security_event', 'suricata',          'Suricata',             0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('flow_volume',    'insight',           'NetFlow / Insight',    0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('dhcp_lease',     'kea',               'Kea DHCP',             0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('dhcp_lease',     'dnsmasq',           'Dnsmasq DHCP',         0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('dhcp_lease',     'isc',               'ISC dhcpd',            0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('dns_lookup',     'unbound',           'Unbound',              0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('dns_lookup',     'dnsmasq',           'Dnsmasq resolver',     0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('geo_asn',        'maxmind_geolite2',  'MaxMind GeoLite2',     0, CAST(strftime('%s', 'now') AS INTEGER))
+ON CONFLICT (kind, provider_key) DO NOTHING;
+
+-- Availability is a modelled state, so exactly one row exists per registry row
+-- from the first apply onwards. Until a probe has run, each provider is
+-- 'unavailable' with the probe recorded as not yet run — never an absent row,
+-- which a screen could not tell apart from a provider that is fine. The row
+-- set is derived from the registry, so registering a provider and forgetting
+-- its availability row is not possible here, and the NOT EXISTS guard is what
+-- makes a second apply leave an already-probed row alone.
+INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
+SELECT p.id, 'unavailable', 'not_yet_probed', NULL, 0
+FROM provider AS p
+WHERE NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);

@@ -4,7 +4,7 @@
 This document names the seam between "the material" and "who supplied it", and
 stops there. It is a seam document, not a plugin specification.
 
-The authority on the schema is `migrations/*.sql`; on the sources,
+The authority on the schema is `internal/store/schema.sql`; on the sources,
 `docs/opnsense-api-survey.md`; on the entities, `docs/data-model.md`.
 
 ## Six kinds
@@ -56,7 +56,7 @@ firewall can be told apart from silence by an empty result alone (survey, gap
 switched off is therefore recorded as being in that state and rendered as that
 condition — never as "no traffic", "no alerts", "no clients" or "no names". A
 provider with no availability row would be indistinguishable from a healthy
-one, so the row exists from the migration onwards, in the not-yet-probed
+one, so the row exists from the first apply of the schema onwards, in the not-yet-probed
 `unavailable` state.
 
 ## At most one provider per kind is active
@@ -68,7 +68,7 @@ most one provider per kind is active**, enforced by a partial unique index over
 `kind` where `is_active = 1`.
 
 On a freshly migrated database **no provider is active**. Activeness is
-determined by runtime detection at step 4, never by a migration: a migration
+determined by runtime detection at step 4, never by the schema: a schema file
 has no way to know what is installed and must not pretend to.
 
 How step 4 chooses which provider to activate — the selection policy — is not
@@ -79,7 +79,7 @@ decided here. This cycle models the marker.
 `security_event` carries what one surveyed provider actually supplies, plus the
 two things any provider must have: an identity of its own
 (`provider_id`, `provider_event_key`) and a rule identity as text, so a provider
-whose rules are named rather than numbered fits without a migration. It carries
+whose rules are named rather than numbered fits without a schema change. It carries
 no column invented for a provider nobody has installed.
 
 When a second provider of any kind is actually installed, **its event shape

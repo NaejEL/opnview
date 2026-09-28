@@ -1,0 +1,62 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Data source 2 - Response shape",
+    "field_list_from": "filters, rows, total_rows, origin; per row filepos, fileid, alert_sid, alert_action, and the surviving original keys timestamp, src_ip, src_port, dest_ip, dest_port, proto, in_iface, flow_id, event_type; the alert key overwritten with the signature text",
+    "why_these_values": "Three alerts across two files, with ascending filepos inside each, so a watermark can stop the read part-way and a resume can be shown to lose nothing and double-count nothing. One carries an alert_action outside the vocabulary, which must become unknown. One rule identity is non-numeric, because the column is text so that a provider whose rules are named rather than numbered fits.",
+    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "filters": {},
+    "origin": "example-eve-current",
+    "total_rows": 3,
+    "rows": [
+      {
+        "fileid": "3",
+        "filepos": 8192,
+        "alert_sid": "2000001",
+        "alert_action": "blocked",
+        "alert": "example signature text one",
+        "timestamp": "2026-09-26T23:50:00+00:00",
+        "src_ip": "198.51.100.10",
+        "src_port": 44330,
+        "dest_ip": "203.0.113.30",
+        "dest_port": 443,
+        "proto": "TCP",
+        "in_iface": "exdev0",
+        "event_type": "alert",
+        "flow_id": 111
+      },
+      {
+        "fileid": "3",
+        "filepos": 4096,
+        "alert_sid": "example-named-rule-identity",
+        "alert_action": "allowed",
+        "alert": "example signature text two",
+        "timestamp": "2026-09-26T23:40:00+00:00",
+        "src_ip": "2001:db8::10",
+        "src_port": 44331,
+        "dest_ip": "2001:db8::30",
+        "dest_port": 443,
+        "proto": "TCP",
+        "in_iface": "exdev1",
+        "event_type": "alert"
+      },
+      {
+        "fileid": "2",
+        "filepos": 2048,
+        "alert_sid": "2000003",
+        "alert_action": "example-action-outside-the-vocabulary",
+        "alert": "example signature text three",
+        "timestamp": "2026-09-26T22:00:00+00:00",
+        "src_ip": "198.51.100.11",
+        "dest_ip": "203.0.113.31",
+        "proto": "UDP",
+        "in_iface": "exdev0",
+        "event_type": "alert"
+      }
+    ]
+  }
+}

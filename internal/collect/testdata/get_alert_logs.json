@@ -1,0 +1,31 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Data source 2 - Response shape",
+    "field_list_from": "filename, size, modified, sequence",
+    "why_these_values": "Three rotated files, so fileid values are enumerable and a watermark can exist per file. A fourth file the watermark table holds is deliberately absent from this list in the rotation test, which is how a lost rotation is detected.",
+    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": [
+    {
+      "filename": "example-eve-current",
+      "size": 1024,
+      "modified": 1750000000,
+      "sequence": 3
+    },
+    {
+      "filename": "example-eve-archive-1",
+      "size": 2048,
+      "modified": 1749900000,
+      "sequence": 2
+    },
+    {
+      "filename": "example-eve-archive-2",
+      "size": 4096,
+      "modified": 1749800000,
+      "sequence": 1
+    }
+  ]
+}

@@ -1,5 +1,12 @@
 -- opnview — retention purge.
 --
+-- It lives beside internal/store/schema.sql and is embedded into the binary by
+-- internal/store, which is the only code that runs it; sql/schema-checks.sh
+-- runs the same file against a throwaway database. Go's embed directive cannot
+-- reach outside its own package directory, and a second copy under sql/ would
+-- be a second truth, so the one copy lives where the code that applies it can
+-- read it.
+--
 -- The horizon is configuration, never a constant: every statement below reads
 -- it from setting.retention_seconds. A value of 0 means unlimited, and the
 -- scalar subquery then yields NULL, so every comparison is NULL and nothing is
@@ -155,6 +162,30 @@ WHERE period_end_at < (
 
 DELETE FROM owner_volume_aggregate_30d
 WHERE period_end_at < (
+    SELECT :now - CAST(value AS INTEGER)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+);
+
+-- ---------------------------------------------------------------------------
+-- The two sampled tables this cycle added.
+--
+-- A collection gap is purged by detected_at: a gap describing a window whose
+-- observations would themselves have gone says nothing a screen can use, and
+-- keeping it would make the oldest edge of the history read as permanently
+-- broken. A measurement sample is purged by sampled_at like every other
+-- observation.
+-- ---------------------------------------------------------------------------
+
+DELETE FROM collection_gap
+WHERE detected_at < (
+    SELECT :now - CAST(value AS INTEGER)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+);
+
+DELETE FROM measurement_sample
+WHERE sampled_at < (
     SELECT :now - CAST(value AS INTEGER)
     FROM setting
     WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0

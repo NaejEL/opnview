@@ -655,11 +655,16 @@ identity at all.
 
 ### The telemetry the data model calls gaps G9 and G10 exists
 
-All answered: `/api/diagnostics/system/systemResources`, `systemTemperature`,
-`systemTime`, `systemDisk`, `/api/diagnostics/activity/getActivity`, and
+All answered: `/api/diagnostics/system/systemResources`,
+`/api/diagnostics/system/systemTemperature`,
+`/api/diagnostics/system/systemTime`, `/api/diagnostics/system/systemDisk`,
+`/api/diagnostics/activity/getActivity`, and
 `/api/diagnostics/traffic/interface` — the last giving per-interface packet and
-byte counters, errors, link state and line rate. **The gap is in the schema,
-which has no table for a sampled gauge, not in the API.**
+byte counters, errors, link state and line rate. The four system paths are
+written out in full here rather than sharing a prefix, so each one can be checked
+verbatim against the endpoint registry `opnview` ships; the probes and their
+results are unchanged. **The gap is in the schema, which has no table for a
+sampled gauge, not in the API.**
 
 ### Suricata, on that firewall
 
@@ -690,6 +695,101 @@ the widget nor the collector may treat that as a fault.
 **Nothing in this document records a real installation's interface labels,
 device names, addresses or counts.** The probes that produced these findings
 were run by the maintainer and their output was never committed.
+
+## What the plugin ecosystem actually exposes, 2026-09-28
+
+Read from `docs.opnsense.org`, the plugin and core sources on GitHub, and the
+`configd` action files. **Facts only**; what they imply for the model is a
+decision, not a finding, and is not recorded here.
+
+Three limits, stated because they bound everything below. **OPNsense publishes
+no install or download telemetry** — `pkg.opnsense.org` serves no counters and
+the maintainers cite none in their own plugin-system thread — so no popularity
+ranking is possible, including this one. Forum volume was used as a proxy and it
+**measures friction, not adoption**: a plugin that installs and works generates
+no threads. And Reddit was unreachable, so none of the usual community evidence
+is in here.
+
+### Four of the six kinds are fed by core, not by plugins
+
+There is no `os-wireguard`, `os-suricata`, `os-unbound`, `os-dnsmasq` or
+`os-kea`: WireGuard is core since 24.1, and the IDS, both resolvers and both
+DHCP servers are core. Zenarmor ships as `os-sunnyvalley`; AdGuard Home has no
+official package at all and is third-party, console-installed.
+
+### The dominant pattern: configuration and service control, no data
+
+Verified endpoint list by endpoint list. **ntopng, Maltrail, dnscrypt-proxy,
+Bind, Caddy, Netdata, Telegraf, collectd and node_exporter expose no data
+through the OPNsense API** — configuration and service lifecycle only. For
+several of them the data exists on the box, in the tool's own store or its own
+API; OPNsense is simply not a route to it. **A connector that can only be handed
+an OPNsense session is ruled out of most of the ecosystem by construction.**
+
+### What does produce data, and in what shape
+
+- **CrowdSec** — `crowdsec/alerts/search` is event-shaped; `crowdsec/decisions/search`
+  is a **current ban list with a TTL and no timestamp at all**. Both run
+  `cscli … -l 0`: no limit, no `since`, so **every poll re-dumps the whole set**.
+- **WireGuard** (core) — `wireguard/service/show`: per-peer state plus
+  `transfer-rx`/`transfer-tx`, which are **monotonic per service lifetime**, not
+  per interval.
+- **HAProxy** — `statistics/counters`, keyed by frontend/backend/server, not by
+  address pair.
+- **nginx** — `logs/accesses` and `service/vts`: per-request HTTP records, an
+  application-layer event shape whose dimensions are URL and status code.
+- **vnStat** — per-interface volume per period, and **unusable**: the four
+  documented endpoints return `vnstat -h|-d|-m|-y` as raw ASCII tables. A
+  `--json` `configd` action exists and **no controller exposes it**.
+- **FRR** — structured JSON for neighbours and routes; `bfdsummary` and
+  `generalrunningconfig` are raw text.
+- **LLDPd, NUT, apcupsd, SMART, Tor, Monit, acme-client** — state or measurement,
+  several returning unparsed console output.
+
+### Shapes the model has no room for
+
+Two, and the first is not eleven problems but one. **A reconciled set**: the
+current things of type X, each with attributes and sometimes a TTL, replaced
+wholesale on each poll rather than appended to — WireGuard peers, CrowdSec
+decisions, LLDP neighbours, FRR routes, certificates, Monit services, UPnP
+mappings, Tor circuits. Every kind in this model is append-only. `interface` and
+`dhcp_lease` *are* reconciled state, but as bespoke tables rather than as a
+kind, so nothing else can supply that shape. The second is the application-layer
+request log, which one source produces.
+
+### Four findings that bear on the collectors already written
+
+- **`provider.is_active` admits one provider per kind.** People run Suricata,
+  CrowdSec and Zenarmor together; the how-to corpus is people stacking them.
+  Three concurrent `security_event` providers is the normal case.
+- **Nothing upstream supports an incremental read.** CrowdSec dumps everything;
+  `ids/service/query_alerts` documents no time filter; vnStat returns the whole
+  history. This is the same snapshot-versus-append distinction as the missing
+  shape above, arriving from the transport side.
+- **CrowdSec would double-count.** Its firewall bouncer enforces through pf
+  tables and `block drop` rules. *Inferred, and load-bearing*: if those rules
+  log, the drops are **already in `firewall_log`**, so emitting decisions as
+  blocking events counts each block twice. Emit them as state.
+- **Zenarmor cannot be mirrored.** Its own hardware page gives ~5 MB per hour per
+  Mbit/s — about 168 GB a month on a 100 Mbit/s link. Aggregates only, and its
+  API keys are minted in a cloud console with no published endpoints.
+
+### And one about a source already depended on
+
+The forum record for NetFlow/Insight is not questions but bug reports:
+*no data available*, *excessive CPU and disk I/O*, *counting traffic twice*,
+*OUT_BYTES and OUT_PACKETS always zero*. `flow_volume` already carries an
+observation-point caveat; these are a second class, in the source itself, and
+two of them are correctness rather than coverage.
+
+### A population with no resolver source at all
+
+Only Unbound and dnsmasq expose query logs. **Bind and dnscrypt-proxy expose
+none** — both endpoint lists checked. So a real set of installations has no
+`dns_lookup` source and therefore no site names. `source_availability` models
+that correctly as a state rather than as emptiness; the point is that the
+affected population is larger than it looks, and the interface copy for it
+carries weight.
 
 ## Gaps and alternatives
 
