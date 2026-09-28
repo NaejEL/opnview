@@ -122,9 +122,9 @@ a requirement genuinely splits in two, say so and propose two specs rather than
 mixing the kinds in one.
 
 An interface spec is written against the three binding documents named above,
-and every one of its acceptance criteria stays objectively verifiable: "the
-widget carries the six fields `docs/widget-catalogue.md` requires" is a
-criterion, "the canvas looks right" is not. How the result *looks* is the
+and every one of its acceptance criteria stays objectively verifiable: "the widget
+draws one of the shapes `docs/widget-catalogue.md` declares, with every
+parameter it offers changing what is drawn" is a criterion, "the canvas looks right" is not. How the result *looks* is the
 maintainer's judgement and belongs in a *For maintainer review* list, never in
 the acceptance criteria.
 

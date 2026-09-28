@@ -61,10 +61,11 @@ placed widgets. The whole document is one object with the following fields.
 | Field | Required | Type | Meaning |
 |---|---|---|---|
 | `id` | **yes** | string | Unique within its canvas, same slug shape as a canvas id. It is what a saved comment, a link or a deep-link URL points at. |
-| `type` | **yes** | string | The catalogue identifier of the widget — `interface_volume_ranking`, `passed_traffic_world_map`, `unified_blocked_feed` and so on. Each `###` entry in `docs/widget-catalogue.md` declares exactly one, in its **Type** field; that document is the vocabulary and this one does not duplicate it. An unknown `type` is an unresolved reference, not a parse error; see *Unresolved references*. |
+| `type` | no | string | The **preset** identifier — `interface_volume_ranking`, `passed_traffic_world_map`, `unified_blocked_feed` and so on. Each `###` entry in `docs/widget-catalogue.md`, Part 2, declares exactly one in its **Type** field; that document is the vocabulary and this one does not duplicate it. An unknown `type` is an unresolved reference, not a parse error; see *Unresolved references*. **Exactly one of `type` and `shape` is required.** |
+| `shape` | no | string | The **shape** identifier — `figure`, `ranked_bars`, `time_series`, `table`, `feed`, `cards`, `map`, `donut`, `tree`, `sankey`, `graph`, `matrix`. Part 1 of `docs/widget-catalogue.md` is the vocabulary. A widget carrying `shape` and no `type` is a shape the reader bound themselves: its binding lives in `parameters`, and nothing in the catalogue has to have anticipated it. A widget carrying `type` **also** resolves to a shape — the preset names it — and stating both is allowed only where they agree; a disagreement is an unresolved reference. **Exactly one of `type` and `shape` is required.** |
 | `title` | no | string | Overrides the catalogue's default heading for this instance. |
 | `placement` | **yes** | object | Where the widget sits. See below. |
-| `parameters` | no | object | The widget's settings. Keys are defined per `type` by the catalogue's **Parameters** field. Absent means "every parameter at its catalogue default", which is a valid and common case. |
+| `parameters` | no | object | The widget's settings. For a `type`, the keys are defined by that preset's **Parameters** field; absent means "every parameter at its catalogue default", which is a valid and common case. For a bare `shape`, the keys are the shape's **Shape parameters** *plus the binding* — which entity, which dimensions, which measures — and `parameters` is then **required**, because a shape with no binding has nothing to draw. |
 
 ### Placement
 

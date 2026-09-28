@@ -94,8 +94,9 @@ variation:
 - `docs/ui-references.md` — the visual language, the surveyed prior art and,
   in its section *The maintainer's recorded preferences*, the per-question
   preferences the mockup is judged against;
-- `docs/widget-catalogue.md` — every widget, its six fields, and the *Gaps
-  found* table naming what the model cannot yet answer;
+- `docs/widget-catalogue.md` — the twelve widget **shapes**, the **presets**
+  that bind data to them, and the *Gaps found* table naming what the model
+  cannot yet answer;
 - `docs/dashboard-format.md` — the dashboard file format, its references, its
   versioning and its import behaviour.
 

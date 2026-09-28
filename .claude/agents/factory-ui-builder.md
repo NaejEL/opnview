@@ -29,8 +29,8 @@ bind with them:
 
 - **`docs/ui-references.md`** — the surveyed prior art, the visual language,
   the palettes, and the maintainer's own preferences.
-- **`docs/widget-catalogue.md`** — every widget, the six fields each entry
-  carries, the two standing UI statements, and the *Gaps found* table.
+- **`docs/widget-catalogue.md`** — the twelve widget **shapes** (what gets
+  built), the **presets** that bind data to a shape, and the *Gaps found* table.
 - **`docs/dashboard-format.md`** — the dashboard file format: canvases,
   widgets, placement, parameters, references, versioning, import.
 
@@ -143,12 +143,12 @@ the page impossible to judge.
 - **Write nothing to the firewall.** The API is read-only. No control in any
   interface you build may change a firewall setting, and none may suggest that
   it can.
-- **The observation-point limit is displayed, not hidden.** Wherever a screen
-  shows a volume, a packet count or a connection count, it states that traffic
-  between two devices inside one segment never crosses the firewall and is
-  invisible, so the figure is a lower bound. The required copy is in
-  `docs/widget-catalogue.md`, *Two standing UI statements*, together with the
-  second required statement: site names are inferred, not observed.
+- **The observation-point limit binds the model, not the screen.** Traffic
+  between two clients behind one interface never crosses the firewall, so every
+  volume, packet and connection figure is a lower bound — and so are inferred
+  site names. Both are recorded in `docs/widget-catalogue.md`, *Two standing
+  facts — documented, never printed on screen*. **Do not print either on a
+  screen**: `ROADMAP.md` forbids explanatory copy in the interface.
 - **Verified OPNsense endpoints.** Any endpoint a page or a handler calls is
   justified by the OPNsense documentation and its path documented in a comment
   where it is called. Do not guess an API path.

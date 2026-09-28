@@ -444,12 +444,32 @@ Two consequences to design rather than discover:
   the parts are files the service reads, not a store to provision — but the
   directory, its precedence over the embedded defaults and its reload behaviour
   are part of this step.
-- `docs/widget-catalogue.md`'s six fields per entry stop being prose for a human
-  and become **the widget manifest's schema**. That is what makes a widget a
-  directory rather than a patch.
+- `docs/widget-catalogue.md`'s **shape** fields — what the shape draws, what it
+  requires of its data, its parameters, its empty and absent states, its
+  truncation rule — stop being prose for a human and become **the widget
+  manifest's schema**. That is what makes a widget a directory rather than a
+  patch.
 
 - The widget catalogue of `docs/widget-catalogue.md`, implemented as placeable
   widgets that can be added, moved and resized on a grid.
+- **A widget is a shape, and the data is a parameter.** A widget that shows one
+  figure is the *same widget* whether the figure is a temperature, a lease count
+  or a WAN rate. So the inventory is **twelve** shapes — one figure, ranked
+  bars, a time series, a table, a feed, cards, a map, a donut, a tree, a Sankey,
+  a graph, a matrix — and not a list of subjects. The count is twelve and not
+  the ten guessed here because it was **derived from the presets**, plus `graph`,
+  which comes from a requirement rather than from a preset;
+  `docs/widget-catalogue.md`, *Why twelve*, holds the derivation and is
+  authoritative. `docs/widget-catalogue.md`'s entries are **presets**: a
+  shape, a query and a title, chosen because they answer a question worth
+  answering. They are not twenty-nine different things to build.
+
+  **This is the corollary of modular connectors.** A connector brings entities
+  and the dimensions they can be grouped by; the shapes already know how to draw
+  those. Nobody writes a widget for a plugin, and the product never ships data
+  nothing can display. It is also why the plugin manifest feeds the widget
+  engine and not only the store: what a connector declares *is* what a reader
+  can group by.
 - **The connection tree answers where a chosen subject goes preferentially** —
   an interface, a client or an owner, picked by the reader, with what it reaches
   ranked. The step-3 mockup rooted it at the firewall instead, which is true of
