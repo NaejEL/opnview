@@ -742,17 +742,84 @@ check 'GAP-AC3 a gap is attributed to a provider that exists' '0' \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM collection_gap g
         WHERE NOT EXISTS (SELECT 1 FROM provider p WHERE p.id = g.provider_id);')"
 
-# GAP-AC4: no other table was added for this. A capability 4A does not have gets
-# no table, and the accounts and secrets the sign-in decision implies are not
-# here either -- they arrive with the cycle that has a sign-in.
+# GAP-AC4: no other table was added for this. A capability the product does not
+# have gets no table.
+#
+# RESTATED, NOT RELAXED, BY THE SIGN-IN CYCLE. The original wording said that "the
+# accounts and secrets the sign-in decision implies are not here either -- they
+# arrive with the cycle that has a sign-in". That cycle has now happened: it creates
+# the first account, it signs people in, and it is where the firewall URL and the API
+# key and secret enter the product. So the three tables it adds are named and
+# REQUIRED to exist, one by one, and every other name in the original vocabulary is
+# still forbidden.
+#
+# The restatement is STRICTER than what it replaces, in two ways. The old check could
+# only fail on a table appearing; this one also fails on one of the three
+# DISAPPEARING. And the forbidden list keeps every capability the product still does
+# not have -- dashboards, canvases, widgets and themes, which are step 7 -- plus
+# `user`, which here is not a synonym for `account`: it is OPNsense's own word for the
+# firewall user whose API key opnview holds, and it must never become a table.
+GAP_AC4_EXPECTED='account
+encrypted_credential
+session'
+check 'GAP-AC4 the three tables the sign-in cycle adds all exist' "$GAP_AC4_EXPECTED" \
+    "$(q "$MAIN_DB" "SELECT name FROM sqlite_master
+        WHERE type = 'table'
+          AND name IN ('account', 'session', 'encrypted_credential')
+        ORDER BY name;")"
 check 'GAP-AC4 no table exists for a capability this cycle does not have' '' \
     "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM sqlite_master
         WHERE type = 'table'
+          AND name NOT IN ('account', 'session', 'encrypted_credential')
           AND (lower(name) GLOB '*account*' OR lower(name) GLOB '*user*'
                OR lower(name) GLOB '*secret*' OR lower(name) GLOB '*credential*'
                OR lower(name) GLOB '*session*' OR lower(name) GLOB '*password*'
                OR lower(name) GLOB '*dashboard*' OR lower(name) GLOB '*canvas*'
                OR lower(name) GLOB '*widget*' OR lower(name) GLOB '*theme*');")"
+
+# GAP-AC4b: the three carry what the security design requires of them, and the
+# SCHEMA is what enforces it rather than the code remembering to.
+#
+# The password parameters are COLUMNS, which is the whole of what ROADMAP.md means by
+# storing them beside the hash so they can be raised later. The session's primary key
+# is a DIGEST of the token rather than the token, so a copied database hands over no
+# usable session. And a ciphertext carries the nonce, the algorithm label and the key
+# identifier without which it cannot be opened, and without which a REPLACED key
+# cannot be told apart from a TAMPERED ciphertext.
+check 'GAP-AC4b the account carries the Argon2id parameters beside the hash' '6' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('account')
+        WHERE name IN ('password_algorithm', 'password_memory_kib', 'password_iterations',
+                       'password_parallelism', 'password_salt', 'password_digest');")"
+check 'GAP-AC4b the account has no column that could hold a password' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM pragma_table_info('account')
+        WHERE name = 'password' OR name GLOB '*plaintext*' OR name GLOB '*cleartext*';")"
+check 'GAP-AC4b the session is keyed by a digest of its token, never the token' 'token_digest' \
+    "$(q "$MAIN_DB" "SELECT name FROM pragma_table_info('session') WHERE pk = 1;")"
+check 'GAP-AC4b the session carries both bounds and its own form token' '4' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('session')
+        WHERE name IN ('csrf_token', 'created_at', 'last_seen_at', 'expires_at');")"
+check 'GAP-AC4b the session belongs to an account by foreign key' '1' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_foreign_key_list('session')
+        WHERE \"table\" = 'account' AND \"from\" = 'account_id';")"
+check 'GAP-AC4b a ciphertext carries its nonce, its algorithm and its key identifier' '4' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM pragma_table_info('encrypted_credential')
+        WHERE name IN ('algorithm', 'key_id', 'nonce', 'ciphertext');")"
+check 'GAP-AC4b no encryption key is a column anywhere in the schema' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(m.name || '.' || i.name, ',')
+        FROM sqlite_master m JOIN pragma_table_info(m.name) i
+        WHERE m.type = 'table'
+          AND (i.name GLOB '*encryption_key*' OR i.name GLOB '*private_key*'
+               OR i.name GLOB '*key_material*');")"
+
+# GAP-AC4c: nothing seeds them. The schema has been applied and the seed has run by
+# this point, and all three are still empty -- because an account nobody created, a
+# session nobody signed in to and a credential nobody typed would each be worse than
+# an empty table. The credentials enter through the settings surface and through no
+# other means, which is the whole point of the cycle that added them.
+for t in account session encrypted_credential; do
+    check "GAP-AC4c neither the schema nor the seed puts a row into $t" '0' \
+        "$(q "$MAIN_DB" "SELECT count(*) FROM \"$t\";")"
+done
 
 # GAP-AC5: the two tables this cycle added are classified growing and are purged,
 # because each accumulates one row per pass and would otherwise grow without

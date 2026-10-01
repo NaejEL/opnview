@@ -1,0 +1,83 @@
+{
+  "language": "en",
+  "strings": {
+    "app.name": "opnview",
+
+    "action.sign_in": "Sign in",
+    "action.sign_out": "Sign out",
+    "action.create_account": "Create the account",
+    "action.save": "Save",
+    "action.reset_password": "Reset the password",
+
+    "field.login": "Login",
+    "field.password": "Password",
+    "field.password_again": "Password, again",
+    "field.new_password": "New password",
+    "field.setup_token": "Setup token",
+    "field.key_file": "Key file contents",
+    "field.firewall_url": "Firewall URL",
+    "field.api_key": "API key",
+    "field.api_secret": "API secret",
+    "field.maxmind_licence_key": "MaxMind licence key",
+    "field.theme": "Theme",
+
+    "setup.title": "Create the first account",
+    "setup.heading": "Create the first account",
+
+    "sign_in.title": "Sign in",
+    "sign_in.heading": "Sign in",
+    "sign_in.recover": "Reset the password with the key file",
+
+    "recover.title": "Reset the password",
+    "recover.heading": "Reset the password",
+
+    "settings.title": "Settings",
+    "settings.heading.firewall": "OPNsense",
+    "settings.heading.geolocation": "Geolocation",
+    "settings.heading.appearance": "Appearance",
+
+    "settings.label.credential_state": "Stored credentials",
+    "settings.label.verification": "Verification",
+    "settings.label.maxmind_licence_key_state": "Stored licence key",
+
+    "state.credential.absent": "Not configured",
+    "state.credential.ready": "Readable",
+    "state.credential.undecryptable": "Unreadable: the key file does not match",
+
+    "state.verification.not_attempted": "Not attempted",
+    "state.verification.verified": "The firewall answered",
+    "state.verification.credentials_rejected": "The credentials were rejected",
+    "state.verification.endpoint_not_found": "The endpoint was not found",
+    "state.verification.unreachable": "The host was not reached",
+    "state.verification.unexpected_answer": "The answer could not be used",
+    "state.verification.no_url": "No firewall URL",
+
+    "state.licence_key.absent": "None",
+    "state.licence_key.stored": "Stored",
+    "state.licence_key.undecryptable": "Unreadable: the key file does not match",
+
+    "theme.system": "Follow the operating system",
+    "theme.light": "Industrial, light",
+    "theme.dark": "Industrial, dark",
+
+    "notice.setup_done": "The account was created.",
+    "notice.settings_saved": "Saved.",
+    "notice.password_reset": "The password was reset.",
+    "notice.signed_out": "Signed out.",
+
+    "error.setup_token_refused": "The setup token was refused.",
+    "error.setup_closed": "This installation already has an account.",
+    "error.login_required": "A login is required.",
+    "error.password_required": "A password is required.",
+    "error.password_mismatch": "The two passwords are not the same.",
+    "error.password_too_short": "A password of at least twelve characters is required.",
+    "error.sign_in_refused": "The login and password were refused.",
+    "error.session_expired": "The session has ended.",
+    "error.form_token_refused": "The form was refused; load the page again.",
+    "error.key_file_refused": "The key file was refused.",
+    "error.firewall_url_invalid": "The firewall URL must be an http or https address.",
+    "error.api_key_required": "An API key is required beside an API secret.",
+    "error.theme_unknown": "That theme does not exist.",
+    "error.internal": "The request could not be completed."
+  }
+}

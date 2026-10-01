@@ -3,8 +3,14 @@
 // There are exactly two sources, and no third: the `setting` table, and the
 // defaults written down here. There is no environment variable, no
 // configuration file and no `configure` subcommand — the firewall URL, the API
-// key and secret and the MaxMind key are entered in the interface, which is
-// cycle 4B, and this cycle stores none of them.
+// key and secret and the MaxMind key are entered in opnview's own settings
+// surface and nowhere else.
+//
+// Since cycle 4B this package also SURFACES THE CREDENTIALS TO THE COLLECTORS and
+// notices a change to them without a restart. That is credentials.go: the
+// `setting` rows holding the firewall URL and the API key, the decryption of the
+// API secret from `encrypted_credential`, the three named states those can be in,
+// and the live holder the OPNsense client reads on every call.
 //
 // Every default here is a duration or a mode. NO INTERFACE NAME, VLAN NAME,
 // ADDRESS, CIDR OR COUNT IS A DEFAULT, because every one of those is discovered

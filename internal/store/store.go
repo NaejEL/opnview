@@ -19,6 +19,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -52,13 +53,47 @@ func Open(ctx context.Context, dataDir string) (*Store, error) {
 	if dataDir == "" {
 		return nil, errors.New("store: no data directory was given")
 	}
+	// The directory is created rather than required. A first start against a
+	// fresh installation has nothing there yet, and refusing to create the one
+	// directory the operator just named on the command line would be refusing to
+	// start for no reason. 0700 because the database and the key file beside it
+	// are the two things in this product that must not be world-readable.
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		return nil, fmt.Errorf("store: creating the data directory %s: %w", dataDir, err)
+	}
 	path := filepath.Join(dataDir, DatabaseFilename)
 
 	// WAL so a reader never blocks the writer; a busy timeout so a checkpoint
 	// never turns into an immediate failure; foreign keys on, because every
 	// "not found is a state" guarantee in the model rests on them.
+	//
+	// secure_delete is FAST, and the guarantee it gives is the weaker one. It
+	// zeroes what is freed INSIDE A PAGE THAT IS BEING REWRITTEN, and nothing
+	// else: a page that goes back to the freelist whole is unlinked and left with
+	// its bytes in the file until something reuses it. The strong form zeroes
+	// every freed page of every table on every delete and update, and the purge
+	// loops delete continuously, which is a write amplification paid on all the
+	// measurement tables to protect the two credential rows.
+	//
+	// WHAT IT STILL MAKES TRUE, which is the motive: a credential row is
+	// REPLACED IN PLACE — one row per name, ON CONFLICT DO UPDATE — so the prior
+	// ciphertext is overwritten inside its own page rather than freed, and FAST
+	// zeroes exactly that. What it does not make true is a guarantee about the
+	// whole file: a credential row that was deleted, or one moved by a page
+	// split, can leave its old bytes in a freed page.
+	//
+	// AND THE WRITE-AHEAD LOG IS A DIFFERENT MATTER AGAIN. While the service
+	// runs, <database>-wal holds the prior ciphertext as well as the current one,
+	// and secure_delete says nothing about the WAL in either setting. This is
+	// recorded rather than dressed up: the residue is AES-GCM under the same key
+	// file, so it discloses nothing to anyone who does not hold that file, and
+	// only a SUPERSEDED secret to anyone who holds both. Making the guarantee
+	// true of the file would mean a wal_checkpoint(TRUNCATE) after every
+	// credential write; that was weighed and not taken. See the README's
+	// limitations, and AC16 of specs/SPEC-accounts-and-settings.md.
 	source := "file:" + filepath.ToSlash(path) +
-		"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)"
+		"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)" +
+		"&_pragma=secure_delete(FAST)"
 
 	db, err := sql.Open("sqlite", source)
 	if err != nil {

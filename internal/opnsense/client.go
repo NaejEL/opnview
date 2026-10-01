@@ -146,18 +146,62 @@ type Response struct {
 // OK reports whether the call reached the firewall and got a usable body.
 func (r Response) OK() bool { return r.Outcome == OutcomeOK }
 
+// CredentialSource yields the credentials the NEXT request is made with.
+//
+// IT IS A SEAM, AND IT IS THE ONLY ONE THIS PACKAGE HAS. Cycle 4A built the
+// client once at start-up with an empty Credentials value, which meant a
+// credential typed into the settings surface could not reach a running collector:
+// a typo cost a restart, and so did the first correct entry. A source is read per
+// request instead, so a change made through the interface takes effect on the
+// next collection pass in the same process.
+//
+// It is an interface rather than a setter on Client for the reason every other
+// narrow interface in this repository is one: the thing that OWNS the credentials
+// — internal/config, which knows where they are stored and how they are
+// decrypted — must not be something this package imports.
+type CredentialSource interface {
+	// Credentials returns the credentials to use now. An implementation must be
+	// safe to call from several goroutines: the collector loops run concurrently.
+	Credentials() Credentials
+}
+
+// staticCredentials is a CredentialSource that never changes. It is what
+// NewClient wraps its argument in, so a caller with one fixed firewall — every
+// test in this repository, and nothing in the product — needs no source of its
+// own.
+type staticCredentials struct{ credentials Credentials }
+
+// Credentials returns the fixed value.
+func (s staticCredentials) Credentials() Credentials { return s.credentials }
+
+// Static returns a CredentialSource over one fixed value.
+func Static(credentials Credentials) CredentialSource {
+	return staticCredentials{credentials: credentials}
+}
+
 // Client is the single point at which opnview builds an HTTP request. Nothing
 // else in cmd/ or internal/ constructs one, which is what makes "one outbound
 // destination" an enforceable property rather than an intention.
 type Client struct {
-	credentials Credentials
-	http        *http.Client
+	source CredentialSource
+	http   *http.Client
 }
 
-// NewClient returns a client for one firewall. transport may be nil, in which
-// case a transport with no shared state is used; tests pass a transport that
-// fails any host but the fake firewall.
+// NewClient returns a client for one firewall whose credentials never change.
+// transport may be nil, in which case a transport with no shared state is used;
+// tests pass a transport that fails any host but the fake firewall.
 func NewClient(credentials Credentials, transport http.RoundTripper, timeout time.Duration) *Client {
+	return NewClientFromSource(Static(credentials), transport, timeout)
+}
+
+// NewClientFromSource returns a client that reads its credentials for every
+// request. It is what the product uses, so that the settings surface can change
+// them without a restart.
+func NewClientFromSource(source CredentialSource, transport http.RoundTripper,
+	timeout time.Duration) *Client {
+	if source == nil {
+		source = Static(Credentials{})
+	}
 	if transport == nil {
 		transport = &http.Transport{}
 	}
@@ -165,8 +209,8 @@ func NewClient(credentials Credentials, transport http.RoundTripper, timeout tim
 		timeout = 30 * time.Second
 	}
 	return &Client{
-		credentials: credentials,
-		http:        &http.Client{Transport: transport, Timeout: timeout},
+		source: source,
+		http:   &http.Client{Transport: transport, Timeout: timeout},
 	}
 }
 
@@ -193,13 +237,19 @@ type RequestOptions struct {
 func (c *Client) Call(ctx context.Context, ep Endpoint, opt RequestOptions) (Response, error) {
 	response := Response{Endpoint: ep}
 
+	// The credentials are read ONCE PER CALL, from the source, so a change made
+	// through the settings surface reaches the next pass without a restart. Read
+	// once and held in a local, so one call cannot be built from two halves of two
+	// different credential sets.
+	credentials := c.source.Credentials()
+
 	if !registered(ep) {
 		return response, fmt.Errorf("%w: %s", ErrEndpointNotRegistered, ep.Path)
 	}
 	if command := MutatingCommand(ep.Path); command != "" {
 		return response, fmt.Errorf("%w: %s in %s", ErrMutatingCommand, command, ep.Path)
 	}
-	if c.credentials.BaseURL == "" {
+	if credentials.BaseURL == "" {
 		return response, ErrNoBaseURL
 	}
 	for _, argument := range opt.Arguments {
@@ -211,7 +261,7 @@ func (c *Client) Call(ctx context.Context, ep Endpoint, opt RequestOptions) (Res
 		}
 	}
 
-	target := strings.TrimRight(c.credentials.BaseURL, "/") + ep.Path
+	target := strings.TrimRight(credentials.BaseURL, "/") + ep.Path
 	for _, argument := range opt.Arguments {
 		target += "/" + argument
 	}
@@ -245,7 +295,7 @@ func (c *Client) Call(ctx context.Context, ep Endpoint, opt RequestOptions) (Res
 		request.Header.Set("Content-Type", contentType)
 	}
 	request.Header.Set("Accept", "application/json")
-	request.SetBasicAuth(c.credentials.APIKey, c.credentials.APISecret)
+	request.SetBasicAuth(credentials.APIKey, credentials.APISecret)
 
 	answer, err := c.http.Do(request)
 	if err != nil {

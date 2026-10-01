@@ -1,0 +1,39 @@
+{{- /*
+  The password reset surface.
+
+  A FORGOTTEN PASSWORD IS RECOVERABLE BY POSSESSION OF THE KEY FILE, and by
+  nothing else. Whoever holds that file already holds the decryptable secrets, so
+  requiring it grants an attacker nothing they did not already have, and it returns
+  the installation without deleting the database.
+
+  The page renders unauthenticated and discloses nothing: it names no login, and a
+  submission without the key file is refused with the same message as a submission
+  with the wrong one.
+*/ -}}
+{{define "body" -}}
+<section class="card">
+<h1>{{t "recover.heading"}}</h1>
+<form method="post" action="{{.RecoverPath}}">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<div class="field">
+<label for="login">{{t "field.login"}}</label>
+<input id="login" name="login" type="text" autocomplete="username" spellcheck="false" required value="{{.Login}}">
+</div>
+<div class="field">
+<label for="key_file">{{t "field.key_file"}}</label>
+<textarea id="key_file" name="key_file" rows="2" spellcheck="false" autocomplete="off" required></textarea>
+</div>
+<div class="field">
+<label for="password">{{t "field.new_password"}}</label>
+<input id="password" name="password" type="password" autocomplete="new-password" required>
+</div>
+<div class="field">
+<label for="password_again">{{t "field.password_again"}}</label>
+<input id="password_again" name="password_again" type="password" autocomplete="new-password" required>
+</div>
+<div class="actions">
+<button type="submit">{{t "action.reset_password"}}</button>
+</div>
+</form>
+</section>
+{{- end}}

@@ -1,0 +1,76 @@
+{{- /*
+  The settings surface: where credentials enter the product.
+
+  THREE CARDS, ONE PER SUBJECT, angular at the 0.25rem radius — the layout
+  docs/ui-references.md's General layout row records. Each card carries its fields
+  and the state of what is stored beside them; none of them carries a sentence of
+  explanation, and if a field turns out to need one, the field is wrong and that is
+  a finding for the next cycle rather than a licence to add copy.
+
+  A SECRET FIELD IS NEVER PRE-FILLED. The API secret and the MaxMind licence key
+  render empty whatever is stored, and an empty submission LEAVES THE STORED VALUE
+  ALONE rather than clearing it — otherwise saving the theme would destroy the
+  credentials. What is stored is reported as a STATE beside the field, which is the
+  only thing about a secret this surface may say.
+
+  THE FIREWALL URL AND THE API KEY ARE PRE-FILLED, because they are configuration
+  rather than secrets and a reader correcting a typo has to be able to see the typo.
+
+  NOTHING HERE WRITES TO THE FIREWALL. There is no control on this page that could,
+  and the API client refuses a mutating command before a request exists.
+*/ -}}
+{{define "body" -}}
+<form method="post" action="{{.SettingsPath}}">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+
+<section class="card">
+<h1>{{t "settings.heading.firewall"}}</h1>
+<div class="field">
+<label for="firewall_url">{{t "field.firewall_url"}}</label>
+<input id="firewall_url" name="firewall_url" type="url" autocomplete="off" spellcheck="false" value="{{.FirewallURL}}">
+</div>
+<div class="field">
+<label for="api_key">{{t "field.api_key"}}</label>
+<input id="api_key" name="api_key" type="text" autocomplete="off" spellcheck="false" value="{{.APIKey}}">
+</div>
+<div class="field">
+<label for="api_secret">{{t "field.api_secret"}}</label>
+<input id="api_secret" name="api_secret" type="password" autocomplete="off">
+</div>
+<dl class="states">
+<dt>{{t "settings.label.credential_state"}}</dt>
+<dd>{{t .CredentialState}}</dd>
+<dt>{{t "settings.label.verification"}}</dt>
+<dd>{{t .VerificationState}}</dd>
+</dl>
+</section>
+
+<section class="card">
+<h1>{{t "settings.heading.geolocation"}}</h1>
+<div class="field">
+<label for="maxmind_licence_key">{{t "field.maxmind_licence_key"}}</label>
+<input id="maxmind_licence_key" name="maxmind_licence_key" type="password" autocomplete="off">
+</div>
+<dl class="states">
+<dt>{{t "settings.label.maxmind_licence_key_state"}}</dt>
+<dd>{{t .LicenceKeyState}}</dd>
+</dl>
+</section>
+
+<section class="card">
+<h1>{{t "settings.heading.appearance"}}</h1>
+<div class="field">
+<label for="theme">{{t "field.theme"}}</label>
+<select id="theme" name="theme">
+{{- range .Themes}}
+<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{t .Label}}</option>
+{{- end}}
+</select>
+</div>
+</section>
+
+<div class="actions">
+<button type="submit">{{t "action.save"}}</button>
+</div>
+</form>
+{{- end}}

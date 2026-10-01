@@ -88,7 +88,7 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | why a filter-log line was written | `reason` | `flow.log_reason` | `/api/diagnostics/firewall/log`, field `reason` (survey, data source 1, *Response shape*); prefixed because `reason` alone would read as the reason for the decision, which is the rule |
 | the resolver's validation verdict on a lookup | `dnssec_status` | `dns_resolution.dnssec_status` | `/api/unbound/overview/search_queries`, field `dnssec_status` (survey, data source 5, *Response shape*) |
 
-**Ten terms are `opnview`'s own, because OPNsense has no word for them.**
+**Thirteen terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -103,6 +103,9 @@ vocabulary read off an endpoint:
 | `dns_resolution.lookup_key` | the resolver returns a `uuid` field and it is null on every row, so the endpoint supplies no identity for a lookup at all | the column holds an identity `opnview` composes from the row's own content, so it is named for what it **is** — a key — rather than for the uuid it is not, and not `digest` either, because a provider that does supply a stable identifier stores that here unchanged |
 | `reconciled_state`, and with it `state_snapshot`, `state_item` and their `set_key` / `item_key` / `captured_at` | the shape is real and unnamed: ten of the eleven surveyed sources that fit no other kind report **the complete current set of things of one type**, and each of them names only its own contents — decisions, peers, neighbours, routes, circuits. None of them, and no OPNsense endpoint, has a word for the shape itself | the word is taken from what those ten have in common: the set is **reconciled** against the previous one rather than appended to. `captured_at` is named for the claim it makes — the set was complete at that instant — because that claim is the only thing that makes a departure detectable; `set_key` and `item_key` follow the `provider_key` / `subject_key` pattern already in the schema |
 | `state_item_departure` | no source reports a departure. Every one of them reports only what it currently holds, and says nothing at all about what it used to hold (the same finding as survey gap 11, arriving from a different direction) | the view is named for the question it answers — what has left this set — and it is a view rather than a column because a departure is a fact about two snapshots, and a stored copy could disagree with them |
+| `account` | OPNsense has **users**, and it has **API keys** issued to a user. Neither names a login into a *different* product: an `opnview` account authenticates nobody to the firewall and grants nothing on it | the word is the ordinary one for the thing, and it is deliberately **not** `user`, so that nothing in this schema can be mistaken for the OPNsense user whose API key `opnview` holds. The password columns carry the Argon2id parameters beside the digest because `ROADMAP.md` asks for exactly that; see `account`'s own section |
+| `session` | no product `opnview` reads has a notion of a browser signed in to `opnview`. OPNsense's own web session is its own and is never read here | the word is taken from what the row is. Its primary key is a **digest** of the token rather than the token, so the token exists only in the cookie; `expires_at` is named for the absolute cap it holds, and the sliding idle window is deliberately **not** a column — see that section |
+| `encrypted_credential` | OPNsense names an **API key** and an **API secret**, and MaxMind a **licence key**, but none of them has a word for *a credential this product holds at rest and has to be able to send again*. `setting` cannot be that word: a ciphertext is not a value | the term names what the row is — a credential, encrypted — and the four columns beside the ciphertext (`algorithm`, `key_id`, `nonce`, `updated_at`) are what make it openable and what let a replaced key be told apart from a tampered ciphertext. `name` holds which credential it is, as data, exactly as `provider_key` does |
 | `dhcp_lease.generation_key` | OPNsense's lease endpoints report an expiry, and only Kea reports a validity start. None of them reports an identity for a lease **generation**, which is the thing `opnview` needs one row per | the column is named for what it identifies — one generation of one lease — and its value carries the name of what it rests on (`start:`, `expiry:`, `observed_day:`), so a reader can tell a real start from a substitute without consulting the backend. It exists because `starts_at` was doing this job as well as its own, and was honest only because a comment beside it said so |
 
 **What this replaced.** `segment` was invented before any research existed and
@@ -144,6 +147,7 @@ table.
 
 <!-- entity-list:begin -->
 ```
+account
 blocked_event
 blocklist
 client
@@ -151,6 +155,7 @@ collection_gap
 dhcp_lease
 dns_resolution
 domain_attribution
+encrypted_credential
 eve_ingest_cursor
 flow
 geo_asn
@@ -167,6 +172,7 @@ provider
 provider_rule_info
 rule
 security_event
+session
 setting
 source_availability
 state_item
@@ -225,7 +231,9 @@ volume_aggregate_7d
 
 <!-- bounded-tables:begin -->
 ```
+account
 blocklist
+encrypted_credential
 eve_ingest_cursor
 interface
 interface_map
@@ -233,6 +241,7 @@ owner
 provider
 provider_rule_info
 rule
+session
 setting
 source_availability
 ```
@@ -252,6 +261,9 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `source_availability` | exactly one row per `provider` row, for the life of the database |
 | `eve_ingest_cursor` | one watermark per rotated `eve.json` file; the firewall keeps the current file plus four archives |
 | `setting` | one row per configuration key |
+| `account` | one row per opnview login, created by hand in the setup surface |
+| `session` | one row per session issued and not yet expired and collected; a browser holds one |
+| `encrypted_credential` | one row per named credential opnview has to send somewhere; two exist |
 
 `client` is classified as growing, not bounded: an address reissued to another
 machine creates a new identity rather than updating an existing one, so the
@@ -1256,7 +1268,123 @@ comparison is `NULL` and nothing is deleted.
 
 `aggregate_mode` is `full` or `no_domains`.
 
+**The firewall URL, the OPNsense API key and the theme are rows here.** They are
+configuration, `internal/config` already looks here for configuration, and a
+second location would be a second truth. The two ciphertexts are **not** rows
+here, for the reason `encrypted_credential` gives: `value` is a single
+`TEXT NOT NULL` and a ciphertext needs four columns beside it.
+
 **Retention:** never purged. **Indexes:** the primary key.
+
+### `account` — one opnview login
+
+**Source: none.** The term is `opnview`'s own and is recorded as such in
+*Vocabulary*: OPNsense has users and API keys, and neither names a login into a
+different product. Nothing in this table is read from an endpoint, and nothing
+in it authenticates anybody to the firewall.
+
+**Identity:** `id`; `login` is unique.
+
+**The algorithm parameters are columns, and that is the whole design.**
+`ROADMAP.md`, *Rules that apply to every step*, asks for Argon2id, a per-user
+salt, and the parameters stored beside the hash so they can be raised later. So
+`password_algorithm`, `password_memory_kib`, `password_iterations` and
+`password_parallelism` sit beside `password_salt` and `password_digest`, and
+verification reads them **from the record**. Raising the product's defaults
+therefore changes what a *new* record is written with and leaves every record
+already written verifiable. That is parameter agility, and it is a column layout
+rather than a registry: one algorithm is mandated, so there is no kind with two
+implementations here and nothing to select at runtime.
+
+`password_algorithm` is not constrained to a value list, for the same reason no
+provider name is: an implementation label is data, and a `CHECK` enumerating
+today's one label would have to be edited the day there are two.
+
+**The password is never stored and never read back.** `password_digest` is the
+Argon2id output over the password, the salt and the parameters. No read path in
+`opnview` returns a digest, a salt or a parameter set.
+
+**A forgotten password is recoverable by possession of the key file**, and by
+nothing else. Whoever holds that file already holds the decryptable secrets, so
+requiring it grants an attacker nothing they did not have, and it returns the
+installation without deleting the database.
+
+**Several rows are permitted; one exists.** Nothing in `ROADMAP.md`, in this
+document or in the survey mentions a second login, a role, a permission or an
+invitation, so there are none — and no constraint restricts the table to one
+row, because such a constraint would be honest today and a migration tomorrow,
+and there are no migrations.
+
+**Retention:** never purged. **Indexes:** the primary key and the unique
+`login`.
+
+### `session` — one signed-in browser
+
+**Source: none.** `opnview`'s own term, recorded in *Vocabulary*.
+
+**Identity:** `token_digest`, the primary key — **a digest of the session token,
+not the token.** The token exists in the cookie and nowhere else, so a database
+that is copied, backed up or sent by mistake — the case the key file's own
+limitation is written against — hands over no usable session. A lookup hashes
+what the cookie carried and compares digests.
+
+**Two expiries, both enforced.** `expires_at` is the **absolute cap**, written
+once when the session is issued and never moved. The **sliding idle window** is
+`last_seen_at` plus a duration `internal/auth` carries, evaluated on every
+request; it is deliberately not a column, because a stored copy of it would be a
+second truth that a change to the window could not reach. An expired session is
+refused and never renewed, on either bound.
+
+`csrf_token` is the session's own, so a submission carrying another session's
+token fails the comparison rather than being accepted.
+
+**Retention:** not purged by `retention_seconds`, which is the observation
+horizon and says nothing about a sign-in. Rows are deleted when the session is
+signed out, when it is found expired, and when the account is removed — the
+foreign key cascades.
+
+**Indexes:** the primary key, `idx_session_account` for the cascade and for
+signing every session of one account out, and `idx_session_expires_at` so
+collecting expired rows is an index range rather than a scan.
+
+### `encrypted_credential` — one credential opnview has to send to somebody else
+
+**Source: the user, through the settings surface, and nowhere else.** There is
+no environment variable, no configuration file and no `configure` subcommand.
+
+**Identity:** `name`, the primary key. Two names exist: the OPNsense API secret
+and the MaxMind licence key — the exact two `ROADMAP.md` names.
+
+**Why encryption and not hashing.** `ROADMAP.md`, *Rules that apply to every
+step*: these are not passwords. They are sent to the firewall and to MaxMind on
+every call, so hashing them would make the product unable to work. They are
+encrypted at rest with authenticated encryption and decrypted to be used.
+
+**Why this is a table and not a `setting` row.** `setting.value` is a single
+`TEXT NOT NULL`, and a ciphertext is not a value: it needs the `nonce` it was
+sealed with, the `algorithm` label of the scheme that sealed it, and the
+`key_id` of the key that did it — or it cannot be opened, and **a key that has
+been replaced cannot be told apart from a ciphertext that has been tampered
+with.** Those are four columns.
+
+**The OPNsense API key is not here.** It is the Basic-auth username half of the
+pair, `ROADMAP.md` does not list it among the secrets, and putting it here would
+make a third ciphertext where the settled design names two. It is a `setting`
+row.
+
+**The key is a file beside the database**, created on first start with
+permissions denying group and other, and never a row in the database. The limit
+of that protection is stated in `README.md`'s limitations section in
+`ROADMAP.md`'s own words, and it is **not** restated on any screen.
+
+**A lost or replaced key file is a named state.** With the database intact and
+the key file gone or different, opening a ciphertext fails, and that failure is
+reported as its own state — *the stored credentials cannot be decrypted* — which
+is not the same state as *no firewall is configured*. The two are
+distinguishable, and re-entry is offered.
+
+**Retention:** never purged. Overwriting a credential replaces the row, so no
+prior ciphertext survives beside the current one. **Indexes:** the primary key.
 
 ### `collection_gap` — an interval opnview knows it did not cover
 

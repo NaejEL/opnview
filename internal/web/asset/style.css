@@ -1,0 +1,347 @@
+/* opnview — the stylesheet for the setup, sign-in and settings surfaces.
+ *
+ * EVERY VALUE HERE IS FROM docs/ui-references.md, Family C, "The industrial
+ * palette", and the rule it serves is ROADMAP.md step 3's: the language is
+ * angular, dense and high-contrast, the corner radius is 0.25rem, the fonts are
+ * system fonts only, and the layout is a fixed top bar above a centred main
+ * column. The non-colour tokens are that section's non-colour table; the colour
+ * tokens are its light and dark columns, mapped by ROLE rather than by position.
+ * Nothing is paraphrased into a new list: the document is the source and the
+ * token names below are the ones the step-3 mockup already uses, so the three
+ * surfaces and the canvas share one vocabulary.
+ *
+ * NOTHING IS LOADED FROM OFF-HOST. There is no @import, no url(), no web font
+ * and no image: the font stack is entirely system fonts, which is precisely what
+ * ROADMAP.md's "no resource loaded from a CDN" rule requires and is why the
+ * industrial palette can be adopted whole without a byte of downloaded
+ * typography.
+ *
+ * THE THEME FOLLOWS THE OPERATING SYSTEM ON FIRST LAUNCH AND THE OVERRIDE WINS
+ * AFTERWARDS. :root carries the complete light palette. The
+ * prefers-color-scheme block redefines it for a machine set to dark, guarded so
+ * an explicit light override outranks it. The [data-theme] blocks are the
+ * override, and they come last so they win in both directions. An installation
+ * nobody has overridden renders no data-theme attribute at all, so only the
+ * media query applies — which is the operating system being followed.
+ *
+ * ONLY THE INDUSTRIAL PALETTE IS HERE. Tokyo Night, Dracula, Nord, Rosé Pine and
+ * Catppuccin are offered at the values published on the maintainer's own site,
+ * each as a FILE of the same kind a third party adds; that registry is step 7 and
+ * is out of scope for this cycle.
+ */
+
+/* Non-colour tokens. Declared once, never overridden by a palette. */
+:root {
+  --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "SF Mono", "Monaco", "Inconsolata", "Fira Mono", "Droid Sans Mono", "Source Code Pro", "Consolas", "Liberation Mono", monospace;
+  --line-height: 1.6;
+  --font-weight: 500;
+  --font-weight-bold: 700;
+  --font-size-base: 1rem;
+  --spacing: 1rem;
+  --spacing-sm: 0.5rem;
+  --spacing-lg: 2rem;
+  --border-radius: 0.25rem;
+  --border-width: 1px;
+  --header-height: 3.75rem;
+  --column-width: 40rem;
+}
+
+/* Industrial — light. The default palette. */
+:root {
+  --bg-app: #f8f9fa;
+  --bg-raised: #e9ecef;
+  --bg-surface: #ffffff;
+  --text-primary: #212529;
+  --text-secondary: #495057;
+  --text-muted: #6c757d;
+  --border-color: #ced4da;
+  --border-strong: #adb5bd;
+  --input-bg: #ffffff;
+  --accent: #2c5f8d;
+  --accent-hover: #1e4164;
+  --accent-soft: rgba(44, 95, 141, 0.25);
+  --link: #2c5f8d;
+  --link-hover: #1e4164;
+  --on-accent: #ffffff;
+  --status-ok: #28a745;
+  --status-error: #dc3545;
+}
+
+/* Industrial — low-light. Guarded so an explicit light override outranks it. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="industrial-light"]) {
+    --bg-app: #1c1c1e;
+    --bg-raised: #2c2c2e;
+    --bg-surface: #2c2c2e;
+    --text-primary: #f5f5f7;
+    --text-secondary: #d1d1d6;
+    --text-muted: #8e8e93;
+    --border-color: #48484a;
+    --border-strong: #636366;
+    --input-bg: #2c2c2e;
+    --accent: #3a7ca5;
+    --accent-hover: #5a9cc8;
+    --accent-soft: rgba(58, 124, 165, 0.35);
+    --link: #5a9cc8;
+    --link-hover: #7eb8db;
+    --on-accent: #ffffff;
+    --status-ok: #30d158;
+    --status-error: #ff453a;
+  }
+}
+
+/* The override, last, so it wins whichever way the operating system is set. */
+:root[data-theme="industrial-light"] {
+  --bg-app: #f8f9fa;
+  --bg-raised: #e9ecef;
+  --bg-surface: #ffffff;
+  --text-primary: #212529;
+  --text-secondary: #495057;
+  --text-muted: #6c757d;
+  --border-color: #ced4da;
+  --border-strong: #adb5bd;
+  --input-bg: #ffffff;
+  --accent: #2c5f8d;
+  --accent-hover: #1e4164;
+  --accent-soft: rgba(44, 95, 141, 0.25);
+  --link: #2c5f8d;
+  --link-hover: #1e4164;
+  --on-accent: #ffffff;
+  --status-ok: #28a745;
+  --status-error: #dc3545;
+}
+
+:root[data-theme="industrial-dark"] {
+  --bg-app: #1c1c1e;
+  --bg-raised: #2c2c2e;
+  --bg-surface: #2c2c2e;
+  --text-primary: #f5f5f7;
+  --text-secondary: #d1d1d6;
+  --text-muted: #8e8e93;
+  --border-color: #48484a;
+  --border-strong: #636366;
+  --input-bg: #2c2c2e;
+  --accent: #3a7ca5;
+  --accent-hover: #5a9cc8;
+  --accent-soft: rgba(58, 124, 165, 0.35);
+  --link: #5a9cc8;
+  --link-hover: #7eb8db;
+  --on-accent: #ffffff;
+  --status-ok: #30d158;
+  --status-error: #ff453a;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight);
+  line-height: var(--line-height);
+}
+
+/* The fixed 60-pixel bar of the industrial palette's own layout. */
+.top-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing);
+  height: var(--header-height);
+  padding: var(--spacing-sm) var(--spacing);
+  background-color: var(--bg-raised);
+  border-bottom: var(--border-width) solid var(--border-color);
+}
+
+.product {
+  font-weight: var(--font-weight-bold);
+  letter-spacing: 0.02em;
+}
+
+.bar-action {
+  margin: 0;
+}
+
+/* The main column: capped and centred, beneath the bar. */
+.column {
+  max-width: var(--column-width);
+  margin: 0 auto;
+  padding: calc(var(--header-height) + var(--spacing-lg)) var(--spacing) var(--spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing);
+}
+
+/* Angular cards. The radius is the palette's 0.25rem, and it is a chamfer
+ * rather than a curve — which is the point of the language and the one thing
+ * Homarr's structure was taken without. */
+.card {
+  background-color: var(--bg-surface);
+  border: var(--border-width) solid var(--border-color);
+  border-radius: var(--border-radius);
+  padding: var(--spacing);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  font-weight: var(--font-weight-bold);
+  line-height: 1.2;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+label {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-bold);
+}
+
+input,
+select,
+textarea {
+  width: 100%;
+  padding: var(--spacing-sm);
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--border-radius);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight);
+}
+
+textarea {
+  font-family: var(--font-mono);
+  resize: vertical;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: 0.125rem solid var(--accent);
+  outline-offset: 0.0625rem;
+}
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--spacing-sm);
+}
+
+button {
+  padding: var(--spacing-sm) var(--spacing);
+  background-color: var(--accent);
+  color: var(--on-accent);
+  border: var(--border-width) solid var(--accent);
+  border-radius: var(--border-radius);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-bold);
+  cursor: pointer;
+}
+
+button:hover {
+  background-color: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+
+button.secondary {
+  background-color: transparent;
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+button.secondary:hover {
+  background-color: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* The states beside a field: a term and its current value, dense, two columns. */
+.states {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--spacing-sm) var(--spacing);
+  margin: 0;
+  padding-top: var(--spacing-sm);
+  border-top: var(--border-width) solid var(--border-color);
+}
+
+.states dt {
+  color: var(--text-muted);
+}
+
+.states dd {
+  margin: 0;
+  font-weight: var(--font-weight-bold);
+}
+
+.notice {
+  margin: 0;
+  padding: var(--spacing-sm) var(--spacing);
+  border-left: 0.125rem solid var(--border-strong);
+  border-radius: var(--border-radius);
+  background-color: var(--bg-raised);
+}
+
+.notice.ok {
+  border-left-color: var(--status-ok);
+}
+
+.notice.bad {
+  border-left-color: var(--status-error);
+}
+
+.aside {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+/* A LINK TAKES THE LINK TOKENS, NOT THE ACCENT. The accent is the colour of a
+ * control; a link is a colour that has to be READ against the page, and in
+ * low light the two are not the same value — docs/ui-references.md, Family C,
+ * gives the link #5a9cc8 where the accent is #3a7ca5. Styling a link with the
+ * accent is the silent divergence this replaces. */
+a {
+  color: var(--link);
+}
+
+a:hover {
+  color: var(--link-hover);
+}
+
+@media (max-width: 30rem) {
+  .column {
+    padding-left: var(--spacing-sm);
+    padding-right: var(--spacing-sm);
+  }
+
+  .states {
+    grid-template-columns: 1fr;
+    gap: 0 0;
+  }
+}

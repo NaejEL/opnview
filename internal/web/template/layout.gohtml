@@ -1,0 +1,58 @@
+{{- /*
+  The layout every surface shares.
+
+  IT CITES THE BINDING DOCUMENTS RATHER THAN PARAPHRASING THEM. The visual
+  language is docs/ui-references.md, Family C, "The industrial palette", and
+  ROADMAP.md step 3: a fixed bar across the top, a main column whose content is
+  capped and centred, angular cards at the 0.25rem radius, system fonts only. The
+  compositional reference is Cloudflare Radar — docs/ui-references.md, "The
+  maintainer's recorded preferences", the General layout row — which is a left
+  navigation rail, a scoped header carrying the selectors, and angular cards.
+  THERE IS NO RAIL HERE, and that is a decision rather than an omission: a rail
+  navigates between canvases and this cycle ships no canvases. The rail arrives
+  with them, in step 7.
+
+  NO BARE TEXT EXISTS IN THIS FILE OR IN ANY OTHER TEMPLATE. Every text node is a
+  catalogue lookup, and a test strips the tags and the actions and fails if
+  anything but whitespace is left. That is ROADMAP.md step 7's "no user-visible
+  string is a literal", enforced rather than intended.
+
+  NO EXPLANATORY COPY EITHER. A title names, a label names its field, a state is
+  named in a word. Nothing here explains the product, and neither of the two
+  standing limitations — the observation point, and what the key file does and does
+  not protect — is recited anywhere on screen. Both are documented, in README.md.
+
+  NOTHING IS LOADED FROM OFF-HOST. One stylesheet, served by this binary from its
+  own embedded copy. No font, no script, no icon set, no favicon, no analytics.
+*/ -}}
+{{define "layout" -}}
+<!doctype html>
+<html lang="{{.Language}}"{{with .ThemeAttribute}} data-theme="{{.}}"{{end}}>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{t .TitleKey}}</title>
+<link rel="stylesheet" href="{{.StylesheetPath}}">
+</head>
+<body>
+<header class="top-bar">
+<span class="product">{{t "app.name"}}</span>
+{{- if .SignedIn}}
+<form method="post" action="{{.SignOutPath}}" class="bar-action">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<button type="submit" class="secondary">{{t "action.sign_out"}}</button>
+</form>
+{{- end}}
+</header>
+<main class="column">
+{{- with .Notice}}
+<p class="notice ok">{{t .}}</p>
+{{- end}}
+{{- with .Error}}
+<p class="notice bad">{{t .}}</p>
+{{- end}}
+{{- template "body" .}}
+</main>
+</body>
+</html>
+{{- end}}

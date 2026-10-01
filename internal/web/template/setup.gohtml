@@ -1,0 +1,45 @@
+{{- /*
+  The setup surface: the first account, and nothing else.
+
+  The firewall URL, the API key and secret, the MaxMind key and the theme are
+  entered in the settings surface once signed in — ROADMAP.md step 4 asks for
+  setup "creating the first account, then" the rest, and "then" is a second
+  surface rather than one long form, because the second one has to exist anyway
+  for a credential to be changed afterwards.
+
+  THE TOKEN FIELD IS THE FIRST FIELD, because the token is the first thing the
+  reader has: it was printed on the console at start-up. Nothing on this page
+  explains where it came from.
+
+  THERE IS NO CLOSED STATE ON THIS PAGE. Once an account exists this template is
+  never reached at all: the middleware refuses the surface on every method, a GET
+  being redirected to the sign-in surface and a POST refused there, so a branch
+  here would be a state nothing can render.
+*/ -}}
+{{define "body" -}}
+<section class="card">
+<h1>{{t "setup.heading"}}</h1>
+<form method="post" action="{{.SetupPath}}">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<div class="field">
+<label for="setup_token">{{t "field.setup_token"}}</label>
+<input id="setup_token" name="setup_token" type="text" autocomplete="off" spellcheck="false" required>
+</div>
+<div class="field">
+<label for="login">{{t "field.login"}}</label>
+<input id="login" name="login" type="text" autocomplete="username" spellcheck="false" required value="{{.Login}}">
+</div>
+<div class="field">
+<label for="password">{{t "field.password"}}</label>
+<input id="password" name="password" type="password" autocomplete="new-password" required>
+</div>
+<div class="field">
+<label for="password_again">{{t "field.password_again"}}</label>
+<input id="password_again" name="password_again" type="password" autocomplete="new-password" required>
+</div>
+<div class="actions">
+<button type="submit">{{t "action.create_account"}}</button>
+</div>
+</form>
+</section>
+{{- end}}

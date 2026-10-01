@@ -35,7 +35,16 @@ it: everything goes through its REST API, read-only.
 **Under construction.** Nothing is usable yet.
 Progress follows [ROADMAP.md](ROADMAP.md) — eight steps, validation after each
 one. Step 1 is done: [docs/opnsense-api-survey.md](docs/opnsense-api-survey.md).
-Current step: 2, data model and SQLite schema.
+Current step: 4, collection and storage.
+
+`opnview` now has its own accounts, and that is where credentials enter it.
+On first start it creates its database and its encryption key, prints a
+**one-time setup token** to the console, and serves three surfaces: create the
+first account with that token, sign in, and enter the firewall URL, the API key
+and secret, the MaxMind licence key and the theme. There is no environment
+variable, no configuration file and no `configure` command, and a credential
+changed in the interface takes effect on the next collection pass without a
+restart. There are no canvases and no widgets yet: those are steps 5 and 7.
 
 ## Data sources
 
@@ -95,11 +104,15 @@ Read the alerts with that in mind, or you will be looking for the wrong thing.
 
 Exactly two things, and nothing else:
 
-1. the calls to the firewall API, on your local network;
+1. the calls to the firewall API, on your local network — the credential check
+   `opnview` makes when you enter or correct your API key is one of these, to
+   the same firewall, read-only, and not a third thing;
 2. the MaxMind GeoLite2 database download, which contacts a third-party server
    with your licence key.
 
-No telemetry, no version check, no resource loaded from a CDN.
+No telemetry, no version check, no resource loaded from a CDN. The interface
+loads nothing from anywhere: its stylesheet is served by `opnview` itself and
+its fonts are the ones already on your machine.
 
 ## Limitations, stated up front
 
@@ -127,6 +140,47 @@ rather than showing an empty panel.
 per-address-pair traffic at a one-day resolution, for 62 days. Shorter periods
 are built from `opnview`'s own history, so the 1 h and 24 h views are only as
 deep as the time it has been running.
+
+**The encryption key is a file beside the database, and the limit is stated
+rather than dressed up.** Your OPNsense API secret and your MaxMind licence key
+are encrypted at rest with authenticated encryption; the key that opens them is
+created on first start, in the data directory, with permissions denying group
+and other. **This protects a database that is copied, backed up, sent by mistake
+or committed by accident, because the key file does not travel with it. It does
+not protect against someone who already has the machine, who reads both.** No
+scheme can, while the service starts and collects without a human — which it
+must, or collection stops at every reboot until somebody signs in. That trade
+was taken deliberately.
+
+Two consequences follow, and neither is a defect:
+
+- **back up the key file with the database, or separately, but do not lose it.**
+  Without it the stored credentials cannot be read and have to be entered again;
+  the history in the database is untouched either way;
+- **a forgotten password is recovered by presenting that same key file**, and by
+  nothing else. Whoever holds it already holds the decryptable secrets, so
+  requiring it grants an attacker nothing they did not have — and it returns the
+  installation without deleting the database.
+
+**Replacing a credential leaves the previous one in the write-ahead log until a
+checkpoint, and that is said rather than glossed over.** A credential is stored as
+one row, replaced in place, so no row holds the previous value. But while the
+service is running, `opnview.db-wal` beside the database holds the previous
+ciphertext as well as the current one. It is encrypted under the same key file, so
+it discloses nothing to anyone who does not hold that file, and only a
+**superseded** secret to anyone who holds both — the same people the limitation
+above already names. Forcing a full checkpoint after every credential write would
+close it and was weighed against the cost; it was not taken. If you rotate a
+secret because it leaked, revoke it on the firewall as well, which is what makes
+the old value worthless wherever a copy of it sits.
+
+**The session cookie carries no `Secure` flag.** `opnview` serves plain HTTP
+today: `Secure` would make signing in impossible, and there is no TLS story
+before the packaging step. The cookie is `HttpOnly` and `SameSite=Lax`, every
+mutating form carries a token that a different session's token does not satisfy,
+and the session token itself is stored only as a digest — so a copy of the
+database hands over no usable session. **On a network where somebody may be
+reading your traffic, put `opnview` behind a reverse proxy that terminates TLS.**
 
 ## Data
 

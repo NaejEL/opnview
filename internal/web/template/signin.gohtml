@@ -1,0 +1,31 @@
+{{- /*
+  The sign-in surface.
+
+  THE TWO FAILURES ARE ONE MESSAGE. A login that does not exist and a password
+  that does not verify produce the same refusal, the same status and the same page,
+  so nothing here says whether a login exists.
+
+  The link at the foot goes to the reset surface. It is a link and not a
+  paragraph: "reset the password with the key file" names where it goes, and
+  nothing on either page explains what the key file is for.
+*/ -}}
+{{define "body" -}}
+<section class="card">
+<h1>{{t "sign_in.heading"}}</h1>
+<form method="post" action="{{.SignInPath}}">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<div class="field">
+<label for="login">{{t "field.login"}}</label>
+<input id="login" name="login" type="text" autocomplete="username" spellcheck="false" required value="{{.Login}}">
+</div>
+<div class="field">
+<label for="password">{{t "field.password"}}</label>
+<input id="password" name="password" type="password" autocomplete="current-password" required>
+</div>
+<div class="actions">
+<button type="submit">{{t "action.sign_in"}}</button>
+</div>
+</form>
+<p class="aside"><a href="{{.RecoverPath}}">{{t "sign_in.recover"}}</a></p>
+</section>
+{{- end}}

@@ -48,6 +48,119 @@ CREATE TABLE IF NOT EXISTS setting (
 );
 
 -- ---------------------------------------------------------------------------
+-- account — one opnview login. Bounded: one row per account.
+--
+-- `account` and `session` are opnview's OWN terms, recorded as such in
+-- docs/data-model.md, Vocabulary: OPNsense has users and API keys, and neither
+-- names a login into a different product. Nothing here is read from an
+-- endpoint.
+--
+-- THE ALGORITHM PARAMETERS ARE COLUMNS, AND THAT IS THE WHOLE DESIGN.
+-- ROADMAP.md, "Rules that apply to every step", asks for Argon2id, a per-user
+-- salt, and the parameters stored beside the hash so they can be raised later.
+-- Raising them is therefore a change to the DEFAULTS the code writes for a NEW
+-- record, and every record already written still verifies against the
+-- parameters it was written with. That is parameter agility, and it is a column
+-- layout rather than a registry: one algorithm is mandated, so there is no kind
+-- with two implementations here and nothing to select at runtime.
+--
+-- password_algorithm is NOT constrained to a value list. A CHECK enumerating
+-- 'argon2id' would have to be edited the day a second label exists, and this
+-- file follows the same rule the provider registry follows: an implementation
+-- name is data, never an identifier and never a CHECK.
+--
+-- The password itself is never stored and never read back. The digest is the
+-- Argon2id output over (password, salt, parameters) and nothing else.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS account (
+    id                   INTEGER PRIMARY KEY,
+    login                TEXT NOT NULL UNIQUE CHECK (length(login) > 0),
+    password_algorithm   TEXT NOT NULL CHECK (length(password_algorithm) > 0),
+    password_memory_kib  INTEGER NOT NULL CHECK (password_memory_kib > 0),
+    password_iterations  INTEGER NOT NULL CHECK (password_iterations > 0),
+    password_parallelism INTEGER NOT NULL CHECK (password_parallelism > 0),
+    password_salt        BLOB NOT NULL CHECK (length(password_salt) >= 16),
+    password_digest      BLOB NOT NULL CHECK (length(password_digest) >= 16),
+    created_at           INTEGER NOT NULL
+                         CHECK (created_at >= 0 AND created_at < 4102444800),
+    password_set_at      INTEGER NOT NULL
+                         CHECK (password_set_at >= 0 AND password_set_at < 4102444800)
+);
+
+-- ---------------------------------------------------------------------------
+-- session — one signed-in browser. Bounded: one row per session issued and not
+-- yet expired and collected.
+--
+-- THE PRIMARY KEY IS A DIGEST, NOT THE TOKEN. The token exists in the cookie
+-- and nowhere else: a database that is copied, backed up or sent by mistake —
+-- the case the key file's own limitation is written against — hands over no
+-- usable session. A lookup hashes what the cookie carried and compares digests.
+--
+-- TWO EXPIRIES, BOTH ENFORCED. `expires_at` is the ABSOLUTE cap, written once
+-- when the session is issued and never moved. The SLIDING IDLE WINDOW is
+-- `last_seen_at` plus a duration internal/auth carries, evaluated on every
+-- request: it is not a column, because a stored copy of it would be a second
+-- truth that a change to the window could not reach. An expired session is
+-- refused and never renewed.
+--
+-- csrf_token is the session's own. A submission carrying another session's
+-- token fails the comparison, which is what makes AC11's second half testable.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS session (
+    token_digest TEXT PRIMARY KEY,
+    account_id   INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    csrf_token   TEXT NOT NULL CHECK (length(csrf_token) > 0),
+    created_at   INTEGER NOT NULL CHECK (created_at >= 0 AND created_at < 4102444800),
+    last_seen_at INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
+    expires_at   INTEGER NOT NULL CHECK (expires_at >= 0 AND expires_at < 4102444800)
+);
+
+CREATE INDEX IF NOT EXISTS idx_session_account
+    ON session (account_id);
+CREATE INDEX IF NOT EXISTS idx_session_expires_at
+    ON session (expires_at);
+
+-- ---------------------------------------------------------------------------
+-- encrypted_credential — one credential opnview has to send to somebody else.
+-- Bounded: one row per named credential.
+--
+-- WHY THIS IS NOT A `setting` ROW. `setting.value` is a single TEXT NOT NULL,
+-- and a ciphertext is not a value: it needs the nonce it was sealed with, the
+-- label of the algorithm that sealed it, and the identifier of the key that did
+-- it, or it cannot be opened and a key that has been replaced cannot be told
+-- apart from a ciphertext that has been tampered with. Those are four columns,
+-- so this is a table.
+--
+-- WHY ENCRYPTION AND NOT HASHING. ROADMAP.md, "Rules that apply to every step":
+-- these are not passwords. They are sent to the firewall and to MaxMind on
+-- every call, so hashing them would make the product unable to work. They are
+-- encrypted at rest with authenticated encryption and decrypted to be used.
+--
+-- The key is a FILE BESIDE THE DATABASE, never a row in it. The limit of that
+-- is stated in README.md's limitations section in ROADMAP.md's own words, and
+-- it is not restated on any screen.
+--
+-- algorithm and key_id are not constrained to value lists, for the same reason
+-- password_algorithm is not: a future scheme is a second label, not a second
+-- copy of the product.
+--
+-- `name` is opnview's own vocabulary for which credential this is. The two this
+-- cycle writes are the OPNsense API secret and the MaxMind licence key — the
+-- exact two ROADMAP.md names. The OPNsense API KEY is not one of them and is a
+-- `setting` row: it is the Basic-auth username half of the pair, which the
+-- roadmap does not list among the secrets, and putting it here would make a
+-- third ciphertext where the settled design names two.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS encrypted_credential (
+    name       TEXT PRIMARY KEY,
+    algorithm  TEXT NOT NULL CHECK (length(algorithm) > 0),
+    key_id     TEXT NOT NULL CHECK (length(key_id) > 0),
+    nonce      BLOB NOT NULL CHECK (length(nonce) > 0),
+    ciphertext BLOB NOT NULL CHECK (length(ciphertext) > 0),
+    updated_at INTEGER NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
+);
+
+-- ---------------------------------------------------------------------------
 -- Provider registry — one row per implementation that can feed opnview,
 -- grouped by the kind of material it supplies. Bounded: one row per
 -- implementation known to the project.
