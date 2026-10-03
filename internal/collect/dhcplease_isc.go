@@ -48,7 +48,7 @@ func (iscLeases) probe(ctx context.Context, host session) (probeResult, error) {
 }
 
 // leases refuses, with the reason.
-func (iscLeases) leases(context.Context, session) ([]leaseObservation, probeResult, error) {
+func (iscLeases) leases(context.Context, session, int) ([]leaseObservation, probeResult, error) {
 	return nil, probeResult{probe: opnsense.ISCStatus, state: store.StateUnavailable},
 		fmt.Errorf("%w: the ISC lease endpoint answered 404 on the surveyed firmware and its "+
 			"field contract is unverified", ErrUnsupportedRead)

@@ -88,7 +88,7 @@ func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeS
 		}
 	}
 
-	records, result, readErr := source.alerts(ctx, c)
+	records, result, readErr := source.alerts(ctx, c, c.pages().SecurityEvent)
 	if writeErr := c.writeAvailability(ctx, providerID, result.state,
 		result.probe, result.detail); writeErr != nil {
 		return writeErr

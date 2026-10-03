@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -177,8 +178,33 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 		})
 	}
 
-	separable := make([]string, 0, len(outcomes))
+	// The operator's selection of each implementation: off, on, or auto, which is what a
+	// missing row means. A selection that cannot be read is reported with the round's
+	// failures and given no value here. Availability is written whatever it says.
+	selections := make(map[string]config.Selection, len(outcomes))
 	for _, entry := range outcomes {
+		selection, err := config.LoadSourceSelection(ctx, c.store, kind, entry.providerKey)
+		if err != nil {
+			// The error names the setting key, so the operator can find the row that
+			// could not be read.
+			failures = append(failures, err)
+			continue
+		}
+		selections[entry.providerKey] = selection
+	}
+
+	separable := make([]string, 0, len(outcomes))
+	forced := make([]string, 0, len(outcomes))
+	for _, entry := range outcomes {
+		switch selections[entry.providerKey] {
+		case config.SelectionOff:
+			// Turned off: never activated, whatever the firewall says. Its availability is
+			// still recorded below, because selection is a decision and not a claim.
+			continue
+		case config.SelectionOn:
+			forced = append(forced, entry.providerKey)
+			continue
+		}
 		if entry.result.separable {
 			separable = append(separable, entry.providerKey)
 		}
@@ -190,14 +216,21 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 	// carries the provider that reported it, so both are read and neither figure is doubled.
 	// That is the whole behavioural consequence of dropping the one-active-provider-per-kind
 	// index, and it lives here rather than in a comment about the index.
+	//
+	// AN IMPLEMENTATION TURNED ON IS THE OPERATOR SAYING WHICH ONE: it is the separation the
+	// firewall's own configuration did not make, so it settles the ambiguity.
 	concurrent := store.KindAdmitsSeveralActiveProviders(kind)
 	ambiguity := ""
-	if len(separable) > 1 && !concurrent {
+	if len(forced) > 0 {
+		// A choice made by a person replaces the firewall's answer for the kind: the
+		// implementations left on auto are not activated beside it.
+		separable = separable[:0]
+	} else if len(separable) > 1 && !concurrent {
+		// Nobody chose, and the firewall's configuration does not separate the two.
 		ambiguity = "two implementations of this kind are both reachable and configured (" +
 			joinWithComma(separable) + "), and the firewall's own configuration does not say " +
 			"which serves clients, so opnview reads neither"
 	}
-
 	for _, entry := range outcomes {
 		detail := entry.result.detail
 		if ambiguity != "" && entry.result.separable {
@@ -217,10 +250,15 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 		}
 	}
 
-	active := separable
+	// The ambiguity activates neither of the two the firewall does not separate.
 	if len(separable) > 1 && !concurrent {
-		active = nil
+		separable = nil
 	}
+	// What opnview reads: every implementation turned on, then those the probe round
+	// activates on its own. For an exclusive kind two turned on is refused by the store
+	// with a sentence naming the kind, and reported like any other failure of the round;
+	// it is never settled here by picking one.
+	active := append(append([]string{}, forced...), separable...)
 	if err := c.store.SetActiveProviders(ctx, kind, active...); err != nil {
 		return err
 	}

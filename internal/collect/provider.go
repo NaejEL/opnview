@@ -192,7 +192,7 @@ type firewallLogSource interface {
 	probe(ctx context.Context, host session) (probeResult, error)
 	// records returns the most recent page, newest first, with the result of the call so
 	// the kind can record it.
-	records(ctx context.Context, host session) ([]logRecord, probeResult, error)
+	records(ctx context.Context, host session, pageSize int) ([]logRecord, probeResult, error)
 }
 
 // alertRecord is one security event, decoded and normalised by its implementation.
@@ -235,7 +235,7 @@ type securityEventSource interface {
 	// loss is detected.
 	rotation(ctx context.Context, host session) (rotationView, probeResult, error)
 	// alerts returns the most recent events, newest first.
-	alerts(ctx context.Context, host session) ([]alertRecord, probeResult, error)
+	alerts(ctx context.Context, host session, pageSize int) ([]alertRecord, probeResult, error)
 }
 
 // leaseObservation is one lease generation, with the field-name differences between
@@ -269,7 +269,7 @@ type leaseSource interface {
 	providerKey() string
 	probe(ctx context.Context, host session) (probeResult, error)
 	// leases returns the backend's current lease table, or ErrUnsupportedRead.
-	leases(ctx context.Context, host session) ([]leaseObservation, probeResult, error)
+	leases(ctx context.Context, host session, pageSize int) ([]leaseObservation, probeResult, error)
 }
 
 // lookupRecord is one resolver lookup, decoded and normalised by its implementation.

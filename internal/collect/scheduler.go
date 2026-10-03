@@ -22,6 +22,14 @@ import (
 // setting.retention_seconds both exist, and without a loop running them the database
 // grows without bound from the first poll.
 //
+// AN INTERVAL IS READ BEFORE EVERY WAIT, NOT ONCE AT START. Each task carries a
+// function that returns its interval, and the loop asks it again before each wait,
+// so an interval saved on the collection surface changes the next scheduled pass of
+// a running service without a restart. A pass already waiting finishes its wait
+// first: the change takes effect one pass later, never by cutting a wait short.
+// The intervals come from config.Live, which the collection surface writes after
+// it has stored and reloaded the configuration.
+//
 // THE CLOCK IS INJECTED, so a test drives every loop deterministically rather than
 // sleeping. Nothing here reads time.Now directly.
 
@@ -30,8 +38,12 @@ type Task struct {
 	// Name identifies the loop in an error report. It is English and it names the
 	// source, not the function.
 	Name string
-	// Interval is how long the loop waits between passes.
-	Interval time.Duration
+	// Interval returns how long the loop waits before its next pass. It is asked
+	// again before every wait, which is how a saved interval reaches a running loop;
+	// a value that is not positive leaves the previous one in force, and a task
+	// whose interval is not positive at start is not run at all. FixedInterval
+	// builds one that never changes.
+	Interval func() time.Duration
 	// Run is one pass. An error is reported and the loop continues.
 	Run func(context.Context) error
 	// RunAtStart says whether the first pass happens immediately rather than after
@@ -44,16 +56,27 @@ type Task struct {
 // that this package imposes no logging library on the program.
 type ErrorReporter func(taskName string, err error)
 
-// Tasks returns the seven loops, wired to one collector and one configuration.
+// FixedInterval returns an interval function that always answers interval. It is
+// for a task whose cadence is not a setting, and for a test that wants a loop at a
+// known cadence without building a configuration around it.
+//
+// The value is captured once; nothing can change it afterwards.
+func FixedInterval(interval time.Duration) func() time.Duration {
+	return func() time.Duration { return interval }
+}
+
+// Tasks returns the seven loops, wired to one collector and one live configuration.
 //
 // The five collector cadences are the intervals internal/config carries, each of
 // which names the survey section that justifies it beside its constant. They are
-// not restated here, so the justification cannot drift from the number.
-func (c *Collector) Tasks(settings config.Config, purge func(context.Context) error) []Task {
+// not restated here, so the justification cannot drift from the number. Each task
+// reads its own field of settings before every wait, through config.Live, so a
+// saved interval reaches the loop without a restart.
+func (c *Collector) Tasks(settings *config.Live, purge func(context.Context) error) []Task {
 	return []Task{
 		{
 			Name:       "runtime discovery",
-			Interval:   settings.DiscoveryInterval,
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DiscoveryInterval }),
 			Run:        c.RefreshDiscovery,
 			RunAtStart: true,
 		},
@@ -62,43 +85,43 @@ func (c *Collector) Tasks(settings config.Config, purge func(context.Context) er
 			// kind opnview reads can change when the firewall's configuration does,
 			// and that is the same kind of fact discovery refreshes.
 			Name:       "availability probes",
-			Interval:   settings.DiscoveryInterval,
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DiscoveryInterval }),
 			Run:        c.ProbeAll,
 			RunAtStart: true,
 		},
 		{
 			Name:       "filter log",
-			Interval:   settings.FirewallLogInterval,
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.FirewallLogInterval }),
 			Run:        c.CollectFirewallLog,
 			RunAtStart: true,
 		},
 		{
 			Name:       "security events",
-			Interval:   settings.SecurityEventInterval,
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.SecurityEventInterval }),
 			Run:        c.CollectSecurityEvent,
 			RunAtStart: true,
 		},
 		{
 			Name:       "sampled measurement",
-			Interval:   settings.MeasurementInterval,
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.MeasurementInterval }),
 			Run:        c.CollectMeasurement,
 			RunAtStart: true,
 		},
 		{
 			Name:       "DHCP leases",
-			Interval:   settings.DHCPLeaseInterval,
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DHCPLeaseInterval }),
 			Run:        c.CollectDHCPLease,
 			RunAtStart: true,
 		},
 		{
 			Name:       "resolver lookups",
-			Interval:   settings.DNSLookupInterval,
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DNSLookupInterval }),
 			Run:        c.CollectDNSLookup,
 			RunAtStart: true,
 		},
 		{
 			Name:       "retention purge",
-			Interval:   settings.PurgeInterval,
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.PurgeInterval }),
 			Run:        purge,
 			RunAtStart: false,
 		},
@@ -120,7 +143,7 @@ func Run(ctx context.Context, clock Clock, tasks []Task, report ErrorReporter) e
 
 	var waiting sync.WaitGroup
 	for _, task := range tasks {
-		if task.Run == nil || task.Interval <= 0 {
+		if task.Run == nil || task.Interval == nil || task.Interval() <= 0 {
 			// A loop with no work or no cadence is a configuration mistake rather than
 			// something to run every zero seconds.
 			continue
@@ -149,11 +172,18 @@ func runLoop(ctx context.Context, clock Clock, task Task, report ErrorReporter) 
 			report(task.Name, err)
 		}
 	}
+	// The interval is asked for before every wait, so a saved one takes effect on
+	// the next pass. One that is not positive keeps the last good one rather than
+	// spinning the loop: Run already refused to start a task with none.
+	interval := task.Interval()
 	for {
+		if next := task.Interval(); next > 0 {
+			interval = next
+		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-clock.After(task.Interval):
+		case <-clock.After(interval):
 			if ctx.Err() != nil {
 				return
 			}

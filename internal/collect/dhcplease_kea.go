@@ -58,9 +58,9 @@ func (keaLeases) probe(ctx context.Context, host session) (probeResult, error) {
 }
 
 // leases reads the lease table from the running daemon through its control agent.
-func (keaLeases) leases(ctx context.Context, host session) (
+func (keaLeases) leases(ctx context.Context, host session, pageSize int) (
 	[]leaseObservation, probeResult, error) {
-	rows, result, err := readLeaseRows(ctx, host, opnsense.KeaLeases)
+	rows, result, err := readLeaseRows(ctx, host, opnsense.KeaLeases, pageSize)
 	if err != nil || rows == nil {
 		if result.state == store.StateReachable && len(rows) == 0 {
 			// The survey names the likely cause, so the detail names it too rather than

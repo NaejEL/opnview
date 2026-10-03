@@ -27,7 +27,7 @@ import (
 func TestTheSevenLoopsRunAtTheConfiguredCadences(t *testing.T) {
 	harness := newProbeHarness(t)
 	settings := config.Defaults()
-	tasks := harness.collector.Tasks(settings, func(context.Context) error { return nil })
+	tasks := harness.collector.Tasks(config.NewLive(settings), func(context.Context) error { return nil })
 
 	wanted := map[string]time.Duration{
 		"runtime discovery":   settings.DiscoveryInterval,
@@ -48,8 +48,8 @@ func TestTheSevenLoopsRunAtTheConfiguredCadences(t *testing.T) {
 			t.Errorf("the loop %q is not one this test knows about", task.Name)
 			continue
 		}
-		if task.Interval != interval {
-			t.Errorf("the %q loop runs every %v, want %v", task.Name, task.Interval, interval)
+		if task.Interval() != interval {
+			t.Errorf("the %q loop runs every %v, want %v", task.Name, task.Interval(), interval)
 		}
 		if task.Run == nil {
 			t.Errorf("the %q loop has no work", task.Name)
@@ -82,13 +82,13 @@ func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
 	reported := make(chan string, 64)
 
 	tasks := []Task{
-		{Name: "the failing one", Interval: time.Second, RunAtStart: true,
+		{Name: "the failing one", Interval: FixedInterval(time.Second), RunAtStart: true,
 			Run: func(context.Context) error { counts[0].Add(1); return failing }},
-		{Name: "the first healthy one", Interval: time.Second, RunAtStart: true,
+		{Name: "the first healthy one", Interval: FixedInterval(time.Second), RunAtStart: true,
 			Run: func(context.Context) error { counts[1].Add(1); return nil }},
-		{Name: "the second healthy one", Interval: time.Second, RunAtStart: true,
+		{Name: "the second healthy one", Interval: FixedInterval(time.Second), RunAtStart: true,
 			Run: func(context.Context) error { counts[2].Add(1); return nil }},
-		{Name: "the third healthy one", Interval: time.Second, RunAtStart: true,
+		{Name: "the third healthy one", Interval: FixedInterval(time.Second), RunAtStart: true,
 			Run: func(context.Context) error { counts[3].Add(1); return nil }},
 	}
 
@@ -147,9 +147,9 @@ func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
 func TestTheRunLoopStopsOnCancellationWithinABoundedDeadline(t *testing.T) {
 	clock := newFixedClock(referenceInstant())
 	tasks := []Task{
-		{Name: "a loop that waits", Interval: time.Hour, RunAtStart: true,
+		{Name: "a loop that waits", Interval: FixedInterval(time.Hour), RunAtStart: true,
 			Run: func(context.Context) error { return nil }},
-		{Name: "another loop that waits", Interval: time.Hour, RunAtStart: true,
+		{Name: "another loop that waits", Interval: FixedInterval(time.Hour), RunAtStart: true,
 			Run: func(context.Context) error { return nil }},
 	}
 
@@ -177,9 +177,9 @@ func TestALoopWithNoCadenceIsNotRun(t *testing.T) {
 	clock := newFixedClock(referenceInstant())
 	var ran atomic.Int64
 	tasks := []Task{
-		{Name: "a loop with no interval", Interval: 0, RunAtStart: true,
+		{Name: "a loop with no interval", Interval: FixedInterval(0), RunAtStart: true,
 			Run: func(context.Context) error { ran.Add(1); return nil }},
-		{Name: "a loop with no work", Interval: time.Second, RunAtStart: true},
+		{Name: "a loop with no work", Interval: FixedInterval(time.Second), RunAtStart: true},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -200,7 +200,7 @@ func TestAPassThatFailsBecauseTheRunIsStoppingIsNotReported(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	tasks := []Task{{
-		Name: "a loop that fails as the context closes", Interval: time.Hour, RunAtStart: true,
+		Name: "a loop that fails as the context closes", Interval: FixedInterval(time.Hour), RunAtStart: true,
 		Run: func(ctx context.Context) error {
 			cancel()
 			return ctx.Err()

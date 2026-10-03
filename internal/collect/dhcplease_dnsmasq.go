@@ -61,9 +61,9 @@ func (dnsmasqLeases) probe(ctx context.Context, host session) (probeResult, erro
 }
 
 // leases reads the lease file through the API.
-func (dnsmasqLeases) leases(ctx context.Context, host session) (
+func (dnsmasqLeases) leases(ctx context.Context, host session, pageSize int) (
 	[]leaseObservation, probeResult, error) {
-	rows, result, err := readLeaseRows(ctx, host, opnsense.DnsmasqLeases)
+	rows, result, err := readLeaseRows(ctx, host, opnsense.DnsmasqLeases, pageSize)
 	if err != nil || rows == nil {
 		if result.state == store.StateReachable && len(rows) == 0 {
 			result.detail = "the backend is running and reported no active lease, which is not " +

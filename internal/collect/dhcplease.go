@@ -103,7 +103,7 @@ func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource) 
 			providerKey)
 	}
 
-	observations, result, readErr := source.leases(ctx, c)
+	observations, result, readErr := source.leases(ctx, c, c.pages().DHCPLease)
 	if errors.Is(readErr, ErrUnsupportedRead) {
 		// The implementation is registered and its material cannot be read. That is a state,
 		// recorded with its reason, and not a failed pass: nothing was attempted.
@@ -290,12 +290,11 @@ func (c *Collector) ingestNeighbour(ctx context.Context, row decode.Object,
 	return err
 }
 
-// leasePageSize is how many lease rows one poll asks for. The table is small — one row per
-// active lease — so one generous page is the whole of it in practice.
-const leasePageSize = 500
-
 // readLeaseRows is the part of a lease read that is the same for every backend: one page, the
 // standard envelope, and the availability state the answer implies.
+//
+// The page holds pageSize rows, the operator's page size for the kind. The table is small —
+// one row per active lease — so one page is the whole of it in practice.
 //
 // IT IS A FREE FUNCTION OVER THE PORT RATHER THAN A METHOD ON IT. Only this kind's
 // implementations call it, and a port that gains a method for one kind's convenience stops
@@ -304,12 +303,12 @@ const leasePageSize = 500
 // identically at the call site and costs a connector nothing, and when connectors speak a
 // protocol it travels with the lease reader instead of becoming a verb the far side has to
 // implement.
-func readLeaseRows(ctx context.Context, host session, endpoint opnsense.Endpoint) (
+func readLeaseRows(ctx context.Context, host session, endpoint opnsense.Endpoint, pageSize int) (
 	[]decode.Object, probeResult, error) {
 	result := probeResult{probe: endpoint, state: store.StateUnavailable}
 
 	response, err := host.call(ctx, endpoint, opnsense.RequestOptions{
-		Form: opnsense.Pagination(1, leasePageSize),
+		Form: opnsense.Pagination(1, pageSize),
 	})
 	if err != nil && response.Outcome == "" {
 		return nil, result, err

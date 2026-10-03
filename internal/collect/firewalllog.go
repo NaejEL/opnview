@@ -39,7 +39,7 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 			providerKey)
 	}
 
-	records, result, readErr := source.records(ctx, c)
+	records, result, readErr := source.records(ctx, c, c.pages().FirewallLog)
 	if writeErr := c.writeAvailability(ctx, providerID, result.state,
 		result.probe, result.detail); writeErr != nil {
 		return writeErr

@@ -50,6 +50,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -175,13 +176,21 @@ type Collector struct {
 	// no zone. It is zero until a live firewall says otherwise.
 	firewallOffsetSeconds int
 
+	// pageSizes is how many records each paged read asks for. It is the operator's
+	// setting, held here rather than read from the database on every pass, and
+	// replaced by Configure when the collection surface saves a new one; the mutex
+	// below guards it with the discovery snapshot. A collector reads it once per
+	// pass, through pages.
+	pageSizes config.PageSizes
+
 	mutex     sync.RWMutex
 	discovery Discovery
 }
 
 // New returns a collector. The client is the only thing in opnview that builds an
 // HTTP request, so passing it here is what makes "one outbound destination" hold
-// for every collector at once.
+// for every collector at once. The page sizes start at their defaults until
+// Configure is called with the loaded configuration.
 func New(client *opnsense.Client, database *store.Store, clock Clock) *Collector {
 	if clock == nil {
 		clock = SystemClock{}
@@ -190,8 +199,38 @@ func New(client *opnsense.Client, database *store.Store, clock Clock) *Collector
 		client:    client,
 		store:     database,
 		clock:     clock,
+		pageSizes: config.DefaultPageSizes(),
 		discovery: newDiscovery(),
 	}
+}
+
+// Configure applies a configuration to a running collector: the page sizes, which
+// are the only part of it the collectors read. The intervals reach the scheduler
+// through config.Live, not through here. The next pass of each collector uses the
+// new pages; a pass already running finishes with the ones it started with. It is
+// what web.Reconfigurable asks of a collector.
+func (c *Collector) Configure(settings config.Config) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.pageSizes = config.PageSizes{
+		FirewallLog:   settings.FirewallLogPageSize,
+		SecurityEvent: settings.SecurityEventPageSize,
+		DHCPLease:     settings.DHCPLeasePageSize,
+	}
+}
+
+// PageSizes returns the page sizes the collectors use now.
+//
+// It exists for a test to assert that a saved setting reached a running
+// collector. Nothing should use it as a second source of truth: the setting rows
+// are the truth, and this is what the collectors were last told.
+func (c *Collector) PageSizes() config.PageSizes { return c.pages() }
+
+// pages returns the page sizes in force.
+func (c *Collector) pages() config.PageSizes {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.pageSizes
 }
 
 // Discovery returns the current snapshot.

@@ -26,17 +26,10 @@ type pfFilterLog struct{}
 // providerKey is the registry row this implementation answers for.
 func (pfFilterLog) providerKey() string { return ProviderPf }
 
-// firewallLogPageSize is how many records one poll asks for.
-//
-// The survey's own figures: `limit` defaults to 1000 and `limit=0` is coerced back to 1000,
-// so the cost of a poll is bounded either way. The verified section measured the log at a
-// few lines per second on an ordinary home network, which leaves an order of magnitude of
-// headroom at 500 records every 10 seconds. It is a starting point to be measured per
-// installation, not a fact about anyone's network, and the gap row the kind writes is what
-// makes an undersized page visible instead of silent.
-const firewallLogPageSize = 500
-
-// firewallLogQuery builds the query string for one poll.
+// firewallLogQuery builds the query string for one poll, asking for `limit` lines. The limit
+// is the page size the operator configured, not a constant of this file: the survey's
+// `limit` defaults to 1000 and is coerced back to 1000, and internal/sizing suggests a page
+// from the rate this installation measures.
 //
 // `digest` is deliberately absent. The survey's inferred text treated it as the incremental
 // primitive; measured twice on a live firewall, passing it returned byte-identical output
@@ -85,11 +78,11 @@ func (pfFilterLog) probe(ctx context.Context, host session) (probeResult, error)
 }
 
 // records reads one page, newest first.
-func (pfFilterLog) records(ctx context.Context, host session) ([]logRecord, probeResult, error) {
+func (pfFilterLog) records(ctx context.Context, host session, pageSize int) ([]logRecord, probeResult, error) {
 	result := probeResult{probe: opnsense.FirewallLog, state: store.StateUnavailable}
 
 	response, err := host.call(ctx, opnsense.FirewallLog, opnsense.RequestOptions{
-		Query: firewallLogQuery(firewallLogPageSize),
+		Query: firewallLogQuery(pageSize),
 	})
 	if err != nil && response.Outcome == "" {
 		return nil, result, err

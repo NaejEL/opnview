@@ -25,10 +25,8 @@ type suricataAlerts struct{}
 // providerKey is the registry row this implementation answers for.
 func (suricataAlerts) providerKey() string { return ProviderSuricata }
 
-// alertPageSize is how many records one poll asks for. The endpoint's own default is 9999; a
-// smaller page is enough because the kind's watermark stops the read at the first record
-// already stored, and it bounds the cost of a poll that lands just after a rotation.
-const alertPageSize = 500
+// The page an alert read asks for is the operator's page size, passed in by the kind; the
+// endpoint's own default of 9999 is its ceiling, which internal/sizing records.
 
 // probe separates absent from installed-but-stopped from running.
 //
@@ -121,12 +119,12 @@ func (suricataAlerts) rotation(ctx context.Context, host session) (
 // metadata are gone before opnview sees them. That is why NormalisedSeverity is nil on
 // every record below: severity is resolved through the per-provider rule-info cache and
 // from nowhere else.
-func (suricataAlerts) alerts(ctx context.Context, host session) (
+func (suricataAlerts) alerts(ctx context.Context, host session, pageSize int) (
 	[]alertRecord, probeResult, error) {
 	result := probeResult{probe: opnsense.QueryAlerts, state: store.StateUnavailable}
 
 	response, err := host.call(ctx, opnsense.QueryAlerts, opnsense.RequestOptions{
-		Form: opnsense.Pagination(1, alertPageSize),
+		Form: opnsense.Pagination(1, pageSize),
 	})
 	if err != nil && response.Outcome == "" {
 		return nil, result, err

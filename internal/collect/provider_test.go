@@ -185,7 +185,7 @@ func TestTheUnreadableImplementationsReturnTheUnsupportedSentinel(t *testing.T) 
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 
-	if _, _, err := leaseSources[ProviderISC].leases(ctx, harness.collector); !errors.Is(
+	if _, _, err := leaseSources[ProviderISC].leases(ctx, harness.collector, 1); !errors.Is(
 		err, ErrUnsupportedRead) {
 		t.Errorf("the ISC lease read returned %v, not the unsupported sentinel", err)
 	}

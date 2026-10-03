@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
 )
@@ -595,4 +596,139 @@ func everyProvider(t *testing.T, database *store.Store) []registryRow {
 		t.Fatal("the registry is empty")
 	}
 	return providers
+}
+
+// The operator's selection. Rebuilt after the loss of 2 October 2026: the build of that
+// evening recorded the four test names below, not their bodies, so the bodies are rewritten
+// from what the names state and from the compiled behaviour of resolveKind.
+
+// selectSource stores the operator's selection of one implementation.
+func (h *probeHarness) selectSource(t *testing.T, kind, providerKey, value string) {
+	t.Helper()
+	key := config.KeySourceSelection(kind, providerKey)
+	if err := h.store.SetSetting(context.Background(), key, value, referenceInstant().Unix()); err != nil {
+		t.Fatalf("storing the selection %s = %q: %v", key, value, err)
+	}
+}
+
+// reachableAndSeparable is a probeable of an exclusive kind the firewall marks as serving.
+func reachableAndSeparable(key string) probeable {
+	return probeable{providerKey: key, run: func(context.Context, session) (probeResult, error) {
+		return probeResult{state: store.StateReachable, probe: opnsense.UnboundIsEnabled, separable: true}, nil
+	}}
+}
+
+// TestASourceTheOperatorTurnedOffIsNotCollectedAlthoughItIsReachable: off is never read,
+// whatever the probe concluded, and availability is still recorded as the firewall reported
+// it, because a selection is a decision and not a claim about the firewall.
+func TestASourceTheOperatorTurnedOffIsNotCollectedAlthoughItIsReachable(t *testing.T) {
+	harness := newProbeHarness(t)
+	ctx := context.Background()
+	harness.fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness.selectSource(t, KindFirewallLog, ProviderPf, string(config.SelectionOff))
+
+	if err := harness.collector.probeFirewallLog(ctx); err != nil {
+		t.Fatalf("probing the filter log: %v", err)
+	}
+	if key := harness.activeKeyOf(t, KindFirewallLog); key != "" {
+		t.Fatalf("a source turned off was activated: %q", key)
+	}
+	if state, _, _ := harness.availabilityOf(t, KindFirewallLog, ProviderPf); state != store.StateReachable {
+		t.Errorf("the reachable filter log reads %q; the selection must not change what was reported", state)
+	}
+
+	probes := len(harness.fake.requestsTo(opnsense.FirewallLog))
+	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+		t.Fatalf("a collector pass over a source turned off: %v", err)
+	}
+	if read := len(harness.fake.requestsTo(opnsense.FirewallLog)) - probes; read != 0 {
+		t.Errorf("the pass read a source turned off %d times", read)
+	}
+	if stored := countRows(t, harness.store, "flow"); stored != 0 {
+		t.Errorf("the pass stored %d flows from a source turned off", stored)
+	}
+}
+
+// TestASourceTheOperatorTurnedOnIsCollectedAlthoughTheProbeWouldHaveDroppedIt: one failed
+// probe used to drop a working source until the next round. Turned on, the source is read
+// whatever the probe concluded, and the availability row says what the probe saw.
+func TestASourceTheOperatorTurnedOnIsCollectedAlthoughTheProbeWouldHaveDroppedIt(t *testing.T) {
+	harness := newProbeHarness(t)
+	ctx := context.Background()
+	harness.fake.answer(opnsense.FirewallLog, http.StatusInternalServerError, []byte(`{}`))
+	harness.selectSource(t, KindFirewallLog, ProviderPf, string(config.SelectionOn))
+
+	if err := harness.collector.probeFirewallLog(ctx); err != nil {
+		t.Fatalf("probing the filter log: %v", err)
+	}
+	if key := harness.activeKeyOf(t, KindFirewallLog); key != ProviderPf {
+		t.Fatalf("the source turned on is not active (active: %q)", key)
+	}
+	if state, _, _ := harness.availabilityOf(t, KindFirewallLog, ProviderPf); state != store.StateUnavailable {
+		t.Errorf("a probe answered 500 reads %q; it must be recorded as unavailable", state)
+	}
+
+	// The next pass reads it, at the page size in force, and reports what the read returned.
+	probes := len(harness.fake.requestsTo(opnsense.FirewallLog))
+	if err := harness.collector.CollectFirewallLog(ctx); err == nil {
+		t.Error("a pass over a source answering 500 reported no failure")
+	}
+	requests := harness.fake.requestsTo(opnsense.FirewallLog)
+	if len(requests)-probes != 1 {
+		t.Fatalf("the pass sent %d requests to the filter log, want 1", len(requests)-probes)
+	}
+	if limit := requests[len(requests)-1].query.Get("limit"); limit != "500" {
+		t.Errorf("the pass asked for %q records, want the default page of 500", limit)
+	}
+}
+
+// TestASelectionThatCannotBeReadIsReportedRatherThanTreatedAsAuto: a selection row whose
+// value is not auto, on or off is an error naming the row, returned by the probe round so
+// the operator can find it, rather than a silent fallback.
+//
+// What the compiled build of 2 October did with the implementation itself is recorded here
+// as found: it gave the unreadable row no selection, so the implementation was activated or
+// not on the probe's word alone, as with no row. The assertions below hold to that build.
+func TestASelectionThatCannotBeReadIsReportedRatherThanTreatedAsAuto(t *testing.T) {
+	harness := newProbeHarness(t)
+	ctx := context.Background()
+	harness.selectSource(t, KindDNSLookup, ProviderUnbound, "yes")
+
+	err := harness.collector.resolveKind(ctx, KindDNSLookup, []probeable{reachableAndSeparable(ProviderUnbound)})
+	if err == nil {
+		t.Fatal("an unreadable selection was not reported")
+	}
+	key := config.KeySourceSelection(KindDNSLookup, ProviderUnbound)
+	if !strings.Contains(err.Error(), key) {
+		t.Errorf("the report %q does not name the setting %s", err, key)
+	}
+	if state, _, _ := harness.availabilityOf(t, KindDNSLookup, ProviderUnbound); state != store.StateReachable {
+		t.Errorf("the availability reads %q; an unreadable selection must not stop it being recorded", state)
+	}
+}
+
+// TestTurningOneOnBreaksTheTieThatUsedToReadNeither: where two implementations of an
+// exclusive kind both answer and the firewall's configuration does not separate them, the
+// round reads neither — and no person could break the tie. Turning one on is that person
+// saying which one: it is read, the other is not, and the ambiguity is recorded nowhere.
+func TestTurningOneOnBreaksTheTieThatUsedToReadNeither(t *testing.T) {
+	harness := newProbeHarness(t)
+	ctx := context.Background()
+	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
+
+	if err := harness.collector.resolveKind(ctx, KindDNSLookup,
+		[]probeable{reachableAndSeparable(ProviderUnbound), reachableAndSeparable(ProviderDnsmasq)}); err != nil {
+		t.Fatalf("resolving the kind: %v", err)
+	}
+	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderUnbound {
+		t.Fatalf("the active resolver is %q, want the one turned on", key)
+	}
+	for _, provider := range []string{ProviderUnbound, ProviderDnsmasq} {
+		if state, _, _ := harness.availabilityOf(t, KindDNSLookup, provider); state != store.StateReachable {
+			t.Errorf("%s reads %q, and both answered", provider, state)
+		}
+		if detail := harness.detailOf(t, KindDNSLookup, provider); strings.Contains(detail, "reads neither") {
+			t.Errorf("%s records the ambiguity although it was settled: %q", provider, detail)
+		}
+	}
 }
