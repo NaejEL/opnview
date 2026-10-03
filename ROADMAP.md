@@ -162,8 +162,8 @@ container run says nothing about deployment.
 |---|---|---|---|
 |1|OPNsense API exploration|Verified findings document|Done|
 |2|Data model and SQLite schema|Schema + model document|Done|
-|3|Static HTML mockup — overview|HTML file for a representative canvas, fake data|To do|
-|4|Backend: collection and storage|Collectors + persistence + tests|To do|
+|3|Static HTML mockup — overview|HTML file for a representative canvas, fake data|Done|
+|4|Backend: collection and storage|Collectors + persistence + tests|In progress — 4A (collection) and 4B (accounts and credentials) done, polling sized from measured usage done; 4C (MaxMind) and the validation against a real OPNsense remain|
 |5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|To do|
 |6|Backend: alerts and client correlation|Alert model + API + tests|To do|
 |7|Full frontend|Canvases, widgets, dashboard import/export|To do|
