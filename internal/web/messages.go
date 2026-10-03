@@ -37,6 +37,7 @@ const (
 	msgFormTokenRefused   messageKey = "error.form_token_refused"
 	msgKeyFileRefused     messageKey = "error.key_file_refused"
 	msgFirewallURLInvalid messageKey = "error.firewall_url_invalid"
+	msgFingerprintInvalid messageKey = "error.fingerprint_invalid"
 	msgAPIKeyRequired     messageKey = "error.api_key_required"
 	msgThemeUnknown       messageKey = "error.theme_unknown"
 	msgInternal           messageKey = "error.internal"
@@ -66,13 +67,14 @@ const (
 // come from the opnsense.Outcome vocabulary, which already separates 401/403 from
 // 404 from unreachable, and NONE of them is reported as success.
 const (
-	msgVerifyNotAttempted     messageKey = "state.verification.not_attempted"
-	msgVerifyVerified         messageKey = "state.verification.verified"
-	msgVerifyCredentialsBad   messageKey = "state.verification.credentials_rejected"
-	msgVerifyEndpointNotFound messageKey = "state.verification.endpoint_not_found"
-	msgVerifyUnreachable      messageKey = "state.verification.unreachable"
-	msgVerifyUnexpectedAnswer messageKey = "state.verification.unexpected_answer"
-	msgVerifyNoURL            messageKey = "state.verification.no_url"
+	msgVerifyNotAttempted       messageKey = "state.verification.not_attempted"
+	msgVerifyVerified           messageKey = "state.verification.verified"
+	msgVerifyCredentialsBad     messageKey = "state.verification.credentials_rejected"
+	msgVerifyEndpointNotFound   messageKey = "state.verification.endpoint_not_found"
+	msgVerifyUnreachable        messageKey = "state.verification.unreachable"
+	msgVerifyCertificateRefused messageKey = "state.verification.certificate_refused"
+	msgVerifyUnexpectedAnswer   messageKey = "state.verification.unexpected_answer"
+	msgVerifyNoURL              messageKey = "state.verification.no_url"
 )
 
 // The page titles. They are keys like every other user-visible string: a title is
@@ -103,15 +105,15 @@ func handlerMessageKeys() []messageKey {
 		msgSetupTokenRefused, msgSetupClosed, msgLoginRequired, msgPasswordRequired,
 		msgPasswordMismatch, msgPasswordTooShort, msgSignInRefused, msgSessionExpired,
 		msgFormTokenRefused, msgKeyFileRefused, msgFirewallURLInvalid,
-		msgAPIKeyRequired, msgThemeUnknown, msgInternal,
+		msgFingerprintInvalid, msgAPIKeyRequired, msgThemeUnknown, msgInternal,
 
 		msgCredentialAbsent, msgCredentialReady, msgCredentialUndecryptable,
 
 		msgLicenceKeyAbsent, msgLicenceKeyStored, msgLicenceKeyUndecryptable,
 
 		msgVerifyNotAttempted, msgVerifyVerified, msgVerifyCredentialsBad,
-		msgVerifyEndpointNotFound, msgVerifyUnreachable, msgVerifyUnexpectedAnswer,
-		msgVerifyNoURL,
+		msgVerifyEndpointNotFound, msgVerifyUnreachable, msgVerifyCertificateRefused,
+		msgVerifyUnexpectedAnswer, msgVerifyNoURL,
 
 		msgTitleSetup, msgTitleSignIn, msgTitleSettings, msgTitleRecover,
 

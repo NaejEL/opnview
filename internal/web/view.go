@@ -29,6 +29,15 @@ type view struct {
 	TitleKey messageKey
 	// StylesheetPath is the one asset a page loads, served by this binary.
 	StylesheetPath string
+	// Surface is the page's own class on <main>, so the stylesheet can size one
+	// surface differently from another.
+	//
+	// IT IS A CLASS AND NOT A WIDTH. An authentication surface is two fields and a
+	// button and wants a narrow column; the settings surface is three cards of
+	// configuration and wants the wider one. Carrying the page name lets the
+	// stylesheet make that distinction in one place instead of each template
+	// carrying inline geometry.
+	Surface string
 	// SignedIn says whether to draw the sign-out control.
 	SignedIn bool
 	// CSRFToken is the token every mutating form carries.
@@ -52,6 +61,10 @@ type view struct {
 	// pre-filled: a reader correcting a typo has to be able to see the typo.
 	FirewallURL string
 	APIKey      string
+	// CertificateFingerprint is the pinned SHA-256 fingerprint, pre-filled for the
+	// same reason: it is a hash of a certificate the firewall shows to anybody, so
+	// it is configuration and not a secret.
+	CertificateFingerprint string
 	// The three states the settings surface reports. Each is a key.
 	CredentialState   messageKey
 	VerificationState messageKey

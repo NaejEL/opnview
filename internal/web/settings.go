@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
 )
@@ -53,6 +54,7 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 	firewallURL := strings.TrimRight(strings.TrimSpace(request.PostFormValue("firewall_url")), "/")
 	apiKey := strings.TrimSpace(request.PostFormValue("api_key"))
 	apiSecret := request.PostFormValue("api_secret")
+	fingerprintTyped := request.PostFormValue("certificate_fingerprint")
 	licenceKey := strings.TrimSpace(request.PostFormValue("maxmind_licence_key"))
 	theme := request.PostFormValue("theme")
 
@@ -61,6 +63,13 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 			s.renderSettingsRefusal(writer, request, msgFirewallURLInvalid)
 			return
 		}
+	}
+	// Normalised rather than refused for its punctuation: OPNsense displays a
+	// fingerprint colon-separated and upper-case, and that is what a reader pastes.
+	fingerprint, err := opnsense.ParseFingerprint(fingerprintTyped)
+	if err != nil {
+		s.renderSettingsRefusal(writer, request, msgFingerprintInvalid)
+		return
 	}
 	parsedTheme, err := ParseTheme(theme)
 	if err != nil {
@@ -79,6 +88,11 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 		return
 	}
 	if err := s.writeSetting(ctx, config.KeyOPNsenseAPIKey, apiKey, now); err != nil {
+		s.failInternal(writer, request, err)
+		return
+	}
+	if err := s.writeSetting(ctx, config.KeyOPNsenseCertificateFingerprint,
+		fingerprint, now); err != nil {
 		s.failInternal(writer, request, err)
 		return
 	}
@@ -103,6 +117,12 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 		return
 	}
 	s.credentials.Set(credentials)
+	// The pooled connections were shaken hands over the PREVIOUS fingerprint, and
+	// the certificate is checked once per handshake. Without this, correcting a pin
+	// would leave a connection open that the new pin does not accept, and the
+	// verification below would report a firewall that answers on a trust decision
+	// that is no longer in force.
+	s.client.CloseIdleConnections()
 
 	// One call to the firewall, and the only one this package makes. It is the first
 	// of the two permitted outbound calls and not a third; see verify.go.
@@ -146,8 +166,13 @@ func (s *Server) fillSettings(request *http.Request, built *view,
 	if err != nil {
 		return err
 	}
+	fingerprint, _, err := s.store.Setting(ctx, config.KeyOPNsenseCertificateFingerprint)
+	if err != nil {
+		return err
+	}
 	built.FirewallURL = firewallURL
 	built.APIKey = apiKey
+	built.CertificateFingerprint = fingerprint
 
 	_, state, err := config.LoadFirewallCredentials(ctx, s.store, s.unsealer())
 	if err != nil {

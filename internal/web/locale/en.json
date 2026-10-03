@@ -16,6 +16,7 @@
     "field.setup_token": "Setup token",
     "field.key_file": "Key file contents",
     "field.firewall_url": "Firewall URL",
+    "field.certificate_fingerprint": "Certificate fingerprint (SHA-256)",
     "field.api_key": "API key",
     "field.api_secret": "API secret",
     "field.maxmind_licence_key": "MaxMind licence key",
@@ -49,6 +50,7 @@
     "state.verification.credentials_rejected": "The credentials were rejected",
     "state.verification.endpoint_not_found": "The endpoint was not found",
     "state.verification.unreachable": "The host was not reached",
+    "state.verification.certificate_refused": "The firewall answered with a certificate that was refused",
     "state.verification.unexpected_answer": "The answer could not be used",
     "state.verification.no_url": "No firewall URL",
 
@@ -76,6 +78,7 @@
     "error.form_token_refused": "The form was refused; load the page again.",
     "error.key_file_refused": "The key file was refused.",
     "error.firewall_url_invalid": "The firewall URL must be an http or https address.",
+    "error.fingerprint_invalid": "The certificate fingerprint must be 64 hexadecimal characters",
     "error.api_key_required": "An API key is required beside an API secret.",
     "error.theme_unknown": "That theme does not exist.",
     "error.internal": "The request could not be completed."
