@@ -11,9 +11,10 @@ import (
 // The source-policy tests. They read the repository's own Go source and fail on the
 // patterns the project rules forbid.
 //
-// WHY THEY LIVE HERE. internal/opnsense is the one package allowed to build an HTTP
-// request, so it is the package whose privilege the rest of the tree must not share;
-// asserting that from inside it keeps the rule and its enforcement in one place.
+// WHY THEY LIVE HERE. internal/opnsense is one of the two packages allowed to build an
+// HTTP request — the firewall client — and internal/maxmind is the other, the MaxMind
+// database download: the two outbound calls the roadmap allows, one package each.
+// Asserting that from here keeps the rule and its enforcement in one place.
 //
 // WHAT IS IN SCOPE. Every non-test Go file under cmd/ and internal/. Test files and
 // testdata are excluded, deliberately and for a reason the project rules state:
@@ -26,12 +27,14 @@ import (
 // scannedRoots are the directories that hold the program.
 var scannedRoots = []string{"../../cmd", "../../internal"}
 
-// TestNoPackageButThisOneBuildsAnHTTPRequest is the one-chokepoint rule.
+// TestOnlyTheTwoOutboundPackagesBuildAnHTTPRequest is the two-chokepoint rule: one
+// package per outbound call the roadmap allows, and no third.
 //
 // The forbidden names are the ones that reach the network without going through a
 // client somebody configured: the package-level helpers and the shared default
-// client and transport. http.NewRequestWithContext is allowed here and nowhere else.
-func TestNoPackageButThisOneBuildsAnHTTPRequest(t *testing.T) {
+// client and transport. http.NewRequestWithContext is allowed in internal/opnsense
+// and internal/maxmind and nowhere else.
+func TestOnlyTheTwoOutboundPackagesBuildAnHTTPRequest(t *testing.T) {
 	forbiddenEverywhere := []string{
 		"http.Get(", "http.Post(", "http.PostForm(", "http.Head(",
 		"http.DefaultClient", "http.DefaultTransport",
@@ -46,12 +49,13 @@ func TestNoPackageButThisOneBuildsAnHTTPRequest(t *testing.T) {
 					file, forbidden)
 			}
 		}
-		if inThisPackage(file) {
+		if inAnOutboundPackage(file) {
 			continue
 		}
 		for _, restricted := range onlyHere {
 			if strings.Contains(body, restricted) {
-				t.Errorf("%s uses %s; only internal/opnsense may construct an HTTP request",
+				t.Errorf("%s uses %s; only internal/opnsense and internal/maxmind may "+
+					"construct an HTTP request",
 					file, restricted)
 			}
 		}
@@ -73,6 +77,10 @@ var absoluteURLLiteral = regexp.MustCompile(`"https?://`)
 func TestTheOnlyAbsoluteURLLiteralsAreTheRegistryCitations(t *testing.T) {
 	citationHost := regexp.MustCompile(
 		`"https://(docs\.opnsense\.org|github\.com/opnsense/core)/`)
+	// The MaxMind registry may hold the one host it downloads from, and citations of
+	// MaxMind's own documentation, and nothing else.
+	maxmindLiteral := regexp.MustCompile(
+		`"https://(download\.maxmind\.com"|dev\.maxmind\.com/|www\.maxmind\.com/)`)
 
 	for _, file := range goSourceFiles(t) {
 		body := readFile(t, file)
@@ -80,7 +88,15 @@ func TestTheOnlyAbsoluteURLLiteralsAreTheRegistryCitations(t *testing.T) {
 			if !absoluteURLLiteral.MatchString(line) {
 				continue
 			}
-			if filepath.Base(file) != "endpoints.go" {
+			if filepath.Base(file) == "endpoints.go" && strings.Contains(file, "/internal/maxmind/") {
+				if !maxmindLiteral.MatchString(line) {
+					t.Errorf("%s:%d holds an absolute URL literal that is neither the MaxMind "+
+						"download host nor a citation of MaxMind's documentation: %s",
+						file, number+1, strings.TrimSpace(line))
+				}
+				continue
+			}
+			if filepath.Base(file) != "endpoints.go" || !inThisPackage(file) {
 				t.Errorf("%s:%d holds an absolute URL literal outside the registry: %s",
 					file, number+1, strings.TrimSpace(line))
 				continue
@@ -350,6 +366,12 @@ func walkGoFiles(t *testing.T, includeTests bool) []string {
 // inThisPackage reports whether a path is inside internal/opnsense.
 func inThisPackage(path string) bool {
 	return strings.Contains(path, "/internal/opnsense/")
+}
+
+// inAnOutboundPackage reports whether a file belongs to one of the two packages that
+// make the two outbound calls.
+func inAnOutboundPackage(path string) bool {
+	return inThisPackage(path) || strings.Contains(path, "/internal/maxmind/")
 }
 
 // readFile returns a file's contents.

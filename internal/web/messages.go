@@ -166,13 +166,30 @@ const (
 	msgCredentialUndecryptable messageKey = "state.credential.undecryptable"
 )
 
-// The MaxMind licence-key states. The key is STORED AND NOT VERIFIED in this
-// cycle: verifying it means downloading, the download is cycle 4C, and a
-// verification download here would be an outbound call made before it is needed.
+// The MaxMind licence-key states: whether the key is stored and can be opened.
+// Whether MaxMind accepts it is what a download finds out, and is reported by the
+// dataset states below.
 const (
 	msgLicenceKeyAbsent        messageKey = "state.licence_key.absent"
 	msgLicenceKeyStored        messageKey = "state.licence_key.stored"
 	msgLicenceKeyUndecryptable messageKey = "state.licence_key.undecryptable"
+)
+
+// The MaxMind dataset states: where the GeoLite2 databases stand, one per probe the
+// refresh records, so a refused key, a spent download limit and a network failure
+// are three different sentences.
+const (
+	msgGeoIPNotDownloaded  messageKey = "state.geoip.not_downloaded"
+	msgGeoIPCurrent        messageKey = "state.geoip.current"
+	msgGeoIPNoLicenceKey   messageKey = "state.geoip.no_licence_key"
+	msgGeoIPKeyUnreadable  messageKey = "state.geoip.licence_key_undecryptable"
+	msgGeoIPNoAccountID    messageKey = "state.geoip.no_account_id"
+	msgGeoIPRefused        messageKey = "state.geoip.download_refused"
+	msgGeoIPLimited        messageKey = "state.geoip.download_limit_reached"
+	msgGeoIPFailed         messageKey = "state.geoip.download_failed"
+	msgLabelGeoIPState     messageKey = "settings.label.geoip_state"
+	msgLabelGeoIPBuild     messageKey = "settings.label.geoip_build"
+	msgMaxMindAccountIDBad messageKey = "error.maxmind_account_id_invalid"
 )
 
 // The verification outcomes, one per thing the firewall's answer can mean. They
@@ -229,6 +246,9 @@ func handlerMessageKeys() []messageKey {
 		msgCredentialAbsent, msgCredentialReady, msgCredentialUndecryptable,
 
 		msgLicenceKeyAbsent, msgLicenceKeyStored, msgLicenceKeyUndecryptable,
+		msgGeoIPNotDownloaded, msgGeoIPCurrent, msgGeoIPNoLicenceKey, msgGeoIPKeyUnreadable,
+		msgGeoIPNoAccountID, msgGeoIPRefused, msgGeoIPLimited, msgGeoIPFailed,
+		msgLabelGeoIPState, msgLabelGeoIPBuild, msgMaxMindAccountIDBad,
 
 		msgVerifyNotAttempted, msgVerifyVerified, msgVerifyCredentialsBad,
 		msgVerifyEndpointNotFound, msgVerifyUnreachable, msgVerifyCertificateRefused,

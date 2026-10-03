@@ -66,9 +66,19 @@
 <label for="maxmind_licence_key">{{t "field.maxmind_licence_key"}}</label>
 <input id="maxmind_licence_key" name="maxmind_licence_key" type="password" autocomplete="off">
 </div>
+<div class="field">
+<label for="maxmind_account_id">{{t "field.maxmind_account_id"}}</label>
+<input id="maxmind_account_id" name="maxmind_account_id" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="{{.MaxMindAccountID}}">
+</div>
 <dl class="states">
 <dt>{{t "settings.label.maxmind_licence_key_state"}}</dt>
 <dd>{{t .LicenceKeyState}}</dd>
+<dt>{{t "settings.label.geoip_state"}}</dt>
+<dd>{{t .GeoIPState}}</dd>
+{{- with .GeoIPBuild}}
+<dt>{{t "settings.label.geoip_build"}}</dt>
+<dd><span class="figure">{{.}}</span></dd>
+{{- end}}
 </dl>
 </section>
 

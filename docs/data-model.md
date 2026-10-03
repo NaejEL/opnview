@@ -976,8 +976,14 @@ cascade from a purged lookup is an index search.
 
 **Source:** the active provider of the `geo_asn` kind — today the MaxMind
 GeoLite2 City and ASN databases, the second of the two outbound calls the
-project allows. Acquisition, refresh and licence handling are step 4; only the
-model is in scope here.
+project allows, acquired and read by `internal/maxmind` (step 4C; see
+`specs/SPEC-maxmind-geolite2.md`). The databases are downloaded with the
+account ID and the licence key, checked once a day and replaced only by a newer
+build that opens, and kept in `geoip/` in the data directory. A lookup reads
+them and contacts nothing. Every public address the stored flows carry, as
+source or destination, is looked up; a private, loopback, link-local or
+otherwise non-public address is never looked up and has no row. An address
+looked up against an older build than the one in use is looked up again.
 
 **Identity:** `address`, the primary key. Keyed per address rather than per
 prefix: the dataset answers with a prefix, and SQLite has no natural
@@ -1112,7 +1118,7 @@ condition; it is never rendered as an absence of data:
 | `flow_volume` | `/api/diagnostics/netflow/is_enabled`, then `get_metadata` | `local == 0` is `present_but_disabled`; a zero `last_sync` is `present_but_disabled` with the detail saying it is not yet aggregating |
 | `dhcp_lease` | `/api/kea/service/status`, `/api/dnsmasq/service/status`, `/api/dhcpv4/service/status` | a backend that is not running is `unavailable`; when no backend of the kind runs, clients fall back to being named by address |
 | `dns_lookup` | `/api/unbound/overview/is_enabled`, `/api/dnsmasq/settings/get` | reporting or query logging off is `present_but_disabled`; an unreachable resolver is `unavailable`; a window the endpoint did not honour is a collection fault, also `unavailable`, never "this client made no queries" |
-| `geo_asn` | the local dataset file | never downloaded, or a download that failed, is `unavailable`; the row describes the **dataset**, while `geo_asn.lookup_state` describes a single address lookup |
+| `geo_asn` | the local dataset files, after each refresh | `reachable` exactly when both databases are on disk and open; never downloaded, or no download that produced one, is `unavailable`. The probe records what the last refresh found — current, no licence key, no account ID, refused, limit reached, failed — so a failed refresh over databases still in use is `reachable` with the failure as its probe. The row describes the **dataset**, while `geo_asn.lookup_state` describes a single address lookup |
 
 Availability is reachability. Which provider `opnview` reads is
 `provider.is_active`, and the diagnostic query
@@ -1309,6 +1315,14 @@ no larger than a Go duration holds; a page size is a positive whole number, and
 one above what the firewall serves is stored and reported as such on the
 collection surface rather than refused. The collection surface writes both rows
 of a pair together, and the running service reads them again without a restart.
+
+**`maxmind_account_id` is the MaxMind account ID**, which MaxMind requires beside
+the licence key to download a database. It is a setting row rather than an
+`encrypted_credential` because it grants nothing without the key, like the
+firewall URL beside the API secret; it is a positive whole number.
+`refresh_interval_geoip_seconds` (default 86 400) is how often the databases are
+checked for a newer build, and `poll_interval_geo_lookup_seconds` (default 300)
+how often stored addresses are looked up in them.
 
 **`source_selection_<kind>_<provider_key>` is the operator's selection** of one
 registry row — `auto`, `on` or `off`, exactly as written — described under

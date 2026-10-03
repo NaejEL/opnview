@@ -69,6 +69,13 @@ type view struct {
 	CredentialState   messageKey
 	VerificationState messageKey
 	LicenceKeyState   messageKey
+	// MaxMindAccountID is pre-filled: it identifies an account and grants nothing
+	// without the licence key.
+	MaxMindAccountID string
+	// GeoIPState says where the MaxMind databases stand, and GeoIPBuild is the
+	// build of the ones in use, empty when there are none.
+	GeoIPState messageKey
+	GeoIPBuild string
 	// Themes are the options the selector offers.
 	Themes []themeOption
 

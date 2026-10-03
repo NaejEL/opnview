@@ -645,6 +645,7 @@ func everyRenderedPage(t *testing.T) []renderedPage {
 	}))
 
 	pages = append(pages, collectionPages(t)...)
+	pages = append(pages, geoIPPages(t)...)
 
 	if len(pages) == 0 {
 		t.Fatal("no page was rendered, so these assertions are vacuous")

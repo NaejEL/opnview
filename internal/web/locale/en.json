@@ -21,6 +21,7 @@
     "field.api_key": "API key",
     "field.api_secret": "API secret",
     "field.maxmind_licence_key": "MaxMind licence key",
+    "field.maxmind_account_id": "MaxMind account ID",
     "field.theme": "Theme",
     "field.page_size": "Page size, records per poll",
     "field.interval_seconds": "Interval, seconds between polls",
@@ -44,6 +45,8 @@
     "settings.label.credential_state": "Stored credentials",
     "settings.label.verification": "Verification",
     "settings.label.maxmind_licence_key_state": "Stored licence key",
+    "settings.label.geoip_state": "GeoLite2 databases",
+    "settings.label.geoip_build": "Database build",
 
     "state.credential.absent": "Not configured",
     "state.credential.ready": "Readable",
@@ -61,6 +64,15 @@
     "state.licence_key.absent": "None",
     "state.licence_key.stored": "Stored",
     "state.licence_key.undecryptable": "Unreadable: the key file does not match",
+
+    "state.geoip.not_downloaded": "Not downloaded yet",
+    "state.geoip.current": "Current",
+    "state.geoip.no_licence_key": "Not downloaded: no licence key",
+    "state.geoip.licence_key_undecryptable": "Not downloaded: the licence key cannot be read",
+    "state.geoip.no_account_id": "Not downloaded: no account ID",
+    "state.geoip.download_refused": "MaxMind refused the account ID and licence key",
+    "state.geoip.download_limit_reached": "MaxMind's daily download limit is reached",
+    "state.geoip.download_failed": "The last download failed",
 
     "collection.title": "Collection",
     "collection.group.in_force": "In force",
@@ -140,6 +152,7 @@
     "notice.suggestion_not_filled": "There is no suggestion to fill with",
 
     "error.setup_token_refused": "The setup token was refused.",
+    "error.maxmind_account_id_invalid": "The MaxMind account ID must be a positive whole number.",
     "error.setup_closed": "This installation already has an account.",
     "error.login_required": "A login is required.",
     "error.password_required": "A password is required.",

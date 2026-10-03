@@ -16,8 +16,8 @@ import (
 // path the fake receives also has to be a registry entry, so a URL built by hand is caught
 // too.
 //
-// What this rules out, concretely: the MaxMind download belongs to cycle 4C and must not
-// have wandered into this one; and there is no CDN, no telemetry and no version check
+// What this rules out, concretely: the MaxMind download belongs to internal/maxmind and must
+// not have wandered into collection; and there is no CDN, no telemetry and no version check
 // anywhere in the collection path.
 func TestDiscoveryAndAllFiveCollectorsReachTheFirewallAndNothingElse(t *testing.T) {
 	harness := newProbeHarness(t)

@@ -72,8 +72,8 @@ const (
 	KindDHCPLease = "dhcp_lease"
 	// KindDNSLookup is data source 5.
 	KindDNSLookup = "dns_lookup"
-	// KindGeoASN is the MaxMind dataset. This cycle neither probes nor reads it:
-	// acquisition is cycle 4C, and no second outbound destination exists here.
+	// KindGeoASN is the MaxMind dataset. This package neither probes nor reads it:
+	// internal/maxmind does, and the second outbound destination lives there alone.
 	KindGeoASN = "geo_asn"
 	// KindMeasurementSample is the sampled reading: the firewall's own gauges and
 	// the live per-pair traffic snapshot, and the kind eight of the ten surveyed

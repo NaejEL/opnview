@@ -46,9 +46,8 @@ func TestEveryRegisteredImplementationHasARegistryRow(t *testing.T) {
 // named here rather than in a comment on the registry so that adding a fourth has to be argued
 // for in a test file somebody reads.
 //
-//   - geo_asn: acquiring the MaxMind dataset is cycle 4C, and this cycle neither probes nor
-//     reads it. An implementation for it now would be a seam justified by a step nobody has
-//     specified.
+//   - geo_asn: the MaxMind dataset is acquired and read by internal/maxmind, not by a
+//     connector behind this package's port, whose only outbound capability is the firewall.
 //   - flow_volume: its destination, pair_volume_observation, is DERIVED from `flow` by step 5 —
 //     the maintainer's ruling — so nothing collects the kind. Its registry row records that the
 //     implementation exists on the firewall; the netflow probe that used to answer for it moved

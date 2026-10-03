@@ -3,6 +3,7 @@ module github.com/NaejEL/opnview
 go 1.27.0
 
 require (
+	github.com/oschwald/maxminddb-golang/v2 v2.7.0
 	golang.org/x/crypto v0.57.0
 	modernc.org/sqlite v1.59.0
 )

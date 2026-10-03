@@ -154,6 +154,19 @@ type Options struct {
 	// the same reason. cmd/opnview passes its collector, which is the one the
 	// scheduler runs.
 	Collector Reconfigurable
+	// GeoIP is the MaxMind databases: woken when the licence key or the account ID is
+	// saved, and asked which build is in use. Nil, as in a test that does not need it,
+	// wakes nothing and reports no build.
+	GeoIP GeoIP
+}
+
+// GeoIP is what the settings surface needs of the MaxMind refresh: to be told that
+// the credentials changed, so the databases are fetched now rather than at the next
+// daily check, and the build of the databases in use. It is an interface so that
+// this package does not import the downloader.
+type GeoIP interface {
+	Wake()
+	Ready() (build int64, ready bool)
 }
 
 // Reconfigurable is what the collection surface needs of a running collector: to be
@@ -192,6 +205,8 @@ type Server struct {
 	// nil; see Options.
 	settings  *config.Live
 	collector Reconfigurable
+	// geoip is woken by a save of the MaxMind credentials; it may be nil.
+	geoip GeoIP
 
 	routes []Route
 	mux    *http.ServeMux
@@ -253,6 +268,7 @@ func New(options Options) (*Server, error) {
 		decoyPassword: decoy,
 		settings:      options.Settings,
 		collector:     options.Collector,
+		geoip:         options.GeoIP,
 	}
 	server.register()
 	return server, nil

@@ -60,6 +60,12 @@ const (
 	KeyDiscoveryInterval = "refresh_interval_discovery_seconds"
 	// KeyPurgeInterval overrides the retention-purge interval.
 	KeyPurgeInterval = "purge_interval_seconds"
+	// KeyGeoIPRefreshInterval overrides how often the MaxMind databases are
+	// checked for a newer build.
+	KeyGeoIPRefreshInterval = "refresh_interval_geoip_seconds"
+	// KeyGeoLookupInterval overrides how often stored addresses are looked up in
+	// the MaxMind databases.
+	KeyGeoLookupInterval = "poll_interval_geo_lookup_seconds"
 )
 
 // The setting keys of the page sizes: how many records one request asks the
@@ -142,6 +148,19 @@ const (
 	// bounded within an hour of a retention change without the delete
 	// competing with ingestion every minute.
 	DefaultPurgeInterval = 3600 * time.Second
+
+	// DefaultGeoIPRefreshInterval is 86 400 s. Not a survey figure: MaxMind
+	// publishes no GeoLite2 release schedule on the pages read for step 4C, and a
+	// HEAD request, which is all a check costs when nothing changed, does not count
+	// against the 30 downloads a day a GeoLite account is allowed. Once a day keeps
+	// a new build well inside the 30 days the GeoLite EULA allows an old one to be
+	// used. See specs/SPEC-maxmind-geolite2.md.
+	DefaultGeoIPRefreshInterval = 86400 * time.Second
+
+	// DefaultGeoLookupInterval is 300 s. opnview's own: a lookup reads a local
+	// file and contacts nothing, so the figure only bounds how long a new
+	// destination stays unplaced, and it matches the discovery cadence.
+	DefaultGeoLookupInterval = 300 * time.Second
 )
 
 // The default page sizes. 500 is the figure the collectors carried as a
@@ -205,6 +224,9 @@ type Config struct {
 	DNSLookupInterval     time.Duration
 	DiscoveryInterval     time.Duration
 	PurgeInterval         time.Duration
+	// GeoIPRefreshInterval and GeoLookupInterval are the two MaxMind cadences.
+	GeoIPRefreshInterval time.Duration
+	GeoLookupInterval    time.Duration
 
 	// FirewallLogPageSize and the two below are the page sizes.
 	FirewallLogPageSize   int
@@ -226,6 +248,8 @@ func Defaults() Config {
 		DNSLookupInterval:     DefaultDNSLookupInterval,
 		DiscoveryInterval:     DefaultDiscoveryInterval,
 		PurgeInterval:         DefaultPurgeInterval,
+		GeoIPRefreshInterval:  DefaultGeoIPRefreshInterval,
+		GeoLookupInterval:     DefaultGeoLookupInterval,
 		// The page sizes are defaults a row overrides, like the intervals.
 		FirewallLogPageSize:   DefaultFirewallLogPageSize,
 		SecurityEventPageSize: DefaultSecurityEventPageSize,
@@ -281,6 +305,8 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		{KeyDNSLookupInterval, &loaded.DNSLookupInterval},
 		{KeyDiscoveryInterval, &loaded.DiscoveryInterval},
 		{KeyPurgeInterval, &loaded.PurgeInterval},
+		{KeyGeoIPRefreshInterval, &loaded.GeoIPRefreshInterval},
+		{KeyGeoLookupInterval, &loaded.GeoLookupInterval},
 	}
 	for _, interval := range intervals {
 		value, present, err := reader.Setting(ctx, interval.key)

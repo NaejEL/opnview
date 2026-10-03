@@ -15,9 +15,9 @@ import (
 // firewall API on the local network. ROADMAP.md permits exactly two outbound calls
 // and this is inside the first of them.
 //
-// THE MAXMIND KEY IS NOT VERIFIED IN THIS CYCLE. Verifying it means downloading,
-// downloading is cycle 4C, and a verification download here would be a call made
-// before it is needed. The key is stored and reported as stored, and nothing else.
+// THE MAXMIND KEY IS NOT VERIFIED HERE. A download verifies it, and downloading is
+// internal/maxmind's alone; a save wakes that refresh, and the settings surface
+// reports the state it recorded.
 //
 // THE FOUR ANSWERS ARE FOUR ANSWERS. 401/403 is a credential failure, 404 is an
 // absent endpoint, a refused certificate is a host that answered and proved an

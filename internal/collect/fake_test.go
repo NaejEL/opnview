@@ -198,7 +198,7 @@ func (f *fakeFirewall) assertEveryPathIsRegistered() {
 //
 // It is what makes "one outbound destination" a property a test can fail on. A
 // second destination — a CDN, a telemetry endpoint, a MaxMind download that
-// wandered into this cycle — does not merely get noticed: the call errors.
+// wandered out of internal/maxmind — does not merely get noticed: the call errors.
 type firewallOnlyTransport struct {
 	t           *testing.T
 	allowedHost string

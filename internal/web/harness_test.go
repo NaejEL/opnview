@@ -100,6 +100,7 @@ type harness struct {
 	// collection surface has to reach without a restart.
 	live      *config.Live
 	collector *recordingCollector
+	geoip     *recordingGeoIP
 }
 
 // recordingCollector stands in for the running collector and keeps every
@@ -115,6 +116,43 @@ func (c *recordingCollector) Configure(settings config.Config) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.configured = append(c.configured, settings)
+}
+
+// recordingGeoIP stands in for the MaxMind refresh: it counts the wakes and answers
+// a build a test sets.
+type recordingGeoIP struct {
+	mutex sync.Mutex
+	wakes int
+	build int64
+	ready bool
+}
+
+// Wake counts one wake.
+func (g *recordingGeoIP) Wake() {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	g.wakes++
+}
+
+// Ready answers the build the test set.
+func (g *recordingGeoIP) Ready() (int64, bool) {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	return g.build, g.ready
+}
+
+// woken returns how many wakes arrived.
+func (g *recordingGeoIP) woken() int {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	return g.wakes
+}
+
+// setBuild makes the databases ready at a build.
+func (g *recordingGeoIP) setBuild(build int64) {
+	g.mutex.Lock()
+	defer g.mutex.Unlock()
+	g.build, g.ready = build, true
 }
 
 // Reselect records the kind whose selection was applied.
@@ -225,6 +263,7 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 	}
 	live := config.NewLive(settings)
 	collector := &recordingCollector{}
+	geoip := &recordingGeoIP{}
 
 	server, err := New(Options{
 		Store:          database,
@@ -237,6 +276,7 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 		Now:            clock.Now,
 		Settings:       live,
 		Collector:      collector,
+		GeoIP:          geoip,
 	})
 	if err != nil {
 		t.Fatalf("building the server: %v", err)
@@ -252,7 +292,7 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 	return &harness{
 		t: t, dataDir: dataDir, store: database, box: box, clock: clock,
 		setupToken: setupToken, creds: credentials, fake: fake, server: server,
-		http: front, live: live, collector: collector,
+		http: front, live: live, collector: collector, geoip: geoip,
 		client: &http.Client{
 			Jar: jar,
 			// A redirect is a fact a test asserts on, so it is never followed

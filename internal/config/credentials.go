@@ -42,6 +42,13 @@ const (
 	// not a per-account preference: the schema has no such concept and one account
 	// cannot justify inventing one.
 	KeyTheme = "theme"
+	// KeyMaxMindAccountID is the MaxMind account ID, which MaxMind requires beside
+	// the licence key to download a database.
+	//
+	// IT IS A SETTING AND NOT A CREDENTIAL, for the reason the fingerprint is: it
+	// identifies an account and grants nothing without the licence key, which stays
+	// an encrypted credential. It is a positive whole number.
+	KeyMaxMindAccountID = "maxmind_account_id"
 )
 
 // FirewallCredentials is the live credential holder the OPNsense client reads.
@@ -212,4 +219,56 @@ func readSetting(ctx context.Context, reader CredentialReader, key string) (stri
 		return "", false, err
 	}
 	return value, present, nil
+}
+
+// MaxMindCredentials are what a MaxMind database download authenticates with: the
+// account ID and the licence key, both required.
+type MaxMindCredentials struct {
+	// AccountID is the setting row, as typed.
+	AccountID string
+	// LicenceKey is the decrypted licence key.
+	LicenceKey string
+}
+
+// LoadMaxMindCredentials reads the MaxMind account ID and the decrypted licence key,
+// and says which of the three states the licence key is in.
+//
+// The states mean what they mean for the firewall: no key stored is absent, a key
+// that cannot be opened is undecryptable and is NOT reported as absent, and ready
+// says only that the key was opened — whether MaxMind accepts it is what a download
+// finds out. The account ID is returned whatever the key's state; a caller with a
+// ready key and no account ID has a configuration halfway entered.
+func LoadMaxMindCredentials(ctx context.Context, reader CredentialReader,
+	unsealer Unsealer) (MaxMindCredentials, CredentialState, error) {
+	accountID, _, err := readSetting(ctx, reader, KeyMaxMindAccountID)
+	if err != nil {
+		return MaxMindCredentials{}, CredentialStateAbsent, err
+	}
+	loaded := MaxMindCredentials{AccountID: accountID}
+
+	sealed, stored, err := reader.Credential(ctx, store.CredentialMaxMindLicenceKey)
+	if err != nil {
+		return loaded, CredentialStateAbsent, err
+	}
+	if !stored {
+		return loaded, CredentialStateAbsent, nil
+	}
+	if unsealer == nil {
+		return loaded, CredentialStateUndecryptable, nil
+	}
+	licenceKey, err := unsealer.Unseal(secret.Ciphertext{
+		Algorithm: sealed.Algorithm,
+		KeyID:     sealed.KeyID,
+		Nonce:     sealed.Nonce,
+		Bytes:     sealed.Ciphertext,
+	})
+	if err != nil {
+		if isUnsealFailure(err) {
+			return loaded, CredentialStateUndecryptable, nil
+		}
+		return loaded, CredentialStateUndecryptable,
+			fmt.Errorf("config: opening the stored MaxMind licence key: %w", err)
+	}
+	loaded.LicenceKey = string(licenceKey)
+	return loaded, CredentialStateReady, nil
 }

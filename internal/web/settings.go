@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/maxmind"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
@@ -58,6 +60,7 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 	apiSecret := request.PostFormValue("api_secret")
 	fingerprintTyped := request.PostFormValue("certificate_fingerprint")
 	licenceKey := strings.TrimSpace(request.PostFormValue("maxmind_licence_key"))
+	accountID := strings.TrimSpace(request.PostFormValue("maxmind_account_id"))
 	theme := request.PostFormValue("theme")
 
 	if firewallURL != "" {
@@ -95,6 +98,19 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 		s.renderSettingsRefusal(writer, request, msgAPIKeyRequired)
 		return
 	}
+	// MaxMind account IDs are numbers; anything else would only be refused by
+	// MaxMind, after spending a request.
+	if accountID != "" {
+		if number, err := strconv.ParseInt(accountID, 10, 64); err != nil || number <= 0 {
+			s.renderSettingsRefusal(writer, request, msgMaxMindAccountIDBad)
+			return
+		}
+	}
+	previousAccountID, _, err := s.store.Setting(ctx, config.KeyMaxMindAccountID)
+	if err != nil {
+		s.failInternal(writer, request, err)
+		return
+	}
 
 	if err := s.writeSetting(ctx, config.KeyOPNsenseBaseURL, firewallURL, now); err != nil {
 		s.failInternal(writer, request, err)
@@ -120,6 +136,16 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 	if err := s.storeSecret(ctx, store.CredentialMaxMindLicenceKey, licenceKey, now); err != nil {
 		s.failInternal(writer, request, err)
 		return
+	}
+	if err := s.writeSetting(ctx, config.KeyMaxMindAccountID, accountID, now); err != nil {
+		s.failInternal(writer, request, err)
+		return
+	}
+	// A new licence key or a different account ID is fetched with now, not at the
+	// next daily check. The refresh runs in its own loop: nothing here waits for it,
+	// and this package makes no call to MaxMind.
+	if s.geoip != nil && (licenceKey != "" || accountID != previousAccountID) {
+		s.geoip.Wake()
 	}
 
 	// THE LIVE HOLDER, through the same path start-up uses. This is what makes the
@@ -241,6 +267,20 @@ func (s *Server) fillSettings(request *http.Request, built *view,
 	}
 	built.LicenceKeyState = licenceState
 
+	accountID, _, err := s.store.Setting(ctx, config.KeyMaxMindAccountID)
+	if err != nil {
+		return err
+	}
+	built.MaxMindAccountID = accountID
+	if built.GeoIPState, err = s.geoIPState(ctx); err != nil {
+		return err
+	}
+	if s.geoip != nil {
+		if build, ready := s.geoip.Ready(); ready {
+			built.GeoIPBuild = instant(build)
+		}
+	}
+
 	current := s.readTheme(ctx)
 	for _, candidate := range themes() {
 		built.Themes = append(built.Themes, themeOption{
@@ -273,8 +313,8 @@ func credentialStateKey(state config.CredentialState) messageKey {
 
 // licenceKeyState says whether the MaxMind licence key is there and openable.
 //
-// IT MAKES NO CALL TO MAXMIND. Nothing in this cycle does: the key is stored and
-// not verified, because verifying it means downloading and the download is cycle 4C.
+// IT MAKES NO CALL TO MAXMIND. Nothing in this package does: whether MaxMind accepts
+// the key is what a download finds out, and geoIPState reports what it found.
 func (s *Server) licenceKeyState(ctx context.Context) (messageKey, error) {
 	sealed, stored, err := s.store.Credential(ctx, store.CredentialMaxMindLicenceKey)
 	if err != nil {
@@ -376,4 +416,39 @@ func validateFirewallURL(value string) error {
 		return errors.New("web: the firewall URL carries credentials in it")
 	}
 	return nil
+}
+
+// geoIPState says where the MaxMind databases stand, from the availability row the
+// refresh writes. It reads the row and contacts nothing.
+//
+// A probe it does not know reads as the failure state rather than as success.
+// "not_yet_probed" is what the schema writes on a fresh database, before any
+// refresh ran.
+func (s *Server) geoIPState(ctx context.Context) (messageKey, error) {
+	providerID, err := s.store.ProviderID(ctx, maxmind.Kind, maxmind.ProviderKey)
+	if err != nil {
+		return "", err
+	}
+	_, probe, _, err := s.store.Availability(ctx, providerID)
+	if err != nil {
+		return "", err
+	}
+	switch probe {
+	case maxmind.ProbeCurrent:
+		return msgGeoIPCurrent, nil
+	case maxmind.ProbeNoLicenceKey:
+		return msgGeoIPNoLicenceKey, nil
+	case maxmind.ProbeLicenceKeyUndecryptable:
+		return msgGeoIPKeyUnreadable, nil
+	case maxmind.ProbeNoAccountID:
+		return msgGeoIPNoAccountID, nil
+	case maxmind.ProbeRefused:
+		return msgGeoIPRefused, nil
+	case maxmind.ProbeLimited:
+		return msgGeoIPLimited, nil
+	case "not_yet_probed":
+		return msgGeoIPNotDownloaded, nil
+	default:
+		return msgGeoIPFailed, nil
+	}
 }

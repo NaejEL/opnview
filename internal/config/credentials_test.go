@@ -246,3 +246,49 @@ func generated(t *testing.T) string {
 	}
 	return hex.EncodeToString(raw)
 }
+
+// TestTheMaxMindLicenceKeyStatesAreDistinguishable: the MaxMind licence key has the
+// same three states as the firewall secret, and the account ID is read beside it
+// whatever the key's state.
+func TestTheMaxMindLicenceKeyStatesAreDistinguishable(t *testing.T) {
+	ctx := context.Background()
+	box, err := secret.Create(t.TempDir())
+	if err != nil {
+		t.Fatalf("creating a key: %v", err)
+	}
+	reader := newFakeCredentialReader()
+	reader.settings[KeyMaxMindAccountID] = "424242"
+
+	loaded, state, err := LoadMaxMindCredentials(ctx, reader, box)
+	if err != nil || state != CredentialStateAbsent || loaded.AccountID != "424242" {
+		t.Errorf("no licence key reads %q with account %q (%v)", state, loaded.AccountID, err)
+	}
+
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		t.Fatalf("generating a licence key: %v", err)
+	}
+	licenceKey := hex.EncodeToString(raw)
+	sealed, err := box.Seal([]byte(licenceKey))
+	if err != nil {
+		t.Fatalf("sealing: %v", err)
+	}
+	reader.put(store.CredentialMaxMindLicenceKey, sealed)
+	loaded, state, err = LoadMaxMindCredentials(ctx, reader, box)
+	if err != nil || state != CredentialStateReady || loaded.LicenceKey != licenceKey ||
+		loaded.AccountID != "424242" {
+		t.Errorf("a readable licence key reads %q (%v)", state, err)
+	}
+
+	other, err := secret.Create(t.TempDir())
+	if err != nil {
+		t.Fatalf("creating a second key: %v", err)
+	}
+	loaded, state, err = LoadMaxMindCredentials(ctx, reader, other)
+	if err != nil || state != CredentialStateUndecryptable || loaded.LicenceKey != "" {
+		t.Errorf("a licence key under another key file reads %q (%v)", state, err)
+	}
+	if _, state, _ := LoadMaxMindCredentials(ctx, reader, nil); state != CredentialStateUndecryptable {
+		t.Errorf("a licence key with no key file reads %q", state)
+	}
+}

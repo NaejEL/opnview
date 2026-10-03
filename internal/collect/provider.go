@@ -44,10 +44,9 @@ import (
 // identity, detecting a gap, recording availability, choosing which implementation is
 // active — lives in the kind's own file and is written once.
 //
-// WHY THERE IS NO INTERFACE FOR THE geo_asn KIND. Its one implementation is the MaxMind
-// dataset, acquiring it is cycle 4C, and this cycle neither probes nor reads it. An
-// interface for it would be a seam justified by a step nobody has specified, which is the
-// scaffolding this file's existence is not.
+// WHY THERE IS NO INTERFACE FOR THE geo_asn KIND HERE. Its one implementation is the MaxMind
+// dataset, which internal/maxmind acquires and reads; it is not a firewall source, and the
+// port below, whose only outbound capability is the firewall, could not serve it.
 
 // session is THE PORT: everything an implementation may ask of the host that runs it, and
 // nothing else. It is the other half of the contract — the interfaces below say what a

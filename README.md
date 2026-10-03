@@ -41,11 +41,16 @@ Current step: 4, collection and storage.
 On first start it creates its database and its encryption key, prints a
 **one-time setup token** to the console, and serves four surfaces: create the
 first account with that token, sign in, enter the firewall URL, the API key
-and secret, the MaxMind licence key and the theme, and size collection. There
-is no environment variable, no configuration file and no `configure` command,
-and a credential changed in the interface takes effect on the next collection
-pass without a restart. There are no canvases and no widgets yet: those are
-steps 5 and 7.
+and secret, the MaxMind account ID and licence key and the theme, and size
+collection. There is no environment variable, no configuration file and no
+`configure` command, and a credential changed in the interface takes effect on
+the next collection pass without a restart. There are no canvases and no widgets
+yet: those are steps 5 and 7.
+
+With a MaxMind account ID and licence key, the GeoLite2 City and ASN databases
+are downloaded and the public addresses the flows carry are placed against them;
+the settings surface says where the databases stand. The map that shows them is
+step 7.
 
 The settings surface can fetch the certificate the firewall presents and put
 its SHA-256 fingerprint in the field, so a default OPNsense, which serves its
@@ -129,7 +134,14 @@ Exactly two things, and nothing else:
    `opnview` makes when you enter or correct your API key is one of these, to
    the same firewall, read-only, and not a third thing;
 2. the MaxMind GeoLite2 database download, which contacts a third-party server
-   with your licence key.
+   with your MaxMind account ID and licence key. It asks `download.maxmind.com`,
+   which redirects the download to the storage host MaxMind names for it; the
+   credentials go to the first and never to the second, and no other host is
+   contacted. Without a licence key and an account ID, nothing is requested.
+   Once a day `opnview` asks whether a newer build exists — a request MaxMind
+   does not count against the 30 downloads a day a GeoLite account is allowed —
+   and downloads only when one does. The databases are kept in `geoip/` in the
+   data directory, and a replaced build is deleted at once.
 
 No telemetry, no version check, no resource loaded from a CDN. The interface
 loads nothing from anywhere: its stylesheet is served by `opnview` itself and
@@ -224,3 +236,8 @@ in most jurisdictions.
 ## Licence
 
 [MIT](LICENSE).
+
+This product includes GeoLite Data created by MaxMind, available from
+<https://www.maxmind.com>. The databases are downloaded on your own MaxMind
+account, under MaxMind's GeoLite End User License Agreement, and are never part
+of this repository.

@@ -50,6 +50,10 @@ type Task struct {
 	// one interval. Discovery and the probe round do; the purge does not, because
 	// there is nothing to purge in the first second of a run.
 	RunAtStart bool
+	// Wake, when it is not nil, runs a pass as soon as it receives, without waiting
+	// for the interval, which then starts again. It is how a save on the settings
+	// surface reaches a loop whose interval is a day long.
+	Wake <-chan struct{}
 }
 
 // ErrorReporter is told about every failed pass. It is an interface-free function so
@@ -180,9 +184,18 @@ func runLoop(ctx context.Context, clock Clock, task Task, report ErrorReporter) 
 		if next := task.Interval(); next > 0 {
 			interval = next
 		}
+		// A nil Wake is a channel nothing ever sends on, so a task without one only
+		// ever waits for its interval.
 		select {
 		case <-ctx.Done():
 			return
+		case <-task.Wake:
+			if ctx.Err() != nil {
+				return
+			}
+			if err := task.Run(ctx); err != nil && ctx.Err() == nil {
+				report(task.Name, err)
+			}
 		case <-clock.After(interval):
 			if ctx.Err() != nil {
 				return

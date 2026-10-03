@@ -349,8 +349,8 @@ func TestASourceThatAnswers404IsUnavailableAndNotActivated(t *testing.T) {
 
 	for _, provider := range everyProvider(t, harness.store) {
 		if provider.kind == KindGeoASN {
-			// Not probed in this cycle: acquiring the dataset is 4C, and no second
-			// outbound destination exists here.
+			// Not probed here: internal/maxmind records the dataset's availability, and
+			// this package makes no call outside the firewall.
 			continue
 		}
 		state, _, _ := harness.availabilityOf(t, provider.kind, provider.key)

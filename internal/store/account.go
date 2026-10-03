@@ -24,9 +24,9 @@ import (
 const (
 	// CredentialOPNsenseAPISecret is the secret half of the firewall API pair.
 	CredentialOPNsenseAPISecret = "opnsense_api_secret"
-	// CredentialMaxMindLicenceKey is the MaxMind licence key. It is stored in
-	// this cycle and not verified: verifying it means downloading, and the
-	// download is cycle 4C.
+	// CredentialMaxMindLicenceKey is the MaxMind licence key. A download, which
+	// sends it to MaxMind with the account ID, is what finds out whether MaxMind
+	// accepts it; see internal/maxmind.
 	CredentialMaxMindLicenceKey = "maxmind_licence_key"
 )
 

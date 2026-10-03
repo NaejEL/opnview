@@ -16,9 +16,9 @@
 // WHAT IT STILL CANNOT DO, STATED SO NOBODY LOOKS FOR IT. There is no canvas, no
 // widget and no dashboard: the interface is four surfaces — setup, sign-in,
 // settings and collection — and the widget endpoints are step 5, the canvases
-// step 7. The MaxMind
-// licence key is stored and NOT verified, because verifying it means downloading and
-// the download is cycle 4C.
+// step 7. The MaxMind GeoLite2 databases are downloaded with the account ID and the
+// licence key entered on the settings surface, kept beside the database, and used to
+// place the addresses the flows carry; the map that shows them is step 7.
 package main
 
 import (
@@ -28,6 +28,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -36,6 +37,7 @@ import (
 	"github.com/NaejEL/opnview/internal/buildinfo"
 	"github.com/NaejEL/opnview/internal/collect"
 	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/maxmind"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
@@ -52,6 +54,11 @@ const shutdownDeadline = 20 * time.Second
 // already serving after the signal. It is well inside shutdownDeadline, because the
 // database cannot be closed until the handlers have stopped touching it.
 const httpGrace = 5 * time.Second
+
+// geoipTimeout bounds one MaxMind request, download included. The City database is
+// tens of megabytes; ten minutes allows for a slow line without letting a stalled
+// download hold the refresh loop for ever.
+const geoipTimeout = 10 * time.Minute
 
 func main() {
 	if err := run(); err != nil {
@@ -161,6 +168,24 @@ func run() (err error) {
 	// loads it.
 	live := config.NewLive(settings)
 
+	// THE SECOND OUTBOUND CALL: the MaxMind databases, in <data-dir>/geoip. A database
+	// on disk that does not open is reported and left for the next refresh to replace;
+	// it does not stop the service.
+	geoipDataset, err := maxmind.OpenDataset(filepath.Join(*dataDir, "geoip"))
+	if geoipDataset == nil {
+		return err
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", buildinfo.AppName, err)
+	}
+	defer func() { _ = geoipDataset.Close() }()
+	geoipCredentials := func(ctx context.Context) (config.MaxMindCredentials, config.CredentialState, error) {
+		return config.LoadMaxMindCredentials(ctx, database, unsealer)
+	}
+	refresher := maxmind.NewRefresher(maxmind.NewClient(geoipTimeout), geoipDataset, database,
+		geoipCredentials, time.Now)
+	locator := maxmind.NewLocator(geoipDataset, database, time.Now)
+
 	setupToken, err := auth.NewSetupToken()
 	if err != nil {
 		return err
@@ -174,6 +199,7 @@ func run() (err error) {
 		SetupToken:  setupToken,
 		Settings:    live,
 		Collector:   collector,
+		GeoIP:       refresher,
 	})
 	if err != nil {
 		return err
@@ -222,7 +248,7 @@ func run() (err error) {
 	fmt.Printf("%s: the interface is listening on %s\n", buildinfo.AppName, *listen)
 
 	collectErr := collect.Run(ctx, collect.SystemClock{},
-		collector.Tasks(live, purge), report)
+		append(collector.Tasks(live, purge), maxmind.Tasks(live, refresher, locator)...), report)
 	running.Wait()
 
 	switch {
