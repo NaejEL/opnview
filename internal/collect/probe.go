@@ -148,17 +148,19 @@ func (c *Collector) probeDNSLookup(ctx context.Context) error {
 	return c.resolveKind(ctx, KindDNSLookup, lookupProbeables())
 }
 
+// probedSource is one implementation as a probe round found it: its registry row and what
+// its probe answered.
+type probedSource struct {
+	providerKey string
+	providerID  int64
+	result      probeResult
+}
+
 // resolveKind probes each implementation of one kind, records what the firewall said about
 // each, and activates the one the firewall's own configuration separates — or none, twice
 // over: none when nothing qualifies, and none when more than one does.
 func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []probeable) error {
-	type outcome struct {
-		providerKey string
-		providerID  int64
-		result      probeResult
-	}
-
-	outcomes := make([]outcome, 0, len(probeables))
+	outcomes := make([]probedSource, 0, len(probeables))
 	var failures []error
 	for _, candidate := range probeables {
 		providerID, err := c.store.ProviderID(ctx, kind, candidate.providerKey)
@@ -173,64 +175,21 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 		if err != nil {
 			failures = append(failures, err)
 		}
-		outcomes = append(outcomes, outcome{
+		outcomes = append(outcomes, probedSource{
 			providerKey: candidate.providerKey, providerID: providerID, result: result,
 		})
 	}
 
-	// The operator's selection of each implementation: off, on, or auto, which is what a
-	// missing row means. A selection that cannot be read is reported with the round's
-	// failures and given no value here. Availability is written whatever it says.
-	selections := make(map[string]config.Selection, len(outcomes))
-	for _, entry := range outcomes {
-		selection, err := config.LoadSourceSelection(ctx, c.store, kind, entry.providerKey)
-		if err != nil {
-			// The error names the setting key, so the operator can find the row that
-			// could not be read.
-			failures = append(failures, err)
-			continue
-		}
-		selections[entry.providerKey] = selection
-	}
+	// Kept for Reselect, which applies a selection saved before the next round from what
+	// this one found.
+	c.mutex.Lock()
+	c.probed[kind] = append([]probedSource(nil), outcomes...)
+	c.mutex.Unlock()
 
-	separable := make([]string, 0, len(outcomes))
-	forced := make([]string, 0, len(outcomes))
-	for _, entry := range outcomes {
-		switch selections[entry.providerKey] {
-		case config.SelectionOff:
-			// Turned off: never activated, whatever the firewall says. Its availability is
-			// still recorded below, because selection is a decision and not a claim.
-			continue
-		case config.SelectionOn:
-			forced = append(forced, entry.providerKey)
-			continue
-		}
-		if entry.result.separable {
-			separable = append(separable, entry.providerKey)
-		}
-	}
+	selections, selectionFailures := c.loadSelections(ctx, kind, outcomes)
+	failures = append(failures, selectionFailures...)
+	active, ambiguity := decideActive(kind, outcomes, selections)
 
-	// Two qualifying implementations are an AMBIGUITY only where the kind is exclusive. Where
-	// the kind admits several — a firewall running Suricata beside CrowdSec, two measurement
-	// sources reporting different subjects — there is nothing to choose between: every row
-	// carries the provider that reported it, so both are read and neither figure is doubled.
-	// That is the whole behavioural consequence of dropping the one-active-provider-per-kind
-	// index, and it lives here rather than in a comment about the index.
-	//
-	// AN IMPLEMENTATION TURNED ON IS THE OPERATOR SAYING WHICH ONE: it is the separation the
-	// firewall's own configuration did not make, so it settles the ambiguity.
-	concurrent := store.KindAdmitsSeveralActiveProviders(kind)
-	ambiguity := ""
-	if len(forced) > 0 {
-		// A choice made by a person replaces the firewall's answer for the kind: the
-		// implementations left on auto are not activated beside it.
-		separable = separable[:0]
-	} else if len(separable) > 1 && !concurrent {
-		// Nobody chose, and the firewall's configuration does not separate the two.
-		ambiguity = "two implementations of this kind are both reachable and configured (" +
-			joinWithComma(separable) + "), and the firewall's own configuration does not say " +
-			"which serves clients, so opnview reads neither"
-	}
 	for _, entry := range outcomes {
 		detail := entry.result.detail
 		if ambiguity != "" && entry.result.separable {
@@ -250,15 +209,6 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 		}
 	}
 
-	// The ambiguity activates neither of the two the firewall does not separate.
-	if len(separable) > 1 && !concurrent {
-		separable = nil
-	}
-	// What opnview reads: every implementation turned on, then those the probe round
-	// activates on its own. For an exclusive kind two turned on is refused by the store
-	// with a sentence naming the kind, and reported like any other failure of the round;
-	// it is never settled here by picking one.
-	active := append(append([]string{}, forced...), separable...)
 	if err := c.store.SetActiveProviders(ctx, kind, active...); err != nil {
 		return err
 	}
@@ -268,6 +218,100 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 			kind, joinErrors(failures))
 	}
 	return nil
+}
+
+// Reselect applies the operator's selection of one kind at once, from what the last probe
+// round found for it, WITHOUT PROBING THE FIREWALL AGAIN. It is what the collection surface
+// calls after a selection is saved, so a source turned on or off is read, or stops being
+// read, from the next pass rather than from the next probe round.
+//
+// It writes no availability row: nothing was checked, and an availability row records a
+// check. Before the first probe round of the process there is nothing to decide from, so it
+// does nothing, and that round applies the selection as every round does. A selection that
+// cannot be read is an error, and the active implementations are then left as they were.
+// It is what web.Reconfigurable asks of a collector.
+func (c *Collector) Reselect(ctx context.Context, kind string) error {
+	c.mutex.RLock()
+	outcomes, probed := c.probed[kind]
+	c.mutex.RUnlock()
+	if !probed {
+		return nil
+	}
+	selections, failures := c.loadSelections(ctx, kind, outcomes)
+	if len(failures) > 0 {
+		return fmt.Errorf("collect: applying the %s selection: %w", kind, joinErrors(failures))
+	}
+	active, _ := decideActive(kind, outcomes, selections)
+	return c.store.SetActiveProviders(ctx, kind, active...)
+}
+
+// loadSelections reads the operator's selection of each implementation: off, on, or auto,
+// which is what a missing row means. A selection that cannot be read is returned among the
+// failures and given no value, so the decision treats that implementation as auto; the error
+// names the setting key, so the operator can find the row.
+func (c *Collector) loadSelections(ctx context.Context, kind string,
+	outcomes []probedSource) (map[string]config.Selection, []error) {
+	selections := make(map[string]config.Selection, len(outcomes))
+	var failures []error
+	for _, entry := range outcomes {
+		selection, err := config.LoadSourceSelection(ctx, c.store, kind, entry.providerKey)
+		if err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		selections[entry.providerKey] = selection
+	}
+	return selections, failures
+}
+
+// decideActive is the activation decision for one kind: the implementations opnview reads,
+// and the sentence recording an ambiguity, empty when there is none. It reads nothing, so a
+// probe round and Reselect cannot decide differently from the same facts.
+func decideActive(kind string, outcomes []probedSource,
+	selections map[string]config.Selection) ([]string, string) {
+	separable := make([]string, 0, len(outcomes))
+	forced := make([]string, 0, len(outcomes))
+	for _, entry := range outcomes {
+		switch selections[entry.providerKey] {
+		case config.SelectionOff:
+			// Turned off: never activated, whatever the firewall says. Its availability is
+			// still recorded, because selection is a decision and not a claim.
+			continue
+		case config.SelectionOn:
+			forced = append(forced, entry.providerKey)
+			continue
+		}
+		if entry.result.separable {
+			separable = append(separable, entry.providerKey)
+		}
+	}
+
+	// Two qualifying implementations are an AMBIGUITY only where the kind is exclusive. Where
+	// the kind admits several — a firewall running Suricata beside CrowdSec, two measurement
+	// sources reporting different subjects — there is nothing to choose between: every row
+	// carries the provider that reported it, so both are read and neither figure is doubled.
+	//
+	// AN IMPLEMENTATION TURNED ON IS THE OPERATOR SAYING WHICH ONE: it is the separation the
+	// firewall's own configuration did not make, so it settles the ambiguity.
+	concurrent := store.KindAdmitsSeveralActiveProviders(kind)
+	ambiguity := ""
+	if len(forced) > 0 {
+		// A choice made by a person replaces the firewall's answer for the kind: the
+		// implementations left on auto are not activated beside it.
+		separable = separable[:0]
+	} else if len(separable) > 1 && !concurrent {
+		// Nobody chose, and the firewall's configuration does not separate the two: neither
+		// is activated.
+		ambiguity = "two implementations of this kind are both reachable and configured (" +
+			joinWithComma(separable) + "), and the firewall's own configuration does not say " +
+			"which serves clients, so opnview reads neither"
+		separable = nil
+	}
+	// What opnview reads: every implementation turned on, then those the probe round
+	// activates on its own. For an exclusive kind two turned on is refused by the store
+	// with a sentence naming the kind, and reported like any other failure; it is never
+	// settled here by picking one.
+	return append(append([]string{}, forced...), separable...), ambiguity
 }
 
 // activeSource is one implementation opnview reads for a kind: its registry key and its

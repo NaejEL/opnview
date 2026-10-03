@@ -729,3 +729,114 @@ func collectionPages(t *testing.T) []renderedPage {
 		pageSource(t, h, PathCollection)})
 	return pages
 }
+
+// selectedIn returns the value of the option selected in one select of a card, or
+// the empty string when none is.
+func selectedIn(t *testing.T, card, id string) string {
+	t.Helper()
+	start := strings.Index(card, `<select id="`+id+`"`)
+	if start < 0 {
+		t.Fatalf("the card has no select %s", id)
+	}
+	body := card[start:]
+	body = body[:strings.Index(body, "</select>")]
+	marker := strings.Index(body, " selected>")
+	if marker < 0 {
+		return ""
+	}
+	return attributeAfter(body[strings.LastIndex(body[:marker], "<option"):], `value="`)
+}
+
+// TestEachImplementationIsSelectableInItsCard: every implementation of a kind has its
+// own selection in that kind's card, named from the catalogue, showing what is stored.
+func TestEachImplementationIsSelectableInItsCard(t *testing.T) {
+	h := signedInHarness(t)
+	h.setSelection("dhcp_lease", "kea", config.SelectionOn)
+	card := cardOf(t, pageSource(t, h, PathCollection), "dhcp_lease")
+
+	for _, implementation := range []struct {
+		key   string
+		label messageKey
+		want  config.Selection
+	}{
+		{"dnsmasq", msgProviderDnsmasqDHCP, config.SelectionAuto},
+		{"isc", msgProviderISC, config.SelectionAuto},
+		{"kea", msgProviderKea, config.SelectionOn},
+	} {
+		id := fieldSelectionPrefix + implementation.key + "_dhcp_lease"
+		if !strings.Contains(card, `<label for="`+id+`">`+catalogueText(t, implementation.label)+"</label>") {
+			t.Errorf("the selection of %s is not labelled with its name", implementation.key)
+		}
+		if got := selectedIn(t, card, id); got != string(implementation.want) {
+			t.Errorf("the selection of %s shows %q, want %q", implementation.key, got, implementation.want)
+		}
+	}
+	if strings.Contains(card, "provider.dns_lookup") || strings.Contains(card, `name="selection_unbound"`) {
+		t.Error("the lease card offers an implementation of another kind")
+	}
+}
+
+// TestASavedSelectionIsStoredAndAppliedAtOnce: a save stores each selection sent and
+// hands the kind to the running collector; a save that sends none leaves them as they
+// are.
+func TestASavedSelectionIsStoredAndAppliedAtOnce(t *testing.T) {
+	h := signedInHarness(t)
+	form := pairForm("dhcp_lease", "500", "300")
+	form.Set("selection_kea", "on")
+	form.Set("selection_isc", "off")
+	form.Set("selection_dnsmasq", "auto")
+	status, page := statusAndBody(t, h.post(PathCollection, form))
+	if status != http.StatusOK {
+		t.Fatalf("saving a selection answered %d", status)
+	}
+	for key, want := range map[string]string{"kea": "on", "isc": "off", "dnsmasq": "auto"} {
+		if got := h.setting(config.KeySourceSelection("dhcp_lease", key)); got != want {
+			t.Errorf("the stored selection of %s is %q, want %q", key, got, want)
+		}
+	}
+	if got := h.collector.reselectedKinds(); len(got) != 1 || got[0] != "dhcp_lease" {
+		t.Errorf("the running collector applied the selections of %v, want [dhcp_lease]", got)
+	}
+	card := cardOf(t, page, "dhcp_lease")
+	if selectedIn(t, card, "selection_kea_dhcp_lease") != "on" ||
+		!stateShown(t, card, msgLabelSelection, msgSelectionOn) {
+		t.Error("the saved card does not show the selection now in force")
+	}
+
+	discard(t, h.post(PathCollection, pairForm("dhcp_lease", "500", "300")))
+	if got := h.setting(config.KeySourceSelection("dhcp_lease", "kea")); got != "on" {
+		t.Errorf("a save that sent no selection changed one to %q", got)
+	}
+}
+
+// TestASelectionThatIsNotOneOfTheThreeIsRefusedAgainstItsField: nothing is stored and
+// nothing applied, and the refusal is drawn against the selection that caused it.
+func TestASelectionThatIsNotOneOfTheThreeIsRefusedAgainstItsField(t *testing.T) {
+	h := signedInHarness(t)
+	form := pairForm("dhcp_lease", "600", "120")
+	form.Set("selection_kea", "maybe")
+	status, page := statusAndBody(t, h.post(PathCollection, form))
+	if status != http.StatusBadRequest {
+		t.Fatalf("a selection that is not one of the three answered %d", status)
+	}
+	card := cardOf(t, page, "dhcp_lease")
+	field := card[strings.Index(card, `<select id="selection_kea_dhcp_lease"`):]
+	field = field[:strings.Index(field, ">")]
+	if !strings.Contains(field, `aria-invalid="true"`) ||
+		!strings.Contains(field, `aria-describedby="selection_kea_refusal_dhcp_lease"`) {
+		t.Error("the refused selection is not marked as the cause of the refusal")
+	}
+	if !strings.Contains(card, catalogueText(t, msgCollectionValueInvalid)) {
+		t.Error("the refusal does not say why")
+	}
+	if _, present, err := h.store.Setting(context.Background(), "page_size_dhcp_lease"); err != nil || present {
+		t.Error("a refused selection let the pair beside it be stored")
+	}
+	if _, present, err := h.store.Setting(context.Background(),
+		config.KeySourceSelection("dhcp_lease", "kea")); err != nil || present {
+		t.Error("a refused selection was stored")
+	}
+	if len(h.collector.reselectedKinds()) != 0 || len(h.collector.received()) != 0 {
+		t.Error("a refused submission reached the running collector")
+	}
+}

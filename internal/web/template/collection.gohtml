@@ -42,6 +42,11 @@
   deliberate act; where the card's outcome state carries no pair the control is
   disabled, because a control that is offered changes what the product does.
 
+  EACH IMPLEMENTATION HAS ITS OWN SELECTION, in its kind's card and saved with it:
+  left to the probe round, collected whatever the probe found, or declined. The
+  three choices are named by the states they put the implementation in, the same
+  sentences the in-force group reports, so the choice and its effect read alike.
+
   THE FIELDS STAY TYPEABLE IN EVERY STATE, including a kind whose source is
   unavailable: an operator sizing for a source they are about to switch on is the
   ordinary case. A kind whose page opnview cannot set says so WHERE THE SECOND FIELD
@@ -97,6 +102,31 @@
 <dd>{{if .StateKey}}{{t .StateKey}}{{else}}<span class="figure">{{.Value}}</span>{{end}}</dd>
 {{- end}}
 </dl>
+
+<h3>{{t "collection.group.implementations"}}</h3>
+{{- $card := .}}
+{{- range .Implementations}}
+{{- if eq $card.InvalidField .Field}}
+<div class="field invalid">
+<label for="{{.Field}}_{{$card.Kind}}">{{t .LabelKey}}</label>
+<select id="{{.Field}}_{{$card.Kind}}" name="{{.Field}}" aria-invalid="true" aria-describedby="{{.Field}}_refusal_{{$card.Kind}}" autofocus>
+{{- range .Options}}
+<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{t .LabelKey}}</option>
+{{- end}}
+</select>
+<p class="field-refusal" id="{{.Field}}_refusal_{{$card.Kind}}">{{t $card.RefusalKey}}</p>
+</div>
+{{- else}}
+<div class="field">
+<label for="{{.Field}}_{{$card.Kind}}">{{t .LabelKey}}</label>
+<select id="{{.Field}}_{{$card.Kind}}" name="{{.Field}}">
+{{- range .Options}}
+<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{t .LabelKey}}</option>
+{{- end}}
+</select>
+</div>
+{{- end}}
+{{- end}}
 
 {{- if .PageIsAdjustable}}
 {{- if eq .InvalidField .FieldPageSize}}

@@ -61,9 +61,11 @@ the new pair takes effect without a restart. Measuring contacts nothing.
 
 Which implementation of a source is read is the operator's decision first and
 the probe round's only where the operator left it: each one is `auto` by
-default, and a `setting` row can turn it `on` or `off` (see `provider` in
-[docs/data-model.md](docs/data-model.md)). The collection surface shows that
-selection; no surface sets it yet.
+default, and can be turned `on` or `off` in its kind's card on the collection
+surface (see `provider` in [docs/data-model.md](docs/data-model.md)). A saved
+selection is applied at once from what the last probe round found, without
+contacting the firewall; before the first round of a start, it waits for that
+round.
 
 ## Data sources
 

@@ -107,6 +107,27 @@ type gapRow struct {
 	MissedSeconds string
 }
 
+// implementationRow is one implementation of a card's kind, with the operator's
+// selection of it as the form shows it: stored, or typed into a refused form.
+type implementationRow struct {
+	// LabelKey names the implementation.
+	LabelKey messageKey
+	// Field is the form field carrying its selection.
+	Field string
+	// Options are the three selections, one of them selected.
+	Options []selectionOption
+}
+
+// selectionOption is one of the three selections an implementation can have.
+type selectionOption struct {
+	// Value is auto, on or off, as config.Selection spells it.
+	Value string
+	// LabelKey is the state the selection puts the implementation in.
+	LabelKey messageKey
+	// Selected marks the one in force, or typed.
+	Selected bool
+}
+
 // collectionCard is one source kind on the collection surface.
 type collectionCard struct {
 	// Kind is the registry kind, which names the card's fields and anchors.
@@ -127,6 +148,9 @@ type collectionCard struct {
 	Suggestion  []figureRow
 	// Gaps are the gap reasons of the measured window, one row each.
 	Gaps []gapRow
+	// Implementations are the kind's implementations in the provider table, each
+	// with the operator's selection, in registry order.
+	Implementations []implementationRow
 	// SuggestionStateKey is the outcome of the derivation, as a state: one of the
 	// sizing outcomes, each its own sentence.
 	SuggestionStateKey messageKey

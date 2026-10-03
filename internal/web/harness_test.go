@@ -107,6 +107,7 @@ type harness struct {
 type recordingCollector struct {
 	mutex      sync.Mutex
 	configured []config.Config
+	reselected []string
 }
 
 // Configure records one configuration.
@@ -114,6 +115,21 @@ func (c *recordingCollector) Configure(settings config.Config) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	c.configured = append(c.configured, settings)
+}
+
+// Reselect records the kind whose selection was applied.
+func (c *recordingCollector) Reselect(_ context.Context, kind string) error {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.reselected = append(c.reselected, kind)
+	return nil
+}
+
+// reselectedKinds returns the kinds whose selection was applied, in order.
+func (c *recordingCollector) reselectedKinds() []string {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return append([]string(nil), c.reselected...)
 }
 
 // received returns the configurations handed over so far.

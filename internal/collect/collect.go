@@ -185,6 +185,10 @@ type Collector struct {
 
 	mutex     sync.RWMutex
 	discovery Discovery
+	// probed is what the last probe round found for each kind, kept so that a
+	// selection the operator saves can be applied at once, without probing the
+	// firewall again; see Reselect. The mutex above guards it.
+	probed map[string][]probedSource
 }
 
 // New returns a collector. The client is the only thing in opnview that builds an
@@ -201,6 +205,7 @@ func New(client *opnsense.Client, database *store.Store, clock Clock) *Collector
 		clock:     clock,
 		pageSizes: config.DefaultPageSizes(),
 		discovery: newDiscovery(),
+		probed:    map[string][]probedSource{},
 	}
 }
 

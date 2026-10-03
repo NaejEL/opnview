@@ -101,6 +101,23 @@ const (
 	msgGapResolverWindow      messageKey = "gap_reason.resolver_window_not_honoured"
 )
 
+// The implementations of the paged kinds, named on the collection surface where the
+// operator selects them. The key is composed from the registry row, provider.<kind>.
+// <provider_key>, so the same product under two kinds is two entries; a provider
+// added to the registry adds its entry here and to each catalogue.
+const (
+	msgProviderPf             messageKey = "provider.firewall_log.pf"
+	msgProviderSuricata       messageKey = "provider.security_event.suricata"
+	msgProviderKea            messageKey = "provider.dhcp_lease.kea"
+	msgProviderDnsmasqDHCP    messageKey = "provider.dhcp_lease.dnsmasq"
+	msgProviderISC            messageKey = "provider.dhcp_lease.isc"
+	msgProviderUnbound        messageKey = "provider.dns_lookup.unbound"
+	msgProviderDnsmasqLookups messageKey = "provider.dns_lookup.dnsmasq"
+
+	// msgGroupImplementations heads the selections in a card.
+	msgGroupImplementations messageKey = "collection.group.implementations"
+)
+
 // The states the collection surface reports in place of a figure.
 //
 // EACH IS A SEPARATE SENTENCE BECAUSE EACH IS A SEPARATE FACT. A source the operator
@@ -235,6 +252,9 @@ func handlerMessageKeys() []messageKey {
 		msgKindFirewallLog, msgKindSecurityEvent, msgKindDHCPLease, msgKindDNSLookup,
 
 		msgGapDigestOutsideWindow, msgGapEveRotationLost, msgGapResolverWindow,
+
+		msgProviderPf, msgProviderSuricata, msgProviderKea, msgProviderDnsmasqDHCP,
+		msgProviderISC, msgProviderUnbound, msgProviderDnsmasqLookups, msgGroupImplementations,
 
 		msgSourceReachable, msgSourceUnavailable, msgSourceDisabled,
 		msgSelectionAuto, msgSelectionOn, msgSelectionOff,

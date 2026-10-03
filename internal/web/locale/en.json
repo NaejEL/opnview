@@ -66,6 +66,7 @@
     "collection.group.in_force": "In force",
     "collection.group.measurement": "Measured",
     "collection.group.suggestion": "Suggested",
+    "collection.group.implementations": "Implementations",
 
     "collection.kind.firewall_log": "Filter log",
     "collection.kind.security_event": "Security events",
@@ -97,6 +98,14 @@
     "gap_reason.digest_outside_returned_window": "Page began after the newest record stored",
     "gap_reason.eve_rotation_lost": "A watermarked event file was rotated away",
     "gap_reason.resolver_window_not_honoured": "The resolver ignored the window asked for",
+
+    "provider.firewall_log.pf": "pf filter log",
+    "provider.security_event.suricata": "Suricata",
+    "provider.dhcp_lease.kea": "Kea DHCP",
+    "provider.dhcp_lease.dnsmasq": "Dnsmasq DHCP",
+    "provider.dhcp_lease.isc": "ISC dhcpd",
+    "provider.dns_lookup.unbound": "Unbound",
+    "provider.dns_lookup.dnsmasq": "Dnsmasq resolver",
 
     "state.sizing.source_reachable": "Reachable",
     "state.sizing.source_unavailable": "Unavailable",

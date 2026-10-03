@@ -157,10 +157,12 @@ type Options struct {
 }
 
 // Reconfigurable is what the collection surface needs of a running collector: to be
-// told the configuration that is now in force. It is an interface so that this
-// package does not import the collectors, and a test can count what reached it.
+// told the configuration that is now in force, and to apply the operator's selection
+// of one kind's implementations at once. It is an interface so that this package
+// does not import the collectors, and a test can count what reached it.
 type Reconfigurable interface {
 	Configure(settings config.Config)
+	Reselect(ctx context.Context, kind string) error
 }
 
 // Server is the HTTP surface. One per process: it holds the routes, the renderer

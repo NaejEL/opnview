@@ -424,7 +424,15 @@ neither. The selection is a decision, not a claim about the firewall:
 and `collection_gap` rows then explain. A selection row that cannot be parsed is
 reported on the console by the probe round; in the compiled build that round
 then decides as it does for `auto`, while the collection surface answers with
-an internal error until the row is corrected. A selection is a `setting` row
+an internal error until the row is corrected.
+
+**The operator sets the selection on the collection surface**, one choice per
+implementation in its kind's card, saved with the card. The save writes the
+rows and applies them at once: the collector keeps what the last probe round
+found for each kind and decides again from that and the new selections, without
+contacting the firewall and without writing an availability row, since nothing
+was checked. Before the first probe round of a start there is nothing to decide
+from, and that round applies the selection as every round does. A selection is a `setting` row
 rather than a column here because `setting` is where configuration lives and a
 column would need a migration on a database that holds real data.
 

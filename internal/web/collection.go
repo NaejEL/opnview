@@ -39,6 +39,9 @@ const (
 	// into the fields, and nothing is stored. Only its presence is read, never its
 	// value.
 	fieldFill = "fill_suggestion"
+	// fieldSelectionPrefix, followed by a provider key, carries the operator's
+	// selection of one implementation of the card's kind.
+	fieldSelectionPrefix = "selection_"
 )
 
 // handleCollectionForm draws the collection surface. Drawing it measures each
@@ -69,6 +72,9 @@ type typedPair struct {
 	pageSize string
 	// intervalSecs is what the interval field shows, as text, in seconds.
 	intervalSecs string
+	// selections is what each implementation's selection field shows, by provider
+	// key; an implementation absent from it shows its stored selection.
+	selections map[string]string
 }
 
 // cardFeedback is what one card has to say after a submission: a save or a fill
@@ -114,8 +120,22 @@ func (s *Server) handleCollectionSubmit(writer http.ResponseWriter, request *htt
 		kind:         kind.Kind,
 		pageSize:     request.PostFormValue(fieldPageSize),
 		intervalSecs: request.PostFormValue(fieldInterval),
+		selections:   map[string]string{},
 	}
-	// Both figures are checked before either is stored.
+	// The selection of each implementation of the kind. A field the form did not
+	// carry leaves the stored selection as it is.
+	providers, err := s.store.ProvidersOfKind(ctx, kind.Kind)
+	if err != nil {
+		s.failInternal(writer, request, err)
+		return
+	}
+	for _, provider := range providers {
+		if values, sent := request.PostForm[fieldSelectionPrefix+provider.ProviderKey]; sent && len(values) > 0 {
+			typed.selections[provider.ProviderKey] = values[0]
+		}
+	}
+
+	// Every figure and every selection is checked before anything is stored.
 	seconds, refusal := typedIntervalSeconds(typed.intervalSecs)
 	if refusal != "" {
 		s.renderCollectionRefusal(writer, request, refusal, fieldInterval, &typed)
@@ -128,6 +148,20 @@ func (s *Server) handleCollectionSubmit(writer http.ResponseWriter, request *htt
 			s.renderCollectionRefusal(writer, request, refusal, fieldPageSize, &typed)
 			return
 		}
+	}
+	selections := make(map[string]config.Selection, len(typed.selections))
+	for _, provider := range providers {
+		value, sent := typed.selections[provider.ProviderKey]
+		if !sent {
+			continue
+		}
+		selection, err := config.ParseSelection(value)
+		if err != nil {
+			s.renderCollectionRefusal(writer, request, msgCollectionValueInvalid,
+				fieldSelectionPrefix+provider.ProviderKey, &typed)
+			return
+		}
+		selections[provider.ProviderKey] = selection
 	}
 
 	// A page size above the firewall's ceiling is STORED and reported as above it:
@@ -146,6 +180,17 @@ func (s *Server) handleCollectionSubmit(writer http.ResponseWriter, request *htt
 		s.failInternal(writer, request, err)
 		return
 	}
+	for _, provider := range providers {
+		selection, chosen := selections[provider.ProviderKey]
+		if !chosen {
+			continue
+		}
+		if err := s.store.SetSetting(ctx, config.KeySourceSelection(kind.Kind, provider.ProviderKey),
+			string(selection), now); err != nil {
+			s.failInternal(writer, request, err)
+			return
+		}
+	}
 
 	// THE RUNNING SERVICE, through the same path start-up uses. This is what makes
 	// a saved pair reach the scheduler and the collectors without a restart. Were
@@ -154,6 +199,15 @@ func (s *Server) handleCollectionSubmit(writer http.ResponseWriter, request *htt
 	if err := s.applyConfiguration(ctx); err != nil {
 		s.failInternal(writer, request, err)
 		return
+	}
+	// The selections are applied at once, from what the last probe round found,
+	// without contacting the firewall: a source turned on or off is read, or stops
+	// being read, from the next pass.
+	if s.collector != nil {
+		if err := s.collector.Reselect(ctx, kind.Kind); err != nil {
+			s.failInternal(writer, request, err)
+			return
+		}
 	}
 
 	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageCollection))
@@ -572,6 +626,30 @@ func (s *Server) buildCollectionCard(ctx context.Context, kind sizing.Kind, type
 		})
 	}
 
+	// THE OPERATOR'S SELECTION of each implementation, as stored, or as typed into
+	// a refused form for this card.
+	providers, err := s.store.ProvidersOfKind(ctx, kind.Kind)
+	if err != nil {
+		return collectionCard{}, err
+	}
+	for _, provider := range providers {
+		selection, err := config.LoadSourceSelection(ctx, s.store, kind.Kind, provider.ProviderKey)
+		if err != nil {
+			return collectionCard{}, err
+		}
+		shown := string(selection)
+		if typed != nil && typed.kind == kind.Kind {
+			if value, present := typed.selections[provider.ProviderKey]; present {
+				shown = value
+			}
+		}
+		card.Implementations = append(card.Implementations, implementationRow{
+			LabelKey: messageKey("provider." + kind.Kind + "." + provider.ProviderKey),
+			Field:    fieldSelectionPrefix + provider.ProviderKey,
+			Options:  selectionOptions(shown),
+		})
+	}
+
 	// THE SUGGESTION, under its own heading. The pair is shown only when there is
 	// one; the state is shown always, so an outcome that carries no pair says why.
 	//
@@ -682,4 +760,17 @@ func instant(epoch int64) string {
 // wholeSeconds is a duration as a whole number of seconds.
 func wholeSeconds(d time.Duration) string {
 	return strconv.FormatInt(int64(d/time.Second), 10)
+}
+
+// selectionOptions are the three selections an implementation can have, with the one
+// shown selected. The labels are the states each selection puts it in.
+func selectionOptions(shown string) []selectionOption {
+	return []selectionOption{
+		{Value: string(config.SelectionAuto), LabelKey: msgSelectionAuto,
+			Selected: shown == string(config.SelectionAuto)},
+		{Value: string(config.SelectionOn), LabelKey: msgSelectionOn,
+			Selected: shown == string(config.SelectionOn)},
+		{Value: string(config.SelectionOff), LabelKey: msgSelectionOff,
+			Selected: shown == string(config.SelectionOff)},
+	}
 }

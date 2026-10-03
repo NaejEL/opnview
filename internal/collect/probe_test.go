@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -730,5 +731,102 @@ func TestTurningOneOnBreaksTheTieThatUsedToReadNeither(t *testing.T) {
 		if detail := harness.detailOf(t, KindDNSLookup, provider); strings.Contains(detail, "reads neither") {
 			t.Errorf("%s records the ambiguity although it was settled: %q", provider, detail)
 		}
+	}
+}
+
+// countingProbeable is reachableAndSeparable, counting how often its probe runs.
+func countingProbeable(key string, runs *int) probeable {
+	inner := reachableAndSeparable(key)
+	return probeable{providerKey: key, run: func(ctx context.Context, host session) (probeResult, error) {
+		*runs++
+		return inner.run(ctx, host)
+	}}
+}
+
+// TestASavedSelectionIsAppliedWithoutProbingTheFirewallAgain: the collection surface saves a
+// selection between two probe rounds, and it is applied at once, from what the last round
+// found, with no probe run and no availability row rewritten.
+func TestASavedSelectionIsAppliedWithoutProbingTheFirewallAgain(t *testing.T) {
+	harness := newProbeHarness(t)
+	ctx := context.Background()
+	runs := 0
+	candidates := []probeable{
+		countingProbeable(ProviderDnsmasq, &runs), countingProbeable(ProviderUnbound, &runs),
+	}
+	if err := harness.collector.resolveKind(ctx, KindDNSLookup, candidates); err != nil {
+		t.Fatalf("resolving the kind: %v", err)
+	}
+	if key := harness.activeKeyOf(t, KindDNSLookup); key != "" {
+		t.Fatalf("two resolvers the firewall does not separate activated %q", key)
+	}
+	_, _, checkedBefore := harness.availabilityOf(t, KindDNSLookup, ProviderUnbound)
+	runsBefore := runs
+
+	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
+	if err := harness.collector.Reselect(ctx, KindDNSLookup); err != nil {
+		t.Fatalf("applying the selection: %v", err)
+	}
+	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderUnbound {
+		t.Errorf("the active resolver is %q after turning Unbound on, want it", key)
+	}
+
+	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOff))
+	harness.selectSource(t, KindDNSLookup, ProviderDnsmasq, string(config.SelectionOn))
+	if err := harness.collector.Reselect(ctx, KindDNSLookup); err != nil {
+		t.Fatalf("applying the second selection: %v", err)
+	}
+	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderDnsmasq {
+		t.Errorf("the active resolver is %q after switching, want dnsmasq", key)
+	}
+
+	if runs != runsBefore {
+		t.Errorf("applying a selection ran %d probes; it must run none", runs-runsBefore)
+	}
+	harness.clock.advance(time.Hour)
+	if err := harness.collector.Reselect(ctx, KindDNSLookup); err != nil {
+		t.Fatalf("applying the selection again: %v", err)
+	}
+	if _, _, checked := harness.availabilityOf(t, KindDNSLookup, ProviderUnbound); checked != checkedBefore {
+		t.Error("applying a selection rewrote an availability row, which records a check that did not happen")
+	}
+}
+
+// TestASelectionSavedBeforeAnyProbeRoundWaitsForTheFirst: with nothing probed yet there is
+// nothing to decide from, so nothing is activated until the first round, which applies it.
+func TestASelectionSavedBeforeAnyProbeRoundWaitsForTheFirst(t *testing.T) {
+	harness := newProbeHarness(t)
+	ctx := context.Background()
+	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
+	if err := harness.collector.Reselect(ctx, KindDNSLookup); err != nil {
+		t.Fatalf("applying a selection before any round: %v", err)
+	}
+	if key := harness.activeKeyOf(t, KindDNSLookup); key != "" {
+		t.Errorf("a selection activated %q with nothing probed", key)
+	}
+	if err := harness.collector.resolveKind(ctx, KindDNSLookup,
+		[]probeable{reachableAndSeparable(ProviderDnsmasq), reachableAndSeparable(ProviderUnbound)}); err != nil {
+		t.Fatalf("resolving the kind: %v", err)
+	}
+	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderUnbound {
+		t.Errorf("the first round activated %q, want the resolver turned on", key)
+	}
+}
+
+// TestASelectionThatCannotBeReadLeavesTheActiveSourcesAsTheyWere: applying a selection that
+// cannot be read is an error, and changes nothing.
+func TestASelectionThatCannotBeReadLeavesTheActiveSourcesAsTheyWere(t *testing.T) {
+	harness := newProbeHarness(t)
+	ctx := context.Background()
+	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
+	if err := harness.collector.resolveKind(ctx, KindDNSLookup,
+		[]probeable{reachableAndSeparable(ProviderDnsmasq), reachableAndSeparable(ProviderUnbound)}); err != nil {
+		t.Fatalf("resolving the kind: %v", err)
+	}
+	harness.selectSource(t, KindDNSLookup, ProviderUnbound, "maybe")
+	if err := harness.collector.Reselect(ctx, KindDNSLookup); err == nil {
+		t.Error("a selection that cannot be read was applied without an error")
+	}
+	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderUnbound {
+		t.Errorf("the active resolver is %q after a failed application, want it unchanged", key)
 	}
 }
