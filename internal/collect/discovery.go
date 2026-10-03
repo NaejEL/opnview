@@ -35,6 +35,9 @@ func (c *Collector) RefreshDiscovery(ctx context.Context) error {
 	if err := c.discoverRules(ctx, &snapshot); err != nil {
 		failures = append(failures, err)
 	}
+	if err := c.discoverClock(ctx); err != nil {
+		failures = append(failures, err)
+	}
 
 	// The snapshot is published even when something failed, because the part that
 	// answered is better than the part that is stale.
@@ -258,4 +261,33 @@ func normaliseRuleDirection(raw string) *string {
 	default:
 		return nil
 	}
+}
+
+// discoverClock measures the firewall's offset from UTC from its own clock, survey
+// gap 7, and puts it in force for every timestamp read after it. A failure leaves
+// the last measurement in force rather than falling back to zero: a zone does not
+// change because one request failed.
+func (c *Collector) discoverClock(ctx context.Context) error {
+	readAt := c.clock.Now()
+	body, ok, err := c.readObject(ctx, opnsense.SystemTime)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("collect: %s did not answer, so the firewall's offset from UTC "+
+			"stays at %ds", opnsense.SystemTime.Path, c.FirewallOffsetSeconds())
+	}
+	datetime, present := decode.String(body, "datetime")
+	if !present {
+		return fmt.Errorf("collect: %s carries no datetime, so the firewall's offset from UTC "+
+			"stays at %ds", opnsense.SystemTime.Path, c.FirewallOffsetSeconds())
+	}
+	offset, err := decode.FirewallOffsetSeconds(datetime, readAt)
+	if err != nil {
+		return err
+	}
+	c.mutex.Lock()
+	c.firewallOffsetSeconds, c.offsetMeasured = offset, true
+	c.mutex.Unlock()
+	return nil
 }

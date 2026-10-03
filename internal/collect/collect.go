@@ -171,10 +171,13 @@ type Collector struct {
 	store  *store.Store
 	clock  Clock
 
-	// firewallOffsetSeconds is the recorded assumption of survey gap 7: the
-	// firewall's offset from UTC, needed by the one timestamp shape that carries
-	// no zone. It is zero until a live firewall says otherwise.
+	// firewallOffsetSeconds is survey gap 7: the firewall's offset from UTC, needed
+	// by the timestamps that carry no zone. It is zero until discovery has measured
+	// it from the firewall's own clock, and measured again on every refresh; the
+	// mutex below guards it.
 	firewallOffsetSeconds int
+	// offsetMeasured says whether it has been measured at least once.
+	offsetMeasured bool
 
 	// pageSizes is how many records each paged read asks for. It is the operator's
 	// setting, held here rather than read from the database on every pass, and
@@ -267,9 +270,33 @@ func (c *Collector) call(ctx context.Context, endpoint opnsense.Endpoint,
 }
 
 // normaliser returns the timestamp normaliser for this instant, carrying the
-// reference time the year-less filter-log shape needs.
-func (c *Collector) normaliser() decode.Normaliser {
-	return decode.Normaliser{Reference: c.clock.Now(), OffsetSeconds: c.firewallOffsetSeconds}
+// reference time the year-less filter-log shape needs and the firewall's offset
+// from UTC.
+//
+// NO ZONE-LESS TIMESTAMP IS READ BEFORE THE OFFSET IS KNOWN. At start the collectors
+// and discovery run side by side, so a collector that gets here first measures the
+// offset itself; if that fails, its pass fails and is retried, rather than storing
+// records at a guessed time that nothing would later correct.
+func (c *Collector) normaliser(ctx context.Context) (decode.Normaliser, error) {
+	c.mutex.RLock()
+	offset, measured := c.firewallOffsetSeconds, c.offsetMeasured
+	c.mutex.RUnlock()
+	if !measured {
+		if err := c.discoverClock(ctx); err != nil {
+			return decode.Normaliser{}, fmt.Errorf("collect: the firewall's offset from UTC "+
+				"is not known yet, so no zone-less timestamp is read: %w", err)
+		}
+		offset = c.FirewallOffsetSeconds()
+	}
+	return decode.Normaliser{Reference: c.clock.Now(), OffsetSeconds: offset}, nil
+}
+
+// FirewallOffsetSeconds is the firewall's offset from UTC as discovery last measured
+// it, and zero before it has.
+func (c *Collector) FirewallOffsetSeconds() int {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.firewallOffsetSeconds
 }
 
 // now is the current instant as the UTC epoch every column stores.

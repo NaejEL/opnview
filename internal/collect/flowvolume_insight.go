@@ -368,13 +368,24 @@ func sampleFirewallTelemetry(ctx context.Context, host session, snapshot Discove
 	} else if !ok {
 		missing = append(missing, "uptime (the endpoint did not answer)")
 	} else {
+		// The live answer is text, "17 days, 23:24:10" and "0.07, 0.14, 0.15", as the
+		// survey's systemTime table records; a number under one of the keys is read too.
 		if value, _, present := decode.FirstFloat(body, unverifiedUptimeKeys...); present {
 			add("", store.MeasureUptimeSeconds, store.UnitSecond, value)
+		} else if text, present := decode.String(body, "uptime"); present && uptimeReadable(text) {
+			seconds, _ := decode.UptimeSeconds(text)
+			add("", store.MeasureUptimeSeconds, store.UnitSecond, float64(seconds))
 		} else {
 			missing = append(missing, "uptime (the endpoint answered with no figure this code could read)")
 		}
 		if value, _, present := decode.FirstFloat(body, unverifiedLoadKeys...); present {
 			add("", store.MeasureLoadAverage, store.UnitDimensionless, value)
+		} else if text, present := decode.String(body, "loadavg"); present {
+			if value, err := decode.FirstLoadAverage(text); err == nil {
+				add("", store.MeasureLoadAverage, store.UnitDimensionless, value)
+			} else {
+				missing = append(missing, "load average (the endpoint answered with no figure this code could read)")
+			}
 		} else {
 			missing = append(missing, "load average (the endpoint answered with no figure this code could read)")
 		}
@@ -538,4 +549,10 @@ func firstString(object decode.Object, keys ...string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// uptimeReadable says whether an uptime text is one decode reads.
+func uptimeReadable(text string) bool {
+	_, err := decode.UptimeSeconds(text)
+	return err == nil
 }

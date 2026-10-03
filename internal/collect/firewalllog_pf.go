@@ -107,7 +107,10 @@ func (pfFilterLog) records(ctx context.Context, host session, pageSize int) ([]l
 		return nil, result, nil
 	}
 
-	normaliser := host.normaliser()
+	normaliser, err := host.normaliser(ctx)
+	if err != nil {
+		return nil, result, err
+	}
 	records := make([]logRecord, 0, len(rows))
 	for _, row := range rows {
 		digest, present := decode.String(row, "__digest__")

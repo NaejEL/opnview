@@ -27,6 +27,7 @@ func TestDiscoveryAndAllFiveCollectorsReachTheFirewallAndNothingElse(t *testing.
 	// rather than returning early on an unavailable provider.
 	fake := harness.fake
 	fake.answerFixture(opnsense.InterfacesInfo, "interfaces_info.json")
+	fake.answerFixture(opnsense.SystemTime, "system_time.json")
 	fake.answerFixture(opnsense.InterfaceNames, "get_interface_names.json")
 	fake.answerFixture(opnsense.SearchRule, "search_rule.json")
 	fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")

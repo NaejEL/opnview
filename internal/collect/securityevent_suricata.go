@@ -148,7 +148,10 @@ func (suricataAlerts) alerts(ctx context.Context, host session, pageSize int) (
 		return nil, result, nil
 	}
 
-	normaliser := host.normaliser()
+	normaliser, err := host.normaliser(ctx)
+	if err != nil {
+		return nil, result, err
+	}
 	records := make([]alertRecord, 0, len(rows))
 	for _, row := range rows {
 		fileID, present := decode.String(row, "fileid")

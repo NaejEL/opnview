@@ -2,6 +2,7 @@ package decode
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
@@ -21,10 +22,12 @@ import (
 // recorded rather than hidden: survey gap 7 says to normalise it against the
 // firewall's current time, read in the same API session. That is what Reference
 // is. The residual assumption is the firewall's UTC offset, which the year-less
-// form does not carry either; OffsetSeconds is where it goes, it defaults to
-// zero, and confirming it against a live firewall is on the list for the end of
-// 4B. Nothing here ever reads the HOST's zone, which is why the tests pass with
-// TZ set to a non-UTC zone.
+// form does not carry either; OffsetSeconds is where it goes. It is zero until
+// FirewallOffsetSeconds has measured it from the firewall's own clock, which
+// discovery does on every refresh. Read with the offset at zero, a live OPNsense
+// on CEST had every filter-log line stored 7 200 s ahead of UTC. Nothing here
+// ever reads the HOST's zone, which is why the tests pass with TZ set to a
+// non-UTC zone.
 
 // isoLayouts are the ISO shapes the two sources produce. The survey records that
 // the filter log's ISO form comes back with the UTC offset stripped
@@ -157,4 +160,39 @@ func (n Normaliser) NormaliseFilterLogTimestamp(value string) (int64, error) {
 		return 0, fmt.Errorf("decode: %q is neither the ISO nor the year-less filter-log shape", value)
 	}
 	return epoch, nil
+}
+
+// systemTimeLayout is the shape of /api/diagnostics/system/systemTime's `datetime`,
+// measured on a live OPNsense 26.7 on 3 October 2026: "Sat Oct 3 21:25:37 CEST 2026".
+// The zone is an abbreviation, which names no offset a parser can trust, so it is
+// read and ignored: what the value gives is the firewall's WALL CLOCK.
+const systemTimeLayout = "Mon Jan _2 15:04:05 MST 2006"
+
+// offsetGranularity is the step every UTC offset in use is a multiple of. A wall
+// clock read a moment after the reference instant is rounded to it, which absorbs
+// the request's latency and any small clock drift.
+const offsetGranularity = 15 * 60
+
+// maxOffsetSeconds bounds a plausible offset: no zone in use is further from UTC
+// than fourteen hours.
+const maxOffsetSeconds = 14 * 3600
+
+// FirewallOffsetSeconds measures the firewall's offset from UTC, survey gap 7, from
+// its wall clock as systemTime reports it and the UTC instant it was read at: the
+// difference, rounded to the quarter hour. Read on every discovery, it follows a
+// change of the firewall's zone and the change to and from summer time.
+func FirewallOffsetSeconds(datetime string, readAt time.Time) (int, error) {
+	parsed, err := time.Parse(systemTimeLayout, strings.Join(strings.Fields(datetime), " "))
+	if err != nil {
+		return 0, fmt.Errorf("decode: %q is not the systemTime datetime shape: %w", datetime, err)
+	}
+	wall := time.Date(parsed.Year(), parsed.Month(), parsed.Day(),
+		parsed.Hour(), parsed.Minute(), parsed.Second(), 0, time.UTC)
+	difference := wall.Sub(readAt.UTC()).Seconds()
+	rounded := int(math.Round(difference/offsetGranularity)) * offsetGranularity
+	if rounded > maxOffsetSeconds || rounded < -maxOffsetSeconds {
+		return 0, fmt.Errorf("decode: the firewall's clock is %ds from UTC, which no zone is; "+
+			"its clock is wrong rather than its zone", rounded)
+	}
+	return rounded, nil
 }

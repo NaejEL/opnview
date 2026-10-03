@@ -245,6 +245,15 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 		t.Fatalf("generating a setup token: %v", err)
 	}
 	clock := newTestClock()
+	// The firewall's clock, from which discovery measures its offset from UTC: a
+	// firewall on UTC, in the shape the survey records. It is the REAL time and not
+	// the test clock's, because the only collectors these tests run are on the system
+	// clock; the quarter-hour rounding absorbs the seconds a test takes.
+	fake.perPath[opnsense.SystemTime.Path] = mustJSON(t, map[string]string{
+		"datetime": time.Now().UTC().Format("Mon Jan _2 15:04:05 UTC 2006"),
+		"uptime":   "1 day, 00:00:00",
+		"loadavg":  "0.10, 0.10, 0.10",
+	})
 
 	// The live holder is primed exactly as cmd/opnview primes it, so a restart test
 	// exercises the same path the product takes.

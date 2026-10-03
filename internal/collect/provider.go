@@ -118,8 +118,9 @@ type session interface {
 
 	// normaliser returns the timestamp normaliser for this instant. It carries the
 	// reference time the one year-less timestamp shape needs, which an implementation
-	// cannot compose for itself without reading a clock.
-	normaliser() decode.Normaliser
+	// cannot compose for itself without reading a clock, and the firewall's offset
+	// from UTC, which it measures first if nothing has yet.
+	normaliser(ctx context.Context) (decode.Normaliser, error)
 
 	// now is the current instant as the UTC epoch every column stores.
 	now() int64

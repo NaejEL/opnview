@@ -666,6 +666,23 @@ verbatim against the endpoint registry `opnview` ships; the probes and their
 results are unchanged. **The gap is in the schema, which has no table for a
 sampled gauge, not in the API.**
 
+**`systemTime`, read on a live OPNsense 26.7 on 3 October 2026.** The answer is
+one object of five fields, and none of them is a number:
+
+| field | as it came back | what it is |
+|---|---|---|
+| `uptime` | `"17 days, 23:24:10"` | text: days, then hours, minutes and seconds |
+| `datetime` | `"Sat Oct 3 21:25:37 CEST 2026"` | the firewall's **wall clock**, with a zone **abbreviation** |
+| `boottime` | `"Tue Sep 15 22:01:27 CEST 2026"` | same shape |
+| `config` | `"Thu Oct 1 23:30:53 CEST 2026"` | same shape: when the configuration was last saved |
+| `loadavg` | `"0.07, 0.14, 0.15"` | text: the 1-, 5- and 15-minute averages |
+
+`datetime` is what closes gap 7: read beside the UTC instant of the request, it
+gives the firewall's offset from UTC. The abbreviation names no offset a parser
+can trust, so the offset is the difference between the wall clock and the UTC
+instant, rounded to the quarter hour. That same firewall, read with the offset
+at zero, had every filter-log line stored 7 200 s ahead of UTC.
+
 ### Suricata, on that firewall
 
 `enabled: 1`, running on two internal interfaces and not on WAN —

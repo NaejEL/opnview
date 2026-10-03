@@ -414,6 +414,9 @@ func arrangeDiscoverableFirewall(t *testing.T, fake *fakeFirewall, collector *Co
 	fake.answerFixture(opnsense.InterfacesInfo, "interfaces_info.json")
 	fake.answerFixture(opnsense.InterfaceNames, "get_interface_names.json")
 	fake.answerFixture(opnsense.SearchRule, "search_rule.json")
+	// The firewall's clock, from which discovery measures its offset from UTC: the
+	// fixture is a firewall on UTC at the reference instant, so the offset is zero.
+	fake.answerFixture(opnsense.SystemTime, "system_time.json")
 	if err := collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("runtime discovery: %v", err)
 	}

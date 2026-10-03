@@ -316,7 +316,7 @@ func fixtureRecords(t *testing.T, name string) []decode.Object {
 // oldestFixtureInstant returns the oldest normalised instant in the filter-log fixture.
 func oldestFixtureInstant(t *testing.T, harness *probeHarness) int64 {
 	t.Helper()
-	normaliser := harness.collector.normaliser()
+	normaliser := decode.Normaliser{Reference: harness.clock.Now()}
 	oldest := int64(0)
 	for _, record := range fixtureRecords(t, "firewall_log.json") {
 		stamp, present := decode.String(record, "__timestamp__")

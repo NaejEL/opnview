@@ -2,14 +2,17 @@
   "__provenance__": {
     "synthesised_from": "docs/opnsense-api-survey.md",
     "captured_from_a_firewall": false,
-    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
-    "survey_section": "Verified against a live firewall, 2026-09-27",
-    "field_list_from": "uptime and load average. THE SURVEY ESTABLISHES THE ENDPOINT AND NOT ITS FIELD NAMES.",
-    "why_these_values": "An uptime in seconds and one load figure.",
-    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading the systemTime table of docs/opnsense-api-survey.md, which records the shape a live OPNsense 26.7 answered with on 2026-10-03; no response was recorded into this file. The values are the tests' own: datetime is the reference instant, 2026-09-27 00:00:00, written as a firewall on UTC would write it, so the offset the tests measure is zero. If the survey is wrong about a field, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "The telemetry the data model calls gaps G9 and G10 exists",
+    "field_list_from": "uptime, datetime, boottime, config, loadavg, each as text, from the survey's systemTime table",
+    "why_these_values": "A wall clock at the reference instant, so the measured offset is zero; an uptime with days, hours, minutes and seconds; three load averages, of which the first is the reading.",
+    "example_values_are_not_a_network": "Every value below is synthesised for this fixture. Nothing below describes anyone's network or firewall."
   },
   "body": {
-    "uptime": 987654,
-    "loadavg": 0.42
+    "uptime": "11 days, 10:17:36",
+    "datetime": "Sun Sep 27 00:00:00 UTC 2026",
+    "boottime": "Tue Sep 15 13:42:24 UTC 2026",
+    "config": "Sat Sep 26 21:30:00 UTC 2026",
+    "loadavg": "0.42, 0.31, 0.25"
   }
 }
