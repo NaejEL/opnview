@@ -12,6 +12,13 @@
   navigates between canvases and this cycle ships no canvases. The rail arrives
   with them, in step 7.
 
+  WHAT THE BAR DOES CARRY IS A LINK PER SURFACE A SIGNED-IN READER MAY REACH, and
+  that arrived with the second one: a route reachable only by typing its path is a
+  route nobody finds, and ROADMAP.md step 7 refuses a view reachable only through a
+  menu inside a menu. Two links are not yet tabs, and tabs over named canvases are
+  step 7's; the links are what this cycle's two surfaces need in order to be
+  reachable at all.
+
   NO BARE TEXT EXISTS IN THIS FILE OR IN ANY OTHER TEMPLATE. Every text node is a
   catalogue lookup, and a test strips the tags and the actions and fails if
   anything but whitespace is left. That is ROADMAP.md step 7's "no user-visible
@@ -38,6 +45,10 @@
 <header class="top-bar">
 <span class="product">{{t "app.name"}}</span>
 {{- if .SignedIn}}
+<nav class="bar-nav">
+<a href="{{.SettingsPath}}">{{t "settings.title"}}</a>
+<a href="{{.CollectionPath}}">{{t "collection.title"}}</a>
+</nav>
 <form method="post" action="{{.SignOutPath}}" class="bar-action">
 <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
 <button type="submit" class="secondary">{{t "action.sign_out"}}</button>

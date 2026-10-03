@@ -5,7 +5,9 @@
  * angular, dense and high-contrast, the corner radius is 0.25rem, the fonts are
  * system fonts only, and the layout is a fixed top bar above a centred main
  * column. The non-colour tokens are that section's non-colour table; the colour
- * tokens are its light and dark columns, mapped by ROLE rather than by position.
+ * tokens are its light and dark columns, mapped by ROLE rather than by position —
+ * with one value deliberately changed, --input-bg, declared and reasoned where the
+ * card's own plane is defined below.
  * Nothing is paraphrased into a new list: the document is the source and the
  * token names below are the ones the step-3 mockup already uses, so the three
  * surfaces and the canvas share one vocabulary.
@@ -69,13 +71,13 @@
 :root {
   --bg-app: #f8f9fa;
   --bg-raised: #e9ecef;
-  --bg-surface: #ffffff;
+  --bg-surface: #e9ecef;
   --text-primary: #212529;
   --text-secondary: #495057;
   --text-muted: #6c757d;
   --border-color: #ced4da;
   --border-strong: #adb5bd;
-  --input-bg: #ffffff;
+  --input-bg: #f8f9fa;
   --accent: #2c5f8d;
   --accent-hover: #1e4164;
   --accent-soft: rgba(44, 95, 141, 0.25);
@@ -97,7 +99,7 @@
     --text-muted: #8e8e93;
     --border-color: #48484a;
     --border-strong: #636366;
-    --input-bg: #2c2c2e;
+    --input-bg: #1c1c1e;
     --accent: #3a7ca5;
     --accent-hover: #5a9cc8;
     --accent-soft: rgba(58, 124, 165, 0.35);
@@ -113,13 +115,13 @@
 :root[data-theme="industrial-light"] {
   --bg-app: #f8f9fa;
   --bg-raised: #e9ecef;
-  --bg-surface: #ffffff;
+  --bg-surface: #e9ecef;
   --text-primary: #212529;
   --text-secondary: #495057;
   --text-muted: #6c757d;
   --border-color: #ced4da;
   --border-strong: #adb5bd;
-  --input-bg: #ffffff;
+  --input-bg: #f8f9fa;
   --accent: #2c5f8d;
   --accent-hover: #1e4164;
   --accent-soft: rgba(44, 95, 141, 0.25);
@@ -139,7 +141,7 @@
   --text-muted: #8e8e93;
   --border-color: #48484a;
   --border-strong: #636366;
-  --input-bg: #2c2c2e;
+  --input-bg: #1c1c1e;
   --accent: #3a7ca5;
   --accent-hover: #5a9cc8;
   --accent-soft: rgba(58, 124, 165, 0.35);
@@ -196,6 +198,25 @@ body {
   margin: 0;
 }
 
+/* The links in the bar: one per surface a signed-in reader may reach. They sit
+ * beside the product name rather than behind a control, because a surface reachable
+ * only by typing its path is a surface nobody finds. */
+.bar-nav {
+  display: flex;
+  gap: var(--spacing);
+  margin-right: auto;
+  margin-left: var(--spacing-lg);
+}
+
+.bar-nav a {
+  font-weight: var(--font-weight-bold);
+  text-decoration: none;
+}
+
+.bar-nav a:hover {
+  text-decoration: underline;
+}
+
 /* The main column: capped and centred, beneath the bar. */
 .column {
   max-width: var(--column-width);
@@ -218,15 +239,50 @@ body {
  * that was missing. The settings surface wraps its three cards in one <form>, so
  * the form — not the cards — is .column's only flex child: .column's gap applied
  * between the notice and the form and nowhere between the cards. The form has to
- * carry the same column layout as the thing it stands in. */
-.column > form {
+ * carry the same column layout as the thing it stands in.
+ *
+ * EVERY FORM, NOT ONLY A DIRECT CHILD. The first version of this rule was
+ * `.column > form`, which fixed the settings surface and left setup and sign-in
+ * exactly as they were: their form sits INSIDE the card, so it matched nothing and
+ * the fields stayed ungrouped with the button flush against the last input. That
+ * was visible in one glance at a rendered page and in no reading of this file —
+ * which is the second time the same class of defect has been found by looking
+ * rather than by reasoning. */
+.column form {
   display: flex;
   flex-direction: column;
   gap: var(--spacing);
   margin: 0;
 }
 
-/* Angular cards. The radius is the palette's 0.25rem, and it is a chamfer
+/* THE THREE PLANES, AND WHY A CARD HAS ONE OF ITS OWN.
+ *
+ * A card used to take the page's own ground, so its computed background equalled
+ * the body's in both themes and the card was a one-pixel hairline and nothing
+ * else. On a page of four cards of twenty near-identical rows, that hairline was
+ * the only boundary between one kind and the next.
+ *
+ * THE DOCUMENT HAS NO CARD TOKEN, and that is a real gap rather than a mapping
+ * slip: docs/ui-references.md's layout table puts fields on --bg-primary beneath a
+ * bar and a sidebar on --bg-secondary, so nothing there is a panel inset into a
+ * page. What the document DOES show is the pattern — its .sidebar-button row puts
+ * an interactive element on --bg-primary INSIDE a --bg-secondary panel — and that
+ * pattern is what is adopted here, which is what the vocabulary rule asks for when
+ * a reference has the shape but not the word.
+ *
+ * So: the page is --bg-primary's values, a CARD is --bg-secondary's (#e9ecef /
+ * #2c2c2e), and a FIELD is the page's ground again, bordered, inset in the card.
+ * In both themes the three planes are three values, the card is told apart from
+ * the page by its fill as well as its border, and the thing you type into is never
+ * the colour of the card holding it — which is the defect commit 40fbd39 fixed and
+ * which this must not reintroduce.
+ *
+ * THE ONE DECLARED DIVERGENCE: --input-bg carries the document's --bg-primary
+ * values rather than the #ffffff / #2c2c2e its table publishes, because in the dark
+ * column the published --input-bg IS --bg-secondary — the card's own fill — and a
+ * field the colour of its card is exactly what nobody could see.
+ *
+ * Angular cards. The radius is the palette's 0.25rem, and it is a chamfer
  * rather than a curve — which is the point of the language and the one thing
  * Homarr's structure was taken without. */
 .card {
@@ -239,11 +295,76 @@ body {
   gap: var(--spacing);
 }
 
+/* A ROUTE'S OWN NAME, AND A CARD'S. h1 names the route once; h2 names a card and
+ * is what that card's aria-labelledby points at. They are sized apart so the
+ * hierarchy is visible as well as announced. */
 h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: var(--font-weight-bold);
+  line-height: 1.2;
+}
+
+h2 {
   margin: 0;
   font-size: 1.25rem;
   font-weight: var(--font-weight-bold);
   line-height: 1.2;
+}
+
+/* A GROUP HEADING INSIDE A CARD, under the card's own name, and the reason it
+ * exists rather than the figures running together: the page size in force and the page size suggested are two
+ * different facts, and a reader who confused them would read a proposal as a
+ * setting. The heading is the smallest thing that separates them, which is why it
+ * is tracked and small rather than another title competing with the card's own. It
+ * takes --text-secondary and not --text-muted: muted on the light page ground
+ * measures 4.45:1, below the 4.5:1 threshold, and small bold text is not large
+ * text. */
+h3 {
+  margin: 0;
+  font-size: 0.875rem;
+  font-weight: var(--font-weight-bold);
+  line-height: 1.2;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* A MEASURED FIGURE IS THE ONE TEXT ON A PAGE THAT IS NOT A CATALOGUE STRING, so it
+ * is marked as what it is and set in the monospaced stack: a column of counts, rates
+ * and instants is read by comparing one line against the next, and a proportional
+ * font makes that comparison guesswork. The token is the one
+ * docs/ui-references.md's non-colour table already carries. */
+.figure {
+  font-family: var(--font-mono);
+}
+
+/* THE SUGGESTION'S FIGURES ARE NOT COLOURED, and the colour is what was wrong with
+ * them. They were set in --accent, which on the low-light page ground measures
+ * 3.73:1 — under the 4.5:1 threshold at 16px bold, so the figures an operator came
+ * for were the least readable strings on the page while every other value measured
+ * 15.63:1. The accent is also the link and button family, so each of them read as a
+ * link that did nothing. They take the ordinary value colour now; what tells a
+ * suggestion from a setting is its own group, its own heading and its own labels,
+ * every one of which says "suggested". */
+
+/* The per-reason gap breakdown: three dense columns under the measurement, present
+ * only when opnview actually recorded a gap. */
+table.gaps {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+table.gaps th,
+table.gaps td {
+  padding: var(--spacing-sm) var(--spacing) var(--spacing-sm) 0;
+  border-bottom: var(--border-width) solid var(--border-color);
+}
+
+table.gaps th {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-bold);
 }
 
 .field {
@@ -276,19 +397,39 @@ textarea {
   resize: vertical;
 }
 
+/* A VALUE THAT IS COMPARED CHARACTER BY CHARACTER IS MONOSPACED. The certificate
+ * fingerprint is 64 hexadecimal characters whose only use is being checked against
+ * another copy of itself; in a proportional font that comparison is guesswork. The
+ * token is the one docs/ui-references.md's non-colour table already carries. */
+input#certificate_fingerprint {
+  font-family: var(--font-mono);
+}
+
+/* THE FOCUS RING IS NOT THE COLOUR OF THE THING IT IS ON. It used to be --accent,
+ * which is exactly the fill of the primary button: tabbing onto Save drew a ring of
+ * the button's own colour around the button, so the control looked slightly thicker
+ * rather than focused. The ring takes --text-primary, which is the one value on the
+ * page that contrasts with every ground and every control in both themes, and it is
+ * offset far enough to read as a ring rather than as a border. */
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible,
 button:focus-visible,
 a:focus-visible {
-  outline: 0.125rem solid var(--accent);
-  outline-offset: 0.0625rem;
+  outline: 0.125rem solid var(--text-primary);
+  outline-offset: 0.125rem;
 }
 
 .actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--spacing-sm);
+}
+
+/* A control that acts on the field directly above it sits under that field and
+ * not at the foot of the form, where it would read as a second way to submit. */
+.actions.beside-field {
+  justify-content: flex-start;
 }
 
 /* ON A GATE THE ACTION IS THE WIDTH OF THE FORM. There is exactly one thing to do
@@ -337,10 +478,45 @@ button.secondary:hover {
   border-color: var(--accent);
 }
 
-/* The states beside a field: a term and its current value, dense, two columns. */
+/* A CONTROL THAT IS NOT OFFERED HAS TO LOOK LIKE IT. The fill control is drawn
+ * disabled on a card with no pair to fill with, and a disabled control carrying the
+ * colours of an enabled one is a control that is offered to the eye and refused to
+ * the hand. It takes the inactive text colour — which WCAG exempts from the text
+ * threshold precisely because it marks a control that does nothing — the quiet
+ * border, and no hover at all. */
+button:disabled {
+  color: var(--text-muted);
+  background-color: transparent;
+  border-color: var(--border-color);
+  cursor: default;
+}
+
+button:disabled:hover {
+  background-color: transparent;
+  border-color: var(--border-color);
+}
+
+/* The states beside a field: a term and its current value, dense, two columns.
+ *
+ * THE LABEL TRACK IS THE SAME WIDTH IN EVERY BLOCK, and that is the point of a
+ * fixed figure rather than max-content. A card holds three of these lists, and
+ * sized to their own content each put its values in a different place: the value
+ * column stepped 134px right at one heading and 129px back at the next, so reading
+ * one card top to bottom meant re-anchoring the eye twice. One track width, one
+ * column of values.
+ *
+ * AND BOTH TRACKS SHRINK TO NOUGHT RATHER THAN OVERFLOWING. With max-content on
+ * the labels and no minimum on the values, a narrow viewport kept the label track
+ * at its full width and squeezed the values until each one hung past the right edge
+ * of its own card and the timestamps were cut mid-character. minmax(0, …) lets both
+ * tracks give way, and a value that still does not fit wraps instead of leaving the
+ * card.
+ *
+ * A label takes --text-secondary and not --text-muted: muted on the light page
+ * ground measures 4.45:1, which is under the 4.5:1 threshold for text this size. */
 .states {
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: minmax(0, 21rem) minmax(0, 1fr);
   gap: var(--spacing-sm) var(--spacing);
   margin: 0;
   padding-top: var(--spacing-sm);
@@ -348,12 +524,50 @@ button.secondary:hover {
 }
 
 .states dt {
-  color: var(--text-muted);
+  min-width: 0;
+  color: var(--text-secondary);
+  overflow-wrap: break-word;
 }
 
 .states dd {
+  min-width: 0;
   margin: 0;
   font-weight: var(--font-weight-bold);
+  overflow-wrap: break-word;
+}
+
+/* A FIGURE A FIELD CANNOT HOLD IS STILL A FACT ABOUT THAT FIELD, so it sits where
+ * the field would be rather than twenty rows above the form. The row keeps the
+ * field's own shape: the label above, the value under it. */
+.field .label {
+  color: var(--text-secondary);
+}
+
+.field .field-state {
+  font-weight: var(--font-weight-bold);
+}
+
+/* A REFUSAL SITS AGAINST THE FIELD THAT CAUSED IT. The text takes the ordinary
+ * colour — the error colour on either card ground measures under 4.5:1, so it marks
+ * the rule beside the words rather than the words themselves — and the input it is
+ * about takes that same colour as its border, which is a non-text mark and needs
+ * 3:1 rather than 4.5:1. */
+.field-refusal {
+  margin: 0;
+  padding-left: var(--spacing-sm);
+  border-left: 0.125rem solid var(--status-error);
+}
+
+.field.invalid input {
+  border-color: var(--status-error);
+}
+
+/* A NOTICE INSIDE A CARD IS NOT A NOTICE ON THE PAGE. The card now carries the
+ * page's raised ground, so a notice drawn on that same ground would be a paragraph
+ * with a coloured rule and no panel: inside a card it takes the page's own ground
+ * instead, which is the plane a card is inset into. */
+.card > .notice {
+  background-color: var(--bg-app);
 }
 
 .notice {
@@ -395,9 +609,16 @@ a:hover {
     padding-left: var(--spacing-sm);
     padding-right: var(--spacing-sm);
   }
+}
 
+/* WHERE THE TWO COLUMNS GIVE WAY, and why it is here rather than at 30rem. The
+ * main column is capped at 40rem, so below roughly 44rem of viewport the card is
+ * narrower than its own content: the old breakpoint fired at 30rem and the damage
+ * began at 30.5rem, which left a band of viewports in which every value hung past
+ * the edge of its card. A term above its value is the layout for that band. */
+@media (max-width: 44rem) {
   .states {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 0 0;
   }
 }

@@ -1,0 +1,139 @@
+{{- /*
+  The collection surface: one card per source kind, each carrying the pair that
+  governs its polling, the record rate opnview has measured, and the pair it would
+  suggest.
+
+  THE ROUTE NAMES ITSELF ONCE, AND EACH CARD NAMES ITS KIND. There is one <h1> for
+  the route and one <h2> per card beneath it, and every card is labelled by that
+  heading through aria-labelledby, so arriving cold the page says what it is and
+  that the cards are instances of one thing rather than four unrelated panels. The
+  group headings inside a card are <h3>, under the card's own name.
+
+  ONE CARD PER KIND AND ONE SAVE PER CARD, angular at the 0.25rem radius — the
+  layout docs/ui-references.md's General layout row records, and the same card the
+  settings surface already uses. Each card is its own form, because a value refused
+  on one kind must leave the other three saveable; a single form over four kinds
+  could not manage that. The cards are the kinds the `provider` table actually
+  holds, read at runtime: a kind with no implementation on this installation
+  produces no card at all.
+
+  THE THREE GROUPS ARE THREE GROUPS DELIBERATELY. The page size in force and the
+  page size suggested are two separately labelled figures under two separate
+  headings, because a reader who confused them would read a proposal as a setting.
+
+  WHAT A CARD HAS TO SAY, IT SAYS INSIDE ITSELF. A save confirmed, a suggestion put
+  into the fields, a figure refused: each is drawn in the card it belongs to, and a
+  refusal is drawn against the FIELD that caused it — marked aria-invalid, pointed
+  at the refusal by aria-describedby, and given the focus. A banner at the top of a
+  page four cards tall names neither the kind that was saved nor the field that was
+  refused.
+
+  A FIGURE IS DATA AND A STATE IS A STRING. Every label, every heading and every
+  state below is a catalogue lookup; the only text that is not is a measured figure
+  — a count, a rate, a number of seconds, an instant. Where there is no figure to
+  show, a NAMED STATE is shown instead and never a nought: no record in the window,
+  no second clock on this table, a span too short to divide by and a source nobody
+  is reading are four different conditions and they render as four different
+  sentences.
+
+  THE FILL CONTROL WRITES NOTHING, AND IS NOT OFFERED WITH NOTHING TO FILL. It puts
+  the suggested figures into the fields, exactly as the settings surface's fetch
+  control fills the fingerprint field, and the save beside it is the second
+  deliberate act; where the card's outcome state carries no pair the control is
+  disabled, because a control that is offered changes what the product does.
+
+  THE FIELDS STAY TYPEABLE IN EVERY STATE, including a kind whose source is
+  unavailable: an operator sizing for a source they are about to switch on is the
+  ordinary case. A kind whose page opnview cannot set says so WHERE THE SECOND FIELD
+  WOULD BE, which is the only place that answers why the form offers one.
+
+  NOTHING HERE WRITES TO THE FIREWALL, and nothing on this page makes any outbound
+  call at all: every figure is read from the local database.
+*/ -}}
+{{define "body" -}}
+<h1>{{t "collection.title"}}</h1>
+{{- range .CollectionCards}}
+<section class="card" id="card_{{.Kind}}" aria-labelledby="card_name_{{.Kind}}">
+<h2 id="card_name_{{.Kind}}">{{t .LabelKey}}</h2>
+{{- with .NoticeKey}}
+<p class="notice ok">{{t .}}</p>
+{{- end}}
+<form method="post" action="{{$.CollectionPath}}">
+<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
+<input type="hidden" name="{{.FieldKind}}" value="{{.Kind}}">
+
+<h3>{{t "collection.group.in_force"}}</h3>
+<dl class="states">
+{{- range .InForce}}
+<dt>{{t .LabelKey}}</dt>
+<dd>{{if .StateKey}}{{t .StateKey}}{{else}}<span class="figure">{{.Value}}</span>{{end}}</dd>
+{{- end}}
+</dl>
+
+<h3>{{t "collection.group.measurement"}}</h3>
+<dl class="states">
+{{- range .Measurement}}
+<dt>{{t .LabelKey}}</dt>
+<dd>{{if .StateKey}}{{t .StateKey}}{{else}}<span class="figure">{{.Value}}</span>{{end}}</dd>
+{{- end}}
+</dl>
+{{- if .Gaps}}
+<table class="gaps">
+<thead>
+<tr><th>{{t "collection.label.gap_reason"}}</th><th>{{t "collection.label.gap_count"}}</th><th>{{t "collection.label.missed_seconds"}}</th></tr>
+</thead>
+<tbody>
+{{- range .Gaps}}
+<tr><td>{{t .ReasonKey}}</td><td><span class="figure">{{.Count}}</span></td><td><span class="figure">{{.MissedSeconds}}</span></td></tr>
+{{- end}}
+</tbody>
+</table>
+{{- end}}
+
+<h3>{{t "collection.group.suggestion"}}</h3>
+<dl class="states">
+{{- range .Suggestion}}
+<dt>{{t .LabelKey}}</dt>
+<dd>{{if .StateKey}}{{t .StateKey}}{{else}}<span class="figure">{{.Value}}</span>{{end}}</dd>
+{{- end}}
+</dl>
+
+{{- if .PageIsAdjustable}}
+{{- if eq .InvalidField .FieldPageSize}}
+<div class="field invalid">
+<label for="page_size_{{.Kind}}">{{t "field.page_size"}}</label>
+<input id="page_size_{{.Kind}}" name="{{.FieldPageSize}}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="{{.PageSizeField}}" aria-invalid="true" aria-describedby="page_size_refusal_{{.Kind}}" autofocus>
+<p class="field-refusal" id="page_size_refusal_{{.Kind}}">{{t .RefusalKey}}</p>
+</div>
+{{- else}}
+<div class="field">
+<label for="page_size_{{.Kind}}">{{t "field.page_size"}}</label>
+<input id="page_size_{{.Kind}}" name="{{.FieldPageSize}}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="{{.PageSizeField}}">
+</div>
+{{- end}}
+{{- else}}
+<div class="field">
+<span class="label">{{t "field.page_size"}}</span>
+<span class="field-state">{{t "state.sizing.page_not_adjustable"}}</span>
+</div>
+{{- end}}
+{{- if eq .InvalidField .FieldInterval}}
+<div class="field invalid">
+<label for="interval_{{.Kind}}">{{t "field.interval_seconds"}}</label>
+<input id="interval_{{.Kind}}" name="{{.FieldInterval}}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="{{.IntervalField}}" aria-invalid="true" aria-describedby="interval_refusal_{{.Kind}}" autofocus>
+<p class="field-refusal" id="interval_refusal_{{.Kind}}">{{t .RefusalKey}}</p>
+</div>
+{{- else}}
+<div class="field">
+<label for="interval_{{.Kind}}">{{t "field.interval_seconds"}}</label>
+<input id="interval_{{.Kind}}" name="{{.FieldInterval}}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="{{.IntervalField}}">
+</div>
+{{- end}}
+<div class="actions">
+<button type="submit" name="{{.FieldFill}}" value="1" class="secondary"{{if not .SuggestionExists}} disabled{{end}}>{{t "action.fill_suggestion"}}</button>
+<button type="submit">{{t "action.save"}}</button>
+</div>
+</form>
+</section>
+{{- end}}
+{{- end}}

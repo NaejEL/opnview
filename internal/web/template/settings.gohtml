@@ -16,6 +16,14 @@
   THE FIREWALL URL AND THE API KEY ARE PRE-FILLED, because they are configuration
   rather than secrets and a reader correcting a typo has to be able to see the typo.
 
+  THE FINGERPRINT IS FILLED BY A BUTTON AND NOT BY THE READER. Asking somebody to
+  go and find a 64-character hash somewhere else, for a certificate opnview is
+  already holding, is asking them to fetch what the program has. The button
+  connects, shows what was presented, and stores NOTHING: accepting it is the save
+  that follows, which is a second deliberate act. The field stays typeable for
+  whoever wants to compare against the source rather than trust the first
+  connection.
+
   NOTHING HERE WRITES TO THE FIREWALL. There is no control on this page that could,
   and the API client refuses a mutating command before a request exists.
 */ -}}
@@ -32,6 +40,9 @@
 <div class="field">
 <label for="certificate_fingerprint">{{t "field.certificate_fingerprint"}}</label>
 <input id="certificate_fingerprint" name="certificate_fingerprint" type="text" autocomplete="off" spellcheck="false" value="{{.CertificateFingerprint}}">
+<div class="actions beside-field">
+<button type="submit" name="fetch_certificate" value="1" class="secondary">{{t "action.fetch_certificate"}}</button>
+</div>
 </div>
 <div class="field">
 <label for="api_key">{{t "field.api_key"}}</label>

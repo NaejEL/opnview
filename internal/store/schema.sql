@@ -207,6 +207,19 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 -- model must say which one the data came from. On a freshly applied database
 -- none is active: activeness is decided by the probe round, never by this file.
 --
+-- AND IT IS DECIDED BY THE OPERATOR BEFORE THE PROBE ROUND. This comment used to
+-- stop at the line above, and it claimed a separation the code did not implement:
+-- the round derived "opnview reads this one" from "this one is reachable" every
+-- five minutes and nobody could overrule it. So one failed probe dropped a working
+-- source, a network that was merely QUIET at that instant was indistinguishable
+-- from an absent one, and two implementations of an exclusive kind both answering
+-- made the round read NEITHER with no way for a human to break the tie. The operator's decision
+-- now comes first and is a `setting` row per source — off is never read, on is
+-- always read, auto is the probe's call and remains the default. See
+-- internal/config, Selection. Availability is untouched by it: what the firewall
+-- reported stays recorded exactly as reported, because selection is a decision and
+-- not a claim about the firewall.
+--
 -- ACTIVENESS IS EXCLUSIVE PER KIND ONLY WHERE TWO PROVIDERS WOULD BE
 -- INDISTINGUISHABLE, and that rule replaces the one-active-provider-per-kind
 -- index this file used to carry. People run several intrusion-detection and
