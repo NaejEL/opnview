@@ -192,3 +192,161 @@ JOIN provider AS p ON p.id = l.provider_id
 LEFT JOIN interface AS s ON s.id = l.interface_id
 WHERE l.client_id = :client_id
 ORDER BY l.observed_at DESC, p.provider_key;
+
+-- diagnostic: Record rate per kind
+-- How many records each paged read writes, measured on the rows opnview holds:
+-- the count in the window, the span it covers on the source clock and on the
+-- ingested clock, the busiest 60-second bucket, and the collection gaps
+-- detected in the window, one row per gap reason. It is the measurement the
+-- collection surface sizes a page and an interval on, character for
+-- character: internal/store/recordrate.go builds each branch, and
+-- internal/sizing holds this file to it, so a suggested pair can be checked by
+-- running this query against the same database.
+--
+-- A kind with no record still yields its row, with a NULL span and peak: no
+-- record is a state, not a rate of nought. The ingested span of the lease
+-- table is NULL because that table records no ingested instant.
+--
+-- Rebuilt after the loss of 2 October 2026 from the compiled measurement of
+-- that evening; this comment is rewritten.
+SELECT
+    k.kind AS kind,
+    :window_start AS window_start_at,
+    :window_end AS window_end_at,
+    (SELECT CAST(value AS INTEGER) FROM setting
+      WHERE key = 'retention_seconds')
+        AS retention_seconds,
+    (SELECT count(*) FROM flow
+      WHERE observed_at >= :window_start AND observed_at < :window_end)
+        AS record_count,
+    (SELECT min(observed_at) FROM flow
+      WHERE observed_at >= :window_start AND observed_at < :window_end)
+        AS covered_from_at,
+    (SELECT max(observed_at) FROM flow
+      WHERE observed_at >= :window_start AND observed_at < :window_end)
+        AS covered_to_at,
+    (SELECT min(ingested_at) FROM flow
+      WHERE observed_at >= :window_start AND observed_at < :window_end)
+        AS ingested_from_at,
+    (SELECT max(ingested_at) FROM flow
+      WHERE observed_at >= :window_start AND observed_at < :window_end)
+        AS ingested_to_at,
+    (SELECT max(bucket_records) FROM
+      (SELECT count(*) AS bucket_records FROM flow
+        WHERE observed_at >= :window_start AND observed_at < :window_end
+        GROUP BY observed_at / 60))
+        AS peak_bucket_records,
+    g.reason AS gap_reason,
+    count(g.id) AS gap_count,
+    coalesce(sum(g.interval_end_at - g.interval_start_at), 0) AS missed_seconds
+FROM (SELECT 'firewall_log' AS kind) AS k
+LEFT JOIN provider AS p ON p.kind = k.kind
+LEFT JOIN collection_gap AS g ON g.provider_id = p.id
+     AND g.detected_at >= :window_start AND g.detected_at < :window_end
+GROUP BY k.kind, g.reason
+UNION ALL
+SELECT
+    k.kind AS kind,
+    :window_start AS window_start_at,
+    :window_end AS window_end_at,
+    (SELECT CAST(value AS INTEGER) FROM setting
+      WHERE key = 'retention_seconds')
+        AS retention_seconds,
+    (SELECT count(*) FROM security_event
+      WHERE occurred_at >= :window_start AND occurred_at < :window_end)
+        AS record_count,
+    (SELECT min(occurred_at) FROM security_event
+      WHERE occurred_at >= :window_start AND occurred_at < :window_end)
+        AS covered_from_at,
+    (SELECT max(occurred_at) FROM security_event
+      WHERE occurred_at >= :window_start AND occurred_at < :window_end)
+        AS covered_to_at,
+    (SELECT min(ingested_at) FROM security_event
+      WHERE occurred_at >= :window_start AND occurred_at < :window_end)
+        AS ingested_from_at,
+    (SELECT max(ingested_at) FROM security_event
+      WHERE occurred_at >= :window_start AND occurred_at < :window_end)
+        AS ingested_to_at,
+    (SELECT max(bucket_records) FROM
+      (SELECT count(*) AS bucket_records FROM security_event
+        WHERE occurred_at >= :window_start AND occurred_at < :window_end
+        GROUP BY occurred_at / 60))
+        AS peak_bucket_records,
+    g.reason AS gap_reason,
+    count(g.id) AS gap_count,
+    coalesce(sum(g.interval_end_at - g.interval_start_at), 0) AS missed_seconds
+FROM (SELECT 'security_event' AS kind) AS k
+LEFT JOIN provider AS p ON p.kind = k.kind
+LEFT JOIN collection_gap AS g ON g.provider_id = p.id
+     AND g.detected_at >= :window_start AND g.detected_at < :window_end
+GROUP BY k.kind, g.reason
+UNION ALL
+SELECT
+    k.kind AS kind,
+    :window_start AS window_start_at,
+    :window_end AS window_end_at,
+    (SELECT CAST(value AS INTEGER) FROM setting
+      WHERE key = 'retention_seconds')
+        AS retention_seconds,
+    (SELECT count(*) FROM dhcp_lease
+      WHERE observed_at >= :window_start AND observed_at < :window_end)
+        AS record_count,
+    (SELECT min(observed_at) FROM dhcp_lease
+      WHERE observed_at >= :window_start AND observed_at < :window_end)
+        AS covered_from_at,
+    (SELECT max(observed_at) FROM dhcp_lease
+      WHERE observed_at >= :window_start AND observed_at < :window_end)
+        AS covered_to_at,
+    NULL
+        AS ingested_from_at,
+    NULL
+        AS ingested_to_at,
+    (SELECT max(bucket_records) FROM
+      (SELECT count(*) AS bucket_records FROM dhcp_lease
+        WHERE observed_at >= :window_start AND observed_at < :window_end
+        GROUP BY observed_at / 60))
+        AS peak_bucket_records,
+    g.reason AS gap_reason,
+    count(g.id) AS gap_count,
+    coalesce(sum(g.interval_end_at - g.interval_start_at), 0) AS missed_seconds
+FROM (SELECT 'dhcp_lease' AS kind) AS k
+LEFT JOIN provider AS p ON p.kind = k.kind
+LEFT JOIN collection_gap AS g ON g.provider_id = p.id
+     AND g.detected_at >= :window_start AND g.detected_at < :window_end
+GROUP BY k.kind, g.reason
+UNION ALL
+SELECT
+    k.kind AS kind,
+    :window_start AS window_start_at,
+    :window_end AS window_end_at,
+    (SELECT CAST(value AS INTEGER) FROM setting
+      WHERE key = 'retention_seconds')
+        AS retention_seconds,
+    (SELECT count(*) FROM dns_resolution
+      WHERE looked_up_at >= :window_start AND looked_up_at < :window_end)
+        AS record_count,
+    (SELECT min(looked_up_at) FROM dns_resolution
+      WHERE looked_up_at >= :window_start AND looked_up_at < :window_end)
+        AS covered_from_at,
+    (SELECT max(looked_up_at) FROM dns_resolution
+      WHERE looked_up_at >= :window_start AND looked_up_at < :window_end)
+        AS covered_to_at,
+    (SELECT min(ingested_at) FROM dns_resolution
+      WHERE looked_up_at >= :window_start AND looked_up_at < :window_end)
+        AS ingested_from_at,
+    (SELECT max(ingested_at) FROM dns_resolution
+      WHERE looked_up_at >= :window_start AND looked_up_at < :window_end)
+        AS ingested_to_at,
+    (SELECT max(bucket_records) FROM
+      (SELECT count(*) AS bucket_records FROM dns_resolution
+        WHERE looked_up_at >= :window_start AND looked_up_at < :window_end
+        GROUP BY looked_up_at / 60))
+        AS peak_bucket_records,
+    g.reason AS gap_reason,
+    count(g.id) AS gap_count,
+    coalesce(sum(g.interval_end_at - g.interval_start_at), 0) AS missed_seconds
+FROM (SELECT 'dns_lookup' AS kind) AS k
+LEFT JOIN provider AS p ON p.kind = k.kind
+LEFT JOIN collection_gap AS g ON g.provider_id = p.id
+     AND g.detected_at >= :window_start AND g.detected_at < :window_end
+GROUP BY k.kind, g.reason;
