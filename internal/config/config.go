@@ -226,6 +226,7 @@ func Defaults() Config {
 		DNSLookupInterval:     DefaultDNSLookupInterval,
 		DiscoveryInterval:     DefaultDiscoveryInterval,
 		PurgeInterval:         DefaultPurgeInterval,
+		// The page sizes are defaults a row overrides, like the intervals.
 		FirewallLogPageSize:   DefaultFirewallLogPageSize,
 		SecurityEventPageSize: DefaultSecurityEventPageSize,
 		DHCPLeasePageSize:     DefaultDHCPLeasePageSize,
@@ -234,8 +235,7 @@ func Defaults() Config {
 
 // SettingReader is the one thing this package needs from storage. It is an
 // interface so that config depends on no storage engine, and store depends on
-// no configuration. *store.Store satisfies it, and so does any map a test
-// builds.
+// no configuration; *store.Store satisfies it.
 type SettingReader interface {
 	// Setting returns the value of one key, and whether the row exists.
 	Setting(ctx context.Context, key string) (string, bool, error)

@@ -271,7 +271,7 @@ func FetchCertificateFingerprint(ctx context.Context, baseURL string) (string, e
 	}
 	address := parsed.Host
 	if parsed.Port() == "" {
-		address = net.JoinHostPort(parsed.Host, "443")
+		address = net.JoinHostPort(address, "443")
 	}
 
 	dialer := tls.Dialer{Config: &tls.Config{

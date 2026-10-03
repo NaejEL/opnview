@@ -228,7 +228,8 @@ func RecordRateBranch(spec RecordRateSpec, bucketSeconds int64) string {
 // bound as a parameter, so that the branch the diagnostic file carries is the
 // complete query for one bucket width, readable and runnable as it stands. It
 // is an int64 formatted in base ten, so nothing but digits and a sign can reach
-// the text, whatever the caller passes.
+// the text, whatever the caller passes; the spliced names come from the
+// registry in code.
 func decimal(value int64) string { return strconv.FormatInt(value, 10) }
 
 // MeasureRecordRate measures the record rate of one kind over one window.
@@ -236,8 +237,7 @@ func decimal(value int64) string { return strconv.FormatInt(value, 10) }
 // A window with no record is not an error: it comes back with HasRecords false
 // and every rate unknown, because "this source wrote nothing" is a state worth
 // showing. A bucket width that is not positive is an error, since there is
-// nothing to count the peak in. The measurement returned with an error carries
-// what was known before it, and nothing more.
+// nothing to count the peak in; the measurement returned with it means nothing.
 func (s *Store) MeasureRecordRate(ctx context.Context, spec RecordRateSpec, window RecordRateWindow,
 	bucketSeconds int64) (RecordRateMeasurement, error) {
 	measurement := RecordRateMeasurement{
@@ -264,12 +264,12 @@ func (s *Store) MeasureRecordRate(ctx context.Context, spec RecordRateSpec, wind
 			kind                       string
 			windowStartAt, windowEndAt int64
 			retention                  sql.NullInt64
-			recordCount, gapCount      int64
+			recordCount                int64
 			coveredFrom, coveredTo     sql.NullInt64
 			ingestedFrom, ingestedTo   sql.NullInt64
 			peak                       sql.NullInt64
 			gapReason                  sql.NullString
-			missedSeconds              int64
+			gapCount, missedSeconds    int64
 		)
 		if err := rows.Scan(&kind, &windowStartAt, &windowEndAt, &retention, &recordCount,
 			&coveredFrom, &coveredTo, &ingestedFrom, &ingestedTo, &peak,

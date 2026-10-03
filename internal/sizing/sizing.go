@@ -201,7 +201,7 @@ func Kinds() []Kind {
 // does, so a record written during the measurement is left for the next one.
 // The clock is the caller's, so a test can place the window anywhere.
 func Window(now time.Time, retentionSeconds int64) store.RecordRateWindow {
-	end := now.Unix()
+	end := now.UTC().Unix()
 	length := NominalWindowSeconds
 	if retentionSeconds > 0 && retentionSeconds < length {
 		length = retentionSeconds
@@ -309,12 +309,12 @@ func Suggest(kind Kind, measured store.RecordRateMeasurement, inForce Pair, coll
 	//
 	// The requirement at that interval decides the rest. It may be unknown —
 	// a peak so high the requirement does not fit an int — and that case is
-	// handled like a requirement above the ceiling: the interval has to move.
-	// It never moves above the interval in force.
-	interval := inForce.Interval
-	if interval < ShortestSuggestibleInterval {
-		interval = ShortestSuggestibleInterval
-	}
+	// handled like a requirement above the ceiling: the interval has to move,
+	// since the page cannot grow past what a request can ask for.
+	interval := max(inForce.Interval, ShortestSuggestibleInterval)
+
+	// It never moves above the interval in force: a suggestion only ever asks
+	// for a bigger page or a shorter interval, never for polling less often.
 	required, ok := requiredRecordsPerPage(measured.PeakBucketRecords, measured.BucketSeconds, interval)
 
 	// A read whose page is not a setting: the page is the ceiling, so the
@@ -431,7 +431,7 @@ func requiredRecordsPerPage(peakBucketRecords, bucketSeconds int64, interval tim
 	}
 	// Peak per second, times the seconds between two polls, times the room.
 	needed := float64(peakBucketRecords) * interval.Seconds() * HeadroomFactor / float64(bucketSeconds)
-	if needed > math.MaxInt32 {
+	if math.IsNaN(needed) || needed > math.MaxInt32 {
 		return 0, false
 	}
 	records := int(math.Ceil(needed))
