@@ -14,8 +14,9 @@
 // a defect.
 //
 // WHAT IT STILL CANNOT DO, STATED SO NOBODY LOOKS FOR IT. There is no canvas, no
-// widget and no dashboard: the interface is three surfaces — setup, sign-in and
-// settings — and the widget endpoints are step 5, the canvases step 7. The MaxMind
+// widget and no dashboard: the interface is four surfaces — setup, sign-in,
+// settings and collection — and the widget endpoints are step 5, the canvases
+// step 7. The MaxMind
 // licence key is stored and NOT verified, because verifying it means downloading and
 // the download is cycle 4C.
 package main
@@ -150,6 +151,15 @@ func run() (err error) {
 
 	client := opnsense.NewClientFromSource(credentials, nil, 0)
 	collector := collect.New(client, database, collect.SystemClock{})
+	// The page sizes the collector asks for come from the configuration, like the
+	// intervals the scheduler waits.
+	collector.Configure(settings)
+
+	// THE LIVE HOLDER. The scheduler reads each interval from it on every turn, and
+	// the collection surface sets it, and the collector's page sizes, when a pair is
+	// saved: a saved pair takes effect without a restart, loaded the way start-up
+	// loads it.
+	live := config.NewLive(settings)
 
 	setupToken, err := auth.NewSetupToken()
 	if err != nil {
@@ -162,6 +172,8 @@ func run() (err error) {
 		Credentials: credentials,
 		Client:      client,
 		SetupToken:  setupToken,
+		Settings:    live,
+		Collector:   collector,
 	})
 	if err != nil {
 		return err
@@ -210,7 +222,7 @@ func run() (err error) {
 	fmt.Printf("%s: the interface is listening on %s\n", buildinfo.AppName, *listen)
 
 	collectErr := collect.Run(ctx, collect.SystemClock{},
-		collector.Tasks(settings, purge), report)
+		collector.Tasks(live, purge), report)
 	running.Wait()
 
 	switch {
