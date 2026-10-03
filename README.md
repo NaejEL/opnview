@@ -35,7 +35,8 @@ it: everything goes through its REST API, read-only.
 **Under construction.** Nothing is usable yet.
 Progress follows [ROADMAP.md](ROADMAP.md) — eight steps, validation after each
 one. Step 1 is done: [docs/opnsense-api-survey.md](docs/opnsense-api-survey.md).
-Current step: 4, collection and storage.
+Current step: 5, correlation, classification and the matrix. Step 4 was validated
+against a live OPNsense on 3 October 2026.
 
 `opnview` now has its own accounts, and that is where credentials enter it.
 On first start it creates its database and its encryption key, prints a
