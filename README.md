@@ -39,12 +39,31 @@ Current step: 4, collection and storage.
 
 `opnview` now has its own accounts, and that is where credentials enter it.
 On first start it creates its database and its encryption key, prints a
-**one-time setup token** to the console, and serves three surfaces: create the
-first account with that token, sign in, and enter the firewall URL, the API key
-and secret, the MaxMind licence key and the theme. There is no environment
-variable, no configuration file and no `configure` command, and a credential
-changed in the interface takes effect on the next collection pass without a
-restart. There are no canvases and no widgets yet: those are steps 5 and 7.
+**one-time setup token** to the console, and serves four surfaces: create the
+first account with that token, sign in, enter the firewall URL, the API key
+and secret, the MaxMind licence key and the theme, and size collection. There
+is no environment variable, no configuration file and no `configure` command,
+and a credential changed in the interface takes effect on the next collection
+pass without a restart. There are no canvases and no widgets yet: those are
+steps 5 and 7.
+
+The settings surface can fetch the certificate the firewall presents and put
+its SHA-256 fingerprint in the field, so a default OPNsense, which serves its
+API under a self-signed certificate, can be pinned without copying the
+fingerprint by hand. Fetching stores nothing; the save beside it does.
+
+The collection surface shows, for each kind of source the installation has, the
+pair that governs its polling — how often, and how many records one request
+asks for — beside the rate `opnview` has measured from its own database over the
+last 24 hours, and the pair it would suggest from that rate. A suggestion is
+never applied on its own: the operator fills the fields with it and saves, and
+the new pair takes effect without a restart. Measuring contacts nothing.
+
+Which implementation of a source is read is the operator's decision first and
+the probe round's only where the operator left it: each one is `auto` by
+default, and a `setting` row can turn it `on` or `off` (see `provider` in
+[docs/data-model.md](docs/data-model.md)). The collection surface shows that
+selection; no surface sets it yet.
 
 ## Data sources
 
@@ -135,6 +154,14 @@ There is no observed-name path to fall back on: see
 stopped, or running on only some interfaces. Alerts exist for the interfaces it
 monitors and for no others; the UI states per interface whether it is covered,
 rather than showing an empty panel.
+
+**A measured record rate is a lower bound.** The collection surface sizes
+polling from the records `opnview` stored. A record that was lost — lines a
+filter-log page no longer reached, an `eve.json` file rotated away, lookups the
+resolver's ring buffer dropped — was never stored and is counted nowhere, so the
+rate the firewall's sources really produce can only be higher. The gaps
+`opnview` detected are shown beside the rate; the ones it could not detect are
+not.
 
 **Volumes per address pair are daily on the firewall.** OPNsense keeps
 per-address-pair traffic at a one-day resolution, for 62 days. Shorter periods

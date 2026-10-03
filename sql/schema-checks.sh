@@ -64,6 +64,8 @@ SCALE_DB="$DATA_DIR/schema-checks-scale.db"
 MEAS_DB="$DATA_DIR/schema-checks-measurement.db"
 STATE_DB="$DATA_DIR/schema-checks-state.db"
 LEASE_DB="$DATA_DIR/schema-checks-lease.db"
+# A freshly applied database for the record-rate checks, which write a gap row.
+RATE_DB="$DATA_DIR/schema-checks-record-rate.db"
 
 # Seed parameters. The default run and the alternative run below differ in
 # every count, so nothing may assume an interface, client, owner or rule count.
@@ -2835,6 +2837,75 @@ check_ge 'FC-AC5 an interface discovered without a state reads as not reported' 
 check 'FC-AC5 no invented vocabulary constrains a field whose value set the survey does not establish' \
     '' "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM pragma_table_info('interface')
          WHERE name IN ('status', 'enabled') AND type <> 'TEXT';")"
+
+# ===========================================================================
+section 'RR-AC1 .. RR-AC6 — the record rate per kind, which sizes polling'
+# ===========================================================================
+# Rewritten after the loss of 2 October 2026. The diagnostic is the measurement
+# the collection surface sizes a page and an interval on; internal/sizing holds
+# its text to the code. These checks hold it to the schema: it runs, it answers
+# for every paged kind, its count is the table's own, and it changes nothing.
+RATE_FILE="$(grep -l -- '-- diagnostic: Record rate per kind' "$WORK"/diag/*.sql | head -n 1)"
+if [ -z "$RATE_FILE" ]; then
+    fail 'RR-AC1 diagnostics.sql carries the record-rate measurement'
+else
+    pass 'RR-AC1 diagnostics.sql carries the record-rate measurement'
+
+    table_row_counts "$MAIN_DB" > "$WORK/rows_before_rate.txt"
+    RATE_KINDS="$(run_query "$MAIN_DB" "$(wrap_query "$RATE_FILE" \
+        'SELECT group_concat(kind, '"','"') FROM (SELECT DISTINCT kind FROM (' \
+        ') ORDER BY kind);')")"
+    check 'RR-AC2 the measurement answers for each paged kind, and only those' \
+        'dhcp_lease,dns_lookup,firewall_log,security_event' "$RATE_KINDS"
+
+    check_ge 'RR-AC3 the seed places filter-log records in the window, so the count is not vacuous' 1 \
+        "$(q "$MAIN_DB" "SELECT count(*) FROM flow
+            WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END;")"
+    check 'RR-AC3 the filter-log count is the count of flow rows in the window' \
+        "$(q "$MAIN_DB" "SELECT count(*) FROM flow
+            WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END;")" \
+        "$(run_query "$MAIN_DB" "$(wrap_query "$RATE_FILE" \
+            'SELECT max(record_count) FROM (' \
+            ") WHERE kind = 'firewall_log';")")"
+    check 'RR-AC3 no peak minute holds more records than the window' '0' \
+        "$(run_query "$MAIN_DB" "$(wrap_query "$RATE_FILE" \
+            'SELECT count(*) FROM (' \
+            ') WHERE peak_bucket_records > record_count;')")"
+    check 'RR-AC4 the lease table, which records no ingested instant, has no ingested span' '' \
+        "$(run_query "$MAIN_DB" "$(wrap_query "$RATE_FILE" \
+            'SELECT group_concat(ingested_from_at) FROM (' \
+            ") WHERE kind = 'dhcp_lease';")")"
+
+    table_row_counts "$MAIN_DB" > "$WORK/rows_after_rate.txt"
+    if cmp -s "$WORK/rows_before_rate.txt" "$WORK/rows_after_rate.txt"; then
+        pass 'RR-AC5 measuring changed no row count'
+    else
+        fail 'RR-AC5 measuring changed a row count'
+    fi
+
+    # On a database with no record at all, every kind still has its row, and the
+    # span and the peak are absent rather than nought.
+    apply_schema "$RATE_DB" "$WORK/apply_rate.err" || fail 'RR-AC6 the record-rate database failed to take the schema'
+    check 'RR-AC6 an empty database still yields one row per paged kind, each counting nothing' '4' \
+        "$(run_query "$RATE_DB" "$(wrap_query "$RATE_FILE" \
+            'SELECT count(*) FROM (' \
+            ') WHERE record_count = 0 AND covered_from_at IS NULL AND peak_bucket_records IS NULL;')")"
+    PF_ID="$(q "$RATE_DB" "SELECT id FROM provider WHERE kind = 'firewall_log' AND provider_key = 'pf';")"
+    q "$RATE_DB" "INSERT INTO collection_gap
+        (provider_id, interval_start_at, interval_end_at, reason, detail, detected_at)
+        VALUES ($PF_ID, $((NOW - 600)), $((NOW - 540)), 'digest_outside_returned_window',
+                NULL, $((NOW - 540)));"
+    check 'RR-AC6 a gap in the window is reported with its reason and the seconds it covers' \
+        'digest_outside_returned_window|1|60' \
+        "$(run_query "$RATE_DB" "$(wrap_query "$RATE_FILE" \
+            'SELECT gap_reason, gap_count, missed_seconds FROM (' \
+            ") WHERE kind = 'firewall_log';")")"
+fi
+
+check 'RR-AC6 the model document states that the record rate is a lower bound' '1' \
+    "$(awk '/^## Record rate$/ { inside = 1; next } /^## / { inside = 0 }
+            inside && /lower bound/ { found = 1 } END { print found + 0 }' \
+        "$REPO_ROOT/docs/data-model.md")"
 
 # ===========================================================================
 section 'PN-AC28 — shellcheck'

@@ -409,6 +409,25 @@ by detection against a live firewall. For an exclusive kind, two candidates the
 firewall's own configuration does not separate activate **neither**; for a
 concurrent kind, every candidate is activated.
 
+**The operator decides first, and the probe round only where the operator left
+the decision to it.** *(Rewritten after the loss of 2 October 2026; the
+behaviour described is that of the compiled build of that evening.)* Each
+registry row has a selection, stored as a `setting` row keyed
+`source_selection_<kind>_<provider_key>` (see `setting` below): `off` is never
+read, `on` is always read whatever the probe concluded, and `auto` — what a
+missing row means — leaves the decision to the probe round, so an installation
+nobody configured behaves as it did before. Turning one implementation of an
+exclusive kind `on` is what breaks the tie that would otherwise activate
+neither. The selection is a decision, not a claim about the firewall:
+`source_availability` keeps recording what the probe found, so a source kept
+`on` while it reports unavailable is a legitimate state that the availability
+and `collection_gap` rows then explain. A selection row that cannot be parsed is
+reported on the console by the probe round; in the compiled build that round
+then decides as it does for `auto`, while the collection surface answers with
+an internal error until the row is corrected. A selection is a `setting` row
+rather than a column here because `setting` is where configuration lives and a
+column would need a migration on a database that holds real data.
+
 **Retention:** never purged. **Indexes:** the primary key, the uniqueness
 constraint on `(kind, provider_key)`, and the partial unique index above.
 
@@ -1268,6 +1287,25 @@ comparison is `NULL` and nothing is deleted.
 
 `aggregate_mode` is `full` or `no_domains`.
 
+**Each paged read is governed by a pair of rows.** *(Rewritten after the loss of
+2 October 2026.)* `poll_interval_<kind>_seconds` overrides how often a kind is
+polled, and `page_size_firewall_log`, `page_size_security_event` and
+`page_size_dhcp_lease` override how many records one request asks for. An
+interval alone does not size a paged read: a poll every ten seconds asking for
+500 records keeps up with a source producing fewer than fifty a second and
+drops the rest. A missing row means the default `internal/config` documents
+beside each key. The per-pair sampler and the resolver take no page size, the
+first because its endpoint is not paged and the second because the firewall
+fixes the size of its answer. An interval is a positive whole number of seconds
+no larger than a Go duration holds; a page size is a positive whole number, and
+one above what the firewall serves is stored and reported as such on the
+collection surface rather than refused. The collection surface writes both rows
+of a pair together, and the running service reads them again without a restart.
+
+**`source_selection_<kind>_<provider_key>` is the operator's selection** of one
+registry row — `auto`, `on` or `off`, exactly as written — described under
+`provider` above. No row is `auto`.
+
 **The firewall URL, the OPNsense API key and the theme are rows here.** They are
 configuration, `internal/config` already looks here for configuration, and a
 second location would be a second truth. The two ciphertexts are **not** rows
@@ -1858,6 +1896,9 @@ that is not a column at all: the polling plan polls the Insight time series
 every 300 s and no table holds it.
 
 ## Record rate
+
+*Rewritten after the loss of 2 October 2026, from the compiled build of that
+evening.*
 
 The record rate is what the collection surface sizes polling from: for one kind,
 how many records the kind's table received over a window, and how they were

@@ -91,7 +91,7 @@ const (
 	// nothing older, whatever is asked. The page is not a setting for this read
 	// at all; only the interval keeps the buffer from wrapping between two
 	// polls, which is what the suggestion for this kind is about.
-	//
+	// A suggestion for this kind therefore carries an interval and no page.
 	PageCeilingDNSLookup = 1000
 )
 
