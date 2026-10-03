@@ -10,20 +10,32 @@
 // notices a change to them without a restart. That is credentials.go: the
 // `setting` rows holding the firewall URL and the API key, the decryption of the
 // API secret from `encrypted_credential`, the three named states those can be in,
-// and the live holder the OPNsense client reads on every call.
+// and the live holder the OPNsense client reads on every call. live.go does the
+// same for the rest of the configuration.
 //
-// Every default here is a duration or a mode. NO INTERFACE NAME, VLAN NAME,
-// ADDRESS, CIDR OR COUNT IS A DEFAULT, because every one of those is discovered
-// at runtime through the API.
+// Every default here is a duration, a mode or a page size. NO INTERFACE NAME,
+// VLAN NAME, ADDRESS, CIDR OR COUNT OF THINGS ON THE NETWORK IS A DEFAULT, because
+// every one of those is discovered at runtime through the API.
 package config
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"time"
 )
+
+// MaxIntervalSeconds is the longest interval, in seconds, that a time.Duration
+// can hold. A setting row above it cannot be represented: multiplied into
+// nanoseconds it would overflow and come out negative or small, and a loop
+// scheduled on that value would run flat out instead of rarely. Load therefore
+// refuses it by name rather than letting the arithmetic decide.
+//
+// Rebuilt after the loss of 2 October 2026 from the compiled package of that
+// evening; the comments in this file are rewritten.
+const MaxIntervalSeconds int64 = math.MaxInt64 / int64(time.Second)
 
 // The setting keys this package reads. Each poll interval is overridable by an
 // optional row: the default is the cadence the survey justifies, and a busy or
@@ -48,6 +60,32 @@ const (
 	KeyDiscoveryInterval = "refresh_interval_discovery_seconds"
 	// KeyPurgeInterval overrides the retention-purge interval.
 	KeyPurgeInterval = "purge_interval_seconds"
+)
+
+// The setting keys of the page sizes: how many records one request asks the
+// firewall for, on the three paged reads.
+//
+// AN INTERVAL ALONE DOES NOT SIZE A PAGED READ. What a poll can lose is decided
+// by the pair: a poll every ten seconds that asks for 500 records keeps up with a
+// source producing fewer than fifty a second and silently drops the rest. The
+// interval was configurable and the page was a constant, so half of the pair was
+// out of the operator's reach; these rows put it back.
+//
+// The other two collectors take no page size, for reasons of the API rather than
+// of opnview: the per-pair sampler reads a snapshot with no paging at all, and
+// the resolver endpoint answers with its whole ring buffer up to a limit the
+// firewall fixes.
+//
+// A page size above what the firewall serves is accepted here and reported on
+// the collection surface; refusing it would hide the measurement that shows why
+// it was typed.
+const (
+	// KeyFirewallLogPageSize overrides the filter-log page size.
+	KeyFirewallLogPageSize = "page_size_firewall_log"
+	// KeySecurityEventPageSize overrides the eve.json alert page size.
+	KeySecurityEventPageSize = "page_size_security_event"
+	// KeyDHCPLeasePageSize overrides the lease page size.
+	KeyDHCPLeasePageSize = "page_size_dhcp_lease"
 )
 
 // The default poll intervals. Each one is the cadence the survey justifies, and
@@ -106,12 +144,53 @@ const (
 	DefaultPurgeInterval = 3600 * time.Second
 )
 
+// The default page sizes. 500 is the figure the collectors carried as a
+// constant before the page became a setting, and nothing more: it is a
+// documented starting point, not a measurement and not a survey figure. What
+// a given installation needs depends on how fast its sources write, which only
+// that installation can measure — the collection surface measures it and
+// suggests a pair.
+//
+// Each default is within what the firewall serves for that read, so a database
+// with no row never asks for a page the firewall would cut short.
+const (
+	// DefaultFirewallLogPageSize is the filter-log page size with no row.
+	DefaultFirewallLogPageSize = 500
+
+	// DefaultSecurityEventPageSize is the eve.json alert page size with no
+	// row. The alert feed is low-volume, so a page this size is far more than a
+	// poll at the default interval returns.
+	DefaultSecurityEventPageSize = 500
+
+	// DefaultDHCPLeasePageSize is the lease page size with no row.
+	DefaultDHCPLeasePageSize = 500
+)
+
+// PageSizes is the page-size half of the configuration, on its own, for the
+// collectors: they size their reads and need nothing else from Config, and a
+// test that builds a collector should not have to invent seven intervals to
+// say how many records a page holds.
+type PageSizes struct {
+	FirewallLog   int
+	SecurityEvent int
+	DHCPLease     int
+}
+
+// DefaultPageSizes returns the page sizes of a database with no page-size row.
+func DefaultPageSizes() PageSizes {
+	return PageSizes{
+		FirewallLog:   DefaultFirewallLogPageSize,
+		SecurityEvent: DefaultSecurityEventPageSize,
+		DHCPLease:     DefaultDHCPLeasePageSize,
+	}
+}
+
 // DefaultRetentionSeconds is 90 days, the documented default. It is written in
 // the schema and read from the database; the constant here exists only so a
 // database with no row still behaves.
 const DefaultRetentionSeconds int64 = 7776000
 
-// Config is the whole of opnview's runtime configuration in this cycle.
+// Config is the whole of opnview's runtime configuration.
 type Config struct {
 	// RetentionSeconds is the purge horizon. 0 means unlimited.
 	RetentionSeconds int64
@@ -126,6 +205,11 @@ type Config struct {
 	DNSLookupInterval     time.Duration
 	DiscoveryInterval     time.Duration
 	PurgeInterval         time.Duration
+
+	// FirewallLogPageSize and the two below are the page sizes.
+	FirewallLogPageSize   int
+	SecurityEventPageSize int
+	DHCPLeasePageSize     int
 }
 
 // Defaults returns the configuration of a database that carries no setting row
@@ -142,12 +226,16 @@ func Defaults() Config {
 		DNSLookupInterval:     DefaultDNSLookupInterval,
 		DiscoveryInterval:     DefaultDiscoveryInterval,
 		PurgeInterval:         DefaultPurgeInterval,
+		FirewallLogPageSize:   DefaultFirewallLogPageSize,
+		SecurityEventPageSize: DefaultSecurityEventPageSize,
+		DHCPLeasePageSize:     DefaultDHCPLeasePageSize,
 	}
 }
 
 // SettingReader is the one thing this package needs from storage. It is an
 // interface so that config depends on no storage engine, and store depends on
-// no configuration.
+// no configuration. *store.Store satisfies it, and so does any map a test
+// builds.
 type SettingReader interface {
 	// Setting returns the value of one key, and whether the row exists.
 	Setting(ctx context.Context, key string) (string, bool, error)
@@ -209,7 +297,40 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		if seconds <= 0 {
 			return loaded, fmt.Errorf("config: %s must be a positive number of seconds, got %d", interval.key, seconds)
 		}
+		if seconds > MaxIntervalSeconds {
+			return loaded, fmt.Errorf("config: %s is %d seconds, which no duration represents (the largest is %d)",
+				interval.key, seconds, MaxIntervalSeconds)
+		}
 		*interval.target = time.Duration(seconds) * time.Second
+	}
+
+	// The page sizes are read the same way. A page size that is not a positive
+	// count is refused; one above what the firewall serves is not, see the
+	// comment on the page-size keys.
+	pageSizes := []struct {
+		key    string
+		target *int
+	}{
+		{KeyFirewallLogPageSize, &loaded.FirewallLogPageSize},
+		{KeySecurityEventPageSize, &loaded.SecurityEventPageSize},
+		{KeyDHCPLeasePageSize, &loaded.DHCPLeasePageSize},
+	}
+	for _, pageSize := range pageSizes {
+		value, present, err := reader.Setting(ctx, pageSize.key)
+		if err != nil {
+			return loaded, err
+		}
+		if !present {
+			continue
+		}
+		count, err := strconv.Atoi(value)
+		if err != nil {
+			return loaded, fmt.Errorf("config: %s is not an integer: %w", pageSize.key, err)
+		}
+		if count <= 0 {
+			return loaded, fmt.Errorf("config: %s must be a positive number of records, got %d", pageSize.key, count)
+		}
+		*pageSize.target = count
 	}
 
 	return loaded, nil
@@ -220,3 +341,90 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 // the LXC, and a program that silently writes a database somewhere plausible is
 // worse than one that refuses to start.
 var ErrNoDataDir = errors.New("config: --data-dir is required and has no default")
+
+// Selection is the operator's decision about one source: whether opnview reads
+// it. The word is opnview's own; OPNsense has none, as nothing there decides it.
+//
+// IT SEPARATES A DECISION FROM A CLAIM. Before it, provider.is_active was written
+// by the probe round and by nothing else, and three things followed from that,
+// all the same mistake — an algorithm deciding what a person should decide:
+//
+//   - one failed probe dropped a source that works, until the next round;
+//   - a source that was merely quiet when probed looked exactly like one that
+//     was absent, and nothing let an operator say which it was;
+//   - where two implementations of an exclusive kind both answered, the round
+//     read neither, and no person could break the tie.
+//
+// A selection is stored per registry row, as a `setting` row whose key
+// KeySourceSelection composes. Availability is untouched by it: what the
+// firewall reported stays recorded as reported, so a source kept on while it
+// reports unavailable is a legitimate state, and the gap and availability rows
+// then say what actually happened.
+//
+// A `setting` row rather than a column on `provider`: that table is where this
+// project keeps configuration, and a column would need a migration on a
+// database that holds real data — which ROADMAP.md makes a threshold decision
+// rather than something to slip into an unrelated change.
+//
+// Turning one source on is also what breaks the exclusive-kind ambiguity: that
+// rule exists because the firewall's configuration did not separate two
+// implementations, and a person saying which one they want is precisely the
+// separation it was missing.
+type Selection string
+
+const (
+	// SelectionAuto leaves the decision to the probe round, which reads the
+	// firewall's own configuration. It is what a missing row means, so an
+	// installation nobody configured behaves as it always did.
+	SelectionAuto Selection = "auto"
+
+	// SelectionOn reads the source whatever the probe concluded, including
+	// a probe that failed.
+	SelectionOn Selection = "on"
+	// SelectionOff never reads the source, whatever the probe concluded; the
+	// probe still records what the firewall reports.
+	SelectionOff Selection = "off"
+)
+
+// KeySourceSelection is the `setting` key holding the selection of one registry
+// row, identified by its kind and its provider key.
+//
+// The key is composed from the registry row, so no provider, product or kind is
+// enumerated here: a provider added to the registry has a selection without a
+// line of this package changing. The same provider key under two kinds — the
+// dnsmasq lease reader and the dnsmasq resolver — is two selections.
+func KeySourceSelection(kind, providerKey string) string {
+	return "source_selection_" + kind + "_" + providerKey
+}
+
+// ParseSelection reads a stored selection. Only the three words are accepted,
+// exactly as written: a value somebody typed wrong is an error to report, not a
+// guess to make. The selection returned with an error is auto and means
+// nothing.
+func ParseSelection(value string) (Selection, error) {
+	switch selection := Selection(value); selection {
+	case SelectionAuto, SelectionOn, SelectionOff:
+		return selection, nil
+	}
+	return SelectionAuto,
+		fmt.Errorf("config: %q is not auto, on or off", value)
+}
+
+// LoadSourceSelection reads the selection of one registry row; no row is auto. A
+// row that cannot be read is an error naming the key, never auto.
+func LoadSourceSelection(ctx context.Context, reader SettingReader, kind, providerKey string) (Selection, error) {
+	// The key names the row in every error, so the operator can find it.
+	key := KeySourceSelection(kind, providerKey)
+	value, present, err := reader.Setting(ctx, key)
+	if err != nil {
+		return SelectionAuto, err
+	}
+	if !present {
+		return SelectionAuto, nil
+	}
+	selection, err := ParseSelection(value)
+	if err != nil {
+		return SelectionAuto, fmt.Errorf("config: %s: %w", key, err)
+	}
+	return selection, nil
+}

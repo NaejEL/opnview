@@ -163,6 +163,8 @@ func TestASettingThatCannotBeReadIsAnErrorRatherThanASilentFallback(t *testing.T
 			map[string]string{KeyFirewallLogInterval: "ten seconds"}, KeyFirewallLogInterval},
 		{"an interval of zero", map[string]string{KeyDNSLookupInterval: "0"}, KeyDNSLookupInterval},
 		{"a negative interval", map[string]string{KeyPurgeInterval: "-60"}, KeyPurgeInterval},
+		{"an interval no duration represents",
+			map[string]string{KeyDiscoveryInterval: "9223372037"}, KeyDiscoveryInterval},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -196,5 +198,95 @@ func TestTheDataDirectoryHasNoDefault(t *testing.T) {
 	}
 	if !strings.Contains(ErrNoDataDir.Error(), "--data-dir") {
 		t.Fatalf("the refusal %q does not name the flag", ErrNoDataDir)
+	}
+}
+
+// TestASettingRowOverridesEveryPageSize is the other half of "no hardcoded
+// configuration": the three page sizes are defaults, like the intervals, and an
+// installation whose sources write faster is entitled to a bigger page without a
+// rebuild. Without it, half of the pair that decides what a poll can lose stays
+// out of the operator's reach.
+func TestASettingRowOverridesEveryPageSize(t *testing.T) {
+	loaded, err := Load(context.Background(), settingTable{rows: map[string]string{
+		KeyFirewallLogPageSize:   "1000",
+		KeySecurityEventPageSize: "250",
+		KeyDHCPLeasePageSize:     "2000",
+	}})
+	if err != nil {
+		t.Fatalf("loading the configuration: %v", err)
+	}
+	for name, pair := range map[string][2]int{
+		"filter log":      {loaded.FirewallLogPageSize, 1000},
+		"security events": {loaded.SecurityEventPageSize, 250},
+		"DHCP leases":     {loaded.DHCPLeasePageSize, 2000},
+	} {
+		if pair[0] != pair[1] {
+			t.Errorf("the %s page size is %d, want %d", name, pair[0], pair[1])
+		}
+	}
+	// A page-size row changes nothing else.
+	if loaded.FirewallLogInterval != DefaultFirewallLogInterval {
+		t.Errorf("a page-size row moved the filter-log interval to %v", loaded.FirewallLogInterval)
+	}
+}
+
+// TestThePageSizesDefaultToTheirDocumentedStartingPoints pins the three figures a
+// database with no row runs at, and the agreement between the two places that say
+// them: Defaults, which Load starts from, and DefaultPageSizes, which a collector
+// built without a configuration starts from. Two figures for one page would make
+// a collector's first pass and its later passes ask for different pages.
+func TestThePageSizesDefaultToTheirDocumentedStartingPoints(t *testing.T) {
+	defaults := Defaults()
+	sizes := DefaultPageSizes()
+	for name, figures := range map[string][3]int{
+		"filter log":      {defaults.FirewallLogPageSize, sizes.FirewallLog, DefaultFirewallLogPageSize},
+		"security events": {defaults.SecurityEventPageSize, sizes.SecurityEvent, DefaultSecurityEventPageSize},
+		"DHCP leases":     {defaults.DHCPLeasePageSize, sizes.DHCPLease, DefaultDHCPLeasePageSize},
+	} {
+		if figures[2] != 500 {
+			t.Errorf("the %s page size defaults to %d, want the documented 500", name, figures[2])
+		}
+		if figures[0] != figures[2] || figures[1] != figures[2] {
+			t.Errorf("the %s page size is %d in Defaults and %d in DefaultPageSizes, want %d in both",
+				name, figures[0], figures[1], figures[2])
+		}
+	}
+	loaded, err := Load(context.Background(), settingTable{rows: map[string]string{}})
+	if err != nil {
+		t.Fatalf("loading an empty configuration: %v", err)
+	}
+	if loaded.FirewallLogPageSize != DefaultFirewallLogPageSize ||
+		loaded.SecurityEventPageSize != DefaultSecurityEventPageSize ||
+		loaded.DHCPLeasePageSize != DefaultDHCPLeasePageSize {
+		t.Errorf("a database with no row loads the page sizes %d, %d and %d",
+			loaded.FirewallLogPageSize, loaded.SecurityEventPageSize, loaded.DHCPLeasePageSize)
+	}
+}
+
+// TestAPageSizeThatIsNotAPositiveCountIsRefused applies the honesty rule to the
+// page sizes. A page of zero records would read nothing and look like a quiet
+// network; a negative one, or one that is not a number, is a typing error that
+// must be visible rather than replaced by the default.
+func TestAPageSizeThatIsNotAPositiveCountIsRefused(t *testing.T) {
+	cases := []struct {
+		name string
+		key  string
+		row  string
+	}{
+		{"a page of zero records", KeyFirewallLogPageSize, "0"},
+		{"a negative page", KeySecurityEventPageSize, "-500"},
+		{"a page that is not a number", KeyDHCPLeasePageSize, "five hundred"},
+		{"a page that is not a whole number", KeyFirewallLogPageSize, "12.5"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := Load(context.Background(), settingTable{rows: map[string]string{testCase.key: testCase.row}})
+			if err == nil {
+				t.Fatalf("%s was accepted silently", testCase.name)
+			}
+			if !strings.Contains(err.Error(), testCase.key) {
+				t.Fatalf("the error %q does not name the setting %s", err, testCase.key)
+			}
+		})
 	}
 }
