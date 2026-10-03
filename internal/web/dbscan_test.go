@@ -3,6 +3,7 @@ package web
 import (
 	"database/sql"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -102,8 +103,18 @@ func tableColumns(t *testing.T, db *sql.DB, table string) []string {
 // than a string somebody chose.
 func databaseBytes(t *testing.T, harness *harness) string {
 	t.Helper()
+	return databaseBytesExcept(t, harness)
+}
+
+// databaseBytesExcept is databaseBytes with some tables left out: the ones a test
+// knows a request moves, such as the session row a signed-in request touches.
+func databaseBytesExcept(t *testing.T, harness *harness, skipped ...string) string {
+	t.Helper()
 	var builder strings.Builder
 	for _, table := range databaseTables(t, harness.store.DB()) {
+		if slices.Contains(skipped, table) {
+			continue
+		}
 		for _, column := range tableColumns(t, harness.store.DB(), table) {
 			rows, err := harness.store.DB().Query(
 				fmt.Sprintf(`SELECT CAST("%s" AS TEXT) FROM "%s"`, column, table))

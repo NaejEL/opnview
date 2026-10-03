@@ -25,19 +25,21 @@ const (
 	pageSignIn   = "signin"
 	pageSettings = "settings"
 	pageRecover  = "recover"
+	// pageCollection is the collection surface.
+	pageCollection = "collection"
 )
 
 // pageNames is every page, so a test can render each one and assert what it does
 // and does not contain.
 func pageNames() []string {
-	return []string{pageSetup, pageSignIn, pageSettings, pageRecover}
+	return []string{pageSetup, pageSignIn, pageSettings, pageRecover, pageCollection}
 }
 
 // renderer holds one compiled template per page.
 //
-// EACH PAGE IS ITS OWN TEMPLATE SET, not one set with four bodies: Go's template
-// namespace is flat, so four files each defining "body" would overwrite one
-// another silently. Parsing the layout once per page costs four parses at start-up
+// EACH PAGE IS ITS OWN TEMPLATE SET, not one set with five bodies: Go's template
+// namespace is flat, so five files each defining "body" would overwrite one
+// another silently. Parsing the layout once per page costs five parses at start-up
 // and removes the possibility of the wrong body being rendered.
 type renderer struct {
 	catalogue  Catalogue

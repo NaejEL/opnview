@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -179,7 +180,9 @@ func TestNoUserVisibleStringIsALiteral(t *testing.T) {
 			known[strings.TrimSpace(value)] = true
 		}
 		for _, page := range everyRenderedPage(t) {
-			for _, line := range visibleLines(page.document) {
+			// A measured figure is data, not a string: the one exception, and only for
+			// a figure in one of the three forms, inside the element that marks it.
+			for _, line := range visibleLines(withoutFigures(page.document)) {
 				if !known[html.UnescapeString(line)] {
 					t.Errorf("%s shows %q, which is in no catalogue", page.name, line)
 				}
@@ -619,10 +622,105 @@ func everyRenderedPage(t *testing.T) []renderedPage {
 	pages = append(pages,
 		renderedPage{"the settings surface with no key file", pageSource(t, lost, PathSettings)})
 
+	// THE PRESENTED CERTIFICATE, fetched and not fetched. The fetch is a TLS
+	// handshake and nothing else, so the fake that speaks TLS presents one and the
+	// fake that does not cannot.
+	fetched := pinned.post(PathSettings, url.Values{
+		"firewall_url": {pinned.fake.baseURL()}, "fetch_certificate": {"1"},
+		"theme": {string(ThemeSystem)},
+	})
+	_, body := statusAndBody(t, fetched)
+	if !strings.Contains(body, pinned.fake.fingerprint()) {
+		t.Error("the fetched certificate's fingerprint is not in the field it fills")
+	}
+	pages = append(pages, renderedPage{"the settings surface with the presented certificate", body})
+	plain := newHarness(t)
+	plain.completeSetup()
+	add("the settings surface with no certificate presented", plain.post(PathSettings, url.Values{
+		"firewall_url": {plain.fake.baseURL()}, "fetch_certificate": {"1"},
+		"theme": {string(ThemeSystem)},
+	}))
+	add("the settings surface fetching with no firewall URL", plain.post(PathSettings, url.Values{
+		"fetch_certificate": {"1"}, "theme": {string(ThemeSystem)},
+	}))
+
+	pages = append(pages, collectionPages(t)...)
+
 	if len(pages) == 0 {
 		t.Fatal("no page was rendered, so these assertions are vacuous")
 	}
 	return pages
+}
+
+// figureForms are the three forms a measured figure takes on a page: a whole
+// number, a rate to three decimals, and an instant in RFC 3339, UTC.
+var figureForms = []*regexp.Regexp{
+	regexp.MustCompile(`^[0-9]+$`),
+	regexp.MustCompile(`^[0-9]+\.[0-9]{3}$`),
+	regexp.MustCompile(`^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$`),
+}
+
+// figureSpan is the element a template marks a figure with.
+var figureSpan = regexp.MustCompile(`<span class="figure">([^<]*)</span>`)
+
+// isFigure says whether a text is a figure in one of the three forms.
+func isFigure(text string) bool {
+	for _, form := range figureForms {
+		if form.MatchString(text) {
+			return true
+		}
+	}
+	return false
+}
+
+// withoutFigures removes every marked figure in one of the three forms from a page,
+// and nothing else: a figure in another form, or a figure outside the element that
+// marks it, stays, and then has to be a catalogue string like any other text.
+func withoutFigures(document string) string {
+	return figureSpan.ReplaceAllStringFunc(document, func(span string) string {
+		if isFigure(figureSpan.FindStringSubmatch(span)[1]) {
+			return ""
+		}
+		return span
+	})
+}
+
+// TestOnlyTheThreeFigureFormsThePagesProducePassTheFigureException holds the
+// exception to what it is for: the three forms, marked, and nothing else — and
+// every figure the pages actually mark is in one of them.
+func TestOnlyTheThreeFigureFormsThePagesProducePassTheFigureException(t *testing.T) {
+	for _, figure := range []string{"0", "86400", "0.125", "12.000", "2026-03-14T09:00:00Z"} {
+		if withoutFigures(`<p><span class="figure">`+figure+`</span></p>`) != "<p></p>" {
+			t.Errorf("the figure %q does not pass the exception", figure)
+		}
+	}
+	for _, text := range []string{
+		"", "-3", "1.5", "0.1250", "1e3", "NaN", "12 records", "3,5",
+		"2026-03-14 09:00:00", "2026-03-14T09:00:00+01:00", "2026-03-14T09:00:00.5Z",
+		"Saved",
+	} {
+		marked := `<span class="figure">` + text + `</span>`
+		if withoutFigures(marked) != marked {
+			t.Errorf("%q passes the exception and is not one of the three forms", text)
+		}
+	}
+	if unmarked := "<dd>42</dd>"; withoutFigures(unmarked) != unmarked {
+		t.Error("a figure outside the element that marks it passes the exception")
+	}
+
+	marked := 0
+	for _, page := range collectionPages(t) {
+		for _, match := range figureSpan.FindAllStringSubmatch(page.document, -1) {
+			marked++
+			if !isFigure(match[1]) {
+				t.Errorf("%s marks %q as a figure, which is none of the three forms",
+					page.name, match[1])
+			}
+		}
+	}
+	if marked == 0 {
+		t.Fatal("no page marks a figure, so this assertion is vacuous")
+	}
 }
 
 // discard reads and closes a response nothing asserts on. It is the redirect that

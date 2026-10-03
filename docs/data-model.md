@@ -1857,6 +1857,43 @@ gaps rather than forgotten (`ids.general.interfaces` as G8; `addr4`, `addr6`,
 that is not a column at all: the polling plan polls the Insight time series
 every 300 s and no table holds it.
 
+## Record rate
+
+The record rate is what the collection surface sizes polling from: for one kind,
+how many records the kind's table received over a window, and how they were
+spread. `store.MeasureRecordRate` computes it from the rows already stored; it
+reads nothing else and writes nothing. The same query, for one bucket width, is
+the *Record rate per kind* section of `sql/queries/diagnostics.sql`.
+
+| Kind | Table | Source clock | Ingested clock |
+|---|---|---|---|
+| `firewall_log` | `flow` | `observed_at` | `ingested_at` |
+| `security_event` | `security_event` | `occurred_at` | `ingested_at` |
+| `dhcp_lease` | `dhcp_lease` | `observed_at` | none |
+| `dns_lookup` | `dns_resolution` | `looked_up_at` | `ingested_at` |
+
+**The window** is the last 24 hours on the source clock, or the retention horizon
+if that is shorter, since the purge has removed whatever lies beyond it. Its start
+is included and its end excluded, so consecutive windows tile.
+
+**The figures** are the record count; the span the records cover, first to last;
+the mean rate over that span on the source clock and, where the table has one, on
+the ingested clock; the peak rate, read in 60-second buckets; and the collection
+gaps detected in the window, per reason, with the seconds they cover. A table with
+no ingested clock reports that rate as not measured rather than copying the source
+rate over, and a window holding no record reports no span and no rate rather than
+a rate of nought.
+
+**The rate is a lower bound.** It counts the records `opnview` stored, which is not
+the same as the records the firewall produced: a record that fell in a collection
+gap — lines a filter-log page no longer reached, an `eve.json` file rotation
+discarded, lookups the resolver's ring buffer dropped — is in no row and is counted
+nowhere. So every rate on the collection surface is at most the source's real rate,
+and a suggestion derived from it can fall short in the same direction; the
+headroom factor of 4 is `opnview`'s own figure and is not a correction for this.
+The caveat is documented here and never printed on a screen, under the same rule
+as the observation-point limit.
+
 ## Purge
 
 `internal/store/purge.sql` is the documented purge. It takes `:now`, reads the

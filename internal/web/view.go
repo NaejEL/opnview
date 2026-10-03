@@ -71,6 +71,91 @@ type view struct {
 	LicenceKeyState   messageKey
 	// Themes are the options the selector offers.
 	Themes []themeOption
+
+	// CollectionPath is where the collection surface lives, for the top bar's link
+	// and for each card's form.
+	//
+	// THE TOP BAR CARRIES A LINK PER SURFACE A SIGNED-IN READER MAY REACH. A route
+	// reachable only by typing its path is a route nobody finds, and the second
+	// surface is what made the bar need links at all.
+	CollectionPath string
+	// CollectionCards are the collection surface's cards, one per source kind the
+	// provider table holds, in the order internal/sizing registers them. A kind
+	// with no provider row produces no card. Every figure in them is read from the
+	// local database; drawing them contacts nothing.
+	CollectionCards []collectionCard
+}
+
+// figureRow is one labelled figure on the collection surface: a measured or
+// configured value, or the named state shown in its place.
+type figureRow struct {
+	// LabelKey names the figure.
+	LabelKey messageKey
+	// Value is the figure, formatted, when there is one to show.
+	Value string
+	// StateKey replaces Value when there is none. Exactly one of the two is set.
+	StateKey messageKey
+}
+
+// gapRow is one gap reason found in the measured window.
+type gapRow struct {
+	// ReasonKey names the reason, from the schema's closed vocabulary.
+	ReasonKey messageKey
+	// Count is how many gaps of that reason the window holds.
+	Count string
+	// MissedSeconds is the time they cover.
+	MissedSeconds string
+}
+
+// collectionCard is one source kind on the collection surface.
+type collectionCard struct {
+	// Kind is the registry kind, which names the card's fields and anchors.
+	Kind string
+	// LabelKey names the kind to the reader.
+	LabelKey messageKey
+	// PageIsAdjustable is false for a read whose page is not a setting; the card
+	// then says so where the page field would be, which is the only place that
+	// answers why the form offers one field.
+	PageIsAdjustable bool
+
+	// InForce, Measurement and Suggestion are the card's three groups, drawn under
+	// three headings so that the pair in force and the pair suggested can never be
+	// read as one another. Each row is a label and either a figure or a named state:
+	// where there is no figure there is a sentence saying why, never a nought.
+	InForce     []figureRow
+	Measurement []figureRow
+	Suggestion  []figureRow
+	// Gaps are the gap reasons of the measured window, one row each.
+	Gaps []gapRow
+	// SuggestionStateKey is the outcome of the derivation, as a state: one of the
+	// sizing outcomes, each its own sentence.
+	SuggestionStateKey messageKey
+	// SuggestionExists says whether there is a pair to fill the fields with; the
+	// fill control is disabled without one, because a control that is offered
+	// changes what the product does.
+	SuggestionExists bool
+
+	// NoticeKey is a save or a fill confirmed in this card; RefusalKey a value
+	// refused in it, against InvalidField, which names the field that caused it.
+	// They are drawn inside the card they belong to: a banner at the top of a page
+	// four cards tall would name neither the kind saved nor the field refused.
+	NoticeKey    messageKey
+	RefusalKey   messageKey
+	InvalidField string
+	// PageSizeField and IntervalField are what the two fields show: the pair in
+	// force, or what was typed when a submission is refused, or the suggestion
+	// when the reader asked for it.
+	PageSizeField string
+	IntervalField string
+
+	// The form's field names, carried rather than spelled in the template, so the
+	// handler that reads them and the page that writes them cannot disagree. Each
+	// card is its own form, so a value refused on one kind leaves the others
+	// saveable.
+	FieldKind     string
+	FieldPageSize string
+	FieldInterval string
+	FieldFill     string
 }
 
 // themeOption is one row of the theme selector.
@@ -102,6 +187,7 @@ func (s *Server) newView(writer http.ResponseWriter, request *http.Request,
 		SignOutPath:    PathSignOut,
 		SettingsPath:   PathSettings,
 		RecoverPath:    PathRecover,
+		CollectionPath: PathCollection,
 	}
 	if carried := takeFlash(writer, request); carried != "" {
 		if isNotice(carried) {
@@ -141,8 +227,14 @@ func (s *Server) renderRefusal(writer http.ResponseWriter, request *http.Request
 		return
 	}
 	built.Error = key
-	if page == pageSettings {
+	switch page {
+	case pageSettings:
 		if err := s.fillSettings(request, &built, msgVerifyNotAttempted); err != nil {
+			s.failInternal(writer, request, err)
+			return
+		}
+	case pageCollection:
+		if err := s.fillCollection(request.Context(), &built, nil, nil); err != nil {
 			s.failInternal(writer, request, err)
 			return
 		}
@@ -161,6 +253,8 @@ func titleKeyFor(page string) messageKey {
 		return msgTitleSettings
 	case pageRecover:
 		return msgTitleRecover
+	case pageCollection:
+		return msgTitleCollection
 	default:
 		return msgTitleSignIn
 	}

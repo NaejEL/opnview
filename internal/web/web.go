@@ -10,9 +10,9 @@
 // reach it, and a test enumerates the table and fails on a route that carries
 // none.
 //
-// WHAT IT SERVES, AND NOTHING MORE. Setup, sign-in and sign-out, settings, and one
-// stylesheet. There is no widget endpoint, no canvas, no dashboard format and no
-// language picker here: those are steps 5 and 7.
+// WHAT IT SERVES, AND NOTHING MORE. Setup, sign-in and sign-out, settings, the
+// collection surface and one stylesheet. There is no widget endpoint, no canvas, no
+// dashboard format and no language picker here: those are steps 5 and 7.
 //
 // NO CONTROL ON ANY PAGE CAN CHANGE A FIREWALL SETTING, and none suggests that it
 // can. The only call this package makes to the firewall is the credential
@@ -51,6 +51,14 @@ const (
 	PathSignOut = "/sign-out"
 	// PathSettings is where credentials enter the product.
 	PathSettings = "/settings"
+	// PathCollection is where the operator sees, per source kind, the pair that
+	// governs its polling, the record rate opnview has measured, and the pair it
+	// would suggest, and saves a new pair.
+	//
+	// It is a route of its own rather than a fourth card on the settings page: the
+	// settings surface is where credentials enter, and this one reads the database
+	// and writes configuration rows only.
+	PathCollection = "/collection"
 	// PathRecover is the password reset authorised by the key file.
 	PathRecover = "/recover"
 	// PathStylesheet is the one static asset.
@@ -133,9 +141,30 @@ type Options struct {
 	// Now is the clock. Nil takes time.Now, and a test drives both session bounds
 	// through it rather than sleeping.
 	Now func() time.Time
+	// Settings is the live configuration the running service reads. The collection
+	// surface loads the configuration again after a save and hands it to this holder,
+	// so a saved interval reaches the scheduler without a restart. Nil leaves the
+	// surface measuring and saving, with nothing running to tell; the next start
+	// reads the rows. A test passes its own holder and asserts on its generation,
+	// which is how "without a restart" is checked rather than assumed. cmd/opnview
+	// passes the holder its scheduler reads.
+	Settings *config.Live
+	// Collector is told the configuration after a save, so a saved page size reaches
+	// the collectors without a restart. Nil is the same state as a nil Settings, for
+	// the same reason. cmd/opnview passes its collector, which is the one the
+	// scheduler runs.
+	Collector Reconfigurable
 }
 
-// Server is the HTTP surface.
+// Reconfigurable is what the collection surface needs of a running collector: to be
+// told the configuration that is now in force. It is an interface so that this
+// package does not import the collectors, and a test can count what reached it.
+type Reconfigurable interface {
+	Configure(settings config.Config)
+}
+
+// Server is the HTTP surface. One per process: it holds the routes, the renderer
+// and the session store, and nothing a request can change.
 type Server struct {
 	store       *store.Store
 	dataDir     string
@@ -156,6 +185,11 @@ type Server struct {
 	// refusal" tells an attacker which logins exist. A refusal for an unknown login
 	// verifies against this record, so both paths cost the same.
 	decoyPassword store.PasswordHash
+
+	// settings and collector are told about a saved configuration. Either may be
+	// nil; see Options.
+	settings  *config.Live
+	collector Reconfigurable
 
 	routes []Route
 	mux    *http.ServeMux
@@ -215,6 +249,8 @@ func New(options Options) (*Server, error) {
 		params:        params,
 		now:           clock,
 		decoyPassword: decoy,
+		settings:      options.Settings,
+		collector:     options.Collector,
 	}
 	server.register()
 	return server, nil
@@ -247,6 +283,11 @@ func (s *Server) register() {
 			handler: s.handleSettingsForm},
 		{Method: http.MethodPost, Pattern: PathSettings, Access: AccessAuthenticated,
 			handler: s.handleSettingsSubmit},
+		// The collection surface reads the local database and writes setting rows only.
+		{Method: http.MethodGet, Pattern: PathCollection, Access: AccessAuthenticated,
+			handler: s.handleCollectionForm},
+		{Method: http.MethodPost, Pattern: PathCollection, Access: AccessAuthenticated,
+			handler: s.handleCollectionSubmit},
 
 		// The reset form discloses nothing — it names no login and lists nothing —
 		// so it is reachable by somebody who has forgotten their password, which is

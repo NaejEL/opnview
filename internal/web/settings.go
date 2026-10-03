@@ -3,8 +3,10 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/config"
@@ -63,6 +65,17 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 			s.renderSettingsRefusal(writer, request, msgFirewallURLInvalid)
 			return
 		}
+	}
+
+	// THE FETCH BUTTON STORES NOTHING. It connects, shows the fingerprint of the
+	// certificate the firewall presents, and redraws the form with it in the field;
+	// accepting it is the save that follows, which is a second deliberate act. It is
+	// handled before anything is parsed or stored, so pressing it with a half-typed
+	// form loses nothing and writes nothing. The URL it connects to is the one typed,
+	// already checked above.
+	if request.PostFormValue("fetch_certificate") != "" {
+		s.showPresentedCertificate(writer, request, firewallURL, apiKey)
+		return
 	}
 	// Normalised rather than refused for its punctuation: OPNsense displays a
 	// fingerprint colon-separated and upper-case, and that is what a reader pastes.
@@ -138,6 +151,47 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 		s.failInternal(writer, request, err)
 		return
 	}
+	if err := s.renderer.render(writer, http.StatusOK, pageSettings, built); err != nil {
+		s.failInternal(writer, request, err)
+	}
+}
+
+// showPresentedCertificate connects to the firewall at the typed URL and redraws the
+// settings surface with the fingerprint of the certificate it presented in the field,
+// and the URL and API key as they were typed. It stores nothing and verifies nothing:
+// the connection reads one certificate and closes, and nothing it read is trusted
+// until the operator saves it. See opnsense.FetchCertificateFingerprint.
+func (s *Server) showPresentedCertificate(writer http.ResponseWriter, request *http.Request,
+	firewallURL, apiKey string) {
+	if firewallURL == "" {
+		s.renderSettingsRefusal(writer, request, msgFirewallURLRequired)
+		return
+	}
+	// The one call this button makes, a TLS handshake and nothing after it.
+	presented, err := opnsense.FetchCertificateFingerprint(request.Context(), firewallURL)
+	if err != nil {
+		// The detail names the address and why; it goes to the console, not the page.
+		fmt.Fprintf(os.Stderr, "opnview: web: fetching the firewall certificate: %v\n", err)
+		s.renderSettingsRefusal(writer, request, msgCertificateNotFetched)
+		return
+	}
+
+	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageSettings))
+	if err != nil {
+		s.failInternal(writer, request, err)
+		return
+	}
+	built.Notice = msgCertificatePresented
+	if err := s.fillSettings(request, &built, msgVerifyNotAttempted); err != nil {
+		s.failInternal(writer, request, err)
+		return
+	}
+	// What was typed stays typed: fillSettings put back what is stored, and nothing
+	// has been stored yet.
+	built.FirewallURL = firewallURL
+	built.APIKey = apiKey
+	built.CertificateFingerprint = presented
+
 	if err := s.renderer.render(writer, http.StatusOK, pageSettings, built); err != nil {
 		s.failInternal(writer, request, err)
 	}

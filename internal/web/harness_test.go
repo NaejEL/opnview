@@ -95,6 +95,32 @@ type harness struct {
 	server     *Server
 	http       *httptest.Server
 	client     *http.Client
+	// live is the configuration holder the scheduler would read, and collector
+	// stands in for the running collector: together they are what a save on the
+	// collection surface has to reach without a restart.
+	live      *config.Live
+	collector *recordingCollector
+}
+
+// recordingCollector stands in for the running collector and keeps every
+// configuration handed to it, in order.
+type recordingCollector struct {
+	mutex      sync.Mutex
+	configured []config.Config
+}
+
+// Configure records one configuration.
+func (c *recordingCollector) Configure(settings config.Config) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	c.configured = append(c.configured, settings)
+}
+
+// received returns the configurations handed over so far.
+func (c *recordingCollector) received() []config.Config {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	return append([]config.Config(nil), c.configured...)
 }
 
 // newHarness builds a server on a fresh data directory.
@@ -177,6 +203,12 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 		t.Fatalf("loading the stored credentials: %v", err)
 	}
 	credentials.Set(initial)
+	settings, err := config.Load(context.Background(), database)
+	if err != nil {
+		t.Fatalf("loading the stored configuration: %v", err)
+	}
+	live := config.NewLive(settings)
+	collector := &recordingCollector{}
 
 	server, err := New(Options{
 		Store:          database,
@@ -187,6 +219,8 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 		SetupToken:     setupToken,
 		PasswordParams: testPasswordParams(),
 		Now:            clock.Now,
+		Settings:       live,
+		Collector:      collector,
 	})
 	if err != nil {
 		t.Fatalf("building the server: %v", err)
@@ -202,7 +236,7 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 	return &harness{
 		t: t, dataDir: dataDir, store: database, box: box, clock: clock,
 		setupToken: setupToken, creds: credentials, fake: fake, server: server,
-		http: front,
+		http: front, live: live, collector: collector,
 		client: &http.Client{
 			Jar: jar,
 			// A redirect is a fact a test asserts on, so it is never followed
