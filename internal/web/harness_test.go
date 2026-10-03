@@ -107,6 +107,26 @@ func newHarness(t *testing.T) *harness {
 // test reuses. withKeyFile false is the lost-key-file state.
 func newHarnessIn(t *testing.T, dataDir string, withKeyFile bool) *harness {
 	t.Helper()
+	return newHarnessOver(t, dataDir, withKeyFile, false)
+}
+
+// newTLSHarness builds a server whose fake firewall speaks TLS under a certificate
+// it generated for itself, reached through THE PRODUCT'S OWN TRANSPORT.
+//
+// IT IS THE ONLY HARNESS THAT EXERCISES A TRUST DECISION, and it exists because the
+// state it produces was being reported as a different state entirely. A default
+// OPNsense serves its API under a self-signed certificate; every other harness here
+// talks plain HTTP to the fake and therefore never makes opnview decide whether to
+// believe a certificate. With no fingerprint pinned this firewall is refused, which
+// is the certificate-refused state; with the right one pinned it answers.
+func newTLSHarness(t *testing.T) *harness {
+	t.Helper()
+	return newHarnessOver(t, t.TempDir(), true, true)
+}
+
+// newHarnessOver builds a server whose fake firewall speaks TLS or does not.
+func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS bool) *harness {
+	t.Helper()
 
 	database, err := store.Open(context.Background(), dataDir)
 	if err != nil {
@@ -126,10 +146,18 @@ func newHarnessIn(t *testing.T, dataDir string, withKeyFile bool) *harness {
 		}
 	}
 
-	fake := newFakeFirewall(t)
+	fake := newFakeFirewall(t, firewallOverTLS)
 	credentials := config.NewFirewallCredentials()
+	// OVER TLS THE INNER TRANSPORT IS THE PRODUCT'S, so what decides whether the
+	// fake's certificate is acceptable is the code that decides it in production, not
+	// a decision the test made. The guard that refuses any other host stays in front
+	// of it either way.
+	var inner http.RoundTripper = http.DefaultTransport
+	if firewallOverTLS {
+		inner = opnsense.NewTrustingTransport(credentials)
+	}
 	client := opnsense.NewClientFromSource(credentials,
-		&firewallOnlyTransport{t: t, allowedHost: fake.host(), inner: http.DefaultTransport},
+		&firewallOnlyTransport{t: t, allowedHost: fake.host(), inner: inner},
 		5*time.Second)
 
 	setupToken, err := auth.NewSetupToken()
@@ -372,8 +400,10 @@ type fakeRequest struct {
 	apiSecret string
 }
 
-// newFakeFirewall starts a fake answering the verification endpoint.
-func newFakeFirewall(t *testing.T) *fakeFirewall {
+// newFakeFirewall starts a fake answering the verification endpoint. overTLS serves
+// it under a certificate httptest generates, which no system root vouches for —
+// which is the shape of a firewall as OPNsense ships it.
+func newFakeFirewall(t *testing.T, overTLS bool) *fakeFirewall {
 	t.Helper()
 	fake := &fakeFirewall{t: t, status: http.StatusOK, perPath: map[string][]byte{}}
 	fake.body = mustJSON(t, map[string]any{"rows": []any{}, "total": 0})
@@ -381,7 +411,11 @@ func newFakeFirewall(t *testing.T) *fakeFirewall {
 	// search envelope every other endpoint uses. An empty map is a firewall with
 	// nothing discovered, which is a state rather than a failure.
 	fake.perPath[opnsense.InterfaceNames.Path] = mustJSON(t, map[string]string{})
-	fake.server = httptest.NewServer(http.HandlerFunc(fake.serve))
+	if overTLS {
+		fake.server = httptest.NewTLSServer(http.HandlerFunc(fake.serve))
+	} else {
+		fake.server = httptest.NewServer(http.HandlerFunc(fake.serve))
+	}
 	t.Cleanup(fake.server.Close)
 	return fake
 }
@@ -431,6 +465,17 @@ func (f *fakeFirewall) host() string {
 
 // baseURL is what a test types into the firewall URL field.
 func (f *fakeFirewall) baseURL() string { return f.server.URL }
+
+// fingerprint is the SHA-256 fingerprint of the certificate this fake presents, or
+// the empty string when it speaks plain HTTP. It is what an operator would read off
+// OPNsense's own interface and type into the settings surface.
+func (f *fakeFirewall) fingerprint() string {
+	f.t.Helper()
+	if f.server.TLS == nil || len(f.server.Certificate().Raw) == 0 {
+		return ""
+	}
+	return opnsense.CertificateFingerprint(f.server.Certificate())
+}
 
 // answer sets what the fake replies with.
 func (f *fakeFirewall) answer(status int, body []byte) {

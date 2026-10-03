@@ -39,6 +39,15 @@ type Credentials struct {
 	APIKey string
 	// APISecret is the secret half, sent as the HTTP Basic password.
 	APISecret string
+	// Fingerprint is the SHA-256 fingerprint of the certificate the firewall is
+	// expected to present, lower-case hex with no separators, or empty.
+	//
+	// EMPTY MEANS THE STANDARD VERIFICATION, NOT AN ABSENT ONE. A fingerprint is
+	// what an operator pins when OPNsense serves the certificate it generated for
+	// itself, which is how the product ships; an installation whose certificate a
+	// certificate authority vouches for leaves this empty and is verified against
+	// the system roots. See trust.go.
+	Fingerprint string
 }
 
 // The refusals. Both are programming errors rather than conditions of the
@@ -125,6 +134,15 @@ const (
 	OutcomeServerError Outcome = "server_error"
 	// OutcomeTransportFailure is no answer at all: the firewall was not reached.
 	OutcomeTransportFailure Outcome = "transport_failure"
+	// OutcomeCertificateRefused is the firewall answering the handshake with a
+	// certificate opnview does not accept.
+	//
+	// IT IS NOT OutcomeTransportFailure, and separating the two is the reason this
+	// value exists. A refused certificate means the host IS reachable and proved an
+	// identity that is not the pinned one; reporting it as an unreachable host sends
+	// the operator to the network when the answer is in the fingerprint field. See
+	// trust.go.
+	OutcomeCertificateRefused Outcome = "certificate_refused"
 )
 
 // Response is one answer from the firewall.
@@ -203,7 +221,10 @@ func NewClientFromSource(source CredentialSource, transport http.RoundTripper,
 		source = Static(Credentials{})
 	}
 	if transport == nil {
-		transport = &http.Transport{}
+		// The product's transport: standard verification, or the pinned fingerprint
+		// when one is configured. A caller that passes its own transport — every
+		// test does — gets exactly that one and no trust decision of ours.
+		transport = NewTrustingTransport(source)
 	}
 	if timeout <= 0 {
 		timeout = 30 * time.Second
@@ -213,6 +234,15 @@ func NewClientFromSource(source CredentialSource, transport http.RoundTripper,
 		http:   &http.Client{Transport: transport, Timeout: timeout},
 	}
 }
+
+// CloseIdleConnections drops the pooled connections.
+//
+// IT IS WHAT MAKES A CHANGED FINGERPRINT TAKE EFFECT WITHOUT A RESTART. The
+// certificate is checked once per handshake, not once per request, so a connection
+// opened under the previous pin would be reused and would keep answering after the
+// pin changed to one it does not match. Whatever replaces the credentials calls
+// this, which is the settings surface.
+func (c *Client) CloseIdleConnections() { c.http.CloseIdleConnections() }
 
 // RequestOptions are the parameters of one call.
 type RequestOptions struct {
@@ -299,8 +329,16 @@ func (c *Client) Call(ctx context.Context, ep Endpoint, opt RequestOptions) (Res
 
 	answer, err := c.http.Do(request)
 	if err != nil {
-		response.Outcome = OutcomeTransportFailure
-		response.Detail = "the firewall did not answer"
+		// THE TWO FAILURES ARE TWO FAILURES. A refused certificate is the firewall
+		// answering with an identity opnview does not accept, and an unreachable host
+		// is no answer at all; they are acted on in two different places.
+		if certificateRefused(err) {
+			response.Outcome = OutcomeCertificateRefused
+			response.Detail = "the firewall's certificate was refused"
+		} else {
+			response.Outcome = OutcomeTransportFailure
+			response.Detail = "the firewall did not answer"
+		}
 		return response, fmt.Errorf("opnsense: calling %s: %w", ep.Path, err)
 	}
 	defer func() { _ = answer.Body.Close() }()

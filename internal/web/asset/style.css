@@ -45,7 +45,25 @@
   --border-width: 1px;
   --header-height: 3.75rem;
   --column-width: 40rem;
+  --column-width-narrow: 23rem;
 }
+
+/* THESE THREE TOKENS ARE OPNVIEW'S OWN, and saying so is the point of this note.
+ * --header-height, --column-width and --column-width-narrow are NOT in
+ * docs/ui-references.md's non-colour table; everything else above is. The document
+ * records a fixed 60-pixel bar and "a main column whose content is capped at 1200
+ * pixels and centred", and 1200 pixels is the cap for a DASHBOARD WITH A SIDEBAR,
+ * which is step 7. The surfaces in this cycle are forms, a form column at 1200
+ * pixels is a line of text nobody can follow, and the document has no value for the
+ * case — so the value is chosen here and the reason is recorded here, which is what
+ * the vocabulary rule asks for when a reference genuinely has no word for
+ * something.
+ *
+ * WHY THERE ARE TWO WIDTHS. An authentication surface is two or four fields and one
+ * button, and at 40rem the fields are far wider than anything typed into them while
+ * the button floats at the end of a line of whitespace. It gets the narrow column.
+ * The settings surface is three cards of configuration, reads as a page of work
+ * rather than a gate, and keeps the wider one. */
 
 /* Industrial — light. The default palette. */
 :root {
@@ -188,6 +206,26 @@ body {
   gap: var(--spacing);
 }
 
+/* THE AUTHENTICATION SURFACES ARE NARROW. Setup, sign-in and the password reset
+ * are a gate and not a page: a column the width of the form's own content. */
+.surface-setup,
+.surface-signin,
+.surface-recover {
+  max-width: var(--column-width-narrow);
+}
+
+/* THE CARDS INSIDE A FORM WERE FLUSH AGAINST ONE ANOTHER, and this is the rule
+ * that was missing. The settings surface wraps its three cards in one <form>, so
+ * the form — not the cards — is .column's only flex child: .column's gap applied
+ * between the notice and the form and nowhere between the cards. The form has to
+ * carry the same column layout as the thing it stands in. */
+.column > form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing);
+  margin: 0;
+}
+
 /* Angular cards. The radius is the palette's 0.25rem, and it is a chamfer
  * rather than a curve — which is the point of the language and the one thing
  * Homarr's structure was taken without. */
@@ -251,6 +289,24 @@ a:focus-visible {
   display: flex;
   justify-content: flex-end;
   gap: var(--spacing-sm);
+}
+
+/* ON A GATE THE ACTION IS THE WIDTH OF THE FORM. There is exactly one thing to do
+ * on each of these three surfaces, and a lone button pushed to the right edge of a
+ * column reads as secondary and sits nowhere near the field above it. Stretched, it
+ * is the last row of the form. The settings surface keeps the right-aligned save:
+ * there the button follows three cards rather than one field, and a full-width bar
+ * at the foot of a page of configuration would read as a banner. */
+.surface-setup .actions,
+.surface-signin .actions,
+.surface-recover .actions {
+  justify-content: stretch;
+}
+
+.surface-setup .actions button,
+.surface-signin .actions button,
+.surface-recover .actions button {
+  width: 100%;
 }
 
 button {

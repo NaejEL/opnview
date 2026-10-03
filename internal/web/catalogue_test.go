@@ -544,6 +544,11 @@ func everyRenderedPage(t *testing.T) []renderedPage {
 		}))
 	add("a settings submission naming a theme that does not exist",
 		configured.post(PathSettings, url.Values{"theme": {"no-such-theme"}}))
+	add("a settings submission whose fingerprint is not a fingerprint",
+		configured.post(PathSettings, url.Values{
+			"certificate_fingerprint": {"not-a-fingerprint"},
+			"theme":                   {string(ThemeSystem)},
+		}))
 
 	// EVERY VERIFICATION OUTCOME, because each is a separate sentence and an error path
 	// is the one nobody looks at. The unreachable host comes last of the firewall
@@ -562,6 +567,15 @@ func everyRenderedPage(t *testing.T) []renderedPage {
 	configured.fake.goDown()
 	add("the settings surface with the firewall unreachable",
 		configured.storeCredentials(apiKey, randomHex(t, 16)))
+
+	// THE CERTIFICATE REFUSED, WHICH IS NOT THE HOST UNREACHABLE. On its own harness
+	// because its firewall speaks TLS: this is the only state in this list where
+	// opnview decides whether to believe a certificate, and the state the product
+	// used to report as the line above.
+	pinned := newTLSHarness(t)
+	pinned.completeSetup()
+	add("the settings surface with the firewall's certificate refused",
+		pinned.storeCredentials(randomHex(t, 12), randomHex(t, 16)))
 	add("the settings surface with no firewall URL",
 		configured.post(PathSettings, url.Values{"theme": {string(ThemeSystem)}}))
 

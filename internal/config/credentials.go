@@ -11,7 +11,7 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 )
 
-// The setting keys cycle 4B adds. All three are configuration, and configuration
+// The setting keys cycle 4B adds. All four are configuration, and configuration
 // is what this table holds, so a second location for them would be a second
 // truth.
 //
@@ -30,6 +30,14 @@ const (
 	KeyOPNsenseBaseURL = "opnsense_base_url"
 	// KeyOPNsenseAPIKey is the key half of the firewall API pair.
 	KeyOPNsenseAPIKey = "opnsense_api_key"
+	// KeyOPNsenseCertificateFingerprint is the SHA-256 fingerprint of the
+	// certificate the firewall is expected to present, or an absent row.
+	//
+	// IT IS A SETTING AND NOT A CREDENTIAL. A fingerprint is a hash of a certificate
+	// the firewall hands to anybody who connects, so it is public by construction
+	// and there is nothing to encrypt. Storing it beside the URL is also what lets
+	// the settings surface pre-fill it, which a credential may never be.
+	KeyOPNsenseCertificateFingerprint = "opnsense_certificate_fingerprint"
 	// KeyTheme is the installation's theme. It is ONE ROW FOR THE INSTALLATION and
 	// not a per-account preference: the schema has no such concept and one account
 	// cannot justify inventing one.
@@ -139,6 +147,10 @@ func LoadFirewallCredentials(ctx context.Context, reader CredentialReader,
 	if err != nil {
 		return opnsense.Credentials{}, CredentialStateAbsent, err
 	}
+	fingerprint, _, err := readSetting(ctx, reader, KeyOPNsenseCertificateFingerprint)
+	if err != nil {
+		return opnsense.Credentials{}, CredentialStateAbsent, err
+	}
 
 	sealed, stored, err := reader.Credential(ctx, store.CredentialOPNsenseAPISecret)
 	if err != nil {
@@ -176,9 +188,10 @@ func LoadFirewallCredentials(ctx context.Context, reader CredentialReader,
 	}
 
 	return opnsense.Credentials{
-		BaseURL:   baseURL,
-		APIKey:    apiKey,
-		APISecret: string(apiSecret),
+		BaseURL:     baseURL,
+		APIKey:      apiKey,
+		APISecret:   string(apiSecret),
+		Fingerprint: fingerprint,
 	}, CredentialStateReady, nil
 }
 

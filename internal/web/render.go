@@ -106,6 +106,13 @@ func (r *renderer) render(writer http.ResponseWriter, status int, page string, d
 	if !present {
 		return fmt.Errorf("web: there is no page called %q", page)
 	}
+	// The page's own class, stamped here because this is the one function that knows
+	// both the page name and the data. A handler setting it would be four handlers
+	// each able to set it to something else.
+	if built, ok := data.(view); ok {
+		built.Surface = "surface-" + page
+		data = built
+	}
 	var buffer bytes.Buffer
 	if err := compiled.ExecuteTemplate(&buffer, "layout", data); err != nil {
 		return fmt.Errorf("web: rendering %s: %w", page, err)

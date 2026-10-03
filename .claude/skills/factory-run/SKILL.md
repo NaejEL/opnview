@@ -99,6 +99,24 @@ cycle**, whatever the number of verifiers.
    path to the spec. On an `interface` cycle, launch a **new**
    `factory-ergonomist` in the same way, in addition to it, never instead of
    it. Take the final JSON block from each reply.
+
+   **On an `interface` cycle, serve the interface BEFORE launching the
+   Ergonomist, and give it the address.** It has eyes and nothing else; a cycle
+   that hands it a repository and no running page has disabled the role it just
+   launched. The service runs from the development toolchain:
+
+   ```
+   OPNVIEW_LISTEN=8080 docker compose -f docker-compose.serve.yml run --rm --service-ports serve
+   ```
+
+   `--service-ports` is not optional, the port has no default, and the console
+   prints the one-time setup token the Ergonomist needs to get past `/setup` on
+   a fresh database. Pass it the address, the token, and the login it should
+   create. Stop the service when the cycle ends. **This is the omission that
+   produced cycle 4B's three defects**: the surfaces were reviewed in a cycle
+   where `docker-compose.serve.yml` did not yet exist, so no page could be
+   rendered and the layout defects — a rendered proportion and a computed
+   `gap` — were invisible to everyone who looked.
 2. **Both verifiers must approve.** Leave the loop only when every verifier you
    launched returned `verdict: APPROVED` with `tests_passed: true`. **Neither
    verifier takes precedence over the other**: `factory-verifier` owns the
@@ -107,14 +125,28 @@ cycle**, whatever the number of verifiers.
    to the written design references as the floor beneath that judgement — and
    neither may overrule the other's finding. A disagreement is therefore not a deadlock — a blocking
    finding from either sends the cycle round again.
-3. Otherwise, if the counter is strictly below 3: relaunch the same Builder
+3. **A verifier that could not inspect at all stops the cycle here, and does
+   not consume an iteration.** When a verifier returns `tests_passed: false`
+   because the capability its role requires was unavailable — most often
+   `factory-ergonomist` reporting that the interface could not be rendered —
+   the finding is about the ENVIRONMENT and not about the code. Relaunching the
+   Builder on it spends three iterations editing something nobody could see,
+   and then fails for the wrong reason. Instead: leave the loop without
+   approving, report to the maintainer what the verifier tried and the error it
+   received verbatim, and name what has to be made available — serve the page,
+   grant the browser tool set permission for the loopback address, install the
+   tool set. The cycle resumes, from this same verify phase, once it is
+   available. **Do not approve, do not substitute your own reading of the
+   source for the inspection that did not happen, and do not ask the Builder to
+   change anything.**
+4. Otherwise, if the counter is strictly below 3: relaunch the same Builder
    with the path to the spec **and the complete list of `issues` from every
    verifier merged into one list** (file, severity, description, none omitted,
    none summarised, none dropped because the other verifier approved), plus the
    instruction to fix every issue without regressing on acceptance criteria
    already satisfied. Increment the counter and go back to sub-step 1 with new
    verifiers.
-4. If the counter reaches 3 without approval: **fail explicitly**. Publish the
+5. If the counter reaches 3 without approval: **fail explicitly**. Publish the
    remaining issues as they are, along with the state of the repository. Never
    approve out of exhaustion, never shrink the spec to make the verdict pass.
 
