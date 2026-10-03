@@ -1,6 +1,7 @@
 package opnsense
 
 import (
+	"context"
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
@@ -8,7 +9,9 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -234,4 +237,59 @@ func certificateRefused(err error) bool {
 	}
 	var invalid x509.CertificateInvalidError
 	return errors.As(err, &invalid)
+}
+
+// FetchCertificateFingerprint connects to the firewall at baseURL, completes a TLS
+// handshake, and returns the SHA-256 fingerprint of the certificate it presented.
+// It is what the settings surface calls when an operator asks to see the
+// certificate before pinning it, so that the fingerprint can be compared with the
+// one OPNsense displays instead of typed from it.
+//
+// THIS IS THE ONE CONNECTION THAT DOES NOT VERIFY THE CERTIFICATE, AND IT TRUSTS
+// NOTHING. Its whole purpose is to read a certificate that the standard
+// verification would refuse — the self-signed one OPNsense ships with — so the
+// verification is off. What makes that safe is what the function does not do: it
+// sends no request, no credential and no byte of application data over the
+// connection, and it returns nothing but the fingerprint. The result is shown to
+// a person, who compares it with the firewall's own interface and decides whether
+// to pin it; until that person saves it, no collector trusts it, and every
+// connection that carries a credential still goes through NewTrustingTransport.
+//
+// A URL whose scheme is not https presents no certificate, and is answered with
+// ErrNoCertificate rather than a connection attempt. With no port, the https
+// default applies. A handshake that fails is an error naming the address, so an
+// unreachable host is reported as unreachable.
+func FetchCertificateFingerprint(ctx context.Context, baseURL string) (string, error) {
+	parsed, err := url.Parse(baseURL)
+	if err != nil {
+		return "", fmt.Errorf("opnsense: reading the firewall URL: %w", err)
+	}
+	if parsed.Scheme != "https" {
+		// Plain HTTP has no certificate to read, and an empty or relative URL has
+		// no host to read it from.
+		return "", ErrNoCertificate
+	}
+	address := parsed.Host
+	if parsed.Port() == "" {
+		address = net.JoinHostPort(parsed.Host, "443")
+	}
+
+	dialer := tls.Dialer{Config: &tls.Config{
+		// Off on purpose, and on this connection only: see the comment above. The
+		// handshake is the whole exchange, and its one product is a fingerprint a
+		// person checks before anything trusts it.
+		InsecureSkipVerify: true,
+		MinVersion:         tls.VersionTLS12,
+	}}
+	conn, err := dialer.DialContext(ctx, "tcp", address)
+	if err != nil {
+		return "", fmt.Errorf("opnsense: reaching %s: %w", address, err)
+	}
+	defer func() { _ = conn.Close() }()
+
+	state := conn.(*tls.Conn).ConnectionState()
+	if len(state.PeerCertificates) == 0 {
+		return "", ErrNoCertificate
+	}
+	return CertificateFingerprint(state.PeerCertificates[0]), nil
 }
