@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/store"
@@ -46,7 +47,14 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 		return err
 	}
 
-	now := c.now()
+	// No retention purge runs between this pass storing its lookups and the end of its
+	// derivation (purge.go).
+	defer c.storing()()
+	// The instant every lookup of this pass is stamped with stays in flight until the
+	// pass has written them, so a lease pass running meanwhile does not move the point it
+	// next resolves host names from past lookups not yet committed.
+	now, ingest := c.beginIngest()
+	defer c.endIngest(ingest)
 	span := source.requestedSpanSeconds()
 	windowStart := now - span
 
@@ -55,6 +63,7 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 		oldestSeen             int64
 		haveOldest             bool
 		outsideRequestedWindow int
+		stored                 derivation
 		totalRows              int
 	)
 
@@ -66,11 +75,12 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 			return c.writeAvailability(ctx, providerID, result.state, result.probe, readErr.Error())
 		}
 		if readErr != nil {
+			// The pages read before this one are stored, and are derived all the same.
 			if writeErr := c.writeAvailability(ctx, providerID, result.state,
 				result.probe, result.detail); writeErr != nil {
-				return writeErr
+				return c.deriveAfter(ctx, stored, joinErrors([]error{readErr, writeErr}))
 			}
-			return readErr
+			return c.deriveAfter(ctx, stored, readErr)
 		}
 		if len(records) == 0 {
 			break
@@ -95,11 +105,13 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 
 			lookup, err := c.buildDNSResolution(ctx, record, providerKey, now)
 			if err != nil {
-				return err
+				return c.deriveAfter(ctx, stored, err)
 			}
 			if err := c.store.InsertDNSResolution(ctx, lookup); err != nil {
-				return err
+				return c.deriveAfter(ctx, stored, err)
 			}
+			stored.addresses = append(stored.addresses, lookup.ClientAddress)
+			stored.widen(record.LookedUpAt, record.LookedUpAt+c.attributionMaxDelay())
 		}
 		if newOnThisPage == 0 {
 			// Every row on this page was already inside the stored history, so the pages behind
@@ -123,7 +135,7 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 	}
 	if err := c.writeAvailability(ctx, providerID, store.StateReachable,
 		lastResult.probe, detail); err != nil {
-		return err
+		return c.deriveAfter(ctx, stored, err)
 	}
 
 	// The gap test, and the only one this kind's material permits: the buffer holds the most
@@ -142,18 +154,43 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 			Detail:          &gapDetail,
 			DetectedAt:      now,
 		}); err != nil {
-			return err
+			return c.deriveAfter(ctx, stored, err)
 		}
 	}
-	return nil
+
+	// The lookups are stored, so their queriers can be placed, and every flow they could
+	// name -- up to the attribution delay after each -- has its attribution decided again.
+	return c.derive(ctx, stored)
 }
 
 // buildDNSResolution turns one record into a row, resolving the querying machine.
 func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 	resolver string, now int64) (store.DNSResolution, error) {
+	// The resolver's query report gives, in place of the querying address, the name a
+	// reverse lookup of it returned whenever there was one (opnsense/core 26.7.3,
+	// scripts/unbound/stats.py, the `details` query, over the `client` table
+	// scripts/unbound/logger.py fills through socket.gethostbyaddr). Such a name is
+	// resolved back to an address through the DHCP leases valid at the lookup's
+	// instant, and only when exactly one address answers; otherwise the lookup names
+	// no machine, and the resolution is recorded either way.
+	clientAddress := record.ClientAddress
+	resolution := store.ClientResolutionLoggedAddress
+	var clientHostname *string
+	if clientAddress != "" {
+		if _, err := netip.ParseAddr(clientAddress); err != nil {
+			logged := clientAddress
+			clientHostname = &logged
+			clientAddress, resolution, err = c.store.ResolveLeaseHostname(ctx, logged, record.LookedUpAt)
+			if err != nil {
+				return store.DNSResolution{}, err
+			}
+		}
+	}
+
 	var clientID *int64
-	if record.ClientAddress != "" {
-		id, _, found, err := c.store.ClientRefByAddressSince(ctx, record.ClientAddress,
+	if clientAddress != "" && (resolution == store.ClientResolutionLoggedAddress ||
+		resolution == store.ClientResolutionLeased) {
+		id, _, found, err := c.store.ClientRefByAddressSince(ctx, clientAddress,
 			now-AddressIdleWindow)
 		if err != nil {
 			return store.DNSResolution{}, err
@@ -168,18 +205,20 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 	}
 
 	return store.DNSResolution{
-		LookupKey:     record.DeduplicationKey,
-		ClientAddress: record.ClientAddress,
-		ClientID:      clientID,
-		Domain:        record.Domain,
-		Resolver:      resolver,
-		Action:        record.Action,
-		AnswerSource:  record.AnswerSource,
-		Rcode:         record.Rcode,
-		DNSSECStatus:  record.DNSSECStatus,
-		BlocklistName: record.BlocklistName,
-		LookedUpAt:    record.LookedUpAt,
-		IngestedAt:    now,
+		LookupKey:        record.DeduplicationKey,
+		ClientAddress:    clientAddress,
+		ClientHostname:   clientHostname,
+		ClientResolution: resolution,
+		ClientID:         clientID,
+		Domain:           record.Domain,
+		Resolver:         resolver,
+		Action:           record.Action,
+		AnswerSource:     record.AnswerSource,
+		Rcode:            record.Rcode,
+		DNSSECStatus:     record.DNSSECStatus,
+		BlocklistName:    record.BlocklistName,
+		LookedUpAt:       record.LookedUpAt,
+		IngestedAt:       now,
 	}, nil
 }
 

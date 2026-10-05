@@ -294,3 +294,37 @@ func TestAPageSizeThatIsNotAPositiveCountIsRefused(t *testing.T) {
 		})
 	}
 }
+
+// TestTheAttributionDelayIsAPositiveWholeNumberOfSeconds is the setting row of step 5's
+// attribution: 5 with no row, read from the row when there is one, and refused when it is
+// not a positive whole number.
+func TestTheAttributionDelayIsAPositiveWholeNumberOfSeconds(t *testing.T) {
+	ctx := context.Background()
+	loaded, err := Load(ctx, settingTable{rows: map[string]string{}})
+	if err != nil || loaded.AttributionMaxDelaySeconds != 5 {
+		t.Errorf("with no row the delay is %d (%v), not 5", loaded.AttributionMaxDelaySeconds, err)
+	}
+	loaded, err = Load(ctx, settingTable{rows: map[string]string{KeyAttributionMaxDelay: "6"}})
+	if err != nil || loaded.AttributionMaxDelaySeconds != 6 {
+		t.Errorf("a row of 6 gave %d (%v)", loaded.AttributionMaxDelaySeconds, err)
+	}
+	for _, value := range []string{"0", "-5", "5.5", "five", ""} {
+		if _, err := Load(ctx, settingTable{rows: map[string]string{KeyAttributionMaxDelay: value}}); err == nil ||
+			!strings.Contains(err.Error(), KeyAttributionMaxDelay) {
+			t.Errorf("the delay %q was accepted, or refused without naming the key: %v", value, err)
+		}
+	}
+}
+
+// TestThePublicSuffixListIsCheckedOnceADayByDefault is the refresh interval of the third
+// outbound call: publicsuffix.org asks for no more than one download a day.
+func TestThePublicSuffixListIsCheckedOnceADayByDefault(t *testing.T) {
+	if Defaults().PublicSuffixRefreshInterval != 24*time.Hour {
+		t.Errorf("the list is checked every %s", Defaults().PublicSuffixRefreshInterval)
+	}
+	loaded, err := Load(context.Background(), settingTable{rows: map[string]string{
+		KeyPublicSuffixRefreshInterval: "172800"}})
+	if err != nil || loaded.PublicSuffixRefreshInterval != 48*time.Hour {
+		t.Errorf("a row of two days gave %s (%v)", loaded.PublicSuffixRefreshInterval, err)
+	}
+}

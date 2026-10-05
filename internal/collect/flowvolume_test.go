@@ -34,6 +34,8 @@ func arrangeMeasurementCollection(t *testing.T) *probeHarness {
 	harness.fake.answerFixture(opnsense.SystemTime, "system_time.json")
 	harness.fake.answerFixture(opnsense.SystemDisk, "system_disk.json")
 	harness.fake.answerFixture(opnsense.Activity, "activity.json")
+	harness.fake.answerFixture(opnsense.GatewayStatus, "gateway_status.json")
+	harness.fake.answerFixture(opnsense.SystemSwap, "system_swap.json")
 	if err := harness.collector.probeMeasurement(context.Background()); err != nil {
 		t.Fatalf("probing the volume source: %v", err)
 	}
@@ -158,7 +160,7 @@ func TestASamplerRefusalIsRecordedRatherThanLookingLikeSilence(t *testing.T) {
 		t.Error("the refusal also stopped the firewall-health readings, which are unrelated")
 	}
 	if pairs := scalarCount(t, harness.store,
-		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'endpoint_pair'"); pairs != 0 {
+		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'interface_endpoint_pair'"); pairs != 0 {
 		t.Errorf("%d pair readings were stored from a refused sample", pairs)
 	}
 }
@@ -177,9 +179,9 @@ func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 		unit        store.Unit
 		why         string
 	}{
-		{"endpoint_pair", store.MeasureCumulativeBytesIn, store.UnitByte,
+		{"interface_endpoint_pair", store.MeasureCumulativeBytesIn, store.UnitByte,
 			"the per-pair volume, which is a live snapshot upstream and history only here"},
-		{"endpoint_pair", store.MeasureRateBitsOut, store.UnitBitPerSecond,
+		{"interface_endpoint_pair", store.MeasureRateBitsOut, store.UnitBitPerSecond,
 			"the rate the same snapshot reports beside the counter"},
 		{"firewall", store.MeasureMemoryUseRatio, store.UnitRatio, "memory"},
 		{"firewall", store.MeasureCPUUseRatio, store.UnitRatio, "the processor"},
@@ -189,6 +191,9 @@ func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 		{"firewall", store.MeasureDiskUseRatio, store.UnitRatio, "a filesystem"},
 		{"interface", store.MeasureBytesIn, store.UnitByte, "a per-interface byte counter"},
 		{"interface", store.MeasurePacketsOut, store.UnitPacket, "a per-interface packet counter"},
+		{"interface", store.MeasureErrorsIn, store.UnitPacket, "a per-interface error counter"},
+		{"gateway", store.MeasureDelayMilliseconds, store.UnitMillisecond, "a gateway round-trip time"},
+		{"gateway", store.MeasureLossRatio, store.UnitRatio, "a gateway packet loss"},
 	} {
 		stored := scalarCount(t, harness.store,
 			"SELECT count(*) FROM measurement_sample WHERE subject_kind = ? AND measure = ? AND unit = ?",
@@ -199,17 +204,21 @@ func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 		}
 	}
 
-	// A pair subject is canonically ordered, so the same pair sampled from either end is
-	// one subject rather than two.
+	// A pair subject names the device it was read on, then the local address, then the peer:
+	// the two facts the canonical pair used to drop.
+	devices := map[string]bool{}
+	for _, device := range stringColumn(t, harness.store, "SELECT device FROM interface") {
+		devices[device] = true
+	}
 	for _, key := range stringColumn(t, harness.store,
-		"SELECT DISTINCT subject_key FROM measurement_sample WHERE subject_kind = 'endpoint_pair'") {
+		"SELECT DISTINCT subject_key FROM measurement_sample WHERE subject_kind = 'interface_endpoint_pair'") {
 		parts := strings.Split(key, " ")
-		if len(parts) != 2 {
-			t.Errorf("the pair subject %q is not two addresses", key)
+		if len(parts) != 3 {
+			t.Errorf("the pair subject %q is not a device, a local address and a peer", key)
 			continue
 		}
-		if parts[0] > parts[1] {
-			t.Errorf("the pair subject %q is not in lexicographic order", key)
+		if !devices[parts[0]] {
+			t.Errorf("the pair subject %q does not begin with a discovered device", key)
 		}
 	}
 
@@ -222,7 +231,7 @@ func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 	}
 	// The pair readings do name one: that volume is the measurement_sample kind's material.
 	if unattributed := scalarCount(t, harness.store,
-		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'endpoint_pair' AND provider_id IS NULL"); unattributed != 0 {
+		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'interface_endpoint_pair' AND provider_id IS NULL"); unattributed != 0 {
 		t.Errorf("%d pair readings name no provider", unattributed)
 	}
 }
@@ -366,7 +375,7 @@ func TestAnEmptyTrafficSnapshotIsNotReportedAsAnAbsenceOfTraffic(t *testing.T) {
 			"absence of traffic and that a wrong argument answers the same way", detail)
 	}
 	if pairs := scalarCount(t, harness.store,
-		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'endpoint_pair'"); pairs != 0 {
+		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'interface_endpoint_pair'"); pairs != 0 {
 		t.Errorf("%d pair readings were invented from an empty snapshot", pairs)
 	}
 }

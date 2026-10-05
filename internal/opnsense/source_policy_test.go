@@ -1,6 +1,7 @@
 package opnsense
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -11,10 +12,11 @@ import (
 // The source-policy tests. They read the repository's own Go source and fail on the
 // patterns the project rules forbid.
 //
-// WHY THEY LIVE HERE. internal/opnsense is one of the two packages allowed to build an
-// HTTP request — the firewall client — and internal/maxmind is the other, the MaxMind
-// database download: the two outbound calls the roadmap allows, one package each.
-// Asserting that from here keeps the rule and its enforcement in one place.
+// WHY THEY LIVE HERE. internal/opnsense is one of the three packages allowed to build an
+// HTTP request — the firewall client — internal/maxmind is the second, the MaxMind
+// database download, and internal/publicsuffix the third, the Public Suffix List
+// download: the three outbound calls the roadmap allows, one package each. Asserting that
+// from here keeps the rule and its enforcement in one place.
 //
 // WHAT IS IN SCOPE. Every non-test Go file under cmd/ and internal/. Test files and
 // testdata are excluded, deliberately and for a reason the project rules state:
@@ -27,39 +29,79 @@ import (
 // scannedRoots are the directories that hold the program.
 var scannedRoots = []string{"../../cmd", "../../internal"}
 
-// TestOnlyTheTwoOutboundPackagesBuildAnHTTPRequest is the two-chokepoint rule: one
-// package per outbound call the roadmap allows, and no third.
+// TestOnlyTheThreeOutboundPackagesBuildAnHTTPRequest is the three-chokepoint rule: one
+// package per outbound call the roadmap allows, and no fourth.
 //
 // The forbidden names are the ones that reach the network without going through a
 // client somebody configured: the package-level helpers and the shared default
-// client and transport. http.NewRequestWithContext is allowed in internal/opnsense
-// and internal/maxmind and nowhere else.
-func TestOnlyTheTwoOutboundPackagesBuildAnHTTPRequest(t *testing.T) {
+// client and transport. http.NewRequestWithContext is allowed in internal/opnsense,
+// internal/maxmind and internal/publicsuffix and nowhere else.
+func TestOnlyTheThreeOutboundPackagesBuildAnHTTPRequest(t *testing.T) {
+	builders := map[string]bool{}
+	for _, file := range goSourceFiles(t) {
+		for _, violation := range outboundViolations(file, readFile(t, file)) {
+			t.Error(violation)
+		}
+		if inAnOutboundPackage(file) && strings.Contains(readFile(t, file), "http.NewRequest") {
+			builders[filepath.Base(filepath.Dir(file))] = true
+		}
+	}
+	// And the three really are the three: each of them builds a request, so the rule is
+	// not passing because a package quietly stopped making its call.
+	for _, name := range []string{"opnsense", "maxmind", "publicsuffix"} {
+		if !builders[name] {
+			t.Errorf("internal/%s builds no HTTP request, so the three-package rule no longer "+
+				"describes the program", name)
+		}
+	}
+}
+
+// TestAFourthPackageBuildingARequestFailsThePolicy is the teeth of the rule above: a file
+// in any package but the three, building a request, is reported, and the same text in
+// one of the three is not.
+func TestAFourthPackageBuildingARequestFailsThePolicy(t *testing.T) {
+	body := "package fourth\n\nfunc call() { request, _ := http.NewRequestWithContext(ctx, " +
+		"http.MethodGet, target, nil) }\n"
+	if violations := outboundViolations("../../internal/fourth/call.go", body); len(violations) == 0 {
+		t.Error("a fourth package building an HTTP request passed the policy")
+	}
+	for _, allowed := range []string{"opnsense", "maxmind", "publicsuffix"} {
+		if violations := outboundViolations("../../internal/"+allowed+"/call.go", body); len(violations) != 0 {
+			t.Errorf("internal/%s building a request was reported: %v", allowed, violations)
+		}
+	}
+	if violations := outboundViolations("../../internal/publicsuffix/call.go",
+		"resp, err := http.Get(target)"); len(violations) == 0 {
+		t.Error("the shared default client passed the policy inside an outbound package")
+	}
+}
+
+// outboundViolations returns what one file does that the outbound rule forbids.
+func outboundViolations(file, body string) []string {
 	forbiddenEverywhere := []string{
 		"http.Get(", "http.Post(", "http.PostForm(", "http.Head(",
 		"http.DefaultClient", "http.DefaultTransport",
 	}
 	onlyHere := []string{"http.NewRequest", "&http.Client{", "http.Client{"}
 
-	for _, file := range goSourceFiles(t) {
-		body := readFile(t, file)
-		for _, forbidden := range forbiddenEverywhere {
-			if strings.Contains(body, forbidden) {
-				t.Errorf("%s uses %s, which reaches the network outside the one configured client",
-					file, forbidden)
-			}
-		}
-		if inAnOutboundPackage(file) {
-			continue
-		}
-		for _, restricted := range onlyHere {
-			if strings.Contains(body, restricted) {
-				t.Errorf("%s uses %s; only internal/opnsense and internal/maxmind may "+
-					"construct an HTTP request",
-					file, restricted)
-			}
+	var violations []string
+	for _, forbidden := range forbiddenEverywhere {
+		if strings.Contains(body, forbidden) {
+			violations = append(violations, fmt.Sprintf(
+				"%s uses %s, which reaches the network outside the one configured client", file, forbidden))
 		}
 	}
+	if inAnOutboundPackage(file) {
+		return violations
+	}
+	for _, restricted := range onlyHere {
+		if strings.Contains(body, restricted) {
+			violations = append(violations, fmt.Sprintf("%s uses %s; only internal/opnsense, "+
+				"internal/maxmind and internal/publicsuffix may construct an HTTP request",
+				file, restricted))
+		}
+	}
+	return violations
 }
 
 // absoluteURLLiteral matches a string literal that names an absolute HTTP address.
@@ -81,11 +123,24 @@ func TestTheOnlyAbsoluteURLLiteralsAreTheRegistryCitations(t *testing.T) {
 	// MaxMind's own documentation, and nothing else.
 	maxmindLiteral := regexp.MustCompile(
 		`"https://(download\.maxmind\.com"|dev\.maxmind\.com/|www\.maxmind\.com/)`)
+	// The Public Suffix List registry may hold the one file it downloads, and citations of
+	// the list's own pages and licence, and nothing else.
+	publicSuffixLiteral := regexp.MustCompile(
+		`"https://(publicsuffix\.org/list/(public_suffix_list\.dat)?"|` +
+			`github\.com/publicsuffix/list/wiki/Format"|mozilla\.org/MPL/2\.0/")`)
 
 	for _, file := range goSourceFiles(t) {
 		body := readFile(t, file)
 		for number, line := range strings.Split(body, "\n") {
 			if !absoluteURLLiteral.MatchString(line) {
+				continue
+			}
+			if filepath.Base(file) == "endpoints.go" && strings.Contains(file, "/internal/publicsuffix/") {
+				if !publicSuffixLiteral.MatchString(line) {
+					t.Errorf("%s:%d holds an absolute URL literal that is neither the Public Suffix "+
+						"List's download nor a citation of its pages: %s",
+						file, number+1, strings.TrimSpace(line))
+				}
 				continue
 			}
 			if filepath.Base(file) == "endpoints.go" && strings.Contains(file, "/internal/maxmind/") {
@@ -368,10 +423,11 @@ func inThisPackage(path string) bool {
 	return strings.Contains(path, "/internal/opnsense/")
 }
 
-// inAnOutboundPackage reports whether a file belongs to one of the two packages that
-// make the two outbound calls.
+// inAnOutboundPackage reports whether a file belongs to one of the three packages that
+// make the three outbound calls.
 func inAnOutboundPackage(path string) bool {
-	return inThisPackage(path) || strings.Contains(path, "/internal/maxmind/")
+	return inThisPackage(path) || strings.Contains(path, "/internal/maxmind/") ||
+		strings.Contains(path, "/internal/publicsuffix/")
 }
 
 // readFile returns a file's contents.

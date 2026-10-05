@@ -19,6 +19,11 @@
 -- description appears below, and no query assumes an interface count or an
 -- address family.
 --
+-- The decision split is the step-5A rule, the same as the aggregate families':
+-- "allowed" is action 'pass', "blocked" is 'block' or 'reject' -- a reject is a
+-- refusal that answers -- and a record whose action could not be named
+-- ('unknown') is counted as neither.
+--
 -- Observation-point limit: every byte figure below counts only traffic that
 -- crossed the firewall. Traffic between two clients behind one interface is
 -- invisible to all five sources, so every volume is a lower bound and the
@@ -31,8 +36,8 @@
 SELECT
     f.traffic_scope                                         AS traffic_scope,
     count(*)                                                AS flow_count,
-    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END)     AS blocked_count,
-    sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END)    AS allowed_count,
+    sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_count,
+    sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END)      AS allowed_count,
     sum(f.packet_bytes)                                     AS observed_bytes,
     count(DISTINCT f.src_interface_id)                        AS source_interface_count,
     count(DISTINCT f.src_client_id)                         AS source_client_count
@@ -53,8 +58,8 @@ SELECT
     coalesce(sdst.user_label, sdst.description)          AS dst_interface_label,
     f.traffic_scope                                                 AS traffic_scope,
     sum(f.packet_bytes)                                             AS observed_bytes,
-    sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END)            AS allowed_connections,
-    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END)             AS blocked_connections,
+    sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END)              AS allowed_connections,
+    sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
     group_concat(DISTINCT r.description)                            AS matching_rules,
     sum(CASE WHEN f.rule_lookup_state = 'not_found' THEN 1 ELSE 0 END) AS unknown_rule_connections
 FROM flow AS f
@@ -77,7 +82,7 @@ SELECT
     d.unstable_identity                                     AS unstable_identity,
     count(*)                                                AS flow_count,
     sum(f.packet_bytes)                                     AS observed_bytes,
-    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END)     AS blocked_count,
+    sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_count,
     count(DISTINCT f.dst_address)                           AS distinct_destinations,
     sum(CASE WHEN f.traffic_scope = 'east_west' THEN 1 ELSE 0 END) AS east_west_count,
     max(f.observed_at)                                      AS last_seen_at
@@ -121,10 +126,10 @@ ORDER BY f.observed_at DESC;
 
 -- screen: Blocked
 -- The blocked timeline, by rule and by source. blocked_event is the projection
--- of flow on the blocking actions; a rid that matches no known rule is
--- returned with rule_lookup_state 'not_found' and a null description, and a
--- raw interface name absent from the interface map likewise. Present, not
--- missing.
+-- of flow on the refusing actions, 'block' and 'reject', and action says which;
+-- a rid that matches no known rule is returned with rule_lookup_state
+-- 'not_found' and a null description, and a raw interface name absent from the
+-- interface map likewise. Present, not missing.
 SELECT
     b.observed_at                                           AS observed_at,
     b.src_interface_id                                        AS src_interface_id,
@@ -133,6 +138,7 @@ SELECT
     b.dst_address                                           AS dst_address,
     b.dst_port                                              AS dst_port,
     b.protocol                                              AS protocol,
+    b.action                                                AS action,
     b.traffic_scope                                         AS traffic_scope,
     b.rid                                                   AS rid,
     b.rule_lookup_state                                     AS rule_lookup_state,

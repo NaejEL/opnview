@@ -56,8 +56,12 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 )
 
-// The provider kinds, which are the eight the schema constrains `provider.kind` to.
+// The provider kinds, which are the nine the schema constrains `provider.kind` to.
 const (
+	// KindPublicSuffix is the Public Suffix List. This package neither probes nor
+	// reads it: internal/publicsuffix does, and the third outbound destination lives
+	// there alone.
+	KindPublicSuffix = "public_suffix"
 	// KindFirewallLog is data source 1.
 	KindFirewallLog = "firewall_log"
 	// KindSecurityEvent is data source 2. It admits several concurrently active
@@ -148,6 +152,10 @@ type Discovery struct {
 	// RuleIDByPfLabel maps a filter-log `rid` to its stored rule. A rid absent
 	// from this map is normal: the rule was removed.
 	RuleIDByPfLabel map[string]int64
+	// Upstream holds the interfaces the firewall reports a gateway behind. Evidence
+	// read on one of them -- a neighbour, a lease -- does not make an address a member
+	// of it: an address reached through an upstream interface is outside.
+	Upstream map[int64]struct{}
 	// RefreshedAt is when this snapshot was read.
 	RefreshedAt int64
 }
@@ -161,6 +169,7 @@ func newDiscovery() Discovery {
 		InterfaceIDByDevice:     map[string]int64{},
 		Devices:                 map[string]struct{}{},
 		RuleIDByPfLabel:         map[string]int64{},
+		Upstream:                map[int64]struct{}{},
 	}
 }
 
@@ -192,6 +201,39 @@ type Collector struct {
 	// selection the operator saves can be applied at once, without probing the
 	// firewall again; see Reselect. The mutex above guards it.
 	probed map[string][]probedSource
+
+	// maxDelaySeconds is the attribution_max_delay_seconds setting: how long before a
+	// flow a lookup may have been made and still name it. The mutex guards it.
+	maxDelaySeconds int64
+	// lastRefreshAt is the instant of the last successful aggregate refresh, and
+	// onLinkFingerprint what classification read of the interfaces themselves --
+	// which are upstream, their link-local rule, the networks that count -- at the
+	// last derivation that placed every address; the mutex guards both.
+	lastRefreshAt     int64
+	onLinkFingerprint string
+	// hostnamesSince is where the next lease pass starts resolving host-name lookups
+	// again: the watermark of the previous one, so a pass resolves only the lookups
+	// ingested since and its work does not grow with those that stay unresolved. It
+	// starts at the collector's creation, so a run does not retry what an earlier run
+	// tried. The mutex guards it.
+	hostnamesSince int64
+	// ingesting holds the ingestion instant of every pass that has stamped rows with
+	// it and has not yet finished writing them, keyed by a sequence number; the
+	// mutex guards both. The refresh never moves its watermark past the oldest of
+	// them, because rows stamped with that instant may commit after the refresh
+	// has read; see beginIngest.
+	ingesting      map[uint64]int64
+	ingestSequence uint64
+	// deriveMutex serialises the derivations, so two passes finishing together
+	// never refresh one slot from two half-classified states.
+	deriveMutex sync.Mutex
+	// purgeMutex orders the retention purge against the passes: a pass holds it for
+	// reading from before it stores its first row until its derivation has ended, and
+	// the purge holds it for writing. It is taken before deriveMutex, never after; see
+	// purge.go.
+	purgeMutex sync.RWMutex
+	// hooks are the test hooks of the purge's ordering, zero outside a test.
+	hooks orderingHooks
 }
 
 // New returns a collector. The client is the only thing in opnview that builds an
@@ -203,17 +245,19 @@ func New(client *opnsense.Client, database *store.Store, clock Clock) *Collector
 		clock = SystemClock{}
 	}
 	return &Collector{
-		client:    client,
-		store:     database,
-		clock:     clock,
-		pageSizes: config.DefaultPageSizes(),
-		discovery: newDiscovery(),
-		probed:    map[string][]probedSource{},
+		client:          client,
+		store:           database,
+		clock:           clock,
+		pageSizes:       config.DefaultPageSizes(),
+		maxDelaySeconds: config.DefaultAttributionMaxDelaySeconds,
+		discovery:       newDiscovery(),
+		probed:          map[string][]probedSource{},
+		hostnamesSince:  clock.Now().Unix(),
 	}
 }
 
-// Configure applies a configuration to a running collector: the page sizes, which
-// are the only part of it the collectors read. The intervals reach the scheduler
+// Configure applies a configuration to a running collector: the page sizes and the
+// attribution delay, which are the parts of it the collectors read. The intervals reach the scheduler
 // through config.Live, not through here. The next pass of each collector uses the
 // new pages; a pass already running finishes with the ones it started with. It is
 // what web.Reconfigurable asks of a collector.
@@ -224,6 +268,9 @@ func (c *Collector) Configure(settings config.Config) {
 		FirewallLog:   settings.FirewallLogPageSize,
 		SecurityEvent: settings.SecurityEventPageSize,
 		DHCPLease:     settings.DHCPLeasePageSize,
+	}
+	if settings.AttributionMaxDelaySeconds > 0 {
+		c.maxDelaySeconds = settings.AttributionMaxDelaySeconds
 	}
 }
 

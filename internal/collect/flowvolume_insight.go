@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/decode"
@@ -88,8 +89,38 @@ var (
 	unverifiedPacketsInKeys = []string{"packets received", "packets_received", "packets_in", "ipackets", "in_packets"}
 	// unverifiedPacketsOutKeys is the outbound packet counter.
 	unverifiedPacketsOutKeys = []string{"packets transmitted", "packets_transmitted", "packets_out", "opackets", "out_packets"}
-	// unverifiedPeerAddressKeys names the peer in a traffic/top details entry.
-	unverifiedPeerAddressKeys = []string{"address", "ip", "addr", "peer"}
+)
+
+// The field names VERIFIED against the source for step 5, each read from the code that writes
+// the response rather than guessed, and each still to be probed against a live firewall at the
+// step's validation (docs/opnsense-api-survey.md, "Telemetry field names, read from source for
+// step 5").
+const (
+	// inputErrorsKey and outputErrorsKey are the per-interface error counters of
+	// /api/diagnostics/traffic/interface. The controller returns the lines `ifinfo` prints,
+	// split on ':' into a key and a string value (opnsense/core 26.7.3,
+	// legacy_interface_stats in interfaces.lib.inc), and ifinfo prints
+	// "input errors: %lu" and "output errors: %lu" (opnsense/ports, ifinfo.c).
+	inputErrorsKey  = "input errors"
+	outputErrorsKey = "output errors"
+	// The fields of one item of /api/routes/gateway/status (opnsense/core 26.7.3,
+	// scripts/routes/gateway_status.php and dpinger.inc): `delay` and `stddev` are
+	// sprintf('%0.1f ms'), `loss` is sprintf('%0.1f %%'), and "~" where dpinger has no figure.
+	gatewayNameKey   = "name"
+	gatewayDelayKey  = "delay"
+	gatewayStddevKey = "stddev"
+	gatewayLossKey   = "loss"
+	// The fields of /api/diagnostics/system/systemSwap (opnsense/core 26.7.3,
+	// SystemController::systemSwapAction returning scripts/system/swapinfo.py): a
+	// `swap` list with one entry per swap device, its `device`, `total` and `used`
+	// written as strings in KiB because the script passes swapinfo -k's columns on
+	// unconverted.
+	swapListKey   = "swap"
+	swapDeviceKey = "device"
+	swapTotalKey  = "total"
+	swapUsedKey   = "used"
+	// kibibyte is the unit swapinfo -k writes in.
+	kibibyte = 1024
 )
 
 // probe reads whether the firewall keeps volume data itself.
@@ -218,39 +249,87 @@ func samplePairVolume(ctx context.Context, host session, snapshot Discovery,
 		return nil, "the traffic snapshot body could not be read",
 			fmt.Errorf("collect: reading the traffic snapshot: %w", err)
 	}
-
 	var readings []store.MeasurementSample
 	pairs := 0
-	for _, entry := range perInterface(body) {
-		for _, record := range recordsOf(entry) {
-			localAddress, present := firstString(record, unverifiedPeerAddressKeys...)
+	identifiers := perInterface(body)
+	identifierOrder := make([]string, 0, len(identifiers))
+	for identifier := range identifiers {
+		identifierOrder = append(identifierOrder, identifier)
+	}
+	sort.Strings(identifierOrder)
+	for _, identifier := range identifierOrder {
+		// The interface the record was read on is kept, under its network device, the
+		// token every other interface reading is keyed by. An identifier discovery does
+		// not know has no device to file the reading under, and is left out rather than
+		// filed under a name nothing joins to.
+		device := deviceOf(snapshot, identifier)
+		if device == "" {
+			continue
+		}
+		for _, record := range recordsOf(identifiers[identifier]) {
+			localAddress, present := decode.String(record, "address")
 			if !present {
 				continue
 			}
-			for _, detail := range decode.Objects(record["details"]) {
-				peerAddress, present := firstString(detail, unverifiedPeerAddressKeys...)
+			// The record's own totals, over every peer of the local address. The local
+			// address's sending is reported only here, so these are what a client's and
+			// a device's outbound figures come from (store.SubjectInterfaceEndpoint).
+			endpointKey := store.InterfaceEndpointKey(device, localAddress)
+			for _, total := range []struct {
+				key     string
+				measure store.Measure
+				unit    store.Unit
+			}{
+				{"rate_bits_in", store.MeasureRateBitsIn, store.UnitBitPerSecond},
+				{"rate_bits_out", store.MeasureRateBitsOut, store.UnitBitPerSecond},
+				{"cumulative_bytes_in", store.MeasureCumulativeBytesIn, store.UnitByte},
+				{"cumulative_bytes_out", store.MeasureCumulativeBytesOut, store.UnitByte},
+			} {
+				value, present := decode.Float(record, total.key)
+				if !present {
+					continue
+				}
+				readings = append(readings, store.MeasurementSample{
+					ProviderID:  &providerID,
+					SubjectKind: store.SubjectInterfaceEndpoint,
+					SubjectKey:  endpointKey,
+					Measure:     total.measure,
+					Unit:        total.unit,
+					Value:       value,
+					SampledAt:   now,
+				})
+			}
+			details := decode.Objects(record["details"])
+			for _, detail := range details {
+				peerAddress, present := decode.String(detail, "address")
 				if !present || peerAddress == localAddress {
 					continue
 				}
-				subjectKey := canonicalPairKey(localAddress, peerAddress)
+				subjectKey := store.InterfaceEndpointPairKey(device, localAddress, peerAddress)
+				var values []pairReading
+				// A details entry is the peer's half of one iftop line pair: what the PEER sent
+				// to the local address, so its rate_bits and cumulative_bytes are the pair's
+				// inbound figures relative to the local end.
+				values = append(values,
+					pairReading{detail, "rate_bits", store.MeasureRateBitsIn, store.UnitBitPerSecond},
+					pairReading{detail, "cumulative_bytes", store.MeasureCumulativeBytesIn, store.UnitByte})
+				// The local address's own sending is reported only as its total over every
+				// peer. With exactly one peer that total IS the pair's outbound figure; with
+				// several, the split is not reported and no outbound reading is written.
+				if len(details) == 1 {
+					values = append(values,
+						pairReading{record, "rate_bits_out", store.MeasureRateBitsOut, store.UnitBitPerSecond},
+						pairReading{record, "cumulative_bytes_out", store.MeasureCumulativeBytesOut, store.UnitByte})
+				}
 				wrote := false
-				for _, reading := range []struct {
-					key     string
-					measure store.Measure
-					unit    store.Unit
-				}{
-					{"cumulative_bytes_in", store.MeasureCumulativeBytesIn, store.UnitByte},
-					{"cumulative_bytes_out", store.MeasureCumulativeBytesOut, store.UnitByte},
-					{"rate_bits_in", store.MeasureRateBitsIn, store.UnitBitPerSecond},
-					{"rate_bits_out", store.MeasureRateBitsOut, store.UnitBitPerSecond},
-				} {
-					value, present := decode.Float(detail, reading.key)
+				for _, reading := range values {
+					value, present := decode.Float(reading.from, reading.key)
 					if !present {
 						continue
 					}
 					readings = append(readings, store.MeasurementSample{
 						ProviderID:  &providerID,
-						SubjectKind: store.SubjectEndpointPair,
+						SubjectKind: store.SubjectInterfaceEndpointPair,
 						SubjectKey:  subjectKey,
 						Measure:     reading.measure,
 						Unit:        reading.unit,
@@ -270,19 +349,18 @@ func samplePairVolume(ctx context.Context, host session, snapshot Discovery,
 		return readings, "the traffic snapshot named no endpoint pair, which is not an absence " +
 			"of traffic; a wrong interface argument answers exactly this way", nil
 	}
-	return readings, fmt.Sprintf("sampled %d endpoint pairs from a live snapshot; no endpoint "+
-		"exposes a per-pair aggregate over a past window, so this history is opnview's own",
-		pairs), nil
+	return readings, fmt.Sprintf("sampled %d endpoint pairs from a live snapshot of %d seconds; no "+
+		"endpoint exposes a per-pair aggregate over a past window, so this history is opnview's own",
+		pairs, store.SampleSeconds), nil
 }
 
-// canonicalPairKey renders two addresses in lexicographic order, joined by a space. It is the
-// same canonical ordering pair_volume_observation enforces with endpoint_low and
-// endpoint_high, so a pair sampled from either end collapses to one subject instead of two.
-func canonicalPairKey(first, second string) string {
-	if first > second {
-		first, second = second, first
-	}
-	return first + " " + second
+// pairReading is one figure of one interface endpoint pair: which object it is read from,
+// under which field, and what it is stored as.
+type pairReading struct {
+	from    decode.Object
+	key     string
+	measure store.Measure
+	unit    store.Unit
 }
 
 // sampleFirewallTelemetry reads the six telemetry endpoints and returns the readings, plus the
@@ -445,6 +523,8 @@ func sampleFirewallTelemetry(ctx context.Context, host session, snapshot Discove
 				{unverifiedBytesOutKeys, store.MeasureBytesOut, store.UnitByte},
 				{unverifiedPacketsInKeys, store.MeasurePacketsIn, store.UnitPacket},
 				{unverifiedPacketsOutKeys, store.MeasurePacketsOut, store.UnitPacket},
+				{[]string{inputErrorsKey}, store.MeasureErrorsIn, store.UnitPacket},
+				{[]string{outputErrorsKey}, store.MeasureErrorsOut, store.UnitPacket},
 			} {
 				value, _, present := decode.FirstFloat(counters, reading.keys...)
 				if !present {
@@ -464,6 +544,24 @@ func sampleFirewallTelemetry(ctx context.Context, host session, snapshot Discove
 		if written == 0 {
 			missing = append(missing, "interface counters (the endpoint answered with no figure this code could read)")
 		}
+	}
+
+	gateways, absent, err := sampleGateways(ctx, host, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	readings = append(readings, gateways...)
+	if absent != "" {
+		missing = append(missing, absent)
+	}
+
+	swap, absent, err := sampleSwap(ctx, host, now)
+	if err != nil {
+		return nil, nil, err
+	}
+	readings = append(readings, swap...)
+	if absent != "" {
+		missing = append(missing, absent)
 	}
 
 	return readings, missing, nil
@@ -555,4 +653,141 @@ func firstString(object decode.Object, keys ...string) (string, bool) {
 func uptimeReadable(text string) bool {
 	_, err := decode.UptimeSeconds(text)
 	return err == nil
+}
+
+// sampleGateways reads /api/routes/gateway/status and returns each gateway's round-trip
+// time, its standard deviation and its packet loss, keyed by the gateway's name.
+//
+// A figure the endpoint reports as "~" -- dpinger has none for that gateway -- or in a form
+// this code cannot read is not written, and a gateway with no figure at all is not written
+// either: no reading is ever a zero standing in for one that did not answer. When the endpoint
+// does not answer, or answers with no gateway, the absence is returned in words for the
+// availability detail, which is where an unavailable reading is recorded.
+func sampleGateways(ctx context.Context, host session, now int64) ([]store.MeasurementSample, string, error) {
+	body, ok, err := host.readObject(ctx, opnsense.GatewayStatus)
+	if err != nil {
+		return nil, "", err
+	}
+	if !ok {
+		return nil, "gateway latency and loss (the endpoint did not answer)", nil
+	}
+	items := decode.Objects(body["items"])
+	if len(items) == 0 {
+		return nil, "gateway latency and loss (the endpoint reported no gateway)", nil
+	}
+	var readings []store.MeasurementSample
+	for _, item := range items {
+		name, present := decode.String(item, gatewayNameKey)
+		if !present {
+			continue
+		}
+		for _, reading := range []struct {
+			key     string
+			measure store.Measure
+			unit    store.Unit
+			parse   func(string) (float64, bool)
+		}{
+			{gatewayDelayKey, store.MeasureDelayMilliseconds, store.UnitMillisecond, parseMilliseconds},
+			{gatewayStddevKey, store.MeasureDelayStddevMilliseconds, store.UnitMillisecond, parseMilliseconds},
+			{gatewayLossKey, store.MeasureLossRatio, store.UnitRatio, parseLossRatio},
+		} {
+			text, present := decode.String(item, reading.key)
+			if !present {
+				continue
+			}
+			value, readable := reading.parse(text)
+			if !readable {
+				continue
+			}
+			readings = append(readings, store.MeasurementSample{
+				SubjectKind: store.SubjectGateway,
+				SubjectKey:  name,
+				Measure:     reading.measure,
+				Unit:        reading.unit,
+				Value:       value,
+				SampledAt:   now,
+			})
+		}
+	}
+	if len(readings) == 0 {
+		return nil, "gateway latency and loss (no gateway reported a figure)", nil
+	}
+	return readings, "", nil
+}
+
+// sampleSwap reads /api/diagnostics/system/systemSwap and returns each swap device's size
+// and use, in bytes, under the firewall subject keyed by the device.
+//
+// A figure that is absent or unreadable is not written. A firewall with no swap device answers
+// with an empty list, which is a fact about the machine and not a zero of use; it is returned in
+// words for the availability detail, as an endpoint that does not answer is.
+func sampleSwap(ctx context.Context, host session, now int64) ([]store.MeasurementSample, string, error) {
+	body, ok, err := host.readObject(ctx, opnsense.SystemSwap)
+	if err != nil {
+		return nil, "", err
+	}
+	if !ok {
+		return nil, "swap (the endpoint did not answer)", nil
+	}
+	devices := decode.Objects(body[swapListKey])
+	if len(devices) == 0 {
+		return nil, "swap (this firewall reports no swap device)", nil
+	}
+	var readings []store.MeasurementSample
+	for _, entry := range devices {
+		device, present := decode.String(entry, swapDeviceKey)
+		if !present || device == "" {
+			continue
+		}
+		for _, reading := range []struct {
+			key     string
+			measure store.Measure
+		}{
+			{swapTotalKey, store.MeasureSwapTotalBytes},
+			{swapUsedKey, store.MeasureSwapUsedBytes},
+		} {
+			kib, present := decode.Float(entry, reading.key)
+			if !present || kib < 0 {
+				continue
+			}
+			readings = append(readings, store.MeasurementSample{
+				SubjectKind: store.SubjectFirewall,
+				SubjectKey:  device,
+				Measure:     reading.measure,
+				Unit:        store.UnitByte,
+				Value:       kib * kibibyte,
+				SampledAt:   now,
+			})
+		}
+	}
+	if len(readings) == 0 {
+		return nil, "swap (the endpoint answered with no figure this code could read)", nil
+	}
+	return readings, "", nil
+}
+
+// parseMilliseconds reads dpinger's "%0.1f ms". "~" and anything else is unreadable.
+func parseMilliseconds(text string) (float64, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasSuffix(trimmed, "ms") {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(trimmed, "ms")), 64)
+	if err != nil || value < 0 {
+		return 0, false
+	}
+	return value, true
+}
+
+// parseLossRatio reads dpinger's "%0.1f %%" as a 0-to-1 ratio. "~" is unreadable.
+func parseLossRatio(text string) (float64, bool) {
+	trimmed := strings.TrimSpace(text)
+	if !strings.HasSuffix(trimmed, "%") {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(trimmed, "%")), 64)
+	if err != nil || value < 0 || value > 100 {
+		return 0, false
+	}
+	return value / 100, true
 }

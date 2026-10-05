@@ -25,6 +25,8 @@ import (
 	"math"
 	"strconv"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/store"
 )
 
 // MaxIntervalSeconds is the longest interval, in seconds, that a time.Duration
@@ -51,7 +53,7 @@ const (
 	// KeySecurityEventInterval overrides the eve.json alert poll interval.
 	KeySecurityEventInterval = "poll_interval_security_event_seconds"
 	// KeyMeasurementInterval overrides the sampled-measurement interval.
-	KeyMeasurementInterval = "poll_interval_measurement_seconds"
+	KeyMeasurementInterval = store.MeasurementIntervalKey
 	// KeyDHCPLeaseInterval overrides the lease poll interval.
 	KeyDHCPLeaseInterval = "poll_interval_dhcp_lease_seconds"
 	// KeyDNSLookupInterval overrides the resolver poll interval.
@@ -66,6 +68,12 @@ const (
 	// KeyGeoLookupInterval overrides how often stored addresses are looked up in
 	// the MaxMind databases.
 	KeyGeoLookupInterval = "poll_interval_geo_lookup_seconds"
+	// KeyPublicSuffixRefreshInterval overrides how often the Public Suffix List is
+	// checked for a newer copy.
+	KeyPublicSuffixRefreshInterval = "refresh_interval_public_suffix_list_seconds"
+	// KeyAttributionMaxDelay is how long before a flow, in seconds, a resolver lookup
+	// may have been made and still name it. The schema writes its default row.
+	KeyAttributionMaxDelay = "attribution_max_delay_seconds"
 )
 
 // The setting keys of the page sizes: how many records one request asks the
@@ -120,8 +128,9 @@ const (
 	// The verified section turns that from a cache cadence into a sampling
 	// cadence — /api/diagnostics/traffic/top is a live snapshot and nothing
 	// upstream answers for a past window, so this interval is the resolution of
-	// opnview's own per-pair history rather than a refresh rate.
-	DefaultMeasurementInterval = 300 * time.Second
+	// opnview's own per-pair history rather than a refresh rate. The figure lives in
+	// internal/store, which reads the same row to bound a current rate.
+	DefaultMeasurementInterval = store.DefaultMeasurementIntervalSeconds * time.Second
 
 	// DefaultDHCPLeaseInterval is 300 s. Survey, data source 4, "Sustainable
 	// polling frequency": leases change on the scale of minutes to hours, the
@@ -161,6 +170,12 @@ const (
 	// file and contacts nothing, so the figure only bounds how long a new
 	// destination stays unplaced, and it matches the discovery cadence.
 	DefaultGeoLookupInterval = 300 * time.Second
+
+	// DefaultPublicSuffixRefreshInterval is 86 400 s. publicsuffix.org asks that an
+	// application download the list "no more than once per day" (publicsuffix.org/list/),
+	// and a check that finds the list unchanged costs a conditional request answered
+	// 304 with no body.
+	DefaultPublicSuffixRefreshInterval = 86400 * time.Second
 )
 
 // The default page sizes. 500 is the figure the collectors carried as a
@@ -209,6 +224,12 @@ func DefaultPageSizes() PageSizes {
 // database with no row still behaves.
 const DefaultRetentionSeconds int64 = 7776000
 
+// DefaultAttributionMaxDelaySeconds is 5 s, the maintainer's default for how long
+// before a flow a resolver lookup may have been made and still name it. Like the
+// retention horizon it is written in the schema and read from the database; the
+// constant exists only so a database with no row still behaves.
+const DefaultAttributionMaxDelaySeconds int64 = 5
+
 // Config is the whole of opnview's runtime configuration.
 type Config struct {
 	// RetentionSeconds is the purge horizon. 0 means unlimited.
@@ -232,6 +253,13 @@ type Config struct {
 	FirewallLogPageSize   int
 	SecurityEventPageSize int
 	DHCPLeasePageSize     int
+
+	// PublicSuffixRefreshInterval is how often the Public Suffix List is checked
+	// for a newer copy.
+	PublicSuffixRefreshInterval time.Duration
+	// AttributionMaxDelaySeconds is how long before a flow a resolver lookup may
+	// have been made and still name it.
+	AttributionMaxDelaySeconds int64
 }
 
 // Defaults returns the configuration of a database that carries no setting row
@@ -239,17 +267,19 @@ type Config struct {
 // reach opnview through the interface.
 func Defaults() Config {
 	return Config{
-		RetentionSeconds:      DefaultRetentionSeconds,
-		AggregateMode:         "full",
-		FirewallLogInterval:   DefaultFirewallLogInterval,
-		SecurityEventInterval: DefaultSecurityEventInterval,
-		MeasurementInterval:   DefaultMeasurementInterval,
-		DHCPLeaseInterval:     DefaultDHCPLeaseInterval,
-		DNSLookupInterval:     DefaultDNSLookupInterval,
-		DiscoveryInterval:     DefaultDiscoveryInterval,
-		PurgeInterval:         DefaultPurgeInterval,
-		GeoIPRefreshInterval:  DefaultGeoIPRefreshInterval,
-		GeoLookupInterval:     DefaultGeoLookupInterval,
+		RetentionSeconds:            DefaultRetentionSeconds,
+		AggregateMode:               "full",
+		FirewallLogInterval:         DefaultFirewallLogInterval,
+		SecurityEventInterval:       DefaultSecurityEventInterval,
+		MeasurementInterval:         DefaultMeasurementInterval,
+		DHCPLeaseInterval:           DefaultDHCPLeaseInterval,
+		DNSLookupInterval:           DefaultDNSLookupInterval,
+		DiscoveryInterval:           DefaultDiscoveryInterval,
+		PurgeInterval:               DefaultPurgeInterval,
+		GeoIPRefreshInterval:        DefaultGeoIPRefreshInterval,
+		GeoLookupInterval:           DefaultGeoLookupInterval,
+		PublicSuffixRefreshInterval: DefaultPublicSuffixRefreshInterval,
+		AttributionMaxDelaySeconds:  DefaultAttributionMaxDelaySeconds,
 		// The page sizes are defaults a row overrides, like the intervals.
 		FirewallLogPageSize:   DefaultFirewallLogPageSize,
 		SecurityEventPageSize: DefaultSecurityEventPageSize,
@@ -307,6 +337,7 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		{KeyPurgeInterval, &loaded.PurgeInterval},
 		{KeyGeoIPRefreshInterval, &loaded.GeoIPRefreshInterval},
 		{KeyGeoLookupInterval, &loaded.GeoLookupInterval},
+		{KeyPublicSuffixRefreshInterval, &loaded.PublicSuffixRefreshInterval},
 	}
 	for _, interval := range intervals {
 		value, present, err := reader.Setting(ctx, interval.key)
@@ -357,6 +388,20 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 			return loaded, fmt.Errorf("config: %s must be a positive number of records, got %d", pageSize.key, count)
 		}
 		*pageSize.target = count
+	}
+
+	if value, present, err := reader.Setting(ctx, KeyAttributionMaxDelay); err != nil {
+		return loaded, err
+	} else if present {
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return loaded, fmt.Errorf("config: %s is not a whole number of seconds: %w", KeyAttributionMaxDelay, err)
+		}
+		if seconds <= 0 {
+			return loaded, fmt.Errorf("config: %s must be a positive whole number of seconds, got %d",
+				KeyAttributionMaxDelay, seconds)
+		}
+		loaded.AttributionMaxDelaySeconds = seconds
 	}
 
 	return loaded, nil

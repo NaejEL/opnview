@@ -180,7 +180,7 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 --   dns_lookup      /api/unbound/overview/search_queries,
 --                   /api/diagnostics/log/core/dnsmasq        (data source 5)
 --   geo_asn         the MaxMind GeoLite2 City and ASN databases, the second of
---                   the two outbound calls the project allows
+--                   the three outbound calls the project allows
 --   measurement_sample
 --                   /api/diagnostics/system/systemResources,
 --                   /api/diagnostics/system/systemTemperature,
@@ -192,6 +192,13 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 --                   ("The telemetry the data model calls gaps G9 and G10
 --                   exists", and "The per-pair data is a live snapshot, not
 --                   history")
+--   public_suffix   the Public Suffix List, downloaded from publicsuffix.org,
+--                   the third of the three outbound calls the project allows.
+--                   It supplies no row of observed data: it is the rule set
+--                   the registrable domain of a site name is computed from
+--                   (internal/publicsuffix). It is a kind because it has a
+--                   provider, an availability and failures to record, exactly
+--                   as geo_asn does.
 --   reconciled_state
 --                   no endpoint is read for it yet. It is the shape ten of the
 --                   eleven surveyed sources that fit no kind at all produce:
@@ -247,6 +254,7 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 --   geo_asn             geo_asn.address                             no
 --   measurement_sample  (subject, measure, sampled_at, provider)    YES
 --   reconciled_state    (provider_id, set_key, captured_at)         YES
+--   public_suffix       one list file on disk, no row                no
 --
 -- dhcp_lease IS CONCURRENT, AND THE DEPLOYMENT IS THE ORDINARY ONE: one server
 -- issuing on one VLAN and another on a second, two scopes with no overlap. The
@@ -276,7 +284,8 @@ CREATE TABLE IF NOT EXISTS provider (
     kind          TEXT NOT NULL
                   CHECK (kind IN ('firewall_log', 'security_event', 'flow_volume',
                                   'dhcp_lease', 'dns_lookup', 'geo_asn',
-                                  'measurement_sample', 'reconciled_state')),
+                                  'measurement_sample', 'reconciled_state',
+                                  'public_suffix')),
     provider_key  TEXT NOT NULL,
     display_name  TEXT NOT NULL,
     is_active     INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
@@ -360,8 +369,143 @@ CREATE TABLE IF NOT EXISTS interface (
                    (CASE WHEN link_kind = 'tunnel' THEN 1 ELSE 0 END) VIRTUAL,
     vlan_tag       INTEGER,
     address_family INTEGER CHECK (address_family IS NULL OR address_family IN (4, 6)),
+    -- is_upstream is 1 exactly when the last interfaces_info response reported a
+    -- non-empty `gateways[]` for this interface, and 0 otherwise. The API field
+    -- is the only input: no name, description, link type or address decides it.
+    -- The term is the widget catalogue's "upstream interface"; OPNsense applies
+    -- "upstream" to a GATEWAY (System > Gateways, "Upstream Gateway"), and an
+    -- interface carrying a gateway is what reaches beyond the firewall.
+    --
+    -- An address reached through an upstream interface is OUTSIDE: it has no
+    -- interface membership, and on-link evidence on an upstream interface is not
+    -- evidence of membership (docs/data-model.md, "Classification").
+    is_upstream    INTEGER NOT NULL DEFAULT 0 CHECK (is_upstream IN (0, 1)),
+    -- link_local_evidence is the OPERATOR'S rule, and discovery never writes it:
+    -- whether an IPv6 link-local address (RFC 4291, section 2.5.6) seen on this
+    -- interface is evidence that the address belongs to it. A link-local prefix
+    -- is the same on every interface, so an address inside it says nothing about
+    -- where a machine sits unless the operator says it does. The default is no
+    -- (0), and setting it on one interface makes such an address evidence on
+    -- that interface only (docs/data-model.md, "Classification").
+    link_local_evidence INTEGER NOT NULL DEFAULT 0 CHECK (link_local_evidence IN (0, 1)),
     first_seen_at  INTEGER NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
     last_seen_at   INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800)
+);
+
+-- ---------------------------------------------------------------------------
+-- Interface address — the addresses an interface held, and the gateways behind
+-- it, with the instants opnview first and last saw each one. Closes G13 in
+-- part.
+-- Source: /api/interfaces/overview/interfaces_info, fields `addr4` and `addr6`
+-- (one string each, "address/prefix length", or empty), `ipv4[]` and `ipv6[]`
+-- (every address the interface holds, each entry an object whose `ipaddr` is
+-- "address/prefix length") and `gateways[]` (a list of gateway ADDRESSES, at
+-- most one per address family), all read at opnsense/core 26.7.3,
+-- Interfaces/Api/OverviewController.php. Survey: "Runtime discovery" (i).
+--
+-- source_field is the API field the row was read from, verbatim: 'addr4',
+-- 'addr6', 'ipv4', 'ipv6' or 'gateways'. It is the endpoint's own vocabulary, so
+-- nothing is invented to tell a primary address from a secondary one, or an
+-- interface address from a gateway address. The primary address normally
+-- appears twice, once under `addr4` and once in `ipv4[]`, and is stored under
+-- both: each row says what one field reported.
+--
+-- A CHANGE IS A NEW ROW AND THE HISTORY IS THE TABLE. A row is keyed on
+-- (interface, field, address, prefix length); a refresh that reads the same
+-- value moves last_seen_at, and a refresh that reads a different value inserts
+-- a row and leaves the predecessor's last_seen_at where the last sighting put
+-- it. "When did the public address last change" is therefore the first_seen_at
+-- of the current row, and it can only come from opnview having looked before:
+-- no endpoint keeps that history.
+--
+-- With ipv4[] and ipv6[] stored, G13 is closed (docs/widget-catalogue.md, "Gaps
+-- closed"). The interface's NETWORKS -- the ranges classification reads as
+-- membership evidence -- are not this table: they are interface_network below,
+-- where a detected range and one the operator set are told apart.
+--
+-- Growing, slowly: one row per address an interface ever held. Purged by
+-- last_seen_at, which never drops a current row because discovery moves it.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS interface_address (
+    id             INTEGER PRIMARY KEY,
+    interface_id   INTEGER NOT NULL REFERENCES interface (id),
+    source_field   TEXT NOT NULL
+                   CHECK (source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6', 'gateways')),
+    address        TEXT NOT NULL CHECK (length(address) > 0),
+    prefix_length  INTEGER CHECK (prefix_length IS NULL
+                                  OR (prefix_length >= 0 AND prefix_length <= 128)),
+    address_family INTEGER NOT NULL CHECK (address_family IN (4, 6)),
+    first_seen_at  INTEGER NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
+    last_seen_at   INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
+    CHECK (last_seen_at >= first_seen_at),
+    -- A gateway is an address with no prefix; an interface address carries one.
+    CHECK ((source_field = 'gateways') = (prefix_length IS NULL))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_interface_address_value
+    ON interface_address (interface_id, source_field, address, ifnull(prefix_length, -1));
+-- "This interface's current addresses" and "is this address one of the
+-- firewall's own" are index searches rather than scans of a growing table.
+CREATE INDEX IF NOT EXISTS idx_interface_address_interface
+    ON interface_address (interface_id, last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_interface_address_address
+    ON interface_address (address, source_field);
+CREATE INDEX IF NOT EXISTS idx_interface_address_last_seen_at
+    ON interface_address (last_seen_at);
+
+-- ---------------------------------------------------------------------------
+-- Interface network — one on-link address range of an interface: the range
+-- whose addresses classification takes to sit behind that interface.
+--
+-- THE TERM IS OPNSENSE'S. OPNsense calls the range an interface's address and
+-- prefix length cover that interface's NETWORK: the firewall rule editor offers
+-- "LAN net" for it, and the internal alias that holds it is named for "LAN
+-- network" (https://docs.opnsense.org/manual/aliases.html, internal aliases).
+-- opnview keeps the word, per interface, whatever the interface is called.
+--
+-- A NETWORK IS EITHER DETECTED OR SET BY THE OPERATOR, and origin says which:
+--   'detected'  proposed by discovery from `addr4` / `addr6` and the entries of
+--               `ipv4[]` / `ipv6[]` (their address masked to their prefix
+--               length). An IPv6 link-local prefix is never proposed: it is the
+--               same on every interface and places nothing; whether a
+--               link-local address is evidence is interface.link_local_evidence.
+--   'operator'  added by the operator, or a detected network the operator
+--               confirmed.
+-- removed_at is set when the operator removes a network. The row is kept, so a
+-- detected network the operator removed is not proposed back into use by the
+-- next discovery: discovery moves last_detected_at and never touches origin or
+-- removed_at.
+--
+-- WHICH NETWORKS COUNT is the maintainer's decision D1 (specs/SPEC-step-5a-
+-- corrections.md): a detected network counts until the operator overrides it;
+-- an operator network always wins over a detected one; a removed network does
+-- not count. A detected network counts only while discovery still reports it,
+-- that is while its last_detected_at is the latest detection of its interface.
+-- Nothing here is a default: no range is written by the schema or by code.
+--
+-- Bounded: one row per network an interface has carried, set by the
+-- installation and the operator rather than by how long opnview has run. It is
+-- never purged, because an operator row is user input.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS interface_network (
+    id                INTEGER PRIMARY KEY,
+    interface_id      INTEGER NOT NULL REFERENCES interface (id),
+    network_address   TEXT NOT NULL CHECK (length(network_address) > 0),
+    prefix_length     INTEGER NOT NULL CHECK (prefix_length >= 0 AND prefix_length <= 128),
+    address_family    INTEGER NOT NULL CHECK (address_family IN (4, 6)),
+    origin            TEXT NOT NULL CHECK (origin IN ('detected', 'operator')),
+    first_detected_at INTEGER CHECK (first_detected_at IS NULL
+                                     OR (first_detected_at >= 0 AND first_detected_at < 4102444800)),
+    last_detected_at  INTEGER CHECK (last_detected_at IS NULL
+                                     OR (last_detected_at >= 0 AND last_detected_at < 4102444800)),
+    removed_at        INTEGER CHECK (removed_at IS NULL
+                                     OR (removed_at >= 0 AND removed_at < 4102444800)),
+    updated_at        INTEGER NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800),
+    CHECK ((first_detected_at IS NULL) = (last_detected_at IS NULL)),
+    -- A network nobody detected was set by the operator.
+    CHECK (origin = 'operator' OR first_detected_at IS NOT NULL),
+    CHECK (address_family = 6 OR prefix_length <= 32),
+    UNIQUE (interface_id, network_address, prefix_length)
 );
 
 -- ---------------------------------------------------------------------------
@@ -423,6 +567,19 @@ CREATE TABLE IF NOT EXISTS interface_map (
 -- has two possible causes and only this column tells them apart. It is
 -- nullable, because a rule discovered from a source that did not report the
 -- flag must read as "not reported" rather than as "does not log".
+--
+-- interface is the endpoint's `interface` field, verbatim, and legacy its
+-- `legacy` field. The two are stored together because the first means two
+-- different things depending on the second, read at opnsense/core 26.7.3
+-- (Firewall/Api/FilterController.php): on a model rule it is the comma-separated
+-- list of interface CONFIGURATION KEYS, and on a legacy or automatic rule the
+-- controller has already rewritten each key into the interface's DESCRIPTION.
+-- So a token is resolved to an interface only on a non-legacy rule, and only by
+-- equality with interface.identifier, which is a key and not a name; a legacy
+-- rule's interfaces are reported unresolved rather than matched on a
+-- description. An empty value is a floating rule, which the controller treats
+-- as matching on every interface. Stored for the "N rules do not log" figure
+-- per interface; docs/data-model.md, `rule`.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS rule (
     id            INTEGER PRIMARY KEY,
@@ -431,6 +588,8 @@ CREATE TABLE IF NOT EXISTS rule (
     action        TEXT NOT NULL
                   CHECK (action IN ('pass', 'block', 'reject', 'unknown')),
     direction     TEXT CHECK (direction IS NULL OR direction IN ('in', 'out', 'any')),
+    interface     TEXT,
+    legacy        INTEGER CHECK (legacy IS NULL OR legacy IN (0, 1)),
     logs_matches  INTEGER CHECK (logs_matches IS NULL OR logs_matches IN (0, 1)),
     is_automatic  INTEGER NOT NULL DEFAULT 0 CHECK (is_automatic IN (0, 1)),
     discovered_at INTEGER NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800)
@@ -491,6 +650,10 @@ CREATE TABLE IF NOT EXISTS client (
 );
 
 CREATE INDEX IF NOT EXISTS idx_client_interface ON client (interface_id, id);
+
+-- "The machine at this address" is what classification and attribution ask for
+-- every address a pass touches; an index search, never a scan of a growing table.
+CREATE INDEX IF NOT EXISTS idx_client_last_address ON client (last_address, last_seen_at);
 
 -- An owner's machines. owner_id is NULL-bearing, and SQLite keeps the
 -- unassigned clients at the head of this index rather than omitting them, so
@@ -575,6 +738,9 @@ CREATE INDEX IF NOT EXISTS idx_dhcp_lease_observed_at ON dhcp_lease (observed_at
 -- report one, and an index leading on a column that is null for a whole backend
 -- would order that backend's leases arbitrarily.
 CREATE INDEX IF NOT EXISTS idx_dhcp_lease_client ON dhcp_lease (client_id, observed_at);
+-- A host name the resolver logged as a lookup's client, resolved to the address
+-- leased under it. Host names compare without regard to case, as DNS names do.
+CREATE INDEX IF NOT EXISTS idx_dhcp_lease_hostname ON dhcp_lease (hostname COLLATE NOCASE);
 
 -- ---------------------------------------------------------------------------
 -- Flow — one filter-log record, allowed or blocked. The blocked events are a
@@ -587,13 +753,26 @@ CREATE INDEX IF NOT EXISTS idx_dhcp_lease_client ON dhcp_lease (client_id, obser
 -- interface, and north-south otherwise. It derives from interface membership and
 -- from nothing else — no address, no CIDR, no name.
 --
+-- MEMBERSHIP IS DECIDED FROM ON-LINK EVIDENCE ONLY, after the record is stored,
+-- by internal/store's classification (docs/data-model.md, "Classification"): a
+-- lease, a neighbour entry, an address inside a prefix an interface holds, or an
+-- earlier sighting inside a non-upstream interface. An address with none is
+-- OUTSIDE: its end carries no interface and no client, so a remote address never
+-- becomes a client row. The classification is a function of the evidence held
+-- and not of the order records arrived in, and re-running it changes nothing.
+--
 -- log_reason is the filter log's own `reason` field: WHY the packet was
--- logged, which is not the same question as what was done to it. A record
--- whose reason is not a rule match was not denied by a rule at all, and
--- rendering it as a rule denial would attribute a decision to a rule that made
--- none. The value is stored verbatim and is never parsed or matched on: the
--- survey establishes the field but not its value set, so no CHECK enumerates
--- one here — that would be inventing a vocabulary OPNsense has not published.
+-- logged, which is not the same question as what was done to it. It is stored
+-- verbatim and no CHECK enumerates it, because a value outside the set below is
+-- possible and must be kept rather than refused. THE SET IS NOW ESTABLISHED, from
+-- the reason table of the `filterlog` daemon that writes the line (opnsense/ports
+-- 26.7.3, opnsense/filterlog/files/filterlog.c), which is FreeBSD pf's PFRES_NAMES
+-- (sys/netpfil/pf/pf.h) up to `synproxy`: match, bad-offset, fragment, short,
+-- normalize, memory, bad-timestamp, congestion, ip-option, proto-cksum,
+-- state-mismatch, state-insert, state-limit, src-limit, synproxy. Any other
+-- reason is written by filterlog as `unknown(<n>)`. Code may match on the
+-- established values and on no other: `match` is a rule decision, and every
+-- other established value is a packet dropped for a reason no rule expresses.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS flow (
     id                     INTEGER PRIMARY KEY,
@@ -662,9 +841,105 @@ CREATE INDEX IF NOT EXISTS idx_flow_src_interface_observed_at ON flow
     (src_interface_id, observed_at, src_client_id, packet_bytes, action,
      traffic_scope, dst_address);
 CREATE INDEX IF NOT EXISTS idx_flow_src_client_observed_at ON flow (src_client_id, observed_at);
-CREATE INDEX IF NOT EXISTS idx_flow_blocked_observed_at ON flow (observed_at) WHERE action = 'block';
+-- The partial index of the blocked_event view, over the refusals: a 'block' and a
+-- 'reject' -- a reject is a refusal that answers. Its predicate is written exactly
+-- as the view's, which is what lets the planner use it. It replaced
+-- idx_flow_blocked_observed_at, which covered 'block' alone, and the old one is
+-- dropped by name so a database it was created in loses it.
+DROP INDEX IF EXISTS idx_flow_blocked_observed_at;
+CREATE INDEX IF NOT EXISTS idx_flow_refused_observed_at ON flow (observed_at)
+    WHERE action IN ('block', 'reject');
 
-CREATE VIEW IF NOT EXISTS blocked_event AS
+-- The four indexes step 5 adds, each for a statement in internal/store/derive.sql
+-- that would otherwise scan the largest growing table:
+--   idx_flow_src_address, idx_flow_dst_address  classification, which rewrites
+--       every flow touching one address and reads the sightings of that address;
+--   idx_flow_ingested_at  the refresh, which finds the slots holding a flow
+--       ingested since the last refresh;
+--   idx_flow_dst_client_observed_at  re-pointing a client identity and the
+--       retention guard on a client, both of which look a client up as a
+--       destination.
+CREATE INDEX IF NOT EXISTS idx_flow_src_address ON flow (src_address, observed_at);
+CREATE INDEX IF NOT EXISTS idx_flow_dst_address ON flow (dst_address, observed_at);
+CREATE INDEX IF NOT EXISTS idx_flow_ingested_at ON flow (ingested_at, observed_at);
+CREATE INDEX IF NOT EXISTS idx_flow_dst_client_observed_at ON flow (dst_client_id, observed_at);
+
+-- ---------------------------------------------------------------------------
+-- classified_flow — a flow, with the three facts every derivation reads from it
+-- written ONCE, as expressions over its stored columns.
+--
+-- traffic_direction is opnview's own term, taken from the widget catalogue's
+-- scopes: 'outbound' (the destination is outside), 'inbound' (the source is
+-- outside) or 'inter_interface' (neither end is outside). It is NOT flow.direction,
+-- which stays pf's per-interface `dir`: a packet leaving a client for the
+-- Internet is `in` on the client's interface. When BOTH ends are outside -- an
+-- unsolicited packet to the firewall's own upstream address, or one the firewall
+-- sends from it -- membership cannot decide, and pf's `dir` on the interface the
+-- record was logged on can: `out` is outbound, anything else inbound. That
+-- tie-break is the only place `dir` enters, so the three directions partition the
+-- flows exactly.
+--
+-- local_interface_id and local_client_id name the INSIDE end: the source when it
+-- has an interface, else the destination, else nothing. peer_address is the
+-- OUTSIDE end: the destination of an outbound flow, the source of an inbound one,
+-- and NULL between two interfaces.
+--
+-- A view rather than columns: the three are pure functions of the row, and a
+-- view over one table is flattened by the planner, so every statement that reads
+-- it keeps the flow indexes.
+-- ---------------------------------------------------------------------------
+CREATE VIEW IF NOT EXISTS classified_flow AS
+SELECT
+    id,
+    observed_at,
+    ingested_at,
+    interface_device,
+    src_interface_id,
+    dst_interface_id,
+    src_client_id,
+    dst_client_id,
+    src_address,
+    dst_address,
+    src_port,
+    dst_port,
+    protocol,
+    action,
+    direction,
+    log_reason,
+    packet_bytes,
+    rid,
+    rule_id,
+    traffic_scope,
+    CASE
+        WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN 'inter_interface'
+        WHEN src_interface_id IS NOT NULL THEN 'outbound'
+        WHEN dst_interface_id IS NOT NULL THEN 'inbound'
+        WHEN direction = 'out' THEN 'outbound'
+        ELSE 'inbound'
+    END AS traffic_direction,
+    CASE
+        WHEN src_interface_id IS NOT NULL THEN src_interface_id
+        ELSE dst_interface_id
+    END AS local_interface_id,
+    CASE
+        WHEN src_interface_id IS NOT NULL THEN src_client_id
+        WHEN dst_interface_id IS NOT NULL THEN dst_client_id
+    END AS local_client_id,
+    CASE
+        WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN NULL
+        WHEN src_interface_id IS NOT NULL THEN dst_address
+        WHEN dst_interface_id IS NOT NULL THEN src_address
+        WHEN direction = 'out' THEN dst_address
+        ELSE src_address
+    END AS peer_address
+FROM flow;
+
+-- blocked_event — every refused filter-log record: action 'block' or 'reject'. A
+-- record whose action could not be named ('unknown') is not a refusal and is not
+-- here, and it is not counted as allowed anywhere either. Dropped and created
+-- again on every apply, for the reason blocked_decision is.
+DROP VIEW IF EXISTS blocked_event;
+CREATE VIEW blocked_event AS
 SELECT
     id AS flow_id,
     observed_at,
@@ -687,9 +962,10 @@ SELECT
     rid,
     rule_id,
     rule_lookup_state,
+    action,
     traffic_scope
 FROM flow
-WHERE action = 'block';
+WHERE action IN ('block', 'reject');
 
 -- ---------------------------------------------------------------------------
 -- Blocklist — one named list the resolver refused a lookup against, and the
@@ -784,11 +1060,46 @@ CREATE TABLE IF NOT EXISTS blocklist (
 -- a blocked one the resolver did not attribute. A screen renders the second
 -- case as "blocked, list not recorded" rather than merging it into a bucket;
 -- the action column is what tells the two apart.
+--
+-- interface_id and interface_lookup_state place the querying address on an
+-- interface (G6). They are resolved by the same classification that places a
+-- flow's ends, from the same on-link evidence, never from an address range
+-- written anywhere: 'pending' until it has run, 'resolved' with the interface,
+-- and 'not_found' when the address has no on-link evidence at all. So a lookup
+-- from an address no client row names can still be placed.
+--
+-- answer_source holds the endpoint's `source` verbatim. Its values are
+-- established at opnsense/core 26.7.3 (scripts/unbound/stats.py): Recursion,
+-- Local, Local-data and Cache. Local-data is a host override or another
+-- local-data entry; Local is a blocklist answer or a SERVFAIL.
 -- ---------------------------------------------------------------------------
+--
+-- client_resolution says what the endpoint's `client` field held, because it is
+-- not always an address. The resolver's query report replaces the querying
+-- address by the name a reverse lookup of it returned, when there was one
+-- (opnsense/core 26.7.3, scripts/unbound/stats.py, the `details` query, which
+-- joins the logged client to the `client` table that scripts/unbound/logger.py
+-- fills through socket.gethostbyaddr). So:
+--   'logged_address'      `client` was an address; client_address is it and
+--                         client_hostname is NULL.
+--   'lease_hostname'      `client` was a host name, and exactly one address held
+--                         a DHCP lease under that name at the lookup's instant;
+--                         client_address is that address and client_hostname the
+--                         logged name, verbatim.
+--   'ambiguous_hostname'  a host name that more than one address held a lease
+--                         under at that instant;
+--   'unknown_hostname'    a host name no lease named at that instant.
+-- In the last two cases client_address holds the logged name verbatim, the
+-- lookup is placed nowhere and attributes nothing: a name that does not resolve
+-- to one address does not say which machine asked.
 CREATE TABLE IF NOT EXISTS dns_resolution (
     id             INTEGER PRIMARY KEY,
     lookup_key     TEXT NOT NULL UNIQUE,
     client_address TEXT NOT NULL,
+    client_hostname TEXT,
+    client_resolution TEXT NOT NULL DEFAULT 'logged_address'
+                   CHECK (client_resolution IN ('logged_address', 'lease_hostname',
+                                                'ambiguous_hostname', 'unknown_hostname')),
     client_id      INTEGER REFERENCES client (id),
     domain         TEXT NOT NULL,
     resolver       TEXT NOT NULL CHECK (resolver IN ('unbound', 'dnsmasq')),
@@ -798,17 +1109,30 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
     dnssec_status  TEXT,
     blocklist_id   INTEGER REFERENCES blocklist (id),
     looked_up_at   INTEGER NOT NULL CHECK (looked_up_at >= 0 AND looked_up_at < 4102444800),
-    ingested_at    INTEGER NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800)
+    ingested_at    INTEGER NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
+    interface_id   INTEGER REFERENCES interface (id),
+    interface_lookup_state TEXT NOT NULL DEFAULT 'pending'
+                   CHECK (interface_lookup_state IN ('resolved', 'not_found', 'pending')),
+    CHECK ((interface_lookup_state = 'resolved') = (interface_id IS NOT NULL)),
+    CHECK ((client_resolution = 'logged_address') = (client_hostname IS NULL))
 );
 
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_looked_up_at ON dns_resolution (looked_up_at);
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_client ON dns_resolution (client_address, looked_up_at);
+-- The attribution's lookup by the same client, and re-pointing a client identity.
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_id ON dns_resolution (client_id, looked_up_at);
 
 -- "Which list refused what, over this period" is an index search rather than a
 -- scan of a growing table. The NULL-bearing leading column keeps the
 -- unattributed blocked lookups at the head of the index instead of omitting
 -- them, so the "list not recorded" rows are served by it too.
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_blocklist ON dns_resolution (blocklist_id, looked_up_at);
+-- The lookups whose logged host name did not resolve to one address, ingested since
+-- a given instant: what one lease pass resolves again. It replaced an index on
+-- (client_resolution, looked_up_at), dropped by name.
+DROP INDEX IF EXISTS idx_dns_resolution_client_resolution;
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_unresolved_hostname
+    ON dns_resolution (client_resolution, ingested_at);
 
 -- ---------------------------------------------------------------------------
 -- Domain attribution — the site name carried by a flow, and the lookup it was
@@ -822,6 +1146,15 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_blocklist ON dns_resolution (block
 -- lookup itself — a mandatory foreign key, so an attribution cannot exist
 -- without it — and the delay between that lookup and the flow, so the
 -- attribution can be judged.
+--
+-- THE RULE, written once in internal/store/derive.sql and stated in
+-- docs/data-model.md: the resolver log carries no answer address, so a flow gets
+-- an attribution exactly when the eligible lookups by the same client in
+-- [observed_at - max delay, observed_at] name exactly one distinct domain. The
+-- flow must have an outside destination; the lookup must have passed, answered
+-- by Recursion, Cache or Local-data. site_name is that domain verbatim, and
+-- the referenced lookup is the latest of them. The max delay is the
+-- attribution_max_delay_seconds row of `setting`.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS domain_attribution (
     flow_id                   INTEGER PRIMARY KEY
@@ -844,7 +1177,7 @@ CREATE INDEX IF NOT EXISTS idx_domain_attribution_resolution ON domain_attributi
 -- is a row whose lookup_state is 'miss', never an absent row; a 'pending' row
 -- has not been looked up yet and names no provider.
 -- Source: the geo_asn kind of the provider registry — today the MaxMind
--- GeoLite2 City and ASN databases, the second and last of the two outbound
+-- GeoLite2 City and ASN databases, the second of the three outbound
 -- calls the project allows. Acquisition is step 4.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS geo_asn (
@@ -951,6 +1284,107 @@ CREATE INDEX IF NOT EXISTS idx_security_event_occurred_at ON security_event (occ
 CREATE INDEX IF NOT EXISTS idx_security_event_client_occurred_at ON security_event (src_client_id, occurred_at);
 CREATE INDEX IF NOT EXISTS idx_security_event_rule_occurred_at
     ON security_event (provider_id, rule_identity, occurred_at);
+-- Classification rewrites an event's source end with the flows of that address.
+CREATE INDEX IF NOT EXISTS idx_security_event_src_address
+    ON security_event (src_address, occurred_at);
+
+-- ---------------------------------------------------------------------------
+-- blocked_decision — every refusal, whichever engine decided it, under one
+-- vocabulary. Closes G2.
+--
+-- A refusal lives in three tables under three column names and three value sets:
+-- flow.action IN ('block', 'reject'), dns_resolution.action IN ('block', 'drop') and
+-- security_event.event_action = 'blocked'. This view projects each of them once,
+-- keyed by (source_table, source_id), so every refusal appears exactly once.
+--
+-- engine_kind is opnview's own closed vocabulary, recorded in
+-- docs/data-model.md, and every refusal has a place in it:
+--   firewall_rule                a filter-log record whose reason is `match`
+--   firewall_no_rule             one whose reason is another established pf
+--                                reason: dropped for a reason no rule expresses
+--   firewall_reason_not_recorded one whose reason is absent or outside the
+--                                established set, so neither can be claimed
+--   dns_advertising_list, dns_tracking_list, dns_threat_list,
+--   dns_parental_list, dns_other_list
+--                                a lookup refused by a list carrying that
+--                                user-assigned purpose
+--   dns_unassigned_list          refused by a list nobody has classified
+--   dns_list_not_recorded        refused with no list named by the resolver
+--   security_engine              a security event the engine blocked
+-- The purpose is the user's, from blocklist.purpose, and never derived from a
+-- list's name.
+--
+-- engine_reference is what decided inside the engine: the pf label (`rid`), the
+-- list's name, or the rule identity. target is what was refused: the
+-- destination address, or the domain. target_is_this_firewall is 1 when that
+-- address is one the firewall itself holds (interface_address, addr4 or addr6),
+-- which is how a feed says "-> this firewall".
+-- ---------------------------------------------------------------------------
+-- The view is dropped and created again on every apply, so an edit to its text
+-- reaches a database the previous text was applied to: CREATE VIEW IF NOT EXISTS
+-- alone would keep the old one for ever.
+DROP VIEW IF EXISTS blocked_decision;
+CREATE VIEW blocked_decision AS
+SELECT
+    'flow'                                                  AS source_table,
+    f.id                                                    AS source_id,
+    f.observed_at                                           AS occurred_at,
+    CASE
+        WHEN f.log_reason = 'match' THEN 'firewall_rule'
+        WHEN f.log_reason IN ('bad-offset', 'fragment', 'short', 'normalize', 'memory',
+                              'bad-timestamp', 'congestion', 'ip-option', 'proto-cksum',
+                              'state-mismatch', 'state-insert', 'state-limit',
+                              'src-limit', 'synproxy') THEN 'firewall_no_rule'
+        ELSE 'firewall_reason_not_recorded'
+    END                                                     AS engine_kind,
+    f.rid                                                   AS engine_reference,
+    f.src_client_id                                         AS client_id,
+    f.src_interface_id                                      AS interface_id,
+    f.dst_address                                           AS target,
+    'address'                                               AS target_kind,
+    EXISTS (SELECT 1 FROM interface_address AS a
+            WHERE a.address = f.dst_address AND a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6'))
+                                                            AS target_is_this_firewall
+FROM flow AS f
+WHERE f.action IN ('block', 'reject')
+UNION ALL
+SELECT
+    'dns_resolution',
+    r.id,
+    r.looked_up_at,
+    CASE
+        WHEN r.blocklist_id IS NULL THEN 'dns_list_not_recorded'
+        WHEN b.purpose IS NULL THEN 'dns_unassigned_list'
+        WHEN b.purpose = 'advertising' THEN 'dns_advertising_list'
+        WHEN b.purpose = 'tracking' THEN 'dns_tracking_list'
+        WHEN b.purpose = 'threat' THEN 'dns_threat_list'
+        WHEN b.purpose = 'parental' THEN 'dns_parental_list'
+        ELSE 'dns_other_list'
+    END,
+    b.name,
+    r.client_id,
+    r.interface_id,
+    r.domain,
+    'domain',
+    0
+FROM dns_resolution AS r
+LEFT JOIN blocklist AS b ON b.id = r.blocklist_id
+WHERE r.action IN ('block', 'drop')
+UNION ALL
+SELECT
+    'security_event',
+    e.id,
+    e.occurred_at,
+    'security_engine',
+    e.rule_identity,
+    e.src_client_id,
+    e.src_interface_id,
+    e.dst_address,
+    'address',
+    EXISTS (SELECT 1 FROM interface_address AS a
+            WHERE a.address = e.dst_address AND a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6'))
+FROM security_event AS e
+WHERE e.event_action = 'blocked';
 
 -- ---------------------------------------------------------------------------
 -- eve.json ingestion cursor — a per-file byte-offset watermark over an
@@ -1007,32 +1441,32 @@ CREATE TABLE IF NOT EXISTS source_availability (
 -- collector writes this table and none will: the only per-pair endpoint the
 -- survey found carries neither a port nor a protocol, and `flow` carries both
 -- exactly, from the filter log. So these rows are step 5's to COMPUTE from
--- `flow`, and nobody should look for the collector that fills them. The SAMPLED
--- per-pair volume, which is a different thing — a live rate snapshot rather than
--- a period total — stays in measurement_sample, where 4A already puts it.
+-- `flow`, and step 5 does: the statement insert_pair_volume of
+-- internal/store/derive.sql rewrites one UTC day from the flows observed in it,
+-- and nothing else writes the table but the retention purge. The SAMPLED
+-- per-pair volume, which is a different thing -- bytes seen in two-second
+-- samples rather than a period total -- stays in measurement_sample.
 --
--- The de-duplication key below is kept exactly as surveyed, because the
--- derivation must produce the same key: a per-pair figure summed over a day is
--- direction-free whether it came from the firewall's own aggregate or from
--- opnview's own records.
+-- The de-duplication key below is kept as surveyed: a per-pair figure summed
+-- over a day is direction-free whether it came from the firewall's own
+-- aggregate or from opnview's own records, so the derivation groups on
+-- (day_start_at, endpoint_low, endpoint_high, service_port, protocol), where
+-- endpoint_low and endpoint_high are the two addresses in lexicographic order,
+-- and both directions of one pair collapse to one row.
 --
 -- Origin of the shape: /api/diagnostics/networkinsight/top/FlowSourceAddrDetails/...
 -- with a field list containing src_addr and dst_addr; the row carries total (the
 -- octets or packets measure) and last_seen. Survey: data source 3.
 --
--- Insight writes each flow once per interface AND once per direction, with
--- source and destination swapped on the outbound direction, so naive
--- summation double-counts. The de-duplication key is therefore explicit and
--- direction-free: (day_start_at, endpoint_low, endpoint_high, service_port,
--- protocol), where endpoint_low and endpoint_high are the two addresses in
--- lexicographic order. The interface and direction of the observation that
--- won the insert are kept for provenance only and are NOT part of the key.
--- The derivation inserts with ON CONFLICT DO NOTHING.
---
--- service_port is min(src_port, dst_port) as computed by Insight — a heuristic
--- and not the real destination port, which the filter log carries exactly.
--- octets and packets are REAL because Insight pro-rates flows spanning a slice
--- boundary.
+-- service_port IS THE REAL DESTINATION PORT, flow.dst_port, and no longer
+-- Insight's min(src_port, dst_port) heuristic: the derivation reads the filter
+-- log, which carries the exact port. A protocol with no port -- every record
+-- whose dst_port is NULL -- is stored with service_port 0. octets is the sum of
+-- the logged packet lengths and packets the count of logged records, so both
+-- are LOGGED figures and lower bounds, never conversation volumes; they stay
+-- REAL because the shape was Insight's. observed_direction and
+-- observed_interface_device are those of the earliest flow of the group and are
+-- kept for provenance only.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS pair_volume_observation (
     id                        INTEGER PRIMARY KEY,
@@ -1054,127 +1488,209 @@ CREATE TABLE IF NOT EXISTS pair_volume_observation (
 
 CREATE INDEX IF NOT EXISTS idx_pair_volume_day ON pair_volume_observation (day_start_at);
 
+-- ---------------------------------------------------------------------------
+-- The aggregate families. Six keys, four periods each, all computed from
+-- opnview's own `flow` by internal/store/derive.sql and refreshed together, slot
+-- by slot, on the contract docs/data-model.md writes down once.
+--
+-- THE FOUR PERIODS ARE CALENDAR SLOTS, ALIGNED TO UTC:
+--   _1h   the hour
+--   _24h  the day
+--   _7d   the ISO week, starting Monday 00:00 UTC
+--   _30d  the calendar MONTH, of 28, 29, 30 or 31 days
+-- The `_30d` suffix holds months and the `_7d` suffix ISO weeks. The names are
+-- the periods a widget asks for, and are kept; period_end_at says exactly where
+-- each slot ends, so nothing has to multiply a day by thirty.
+--
+-- EVERY FAMILY CARRIES THE ALLOWED / BLOCKED / UNKNOWN SPLIT, of bytes and of
+-- connections, and bytes is the sum of the three. "Allowed" is flow.action =
+-- 'pass', "blocked" is 'block' or 'reject' -- a reject is a refusal that answers --
+-- and "unknown" is a record whose action opnview could not name. An unknown
+-- decision is counted as neither: a decision nobody read is not an allowance.
+--
+-- The byte figures are LOGGED BYTES, the sum of flow.packet_bytes. pf logs the
+-- packet that establishes a state and not the rest of the connection
+-- (pf.conf(5), `log`), and a connection logged on two interfaces counts twice,
+-- so these are logged volume and never conversation volume.
+--
+-- Observation-point limit: traffic between two clients behind one interface
+-- never reaches the firewall and is in none of these figures.
+--
+-- A slot is unique per period and key, through a unique index whose NULL-bearing
+-- columns are wrapped in ifnull, because SQLite treats NULLs in a unique index
+-- as distinct.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- volume_aggregate_* — per interface pair and outside peer: the primary volume
+-- store, not a cache over Insight (survey, data source 3: per-pair data exists
+-- on the firewall only daily, for 62 days).
+--
+-- src_interface_id IS NULLABLE: an inbound flow's source is outside and has no
+-- interface, and the slot key wraps it in ifnull so that slot is unique too.
+-- peer_address is classified_flow.peer_address, the outside end, and
+-- traffic_direction the outbound / inbound / inter_interface classification; the
+-- CHECKs pin both to the interfaces the row carries. The direction in the key is
+-- what closes G3: outbound and inbound are told apart in every period.
+-- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS volume_aggregate_1h (
     id                  INTEGER PRIMARY KEY,
     period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    INTEGER NOT NULL REFERENCES interface (id),
+    src_interface_id    INTEGER REFERENCES interface (id),
     dst_interface_id    INTEGER REFERENCES interface (id),
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
     allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
     blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
-    CHECK (period_end_at > period_start_at)
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
+    CHECK (traffic_scope = CASE WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
+                                THEN 'east_west' ELSE 'north_south' END),
+    CHECK ((traffic_direction = 'inter_interface')
+           = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL)),
+    CHECK (src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'),
+    CHECK (src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'),
+    CHECK ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_1h_slot
-    ON volume_aggregate_1h (period_start_at, src_interface_id,
-                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''));
+    ON volume_aggregate_1h (period_start_at, ifnull(src_interface_id, -1),
+                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
+                            traffic_direction);
 
 CREATE TABLE IF NOT EXISTS volume_aggregate_24h (
     id                  INTEGER PRIMARY KEY,
     period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    INTEGER NOT NULL REFERENCES interface (id),
+    src_interface_id    INTEGER REFERENCES interface (id),
     dst_interface_id    INTEGER REFERENCES interface (id),
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
     allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
     blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
-    CHECK (period_end_at > period_start_at)
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
+    CHECK (traffic_scope = CASE WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
+                                THEN 'east_west' ELSE 'north_south' END),
+    CHECK ((traffic_direction = 'inter_interface')
+           = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL)),
+    CHECK (src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'),
+    CHECK (src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'),
+    CHECK ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_24h_slot
-    ON volume_aggregate_24h (period_start_at, src_interface_id,
-                             ifnull(dst_interface_id, -1), ifnull(peer_address, ''));
+    ON volume_aggregate_24h (period_start_at, ifnull(src_interface_id, -1),
+                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
+                            traffic_direction);
 
 CREATE TABLE IF NOT EXISTS volume_aggregate_7d (
     id                  INTEGER PRIMARY KEY,
     period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    INTEGER NOT NULL REFERENCES interface (id),
+    src_interface_id    INTEGER REFERENCES interface (id),
     dst_interface_id    INTEGER REFERENCES interface (id),
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
     allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
     blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
-    CHECK (period_end_at > period_start_at)
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
+    CHECK (traffic_scope = CASE WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
+                                THEN 'east_west' ELSE 'north_south' END),
+    CHECK ((traffic_direction = 'inter_interface')
+           = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL)),
+    CHECK (src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'),
+    CHECK (src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'),
+    CHECK ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_7d_slot
-    ON volume_aggregate_7d (period_start_at, src_interface_id,
-                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''));
+    ON volume_aggregate_7d (period_start_at, ifnull(src_interface_id, -1),
+                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
+                            traffic_direction);
 
 CREATE TABLE IF NOT EXISTS volume_aggregate_30d (
     id                  INTEGER PRIMARY KEY,
     period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
     period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    INTEGER NOT NULL REFERENCES interface (id),
+    src_interface_id    INTEGER REFERENCES interface (id),
     dst_interface_id    INTEGER REFERENCES interface (id),
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
     allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
     blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
-    CHECK (period_end_at > period_start_at)
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
+    CHECK (traffic_scope = CASE WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
+                                THEN 'east_west' ELSE 'north_south' END),
+    CHECK ((traffic_direction = 'inter_interface')
+           = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL)),
+    CHECK (src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'),
+    CHECK (src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'),
+    CHECK ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_30d_slot
-    ON volume_aggregate_30d (period_start_at, src_interface_id,
-                             ifnull(dst_interface_id, -1), ifnull(peer_address, ''));
+    ON volume_aggregate_30d (period_start_at, ifnull(src_interface_id, -1),
+                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
+                            traffic_direction);
 
 -- ---------------------------------------------------------------------------
--- The per-owner aggregates — the same four periods, keyed on the person
--- rather than on the interface pair.
+-- owner_volume_aggregate_* — the same four periods, keyed on the person rather
+-- than on the interface pair. Closed G11.
 --
--- Why they exist: the four tables above carry interfaces and peer addresses
--- and no owner dimension at all, so "how much did Bob's machines move this
--- month" had nothing to read once the question left the flow horizon, which is
--- bounded by the retention_seconds row of setting. That was gap G11 in
--- docs/widget-catalogue.md and this family closes it.
+-- A flow belongs to the owner of its INSIDE client, classified_flow's
+-- local_client_id: the source when the source is inside, else the destination.
+-- A flow with no inside client belongs to nobody and is in no row of this
+-- family; it is still in the interface family above.
 --
--- Keyed as the four above are: the slot is (period_start_at, owner, scope),
--- with the same ifnull wrapper on the NULL-bearing column, because SQLite
--- treats NULLs in a UNIQUE index as distinct. One difference is deliberate and
--- is not a drift: traffic_scope is part of the key here, where above it is
--- derivable from whether dst_interface_id is set. A per-owner slot has no
--- destination interface to derive it from, so it is keyed explicitly.
+-- owner_id IS NULL IS THE UNASSIGNED BUCKET, AND IT IS NOT OPTIONAL. Ownership is
+-- assigned by hand and most machines belong to nobody in particular, so a
+-- per-person aggregate that dropped the unowned clients would under-report the
+-- network while looking complete. Nothing here infers an owner.
 --
--- owner_id IS NULL IS THE UNASSIGNED BUCKET, AND IT IS NOT OPTIONAL. Ownership
--- is assigned by hand and most machines on a network belong to nobody in
--- particular, so a per-person aggregate that dropped the unowned clients would
--- under-report the network while looking complete. The column is therefore
--- NULL-bearing by design and the unassigned slot is an ordinary row --
--- the same guarantee the "Clients per owner" diagnostic already carries.
+-- client_count is the number of distinct clients that contributed to THIS slot.
+-- It MUST NOT be summed across slots: the same machine active in two hours would
+-- be counted twice. Across slots, distinct clients are counted from the client
+-- family below, whose key carries the client.
 --
--- Nothing here infers an owner. These rows are computed from flow joined to
--- client.owner_id, which only a statement somebody wrote can fill.
---
--- client_count is the number of distinct clients that contributed to THIS
--- slot. It is a per-slot figure and MUST NOT be summed across slots: the same
--- machine active in two hours would be counted twice. Summing bytes, allowed
--- and blocked across slots is correct; summing client_count is not.
---
--- Refresh contract: identical to the four above, and written down once in
--- docs/data-model.md. A slot is recomputed when a flow inside its window is
--- ingested; the current slot is recomputed on every pass; computed_at against
--- the newest ingested_at inside the window is the staleness rule; a closed
--- slot is left alone. One addition specific to this family: reassigning a
--- client to another owner, or clearing its owner, invalidates every slot whose
--- window holds a flow from that client, because ownership is an attribute of
--- the person and not of the flow.
---
--- Observation-point limit applies here exactly as above: these are lower
--- bounds, and a per-person screen must say so.
+-- Reassigning a client to another owner invalidates every slot holding one of its
+-- flows, because ownership is an attribute of the person and not of the flow.
 -- ---------------------------------------------------------------------------
-
 CREATE TABLE IF NOT EXISTS owner_volume_aggregate_1h (
     id                  INTEGER PRIMARY KEY,
     period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
@@ -1182,11 +1698,16 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_1h (
     owner_id            INTEGER REFERENCES owner (id),
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
     allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
     blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
     client_count        INTEGER NOT NULL CHECK (client_count >= 0),
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
-    CHECK (period_end_at > period_start_at)
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_1h_slot
@@ -1199,11 +1720,16 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_24h (
     owner_id            INTEGER REFERENCES owner (id),
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
     allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
     blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
     client_count        INTEGER NOT NULL CHECK (client_count >= 0),
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
-    CHECK (period_end_at > period_start_at)
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_24h_slot
@@ -1216,11 +1742,16 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_7d (
     owner_id            INTEGER REFERENCES owner (id),
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
     allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
     blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
     client_count        INTEGER NOT NULL CHECK (client_count >= 0),
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
-    CHECK (period_end_at > period_start_at)
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_7d_slot
@@ -1233,15 +1764,606 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_30d (
     owner_id            INTEGER REFERENCES owner (id),
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
     allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
     blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
     client_count        INTEGER NOT NULL CHECK (client_count >= 0),
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
-    CHECK (period_end_at > period_start_at)
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_30d_slot
     ON owner_volume_aggregate_30d (period_start_at, ifnull(owner_id, -1), traffic_scope);
+
+-- ---------------------------------------------------------------------------
+-- client_volume_aggregate_* — per machine. Closes G4.
+--
+-- Keyed on (period, inside client, traffic direction). A flow lands under its
+-- local_client_id, so a client's inbound traffic is its own as well as its
+-- outbound traffic. distinct_peers counts the distinct addresses at the OTHER end
+-- of the client's flows in THIS slot -- the catalogue's "distinct destinations"
+-- for an outbound flow -- and, as with every distinct figure, is never summed across
+-- slots.
+--
+-- A client row may be removed (the retention purge, or a superseded identity
+-- whose flows were re-pointed): its slots go with it through ON DELETE CASCADE,
+-- after the refresh has already re-keyed every slot its flows moved out of.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS client_volume_aggregate_1h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    distinct_peers      INTEGER NOT NULL CHECK (distinct_peers >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_client_volume_aggregate_1h_slot
+    ON client_volume_aggregate_1h (period_start_at, client_id, traffic_direction);
+CREATE INDEX IF NOT EXISTS idx_client_volume_aggregate_1h_client
+    ON client_volume_aggregate_1h (client_id, period_start_at);
+
+CREATE TABLE IF NOT EXISTS client_volume_aggregate_24h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    distinct_peers      INTEGER NOT NULL CHECK (distinct_peers >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_client_volume_aggregate_24h_slot
+    ON client_volume_aggregate_24h (period_start_at, client_id, traffic_direction);
+CREATE INDEX IF NOT EXISTS idx_client_volume_aggregate_24h_client
+    ON client_volume_aggregate_24h (client_id, period_start_at);
+
+CREATE TABLE IF NOT EXISTS client_volume_aggregate_7d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    distinct_peers      INTEGER NOT NULL CHECK (distinct_peers >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_client_volume_aggregate_7d_slot
+    ON client_volume_aggregate_7d (period_start_at, client_id, traffic_direction);
+CREATE INDEX IF NOT EXISTS idx_client_volume_aggregate_7d_client
+    ON client_volume_aggregate_7d (client_id, period_start_at);
+
+CREATE TABLE IF NOT EXISTS client_volume_aggregate_30d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    distinct_peers      INTEGER NOT NULL CHECK (distinct_peers >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_client_volume_aggregate_30d_slot
+    ON client_volume_aggregate_30d (period_start_at, client_id, traffic_direction);
+CREATE INDEX IF NOT EXISTS idx_client_volume_aggregate_30d_client
+    ON client_volume_aggregate_30d (client_id, period_start_at);
+
+-- ---------------------------------------------------------------------------
+-- peer_volume_aggregate_* — per machine and per address at the other end of its
+-- flows. It is what makes every distinct_peers figure exact.
+--
+-- Keyed on (period, inside client, traffic direction, peer address). The client
+-- is classified_flow's local_client_id, as in the client family; peer_address is
+-- the address at the OTHER end from that client: the destination when the client
+-- is the source, the source otherwise. For an outbound or an inbound flow that is
+-- the volume family's peer_address, the outside end; between two interfaces it is
+-- the other inside address, which the volume family does not key on. The term
+-- "peer" is the one distinct_peers already used for that address.
+--
+-- A distinct count cannot be summed across slots, and the client family's
+-- distinct_peers used to be counted in each slot from `flow` alone, so a day or
+-- a month composed from finer slots could only carry an approximation of it.
+-- With the peer in the key, the client family of EVERY slot is regrouped from
+-- this family's same slot, and distinct_peers is the number of its rows: exact
+-- in an hour, in a composed day and in a rolled-up week or month alike, and one
+-- peer active in two hours of a day counts once in that day.
+--
+-- Its slots are composed exactly as the other families' are, its retention and
+-- purge are theirs, and a client removed takes its slots with it through
+-- ON DELETE CASCADE.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS peer_volume_aggregate_1h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+    peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_peer_volume_aggregate_1h_slot
+    ON peer_volume_aggregate_1h (period_start_at, client_id, traffic_direction, peer_address);
+CREATE INDEX IF NOT EXISTS idx_peer_volume_aggregate_1h_client
+    ON peer_volume_aggregate_1h (client_id, period_start_at);
+
+CREATE TABLE IF NOT EXISTS peer_volume_aggregate_24h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+    peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_peer_volume_aggregate_24h_slot
+    ON peer_volume_aggregate_24h (period_start_at, client_id, traffic_direction, peer_address);
+CREATE INDEX IF NOT EXISTS idx_peer_volume_aggregate_24h_client
+    ON peer_volume_aggregate_24h (client_id, period_start_at);
+
+CREATE TABLE IF NOT EXISTS peer_volume_aggregate_7d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+    peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_peer_volume_aggregate_7d_slot
+    ON peer_volume_aggregate_7d (period_start_at, client_id, traffic_direction, peer_address);
+CREATE INDEX IF NOT EXISTS idx_peer_volume_aggregate_7d_client
+    ON peer_volume_aggregate_7d (client_id, period_start_at);
+
+CREATE TABLE IF NOT EXISTS peer_volume_aggregate_30d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    traffic_direction   TEXT NOT NULL
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+    peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_peer_volume_aggregate_30d_slot
+    ON peer_volume_aggregate_30d (period_start_at, client_id, traffic_direction, peer_address);
+CREATE INDEX IF NOT EXISTS idx_peer_volume_aggregate_30d_client
+    ON peer_volume_aggregate_30d (client_id, period_start_at);
+
+-- ---------------------------------------------------------------------------
+-- domain_volume_aggregate_* — per inferred site name and client. Closes G5.
+--
+-- Computed from the flows that carry a domain_attribution, so a site name
+-- outlives both the flow and the lookup it was inferred from. site_name is the
+-- attributed name verbatim; grouping it into a registrable domain is done at read
+-- time from the Public Suffix List and never stored. client_id is the flow's
+-- source client, the machine that made the lookup; NULL when the flow named
+-- none, keyed through ifnull.
+--
+-- The flow count is allowed_connections + blocked_connections +
+-- unknown_connections. Distinct clients
+-- per site over several slots are counted as distinct client_id over the slot
+-- rows, which is exact because the client is in the key; nothing is summed.
+--
+-- aggregate_mode = 'no_domains' does NOT stop this family being written: the mode
+-- withholds names at the API (step 5B), and what is stored is unchanged.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS domain_volume_aggregate_1h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
+    client_id           INTEGER REFERENCES client (id) ON DELETE CASCADE,
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_volume_aggregate_1h_slot
+    ON domain_volume_aggregate_1h (period_start_at, site_name, ifnull(client_id, -1));
+
+CREATE TABLE IF NOT EXISTS domain_volume_aggregate_24h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
+    client_id           INTEGER REFERENCES client (id) ON DELETE CASCADE,
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_volume_aggregate_24h_slot
+    ON domain_volume_aggregate_24h (period_start_at, site_name, ifnull(client_id, -1));
+
+CREATE TABLE IF NOT EXISTS domain_volume_aggregate_7d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
+    client_id           INTEGER REFERENCES client (id) ON DELETE CASCADE,
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_volume_aggregate_7d_slot
+    ON domain_volume_aggregate_7d (period_start_at, site_name, ifnull(client_id, -1));
+
+CREATE TABLE IF NOT EXISTS domain_volume_aggregate_30d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
+    client_id           INTEGER REFERENCES client (id) ON DELETE CASCADE,
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_volume_aggregate_30d_slot
+    ON domain_volume_aggregate_30d (period_start_at, site_name, ifnull(client_id, -1));
+
+-- ---------------------------------------------------------------------------
+-- rule_volume_aggregate_* — per rule and interface pair, so the matrix's rules
+-- and a rule's recent history are answerable beyond the flow horizon.
+--
+-- rule_id is the rule the flow's rid resolved to; NULL is every flow whose rid
+-- resolved to nothing or named none, kept as its own slot through ifnull so the
+-- family sums to every flow. A rule is never purged, so a rule deleted on the
+-- firewall after it was discovered keeps its slots and its description.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS rule_volume_aggregate_1h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    rule_id             INTEGER REFERENCES rule (id),
+    src_interface_id    INTEGER REFERENCES interface (id),
+    dst_interface_id    INTEGER REFERENCES interface (id),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_volume_aggregate_1h_slot
+    ON rule_volume_aggregate_1h (period_start_at, ifnull(rule_id, -1),
+                                 ifnull(src_interface_id, -1), ifnull(dst_interface_id, -1));
+CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_1h_rule
+    ON rule_volume_aggregate_1h (rule_id, period_start_at);
+
+CREATE TABLE IF NOT EXISTS rule_volume_aggregate_24h (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    rule_id             INTEGER REFERENCES rule (id),
+    src_interface_id    INTEGER REFERENCES interface (id),
+    dst_interface_id    INTEGER REFERENCES interface (id),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_volume_aggregate_24h_slot
+    ON rule_volume_aggregate_24h (period_start_at, ifnull(rule_id, -1),
+                                 ifnull(src_interface_id, -1), ifnull(dst_interface_id, -1));
+CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_24h_rule
+    ON rule_volume_aggregate_24h (rule_id, period_start_at);
+
+CREATE TABLE IF NOT EXISTS rule_volume_aggregate_7d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    rule_id             INTEGER REFERENCES rule (id),
+    src_interface_id    INTEGER REFERENCES interface (id),
+    dst_interface_id    INTEGER REFERENCES interface (id),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_volume_aggregate_7d_slot
+    ON rule_volume_aggregate_7d (period_start_at, ifnull(rule_id, -1),
+                                 ifnull(src_interface_id, -1), ifnull(dst_interface_id, -1));
+CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_7d_rule
+    ON rule_volume_aggregate_7d (rule_id, period_start_at);
+
+CREATE TABLE IF NOT EXISTS rule_volume_aggregate_30d (
+    id                  INTEGER PRIMARY KEY,
+    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    rule_id             INTEGER REFERENCES rule (id),
+    src_interface_id    INTEGER REFERENCES interface (id),
+    dst_interface_id    INTEGER REFERENCES interface (id),
+    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    CHECK (period_end_at > period_start_at),
+    CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_volume_aggregate_30d_slot
+    ON rule_volume_aggregate_30d (period_start_at, ifnull(rule_id, -1),
+                                 ifnull(src_interface_id, -1), ifnull(dst_interface_id, -1));
+CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_30d_rule
+    ON rule_volume_aggregate_30d (rule_id, period_start_at);
+
+-- ---------------------------------------------------------------------------
+-- purged_flow_hour — the PURGED PART of an hour: what the retention purge
+-- removed from `flow`, summed per UTC hour on every key an aggregate family
+-- reads.
+--
+-- WHY IT EXISTS. An hour slot is computed from the flows observed inside it.
+-- When the retention horizon falls inside an hour -- the current hour itself,
+-- under a retention shorter than an hour -- the purge removes part of that
+-- hour's flows while the rest are still being ingested, reclassified or
+-- attributed. Recomputing the hour from `flow` alone would then drop the purged
+-- flows, and leaving it as it was would freeze it: a flow ingested late into it
+-- would never be counted, and a reclassification would leave its old figures in
+-- place. So the purge writes here, in the same transaction and BEFORE it
+-- deletes them, the figures of the flows it removes, and every hour slot is
+-- computed from the flows still present PLUS its purged part
+-- (internal/store/derive.sql, "The refresh"). Days, weeks and months are
+-- composed from hours and days, so they follow.
+--
+-- The key is the union of the families' keys, so each family regroups it as it
+-- regroups `flow`:
+--   src_interface_id, dst_interface_id  both ends' interfaces (volume, rule);
+--   src_client_id                       the source client (domain);
+--   local_client_id                     classified_flow's inside client (peer,
+--                                       client, owner);
+--   traffic_direction                   classified_flow's direction;
+--   peer_address                        the address at the other end from the
+--                                       inside end -- the peer family's peer --
+--                                       and, for a flow with no inside end,
+--                                       classified_flow's peer_address. The
+--                                       volume family's peer is this address
+--                                       except between interfaces, where it is
+--                                       none;
+--   rule_id, site_name, action          the rule, the attributed site name, the
+--                                       decision.
+-- bytes and connections are the summed packet_bytes and the number of records.
+--
+-- What the purged part keeps is the flows' classification when they were
+-- purged, with one exception, the one the flows themselves obey: when a better
+-- identity -- a lease, a MAC -- later names the address of an address-level
+-- client, the purged part is re-pointed to it as the flows are
+-- (internal/store/derive.sql, "repoint_purged_*"). An interface that changes
+-- after the flows are gone does not reach them. A client is never purged while
+-- the purged part names it (internal/store/purge.sql), so the client, peer,
+-- owner and domain families keep its bytes for as long as the hour is kept;
+-- ON DELETE SET NULL is only the backstop of the foreign key.
+--
+-- No unique key: each purge appends the rows of the flows it removed. A flow is
+-- added once because it is stored once: the purge records how far back it has
+-- purged (retention_purge), and the flow insert refuses a record older than that,
+-- inside the insert statement, so no purge committing during a collection pass can
+-- let one in again, although the firewall's page keeps offering it.
+--
+-- Growing: purged exactly as the hour slots are -- once the hour, its ISO week
+-- and its calendar month have all ended before the horizon.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS purged_flow_hour (
+    id                INTEGER PRIMARY KEY,
+    hour_start_at     INTEGER NOT NULL CHECK (hour_start_at >= 0 AND hour_start_at < 4102444800
+                                              AND hour_start_at % 3600 = 0),
+    src_interface_id  INTEGER REFERENCES interface (id),
+    dst_interface_id  INTEGER REFERENCES interface (id),
+    src_client_id     INTEGER REFERENCES client (id) ON DELETE SET NULL,
+    local_client_id   INTEGER REFERENCES client (id) ON DELETE SET NULL,
+    traffic_direction TEXT NOT NULL
+                      CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+    peer_address      TEXT NOT NULL,
+    rule_id           INTEGER REFERENCES rule (id),
+    site_name         TEXT CHECK (site_name IS NULL OR length(site_name) > 0),
+    action            TEXT NOT NULL CHECK (action IN ('pass', 'block', 'reject', 'unknown')),
+    bytes             INTEGER NOT NULL CHECK (bytes >= 0),
+    connections       INTEGER NOT NULL CHECK (connections > 0),
+    purged_at         INTEGER NOT NULL CHECK (purged_at >= 0 AND purged_at < 4102444800),
+    CHECK ((traffic_direction = 'inter_interface')
+           = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))
+);
+
+CREATE INDEX IF NOT EXISTS idx_purged_flow_hour_hour ON purged_flow_hour (hour_start_at);
+-- The refresh selects every hour a purge has written a purged part for since the
+-- previous refresh (internal/store/derive.sql, dirty_hours), by an index search
+-- rather than a scan.
+CREATE INDEX IF NOT EXISTS idx_purged_flow_hour_purged_at ON purged_flow_hour (purged_at, hour_start_at);
+-- The two client columns, so removing a client sets them to NULL by an index
+-- search rather than a scan.
+CREATE INDEX IF NOT EXISTS idx_purged_flow_hour_src_client ON purged_flow_hour (src_client_id);
+CREATE INDEX IF NOT EXISTS idx_purged_flow_hour_local_client ON purged_flow_hour (local_client_id);
+
+-- ---------------------------------------------------------------------------
+-- Retention purge — how far back the retention purge has purged: one row.
+--
+-- purged_before is the furthest horizon any purge has applied: every flow and
+-- every lookup observed before it may be gone, its figures moved into the purged
+-- part. It only moves forward, so lengthening the retention later does not make
+-- a purged record storable again. The flow and lookup inserts read it inside the
+-- insert statement and do not store a record older than it, so a purge that commits
+-- in the middle of a collection pass is seen: the filter-log page and the
+-- resolver's buffer keep offering records the purge already removed, and storing
+-- one again would count it twice -- once in `flow`, once in the purged part of its
+-- hour.
+--
+-- The term is the purge's own: docs/data-model.md, "Purge". Bounded: one row,
+-- written by the purge, absent until the first purge with a finite retention.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS retention_purge (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),
+    purged_before INTEGER NOT NULL CHECK (purged_before >= 0 AND purged_before < 4102444800),
+    purged_at     INTEGER NOT NULL CHECK (purged_at >= 0 AND purged_at < 4102444800)
+);
+
+-- ---------------------------------------------------------------------------
+-- Address classification — the evidence each address was last placed from.
+--
+-- Classification places an address from on-link evidence (docs/data-model.md,
+-- "Classification"). Redoing that over every row naming the address on every
+-- pass would rewrite nothing and still read its whole history, so a pass is
+-- INCREMENTAL: it places only the rows with an unplaced end, unless the evidence
+-- for the address has changed since it was last placed, in which case every row
+-- naming it is placed again. evidence is the fingerprint that decides it: the
+-- kind of evidence that placed the address, the interface it placed it on, and
+-- the strongest client identity at the address -- every input of the outcome
+-- and nothing else. An address with no row here has never been placed, and is
+-- placed in full.
+--
+-- The term "fingerprint" is the one the discovery pass already uses for the same
+-- kind of record (internal/collect, discovery.go).
+--
+-- Growing: one row per address ever classified. Purged by classified_at; an
+-- address whose row was purged is simply placed in full again.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS address_classification (
+    address       TEXT PRIMARY KEY CHECK (length(address) > 0),
+    evidence      TEXT NOT NULL CHECK (length(evidence) > 0),
+    classified_at INTEGER NOT NULL CHECK (classified_at >= 0 AND classified_at < 4102444800)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS idx_address_classification_classified_at
+    ON address_classification (classified_at);
 
 -- ---------------------------------------------------------------------------
 -- Collection gap — one interval opnview knows it did not cover.
@@ -1267,7 +2389,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_30d_slot
 --   * the resolver query window is ignored outright — a 5-minute and a 24-hour
 --     request return the same ~410-second span — so what came back is the most
 --     recent 1000 lookups and never the window that was asked for (survey,
---     "The resolver window is not honoured at all").
+--     "The resolver window is not honoured at all");
+--   * a download of a reference list opnview keeps on disk -- today the Public
+--     Suffix List -- failed or delivered a file that does not parse. The
+--     interval runs from the last successful refresh of the copy in use (or the
+--     failure itself, when there was none) to the failure: it is how long the
+--     copy in use has gone without being refreshed, and the copy stays in use.
 --
 -- reason is a CLOSED vocabulary and it is opnview's own, legitimately: these
 -- are opnview's own detections, not values an endpoint reports, so enumerating
@@ -1286,7 +2413,8 @@ CREATE TABLE IF NOT EXISTS collection_gap (
     reason            TEXT NOT NULL
                       CHECK (reason IN ('digest_outside_returned_window',
                                         'eve_rotation_lost',
-                                        'resolver_window_not_honoured')),
+                                        'resolver_window_not_honoured',
+                                        'download_failed')),
     detail            TEXT,
     detected_at       INTEGER NOT NULL CHECK (detected_at >= 0 AND detected_at < 4102444800),
     CHECK (interval_end_at >= interval_start_at)
@@ -1333,23 +2461,35 @@ CREATE INDEX IF NOT EXISTS idx_collection_gap_interval
 -- time-series store uses, including the aggregate tables OPNsense itself keeps
 -- under /var/netflow.
 --
--- subject_kind and subject_key together name what was measured. The three terms
--- opnview's own sampler uses, and a provider may declare a fourth — HAProxy's
+-- subject_kind and subject_key together name what was measured. The five terms
+-- opnview's own sampler uses, and a provider may declare another — HAProxy's
 -- subject is a backend, and a UPS is neither an interface nor a pair:
 --   'firewall'      the firewall itself. subject_key names the PART measured
 --                   when the reading is of a part -- a temperature sensor, a
---                   mounted filesystem -- and is the empty string when the
---                   reading is of the whole machine, as uptime and load are.
+--                   mounted filesystem, a swap device -- and is the empty
+--                   string when the reading is of the whole machine, as uptime
+--                   and load are.
 --                   It never carries the firewall's URL, which is configuration
 --                   held elsewhere. The value is a label and nothing branches
 --                   on its text.
 --   'interface'     subject_key is the network DEVICE name, the same token
 --                   interface_map keys by, so the reading joins to an interface
 --                   without a foreign key that a discovery refresh could break
---   'endpoint_pair' subject_key is the two addresses in lexicographic order
---                   joined by a space, the same canonical ordering
---                   pair_volume_observation enforces with endpoint_low and
---                   endpoint_high
+--   'interface_endpoint_pair'
+--                   subject_key is the device the reading was taken on, the
+--                   local address and the peer address, joined by spaces, in
+--                   that order. traffic/top reports each local address with its
+--                   peers on one interface, the peer's figures being INBOUND to
+--                   the local address (survey, "What `traffic/top` measures,
+--                   read from source for step 5"), so the order carries the
+--                   direction and is never canonicalised away
+--   'interface_endpoint'
+--                   subject_key is the device and the local address, joined
+--                   by a space: the record's own totals over all its peers.
+--                   The local address's sending is reported ONLY as that
+--                   total, so it is what a client's outbound figure comes from
+--   'gateway'       subject_key is the gateway's name as System > Gateways
+--                   reports it; the delay and loss dpinger measures
 --
 -- THE THREE VOCABULARIES ARE OPNVIEW'S OWN AND ARE EXTENSIBLE BY A PROVIDER,
 -- WITHOUT A SCHEMA CHANGE. They used to be three CHECKs enumerating what 4A's
@@ -1561,10 +2701,18 @@ WHERE NOT EXISTS (
 -- aggregate_mode: 'full' shows everything; 'no_domains' is the aggregate mode
 -- the roadmap asks for — volumes, interfaces, countries and operators, with no
 -- domain name read at all. The Map screen query is that query, and it reads
--- neither dns_resolution nor domain_attribution.
+-- neither dns_resolution nor domain_attribution. It changes what is SHOWN and
+-- never what is stored: attributions and the domain family are written in both
+-- modes, and the API withholds them.
+--
+-- attribution_max_delay_seconds: how long before a flow a resolver lookup may
+-- have been made and still name it (docs/data-model.md, "Site-name
+-- attribution"). 5 is the maintainer's default; it is a positive whole number,
+-- and internal/config refuses anything else.
 INSERT INTO setting (key, value, updated_at) VALUES
     ('retention_seconds', '7776000', CAST(strftime('%s', 'now') AS INTEGER)),
-    ('aggregate_mode', 'full', CAST(strftime('%s', 'now') AS INTEGER))
+    ('aggregate_mode', 'full', CAST(strftime('%s', 'now') AS INTEGER)),
+    ('attribution_max_delay_seconds', '5', CAST(strftime('%s', 'now') AS INTEGER))
 ON CONFLICT (key) DO NOTHING;
 
 -- The provider registry, seeded with the implementations that exist and have
@@ -1605,7 +2753,11 @@ INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at
     -- implements no external contract; what this row accounts for is the sampled
     -- per-pair volume, which is a source's material.
     ('measurement_sample', 'insight',       'NetFlow / Insight sampling',
-                                                                    0, CAST(strftime('%s', 'now') AS INTEGER))
+                                                                    0, CAST(strftime('%s', 'now') AS INTEGER)),
+    -- The Public Suffix List, downloaded from publicsuffix.org by
+    -- internal/publicsuffix: the third of the three outbound calls the project
+    -- allows, and the one implementation of the public_suffix kind.
+    ('public_suffix',  'public_suffix_list', 'Public Suffix List',  0, CAST(strftime('%s', 'now') AS INTEGER))
 ON CONFLICT (kind, provider_key) DO NOTHING;
 
 -- THE reconciled_state KIND HAS NO REGISTRY ROW, AND THAT IS NOT AN OMISSION.

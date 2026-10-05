@@ -87,7 +87,35 @@ const (
 	// ignores timeStart and timeEnd, so a pass whose oldest returned lookup is
 	// newer than the newest stored one missed everything in between.
 	GapResolverWindowNotHonoured GapReason = "resolver_window_not_honoured"
+	// GapDownloadFailed is a reference list opnview downloads -- the Public Suffix
+	// List -- that could not be fetched or did not parse. The copy in use stays in
+	// use; the interval is how long it has gone without a refresh.
+	GapDownloadFailed GapReason = "download_failed"
 )
+
+// LogReasons is the established value set of the filter log's `reason` field,
+// flow.log_reason: the reason table of the `filterlog` daemon that writes the
+// line (opnsense/ports 26.7.3, opnsense/filterlog/files/filterlog.c), which is
+// FreeBSD pf's PFRES_NAMES (sys/netpfil/pf/pf.h) up to synproxy. Any other reason
+// is written as "unknown(<n>)". No code matches a log reason outside this set,
+// and a test fails if one does.
+var LogReasons = []string{
+	"match", "bad-offset", "fragment", "short", "normalize", "memory", "bad-timestamp",
+	"congestion", "ip-option", "proto-cksum", "state-mismatch", "state-insert",
+	"state-limit", "src-limit", "synproxy",
+}
+
+// LogReasonMatch is the reason a rule decided: the packet matched it. Every other
+// established reason is a packet the firewall dropped for a reason no rule
+// expresses.
+const LogReasonMatch = "match"
+
+// The values of the endpoint's `source` field a lookup must carry to name a flow:
+// answered by recursion, from the cache, or from local data such as a host
+// override. Established at opnsense/core 26.7.3, scripts/unbound/stats.py, which
+// maps the stored source to Recursion, Local, Local-data and Cache; Local is a
+// blocklist answer or a SERVFAIL, so it names nothing.
+var AttributionAnswerSources = []string{"Recursion", "Cache", "Local-data"}
 
 // SubjectKind is what a measurement sample measured.
 //
@@ -99,18 +127,53 @@ const (
 // subject is a value and never a schema change.
 type SubjectKind string
 
-// The three subject kinds opnview's own sampler uses.
+// The subject kinds opnview's own sampler uses.
 const (
 	// SubjectFirewall is the firewall as a whole. Its subject key is empty.
 	SubjectFirewall SubjectKind = "firewall"
 	// SubjectInterface is one interface. Its subject key is the network device
 	// name, the token interface_map keys by.
 	SubjectInterface SubjectKind = "interface"
-	// SubjectEndpointPair is two addresses. Its subject key is the pair in
-	// lexicographic order joined by a space — the same canonical ordering
-	// pair_volume_observation enforces.
-	SubjectEndpointPair SubjectKind = "endpoint_pair"
+	// SubjectInterfaceEndpointPair is one pair of addresses AS READ ON ONE
+	// INTERFACE, local end first. Its subject key is the network device name, the
+	// local address and the peer address, joined by single spaces. It replaces the
+	// canonical endpoint_pair subject step 4 wrote, because that subject's
+	// lexicographic key dropped two facts traffic/top states: the interface the record
+	// was read on, and which address was the local one -- so one pair read on two
+	// interfaces at one instant collided and one reading was lost. OPNsense has no
+	// word for it; the term is opnview's own.
+	SubjectInterfaceEndpointPair SubjectKind = "interface_endpoint_pair"
+	// SubjectInterfaceEndpoint is one local address AS READ ON ONE INTERFACE, over
+	// all its peers. Its subject key is the network device name and the local
+	// address, joined by a single space. It carries the totals traffic/top reports
+	// on the record itself -- rate_bits_in, rate_bits_out, cumulative_bytes_in and
+	// cumulative_bytes_out -- because the local address's outbound figure exists
+	// ONLY as that total: it is split per peer nowhere, so a pair carries it only
+	// when the record has a single peer. Without this subject a client talking to
+	// several peers would have no outbound figure at all. The term is opnview's own.
+	SubjectInterfaceEndpoint SubjectKind = "interface_endpoint"
+	// SubjectGateway is one gateway, keyed by the name /api/routes/gateway/status
+	// reports for it.
+	SubjectGateway SubjectKind = "gateway"
 )
+
+// InterfaceEndpointPairKey composes the subject key of an interface endpoint pair.
+func InterfaceEndpointPairKey(device, local, peer string) string {
+	return device + " " + local + " " + peer
+}
+
+// InterfaceEndpointKey composes the subject key of an interface endpoint.
+func InterfaceEndpointKey(device, local string) string {
+	return device + " " + local
+}
+
+// SampleSeconds is how long one traffic/top sample covers. The endpoint runs
+// iftop with `-s 2`, printing one text output after two seconds and quitting
+// (opnsense/core 26.7.3, scripts/interfaces/traffic_top.py), so both its rates and
+// its cumulative bytes describe that two-second capture and nothing longer. Bytes
+// seen in samples are therefore bytes seen in this many seconds per sample, and
+// are never extrapolated to a period.
+const SampleSeconds = 2
 
 // Measure is what was measured. The vocabulary is opnview's own, because the
 // survey establishes the telemetry endpoints and not their field names: a measure
@@ -157,6 +220,27 @@ const (
 	MeasureRateBitsIn Measure = "rate_bits_in"
 	// MeasureRateBitsOut is the outbound half of the rate.
 	MeasureRateBitsOut Measure = "rate_bits_out"
+	// MeasureErrorsIn and MeasureErrorsOut are the per-interface error counters
+	// /api/diagnostics/traffic/interface reports as `input errors` and
+	// `output errors`.
+	MeasureErrorsIn Measure = "errors_in"
+	// MeasureErrorsOut is the outbound error counter.
+	MeasureErrorsOut Measure = "errors_out"
+	// MeasureDelayMilliseconds is a gateway's round-trip time, the `delay` field
+	// of /api/routes/gateway/status.
+	MeasureDelayMilliseconds Measure = "delay_milliseconds"
+	// MeasureDelayStddevMilliseconds is the standard deviation of that round-trip
+	// time, the `stddev` field.
+	MeasureDelayStddevMilliseconds Measure = "delay_stddev_milliseconds"
+	// MeasureLossRatio is a gateway's packet loss, the `loss` field, as a 0-to-1
+	// ratio.
+	MeasureLossRatio Measure = "loss_ratio"
+	// MeasureSwapTotalBytes and MeasureSwapUsedBytes are one swap device's size and
+	// use, the `total` and `used` fields of /api/diagnostics/system/systemSwap,
+	// which swapinfo -k reports in KiB and the sampler stores in bytes. The subject
+	// is the firewall, keyed by the swap device.
+	MeasureSwapTotalBytes Measure = "swap_total_bytes"
+	MeasureSwapUsedBytes  Measure = "swap_used_bytes"
 )
 
 // Unit is the unit of a measurement value. It is mandatory: a number with no unit
@@ -180,6 +264,8 @@ const (
 	UnitBitPerSecond Unit = "bit_per_second"
 	// UnitDimensionless is a figure with no unit, such as a load average.
 	UnitDimensionless Unit = "dimensionless"
+	// UnitMillisecond is a short duration, such as a round-trip time.
+	UnitMillisecond Unit = "millisecond"
 )
 
 // Interface is one discovered OPNsense interface. Every field but UserLabel and
@@ -204,6 +290,41 @@ type Interface struct {
 	LinkKind string
 	// VLANTag is API field `vlan_tag`.
 	VLANTag *int64
+	// IsUpstream is whether the response reported a non-empty `gateways[]` for the
+	// interface, and nothing else.
+	IsUpstream bool
+}
+
+// The five API fields an interface address is read from, stored verbatim in
+// interface_address.source_field.
+const (
+	// SourceFieldAddr4 is the interface's primary IPv4 address, `addr4`.
+	SourceFieldAddr4 = "addr4"
+	// SourceFieldAddr6 is the interface's primary IPv6 address, `addr6`.
+	SourceFieldAddr6 = "addr6"
+	// SourceFieldIPv4 is one entry of `ipv4[]`, every IPv4 address the interface
+	// holds, the primary one included.
+	SourceFieldIPv4 = "ipv4"
+	// SourceFieldIPv6 is one entry of `ipv6[]`, every IPv6 address the interface
+	// holds, the primary one and its link-local address included.
+	SourceFieldIPv6 = "ipv6"
+	// SourceFieldGateways is one entry of `gateways[]`, a gateway address.
+	SourceFieldGateways = "gateways"
+)
+
+// InterfaceAddress is one address an interface holds, or one gateway behind it.
+type InterfaceAddress struct {
+	// InterfaceID is the interface.
+	InterfaceID int64
+	// SourceField is the API field the value was read from.
+	SourceField string
+	// Address is the address, with no prefix.
+	Address string
+	// PrefixLength is the prefix length of an interface address; nil for a
+	// gateway.
+	PrefixLength *int64
+	// AddressFamily is 4 or 6.
+	AddressFamily int64
 }
 
 // Rule is one discovered firewall rule.
@@ -218,6 +339,11 @@ type Rule struct {
 	Action string
 	// Direction is read from the raw twin for the same reason.
 	Direction *string
+	// Interface is API field `interface`, verbatim: interface configuration keys
+	// on a model rule, interface descriptions on a legacy one.
+	Interface *string
+	// Legacy is API field `legacy`, which says which of the two Interface holds.
+	Legacy *bool
 	// LogsMatches is API field `log`: whether the rule writes a filter-log line.
 	// NULL means the source did not report the flag, which is not the same as
 	// "does not log".
@@ -397,8 +523,16 @@ type DNSResolution struct {
 	// opnview composes from the row's own content. The composition, and the
 	// under-count it accepts, are recorded on the column itself.
 	LookupKey string
-	// ClientAddress is `client`.
+	// ClientAddress is the querying address: `client` when it logged an address,
+	// the address the logged host name resolved to through the DHCP leases, or the
+	// logged host name verbatim when it resolved to no single address.
 	ClientAddress string
+	// ClientHostname is `client` when it logged a host name rather than an
+	// address; nil otherwise.
+	ClientHostname *string
+	// ClientResolution says which: one of the ClientResolution constants. Empty is
+	// ClientResolutionLoggedAddress.
+	ClientResolution string
 	// ClientID is the machine that address resolved to, when one is known.
 	ClientID *int64
 	// Domain is `domain`.
@@ -423,6 +557,20 @@ type DNSResolution struct {
 	// IngestedAt is when opnview stored it.
 	IngestedAt int64
 }
+
+// What a lookup's `client` field held, stored in dns_resolution.client_resolution.
+const (
+	// ClientResolutionLoggedAddress is a `client` that was an address.
+	ClientResolutionLoggedAddress = "logged_address"
+	// ClientResolutionLeased is a host name exactly one address held a DHCP
+	// lease under at the lookup's instant.
+	ClientResolutionLeased = "lease_hostname"
+	// ClientResolutionAmbiguous is a host name several addresses held a
+	// lease under at that instant.
+	ClientResolutionAmbiguous = "ambiguous_hostname"
+	// ClientResolutionUnknown is a host name no lease named at that instant.
+	ClientResolutionUnknown = "unknown_hostname"
+)
 
 // SecurityEvent is one event from a provider of the security_event kind.
 type SecurityEvent struct {
@@ -480,10 +628,9 @@ type EveCursor struct {
 }
 
 // There is deliberately NO row shape for pair_volume_observation. That table is
-// DERIVED and not collected — the maintainer's ruling, recorded on the table
-// itself: the only per-pair endpoint carries neither a port nor a protocol, and
-// `flow` carries both, so those rows are step 5's to compute from `flow`. A write
-// path here would be the collector nobody should go looking for.
+// DERIVED and not collected -- the maintainer's ruling, recorded on the table
+// itself -- and its rows are computed from `flow` by the refresh, through the
+// statement insert_pair_volume of derive.sql, without passing through Go values.
 
 // StateSnapshot is one provider's complete set of things of one type, as of one
 // instant, with the things in it.

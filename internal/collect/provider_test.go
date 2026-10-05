@@ -61,7 +61,7 @@ func TestEveryRegistryRowOfACollectedKindHasAnImplementation(t *testing.T) {
 	registered := registeredKeysByKind()
 
 	for _, provider := range everyProvider(t, database) {
-		if provider.kind == KindGeoASN || provider.kind == KindFlowVolume {
+		if provider.kind == KindGeoASN || provider.kind == KindFlowVolume || provider.kind == KindPublicSuffix {
 			continue
 		}
 		found := false
@@ -158,7 +158,8 @@ func TestAnImplementationThatCannotBeReadReportsWhyRatherThanFailingThePass(t *t
 			if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, ProviderISC); err != nil {
 				return err
 			}
-			return harness.collector.collectLeases(ctx)
+			var seen []string
+			return harness.collector.collectLeases(ctx, &seen)
 		}},
 		{KindDNSLookup, ProviderDnsmasq, func(ctx context.Context) error {
 			if err := harness.store.SetActiveProviders(ctx, KindDNSLookup, ProviderDnsmasq); err != nil {
@@ -219,7 +220,8 @@ func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testi
 		t.Fatalf("activating it: %v", err)
 	}
 
-	if err := harness.collector.collectLeases(ctx); err == nil {
+	var seen []string
+	if err := harness.collector.collectLeases(ctx, &seen); err == nil {
 		t.Fatal("collecting from an active provider with no implementation returned no error")
 	}
 }

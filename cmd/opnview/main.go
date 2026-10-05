@@ -18,7 +18,11 @@
 // settings and collection — and the widget endpoints are step 5, the canvases
 // step 7. The MaxMind GeoLite2 databases are downloaded with the account ID and the
 // licence key entered on the settings surface, kept beside the database, and used to
-// place the addresses the flows carry; the map that shows them is step 7.
+// place the addresses the flows carry; the map that shows them is step 7. The Public
+// Suffix List is downloaded from publicsuffix.org once a day, conditionally, to group
+// inferred site names by registrable domain: the third and last outbound call.
+// Classification, site-name attribution and the aggregate refresh run after each
+// collection pass; the widget endpoints that read them are step 5B.
 package main
 
 import (
@@ -39,6 +43,7 @@ import (
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/maxmind"
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/publicsuffix"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/web"
@@ -59,6 +64,10 @@ const httpGrace = 5 * time.Second
 // tens of megabytes; ten minutes allows for a slow line without letting a stalled
 // download hold the refresh loop for ever.
 const geoipTimeout = 10 * time.Minute
+
+// publicSuffixTimeout bounds one Public Suffix List request. The list is a few
+// hundred kilobytes, so a minute is generous on a slow line.
+const publicSuffixTimeout = time.Minute
 
 func main() {
 	if err := run(); err != nil {
@@ -186,6 +195,17 @@ func run() (err error) {
 		geoipCredentials, time.Now)
 	locator := maxmind.NewLocator(geoipDataset, database, time.Now)
 
+	// THE THIRD OUTBOUND CALL: the Public Suffix List, in <data-dir>/publicsuffix. A copy
+	// on disk that does not parse is reported and left for the next refresh to replace.
+	suffixes, err := publicsuffix.NewRefresher(publicsuffix.NewClient(publicSuffixTimeout),
+		filepath.Join(*dataDir, "publicsuffix"), database, time.Now)
+	if suffixes == nil {
+		return err
+	}
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "%s: %v\n", buildinfo.AppName, err)
+	}
+
 	setupToken, err := auth.NewSetupToken()
 	if err != nil {
 		return err
@@ -222,9 +242,6 @@ func run() (err error) {
 	}
 	reportCredentialState(credentialState)
 
-	purge := func(ctx context.Context) error {
-		return database.Purge(ctx, time.Now().UTC().Unix())
-	}
 	report := func(taskName string, err error) {
 		if errors.Is(err, opnsense.ErrNoBaseURL) {
 			// The expected state of an installation nobody has configured yet. It is
@@ -248,7 +265,8 @@ func run() (err error) {
 	fmt.Printf("%s: the interface is listening on %s\n", buildinfo.AppName, *listen)
 
 	collectErr := collect.Run(ctx, collect.SystemClock{},
-		append(collector.Tasks(live, purge), maxmind.Tasks(live, refresher, locator)...), report)
+		append(append(collector.Tasks(live), maxmind.Tasks(live, refresher, locator)...),
+			publicsuffix.Tasks(live, suffixes)...), report)
 	running.Wait()
 
 	switch {

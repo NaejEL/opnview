@@ -1,0 +1,41 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
+// AN EXCERPT, NOT THE LIST. This file holds the rules the Public Suffix List's own
+// test vectors (tests/test_psl.txt of github.com/publicsuffix/list) exercise, copied
+// verbatim and in the list's own sections from the copy whose VERSION and COMMIT
+// lines follow, so the registrable-domain function is tested against the list's
+// real rules without the repository carrying the whole list. The licence above is
+// the list's own, unchanged.
+// VERSION: 2026-10-01_23-02-52_UTC
+// COMMIT: 6cd82aff889e3d64e5e03bc5c1f43da1934a960a
+
+// ===BEGIN ICANN DOMAINS===
+
+ac
+biz
+*.ck
+!www.ck
+cn
+com.cn
+公司.cn
+com
+jp
+ac.jp
+kyoto.jp
+ide.kyoto.jp
+*.kobe.jp
+!city.kobe.jp
+*.mm
+us
+ak.us
+k12.ak.us
+中国
+
+// ===END ICANN DOMAINS===
+// ===BEGIN PRIVATE DOMAINS===
+
+uk.com
+
+// ===END PRIVATE DOMAINS===

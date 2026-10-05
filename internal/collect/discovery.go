@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/netip"
+	"strconv"
+	"strings"
 
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -26,8 +29,10 @@ func (c *Collector) RefreshDiscovery(ctx context.Context) error {
 	snapshot.RefreshedAt = c.now()
 	var failures []error
 
+	interfacesRead := true
 	if err := c.discoverInterfaces(ctx, &snapshot); err != nil {
 		failures = append(failures, err)
+		interfacesRead = false
 	}
 	if err := c.discoverInterfaceNames(ctx, &snapshot); err != nil {
 		failures = append(failures, err)
@@ -42,6 +47,24 @@ func (c *Collector) RefreshDiscovery(ctx context.Context) error {
 	// The snapshot is published even when something failed, because the part that
 	// answered is better than the part that is stale.
 	c.setDiscovery(snapshot)
+
+	// A change of which interfaces are upstream, or of the networks that count,
+	// changes what is outside, so every stored address is placed again. The first
+	// discovery of a run is such a change, which is also what clears any
+	// remote-address client an earlier classification left behind. The derivation
+	// itself compares what classification reads of the interfaces with what it
+	// read last (derive.go), so an operator's edit of a network is caught there
+	// too, at the next derivation, whichever pass runs it.
+	if interfacesRead {
+		changed, err := c.onLinkChanged(ctx)
+		if err != nil {
+			failures = append(failures, err)
+		} else if changed {
+			if err := c.derive(ctx, derivation{}); err != nil {
+				failures = append(failures, err)
+			}
+		}
+	}
 
 	if len(failures) > 0 {
 		return fmt.Errorf("collect: runtime discovery was incomplete: %w", joinErrors(failures))
@@ -82,6 +105,7 @@ func (c *Collector) discoverInterfaces(ctx context.Context, snapshot *Discovery)
 		}
 		linkType, _ := decode.String(row, "link_type")
 		vlanTag := decode.IntPointer(row, "vlan_tag")
+		gateways := gatewayAddresses(row)
 
 		iface := store.Interface{
 			Identifier:  identifier,
@@ -95,10 +119,27 @@ func (c *Collector) discoverInterfaces(ctx context.Context, snapshot *Discovery)
 			LinkType: linkType,
 			LinkKind: linkKind(vlanTag),
 			VLANTag:  vlanTag,
+			// Upstream exactly when the response reports a gateway behind the
+			// interface, and for no other reason.
+			IsUpstream: len(gateways) > 0,
 		}
 		id, err := c.store.UpsertInterface(ctx, iface, now)
 		if err != nil {
 			return err
+		}
+		addresses, networks := interfaceAddresses(row, id, gateways)
+		for _, address := range addresses {
+			if err := c.store.UpsertInterfaceAddress(ctx, address, now); err != nil {
+				return err
+			}
+		}
+		// The networks the addresses cover are proposed as detected networks; the
+		// store keeps what the operator decided about each.
+		if err := c.store.DetectNetworks(ctx, id, networks, now); err != nil {
+			return err
+		}
+		if iface.IsUpstream {
+			snapshot.Upstream[id] = struct{}{}
 		}
 		snapshot.InterfaceIDByIdentifier[identifier] = id
 		snapshot.InterfaceIDByDevice[device] = id
@@ -106,6 +147,119 @@ func (c *Collector) discoverInterfaces(ctx context.Context, snapshot *Discovery)
 		snapshot.Devices[device] = struct{}{}
 	}
 	return nil
+}
+
+// gatewayAddresses reads `gateways[]`: a list of gateway ADDRESSES, at most one
+// per address family, every gateway configured on the interface that is enabled
+// and has an address (opnsense/core 26.7.3, Interfaces/Api/OverviewController.php
+// and Routing/Gateways.php, getInterfaceGateway). An entry that is not an address
+// is left out rather than guessed at.
+func gatewayAddresses(row decode.Object) []netip.Addr {
+	var gateways []netip.Addr
+	entries, isList := row["gateways"].([]any)
+	if !isList {
+		return nil
+	}
+	for _, entry := range entries {
+		text, isText := entry.(string)
+		if !isText {
+			continue
+		}
+		address, err := netip.ParseAddr(strings.TrimSpace(text))
+		if err != nil {
+			continue
+		}
+		gateways = append(gateways, address.Unmap())
+	}
+	return gateways
+}
+
+// interfaceAddresses reads `addr4` and `addr6`, each one string in the form
+// "address/prefix length" or empty, and `ipv4[]` and `ipv6[]`, whose entries are
+// objects whose `ipaddr` has that form (opnsense/core 26.7.3,
+// Interfaces/Api/OverviewController.php, where each entry is built as
+// `ipaddr` = address "/" subnetbits, with a `vhid` beside it for a CARP address).
+// It adds the gateways, and returns the networks the addresses cover. An entry
+// that does not parse is left out rather than guessed at.
+func interfaceAddresses(row decode.Object, interfaceID int64, gateways []netip.Addr) (
+	[]store.InterfaceAddress, []netip.Prefix) {
+	var (
+		addresses []store.InterfaceAddress
+		networks  []netip.Prefix
+	)
+	add := func(field, text string) {
+		prefix, ok := parseInterfacePrefix(text)
+		if !ok {
+			return
+		}
+		bits := int64(prefix.Bits())
+		address := prefix.Addr()
+		addresses = append(addresses, store.InterfaceAddress{
+			InterfaceID:   interfaceID,
+			SourceField:   field,
+			Address:       address.String(),
+			PrefixLength:  &bits,
+			AddressFamily: familyOf(address),
+		})
+		networks = append(networks, prefix.Masked())
+	}
+	for _, field := range []string{store.SourceFieldAddr4, store.SourceFieldAddr6} {
+		if text, present := decode.String(row, field); present {
+			add(field, text)
+		}
+	}
+	for _, field := range []string{store.SourceFieldIPv4, store.SourceFieldIPv6} {
+		entries, isList := row[field].([]any)
+		if !isList {
+			continue
+		}
+		for _, entry := range entries {
+			object, isObject := entry.(map[string]any)
+			if !isObject {
+				continue
+			}
+			if text, present := decode.String(object, "ipaddr"); present {
+				add(field, text)
+			}
+		}
+	}
+	for _, gateway := range gateways {
+		addresses = append(addresses, store.InterfaceAddress{
+			InterfaceID:   interfaceID,
+			SourceField:   store.SourceFieldGateways,
+			Address:       gateway.String(),
+			AddressFamily: familyOf(gateway),
+		})
+	}
+	return addresses, networks
+}
+
+// parseInterfacePrefix reads "address/prefix length". A link-local address may
+// carry its zone -- the device it is scoped to -- which a prefix cannot hold, so the
+// zone is dropped: the address is the same on every interface whatever the zone.
+func parseInterfacePrefix(text string) (netip.Prefix, bool) {
+	slash := strings.LastIndexByte(text, '/')
+	if slash < 0 {
+		return netip.Prefix{}, false
+	}
+	address, err := netip.ParseAddr(strings.TrimSpace(text[:slash]))
+	if err != nil {
+		return netip.Prefix{}, false
+	}
+	bits, err := strconv.Atoi(strings.TrimSpace(text[slash+1:]))
+	if err != nil {
+		return netip.Prefix{}, false
+	}
+	prefix := netip.PrefixFrom(address.WithZone("").Unmap(), bits)
+	return prefix, prefix.IsValid()
+}
+
+// familyOf is 4 or 6.
+func familyOf(address netip.Addr) int64 {
+	if address.Is4() {
+		return 4
+	}
+	return 6
 }
 
 // linkKind is opnview's normalisation of the raw link type into the closed class
@@ -204,6 +358,8 @@ func (c *Collector) discoverRules(ctx context.Context, snapshot *Discovery) erro
 			Action:      normaliseRuleAction(rawTwin(row, "action")),
 			Direction:   normaliseRuleDirection(rawTwin(row, "direction")),
 			LogsMatches: decode.Flag(row, "log"),
+			Interface:   ruleInterface(row),
+			Legacy:      decode.Flag(row, "legacy"),
 			IsAutomatic: decode.FlagOrFalse(decode.Flag(row, "is_automatic")),
 		}
 		id, err := c.store.UpsertRule(ctx, rule, now)
@@ -213,6 +369,22 @@ func (c *Collector) discoverRules(ctx context.Context, snapshot *Discovery) erro
 		snapshot.RuleIDByPfLabel[pfLabel] = id
 	}
 	return nil
+}
+
+// ruleInterface reads the rule's `interface` field verbatim. An empty value is a
+// floating rule, which applies on every interface, and is kept as the empty
+// string; a field the row does not carry is nil, which is not reported.
+func ruleInterface(row decode.Object) *string {
+	raw, present := row["interface"]
+	if !present || raw == nil {
+		return nil
+	}
+	text, isText := raw.(string)
+	if !isText {
+		return nil
+	}
+	trimmed := strings.TrimSpace(text)
+	return &trimmed
 }
 
 // rawTwin reads the %-prefixed raw value in preference to the human-facing one.

@@ -53,12 +53,26 @@ import (
 // machine the filter-log collector will find by address instead of minting the weakest
 // identity for.
 func (c *Collector) CollectDHCPLease(ctx context.Context) error {
+	// No retention purge runs between this pass storing a lease or a neighbour and the
+	// end of its derivation (purge.go).
+	defer c.storing()()
 	var failures []error
 
-	if err := c.collectNeighbours(ctx); err != nil {
+	var seen []string
+	if err := c.collectNeighbours(ctx, &seen); err != nil {
 		failures = append(failures, err)
 	}
-	if err := c.collectLeases(ctx); err != nil {
+	if err := c.collectLeases(ctx, &seen); err != nil {
+		failures = append(failures, err)
+	}
+
+	// A lease or a neighbour entry is on-link evidence, and one that names an address
+	// seen only in flows is a better identity for it: every address read is placed
+	// again, which re-points the rows naming it and decides their attribution again.
+	// A lease can also name the host a lookup logged as its client before the lease
+	// was read, so the lookups whose host name resolved to no single address are
+	// resolved again.
+	if err := c.derive(ctx, derivation{addresses: seen, hostnames: true}); err != nil {
 		failures = append(failures, err)
 	}
 
@@ -77,14 +91,14 @@ func (c *Collector) CollectDHCPLease(ctx context.Context) error {
 // interface. One failing backend does not stop the others: they are separate
 // servers behind separate endpoints, and letting the first failure end the pass
 // would turn one unreadable server into two.
-func (c *Collector) collectLeases(ctx context.Context) error {
+func (c *Collector) collectLeases(ctx context.Context, seen *[]string) error {
 	sources, err := c.activeSources(ctx, KindDHCPLease)
 	if err != nil {
 		return err
 	}
 	var failures []error
 	for _, active := range sources {
-		if err := c.collectLeasesFrom(ctx, active); err != nil {
+		if err := c.collectLeasesFrom(ctx, active, seen); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -95,7 +109,7 @@ func (c *Collector) collectLeases(ctx context.Context) error {
 }
 
 // collectLeasesFrom reads one backend's lease table.
-func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource) error {
+func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource, seen *[]string) error {
 	providerKey, providerID := active.providerKey, active.providerID
 	source, registered := leaseSources[providerKey]
 	if !registered {
@@ -123,6 +137,7 @@ func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource) 
 		if err := c.ingestLease(ctx, observation, snapshot, providerID, providerKey, now); err != nil {
 			return err
 		}
+		*seen = append(*seen, observation.Address)
 	}
 	return nil
 }
@@ -226,7 +241,7 @@ func leaseIdentity(observation leaseObservation, interfaceID *int64,
 }
 
 // collectNeighbours reads the ARP and NDP tables.
-func (c *Collector) collectNeighbours(ctx context.Context) error {
+func (c *Collector) collectNeighbours(ctx context.Context, seen *[]string) error {
 	snapshot := c.Discovery()
 	now := c.now()
 	var failures []error
@@ -252,6 +267,7 @@ func (c *Collector) collectNeighbours(ctx context.Context) error {
 				failures = append(failures, err)
 				break
 			}
+			*seen = append(*seen, decode.RawString(row, "ip"))
 		}
 	}
 
@@ -276,6 +292,13 @@ func (c *Collector) ingestNeighbour(ctx context.Context, row decode.Object,
 	var interfaceID *int64
 	if id, found := snapshot.InterfaceIDByDevice[decode.RawString(row, "intf")]; found {
 		interfaceID = &id
+	}
+	if interfaceID != nil {
+		if _, upstream := snapshot.Upstream[*interfaceID]; upstream {
+			// A neighbour of an upstream interface -- the provider's router, typically --
+			// is outside, and an outside address never becomes a client row.
+			return nil
+		}
 	}
 
 	_, err := c.store.UpsertClient(ctx, store.Client{

@@ -48,7 +48,9 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 		return readErr
 	}
 	if len(records) == 0 {
-		return nil
+		// The refresh runs after every pass, an empty one included: the current slot
+		// of each period is rewritten on every pass, because it is still filling.
+		return c.derive(ctx, derivation{})
 	}
 
 	newestStored, hasStored, err := c.store.NewestFlowObservedAt(ctx)
@@ -57,32 +59,57 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 	}
 
 	snapshot := c.Discovery()
-	now := c.now()
-	oldestReturned := int64(0)
+	// No retention purge runs from here until the derivation has ended, so none can
+	// move these rows into the purged part before a refresh has read them (purge.go).
+	defer c.storing()()
+	// The instant every row of this pass is stamped with stays in flight until the
+	// rows are written, so no refresh running meanwhile moves its watermark past it.
+	now, ingest := c.beginIngest()
+	defer c.endIngest(ingest)
+	var stored derivation
+	passErr := c.storeFirewallLog(ctx, records, snapshot, now, providerID, newestStored, hasStored,
+		&stored)
+	if c.hooks.afterStore != nil {
+		c.hooks.afterStore()
+	}
 
+	// Every record of the page that was stored -- all of them, or those stored before
+	// the pass failed -- can be placed from everything held, its flows attributed, and
+	// the slots refreshed; a failure is still returned.
+	c.endIngest(ingest)
+	return c.deriveAfter(ctx, stored, passErr)
+}
+
+// storeFirewallLog stores the records of one page and runs the gap test, recording
+// in stored every address and instant it wrote, so the derivation that follows
+// reaches them even when this returns an error part-way. A record the retention purge
+// has already removed is not stored again: store.InsertFlow refuses it inside the
+// insert itself, so a purge committing at any moment of this loop is seen.
+func (c *Collector) storeFirewallLog(ctx context.Context, records []logRecord, snapshot Discovery,
+	now, providerID, newestStored int64, hasStored bool, stored *derivation) error {
+	oldestReturned := int64(0)
 	for index, record := range records {
 		if index == 0 || record.ObservedAt < oldestReturned {
 			oldestReturned = record.ObservedAt
 		}
 
-		stored, err := c.store.HasFlowDigest(ctx, record.Digest)
+		seen, err := c.store.HasFlowDigest(ctx, record.Digest)
 		if err != nil {
 			return err
 		}
-		if stored {
+		if seen {
 			// The endpoint echoes back records already seen, and the schema's uniqueness would
 			// reject them anyway. Skipping here keeps the pass from doing work for a row that
 			// cannot land.
 			continue
 		}
 
-		flow, err := c.buildFlow(ctx, record, snapshot, now)
-		if err != nil {
-			return err
-		}
+		flow := buildFlow(record, snapshot, now)
 		if err := c.store.InsertFlow(ctx, flow); err != nil {
 			return err
 		}
+		stored.addresses = append(stored.addresses, record.SrcAddress, record.DstAddress)
+		stored.widen(record.ObservedAt, record.ObservedAt)
 	}
 
 	// The gap test.
@@ -111,42 +138,25 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 // matching no rule is `not_found`, and both are states the screens render. A dropped row would
 // lose a packet that really crossed the firewall, which is the opposite of what this product
 // is for.
-func (c *Collector) buildFlow(ctx context.Context, record logRecord, snapshot Discovery,
-	now int64) (store.Flow, error) {
+//
+// NEITHER END IS PLACED HERE. Which interface an address belongs to, and which client stands
+// behind it, is decided from on-link evidence once the whole page is stored (derive.go and
+// internal/store/classify.go), because the evidence for one record can arrive in a later one.
+// Placing an end from the record alone is how a remote address used to become a client row on
+// whatever interface happened to log it first. Until the derivation runs the row is
+// north-south with no interface on either end, which is what the schema's CHECK requires of
+// an unplaced row.
+func buildFlow(record logRecord, snapshot Discovery, now int64) store.Flow {
 	interfaceState := store.LookupNotFound
-	var loggedInterfaceID *int64
 	switch {
 	case snapshot.RefreshedAt == 0:
 		// Discovery has not run yet, so the key has not been looked up rather than looked up
 		// and missed. The two are different facts.
 		interfaceState = store.LookupPending
 	default:
-		if id, present := snapshot.InterfaceIDByDevice[record.Device]; present {
+		if _, present := snapshot.InterfaceIDByDevice[record.Device]; present {
 			interfaceState = store.LookupResolved
-			loggedInterfaceID = &id
 		}
-	}
-
-	// The record names ONE interface: the one the packet crossed. Which end of the conversation
-	// that is comes from the direction, whose meaning the survey establishes. Everything else
-	// comes from the machines known at the two addresses, each of which carries its own
-	// interface. traffic_scope then derives from interface membership alone, which is the only
-	// thing it is ever allowed to derive from.
-	var srcHint, dstHint *int64
-	switch record.Direction {
-	case "in":
-		srcHint = loggedInterfaceID
-	case "out":
-		dstHint = loggedInterfaceID
-	}
-
-	srcClientID, srcInterfaceID, err := c.clientForAddress(ctx, srcHint, record.SrcAddress, now)
-	if err != nil {
-		return store.Flow{}, err
-	}
-	dstClientID, dstInterfaceID, err := c.clientForAddress(ctx, dstHint, record.DstAddress, now)
-	if err != nil {
-		return store.Flow{}, err
 	}
 
 	ruleState := store.LookupNotFound
@@ -171,10 +181,6 @@ func (c *Collector) buildFlow(ctx context.Context, record logRecord, snapshot Di
 		IngestedAt:           now,
 		InterfaceDevice:      record.Device,
 		InterfaceLookupState: interfaceState,
-		SrcInterfaceID:       srcInterfaceID,
-		DstInterfaceID:       dstInterfaceID,
-		SrcClientID:          srcClientID,
-		DstClientID:          dstClientID,
 		SrcAddress:           record.SrcAddress,
 		DstAddress:           record.DstAddress,
 		SrcPort:              record.SrcPort,
@@ -188,5 +194,5 @@ func (c *Collector) buildFlow(ctx context.Context, record logRecord, snapshot Di
 		Rid:                  record.Rid,
 		RuleID:               ruleID,
 		RuleLookupState:      ruleState,
-	}, nil
+	}
 }

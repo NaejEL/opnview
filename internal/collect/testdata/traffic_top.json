@@ -2,55 +2,66 @@
   "__provenance__": {
     "synthesised_from": "docs/opnsense-api-survey.md",
     "captured_from_a_firewall": false,
-    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
-    "survey_section": "Verified against a live firewall, 2026-09-27",
-    "field_list_from": "per interface, a records[] of local addresses each with rate_bits_in/out, cumulative_bytes_in/out and a details[] of the peers it talked to",
-    "why_these_values": "Keyed by INTERFACE IDENTIFIER, because that is what the endpoint takes. Two interfaces, each with one local address and peers in both address families. The cumulative values are small, as the measurement found: this is a live snapshot and not history.",
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "What `traffic/top` measures, read from source for step 5",
+    "field_list_from": "per interface, records[] each with address, rate_bits_in, rate_bits_out, cumulative_bytes_in, cumulative_bytes_out and details[], each details entry with address, rate, rate_bits, cumulative, cumulative_bytes and tags, as opnsense/core 26.7.3 scripts/interfaces/traffic_top.py builds them",
+    "why_these_values": "Keyed by INTERFACE IDENTIFIER, because that is what the endpoint takes. The first interface has a record with two peers, so only the peers' inbound figures are per pair; the second has a record with one peer, so the record's outbound totals are that pair's. Both address families. The cumulative values are small: each covers the two seconds iftop samples.",
     "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
   },
   "body": {
     "example_if_a": {
+      "status": "ok",
       "records": [
         {
           "address": "198.51.100.10",
-          "rate_bits_in": 1200.0,
-          "rate_bits_out": 800.0,
-          "cumulative_bytes_in": 640.0,
-          "cumulative_bytes_out": 320.0,
+          "rate_bits_in": 1200,
+          "rate_bits_out": 800,
+          "rate_bits": 2000,
+          "cumulative_bytes_in": 640,
+          "cumulative_bytes_out": 320,
+          "cumulative_bytes": 960,
+          "tags": ["private"],
           "details": [
             {
               "address": "203.0.113.20",
-              "cumulative_bytes_in": 400.0,
-              "cumulative_bytes_out": 200.0,
-              "rate_bits_in": 700.0,
-              "rate_bits_out": 500.0
+              "rate": "700b",
+              "rate_bits": 700,
+              "cumulative": "400B",
+              "cumulative_bytes": 400,
+              "tags": []
             },
             {
               "address": "203.0.113.21",
-              "cumulative_bytes_in": 240.0,
-              "cumulative_bytes_out": 120.0,
-              "rate_bits_in": 500.0,
-              "rate_bits_out": 300.0
+              "rate": "500b",
+              "rate_bits": 500,
+              "cumulative": "240B",
+              "cumulative_bytes": 240,
+              "tags": []
             }
           ]
         }
       ]
     },
     "example_if_b": {
+      "status": "ok",
       "records": [
         {
           "address": "2001:db8::10",
-          "rate_bits_in": 90.0,
-          "rate_bits_out": 40.0,
-          "cumulative_bytes_in": 128.0,
-          "cumulative_bytes_out": 64.0,
+          "rate_bits_in": 90,
+          "rate_bits_out": 40,
+          "rate_bits": 130,
+          "cumulative_bytes_in": 128,
+          "cumulative_bytes_out": 64,
+          "cumulative_bytes": 192,
+          "tags": [],
           "details": [
             {
               "address": "2001:db8::20",
-              "cumulative_bytes_in": 128.0,
-              "cumulative_bytes_out": 64.0,
-              "rate_bits_in": 90.0,
-              "rate_bits_out": 40.0
+              "rate": "90b",
+              "rate_bits": 90,
+              "cumulative": "128B",
+              "cumulative_bytes": 128,
+              "tags": []
             }
           ]
         }

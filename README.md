@@ -129,11 +129,11 @@ Read the alerts with that in mind, or you will be looking for the wrong thing.
 
 ## What leaves your installation
 
-Exactly two things, and nothing else:
+Exactly three things, and nothing else:
 
 1. the calls to the firewall API, on your local network — the credential check
    `opnview` makes when you enter or correct your API key is one of these, to
-   the same firewall, read-only, and not a third thing;
+   the same firewall, read-only, and not a separate thing;
 2. the MaxMind GeoLite2 database download, which contacts a third-party server
    with your MaxMind account ID and licence key. It asks `download.maxmind.com`,
    which redirects the download to the storage host MaxMind names for it; the
@@ -143,6 +143,14 @@ Exactly two things, and nothing else:
    does not count against the 30 downloads a day a GeoLite account is allowed —
    and downloads only when one does. The databases are kept in `geoip/` in the
    data directory, and a replaced build is deleted at once.
+3. the Public Suffix List download, from `publicsuffix.org`, which `opnview`
+   uses to group a site name under its registrable domain (`www.example.co.uk`
+   under `example.co.uk`). It carries no credential and nothing about your
+   network: it asks for one public file, once a day, and only conditionally, so
+   an unchanged list costs a "not modified" answer. No other host is contacted.
+   The list is kept in `publicsuffix/` in the data directory; when a download
+   fails, the copy already held stays in use, and before the first successful
+   download no grouping is offered.
 
 No telemetry, no version check, no resource loaded from a CDN. The interface
 loads nothing from anywhere: its stylesheet is served by `opnview` itself and
@@ -242,3 +250,9 @@ This product includes GeoLite Data created by MaxMind, available from
 <https://www.maxmind.com>. The databases are downloaded on your own MaxMind
 account, under MaxMind's GeoLite End User License Agreement, and are never part
 of this repository.
+
+The Public Suffix List is published by the Public Suffix List project at
+<https://publicsuffix.org/list/> under the [Mozilla Public License
+2.0](https://mozilla.org/MPL/2.0/). It is downloaded at run time and is never part
+of the binary; the repository holds only an excerpt for the tests, in
+`internal/publicsuffix/testdata`, with the licence header it carries.

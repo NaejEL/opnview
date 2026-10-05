@@ -4,8 +4,8 @@
     "captured_from_a_firewall": false,
     "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
     "survey_section": "Runtime discovery (i)",
-    "field_list_from": "identifier, description, device, status, enabled, link_type, vlan_tag, addr4, addr6, ipv4[], ipv6[], macaddr",
-    "why_these_values": "Four interfaces. Two carry a vlan_tag so link_kind resolves to vlan; two carry none so it resolves to other. One reports no status and no enabled at all, which must read as not reported rather than as switched off. The identifier and the device DIFFER on every row, which is what lets a test prove the per-pair sampler sends identifiers and never devices.",
+    "field_list_from": "identifier, description, device, status, enabled, link_type, vlan_tag, addr4, addr6, ipv4[], ipv6[], gateways[], macaddr; addr4 and addr6 as address/prefix strings and gateways[] as gateway addresses, as opnsense/core 26.7.3 Interfaces/Api/OverviewController.php builds them",
+    "why_these_values": "Four interfaces. Two carry a vlan_tag so link_kind resolves to vlan; two carry none so it resolves to other. One reports no status and no enabled at all, which must read as not reported rather than as switched off. The identifier and the device DIFFER on every row, which is what lets a test prove the per-pair sampler sends identifiers and never devices. The tunnel reports a gateway behind it, so it is the upstream interface; the first holds a prefix of each family.",
     "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
   },
   "body": {
@@ -21,7 +21,10 @@
         "enabled": "1",
         "link_type": "example-link-type-ethernet",
         "vlan_tag": null,
-        "macaddr": "0a:00:00:00:00:01"
+        "macaddr": "0a:00:00:00:00:01",
+        "addr4": "198.51.100.1/24",
+        "addr6": "2001:db8::1/64",
+        "gateways": []
       },
       {
         "identifier": "example_if_b",
@@ -45,7 +48,10 @@
         "identifier": "example_if_d",
         "device": "exdev3",
         "description": "example description D",
-        "link_type": "example-link-type-tunnel"
+        "link_type": "example-link-type-tunnel",
+        "addr4": "203.0.113.2/24",
+        "addr6": "",
+        "gateways": ["203.0.113.1"]
       }
     ]
   }

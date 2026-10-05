@@ -27,7 +27,7 @@ import (
 func TestTheSevenLoopsRunAtTheConfiguredCadences(t *testing.T) {
 	harness := newProbeHarness(t)
 	settings := config.Defaults()
-	tasks := harness.collector.Tasks(config.NewLive(settings), func(context.Context) error { return nil })
+	tasks := harness.collector.Tasks(config.NewLive(settings))
 
 	wanted := map[string]time.Duration{
 		"runtime discovery":   settings.DiscoveryInterval,

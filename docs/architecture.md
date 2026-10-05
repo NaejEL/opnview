@@ -7,10 +7,10 @@ stops there. It is a seam document, not a plugin specification.
 The authority on the schema is `internal/store/schema.sql`; on the sources,
 `docs/opnsense-api-survey.md`; on the entities, `docs/data-model.md`.
 
-## Eight kinds
+## Nine kinds
 
 A **kind** is a contract `opnview` implements: a shape of material, with a
-normalised destination in the schema. Exactly eight exist, and the `provider`
+normalised destination in the schema. Exactly nine exist, and the `provider`
 table constrains its `kind` column to them.
 
 <!-- provider-kinds:begin -->
@@ -21,6 +21,7 @@ firewall_log
 flow_volume
 geo_asn
 measurement_sample
+public_suffix
 reconciled_state
 security_event
 ```
@@ -36,6 +37,7 @@ security_event
 | `geo_asn` | country, coordinates, ASN and operator per address | `geo_asn` |
 | `measurement_sample` | one numeric reading of one subject at one instant | `measurement_sample` |
 | `reconciled_state` | the complete set of things of one type, as of one instant | `state_snapshot` and `state_item`, with `state_item_departure` over them |
+| `public_suffix` | the rule set a registrable domain is computed from | **no row**: one list file on disk, read by `internal/publicsuffix` to group site names at read time |
 
 **The last two are the survey's finding rather than a design instinct.** Of the
 ~34 data-producing sources the plugin ecosystem exposes, **eight of the ten that
@@ -53,6 +55,16 @@ endpoint carries neither a port nor a protocol and the filter log carries both
 exactly. `reconciled_state` has **no registry row at all**: a row is a claim that
 an implementation exists, and no connector for a state-shaped source is written
 yet.
+
+`public_suffix`, added by step 5A, supplies **no row of observed data**. It is the
+Public Suffix List, downloaded from publicsuffix.org — the third and last of the
+outbound calls the project allows — and it is the rule set the registrable domain
+of a site name is computed from, at read time, by `internal/publicsuffix`. It is a
+kind rather than a helper because it has everything else a kind has: a provider,
+an availability row that says whether a list is held, and failures to record (a
+download that failed is a `collection_gap` with the reason `download_failed`,
+while the list held since the last refresh stays in use). It is exclusive, because
+two lists would be two answers to one question.
 
 A **provider** is one implementation of one kind. It is a row in the `provider`
 registry, identified by `(kind, provider_key)`. Several providers of one kind
@@ -113,6 +125,7 @@ nobody could decompose.
 | `geo_asn` | `geo_asn.address` | no |
 | `measurement_sample` | `(subject, measure, sampled_at, provider)` | **yes** |
 | `reconciled_state` | `(provider_id, set_key, captured_at)` | **yes** |
+| `public_suffix` | one list file on disk, no row | no |
 
 **`dhcp_lease` is concurrent, and the deployment is the ordinary one:** one
 server issuing on one VLAN and another on a second, two scopes with no overlap.

@@ -1,0 +1,25 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Swap, read from source for step 5",
+    "field_list_from": "swap[] each with device, total and used, as opnsense/core 26.7.3 Diagnostics/Api/SystemController.php systemSwapAction and scripts/system/swapinfo.py produce them: the columns of swapinfo -k, in KiB, passed on as strings",
+    "why_these_values": "Two swap devices. The first carries both figures as swapinfo -k writes them; the second carries a used figure that is not a number, which must yield no reading rather than a zero.",
+    "example_values_are_not_a_network": "Every device name below is synthesised for this fixture. No code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "swap": [
+      {
+        "device": "/dev/example-swap-a",
+        "total": "2097152",
+        "used": "1024"
+      },
+      {
+        "device": "/dev/example-swap-b",
+        "total": "1048576",
+        "used": "not-a-figure"
+      }
+    ]
+  }
+}

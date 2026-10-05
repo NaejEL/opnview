@@ -140,70 +140,43 @@ func TestTheTwoDirectionsOfOnePairCollapseToOneVolume(t *testing.T) {
 	}
 }
 
-// TestNoCodePathWritesThePairVolumeTable is the other half of the same ruling, and it is the
-// assertion that makes the ruling durable rather than a comment.
+// TestOnlyTheDerivationWritesThePairVolumeTable is the replacement guard of AC34, and it is
+// what keeps the ruling durable now that step 5 writes the table deliberately.
 //
 // pair_volume_observation is derived from `flow` and collected from nowhere: the only per-pair
 // endpoint the survey found carries neither a port nor a protocol, and the filter log carries
-// both exactly. So no collector fills it, and this test fails the day one appears — which is
-// what makes step 5's derivation a deliberate change rather than a drift. The test's own
-// statements are excluded by construction: it scans the non-test sources.
+// both exactly. So exactly two statements may write it -- delete_pair_volume and
+// insert_pair_volume of derive.sql, the derivation -- plus the retention purge, which removes
+// old rows and writes nothing new. Every other non-test Go or SQL file under cmd/ and internal/
+// is scanned, and a writer anywhere else fails this test.
 //
-// The scan NORMALISES EACH FILE WHOLE rather than reading it line by line, and that is what
-// makes it as strict as the ruling: a long SQL statement in Go is ordinarily wrapped, either as
-// a raw literal spanning lines or as quoted fragments joined with +, so a collector that put
-// the table name on the line after INSERT INTO would have written the derived table and passed
-// a per-line match. Both wrappings collapse here.
-//
-// EVERY WRITING VERB IS ENUMERATED, NOT ONLY INSERT, and the reason is worth recording because
-// an earlier revision of this guard got it wrong: it enumerated the six INSERT conflict clauses
-// and claimed that covered the statement, which is true of conflict clauses and false of the
-// statement. REPLACE INTO is SQLite's own alias for INSERT OR REPLACE and is the most natural
-// way to re-derive a day's slot -- precisely what step 5 will be doing -- so a guard blind to
-// it was blind to the likeliest write there is. UPDATE and DELETE are writes too.
-func TestNoCodePathWritesThePairVolumeTable(t *testing.T) {
-	// The characters a Go source file puts between two halves of one wrapped SQL statement, and
-	// which no SQL identifier contains: the quote and backtick that end and begin a literal, and
-	// the + that joins them. Removing them lets `"INSERT INTO " + "pair_volume_observation"` read
-	// as the one statement it is.
-	// The characters and qualifiers a Go source file can put between a verb and its table, none
-	// of which can occur inside an SQL identifier: the quote, backtick and bracket that delimit
-	// a literal or a quoted name, the + that joins two fragments, and the schema qualifier.
-	sqlLiteralNoise := strings.NewReplacer(
-		"\"", " ", "`", " ", "+", " ", "[", " ", "]", " ", "main.", "")
-	const table = "pair_volume_observation"
-	writeContexts := []string{
-		"insert into " + table,
-		"insert or ignore into " + table,
-		"insert or replace into " + table,
-		"insert or abort into " + table,
-		"insert or fail into " + table,
-		"insert or rollback into " + table,
-		"replace into " + table,
-		"delete from " + table,
-		"update " + table + " set",
-	}
+// The scan NORMALISES EACH FILE WHOLE, because a long SQL statement in Go is ordinarily
+// wrapped -- a raw literal spanning lines, or quoted fragments joined with + -- and EVERY
+// WRITING VERB IS ENUMERATED, REPLACE INTO included, which is SQLite's alias for INSERT OR
+// REPLACE and the likeliest way to re-derive a slot.
+func TestOnlyTheDerivationWritesThePairVolumeTable(t *testing.T) {
 	var offenders []string
 	for _, root := range []string{"../../cmd", "../../internal"} {
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") ||
-				strings.HasSuffix(entry.Name(), "_test.go") {
+			if entry.IsDir() {
+				if entry.Name() == "testdata" {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			name := entry.Name()
+			if strings.HasSuffix(name, "_test.go") ||
+				(!strings.HasSuffix(name, ".go") && !strings.HasSuffix(name, ".sql")) {
 				return nil
 			}
 			source, err := os.ReadFile(path)
 			if err != nil {
 				return err
 			}
-			normalised := strings.Join(strings.Fields(sqlLiteralNoise.Replace(
-				strings.ToLower(string(source)))), " ")
-			for _, context := range writeContexts {
-				if strings.Contains(normalised, context) {
-					offenders = append(offenders, path+": "+context)
-				}
-			}
+			offenders = append(offenders, pairVolumeWriters(filepath.ToSlash(path), string(source))...)
 			return nil
 		})
 		if err != nil {
@@ -211,9 +184,68 @@ func TestNoCodePathWritesThePairVolumeTable(t *testing.T) {
 		}
 	}
 	if len(offenders) > 0 {
-		t.Errorf("pair_volume_observation is derived from flow and collected from nowhere, "+
-			"and these lines write it: %s", strings.Join(offenders, "; "))
+		t.Errorf("pair_volume_observation is derived from flow by derive.sql alone, and these "+
+			"write it: %s", strings.Join(offenders, "; "))
 	}
+
+	// And the derivation really is a writer, so the guard is not passing on a table nothing
+	// writes.
+	text, err := Statement("insert_pair_volume")
+	if err != nil || !strings.Contains(strings.ToLower(text), "insert into pair_volume_observation") {
+		t.Error("the derivation statement insert_pair_volume does not write the table")
+	}
+}
+
+// TestThePairVolumeGuardHasTeeth runs the guard's matcher over writers it must refuse and
+// over the two files it must admit.
+func TestThePairVolumeGuardHasTeeth(t *testing.T) {
+	for _, writer := range []string{
+		"_, err := db.ExecContext(ctx, `INSERT INTO\n\tpair_volume_observation (day_start_at) VALUES (?)`)",
+		`query := "REPLACE INTO " + "pair_volume_observation" + " VALUES (1)"`,
+		"UPDATE pair_volume_observation SET octets = 0",
+		"DELETE FROM main.pair_volume_observation",
+	} {
+		if len(pairVolumeWriters("../../internal/collect/collector.go", writer)) == 0 {
+			t.Errorf("the guard admits a writer outside the derivation: %q", writer)
+		}
+		if len(pairVolumeWriters("../../internal/store/another.sql", writer)) == 0 {
+			t.Errorf("the guard admits a writer in another SQL file: %q", writer)
+		}
+	}
+	derivation, _ := statementFiles.ReadFile("derive.sql")
+	if offenders := pairVolumeWriters("../../internal/store/derive.sql", string(derivation)); len(offenders) != 0 {
+		t.Errorf("the guard refuses the derivation itself: %v", offenders)
+	}
+	purge, _ := sqlFiles.ReadFile("purge.sql")
+	if offenders := pairVolumeWriters("../../internal/store/purge.sql", string(purge)); len(offenders) != 0 {
+		t.Errorf("the guard refuses the retention purge: %v", offenders)
+	}
+}
+
+// pairVolumeWriters returns the writing statements one file holds against the derived
+// table, unless the file is the derivation or the retention purge.
+func pairVolumeWriters(path, source string) []string {
+	if strings.HasSuffix(path, "/internal/store/derive.sql") ||
+		strings.HasSuffix(path, "/internal/store/purge.sql") {
+		return nil
+	}
+	// The characters and qualifiers a Go source file can put between a verb and its table,
+	// none of which can occur inside an SQL identifier.
+	noise := strings.NewReplacer("\"", " ", "`", " ", "+", " ", "[", " ", "]", " ", "main.", "")
+	const table = "pair_volume_observation"
+	normalised := strings.Join(strings.Fields(noise.Replace(strings.ToLower(source))), " ")
+	var offenders []string
+	for _, context := range []string{
+		"insert into " + table, "insert or ignore into " + table, "insert or replace into " + table,
+		"insert or abort into " + table, "insert or fail into " + table,
+		"insert or rollback into " + table, "replace into " + table, "delete from " + table,
+		"update " + table + " set",
+	} {
+		if strings.Contains(normalised, context) {
+			offenders = append(offenders, path+": "+context)
+		}
+	}
+	return offenders
 }
 
 // TestTrafficScopeIsDerivedFromInterfaceMembershipAlone is the classification rule.
@@ -326,7 +358,7 @@ func TestAMeasurementOfEachKindRoundTrips(t *testing.T) {
 		{
 			// The per-pair half, which exists because no endpoint answers for a past
 			// window and opnview has to build that history itself.
-			ProviderID: &providerID, SubjectKind: SubjectEndpointPair,
+			ProviderID: &providerID, SubjectKind: SubjectInterfaceEndpointPair,
 			SubjectKey: "example-endpoint-a example-endpoint-b",
 			Measure:    MeasureCumulativeBytesIn, Unit: UnitByte, Value: 400,
 			SampledAt: 1750000000,

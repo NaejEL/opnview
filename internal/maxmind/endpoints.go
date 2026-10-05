@@ -1,11 +1,12 @@
-// Package maxmind is the second and last of the two outbound calls opnview makes:
-// the MaxMind GeoLite2 City and ASN databases, downloaded on the operator's own
+// Package maxmind is the second of the three outbound calls opnview makes: the
+// MaxMind GeoLite2 City and ASN databases, downloaded on the operator's own
 // account, refreshed, and read locally to place the addresses opnview has seen.
 //
-// IT IS ONE OF EXACTLY TWO PACKAGES ALLOWED TO BUILD AN HTTP REQUEST; the firewall
-// client in internal/opnsense is the other, and a source-policy test there holds the
-// pair. Nothing here contacts anything but the two hosts below, and a lookup
-// contacts nothing at all: it reads a file on disk.
+// IT IS ONE OF EXACTLY THREE PACKAGES ALLOWED TO BUILD AN HTTP REQUEST; the firewall
+// client in internal/opnsense and the Public Suffix List download in
+// internal/publicsuffix are the others, and a source-policy test in internal/opnsense
+// holds the three. Nothing here contacts anything but the two hosts below, and a
+// lookup contacts nothing at all: it reads a file on disk.
 //
 // See specs/SPEC-maxmind-geolite2.md for what MaxMind requires and why each choice
 // here was made.

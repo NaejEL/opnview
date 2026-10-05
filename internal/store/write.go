@@ -188,8 +188,9 @@ func (s *Store) Availability(ctx context.Context, providerID int64) (Availabilit
 func (s *Store) UpsertInterface(ctx context.Context, iface Interface, now int64) (int64, error) {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO interface (identifier, device, description, status, enabled,
-		                        link_type, link_kind, vlan_tag, first_seen_at, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                        link_type, link_kind, vlan_tag, is_upstream,
+		                        first_seen_at, last_seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (identifier) DO UPDATE SET
 		     device       = excluded.device,
 		     description  = excluded.description,
@@ -198,9 +199,10 @@ func (s *Store) UpsertInterface(ctx context.Context, iface Interface, now int64)
 		     link_type    = excluded.link_type,
 		     link_kind    = excluded.link_kind,
 		     vlan_tag     = excluded.vlan_tag,
+		     is_upstream  = excluded.is_upstream,
 		     last_seen_at = excluded.last_seen_at`,
 		iface.Identifier, iface.Device, iface.Description, iface.Status, iface.Enabled,
-		iface.LinkType, iface.LinkKind, iface.VLANTag, now, now)
+		iface.LinkType, iface.LinkKind, iface.VLANTag, boolToInt(iface.IsUpstream), now, now)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing interface %s: %w", iface.Identifier, err)
 	}
@@ -210,6 +212,25 @@ func (s *Store) UpsertInterface(ctx context.Context, iface Interface, now int64)
 		return 0, fmt.Errorf("store: reading back interface %s: %w", iface.Identifier, err)
 	}
 	return id, nil
+}
+
+// UpsertInterfaceAddress records that an interface holds an address, or has a
+// gateway behind it, as of now. A value read again moves its last_seen_at; a new
+// value is a new row, and its predecessor keeps the last instant it was seen, so
+// a change of address is history rather than an overwrite.
+func (s *Store) UpsertInterfaceAddress(ctx context.Context, address InterfaceAddress, now int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO interface_address (interface_id, source_field, address, prefix_length,
+		                                address_family, first_seen_at, last_seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (interface_id, source_field, address, ifnull(prefix_length, -1))
+		 DO UPDATE SET last_seen_at = max(interface_address.last_seen_at, excluded.last_seen_at)`,
+		address.InterfaceID, address.SourceField, address.Address, address.PrefixLength,
+		address.AddressFamily, now, now)
+	if err != nil {
+		return fmt.Errorf("store: writing an address of interface %d: %w", address.InterfaceID, err)
+	}
+	return nil
 }
 
 // UpsertInterfaceMapEntry writes one device-name-to-description entry, the first
@@ -233,18 +254,20 @@ func (s *Store) UpsertInterfaceMapEntry(ctx context.Context, device, description
 // UpsertRule writes one discovered rule and returns its id.
 func (s *Store) UpsertRule(ctx context.Context, rule Rule, now int64) (int64, error) {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO rule (pf_label, description, action, direction, logs_matches,
-		                   is_automatic, discovered_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO rule (pf_label, description, action, direction, interface, legacy,
+		                   logs_matches, is_automatic, discovered_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (pf_label) DO UPDATE SET
 		     description   = excluded.description,
 		     action        = excluded.action,
 		     direction     = excluded.direction,
+		     interface     = excluded.interface,
+		     legacy        = excluded.legacy,
 		     logs_matches  = excluded.logs_matches,
 		     is_automatic  = excluded.is_automatic,
 		     discovered_at = excluded.discovered_at`,
-		rule.PfLabel, rule.Description, rule.Action, rule.Direction,
-		boolToNullableInt(rule.LogsMatches), boolToInt(rule.IsAutomatic), now)
+		rule.PfLabel, rule.Description, rule.Action, rule.Direction, rule.Interface,
+		boolToNullableInt(rule.Legacy), boolToNullableInt(rule.LogsMatches), boolToInt(rule.IsAutomatic), now)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing rule %s: %w", rule.PfLabel, err)
 	}
@@ -262,7 +285,13 @@ func (s *Store) UpsertRule(ctx context.Context, rule Rule, now int64) (int64, er
 // absent from UpsertInterface: ownership is assigned by hand and nothing derives
 // it from a hostname, a MAC prefix, a vendor hint or an address.
 func (s *Store) UpsertClient(ctx context.Context, client Client, now int64) (int64, error) {
-	_, err := s.db.ExecContext(ctx,
+	return upsertClient(ctx, s.db, client, now)
+}
+
+// upsertClient is UpsertClient on a querier, so classification can mint a
+// client inside its own transaction.
+func upsertClient(ctx context.Context, q querier, client Client, now int64) (int64, error) {
+	_, err := q.ExecContext(ctx,
 		`INSERT INTO client (identity_kind, identity_key, interface_id, mac, hostname,
 		                     vendor_hint, last_address, first_seen_at, last_seen_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -279,7 +308,7 @@ func (s *Store) UpsertClient(ctx context.Context, client Client, now int64) (int
 		return 0, fmt.Errorf("store: writing client %s/%s: %w", client.Identity.Kind, client.Identity.Key, err)
 	}
 	var id int64
-	if err := s.db.QueryRowContext(ctx,
+	if err := q.QueryRowContext(ctx,
 		"SELECT id FROM client WHERE identity_kind = ? AND identity_key = ?",
 		client.Identity.Kind, client.Identity.Key).Scan(&id); err != nil {
 		return 0, fmt.Errorf("store: reading back client %s/%s: %w",
@@ -347,7 +376,17 @@ func (s *Store) InsertDHCPLease(ctx context.Context, providerID int64, lease DHC
 }
 
 // InsertFlow writes one filter-log record, or does nothing if its digest is
-// already stored.
+// already stored, or if it was observed before the furthest horizon the retention
+// purge has applied (retention_purge).
+//
+// THAT CHECK IS PART OF THE INSERT STATEMENT, AND THAT IS THE POINT. The purge runs in
+// its own loop, ordered against a pass only from the pass's first stored row to the end
+// of its derivation (internal/collect, purge.go), and moves the records it removes
+// into the purged part of their hour; the filter-log page keeps offering them. A
+// collector that read the watermark first and inserted afterwards could store again a
+// record a purge removed in between, and count it twice. SQLite runs one write at a
+// time, so the watermark read inside the insert sees every purge that committed before
+// it, and a purge that commits after it purges the row once.
 //
 // traffic_scope is not a parameter: it is derived here from interface membership
 // through ScopeOf, so a collector cannot write a scope that disagrees with the
@@ -361,14 +400,16 @@ func (s *Store) InsertFlow(ctx context.Context, flow Flow) error {
 		                   src_port, dst_port, protocol, ip_version, action, direction,
 		                   log_reason, packet_bytes, rid, rule_id, rule_lookup_state,
 		                   traffic_scope)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		 WHERE NOT EXISTS (SELECT 1 FROM retention_purge WHERE purged_before > ?)
 		 ON CONFLICT (log_digest) DO NOTHING`,
 		flow.LogDigest, flow.ObservedAt, flow.IngestedAt, flow.InterfaceDevice,
 		string(flow.InterfaceLookupState), flow.SrcInterfaceID, flow.DstInterfaceID,
 		flow.SrcClientID, flow.DstClientID, flow.SrcAddress, flow.DstAddress,
 		flow.SrcPort, flow.DstPort, flow.Protocol, flow.IPVersion, flow.Action,
 		flow.Direction, flow.LogReason, flow.PacketBytes, flow.Rid, flow.RuleID,
-		string(flow.RuleLookupState), string(ScopeOf(flow.SrcInterfaceID, flow.DstInterfaceID)))
+		string(flow.RuleLookupState), string(ScopeOf(flow.SrcInterfaceID, flow.DstInterfaceID)),
+		flow.ObservedAt)
 	if err != nil {
 		return fmt.Errorf("store: writing a flow: %w", err)
 	}
@@ -423,7 +464,9 @@ func (s *Store) UpsertBlocklist(ctx context.Context, name string, now int64) (in
 }
 
 // InsertDNSResolution writes one resolver lookup, resolving the blocklist name to
-// a row first when the endpoint named one.
+// a row first when the endpoint named one. A lookup made before the furthest horizon
+// the purge has applied is not stored, checked inside the insert for the reason
+// InsertFlow gives: the resolver's buffer keeps offering lookups the purge removed.
 func (s *Store) InsertDNSResolution(ctx context.Context, lookup DNSResolution) error {
 	var blocklistID *int64
 	if lookup.BlocklistName != "" {
@@ -433,15 +476,22 @@ func (s *Store) InsertDNSResolution(ctx context.Context, lookup DNSResolution) e
 		}
 		blocklistID = &id
 	}
+	resolution := lookup.ClientResolution
+	if resolution == "" {
+		resolution = ClientResolutionLoggedAddress
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO dns_resolution (lookup_key, client_address, client_id, domain, resolver,
+		`INSERT INTO dns_resolution (lookup_key, client_address, client_hostname,
+		                             client_resolution, client_id, domain, resolver,
 		                             action, answer_source, rcode, dnssec_status, blocklist_id,
 		                             looked_up_at, ingested_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		 WHERE NOT EXISTS (SELECT 1 FROM retention_purge WHERE purged_before > ?)
 		 ON CONFLICT (lookup_key) DO NOTHING`,
-		lookup.LookupKey, lookup.ClientAddress, lookup.ClientID, lookup.Domain, lookup.Resolver,
+		lookup.LookupKey, lookup.ClientAddress, lookup.ClientHostname, resolution,
+		lookup.ClientID, lookup.Domain, lookup.Resolver,
 		lookup.Action, lookup.AnswerSource, lookup.Rcode, lookup.DNSSECStatus, blocklistID,
-		lookup.LookedUpAt, lookup.IngestedAt)
+		lookup.LookedUpAt, lookup.IngestedAt, lookup.LookedUpAt)
 	if err != nil {
 		return fmt.Errorf("store: writing a resolver lookup: %w", err)
 	}
@@ -562,11 +612,11 @@ func (s *Store) MarkEveFileLost(ctx context.Context, fileID string, now int64) e
 	return nil
 }
 
-// THERE IS NO WRITE PATH FOR pair_volume_observation, and that is the ruling
-// rather than an omission: the table is DERIVED from `flow` by step 5, because the
-// only per-pair endpoint carries neither a port nor a protocol and `flow` carries
-// both. A test asserts that no INSERT into it appears anywhere in this repository's
-// Go code, so the day one does it is a deliberate change and not a drift.
+// THERE IS NO COLLECTOR WRITE PATH FOR pair_volume_observation, and that is the
+// ruling rather than an omission: the table is DERIVED from `flow`, because the only
+// per-pair endpoint carries neither a port nor a protocol and `flow` carries both.
+// The derivation is the statement insert_pair_volume of derive.sql, run by the
+// refresh in aggregate.go, and a test fails if anything else writes the table.
 
 // InsertMeasurementSample writes one reading. Re-reading the same instant is a
 // no-op, which is what a sampler restarting inside one interval needs.

@@ -491,28 +491,28 @@ the build, not a decoration in this document, and
 | Type | Shape | Title | Query in `sql/queries/screens.sql` | Gaps |
 |---|---|---|---|---|
 | `interface_traffic_matrix` | `matrix` | Interface traffic matrix | reuses `-- screen: Matrix`; adapts for 7 d / 30 d | — |
-| `traffic_over_time_by_scope` | `time_series` | Traffic over time by scope | adapts `-- screen: Overview` | G3 |
+| `traffic_over_time_by_scope` | `time_series` | Traffic over time by scope | adapts `-- screen: Overview` | — |
 | `interface_volume_ranking` | `ranked_bars` | Interface volume ranking | adapts `-- screen: Matrix` | — |
-| `client_volume_ranking` | `ranked_bars` | Client volume ranking | adapts `-- screen: Interface` | G4 |
+| `client_volume_ranking` | `ranked_bars` | Client volume ranking | adapts `-- screen: Interface` | — |
 | `client_traffic_detail` | `table` | Client traffic detail | reuses `-- screen: Client` | — |
 | `traffic_composition` | `donut` | Traffic composition, now | adapts `-- screen: Overview` and `-- screen: Interface` | G12 |
 | `connection_tree` | `tree` | Connection tree | composes `-- screen: Interface` and `-- screen: Client` | — |
 | `owner_activity` | `cards` | Per-person activity | composes `-- diagnostic: Clients per owner` with `-- screen: Interface` | — |
-| `top_sites` | `table` | Top sites | none applies | G5 |
-| `sites_by_client` | `matrix` | Sites by client | replaces the site-name half of `-- screen: Client` | G5, G6 |
-| `attribution_rate_per_client` | `table` | Attribution rate per client | `-- diagnostic: Attribution rate per client`, unchanged | — |
+| `top_sites` | `table` | Top sites | none applies | — |
+| `sites_by_client` | `matrix` | Sites by client | replaces the site-name half of `-- screen: Client` | — |
+| `attribution_rate_per_client` | `table` | Attribution rate per client | `-- diagnostic: Attribution rate per client`, aligned by step 5A with `store.ReadAttributionRate` (outside destinations only) | — |
 | `passed_traffic_world_map` | `map` | Passed-traffic world map | adapts `-- screen: Map` | — |
 | `blocked_traffic_world_map` | `map` | Blocked-traffic world map | adapts `-- screen: Map` **and** `-- screen: Alerts` | G7, G8 |
 | `destination_countries` | `table` | Destination countries | reuses `-- screen: Map` | — |
 | `destination_operators` | `table` | Destination operators | reuses `-- screen: Map` | — |
-| `traffic_sankey` | `sankey` | Traffic Sankey | adapts `-- screen: Matrix` or `-- screen: Map` | G4 |
-| `unified_blocked_feed` | `feed` | Unified blocked feed | **replaces** `-- screen: Blocked` | G2, G8 |
+| `traffic_sankey` | `sankey` | Traffic Sankey | adapts `-- screen: Matrix` or `-- screen: Map` | — |
+| `unified_blocked_feed` | `feed` | Unified blocked feed | **replaces** `-- screen: Blocked` | G8 |
 | `blocked_by_firewall_rule` | `table` | Blocked by firewall rule | adapts `-- screen: Blocked` | — |
-| `blocked_dns_lookups` | `table` | Blocked DNS lookups | `-- diagnostic: Blocked lookups by list` | G6 |
+| `blocked_dns_lookups` | `table` | Blocked DNS lookups | `-- diagnostic: Blocked lookups by list` | — |
 | `security_alerts_over_time` | `time_series` | Security alerts over time | adapts `-- screen: Alerts` | G8 |
 | `alerts_by_signature` | `table` | Alerts by signature | reuses `-- screen: Alerts` | G8 |
 | `alerts_by_client_and_interface` | `table` | Alerts by client and interface | reuses `-- screen: Alerts` | G7, G8 |
-| `public_address` | `table` | Public address | none applies | G13 |
+| `public_address` | `table` | Public address | none applies | — |
 | `firewall_health_overview` | `figure` (repeated) | Firewall health overview | none applies | — |
 | `interface_throughput` | `time_series` | Interface throughput | none applies | — |
 | `custom_chart` | `time_series` | Custom chart | composes per series | — |
@@ -582,9 +582,10 @@ with the totals brought forward above the chart. Outbound and inbound derive fro
 `inter_interface`); `measure` (`bytes` | `connections`); `interfaces` (optional
 list of interface references); `stacked` (boolean).
 
-**Gaps** — **G3**: the volume aggregates carry no `direction`, so for any
-pre-computed period outbound and inbound cannot be told apart and only
-`east_west` versus `north_south` can. The widget says so in place.
+**Gaps** — none. **G3 was closed by step 5A**: every volume aggregate carries
+`traffic_direction` (`outbound`, `inbound`, `inter_interface`) in its slot key,
+derived from interface membership, so outbound and inbound are told apart in
+every pre-computed period.
 
 ### Interface volume ranking
 
@@ -644,9 +645,9 @@ leases*.
 identity levels to include); `limit`; `include_unstable` (boolean); `measure`
 (`bytes` | `connections` | `destinations`).
 
-**Gaps** — **G4**: no per-client volume aggregate, so a 7 d or 30 d per-client
-total can only be computed by scanning `flow`, which the `retention_seconds` row
-of `setting` bounds.
+**Gaps** — none. **G4 was closed by step 5A**: the `client_volume_aggregate_*`
+family carries a 7 d or 30 d per-client total beyond the `retention_seconds`
+horizon of `flow`.
 
 ### Client traffic detail
 
@@ -675,7 +676,7 @@ reads as a weak attribution. Providers: `firewall_log`, `dns_lookup`, `geo_asn`,
 `geo_asn.lookup_state`, `geo_asn.country_code`, `geo_asn.operator`,
 `geo_asn.dataset_build_at`; `interface_map.description`. Sources: *Data source 1
 — Filter logs*; *Data source 5 — Resolver DNS lookups*; geo and ASN enrichment,
-the second of the two outbound calls the project allows.
+the second of the three outbound calls the project allows.
 
 **Parameters** — `client` (a client reference — required); `period`; `action`
 (`all` | `allowed` | `blocked`); `scope` (`all` | `east_west` |
@@ -828,8 +829,8 @@ Sources: *Data source 5 — Resolver DNS lookups*; *Data source 1 — Filter log
 `group_by_registrable_domain` (boolean — whether `a.example` and `b.example`
 collapse).
 
-**Gaps** — **G5**: no per-domain volume aggregate, so a 30 d top-sites list
-cannot outlive the `retention_seconds` row of `setting`.
+**Gaps** — none. **G5 was closed by step 5A**: the `domain_volume_aggregate_*`
+family carries a 30 d top-sites list beyond the `retention_seconds` horizon.
 
 ### Sites by client
 
@@ -856,8 +857,8 @@ attribution rate beside it. Providers: `dns_lookup`, `firewall_log`,
 `sites_per_client` (how many names per row); `min_flows`;
 `show_attribution_rate` (boolean, default true).
 
-**Gaps** — **G5** for long periods; **G6** for a per-interface breakdown of
-*lookups* rather than of *flows*.
+**Gaps** — none. **G5 and G6 were closed by step 5A**: the long periods come from
+`domain_volume_aggregate_*`, and a lookup carries its own `interface_id`.
 
 ### Attribution rate per client
 
@@ -876,7 +877,9 @@ client at or near zero is annotated with the likely cause — encrypted DNS
 the firewall's — citing `docs/opnsense-api-survey.md`, *Gaps and alternatives*,
 gap 8. Provider: `dns_lookup`.
 
-**Data** — `flow.src_client_id`, `flow.observed_at`, `flow.id`;
+**Data** — `flow.src_client_id`, `flow.observed_at`, `flow.id`, and
+`flow.dst_interface_id`, because only a flow with an outside destination is
+eligible (`docs/data-model.md`, the correlation rule);
 `domain_attribution.flow_id`, `domain_attribution.correlation_delay_seconds`;
 `client.hostname`, `client.last_address`, `client.identity_kind`. Source: *Data
 source 5 — Resolver DNS lookups*.
@@ -919,7 +922,7 @@ Providers: `firewall_log`, `geo_asn`.
 `allowed_connections` separately from `blocked_connections`. Sources: *Data
 source 3 — NetFlow / Insight*; the allowed/blocked split, *Data source 1 —
 Filter logs*; coordinates, country and operator from the MaxMind GeoLite2 City
-and ASN databases, the second of the two outbound calls the project allows.
+and ASN databases, the second of the three outbound calls the project allows.
 
 **Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `interfaces` (optional
 list of interface references; empty means every discovered interface); `scope`
@@ -1070,9 +1073,9 @@ below which a ribbon joins the "Other" band); `show_blocked` (boolean — whethe
 ribbon colour additionally encodes the blocked share of each pair, which is
 available because the aggregates carry both counts).
 
-**Gaps** — **G4** for `left` = `client` beyond the `flow` retention horizon; the
-widget says so in place rather than silently falling back to interfaces. One
-limit that is not a gap: **`opnview` has no source autonomous system** — it
+**Gaps** — none. **G4 was closed by step 5A**, so `left` = `client` reads
+`client_volume_aggregate_*` beyond the `flow` retention horizon. One limit that is
+not a gap: **`opnview` has no source autonomous system** — it
 observes a network whose local end is an interface and a client, so the faithful
 analogue of an AS-to-AS Sankey is **interface-to-operator**.
 
@@ -1119,9 +1122,9 @@ value `/api/unbound/overview/search_queries` returns verbatim (*Data source 5*,
 (optional); `clients` (optional); `limit`; `group_by` (`none` | `engine` |
 `client` | `target`).
 
-**Gaps** — **G2**: no unified blocking vocabulary across the four engines; the
-feed unions three tables with three column names at the presentation layer until
-a `blocked_decision` view exists. **G8** for the Suricata coverage statement.
+**Gaps** — **G8** for the Suricata coverage statement. **G2 was closed by step
+5A**: the `blocked_decision` view places every refusal of the four engines once,
+under one `engine_kind` vocabulary (`docs/data-model.md`).
 
 **Two model rules this feed must respect** (both in Part 4): a blocklist's
 **purpose** is assigned by the user and never inferred from its name, and a
@@ -1188,9 +1191,9 @@ the last two being states rather than purposes, and selectable precisely so they
 cannot be quietly excluded); `blocklists` (optional — limit to named lists);
 `interfaces` (optional); `clients` (optional); `limit`; `min_count`.
 
-**Gaps** — **G6**: `dns_resolution` carries no interface, so grouping by
-interface joins through `client.interface_id` and a client with no client row is
-unplaceable.
+**Gaps** — none. **G6 was closed by step 5A**: `dns_resolution.interface_id` is
+resolved from the same membership evidence as a flow, and a lookup whose address
+no evidence places is `not_found` rather than silently dropped.
 
 ## Security events
 
@@ -1338,14 +1341,20 @@ than a guess about a name — and otherwise says *"This is the address on the
 upstream interface. This installation is behind another NAT, so the address the
 internet sees is not visible from the firewall and `opnview` does not guess
 it."* It never labels a private address as public, and **never fetches the answer
-from an external echo service**: the project allows exactly two outbound calls.
-Until G13 is closed the change column reads *"not recorded — `opnview` has kept
-no address history yet"* and **must not show a change time**: a fabricated
+from an external echo service**: the project allows exactly three outbound
+calls, and an echo service is none of them.
+Since step 5A `interface_address` keeps every address an interface held, with
+the instants `opnview` first and last saw it, so the change time is the
+`first_seen_at` of the current row **when an earlier row exists**. Until one does,
+the change column reads *"not recorded — `opnview` has seen only this address"*
+and **must not show a change time**: a fabricated
 *"changed recently"* is exactly the zero-that-means-we-could-not-look this
 catalogue forbids. The observation-point limit does **not** apply here and must
 not be shown; this preset describes the firewall, not traffic crossing it.
+Since the step-5A corrections the secondary addresses of `ipv4[]` and `ipv6[]`
+are stored too, each row naming the field it came from.
 
-**Gaps** — **G13**.
+**Gaps** — none. G13 is closed.
 
 ## Firewall health and telemetry
 
@@ -1392,7 +1401,7 @@ not knowable when this preset is written.** Provider: `measurement_sample`.
 
 **Data** — `measurement_sample`, one row per reading, filtered on
 `(subject_kind, subject_key, measure)` over a range of `sampled_at` —
-`subject_kind` being `firewall`, `interface` or `endpoint_pair`. Sources:
+`subject_kind` being `firewall`, `interface`, `interface_endpoint_pair` or `gateway`. Sources:
 `/api/diagnostics/system/systemResources`,
 `/api/diagnostics/system/systemTemperature`,
 `/api/diagnostics/system/systemTime`, `/api/diagnostics/system/systemDisk`,
@@ -1689,7 +1698,8 @@ What `docs/opnsense-api-survey.md` establishes is not repeated here; what remain
 
 | Reading | Endpoint | Status |
 |---|---|---|
-| Gateway latency and loss | `/api/routes/gateway/status` | `UNVERIFIED:` **whether it reports round-trip time and packet loss at all.** The generated reference names the path and documents no response body. *Firewall health overview*'s two gateway metrics and *Public address*'s gateway naming both rest on it. |
+| Gateway latency and loss | `/api/routes/gateway/status` | **Read from source for step 5** (`docs/opnsense-api-survey.md`, *Gateway status, read from source for step 5*): each item carries the gateway's `name`, `address`, `status`, `delay`, `stddev` and `loss` as dpinger reports them, with `~` where dpinger has no figure. `UNVERIFIED:` against a **live** firewall until the step-5 validation probes it. *Firewall health overview*'s two gateway metrics and *Public address*'s gateway naming both rest on it. |
+| Swap | `/api/diagnostics/system/systemSwap` | **Read from source for step 5** (`docs/opnsense-api-survey.md`, *Swap, read from source for step 5*), admitted by the amendment of 4 October 2026: `swap[]` with each device's `total` and `used` as strings in KiB, `{"swap": []}` with no swap device. `UNVERIFIED:` against a **live** firewall until the step-5 validation probes it. *Firewall health overview*'s swap tile rests on it. |
 | Every telemetry reading | the six probed system paths | The paths answer. `UNVERIFIED:` the **field names**, the units and the retention, so each reading tries a candidate list marked in `internal/collect` and records **absent** when none answers. |
 | DHCP via ISC | `/api/dhcpv4/leases/searchLease` | **404 on 26.7.3_11** — ISC is gone. The registry row stays `UNVERIFIED:`. |
 | Rule metadata | `get_rule_info/<sid>` | **404** at the documented path. Step 6 depends on it and must find the real one; until then *Alerts by signature* renders severity **unknown** with the reason. |
@@ -1709,17 +1719,17 @@ preset answers only partially, the gap blocking the rest is named.
 
 | Named question | Presets answering it | Complete today? |
 |---|---|---|
-| Site used, and by whom | *Sites by client* (primary), *Top sites*, *Client traffic detail*, *Attribution rate per client* | Partial — needs G5 beyond `flow` retention; the attribution rate is exposed unconditionally so the coverage is honest. And the resolver's own ring-buffer ceiling bounds any long period (Part 3) |
+| Site used, and by whom | *Sites by client* (primary), *Top sites*, *Client traffic detail*, *Attribution rate per client* | Yes — G5 is closed, so the long periods come from `domain_volume_aggregate_*`; the attribution rate is exposed unconditionally so the coverage is honest. And the resolver's own ring-buffer ceiling bounds any long period (Part 3) |
 | World map of passed **and** blocked traffic | *Passed-traffic world map* and *Blocked-traffic world map* — **two presets, by the maintainer's decision, not one map with two layers**; plus *Destination countries* and *Destination operators* | Yes for both — the aggregates carry `allowed_connections` and `blocked_connections` separately and `security_event.dst_address` covers the detection engine. One honest limit, stated in the blocked map: a **DNS**-blocked lookup resolves to no address and cannot appear on any map, so it is a counter beside it |
-| Who talks to whom, legibly rather than precisely | *Traffic Sankey* (primary), *Interface traffic matrix* | Yes for interface-to-interface and interface-to-operator; a **client**-to-operator Sankey beyond the `flow` horizon needs G4 |
-| Blocked content unified across DNS advertising lists, DNS threat lists, Suricata and firewall rules | *Unified blocked feed* (primary), *Blocked DNS lookups*, *Blocked by firewall rule*, *Alerts by signature* | Partial — **which list** is answerable (G1 closed), with the purpose assigned rather than guessed; what remains is G2, one vocabulary across the four engines |
+| Who talks to whom, legibly rather than precisely | *Traffic Sankey* (primary), *Interface traffic matrix* | Yes for interface-to-interface, interface-to-operator and — G4 being closed — **client**-to-operator beyond the `flow` horizon |
+| Blocked content unified across DNS advertising lists, DNS threat lists, Suricata and firewall rules | *Unified blocked feed* (primary), *Blocked DNS lookups*, *Blocked by firewall rule*, *Alerts by signature* | Yes — **which list** is answerable (G1 closed), with the purpose assigned rather than guessed, and the four engines share one vocabulary in the `blocked_decision` view (G2 closed) |
 | Traffic by VLAN | *Interface volume ranking* (primary), *Interface traffic matrix*, *Traffic over time by scope* | Yes — interface membership is modelled and never inferred from a name |
-| Traffic by MAC or IP | *Client volume ranking* (primary), *Client traffic detail*, *Alerts by client and interface* | Partial — needs G4 beyond `flow` retention |
-| Outbound / inbound / inter-VLAN as selectable scopes | *Traffic over time by scope* (primary), *Interface traffic matrix*, *Interface volume ranking* | Partial — inter-VLAN is complete from `flow.traffic_scope`; outbound and inbound need G3 for any pre-computed period |
-| **Firewall health and telemetry** — uptime, CPU, RAM, disk, temperature, per-interface bandwidth, latency | *Firewall health overview* (primary), *Interface throughput*, *Custom chart* | **Yes, with one reservation.** G9 and G10 are closed: `measurement_sample` holds a sampled gauge and every telemetry endpoint answers. The reservation is the response **field names**, so a reading may be **absent** on a given installation; gateway latency and loss remain `UNVERIFIED:` |
+| Traffic by MAC or IP | *Client volume ranking* (primary), *Client traffic detail*, *Alerts by client and interface* | Yes — G4 is closed, so the long periods come from `client_volume_aggregate_*` |
+| Outbound / inbound / inter-VLAN as selectable scopes | *Traffic over time by scope* (primary), *Interface traffic matrix*, *Interface volume ranking* | Yes — G3 is closed: every pre-computed period carries `traffic_direction`, derived from interface membership |
+| **Firewall health and telemetry** — uptime, CPU, RAM, disk, temperature, per-interface bandwidth, latency | *Firewall health overview* (primary), *Interface throughput*, *Custom chart* | **Yes, with one reservation.** G9 and G10 are closed: `measurement_sample` holds a sampled gauge and every telemetry endpoint answers. The reservation is the response **field names**, so a reading may be **absent** on a given installation; gateway latency and loss are read from `/api/routes/gateway/status`, verified from source and still to be probed live |
 | **The per-person view** — Bob's phone, tablet and laptop as one Bob | *Per-person activity* (primary), and `connection_tree` rooted at a person | **Yes — G11 closed.** The model carries the person, `owner_volume_aggregate_*` carries the long periods, and the preset carries the **Unassigned** card that keeps the unowned majority visible. One honest limit: a person exists only because somebody typed them in |
 | **Which blocklist refused a lookup, and what that list is for** | *Blocked DNS lookups* (primary), *Unified blocked feed* | Yes for the **name**, stored verbatim. The **purpose** is answerable only for lists the user has classified, by design |
-| **The installation's public address** | *Public address* | Partial — the address is readable; **when it last changed is not**. No endpoint keeps a history and the model has nowhere to store one (G13). The preset shows the address and says plainly it has no change history |
+| **The installation's public address** | *Public address* | Yes, within what the firewall can see — the addresses are readable, the secondary ones included since G13 closed, and `interface_address` keeps the history `opnview` has seen, so **when it last changed** is answerable once `opnview` has seen a second address. No endpoint keeps a history, so nothing before `opnview` first looked can be known; and behind an upstream NAT the address the internet sees is not visible from the firewall at all |
 | **Arbitrary combinations of series on one chart** | *Custom chart* (primary) | Yes — and it is not a preset but the `time_series` shape with the series list authored by the reader |
 
 ---
@@ -1738,18 +1748,23 @@ never reused**, and none carries a missing-from-model marker any more.
 | G11 | No widget and no aggregate answers the per-person question | The `owner_volume_aggregate_1h` / `_24h` / `_7d` / `_30d` family keyed on `(period_start_at, owner_id, traffic_scope)` with a NULL `owner_id` carrying the mandatory **unassigned** bucket; and *Per-person activity* plus `connection_tree` rooted at a person |
 | G9 | The model holds no system telemetry at all | **Closed 2026-09-27 by step 4A.** `measurement_sample` stores a subject, a measure, a unit, a value and an instant, and carries the firewall's gauges and the sampled per-pair volume alike. The gap was never in the API |
 | G10 | No source of system telemetry has been surveyed | **Closed 2026-09-27.** Every telemetry endpoint answers, probed against a live OPNsense 26.7.3_11 and recorded in *Verified against a live firewall*. What stays open is not a gap in the model: the responses' **field names** are unestablished, so a reading that does not answer is recorded as **absent** rather than as a zero |
+| G2 | No unified blocking vocabulary across the four engines; a block lived in three tables under three column names and three value sets | **Closed by step 5A.** The `blocked_decision` view projects every refusal — `flow.action IN ('block', 'reject')`, `dns_resolution.action IN ('block', 'drop')` and `security_event.event_action = 'blocked'` — exactly once, under a closed `engine_kind` vocabulary wider than the four categories first proposed, because a drop no rule expresses, a list nobody has classified and a block with no list recorded each need a place: `firewall_rule`, `firewall_no_rule`, `firewall_reason_not_recorded`, one `dns_<purpose>_list` per user-assigned purpose, `dns_unassigned_list`, `dns_list_not_recorded` and `security_engine`. See `docs/data-model.md`, the `blocked_decision` entity |
+| G3 | The volume aggregates carried `traffic_scope` but no direction, so outbound and inbound could not be told apart in any pre-computed period | **Closed by step 5A**, not with the `in` / `out` column first proposed: pf's `dir` is per interface, so a packet leaving a client for the Internet is `in` on the client's interface. The aggregates carry `traffic_direction` — `outbound`, `inbound` or `inter_interface` — derived from interface membership by the `classified_flow` view and part of every slot's key |
+| G4 | No per-client volume aggregate | **Closed by step 5A.** The `client_volume_aggregate_*` family, keyed on `(period_start_at, client_id, traffic_direction)`, with the allowed / blocked split and `distinct_peers` |
+| G5 | No per-domain volume aggregate; `domain_attribution` is purged with its parents | **Closed by step 5A.** The `domain_volume_aggregate_*` family, keyed on `(period_start_at, site_name, client_id)`. Grouping a site name under its registrable domain is done at read time from the Public Suffix List |
+| G6 | `dns_resolution` carried no interface | **Closed by step 5A.** `dns_resolution.interface_id` and `interface_lookup_state`, resolved from the same membership evidence as a flow's ends |
+| G13 | The secondary interface addresses were not stored, nor the address history | **Closed in two parts.** Step 5A stored `addr4`, `addr6` and `gateways[]` in `interface_address`, with `first_seen_at` / `last_seen_at`, so a change is a new row and *when did it last change* is answerable from the second address `opnview` sees onwards — never before, because **no endpoint keeps that history**. The step-5A corrections stored the entries of `ipv4[]` and `ipv6[]` under their own `source_field` values, `ipv4` and `ipv6`, and propose the networks they cover in `interface_network`. What no model change can answer is recorded with the preset rather than as a gap: behind an upstream NAT the address the internet sees is not visible from the firewall, and finding it would need an outbound call the project does not allow |
 
 ## Gaps found
 
-**Nine gaps remain open.** Two were known before the cycle that first mapped the
-widgets onto the schema, five turned up in that mapping, and two — G12 and G13 —
-arrived with the composition donut and the public address. **Each open gap
-carries exactly one missing-from-model marker, in its row of this table**, so a
-grep for the marker returns nine and this table has nine open rows. None is fixed
-here: this document names gaps and a later cycle implements them.
+**Three gaps remain open.** Step 5A closed G2 through G6 and part of G13, and its
+corrections closed the rest of G13. **Each open gap carries exactly one
+missing-from-model marker, in its row of this table**, so a grep for the marker
+returns three and this table has three open rows.
+None is fixed here: this document names gaps and a later cycle implements them.
 
 G12 is of a different order from the rest, and the distinction decides what
-closing it would mean. G2 through G8 and G13 are columns, tables and views
+closing it would mean. G7 and G8 are columns, tables and views
 missing from a model that otherwise has the right shape. **G12 is a
 classification that does not exist in the data at all.** No amount of schema work
 produces an application name from a port number, and the only two routes — a
@@ -1758,15 +1773,9 @@ to a read-only API client. It is recorded so that nobody closes it by guessing.
 
 | Id | Gap | Fix it needs | Cited to |
 |---|---|---|---|
-| G2 | `MISSING FROM MODEL:` No unified blocking vocabulary across the four engines; a block lives in three tables under three column names and three value sets (`flow.action = 'block'`, `dns_resolution.action IN ('block','drop')`, `security_event.event_action = 'blocked'`), and nothing says which *kind* of engine decided | A `blocked_decision` view over `flow`, `dns_resolution` and `security_event` projecting `(occurred_at, engine_kind, engine_reference, client_id, interface_id, target, target_kind)`, `engine_kind` constrained to `firewall_rule`, `dns_advertising_list`, `dns_threat_list`, `security_engine` — the four categories made explicit rather than inferred by a caller | *Data source 1*, *Data source 2*, *Data source 5*; and `sql/queries/screens.sql`, which has no such query |
-| G3 | `MISSING FROM MODEL:` The four volume aggregates carry `traffic_scope` but no `direction`, so outbound and inbound cannot be told apart in any pre-computed period | A `direction` column on all four aggregate tables in the `in` / `out` / `unknown` vocabulary `flow.direction` uses, included in each slot's uniqueness index | *Data source 1 — Filter logs*, *Response shape* (`dir`) |
-| G4 | `MISSING FROM MODEL:` No per-client volume aggregate; the aggregates are keyed on `(period_start_at, src_interface_id, dst_interface_id, peer_address)` and carry no client dimension | A `client_volume_aggregate_<period>` family keyed on `(period_start_at, src_client_id)` with `bytes`, `allowed_connections`, `blocked_connections` and `distinct_destinations`, refreshed on the same contract as the interface aggregates | *Data source 3 — NetFlow / Insight*, *Retention on the firewall* |
-| G5 | `MISSING FROM MODEL:` No per-domain volume aggregate; `domain_attribution` is per flow and is purged with its parents | A `domain_volume_aggregate_<period>` family keyed on `(period_start_at, site_name, src_client_id)` carrying `flow_count`, `bytes` and `distinct_clients` | *Data source 5 — Resolver DNS lookups*, *Retention on the firewall* |
-| G6 | `MISSING FROM MODEL:` `dns_resolution` carries no interface, so a lookup from a client address with no client row cannot be placed | A nullable `interface_id` resolved at ingest against the discovered addressing, plus an `interface_lookup_state` in the `resolved` / `not_found` / `pending` vocabulary `flow` already uses | *Data source 5*, *Response shape* (`client`); *Runtime discovery* (i) |
 | G7 | `MISSING FROM MODEL:` `security_event` carries no destination client or interface, so "which interface was the target" is unanswerable and an alert about traffic *into* an interface is placed by its source only | `dst_client_id` and `dst_interface_id` mirroring the source pair, resolved at ingest the same way, with an index on `(dst_interface_id, occurred_at)` | *Data source 2*, *Response shape* (`dest_ip`) |
 | G8 | `MISSING FROM MODEL:` The interfaces a security-event provider covers are not modelled; `source_availability.detail` is free text | A `provider_interface_coverage` table keyed on `(provider_id, interface_id)` with `is_covered` and `determined_at`, so a UI statement about coverage is a query rather than a string parse | *Runtime discovery* (v) (`ids.general.interfaces`, keys whose `selected` is truthy) |
 | G12 | `MISSING FROM MODEL:` **Nothing classifies a flow as an application.** The schema knows a protocol number and a port and stops there — `flow.protocol`, `flow.dst_port`, `pair_volume_observation.service_port` are the whole of it — so the dimension ntopng and Zenarmor both lead with cannot be offered | **Neither of the two available routes, and that is the finding.** A **port-and-SNI heuristic** is cheap, right for the easy cases and wrong at exactly the edges that matter — a service on a non-standard port, a CDN fronting a dozen products behind one name, anything tunnelled over 443, and every client using encrypted DNS. A heuristic labelled as a fact is the kind of lie this project refuses, and one labelled as a guess is a column nobody can act on. **Deep packet inspection** is what those products do, and OPNsense exposes none of it to a read-only API client: Suricata's application-layer parsers feed detection, and the `tls` and `http` events that would carry a server name cannot be read back. Closing this needs a source that does not exist, not a column, and **neither route is to be implemented** | *Gaps and alternatives*, gaps 2 and 8 |
-| G13 | `MISSING FROM MODEL:` **No interface address and no address history.** `interface` carries `identifier`, `device`, `description`, `user_label`, `link_type`, `link_kind`, `vlan_tag`, `address_family` and the two `_seen_at` instants and **no address column**: addresses live on observations. So the current address has nowhere to be stored, and *when did it last change* is worse than unstored — **no endpoint answers it** | An `interface_address` table keyed on `(interface_id, address)` with the prefix length, the address family, whether a gateway sits behind it, a nullable `gateway_name`, and `first_seen_at` / `last_seen_at`, so a change is a new row and the history is the table. The change time can only ever come from `opnview` having looked before. Separately, and not fixable at all: a firewall behind an upstream NAT cannot see the address the internet sees, and finding it would need a third outbound call the project does not allow | The address fields **are** established — `addr4`, `addr6`, `ipv4[]`, `ipv6[]`, `gateways[]` (*Runtime discovery* (i)). What remains to survey is narrow: the response shape of `/api/routes/gateway/status`, marked `UNVERIFIED:` in Part 5 |
 
 **One candidate was raised and withdrawn**, recorded so it is not rediscovered:
 `security_event.flow_ref` is an unconstrained `INTEGER` with no foreign key to

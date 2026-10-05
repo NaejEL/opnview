@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	// The SQLite driver. Pure Go, so nothing here needs cgo.
@@ -206,6 +207,11 @@ func (s *Store) SetSetting(ctx context.Context, key, value string, now int64) er
 // one Go transaction instead, so a purge is all-or-nothing whichever way it is
 // invoked. The DELETE statements themselves are the file's, unchanged, because
 // sql/schema-checks.sh asserts against that text and two copies would drift.
+//
+// ORDERING IS THE CALLER'S. A running service purges through collect.Collector.Purge,
+// which never lets this run between a pass storing its rows and the end of that
+// pass's derivation (docs/data-model.md, "Purge"). Whatever the ordering, the hours
+// this writes a purged part for are selected by the next refresh (dirty_hours).
 func (s *Store) Purge(ctx context.Context, now int64) error {
 	purge, err := sqlFiles.ReadFile("purge.sql")
 	if err != nil {
@@ -231,6 +237,36 @@ func (s *Store) Purge(ctx context.Context, now int64) error {
 		return fmt.Errorf("store: committing the purge: %w", err)
 	}
 	return nil
+}
+
+// PurgeDueAddresses returns, sorted, the address of every unplaced end of a flow a
+// purge at now would remove. They are what the collector places before it purges, so
+// the purged part records each flow where the evidence held puts it rather than as it
+// was stored. With an unlimited retention nothing is due and the list is empty.
+func (s *Store) PurgeDueAddresses(ctx context.Context, now int64) ([]string, error) {
+	const name = "purge_due_addresses"
+	text, err := Statement(name)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, text, named(text, map[string]any{"now": now})...)
+	if err != nil {
+		return nil, fmt.Errorf("store: %s: %w", name, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var addresses []string
+	for rows.Next() {
+		var address string
+		if err := rows.Scan(&address); err != nil {
+			return nil, fmt.Errorf("store: %s: %w", name, err)
+		}
+		addresses = append(addresses, address)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: %s: %w", name, err)
+	}
+	sort.Strings(addresses)
+	return addresses, nil
 }
 
 // SplitStatements splits a SQL file into statements on the semicolons that end
@@ -328,4 +364,21 @@ func firstLine(statement string) string {
 		}
 	}
 	return strings.TrimSpace(statement)
+}
+
+// PurgedBefore returns the furthest horizon the retention purge has applied, and whether
+// a purge with a finite retention has run at all. Every flow and lookup observed before it
+// may have been purged. InsertFlow and InsertDNSResolution refuse such a record inside
+// their own insert statements, which is what makes the refusal hold against a purge
+// committing at any moment; this read serves the tests and the screens.
+func (s *Store) PurgedBefore(ctx context.Context) (int64, bool, error) {
+	var before int64
+	err := s.db.QueryRowContext(ctx, "SELECT purged_before FROM retention_purge WHERE id = 1").Scan(&before)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, false, nil
+	case err != nil:
+		return 0, false, fmt.Errorf("store: reading how far back the purge has purged: %w", err)
+	}
+	return before, true, nil
 }

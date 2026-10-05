@@ -97,7 +97,11 @@ func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeS
 		return readErr
 	}
 
+	// No retention purge runs between this pass storing an event and the end of its
+	// derivation (purge.go).
+	defer c.storing()()
 	highestPerFile := make(map[string]int64)
+	var sources []string
 	for _, record := range records {
 		if watermark, seen := watermarks[record.FileID]; seen &&
 			record.ByteOffset <= watermark.ByteOffset {
@@ -107,13 +111,11 @@ func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeS
 			highestPerFile[record.FileID] = record.ByteOffset
 		}
 
-		event, err := c.buildSecurityEvent(ctx, record, now)
-		if err != nil {
-			return err
+		if err := c.store.InsertSecurityEvent(ctx, providerID, buildSecurityEvent(record, now)); err != nil {
+			// The events stored before this one are placed all the same.
+			return c.deriveAfter(ctx, derivation{addresses: sources}, err)
 		}
-		if err := c.store.InsertSecurityEvent(ctx, providerID, event); err != nil {
-			return err
-		}
+		sources = append(sources, record.SrcAddress)
 	}
 
 	for fileID, offset := range highestPerFile {
@@ -132,10 +134,15 @@ func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeS
 			RotationState: state,
 			ObservedAt:    now,
 		}); err != nil {
-			return err
+			return c.deriveAfter(ctx, derivation{addresses: sources}, err)
 		}
 	}
-	return nil
+	if len(sources) == 0 {
+		return nil
+	}
+	// The sources are placed after the pass, by the classification that places a
+	// flow's ends.
+	return c.derive(ctx, derivation{addresses: sources})
 }
 
 // recordLostRotations marks every watermarked file the feed no longer carries as lost, and
@@ -174,14 +181,10 @@ func (c *Collector) recordLostRotations(ctx context.Context, providerID int64, v
 }
 
 // buildSecurityEvent turns one record into a row, composing the key the de-duplication rests
-// on and resolving the source machine.
-func (c *Collector) buildSecurityEvent(ctx context.Context, record alertRecord, now int64) (
-	store.SecurityEvent, error) {
-	srcClientID, srcInterfaceID, err := c.clientForAddress(ctx, nil, record.SrcAddress, now)
-	if err != nil {
-		return store.SecurityEvent{}, err
-	}
-
+// on. The source machine is not resolved here: the event's source end is placed by the same
+// classification as a flow's, after the pass, so an attacker's address outside never becomes a
+// client row.
+func buildSecurityEvent(record alertRecord, now int64) store.SecurityEvent {
 	return store.SecurityEvent{
 		// The key is composed here, from the file and the offset inside it, because that is the
 		// pair the provider guarantees stable. The ingestion coordinate itself is not a column
@@ -199,7 +202,5 @@ func (c *Collector) buildSecurityEvent(ctx context.Context, record alertRecord, 
 		DstPort:            record.DstPort,
 		Protocol:           record.Protocol,
 		InInterfaceDevice:  record.InInterfaceDevice,
-		SrcClientID:        srcClientID,
-		SrcInterfaceID:     srcInterfaceID,
-	}, nil
+	}
 }

@@ -118,7 +118,7 @@ func TestAFirewallGaugeNamesNoProviderAndASampledReadingNamesItsOwn(t *testing.T
 		t.Fatalf("writing a firewall gauge: %v", err)
 	}
 	if err := database.InsertMeasurementSample(ctx, MeasurementSample{
-		ProviderID: &providerID, SubjectKind: SubjectEndpointPair,
+		ProviderID: &providerID, SubjectKind: SubjectInterfaceEndpointPair,
 		SubjectKey: "example-endpoint-a example-endpoint-b",
 		Measure:    MeasureCumulativeBytesIn, Unit: UnitByte, Value: 1000, SampledAt: 1750000000,
 	}); err != nil {
@@ -138,7 +138,7 @@ func TestAFirewallGaugeNamesNoProviderAndASampledReadingNamesItsOwn(t *testing.T
 	var unattributed int
 	if err := database.DB().QueryRowContext(ctx,
 		`SELECT count(*) FROM measurement_sample
-		 WHERE subject_kind = 'endpoint_pair' AND provider_id IS NULL`).Scan(&unattributed); err != nil {
+		 WHERE subject_kind = 'interface_endpoint_pair' AND provider_id IS NULL`).Scan(&unattributed); err != nil {
 		t.Fatalf("counting unattributed pair readings: %v", err)
 	}
 	if unattributed != 0 {

@@ -76,7 +76,10 @@ func FixedInterval(interval time.Duration) func() time.Duration {
 // not restated here, so the justification cannot drift from the number. Each task
 // reads its own field of settings before every wait, through config.Live, so a
 // saved interval reaches the loop without a restart.
-func (c *Collector) Tasks(settings *config.Live, purge func(context.Context) error) []Task {
+//
+// The retention purge is this collector's own Purge, so it is ordered against the
+// passes whoever builds the loops (purge.go).
+func (c *Collector) Tasks(settings *config.Live) []Task {
 	return []Task{
 		{
 			Name:       "runtime discovery",
@@ -126,7 +129,7 @@ func (c *Collector) Tasks(settings *config.Live, purge func(context.Context) err
 		{
 			Name:       "retention purge",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.PurgeInterval }),
-			Run:        purge,
+			Run:        c.Purge,
 			RunAtStart: false,
 		},
 	}

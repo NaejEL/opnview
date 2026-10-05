@@ -537,6 +537,35 @@ demo_index_drop "$WORK/screens/06_Alerts.sql" 'Alerts' 'idx_security_event_occur
 demo_index_drop "$WORK/screens/07_Map.sql" 'Map' 'uq_volume_aggregate_24h_slot' \
     'volume_aggregate_24h' 'v'
 
+# C5A-AC9: the step-2 queries count a reject as blocked and an unknown decision as
+# neither, as the aggregate families do. Each figure is compared with a direct
+# count, and the seed holds both a reject and an unknown, so a query that still
+# counted "not block" as allowed, or 'block' alone as blocked, fails here.
+check_ge 'C5A-AC9 the seed holds rejects and unknown decisions to tell the rule apart' 2 \
+    "$(q "$MAIN_DB" "SELECT (SELECT count(*) > 0 FROM flow WHERE action = 'reject')
+        + (SELECT count(*) > 0 FROM flow WHERE action = 'unknown');")"
+check 'C5A-AC9 the Overview counts every reject as blocked and every pass, and only those, as allowed' \
+    "$(q "$MAIN_DB" "SELECT sum(CASE WHEN action IN ('block', 'reject') THEN 1 ELSE 0 END) || '|' ||
+        sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) FROM flow
+        WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END;")" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
+        "SELECT sum(blocked_count) || '|' || sum(allowed_count) FROM (" ');')")"
+check 'C5A-AC9 the Matrix counts every reject as blocked and no unknown as allowed' \
+    "$(q "$MAIN_DB" "SELECT sum(CASE WHEN action IN ('block', 'reject') THEN 1 ELSE 0 END) || '|' ||
+        sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) FROM flow
+        WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND src_interface_id IS NOT NULL;")" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/02_Matrix.sql" \
+        "SELECT sum(blocked_connections) || '|' || sum(allowed_connections) FROM (" ');')")"
+check 'C5A-AC9 blocked_event holds every block and every reject, and nothing else' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE action IN ('block', 'reject');")|0" \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM blocked_event;")|$(q "$MAIN_DB" \
+        "SELECT count(*) FROM blocked_event WHERE action NOT IN ('block', 'reject');")"
+if grep -q 'idx_flow_refused_observed_at' "$WORK/plan_Blocked.txt"; then
+    pass 'C5A-AC9 the Blocked plan searches the partial index over the refusals'
+else
+    fail "C5A-AC9 the Blocked plan does not use idx_flow_refused_observed_at: $(cat "$WORK/plan_Blocked.txt")"
+fi
+
 # ===========================================================================
 section 'AC12 — the matrix cell carries all four figures'
 # ===========================================================================
@@ -719,11 +748,13 @@ expect_sql_failure 'GAP-AC1 a gap attributed to a provider that does not exist i
     "INSERT INTO collection_gap (provider_id, interval_start_at, interval_end_at, reason, detected_at)
      VALUES (999999999, $NOW - 60, $NOW, 'digest_outside_returned_window', $NOW);"
 
-# GAP-AC2: the three reasons are the three MEASURED failure modes, and the
-# vocabulary is closed because these are opnview's own detections rather than
-# values any endpoint reports -- so enumerating them invents nothing.
-check 'GAP-AC2 all three measured failure modes are represented in the seed' \
-    'digest_outside_returned_window|eve_rotation_lost|resolver_window_not_honoured' \
+# GAP-AC2: the reasons are the MEASURED failure modes, and the vocabulary is
+# closed because these are opnview's own detections rather than values any
+# endpoint reports -- so enumerating them invents nothing. RESTATED by step 5A,
+# which adds the fourth: a Public Suffix List download that failed, leaving the
+# list held since the last refresh in use.
+check 'GAP-AC2 all four measured failure modes are represented in the seed' \
+    'digest_outside_returned_window|download_failed|eve_rotation_lost|resolver_window_not_honoured' \
     "$(q "$MAIN_DB" "SELECT group_concat(reason, '|') FROM
         (SELECT DISTINCT reason FROM collection_gap ORDER BY reason);")"
 expect_sql_failure 'GAP-AC2 a reason outside the vocabulary is rejected' "$MAIN_DB" \
@@ -826,7 +857,9 @@ done
 # GAP-AC5: the two tables this cycle added are classified growing and are purged,
 # because each accumulates one row per pass and would otherwise grow without
 # bound from the first day.
-for t in collection_gap measurement_sample; do
+for t in collection_gap measurement_sample purged_flow_hour address_classification \
+         peer_volume_aggregate_1h peer_volume_aggregate_24h peer_volume_aggregate_7d \
+         peer_volume_aggregate_30d; do
     if grep -qx "$t" "$WORK/growing.txt"; then
         pass "GAP-AC5 $t is classified growing in the document"
     else
@@ -871,7 +904,7 @@ check_ge 'MEAS-AC2 a per-interface counter round-trips' 1 \
         WHERE subject_kind = 'interface' AND measure = 'bytes_in' AND unit = 'byte';")"
 check_ge 'MEAS-AC2 a sampled per-pair volume round-trips' 1 \
     "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
-        WHERE subject_kind = 'endpoint_pair' AND measure = 'cumulative_bytes_in'
+        WHERE subject_kind = 'interface_endpoint_pair' AND measure = 'cumulative_bytes_in'
           AND unit = 'byte';")"
 
 # MEAS-AC3, RESTATED. The three vocabularies were closed CHECKs and are not any
@@ -913,11 +946,12 @@ expect_sql_failure 'MEAS-AC3 a reading with no unit is rejected' "$MAIN_DB" \
 # stored under would show up here rather than in a screen.
 check 'MEAS-AC3 the firewall readings still use only the shipped subject terms' '' \
     "$(q "$MAIN_DB" "SELECT group_concat(DISTINCT subject_kind) FROM measurement_sample
-        WHERE subject_kind NOT IN ('firewall', 'interface', 'endpoint_pair');")"
+        WHERE subject_kind NOT IN ('firewall', 'interface', 'interface_endpoint_pair',
+                                   'interface_endpoint', 'gateway');")"
 check 'MEAS-AC3 the firewall readings still use only the shipped units' '' \
     "$(q "$MAIN_DB" "SELECT group_concat(DISTINCT unit) FROM measurement_sample
         WHERE unit NOT IN ('ratio', 'celsius', 'second', 'packet', 'byte',
-                           'bit_per_second', 'dimensionless');")"
+                           'bit_per_second', 'dimensionless', 'millisecond');")"
 
 # MEAS-AC4: re-reading the same instant is a no-op, which is what a sampler
 # restarting inside one interval needs.
@@ -926,11 +960,29 @@ expect_sql_failure 'MEAS-AC4 a duplicate reading of one subject at one instant i
          unit, value, sampled_at)
      SELECT provider_id, subject_kind, subject_key, measure, unit, value, sampled_at
      FROM measurement_sample LIMIT 1;"
-check 'MEAS-AC4 the pair subject is canonically ordered, so one pair is one subject' '0' \
+# MEAS-AC4, RESTATED by step 5A. The pair subject was the two addresses in
+# lexicographic order, so a pair sampled from either end was one subject. That
+# ordering discarded the one thing traffic/top tells apart -- a peer's figures are
+# INBOUND to the local address on the interface the reading was taken on (survey,
+# "What `traffic/top` measures, read from source for step 5") -- so the subject is
+# now the device, the local address and the peer address, in that order, and the
+# assertion is stricter: every key is exactly those three tokens, and its device is
+# one the interface map knows, so one reading is one interface's view of one pair.
+check 'MEAS-AC4 every pair subject is a device, a local address and a peer address' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
-        WHERE subject_kind = 'endpoint_pair'
-          AND substr(subject_key, 1, instr(subject_key, ' ') - 1) >
-              substr(subject_key, instr(subject_key, ' ') + 1);")"
+        WHERE subject_kind = 'interface_endpoint_pair'
+          AND (length(subject_key) - length(replace(subject_key, ' ', '')) <> 2
+               OR instr(subject_key, '  ') > 0
+               OR substr(subject_key, 1, 1) = ' '
+               OR substr(subject_key, -1, 1) = ' ');")"
+check 'MEAS-AC4 every pair subject names a device the interface map knows' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
+        WHERE subject_kind = 'interface_endpoint_pair'
+          AND substr(subject_key, 1, instr(subject_key, ' ') - 1)
+              NOT IN (SELECT device FROM interface_map);")"
+check_ge 'MEAS-AC4 the pair subjects carry both address families' 2 \
+    "$(q "$MAIN_DB" "SELECT count(DISTINCT instr(subject_key, ':') > 0) FROM measurement_sample
+        WHERE subject_kind = 'interface_endpoint_pair';")"
 
 # MEAS-AC5: the firewall's own telemetry names no provider, because it implements
 # no external contract. Attributing it to the volume provider would say the
@@ -940,7 +992,7 @@ check 'MEAS-AC5 no firewall gauge is attributed to a provider' '0' \
         WHERE subject_kind = 'firewall' AND provider_id IS NOT NULL;")"
 check 'MEAS-AC5 every sampled pair volume names the provider whose material it is' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample
-        WHERE subject_kind = 'endpoint_pair' AND provider_id IS NULL;")"
+        WHERE subject_kind = 'interface_endpoint_pair' AND provider_id IS NULL;")"
 check 'MEAS-AC5 no measurement names a provider that does not exist' '0' \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM measurement_sample m
         WHERE m.provider_id IS NOT NULL
@@ -957,7 +1009,7 @@ check 'MEAS-AC6 that registry row has an availability row' '1' \
         WHERE p.kind = 'measurement_sample';")"
 check 'MEAS-AC6 the sampled pair volume is attributed to the measurement provider' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM measurement_sample m
-        WHERE m.subject_kind = 'endpoint_pair'
+        WHERE m.subject_kind = 'interface_endpoint_pair'
           AND m.provider_id NOT IN (SELECT id FROM provider WHERE kind = 'measurement_sample');")"
 
 # MEAS-AC6, the extensibility that replaced closedness: a provider introduces a
@@ -999,7 +1051,7 @@ expect_sql_success 'MEAS-AC7 a second provider may report the same subject at th
      SELECT (SELECT id FROM provider WHERE provider_key = 'meas-ac7-second'),
             m.subject_kind, m.subject_key, m.measure, m.unit, m.value, m.sampled_at
      FROM measurement_sample m
-     WHERE m.subject_kind = 'endpoint_pair' LIMIT 1;"
+     WHERE m.subject_kind = 'interface_endpoint_pair' LIMIT 1;"
 expect_sql_failure 'MEAS-AC7 one provider cannot report the same reading twice' "$MEAS_DB" \
     "INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
          unit, value, sampled_at)
@@ -1322,13 +1374,15 @@ done
 # uniqueness rather than escaping it through a NULL.
 expect_sql_failure 'G11-AC4 a duplicate assigned slot is rejected' "$MAIN_DB" \
     "INSERT INTO owner_volume_aggregate_24h (period_start_at, period_end_at, owner_id,
-        traffic_scope, bytes, allowed_connections, blocked_connections, client_count, computed_at)
-     SELECT period_start_at, period_end_at, owner_id, traffic_scope, 0, 0, 0, 0, $NOW
+        traffic_scope, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+        blocked_connections, unknown_connections, client_count, computed_at)
+     SELECT period_start_at, period_end_at, owner_id, traffic_scope, 0, 0, 0, 0, 0, 0, 0, 0, $NOW
      FROM owner_volume_aggregate_24h WHERE owner_id IS NOT NULL LIMIT 1;"
 expect_sql_failure 'G11-AC4 a duplicate unassigned slot is rejected too' "$MAIN_DB" \
     "INSERT INTO owner_volume_aggregate_24h (period_start_at, period_end_at, owner_id,
-        traffic_scope, bytes, allowed_connections, blocked_connections, client_count, computed_at)
-     SELECT period_start_at, period_end_at, NULL, traffic_scope, 0, 0, 0, 0, $NOW
+        traffic_scope, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+        blocked_connections, unknown_connections, client_count, computed_at)
+     SELECT period_start_at, period_end_at, NULL, traffic_scope, 0, 0, 0, 0, 0, 0, 0, 0, $NOW
      FROM owner_volume_aggregate_24h WHERE owner_id IS NULL LIMIT 1;"
 expect_sql_failure 'G11-AC4 a slot attributed to an owner that does not exist is rejected' "$MAIN_DB" \
     "UPDATE owner_volume_aggregate_24h SET owner_id = 999999999
@@ -1350,14 +1404,23 @@ check 'G11-AC5 every one of the four per-owner periods is non-empty' '' \
     "$(awk -F'|' '$2 + 0 == 0 { print $1 }' "$WORK/owner_coverage.txt")"
 check 'G11-AC5 every one of the four per-owner periods carries an unassigned slot' '' \
     "$(awk -F'|' '$7 + 0 == 0 { print $1 }' "$WORK/owner_coverage.txt")"
+# RESTATED by step 5A: a flow belongs to the owner of its INSIDE client,
+# classified_flow.local_client_id -- the source when the source is inside, else
+# the destination -- so an inbound flow now counts for the machine it reached
+# rather than for nobody. The comparison is against that, and is unchanged in
+# strength: every byte of every flow with an inside client, and no other.
 check 'G11-AC5 the per-owner aggregate totals agree with the flows behind them' \
-    "$(q "$MAIN_DB" 'SELECT sum(f.packet_bytes) FROM flow f
-        JOIN client c ON c.id = f.src_client_id;')" \
+    "$(q "$MAIN_DB" 'SELECT sum(f.packet_bytes) FROM classified_flow f
+        JOIN client c ON c.id = f.local_client_id;')" \
     "$(q "$MAIN_DB" 'SELECT sum(bytes) FROM owner_volume_aggregate_24h;')"
 check 'G11-AC5 an unowned client lands in the unassigned slot rather than being dropped' \
-    "$(q "$MAIN_DB" 'SELECT sum(f.packet_bytes) FROM flow f
-        JOIN client c ON c.id = f.src_client_id WHERE c.owner_id IS NULL;')" \
+    "$(q "$MAIN_DB" 'SELECT sum(f.packet_bytes) FROM classified_flow f
+        JOIN client c ON c.id = f.local_client_id WHERE c.owner_id IS NULL;')" \
     "$(q "$MAIN_DB" 'SELECT sum(bytes) FROM owner_volume_aggregate_24h WHERE owner_id IS NULL;')"
+check 'G11-AC5 the allowed and blocked bytes of a per-owner slot are the flows split by action' \
+    "$(q "$MAIN_DB" "SELECT sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END)
+        FROM classified_flow f JOIN client c ON c.id = f.local_client_id;")" \
+    "$(q "$MAIN_DB" 'SELECT sum(blocked_bytes) FROM owner_volume_aggregate_24h;')"
 
 # ===========================================================================
 section 'AC23, AC24 — source availability and the eve.json cursor'
@@ -1501,7 +1564,16 @@ state_snapshot:captured_at
 volume_aggregate_1h:period_end_at volume_aggregate_24h:period_end_at
 volume_aggregate_7d:period_end_at volume_aggregate_30d:period_end_at
 owner_volume_aggregate_1h:period_end_at owner_volume_aggregate_24h:period_end_at
-owner_volume_aggregate_7d:period_end_at owner_volume_aggregate_30d:period_end_at'
+owner_volume_aggregate_7d:period_end_at owner_volume_aggregate_30d:period_end_at
+client_volume_aggregate_1h:period_end_at client_volume_aggregate_24h:period_end_at
+client_volume_aggregate_7d:period_end_at client_volume_aggregate_30d:period_end_at
+domain_volume_aggregate_1h:period_end_at domain_volume_aggregate_24h:period_end_at
+domain_volume_aggregate_7d:period_end_at domain_volume_aggregate_30d:period_end_at
+rule_volume_aggregate_1h:period_end_at rule_volume_aggregate_24h:period_end_at
+rule_volume_aggregate_7d:period_end_at rule_volume_aggregate_30d:period_end_at
+peer_volume_aggregate_1h:period_end_at peer_volume_aggregate_24h:period_end_at
+peer_volume_aggregate_7d:period_end_at peer_volume_aggregate_30d:period_end_at
+purged_flow_hour:hour_start_at address_classification:classified_at'
 for t in $PURGEABLE; do
     tbl="${t%%:*}"
     col="${t##*:}"
@@ -1514,14 +1586,136 @@ for t in $PURGEABLE; do
 done
 
 BEFORE_NEW_FLOW="$(q "$PURGE_DB" "SELECT count(*) FROM flow WHERE observed_at >= $CUTOFF;")"
+# C5A-AC31: the two exceptions the purge makes, computed BEFORE it runs from the rows
+# that will survive it. A client older than the horizon is kept exactly when something
+# the purge keeps still names it -- a flow, an event, a lease or a lookup newer than the
+# horizon, or the purged part of an hour the purge keeps -- and a lookup older than the
+# horizon exactly when an attribution of a flow newer than the horizon names it.
+KEPT_HOUR="(p.hour_start_at + 3600 >= $CUTOFF
+    OR (p.hour_start_at / 86400) * 86400 - (((p.hour_start_at / 86400) + 3) % 7) * 86400 + 604800 >= $CUTOFF
+    OR CAST(strftime('%s', p.hour_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) >= $CUTOFF)"
+OLD_CLIENTS_NAMED="$(q "$PURGE_DB" "SELECT group_concat(id, ',') FROM (SELECT c.id FROM client AS c
+    WHERE c.last_seen_at < $CUTOFF
+      AND (EXISTS (SELECT 1 FROM flow f WHERE (f.src_client_id = c.id OR f.dst_client_id = c.id)
+                                          AND f.observed_at >= $CUTOFF)
+           OR EXISTS (SELECT 1 FROM security_event e WHERE e.src_client_id = c.id AND e.occurred_at >= $CUTOFF)
+           OR EXISTS (SELECT 1 FROM dhcp_lease l WHERE l.client_id = c.id AND l.observed_at >= $CUTOFF)
+           OR EXISTS (SELECT 1 FROM dns_resolution r WHERE r.client_id = c.id AND r.looked_up_at >= $CUTOFF)
+           OR EXISTS (SELECT 1 FROM purged_flow_hour p
+                      WHERE (p.local_client_id = c.id OR p.src_client_id = c.id) AND $KEPT_HOUR))
+    ORDER BY c.id);")"
+OLD_CLIENTS_KEPT_BY_PURGED_PART="$(q "$PURGE_DB" "SELECT count(*) FROM client AS c
+    WHERE c.last_seen_at < $CUTOFF
+      AND NOT EXISTS (SELECT 1 FROM flow f WHERE f.src_client_id = c.id OR f.dst_client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM security_event e WHERE e.src_client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM dhcp_lease l WHERE l.client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM dns_resolution r WHERE r.client_id = c.id)
+      AND EXISTS (SELECT 1 FROM purged_flow_hour p
+                  WHERE (p.local_client_id = c.id OR p.src_client_id = c.id) AND $KEPT_HOUR);")"
+OLD_CLIENTS_NAMED_ONLY_BY_EXPIRED_PART="$(q "$PURGE_DB" "SELECT count(*) FROM client AS c
+    WHERE c.last_seen_at < $CUTOFF
+      AND NOT EXISTS (SELECT 1 FROM flow f WHERE f.src_client_id = c.id OR f.dst_client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM security_event e WHERE e.src_client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM dhcp_lease l WHERE l.client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM dns_resolution r WHERE r.client_id = c.id)
+      AND EXISTS (SELECT 1 FROM purged_flow_hour p WHERE p.local_client_id = c.id OR p.src_client_id = c.id)
+      AND NOT EXISTS (SELECT 1 FROM purged_flow_hour p
+                      WHERE (p.local_client_id = c.id OR p.src_client_id = c.id) AND $KEPT_HOUR);")"
+OLD_LOOKUPS_NAMED="$(q "$PURGE_DB" "SELECT group_concat(id, ',') FROM (SELECT r.id FROM dns_resolution AS r
+    WHERE r.looked_up_at < $CUTOFF
+      AND EXISTS (SELECT 1 FROM domain_attribution a JOIN flow f ON f.id = a.flow_id
+                  WHERE a.dns_resolution_id = r.id AND f.observed_at >= $CUTOFF
+                    AND a.attributed_at >= $CUTOFF)
+    ORDER BY r.id);")"
 BEFORE_NEW_ALERT="$(q "$PURGE_DB" "SELECT count(*) FROM security_event WHERE occurred_at >= $CUTOFF;")"
 run_purge "$PURGE_DB"
+# RESTATED by step 5A. An hour or a day slot is now kept, beyond its own end, for as
+# long as the ISO week and the calendar month holding it, because a week or a month
+# straddling the horizon is composed from them (docs/data-model.md, refresh rule 6).
+# So for those two periods "older than the horizon" means: the slot, its week and its
+# month all ended before it. The assertion is as strict as before on that set, and a
+# second one says the rows kept are exactly the ones a straddling week or month needs.
+WEEK_END='(period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800'
+MONTH_END="CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER)"
 for t in $PURGEABLE; do
     tbl="${t%%:*}"
     col="${t##*:}"
-    check "AC31 the purge removed every $tbl row older than the horizon" '0' \
-        "$(q "$PURGE_DB" "SELECT count(*) FROM $tbl WHERE $col < $CUTOFF;")"
+    case "$tbl" in
+        *_1h|*_24h)
+            check "AC31 the purge removed every $tbl row whose slot, week and month ended before the horizon" '0' \
+                "$(q "$PURGE_DB" "SELECT count(*) FROM $tbl WHERE $col < $CUTOFF
+                    AND $WEEK_END < $CUTOFF AND $MONTH_END < $CUTOFF;")"
+            check "AC31 every $tbl row kept past its end lies in a week or a month straddling the horizon" '0' \
+                "$(q "$PURGE_DB" "SELECT count(*) FROM $tbl WHERE $col < $CUTOFF
+                    AND NOT ($WEEK_END >= $CUTOFF OR $MONTH_END >= $CUTOFF);")"
+            ;;
+        purged_flow_hour)
+            # The purged part of an hour is kept exactly as long as the hour slot it
+            # feeds: the same rule, over the hour it belongs to.
+            HOUR_WEEK_END="$(printf -- '%s' "$WEEK_END" | sed 's/period_start_at/hour_start_at/g')"
+            HOUR_MONTH_END="$(printf -- '%s' "$MONTH_END" | sed 's/period_start_at/hour_start_at/g')"
+            check "AC31 the purge removed every $tbl row whose hour, week and month ended before the horizon" '0' \
+                "$(q "$PURGE_DB" "SELECT count(*) FROM $tbl WHERE $col + 3600 < $CUTOFF
+                    AND $HOUR_WEEK_END < $CUTOFF AND $HOUR_MONTH_END < $CUTOFF;")"
+            check "AC31 every $tbl row kept past its hour lies in a week or a month straddling the horizon" '0' \
+                "$(q "$PURGE_DB" "SELECT count(*) FROM $tbl WHERE $col + 3600 < $CUTOFF
+                    AND NOT ($HOUR_WEEK_END >= $CUTOFF OR $HOUR_MONTH_END >= $CUTOFF);")"
+            ;;
+        client)
+            # Restated by the step-5A corrections: kept when, and only when, named.
+            check "C5A-AC31 the purge kept exactly the clients older than the horizon that something kept names" \
+                "$OLD_CLIENTS_NAMED" \
+                "$(q "$PURGE_DB" "SELECT group_concat(id, ',') FROM
+                    (SELECT id FROM client WHERE $col < $CUTOFF ORDER BY id);")"
+            ;;
+        dns_resolution)
+            check "C5A-AC31 the purge kept exactly the lookups older than the horizon a surviving attribution names" \
+                "$OLD_LOOKUPS_NAMED" \
+                "$(q "$PURGE_DB" "SELECT group_concat(id, ',') FROM
+                    (SELECT id FROM dns_resolution WHERE $col < $CUTOFF ORDER BY id);")"
+            ;;
+        *)
+            check "AC31 the purge removed every $tbl row older than the horizon" '0' \
+                "$(q "$PURGE_DB" "SELECT count(*) FROM $tbl WHERE $col < $CUTOFF;")"
+            ;;
+    esac
 done
+for family in volume_aggregate owner_volume_aggregate client_volume_aggregate \
+              domain_volume_aggregate rule_volume_aggregate peer_volume_aggregate; do
+    for p in 1h 24h 7d 30d; do
+        if printf -- '%s\n' $PURGEABLE | grep -qx "${family}_$p:period_end_at"; then
+            pass "C5A-AC10 the purge assertions cover ${family}_$p"
+        else
+            fail "C5A-AC10 the purge assertions do not cover ${family}_$p"
+        fi
+    done
+done
+# The purged part is written by the purge itself, before the flows go: what the purge
+# removed from flow is what it added to purged_flow_hour -- less the hours the same
+# purge removes outright, whose hour, week and month all ended before the horizon,
+# because no slot is ever composed from those again.
+FLOW_HOUR_WEEK_END="$(printf -- '%s' "$WEEK_END" | sed 's|period_start_at|((observed_at / 3600) * 3600)|g')"
+FLOW_HOUR_MONTH_END="$(printf -- '%s' "$MONTH_END" | sed 's|period_start_at|((observed_at / 3600) * 3600)|g')"
+check 'C5A-AC2 the purge records the bytes of every flow it removes as a purged part' \
+    "$(q "$MAIN_DB" "SELECT coalesce(sum(packet_bytes), 0) FROM flow WHERE observed_at < $CUTOFF
+        AND NOT ((observed_at / 3600) * 3600 + 3600 < $CUTOFF
+                 AND $FLOW_HOUR_WEEK_END < $CUTOFF AND $FLOW_HOUR_MONTH_END < $CUTOFF);")" \
+    "$(q "$PURGE_DB" "SELECT coalesce(sum(bytes), 0) FROM purged_flow_hour WHERE purged_at = $NOW;")"
+check 'C5A-AC2 the purge records how far back it has purged, and no stored flow is older' \
+    "$CUTOFF|0" \
+    "$(q "$PURGE_DB" 'SELECT purged_before FROM retention_purge;')|$(q "$PURGE_DB" \
+        'SELECT count(*) FROM flow WHERE observed_at < (SELECT purged_before FROM retention_purge);')"
+check_ge 'C5A-AC2 the purge removed flows whose hours are kept, so the check above proves something' 1 \
+    "$(q "$PURGE_DB" "SELECT count(*) FROM purged_flow_hour WHERE purged_at = $NOW;")"
+# And the seed exercises both sides of both rules, so the two checks above prove something.
+check_ge 'C5A-AC31 the seed holds a client older than the horizon that only a kept purged part names' 1 \
+    "$OLD_CLIENTS_KEPT_BY_PURGED_PART"
+check_ge 'C5A-AC31 the seed holds a client older than the horizon that only an expired purged part names' 1 \
+    "$OLD_CLIENTS_NAMED_ONLY_BY_EXPIRED_PART"
+check_ge 'C5A-AC31 the seed holds a lookup older than the horizon that a surviving attribution names' 1 \
+    "$(printf -- '%s' "$OLD_LOOKUPS_NAMED" | tr ',' '\n' | grep -c .)"
+check_ge 'C5A-AC31 the seed holds lookups older than the horizon that nothing surviving names' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM dns_resolution WHERE looked_up_at < $CUTOFF;")"
 check 'AC31 the purge removed no flow newer than the horizon' "$BEFORE_NEW_FLOW" \
     "$(q "$PURGE_DB" "SELECT count(*) FROM flow WHERE observed_at >= $CUTOFF;")"
 check 'AC31 the purge removed no security event newer than the horizon' "$BEFORE_NEW_ALERT" \
@@ -1584,7 +1778,27 @@ $REPO_ROOT/sql/queries/diagnostics.sql
 $REPO_ROOT/sql/seed.sql
 $REPO_ROOT/sql/schema-checks.sh
 $REPO_ROOT/docs/data-model.md
-$REPO_ROOT/docs/architecture.md"
+$REPO_ROOT/docs/architecture.md
+$REPO_ROOT/internal/store/derive.sql
+$REPO_ROOT/internal/store/read.sql
+$REPO_ROOT/internal/store/aggregate.go
+$REPO_ROOT/internal/store/attribute.go
+$REPO_ROOT/internal/store/classify.go
+$REPO_ROOT/internal/store/network.go
+$REPO_ROOT/internal/store/exec.go
+$REPO_ROOT/internal/store/period.go
+$REPO_ROOT/internal/store/read.go
+$REPO_ROOT/internal/store/samples.go
+$REPO_ROOT/internal/store/statements.go
+$REPO_ROOT/internal/collect/derive.go
+$REPO_ROOT/internal/collect/discovery.go
+$REPO_ROOT/internal/collect/dnslookup.go
+$REPO_ROOT/internal/collect/firewalllog.go
+$REPO_ROOT/internal/publicsuffix/client.go
+$REPO_ROOT/internal/publicsuffix/endpoints.go
+$REPO_ROOT/internal/publicsuffix/group.go
+$REPO_ROOT/internal/publicsuffix/list.go
+$REPO_ROOT/internal/publicsuffix/refresh.go"
 DOTTED_QUAD='[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?'
 : > "$WORK/literals.txt"
 while IFS= read -r f; do
@@ -1596,6 +1810,42 @@ if [ -s "$WORK/literals.txt" ]; then
 else
     pass 'AC34 no dotted-quad or CIDR literal in any file this cycle adds'
 fi
+
+# S5A-AC36: the code step 5A adds carries no IPv6 literal, and no interface, device or
+# VLAN name, as well as no dotted quad. The documents are left out of THIS pattern
+# set on purpose: they cite the IPv6 documentation prefix by name, which is prose and
+# not configuration. The code may not even do that. Every non-test Go and SQL file
+# under the three packages step 5A writes is read, so a file added later is covered
+# without being listed.
+STEP5A_CODE_FILES="$(find "$REPO_ROOT/internal/store" "$REPO_ROOT/internal/collect" \
+    "$REPO_ROOT/internal/publicsuffix" -maxdepth 1 \( -name '*.go' -o -name '*.sql' \) \
+    ! -name '*_test.go' | sort)"
+IPV6_COMPRESSED='[0-9A-Fa-f]{1,4}::|::[0-9A-Fa-f]{1,4}'
+IPV6_FULL='([0-9A-Fa-f]{1,4}:){4,7}[0-9A-Fa-f]{1,4}'
+INTERFACE_NAME='\b(igb|em|re|ix|ixl|vtnet|vlan|lagg|bridge|wg|ovpns|ovpnc|tun|tap|opt)[0-9]+\b'
+INTERFACE_IDENTIFIER="(\"|')(lan|wan)(\"|')"
+: > "$WORK/step5a_literals.txt"
+while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    grep -nHE -e "$IPV6_COMPRESSED" -e "$IPV6_FULL" -e "$INTERFACE_NAME" -e "$INTERFACE_IDENTIFIER" \
+        "$f" >> "$WORK/step5a_literals.txt" 2>/dev/null
+done <<< "$STEP5A_CODE_FILES"
+check_ge 'S5A-AC36 the step-5A code files were read' 20 "$(printf -- '%s\n' "$STEP5A_CODE_FILES" | wc -l | tr -d ' ')"
+if [ -s "$WORK/step5a_literals.txt" ]; then
+    fail "S5A-AC36 an IPv6 literal or an interface, device or VLAN name was found: $(head -n 5 "$WORK/step5a_literals.txt")"
+else
+    pass 'S5A-AC36 no IPv6 literal and no interface, device or VLAN name in the step-5A code'
+fi
+# And the patterns have teeth.
+for sample in 'peer := "2001:db8::1"' 'addr := "fd00:1:2:3:4:5:6:7"' 'device = "igb0"' \
+              "WHERE identifier = 'lan'" 'name := "vlan0.20"'; do
+    if printf -- '%s\n' "$sample" | grep -qE -e "$IPV6_COMPRESSED" -e "$IPV6_FULL" \
+            -e "$INTERFACE_NAME" -e "$INTERFACE_IDENTIFIER"; then
+        pass "S5A-AC36 the literal check catches: $sample"
+    else
+        fail "S5A-AC36 the literal check misses: $sample"
+    fi
+done
 check 'AC34 every seeded address was synthesised from a counter at generation time' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE src_address IS NULL OR dst_address IS NULL;")"
 
@@ -1605,8 +1855,14 @@ section 'AC35 — no assumed interface, client or interface count'
 apply_schema "$ALT_DB" "$WORK/apply_alt.err" || fail 'AC35 the alternative database failed to take the schema'
 seed_database "$ALT_DB" "$ALT_INTERFACES" "$ALT_CLIENTS" "$ALT_RULES" "$ALT_FLOW_ROWS" \
     "$ALT_ALERTS" "$ALT_PAIR_ROWS" "$ALT_OWNERS" "$ALT_IPV6_EVERY"
+# RESTATED by step 5A: the seed now discovers one more interface, the UPSTREAM one
+# (a gateway was reported behind it), and no client sits behind it. The parameter
+# counts the interfaces clients sit behind, so it is compared with those, and the
+# upstream one is asserted separately rather than absorbed into the count.
 check 'AC35 the alternative seed has a different interface count' "$ALT_INTERFACES" \
-    "$(q "$ALT_DB" 'SELECT count(*) FROM interface;')"
+    "$(q "$ALT_DB" 'SELECT count(*) FROM interface WHERE is_upstream = 0;')"
+check 'AC35 the alternative seed discovers exactly one upstream interface' '1' \
+    "$(q "$ALT_DB" 'SELECT count(*) FROM interface WHERE is_upstream = 1;')"
 check 'AC35 the alternative seed has a different owner count' "$ALT_OWNERS" \
     "$(q "$ALT_DB" 'SELECT count(*) FROM owner;')"
 check 'AC35 the alternative database is consistent' '' "$(q "$ALT_DB" 'PRAGMA foreign_key_check;')"
@@ -1792,12 +2048,12 @@ check 'VOC-AC4 a freshly migrated database attributes nothing to anybody' '0' \
 check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
     "$(q "$FRESH_DB" 'SELECT count(*) FROM provider WHERE is_active = 1;')"
 
-expect_sql_failure 'PN-AC9 a registry row whose kind is outside the eight is rejected' "$FRESH_DB" \
+expect_sql_failure 'PN-AC9 a registry row whose kind is outside the nine is rejected' "$FRESH_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
      VALUES ('telepathy', 'pn-ac9', 'PN-AC9', 0, $NOW);"
 extract_block "$ARCH_DOC" '<!-- provider-kinds:begin -->' '<!-- provider-kinds:end -->' |
     sort > "$WORK/doc_kinds.txt"
-check 'PN-AC9 the document lists exactly eight kinds' '8' \
+check 'PN-AC9 the document lists exactly nine kinds' '9' \
     "$(wc -l < "$WORK/doc_kinds.txt" | tr -d ' ')"
 q "$MAIN_DB" 'SELECT DISTINCT kind FROM provider ORDER BY kind;' | sort > "$WORK/db_kinds.txt"
 if diff -u "$WORK/doc_kinds.txt" "$WORK/db_kinds.txt" > "$WORK/kinds.diff"; then
@@ -1833,7 +2089,7 @@ KIND_COUNT="$(q "$MAIN_DB" 'SELECT count(DISTINCT kind) FROM provider;')"
 # is asserted by name below rather than as a count.
 EXCLUSIVE_PREDICATE="p.kind NOT IN ('security_event', 'dhcp_lease', 'measurement_sample',
                                     'reconciled_state')"
-check 'PN-AC12 the registry holds a provider of every one of the eight kinds' '8' "$KIND_COUNT"
+check 'PN-AC12 the registry holds a provider of every one of the nine kinds' '9' "$KIND_COUNT"
 # The active set is asserted as a SET rather than as a count derived from the kind
 # count, and that is the restatement: the seed used to activate exactly one provider
 # per kind, and it now models a two-DHCP-server estate, so a count alone would no
@@ -1845,6 +2101,7 @@ dns_lookup/unbound
 firewall_log/pf
 geo_asn/maxmind_geolite2
 measurement_sample/insight
+public_suffix/public_suffix_list
 reconciled_state/example-state-source
 security_event/suricata'
 check 'PN-AC12 the seed activates exactly the providers it names' "$EXPECTED_ACTIVE"     "$(q "$MAIN_DB" "SELECT kind || '/' || provider_key FROM provider
@@ -2029,7 +2286,7 @@ expect_sql_failure 'EX-AC3 two providers of the dns_lookup kind cannot both be a
 
 # EX-AC4: the concurrency is still bounded by the registry. A kind that admits
 # several active providers does not admit an unregistered one.
-expect_sql_failure 'EX-AC4 an active provider of a kind outside the eight is still rejected' "$REGISTER_DB" \
+expect_sql_failure 'EX-AC4 an active provider of a kind outside the nine is still rejected' "$REGISTER_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
      VALUES ('telepathy', 'ex-ac4', 'EX-AC4', 1, $NOW);"
 
@@ -2337,13 +2594,29 @@ while IFS= read -r source_file; do
             ;;
     esac
 done <<EOF
-$(find "$REPO_ROOT/internal" "$REPO_ROOT/cmd" -name '*.go' ! -name '*_test.go' | sort)
+$(find "$REPO_ROOT/internal" "$REPO_ROOT/cmd" \( -name '*.go' -o -name '*.sql' \) ! -name '*_test.go' |
+  grep -vxF -e "$REPO_ROOT/internal/store/derive.sql" -e "$REPO_ROOT/internal/store/purge.sql" | sort)
 EOF
+# RESTATED by step 5A, which wrote the derivation. The scan now reads the embedded
+# .sql files as well as the Go sources -- the derivation is SQL embedded into the
+# binary, so a scan of .go alone would no longer see where the table is written --
+# and admits exactly two writers by path: the derivation's own statement file and
+# the retention purge. Anything else that writes the table, in either language,
+# fails; the Go test TestOnlyTheDerivationWritesThePairVolumeTable asserts the
+# same from inside the module, and its sibling proves it has teeth.
 if [ -s "$WORK/pair_writers.txt" ]; then
-    fail "PV-AC1 a code path writes the derived per-pair table: $(head -n 3 "$WORK/pair_writers.txt")"
+    fail "PV-AC1 a code path other than the derivation writes the per-pair table: $(head -n 3 "$WORK/pair_writers.txt")"
 else
-    pass 'PV-AC1 no Go code path writes the derived per-pair table'
+    pass 'PV-AC1 nothing but the derivation and the purge writes the derived per-pair table'
 fi
+for admitted in derive.sql purge.sql; do
+    if tr '\n' ' ' < "$REPO_ROOT/internal/store/$admitted" | tr -s ' ' | tr '[:upper:]' '[:lower:]' |
+            grep -qE '(insert into|delete from) pair_volume_observation'; then
+        pass "PV-AC1 the admitted writer internal/store/$admitted does write the table"
+    else
+        fail "PV-AC1 internal/store/$admitted is admitted but writes nothing, so the admission is stale"
+    fi
+done
 check 'PV-AC2 the kind whose destination is derived has no active provider' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM provider WHERE kind = 'flow_volume' AND is_active = 1;")"
 for needle in 'DERIVED, NOT COLLECTED' "step 5's to COMPUTE from"; do
@@ -2694,6 +2967,376 @@ while read -r cname cindex; do
         fail "PN-AC29 the $cname plan stopped being covered at 1 000 000 rows"
     fi
 done < "$WORK/covering.txt"
+
+# ===========================================================================
+section 'S5A-AC35 — no derivation or read statement plans a scan of a growing table'
+# ===========================================================================
+# Step 5A's statements live in internal/store/derive.sql and read.sql, embedded
+# into the binary and split there on their "-- statement: <name>" markers. They are
+# split here the same way, every @period@ template is expanded for each of the four
+# periods, every parameter is bound, and each is planned against the seeded
+# database AND the million-row one. A SCAN of a growing table fails, whatever the
+# alias it hides behind -- including the aliases inside a view, because a view over
+# flow is flattened into the statement that reads it and its scan is that
+# statement's scan.
+DERIVE_FILE="$REPO_ROOT/internal/store/derive.sql"
+READ_FILE="$REPO_ROOT/internal/store/read.sql"
+split_statements() {
+    local src="$1" outdir="$2"
+    mkdir -p "$outdir"
+    awk -v outdir="$outdir" '
+        index($0, "-- statement: ") == 1 {
+            name = substr($0, length("-- statement: ") + 1)
+            file = outdir "/" name ".sql"
+            printf "" > file
+            next
+        }
+        file != "" && index($0, "--") != 1 { print >> file }
+    ' "$src"
+}
+rm -rf "$WORK/statements"
+split_statements "$DERIVE_FILE" "$WORK/statements"
+split_statements "$READ_FILE" "$WORK/statements"
+STATEMENT_COUNT="$(find "$WORK/statements" -name '*.sql' | wc -l | tr -d ' ')"
+check_ge 'S5A-AC35 the statement files hold the derivation and read statements' 40 "$STATEMENT_COUNT"
+
+# The view and table every alias can stand for: the statement's own aliases, then
+# the aliases inside the schema's views. classified_flow is a view over flow alone,
+# so a scan of it IS a scan of flow.
+statement_aliases() {
+    grep -ohE '(FROM|JOIN)[[:space:]]+[a-z][a-z0-9_]*[[:space:]]+AS[[:space:]]+[a-z][a-z0-9_]*' "$@" |
+        awk '{ print $4 " " $2 }' | sort -u
+}
+statement_aliases "$SCHEMA_FILE" > "$WORK/view_aliases.txt"
+scanned_growing_tables() {
+    local stmt="$1" plan="$2" token table
+    statement_aliases "$stmt" > "$WORK/stmt_aliases.txt"
+    grep -oE 'SCAN [A-Za-z_][A-Za-z0-9_]*' "$plan" | awk '{ print $2 }' | sort -u |
+    while read -r token; do
+        [ -n "$token" ] || continue
+        table="$(awk -v a="$token" '$1 == a { print $2; exit }' "$WORK/stmt_aliases.txt")"
+        [ -n "$table" ] || table="$(awk -v a="$token" '$1 == a { print $2; exit }' "$WORK/view_aliases.txt")"
+        [ -n "$table" ] || table="$token"
+        [ "$table" = 'classified_flow' ] && table='flow'
+        if grep -qx "$table" "$WORK/growing.txt"; then
+            printf -- '%s\n' "$table"
+        fi
+    done
+}
+plan_statement() {
+    local db="$1" stmt="$2" name
+    {
+        printf -- '.bail on\n.param init\n'
+        grep -oE ':[a-z_]+' "$stmt" | sort -u | while read -r name; do
+            printf -- '.param set %s %s\n' "$name" "$NOW"
+        done
+        printf -- 'EXPLAIN QUERY PLAN\n'
+        cat "$stmt"
+    } | sqlite3 "$db"
+}
+PLANNED=0
+SCANNING=''
+UNPLANNABLE=''
+for stmt in "$WORK"/statements/*.sql; do
+    base="$(basename "$stmt" .sql)"
+    # A composition template names a period AND the finer period its slots are
+    # composed from; it exists only for the three periods that have one.
+    if grep -q '@child@' "$stmt"; then
+        expansions='24h:1h 7d:24h 30d:24h'
+    elif grep -q '@period@' "$stmt"; then
+        expansions='1h 24h 7d 30d'
+    else
+        expansions='-'
+    fi
+    for period in $expansions; do
+        if [ "$period" = '-' ]; then
+            target="$stmt"
+            label="$base"
+        else
+            target="$WORK/statements/expanded_${base}_$period.sql.txt"
+            sed -e "s/@period@/${period%%:*}/g" -e "s/@child@/${period#*:}/g" "$stmt" > "$target"
+            label="${base}[$period]"
+        fi
+        for db in "$MAIN_DB" "$SCALE_DB"; do
+            if ! plan_statement "$db" "$target" > "$WORK/stmt_plan.txt" 2>&1; then
+                UNPLANNABLE="$UNPLANNABLE $label($(head -n 1 "$WORK/stmt_plan.txt"))"
+                continue
+            fi
+            PLANNED=$((PLANNED + 1))
+            scanned="$(scanned_growing_tables "$target" "$WORK/stmt_plan.txt" | tr '\n' ' ')"
+            if [ -n "$scanned" ]; then
+                SCANNING="$SCANNING $label@$(basename "$db" .db):$scanned"
+            fi
+        done
+    done
+done
+check_ge 'S5A-AC35 every statement and every period of every template was planned on both databases' \
+    80 "$PLANNED"
+check 'S5A-AC35 every statement plans against the schema' '' "$UNPLANNABLE"
+check 'S5A-AC35 no derivation or read statement scans a growing table, at either seed size' \
+    '' "$SCANNING"
+# And the check has teeth: a statement that does scan flow is caught, through an
+# alias and through the view.
+printf -- 'SELECT count(*) FROM classified_flow AS z WHERE z.packet_bytes > 0;\n' \
+    > "$WORK/statements/teeth.sql.txt"
+plan_statement "$MAIN_DB" "$WORK/statements/teeth.sql.txt" > "$WORK/stmt_plan.txt" 2>&1
+check 'S5A-AC35 the scan check catches a scan of flow hidden behind the view and an alias' 'flow' \
+    "$(scanned_growing_tables "$WORK/statements/teeth.sql.txt" "$WORK/stmt_plan.txt" | tr -d '\n')"
+
+# ===========================================================================
+section 'S5A-AC35 — the seed fills every new table and column, in both families'
+# ===========================================================================
+for db in "$MAIN_DB" "$ALT_DB"; do
+    tag="$(basename "$db" .db)"
+    for t in interface_address \
+             client_volume_aggregate_1h client_volume_aggregate_24h \
+             client_volume_aggregate_7d client_volume_aggregate_30d \
+             domain_volume_aggregate_1h domain_volume_aggregate_24h \
+             domain_volume_aggregate_7d domain_volume_aggregate_30d \
+             rule_volume_aggregate_1h rule_volume_aggregate_24h \
+             rule_volume_aggregate_7d rule_volume_aggregate_30d \
+             peer_volume_aggregate_1h peer_volume_aggregate_24h \
+             peer_volume_aggregate_7d peer_volume_aggregate_30d \
+             purged_flow_hour address_classification interface_network retention_purge; do
+        check_ge "S5A-AC35 $tag: $t holds rows" 1 "$(q "$db" "SELECT count(*) FROM $t;")"
+    done
+    check "C5A-AC6 $tag: interface_network carries both origins" 'detected,operator' \
+        "$(q "$db" "SELECT group_concat(origin, ',') FROM
+            (SELECT DISTINCT origin FROM interface_network ORDER BY 1);")"
+    check_ge "C5A-AC6 $tag: a detected network the operator removed is kept, removed" 1 \
+        "$(q "$db" "SELECT count(*) FROM interface_network
+            WHERE origin = 'detected' AND removed_at IS NOT NULL;")"
+    check "C5A-AC6 $tag: interface_network carries both families" '4,6' \
+        "$(q "$db" "SELECT group_concat(address_family, ',') FROM
+            (SELECT DISTINCT address_family FROM interface_network ORDER BY 1);")"
+    check "C5A-AC6 $tag: the link-local rule carries both values" '0,1' \
+        "$(q "$db" "SELECT group_concat(link_local_evidence, ',') FROM
+            (SELECT DISTINCT link_local_evidence FROM interface ORDER BY 1);")"
+    check "C5A-AC8 $tag: dns_resolution carries every client resolution" \
+        'ambiguous_hostname,lease_hostname,logged_address,unknown_hostname' \
+        "$(q "$db" "SELECT group_concat(client_resolution, ',') FROM
+            (SELECT DISTINCT client_resolution FROM dns_resolution ORDER BY 1);")"
+    check "C5A-AC4 $tag: every client slot's distinct_peers is its peer rows, in every period" '0' \
+        "$(q "$db" "SELECT (SELECT count(*) FROM client_volume_aggregate_1h c WHERE c.distinct_peers <>
+                (SELECT count(*) FROM peer_volume_aggregate_1h p WHERE p.period_start_at = c.period_start_at
+                   AND p.client_id = c.client_id AND p.traffic_direction = c.traffic_direction))
+              + (SELECT count(*) FROM client_volume_aggregate_30d c WHERE c.distinct_peers <>
+                (SELECT count(*) FROM peer_volume_aggregate_30d p WHERE p.period_start_at = c.period_start_at
+                   AND p.client_id = c.client_id AND p.traffic_direction = c.traffic_direction));")"
+    for p in 1h 24h 7d 30d; do
+        check "S5A-AC35 $tag: volume_aggregate_$p carries all three traffic directions" \
+            'inbound,inter_interface,outbound' \
+            "$(q "$db" "SELECT group_concat(traffic_direction, ',') FROM
+                (SELECT DISTINCT traffic_direction FROM volume_aggregate_$p ORDER BY 1);")"
+        check_ge "S5A-AC35 $tag: volume_aggregate_$p carries an inbound slot with no source interface" 1 \
+            "$(q "$db" "SELECT count(*) FROM volume_aggregate_$p WHERE src_interface_id IS NULL;")"
+        check_ge "S5A-AC35 $tag: volume_aggregate_$p carries outside peers of both families" 2 \
+            "$(q "$db" "SELECT count(DISTINCT instr(peer_address, ':') > 0) FROM volume_aggregate_$p
+                WHERE peer_address IS NOT NULL;")"
+        for t in "volume_aggregate_$p" "owner_volume_aggregate_$p" "client_volume_aggregate_$p" \
+                 "domain_volume_aggregate_$p" "rule_volume_aggregate_$p" "peer_volume_aggregate_$p"; do
+            check_ge "S5A-AC35 $tag: $t fills the allowed bytes" 1 \
+                "$(q "$db" "SELECT count(*) FROM $t WHERE allowed_bytes > 0;")"
+            check_ge "S5A-AC35 $tag: $t fills the blocked bytes" 1 \
+                "$(q "$db" "SELECT count(*) FROM $t WHERE blocked_bytes > 0;")"
+            check_ge "S5A-AC35 $tag: $t keeps the unknown decisions apart" 1 \
+                "$(q "$db" "SELECT count(*) FROM $t WHERE unknown_bytes > 0 AND unknown_connections > 0;")"
+        done
+        check_ge "S5A-AC35 $tag: client_volume_aggregate_$p counts distinct peers" 1 \
+            "$(q "$db" "SELECT count(*) FROM client_volume_aggregate_$p WHERE distinct_peers > 0;")"
+        check_ge "S5A-AC35 $tag: rule_volume_aggregate_$p keeps the flows no rule resolved" 1 \
+            "$(q "$db" "SELECT count(*) FROM rule_volume_aggregate_$p WHERE rule_id IS NULL;")"
+    done
+    check "S5A-AC35 $tag: interface_address carries both families" '4,6' \
+        "$(q "$db" "SELECT group_concat(address_family, ',') FROM
+            (SELECT DISTINCT address_family FROM interface_address ORDER BY 1);")"
+    check "S5A-AC35 $tag: interface_address carries every source field" 'addr4,addr6,gateways,ipv4,ipv6' \
+        "$(q "$db" "SELECT group_concat(source_field, ',') FROM
+            (SELECT DISTINCT source_field FROM interface_address ORDER BY 1);")"
+    check_ge "S5A-AC35 $tag: an interface address change is history, not an overwrite" 2 \
+        "$(q "$db" "SELECT max(n) FROM (SELECT count(*) AS n FROM interface_address
+            WHERE source_field = 'addr4' GROUP BY interface_id);")"
+    check "S5A-AC35 $tag: is_upstream carries both values" '0,1' \
+        "$(q "$db" "SELECT group_concat(is_upstream, ',') FROM
+            (SELECT DISTINCT is_upstream FROM interface ORDER BY 1);")"
+    check_ge "S5A-AC35 $tag: rule.interface is filled, a floating rule's empty value included" 1 \
+        "$(q "$db" "SELECT count(*) FROM rule WHERE interface = '';")"
+    check_ge "S5A-AC35 $tag: rule.legacy marks legacy rows" 1 \
+        "$(q "$db" "SELECT count(*) FROM rule WHERE legacy = 1;")"
+    check "S5A-AC35 $tag: dns_resolution carries every interface lookup state it is seeded with" \
+        'not_found,resolved' \
+        "$(q "$db" "SELECT group_concat(interface_lookup_state, ',') FROM
+            (SELECT DISTINCT interface_lookup_state FROM dns_resolution ORDER BY 1);")"
+    check_ge "S5A-AC35 $tag: an unplaced lookup is seeded in both families" 2 \
+        "$(q "$db" "SELECT count(DISTINCT instr(client_address, ':') > 0) FROM dns_resolution
+            WHERE interface_lookup_state = 'not_found';")"
+    check_ge "S5A-AC35 $tag: the gateway readings are seeded" 2 \
+        "$(q "$db" "SELECT count(DISTINCT measure) FROM measurement_sample WHERE subject_kind = 'gateway';")"
+    check_ge "S5A-AC35 $tag: the interface error readings are seeded" 1 \
+        "$(q "$db" "SELECT count(*) FROM measurement_sample WHERE measure = 'errors_in';")"
+    check_ge "S5A-AC35 $tag: the swap readings are seeded" 1 \
+        "$(q "$db" "SELECT count(*) FROM measurement_sample WHERE measure = 'swap_used_bytes';")"
+    check_ge "S5A-AC35 $tag: the totals of each local address are seeded, in both families" 2 \
+        "$(q "$db" "SELECT count(DISTINCT instr(subject_key, ':') > 0) FROM measurement_sample
+            WHERE subject_kind = 'interface_endpoint';")"
+    check "S5A-AC35 $tag: the seed is consistent" '' "$(q "$db" 'PRAGMA foreign_key_check;')"
+done
+
+# ===========================================================================
+section 'S5A-AC19, S5A-AC25, S5A-AC26 — the seeded aggregates, refusals and directions'
+# ===========================================================================
+# Every family of every period sums to the same flows: the interface and rule
+# families to every flow, the owner and client families to every flow with an
+# inside client, the domain family to every attributed flow.
+FLOW_BYTES="$(q "$MAIN_DB" 'SELECT sum(packet_bytes) FROM flow;')"
+INSIDE_BYTES="$(q "$MAIN_DB" 'SELECT sum(packet_bytes) FROM classified_flow WHERE local_client_id IS NOT NULL;')"
+NAMED_BYTES="$(q "$MAIN_DB" 'SELECT sum(f.packet_bytes) FROM flow f JOIN domain_attribution a ON a.flow_id = f.id;')"
+for p in 1h 24h 7d 30d; do
+    check "S5A-AC19 volume_aggregate_$p sums to every flow" "$FLOW_BYTES" \
+        "$(q "$MAIN_DB" "SELECT sum(bytes) FROM volume_aggregate_$p;")"
+    check "S5A-AC19 rule_volume_aggregate_$p sums to every flow" "$FLOW_BYTES" \
+        "$(q "$MAIN_DB" "SELECT sum(bytes) FROM rule_volume_aggregate_$p;")"
+    check "S5A-AC19 owner_volume_aggregate_$p sums to every flow with an inside client" "$INSIDE_BYTES" \
+        "$(q "$MAIN_DB" "SELECT sum(bytes) FROM owner_volume_aggregate_$p;")"
+    check "S5A-AC19 client_volume_aggregate_$p sums to every flow with an inside client" "$INSIDE_BYTES" \
+        "$(q "$MAIN_DB" "SELECT sum(bytes) FROM client_volume_aggregate_$p;")"
+    check "S5A-AC19 domain_volume_aggregate_$p sums to every attributed flow" "$NAMED_BYTES" \
+        "$(q "$MAIN_DB" "SELECT sum(bytes) FROM domain_volume_aggregate_$p;")"
+done
+check 'S5A-AC18 every 7 d slot starts on a Monday and lasts a week' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM volume_aggregate_7d
+        WHERE strftime('%w', period_start_at, 'unixepoch') <> '1'
+           OR period_end_at - period_start_at <> 604800;")"
+check 'S5A-AC18 every 30 d slot is one calendar month' '0' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM volume_aggregate_30d
+        WHERE strftime('%d %H:%M:%S', period_start_at, 'unixepoch') <> '01 00:00:00'
+           OR period_end_at <> CAST(strftime('%s', period_start_at, 'unixepoch', '+1 month') AS INTEGER);")"
+
+# AC25: every refusal appears once, under the extended vocabulary, and each kind's
+# count equals a direct count of its source rows.
+check 'S5A-AC25 every refusal of the three engines appears exactly once' \
+    "$(q "$MAIN_DB" "SELECT (SELECT count(*) FROM flow WHERE action IN ('block', 'reject'))
+        + (SELECT count(*) FROM dns_resolution WHERE action IN ('block', 'drop'))
+        + (SELECT count(*) FROM security_event WHERE event_action = 'blocked');")" \
+    "$(q "$MAIN_DB" 'SELECT count(DISTINCT source_table || source_id) FROM blocked_decision;')"
+check 'S5A-AC25 no refusal is placed twice' "$(q "$MAIN_DB" 'SELECT count(*) FROM blocked_decision;')" \
+    "$(q "$MAIN_DB" 'SELECT count(DISTINCT source_table || source_id) FROM blocked_decision;')"
+check 'S5A-AC25 every engine kind is in the closed vocabulary' '' \
+    "$(q "$MAIN_DB" "SELECT group_concat(DISTINCT engine_kind) FROM blocked_decision
+        WHERE engine_kind NOT IN ('firewall_rule', 'firewall_no_rule', 'firewall_reason_not_recorded',
+            'dns_advertising_list', 'dns_tracking_list', 'dns_threat_list', 'dns_parental_list',
+            'dns_other_list', 'dns_unassigned_list', 'dns_list_not_recorded', 'security_engine');")"
+check 'S5A-AC25 the seed exercises every kind it can, the three firewall kinds included' \
+    'dns_advertising_list,dns_list_not_recorded,dns_threat_list,dns_tracking_list,dns_unassigned_list,firewall_no_rule,firewall_reason_not_recorded,firewall_rule,security_engine' \
+    "$(q "$MAIN_DB" "SELECT group_concat(engine_kind, ',') FROM
+        (SELECT DISTINCT engine_kind FROM blocked_decision ORDER BY 1);")"
+check 'S5A-AC25 the firewall-rule count equals a direct count' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE action IN ('block', 'reject') AND log_reason = 'match';")" \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM blocked_decision WHERE engine_kind = 'firewall_rule';")"
+check 'S5A-AC25 the list-not-recorded count equals a direct count' \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM dns_resolution
+        WHERE action IN ('block', 'drop') AND blocklist_id IS NULL;")" \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM blocked_decision WHERE engine_kind = 'dns_list_not_recorded';")"
+check_ge 'S5A-AC25 a refusal aimed at the firewall itself is told apart' 1 \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM blocked_decision WHERE target_is_this_firewall = 1;')"
+
+# AC26: the three directions partition the flows, for bytes and for connections.
+check 'S5A-AC26 inbound, outbound and inter-interface bytes sum to every byte' "$FLOW_BYTES" \
+    "$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM classified_flow
+        WHERE traffic_direction IN ('inbound', 'outbound', 'inter_interface');")"
+check 'S5A-AC26 inbound, outbound and inter-interface connections are every flow' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM flow;')" \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
+        WHERE traffic_direction IN ('inbound', 'outbound', 'inter_interface');")"
+check_ge 'S5A-AC26 a flow leaving a client is outbound although pf logged it in' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
+        WHERE traffic_direction = 'outbound' AND direction = 'in' AND src_interface_id IS NOT NULL;")"
+check_ge 'S5A-AC26 a flow with neither end inside is placed by pf dir' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
+        WHERE src_interface_id IS NULL AND dst_interface_id IS NULL AND traffic_direction = 'inbound';")"
+
+# ===========================================================================
+section 'S5A-AC1, AC2, AC5, AC28, AC37 — the documents step 5A edits'
+# ===========================================================================
+SURVEY="$REPO_ROOT/docs/opnsense-api-survey.md"
+CATALOGUE="$REPO_ROOT/docs/widget-catalogue.md"
+for needle in '### Which packets a logging rule writes, read for step 5' \
+              "### The \`reason\` field's values, read for step 5" \
+              "### What \`traffic/top\` measures, read from source for step 5" \
+              '### Telemetry field names, read from source for step 5' \
+              '### Gateway status, read from source for step 5' \
+              '### Swap, read from source for step 5' 'swapinfo.py' \
+              'pf.conf(5)' 'GatewayController.php'; do
+    if grep -qF -- "$needle" "$SURVEY"; then
+        pass "S5A-AC1 the survey records: $needle"
+    else
+        fail "S5A-AC1 the survey does not record: $needle"
+    fi
+done
+for needle in 'pf.conf(5)' 'establishes' 'logged volume' 'no answer address' \
+              "\`engine_kind\` is a closed vocabulary" 'Struck by step 5A' \
+              'not sampled' "\`no_domains\`" 'What step 5B reads' 'iftop'; do
+    if grep -qiF -- "$needle" "$DOC"; then
+        pass "S5A-AC37 the data model states: $needle"
+    else
+        fail "S5A-AC37 the data model does not state: $needle"
+    fi
+done
+for reason in match bad-offset fragment short normalize memory bad-timestamp congestion \
+              ip-option proto-cksum state-mismatch state-insert state-limit src-limit synproxy; do
+    if grep -qF -- "\`$reason\`" "$SURVEY"; then
+        pass "S5A-AC5 the survey records the reason $reason"
+    else
+        fail "S5A-AC5 the survey does not record the reason $reason"
+    fi
+done
+if grep -qF 'Three outbound calls, not one more' "$REPO_ROOT/ROADMAP.md"; then
+    pass 'S5A-AC37 the roadmap allows three outbound calls'
+else
+    fail 'S5A-AC37 the roadmap does not say three outbound calls'
+fi
+if grep -qF 'Two outbound calls' "$REPO_ROOT/ROADMAP.md"; then
+    fail 'S5A-AC37 the roadmap still says two outbound calls'
+else
+    pass 'S5A-AC37 the roadmap no longer says two outbound calls'
+fi
+if grep -qF 'publicsuffix.org' "$REPO_ROOT/README.md"; then
+    pass 'S5A-AC37 the README lists the Public Suffix List download'
+else
+    fail 'S5A-AC37 the README does not list the Public Suffix List download'
+fi
+
+# AC28: the marker appears once per open gap, in the Gaps found table and nowhere
+# else, so its count equals that table's open rows.
+MARKERS="$(grep -c 'MISSING FROM MODEL:' "$CATALOGUE")"
+OPEN_ROWS="$(awk '
+    index($0, "## Gaps found") == 1 { inside = 1; next }
+    inside && index($0, "## ") == 1 { inside = 0 }
+    inside && /^\| G[0-9]+ \|/ { n++ }
+    END { print n + 0 }
+' "$CATALOGUE")"
+check 'S5A-AC28 the missing-from-model markers equal the open rows of Gaps found' "$OPEN_ROWS" "$MARKERS"
+for gap in G2 G3 G4 G5 G6 G13; do
+    check "S5A-AC28 $gap sits under Gaps closed" '1' \
+        "$(awk -v g="$gap" '
+            index($0, "## Gaps closed") == 1 { inside = 1; next }
+            inside && index($0, "## ") == 1 { inside = 0 }
+            inside && index($0, "| " g " |") == 1 { n++ }
+            END { print n + 0 }
+        ' "$CATALOGUE")"
+    check "S5A-AC28 $gap is no longer an open gap" '0' \
+        "$(grep -c "^| $gap | \`MISSING FROM MODEL:\`" "$CATALOGUE")"
+done
+# C5A-AC11: the step-5A corrections stored ipv4[] and ipv6[], which was all that kept
+# G13 open, so it is closed and names the two source fields that closed it.
+if awk 'index($0, "## Gaps closed") == 1 { inside = 1; next }
+        inside && index($0, "## ") == 1 { inside = 0 }
+        inside && index($0, "| G13 |") == 1' "$CATALOGUE" | grep -qF '`ipv4`'; then
+    pass 'C5A-AC11 G13 is closed, and its row names the ipv4 and ipv6 source fields'
+else
+    fail 'C5A-AC11 G13 is not recorded as closed by the ipv4 and ipv6 source fields'
+fi
+check 'C5A-AC11 three gaps remain open' '3' "$OPEN_ROWS"
 
 # ===========================================================================
 section 'FC-AC1 to FC-AC5 — the API field coverage table stays honest'

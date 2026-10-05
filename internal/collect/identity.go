@@ -1,8 +1,6 @@
 package collect
 
 import (
-	"context"
-	"fmt"
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/store"
@@ -42,56 +40,21 @@ import (
 // is why the neighbour tables are collected at all.
 
 // AddressIdleWindow is how long an address may go unseen before a later sighting
-// is treated as a different machine.
-const AddressIdleWindow = 86400
+// is treated as a different machine. It is store.AddressIdleWindow, which the
+// classification reads when it mints a level-3 identity.
+const AddressIdleWindow = store.AddressIdleWindow
 
-// clientForAddress returns the machine at an address, creating a level-3 identity
-// only when nothing more stable knows it.
-//
-// interfaceID is the interface the address was seen behind, when the caller knows
-// it; a level-3 key composed without one is still unique, because the address and
-// the validity start remain in it, and it is honest — the alternative would be
-// inventing an interface for a machine whose interface is unknown.
-func (c *Collector) clientForAddress(ctx context.Context, interfaceID *int64,
-	address string, now int64) (*int64, *int64, error) {
-	if address == "" {
-		return nil, nil, nil
-	}
-
-	// A lease, a neighbour table entry or an earlier sighting already named this
-	// machine, and the sighting is recent enough to be the same one.
-	id, knownInterfaceID, found, err := c.store.ClientRefByAddressSince(ctx, address, now-AddressIdleWindow)
-	if err != nil {
-		return nil, nil, err
-	}
-	if found {
-		resolvedInterface := knownInterfaceID
-		if resolvedInterface == nil {
-			resolvedInterface = interfaceID
-		}
-		return &id, resolvedInterface, nil
-	}
-
-	key := addressIdentityKey(interfaceID, address, now)
-	newID, err := c.store.UpsertClient(ctx, store.Client{
-		Identity:    store.ClientIdentity{Kind: store.IdentityAddressInInterface, Key: key},
-		InterfaceID: interfaceID,
-		LastAddress: &address,
-	}, now)
-	if err != nil {
-		return nil, nil, err
-	}
-	return &newID, interfaceID, nil
-}
+// A LEVEL-3 IDENTITY IS MINTED BY THE CLASSIFICATION AND BY NOTHING HERE. It used to
+// be minted for any address a filter-log record named, on whatever interface the
+// record happened to be logged on, which turned every remote address into a client
+// row. The classification (internal/store/classify.go) mints one only for an address
+// with on-link evidence on a non-upstream interface, after the whole pass is stored.
 
 // addressIdentityKey composes the level-3 key: the interface, the address, and the
-// substitute validity start.
+// substitute validity start. The composition is store.AddressIdentityKey's, so a
+// lease falling to this level and the classification compose the same key.
 func addressIdentityKey(interfaceID *int64, address string, now int64) string {
-	interfacePart := "unknown"
-	if interfaceID != nil {
-		interfacePart = fmt.Sprintf("%d", *interfaceID)
-	}
-	return fmt.Sprintf("%s|%s|%d", interfacePart, address, DayStart(now))
+	return store.AddressIdentityKey(interfaceID, address, now)
 }
 
 // normaliseMAC lower-cases a hardware address and reports whether the result is

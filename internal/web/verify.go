@@ -10,10 +10,10 @@ import (
 
 // Verifying what the user typed.
 //
-// THIS IS THE FIRST OF THE TWO PERMITTED OUTBOUND CALLS, NOT A THIRD. Same
+// THIS IS THE FIRST OF THE THREE PERMITTED OUTBOUND CALLS, NOT A FOURTH. Same
 // destination, same registry, same read-only guarantee as every collector: the
-// firewall API on the local network. ROADMAP.md permits exactly two outbound calls
-// and this is inside the first of them.
+// firewall API on the local network. ROADMAP.md permits exactly three outbound
+// calls and this is inside the first of them.
 //
 // THE MAXMIND KEY IS NOT VERIFIED HERE. A download verifies it, and downloading is
 // internal/maxmind's alone; a save wakes that refresh, and the settings surface

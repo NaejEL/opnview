@@ -50,9 +50,15 @@ so and amend this roadmap rather than quietly working around it.
   be turned on for a source to exist — the resolver query log, for instance —
   it is a manual step the user performs, documented in the README. The
   application never performs it.
-- **Two outbound calls, not one more**: the firewall API (local network) and
-  the MaxMind database download. No telemetry, no version check, no resource
-  loaded from a CDN.
+- **Three outbound calls, not one more**: the firewall API (local network),
+  the MaxMind database download, and the Public Suffix List download from
+  publicsuffix.org. The third was added by the maintainer's decision for step
+  5A, because grouping a site name under its registrable domain needs the list,
+  and the list is maintained upstream: a copy frozen into the binary would group
+  every suffix added after the build wrongly, with no way to tell. It is
+  refreshed daily and fetched conditionally, so an unchanged list costs a 304,
+  and the previous good copy stays in use when a download fails. No telemetry,
+  no version check, no resource loaded from a CDN.
 - **The observation limit is documented, not printed**: the application only
   sees what crosses the router, so every figure is a lower bound.
 - **Degrade, never guess.** Suricata may be absent, installed but stopped, or
@@ -164,7 +170,7 @@ container run says nothing about deployment.
 |2|Data model and SQLite schema|Schema + model document|Done|
 |3|Static HTML mockup — overview|HTML file for a representative canvas, fake data|Done|
 |4|Backend: collection and storage|Collectors + persistence + tests|Done — validated against a live OPNsense 26.7 on 3 October 2026|
-|5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|To do|
+|5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|In progress — 5A (correlation, classification, aggregation) implemented, awaiting verification; 5B (HTTP API) to do|
 |6|Backend: alerts and client correlation|Alert model + API + tests|To do|
 |7|Full frontend|Canvases, widgets, dashboard import/export|To do|
 |8|Install, packaging, documentation|`ct/install.sh`, compose, README|To do|
@@ -368,9 +374,13 @@ every step** above. Prerequisite: the containerised toolchain described under
 ### Step 5 — Backend: correlation, classification, matrix
 
 - Source × destination matrix: volume, allowed connections, blocked
-  connections, matching rules by label. The 1 h and 24 h periods are computed
-  from `opnview`'s own history; only 7 d and 30 d can lean on the firewall's
-  daily per-pair aggregate.
+  connections, matching rules by label. Every period is computed from
+  `opnview`'s own history. ~~Only 7 d and 30 d can lean on the firewall's daily
+  per-pair aggregate.~~ Struck by step 5A: the only per-pair endpoint is a live
+  `traffic/top` snapshot carrying neither a port nor a protocol, and the daily
+  per-pair volume is derived from `flow` rather than read from Insight
+  (`docs/opnsense-api-survey.md`, *The per-pair data is a live snapshot, not
+  history*, and *What `traffic/top` measures, read from source for step 5*).
 - East-west / north-south classification, presented separately.
 - **Site names, sole path on 26.7**: correlating resolver lookups with
   subsequent flows. Suricata cannot serve this (step 1, finding 2), so the
@@ -393,6 +403,27 @@ every step** above. Prerequisite: the containerised toolchain described under
 
 **Validation**: the numbers are correct, and the heuristic's attribution rate
 is honest.
+
+**What this environment cannot prove, and the live firewall must.** Step 5A
+was verified from the `opnsense/core` 26.7.3 source, the surveyed documentation
+and synthesised fixtures. The following are probed against a live OPNsense at
+this step's validation, and each finding is recorded in
+`docs/opnsense-api-survey.md`:
+
+- the field names `/api/routes/gateway/status` returns, and the `~` it writes
+  in place of a reading it does not have;
+- the response of `/api/diagnostics/system/systemSwap`;
+- the time span one `traffic/top` sample covers, which the sampled-bytes
+  measure is defined from;
+- whether a tunnel carrying `gateways[]` — a VPN client with a gateway — is
+  classified as upstream, and whether that is right on that installation;
+- whether `iftop`, behind `traffic/top`, reports a client talking to another
+  interface on both interfaces, counting its rate twice;
+- the FreeBSD release wording of `pf.conf(5)` against the `releng` link the
+  survey cites for the release OPNsense 26.7 ships;
+- how often Unbound logs a host name rather than an address as a lookup's
+  `client`, which decides how many lookups go through the DHCP leases and how
+  many stay unresolved.
 
 ### Step 6 — Backend: alerts and client correlation
 
@@ -542,7 +573,7 @@ data.
   OPNsense API and MaxMind keys, **how to enable the resolver query log**,
   what an internal-interface IDS is and is not for, an
   honest limitations section, a factual section on the data collected and what
-  can be inferred from it, the two outbound calls. Licensed under MIT
+  can be inferred from it, the three outbound calls. Licensed under MIT
   (`LICENSE`).
 
 **Validation**: successful install from scratch on a PVE node.

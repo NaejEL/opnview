@@ -18,7 +18,7 @@ so those were read from the controller and backend sources, the authoritative wi
 than asserted — a hypothesis for step 4 to confirm empirically, not a fact this document stands behind.
 
 **Research is not an outbound call**, and nothing is hardcoded. Reading OPNsense documentation while writing this document is authoring
-activity, not something the binary does; the two outbound calls the roadmap allows are unaffected. Endpoint paths and response keys appear
+activity, not something the binary does; the three outbound calls the roadmap allows are unaffected. Endpoint paths and response keys appear
 below because they are the API contract; interface names, descriptions, subnets, VLAN tags and addresses appear nowhere — they are
 per-installation values discovered at runtime (see *Runtime discovery*), never embedded.
 
@@ -128,6 +128,36 @@ as such. `stream_log` is unsuitable as the primary path — throttled, and close
 
 **Observation-point limit.** The filter log only records packets that traverse the firewall and match a rule with logging enabled. Traffic
 between two devices inside the same segment never reaches the router and never appears here. Any screen built on these counts must say so.
+
+### Which packets a logging rule writes, read for step 5
+
+**A logging rule writes the packet that establishes a state, and not the rest of the connection.** FreeBSD's pf.conf(5) for 15.1-RELEASE,
+which is the release OPNsense 26.7 ships on, under `log`: *"In addition to any action specified, log the packet. Only the packet that
+establishes the state is logged, unless the no state option is specified."* and *"Use all to force logging of all packets for a connection.
+This is not necessary when no state is explicitly specified."* (https://man.freebsd.org/cgi/man.cgi?query=pf.conf&sektion=5&manpath=FreeBSD+15.1-RELEASE).
+OPNsense's per-rule option is the same flag: *"Log — Log packets that are handled by this rule"* (https://docs.opnsense.org/manual/firewall.html),
+and the default block and default pass rules log or not according to *Firewall > Settings > Advanced* — *"Here the logging behaviour of the
+default block/pass, automatic Source NAT as well as bogon and private network blocks can be adjusted. If disabled, only log directives from
+your manual rules will be show in the firewall log."* (https://docs.opnsense.org/manual/firewall_settings.html, *Logging*).
+
+So `length` on a pass record is the length of **one** packet, the one that created the state, and summing it gives **logged bytes**: a
+lower bound of nothing in particular, never the volume of the conversation. A connection logged `in` on one interface and `out` on another
+is two records. Every volume `opnview` computes from this source is named for what it is, and the data model says so beside each.
+
+### The `reason` field's values, read for step 5
+
+The `reason` field is written by OPNsense's `filterlog` daemon, which turns pf's numeric reason into a word through its own table
+(https://github.com/opnsense/ports/blob/26.7.3/opnsense/filterlog/files/filterlog.c, `pf_reasons`), and `read_log.py` passes the field through
+by position without mapping it. The table at 26.7.3 holds fifteen words, which are FreeBSD's `PFRES_NAMES`
+(https://github.com/freebsd/freebsd-src/blob/releng/15.0/sys/netpfil/pf/pf.h) up to `synproxy`:
+
+`match`, `bad-offset`, `fragment`, `short`, `normalize`, `memory`, `bad-timestamp`, `congestion`, `ip-option`, `proto-cksum`, `state-mismatch`,
+`state-insert`, `state-limit`, `src-limit`, `synproxy`.
+
+Any other reason — FreeBSD 15 adds `map-failed` (15) and `translate` (16), which filterlog's table does not carry — is written as
+`unknown(<n>)`. `match` is a rule decision; every other word in the set is a packet pf dropped for a reason no rule expresses. A value outside
+the set says nothing either way. The fixtures this repository records are synthesised and carry no real reason value, so the source is the
+only evidence; **the set is to be confirmed against a live firewall at the validation of step 5**.
 
 ### Degradation
 
@@ -456,6 +486,25 @@ derived `status` and category metadata — exactly the shape the site-name fallb
 `{timestamp, severity, process_name, line}`, `line` being the resolver's own free text. `UNVERIFIED:` the grammar of Unbound's and Dnsmasq's
 query-log lines — neither is a documented stable contract, and a regex over `line` is inherently fragile.
 
+**The value sets, read for step 5.** The query report stores `action` and `source` as integers and `scripts/unbound/stats.py` maps them
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/stats.py): `action` is `Pass`, `Block` or `Drop`, and `source`
+is `Recursion`, `Local`, `Local-data` or `Cache`, capitalised exactly so. The module that writes them,
+`scripts/unbound-dnsbl/dnsbl_module.py`, says what each means: `Recursion` is a query the iterator resolved; `Cache` an answer from
+Unbound's cache; `Local-data` an answer from a local zone or `local-data` entry — **a host override is one**, since OPNsense writes host
+overrides as `local-data:` lines (`src/etc/inc/plugins.inc.d/unbound.inc`); and `Local` is a blocklist's answer (`Block`) or any SERVFAIL
+(`Drop`), so a `Drop` is not always a policy decision. A lookup that names a site for `opnview` is therefore a `Pass` answered by
+`Recursion`, `Cache` or `Local-data`. One more fact of the same code bears on correlation: `client` is **replaced by the reverse-resolved
+host name** when the firewall has one (`stats.py`), so a lookup's `client` is not always an address.
+
+*Read for the step-5A corrections.* The name comes from `scripts/unbound/logger.py`
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/logger.py), which resolves every querying address it logs with
+`socket.gethostbyaddr` under a 10 ms timeout and stores the answer in its `client` table; the `details` query of `stats.py` joins the
+logged address to that table and returns the host name in its place whenever one was found. A reverse lookup answers with the fully
+qualified name. `opnview` resolves such a name back to an address through the DHCP leases valid at the lookup's instant — a lease under
+that name or under its first label — and only when exactly one address answers; otherwise the lookup names no machine
+(`docs/data-model.md`, `dns_resolution`). `UNVERIFIED:` how often a live firewall logs a host name rather than an address; it is on the
+step-5 validation list in `ROADMAP.md`.
+
 ### Retention on the firewall
 
 Unbound query reporting writes to an embedded database **truncated to the last 7 days**, hourly, with a periodic compaction pass — a hard
@@ -516,6 +565,23 @@ join key that turns the filter log's `interface` field into a segment name. http
 https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/OverviewController.php ·
 https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/InterfaceController.php
 
+*Read for step 5 from the same controller.* `addr4` and `addr6` are one string each, `"<address>/<prefix length>"` — the interface's own
+primary address, not its network — or the empty string. `gateways[]` is a list of gateway **addresses**, at most one per address family:
+for each family, the first enabled gateway configured on that interface that has an address, dynamic gateways included
+(`Routing/Gateways.php`, `getInterfaceGateway`). It is not limited to gateways marked *Upstream Gateway* — OPNsense applies "upstream" to a
+gateway, as a default-gateway candidate (https://docs.opnsense.org/manual/gateways.html) — and a LAN or VLAN interface with no gateway
+reports `[]`. `opnview` calls an interface **upstream** exactly when its `gateways[]` is non-empty, and stores `addr4`, `addr6` and
+`gateways[]` with the instants it saw them.
+
+*Read for the step-5A corrections from the same controller.* Each entry of `ipv4[]` and `ipv6[]` is an object whose `ipaddr` is the
+address and its `subnetbits` joined as `"<address>/<prefix length>"`; an entry for a CARP address also carries its `vhid`, and its
+`status`, `advbase`, `advskew`, `peer` and `peer6` from the CARP details. The arrays list every address the interface holds, the primary
+one included, and `ipv6[]` includes the interface's link-local address, which may carry its zone. `opnview` stores every entry under
+`source_field` `ipv4` or `ipv6`, and proposes the range each covers, masked to its prefix length, as one of the interface's **networks**
+— a link-local one excepted, because it is the same on every interface. *Network* is OPNsense's own word for that range: the rule editor
+offers "LAN net", and the internal alias holding it stands for "LAN network" (https://docs.opnsense.org/manual/aliases.html, *internal
+aliases*). The operator can confirm, remove or add networks in `opnview`; see `docs/data-model.md`, `interface_network`.
+
 **(ii) Firewall rules with their label/description and identifier.** `/api/firewall/filter/search_rule` (POST, read-only) takes `interface`
 (comma-separated configuration keys; omitted means all rules), `category`, `show_all`, plus the pagination set; `rowCount: -1` retrieves
 everything. Per-row fields include `uuid`, `description`, `enabled`, `action`, `direction`, `interface`, `ipprotocol`, `protocol`,
@@ -526,6 +592,13 @@ are localised while the `%`-prefixed twins (`%action`, `%direction`, `%protocol`
 use. https://docs.opnsense.org/development/api/core/firewall.html ·
 https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Firewall/Api/FilterController.php ·
 https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/filter/list_non_mvc_rules.php
+
+*Read for step 5 from the same controller.* A row's `interface` means two things. On a model rule it is the comma-separated list of interface
+**configuration keys** (`Filter.xml`, an `InterfaceField` with `Multiple` set), with the descriptions in a `%interface` twin. On a legacy or
+automatic row the controller **rewrites each key into the interface's description** in place and keeps no raw twin. An empty value is a
+floating rule, which the controller treats as matching on every interface. `opnview` stores the field verbatim with `legacy` beside it,
+resolves a model rule's keys by equality with the interface identifier, and leaves a legacy rule's interfaces unresolved rather than matching
+on a description.
 
 **(iii) Determining whether the resolver is Unbound or Dnsmasq.** `/api/unbound/service/status` and `/api/dnsmasq/service/status` (GET) —
 the one reporting `status: "running"` is active; both can be running, in which case the configuration decides which serves clients. Confirm
@@ -598,6 +671,33 @@ an arbitrary past window — `netflow/aggregate` does not exist.
 **Consequence, and it is architectural rather than a collector detail:
 `opnview` builds its own per-pair history by sampling this endpoint.** Nothing
 upstream will answer "what did these two talk about last Tuesday".
+
+### What `traffic/top` measures, read from source for step 5
+
+`TrafficController::topAction` maps the interface names to devices and runs the configd action `interface show top`, which is
+`scripts/interfaces/traffic_top.py --interfaces <devices>`
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/TrafficController.php,
+https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/interfaces/traffic_top.py). That script runs, once per interface,
+`/usr/local/sbin/iftop -nNb -i <device> -s 2 -t`: **one text output after two seconds, then quit**. So:
+
+- `rate_bits_*` is iftop's rate over the last two seconds, in bits per second;
+- `cumulative_bytes_*` is the bytes iftop counted **since its capture began — the same two seconds**;
+- every figure the endpoint returns describes a single capture of about two seconds, taken when the call is made. Nothing covers the
+  interval between two calls.
+
+**Sampled bytes are therefore bytes seen in samples, two seconds per sample, and never a period volume.** They are carried with the seconds
+sampled as their coverage and never extrapolated; a period with no sample is *not sampled*, never zero.
+
+The shape, from the same script. Per interface, `records[]`, one per address iftop reported on the right-hand side of a line pair, each
+with `address`, `rate_bits_in`, `rate_bits_out`, `cumulative_bytes_in`, `cumulative_bytes_out` (that address's totals over all its peers)
+and `details[]`. Each `details` entry is the **peer's** half of one line pair — `address`, `rate_bits` and `cumulative_bytes` of what the peer
+sent to the record's address — so per peer only the inbound figures are reported, and the record's own outbound figures are a total over
+its peers. `opnview` stores a pair's outbound figures only when the record has exactly one peer, where the total is the pair's.
+
+Three cautions, read from the code and not yet measured: iftop stops its text output at its default of ten lines per interface, as
+OPNsense passes no `-L`, so the snapshot may hold only the ten busiest pairs; iftop prints sizes in base 1024 while the script multiplies
+`Kb` by 1000; and which end iftop puts on the right-hand side, which the survey above calls the local address, was not traced in iftop's
+own source. **All three are to be checked against a live firewall at the validation of step 5.**
 
 ### The resolver window is not honoured at all
 
@@ -682,6 +782,59 @@ gives the firewall's offset from UTC. The abbreviation names no offset a parser
 can trust, so the offset is the difference between the wall clock and the UTC
 instant, rounded to the quarter hour. That same firewall, read with the offset
 at zero, had every filter-log line stored 7 200 s ahead of UTC.
+
+### Telemetry field names, read from source for step 5
+
+**Interface errors.** `/api/diagnostics/traffic/interface` runs `interface show traffic`, which is `scripts/interfaces/traffic_stats.php`,
+returning `interfaces.<interface name>` built by `legacy_interface_stats()` (https://github.com/opnsense/core/blob/26.7.3/src/etc/inc/interfaces.lib.inc):
+it runs `ifinfo` and splits each printed line on `:` into a key and a **string** value. The keys are therefore `ifinfo`'s own labels
+(https://github.com/opnsense/ports/blob/master/opnsense/ifinfo/files/ifinfo.c, read at the master branch, not at a 26.7.3 tag): among them
+`bytes received`, `bytes transmitted`, `packets received`, `packets transmitted`, **`input errors`**, **`output errors`** and `collisions`.
+`opnview` samples the two error counters under exactly those names.
+
+**Swap.** `systemResources` returns **no swap figure**: it reads `hw.physmem` and the page counts and returns `memory.total`, `memory.used`
+and, with ZFS, `memory.arc` (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php).
+Swap is served by a separate endpoint, recorded under *Swap, read from source for step 5* below and sampled since the amendment of
+4 October 2026.
+
+All of the above is read from source; **the field names are to be probed against a live firewall at the validation of step 5.**
+
+### Swap, read from source for step 5
+
+| Path | Method | Parameters | Citation |
+|---|---|---|---|
+| `/api/diagnostics/system/systemSwap` | GET | none | https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php |
+
+Listed as `GET diagnostics system system_swap` in the core API reference (https://docs.opnsense.org/development/api/core/diagnostics.html).
+`systemSwapAction` returns the JSON of the configd action `system show swapinfo` unchanged
+(`src/opnsense/service/conf/actions.d/actions_system.conf`, `[show.swapinfo]`), which runs
+`src/opnsense/scripts/system/swapinfo.py` (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/system/swapinfo.py). The
+script runs `/usr/sbin/swapinfo -k`, keeps the lines that contain `/dev/` — so the `Total` line is dropped — and prints
+`{"swap": [{"device", "total", "used"}]}`, the second and third columns passed on **as strings**, in **KiB**. A firewall with no swap
+device prints `{"swap": []}`.
+
+`opnview` samples `total` and `used` per device, converted to bytes, as `swap_total_bytes` and `swap_used_bytes` under the firewall
+subject keyed by the device. A figure that is not a number is no reading; an endpoint that does not answer, or a firewall with no swap
+device, is recorded in the measurement provider's availability detail rather than as a zero. It is the second firewall endpoint step 5
+adds, by the amendment of 4 October 2026. **Read from source only; the endpoint is to be probed against a live firewall at the
+validation of step 5.**
+
+### Gateway status, read from source for step 5
+
+| Path | Method | Parameters | Citation |
+|---|---|---|---|
+| `/api/routes/gateway/status` | GET | none | https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Routes/Api/GatewayController.php |
+
+Listed as `GET routes gateway status` in the core API reference (https://docs.opnsense.org/development/api/core/routes.html).
+`statusAction` returns `{"items": [...], "status": "ok"}`, or `"failed"` with no item when the configd action `interface gateways status`
+(`scripts/routes/gateway_status.php`) returned nothing. Each item carries `name`, `address`, `status`, `status_translated`, `loss`, `delay`,
+`stddev` and `monitor`. The figures come from dpinger through `dpinger_status()` (`src/etc/inc/plugins.inc.d/dpinger.inc`):
+`delay` and `stddev` are `sprintf('%0.1f ms', ...)` and `loss` is `sprintf('%0.1f %%', ...)`, and a gateway with no dpinger figure carries
+`~` instead. `status` is `none` (online), `force_down`, `down`, `delay`, `loss` or `delay+loss`.
+
+`opnview` samples `delay`, `stddev` and `loss` per gateway name, writes no reading for a `~`, and records an endpoint that does not answer
+— or answers with no gateway — in the measurement provider's availability detail rather than as a zero. It is the first of the two firewall endpoints
+step 5 adds. **Read from source only; the endpoint is to be probed against a live firewall at the validation of step 5.**
 
 ### Suricata, on that firewall
 

@@ -113,6 +113,10 @@ const (
 	srcUnboundOver  = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/OverviewController.php"
 	srcUnboundSvc   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/ServiceController.php"
 	srcUnboundModel = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/Unbound.xml"
+	srcGateways     = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Routes/Api/GatewayController.php"
+	docsRoutes      = "https://docs.opnsense.org/development/api/core/routes.html"
+	srcSystemSwap   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php"
+	srcSwapInfo     = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/system/swapinfo.py"
 )
 
 // The survey sections. "Verified" is the section measured against a live
@@ -126,6 +130,8 @@ const (
 	sectionSource5   = "Data source 5 — Resolver DNS lookups"
 	sectionDiscovery = "Runtime discovery"
 	sectionVerified  = "Verified against a live firewall, 2026-09-27"
+	sectionGateway   = "Gateway status, read from source for step 5"
+	sectionSwap      = "Swap, read from source for step 5"
 )
 
 // The registry. Every entry is reachable only through these variables, so a
@@ -366,6 +372,30 @@ var (
 		SurveySection: sectionVerified, UpstreamURL: docsDiagnostics,
 		Note: "Process activity. Field names not established by the survey.",
 	}
+
+	// GatewayStatus is the first of the two firewall endpoints step 5 adds: each gateway's
+	// round-trip time and packet loss, as dpinger measures them. Read from the
+	// 26.7.3 source and not yet probed against a live firewall.
+	GatewayStatus = Endpoint{
+		Path: "/api/routes/gateway/status", Method: http.MethodGet,
+		SurveySection: sectionGateway, UpstreamURL: srcGateways,
+		Note: "Returns {items: [...], status: ok | failed}; each item carries name, address, status, " +
+			"loss (\"0.0 %\"), delay and stddev (\"1.2 ms\") and monitor, or \"~\" where dpinger has no " +
+			"figure. Listed in " + docsRoutes,
+	}
+
+	// SystemSwap is the second firewall endpoint step 5 adds, by the amendment of
+	// 4 October 2026: each swap device's size and use. systemSwapAction returns the
+	// configd action `system show swapinfo` unchanged, which runs swapinfo.py over
+	// `swapinfo -k`. Read from the 26.7.3 source and not yet probed against a live
+	// firewall.
+	SystemSwap = Endpoint{
+		Path: "/api/diagnostics/system/systemSwap", Method: http.MethodGet,
+		SurveySection: sectionSwap, UpstreamURL: srcSystemSwap,
+		Note: "Returns {swap: [{device, total, used}]}, total and used as strings in KiB, one " +
+			"entry per /dev/ line of swapinfo -k and no Total line; {swap: []} with no swap " +
+			"device. Script: " + srcSwapInfo + ". Listed in " + docsDiagnostics,
+	}
 )
 
 // Registry is every endpoint opnview may call, and nothing else. Client refuses
@@ -382,6 +412,7 @@ func Registry() []Endpoint {
 		ISCStatus, ARPTable, NDPTable,
 		SearchQueries, UnboundIsEnabled, UnboundStatus, UnboundSettings,
 		SystemResources, SystemTemperature, SystemTime, SystemDisk, Activity,
+		GatewayStatus, SystemSwap,
 	}
 }
 

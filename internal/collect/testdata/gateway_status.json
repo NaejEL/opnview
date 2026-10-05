@@ -1,0 +1,36 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Gateway status, read from source for step 5",
+    "field_list_from": "items[] each with name, address, status, status_translated, loss, delay, stddev, monitor, and a top-level status, as opnsense/core 26.7.3 Routes/Api/GatewayController.php, gateway_status.php and dpinger.inc produce them",
+    "why_these_values": "Two gateways, one per address family. The first carries every figure in dpinger's own format, delay and stddev as '%0.1f ms' and loss as '%0.1f %%'. The second carries '~' where dpinger has no figure, which must yield no reading rather than a zero.",
+    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "items": [
+      {
+        "name": "EXAMPLE_GW_A",
+        "address": "198.51.100.1",
+        "status": "none",
+        "status_translated": "Online",
+        "loss": "0.5 %",
+        "delay": "12.3 ms",
+        "stddev": "1.4 ms",
+        "monitor": "198.51.100.1"
+      },
+      {
+        "name": "EXAMPLE_GW_B",
+        "address": "2001:db8::1",
+        "status": "none",
+        "status_translated": "Online",
+        "loss": "~",
+        "delay": "~",
+        "stddev": "~",
+        "monitor": "~"
+      }
+    ],
+    "status": "ok"
+  }
+}

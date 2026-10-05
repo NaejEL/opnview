@@ -13,6 +13,13 @@
 -- inferred from resolver-lookup correlation and nothing else on OPNsense 26.7,
 -- so a client using encrypted DNS, or a cached name, shows up here as poorly
 -- attributed rather than mis-attributed.
+--
+-- The eligible flows are those store.ReadAttributionRate counts, and no others:
+-- the flows with an OUTSIDE destination. An east-west flow is never attributed
+-- (docs/data-model.md, the correlation rule), so counting it would lower the rate
+-- for a reason that has nothing to do with naming. Whether the rate is DEFINED --
+-- whether a resolver source answered for the window at all -- is the store
+-- function's to say; this diagnostic reports the counts.
 SELECT
     f.src_client_id                                                  AS client_id,
     count(*)                                                         AS flow_count,
@@ -26,6 +33,7 @@ LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end
   AND f.src_client_id IS NOT NULL
+  AND f.dst_interface_id IS NULL
 GROUP BY f.src_client_id
 ORDER BY attribution_rate_percent ASC, client_id ASC;
 

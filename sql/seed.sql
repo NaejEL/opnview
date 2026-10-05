@@ -74,10 +74,24 @@ external_slot (slot) AS (
     SELECT slot + 1 FROM external_slot
     WHERE slot < 1000000 + max(3999, :pair_rows)
 ),
+-- One slot per interface address and per gateway: 900000 + n is interface n's own
+-- address, 950000 + n the gateway behind the upstream interface, and 960000 + n the
+-- address the upstream interface held before its current one.
+interface_slot (slot) AS (
+    SELECT 900001
+    UNION ALL
+    SELECT slot + 1 FROM interface_slot WHERE slot < 900000 + :interfaces + 1
+),
 every_slot (slot) AS (
     SELECT slot FROM local_slot
     UNION
     SELECT slot FROM external_slot
+    UNION
+    SELECT slot FROM interface_slot
+    UNION
+    SELECT 950000 + :interfaces + 1
+    UNION
+    SELECT 960000 + :interfaces + 1
 )
 INSERT INTO synth_address (slot, address_v4, address_v6)
 SELECT
@@ -145,6 +159,7 @@ WHERE (kind, provider_key) IN (
            ('dhcp_lease', 'dnsmasq'),
            ('dns_lookup', 'unbound'),
            ('geo_asn', 'maxmind_geolite2'),
+           ('public_suffix', 'public_suffix_list'),
            ('reconciled_state', 'example-state-source')
 );
 
@@ -198,10 +213,91 @@ SELECT
     :now
 FROM discovered;
 
+-- One more interface, the UPSTREAM one: the response reported a gateway behind it.
+-- No client sits behind it, because an address reached through it is outside; its
+-- flows are the inbound ones below. It is identified by its position after the
+-- others, never by a name.
+INSERT INTO interface (id, identifier, device, description, user_label, status, enabled,
+                       link_type, link_kind, vlan_tag, address_family, is_upstream,
+                       first_seen_at, last_seen_at)
+VALUES (:interfaces + 1, printf('interface-identifier-%d', :interfaces + 1),
+        printf('device-%d', :interfaces + 1), printf('discovered-description-%d', :interfaces + 1),
+        NULL, 'link-state-primary', 'admin-state-primary', 'other', 'other', NULL, 4, 1,
+        :now - 8640000, :now);
+
 -- The interface map covers every discovered interface. Flows carrying a raw
 -- device name absent from this table exercise the "not found" state.
 INSERT INTO interface_map (device, description, interface_id, discovered_at)
 SELECT device, description, id, :now - 8640000 FROM interface;
+
+-- Every interface's own address in both families, from its slot of the pool, and the
+-- gateway behind the upstream one. The upstream interface's IPv4 address CHANGED once,
+-- so the table holds a history: the earlier address keeps the last instant it was seen.
+INSERT INTO interface_address (interface_id, source_field, address, prefix_length,
+                               address_family, first_seen_at, last_seen_at)
+SELECT i.id, 'addr4', a.address_v4, 24, 4, :now - 8640000, :now
+FROM interface AS i JOIN synth_address AS a ON a.slot = 900000 + i.id
+UNION ALL
+SELECT i.id, 'addr6', a.address_v6, 64, 6, :now - 8640000, :now
+FROM interface AS i JOIN synth_address AS a ON a.slot = 900000 + i.id
+UNION ALL
+SELECT i.id, 'gateways', a.address_v4, NULL, 4, :now - 8640000, :now
+FROM interface AS i JOIN synth_address AS a ON a.slot = 950000 + i.id
+WHERE i.is_upstream = 1
+UNION ALL
+SELECT i.id, 'gateways', a.address_v6, NULL, 6, :now - 8640000, :now
+FROM interface AS i JOIN synth_address AS a ON a.slot = 950000 + i.id
+WHERE i.is_upstream = 1
+UNION ALL
+SELECT i.id, 'addr4', a.address_v4, 24, 4, :now - 17280000, :now - 8640001
+FROM interface AS i JOIN synth_address AS a ON a.slot = 960000 + i.id
+WHERE i.is_upstream = 1;
+
+-- The same addresses as `ipv4[]` and `ipv6[]` report them: every address an
+-- interface holds, the primary one included, under the field's own name.
+INSERT INTO interface_address (interface_id, source_field, address, prefix_length,
+                               address_family, first_seen_at, last_seen_at)
+SELECT interface_id, CASE source_field WHEN 'addr4' THEN 'ipv4' ELSE 'ipv6' END, address,
+       prefix_length, address_family, first_seen_at, last_seen_at
+FROM interface_address
+WHERE source_field IN ('addr4', 'addr6') AND last_seen_at = :now;
+
+-- The operator has said, on the first interface only, that a link-local address
+-- seen there is membership evidence. Every other interface keeps the default, no.
+UPDATE interface SET link_local_evidence = 1 WHERE id = 1;
+
+-- The interface networks. Discovery proposed, for every interface, the network of
+-- its IPv4 and IPv6 address: the address of its slot masked to the prefix length
+-- written above, synthesised from the slot exactly as the address is. On top of
+-- that the operator has added a narrower network to the first interface, and has
+-- removed a network discovery once proposed for the second -- a removed detected
+-- network that discovery must not bring back. Nothing here is a default: the
+-- networks are fixture rows, as the addresses are.
+INSERT INTO interface_network (interface_id, network_address, prefix_length, address_family,
+                               origin, first_detected_at, last_detected_at, removed_at,
+                               updated_at)
+SELECT i.id,
+       printf('%d.%d.%d.0', (a.slot / 16777216) % 256, (a.slot / 65536) % 256, (a.slot / 256) % 256),
+       24, 4, 'detected', :now - 8640000, :now, NULL, :now
+FROM interface AS i JOIN synth_address AS a ON a.slot = 900000 + i.id
+UNION ALL
+SELECT i.id,
+       printf('%x:%x:%x:%x:%x:%x:%x:%x', (a.slot * 7) % 65536, (a.slot * 11) % 65536,
+              (a.slot * 13) % 65536, (a.slot * 17) % 65536, 0, 0, 0, 0),
+       64, 6, 'detected', :now - 8640000, :now, NULL, :now
+FROM interface AS i JOIN synth_address AS a ON a.slot = 900000 + i.id
+UNION ALL
+SELECT i.id,
+       printf('%d.%d.%d.0', (a.slot / 16777216) % 256, (a.slot / 65536) % 256, (a.slot / 256) % 256),
+       25, 4, 'operator', NULL, NULL, NULL, :now - 3600
+FROM interface AS i JOIN synth_address AS a ON a.slot = 900000 + i.id
+WHERE i.id = 1
+UNION ALL
+SELECT i.id,
+       printf('%d.%d.0.0', (a.slot / 16777216) % 256, (a.slot / 65536) % 256),
+       16, 4, 'detected', :now - 17280000, :now - 8640001, :now - 7200, :now - 7200
+FROM interface AS i JOIN synth_address AS a ON a.slot = 900000 + i.id
+WHERE i.id = 2;
 
 -- ---------------------------------------------------------------------------
 -- Firewall rules.
@@ -211,14 +307,24 @@ WITH RECURSIVE counter (n) AS (
     UNION ALL
     SELECT n + 1 FROM counter WHERE n < :rules
 )
-INSERT INTO rule (id, pf_label, description, action, direction, logs_matches,
-                  is_automatic, discovered_at)
+INSERT INTO rule (id, pf_label, description, action, direction, interface, legacy,
+                  logs_matches, is_automatic, discovered_at)
 SELECT
     n,
     printf('rule-label-%d', n),
     printf('rule-description-%d', n),
     CASE WHEN n % 4 = 0 THEN 'block' ELSE 'pass' END,
     CASE WHEN n % 2 = 0 THEN 'in' ELSE 'out' END,
+    -- The endpoint's `interface`, verbatim: one configuration key, two of them, the
+    -- empty string of a floating rule, or -- on a legacy rule -- a description.
+    CASE
+        WHEN n % 6 = 5 THEN ''
+        WHEN n % 5 = 0 THEN printf('discovered-description-%d', ((n - 1) % :interfaces) + 1)
+        WHEN n % 3 = 0 THEN printf('interface-identifier-%d,interface-identifier-%d',
+                                   ((n - 1) % :interfaces) + 1, (n % :interfaces) + 1)
+        ELSE printf('interface-identifier-%d', ((n - 1) % :interfaces) + 1)
+    END,
+    CASE WHEN n % 5 = 0 THEN 1 ELSE 0 END,
     -- All three states of the logging flag, because all three occur: a rule
     -- that logs, a rule that does not -- whose traffic opnview can never see,
     -- the second observation-point limit -- and a rule discovered from a
@@ -492,13 +598,21 @@ WHERE c.mac IS NOT NULL
 -- history is deterministic, dense near the present and long enough for a
 -- 90-day retention horizon to bite.
 --
--- Shape of the generated population:
---   i % 3 = 0   east-west: both endpoints sit in a discovered interface
---   i % 3 <> 0  north-south: the destination is outside every interface
---   i % 3 = 2   the flow will also carry a site-name attribution
---   i % 7 = 0   blocked
---   i % 11 = 0  the rid matches no known rule  -> rule_lookup_state not_found
---   i % 13 = 0  the raw device name is absent from the interface map
+-- Shape of the generated population, in the three traffic directions
+-- classified_flow derives:
+--   i % 3 = 0                inter_interface: both ends sit behind an interface
+--   i % 3 = 1 and i % 5 = 0  inbound: an outside source reaching a client,
+--                            logged on the upstream interface with pf `dir` in
+--   i % 3 = 1 and i % 23 = 0 (and not the above) neither end inside: an outside
+--                            source reaching the upstream interface's own address,
+--                            which pf's `dir` (in) classifies as inbound
+--   every other flow         outbound: the destination is outside every interface
+--   i % 3 = 2                the flow will also carry a site-name attribution
+--   i % 7 = 0                blocked; 'reject' rather than 'block' when i % 29 = 0
+--   i % 37 = 0 (not blocked) an action the collector could not name: 'unknown'
+--   i % 11 = 0               the rid matches no known rule -> rule_lookup_state
+--                            not_found, and the record names the non-match reason
+--   i % 13 = 0               the raw device name is absent from the interface map
 -- The moduli are coprime with :clients in the default run, so every client
 -- sees flows of every kind rather than one kind only.
 -- ---------------------------------------------------------------------------
@@ -507,33 +621,61 @@ WITH RECURSIVE counter (i) AS (
     UNION ALL
     SELECT i + 1 FROM counter WHERE i < :flow_rows
 ),
+kinded AS (
+    SELECT
+        i,
+        CASE
+            WHEN i % 3 = 0 THEN 'inter_interface'
+            WHEN i % 3 = 1 AND i % 5 = 0 THEN 'inbound'
+            WHEN i % 3 = 1 AND i % 23 = 0 THEN 'outside'
+            ELSE 'outbound'
+        END AS kind
+    FROM counter
+),
 chosen AS (
     SELECT
         i,
+        kind,
         :now - (i * 97)                                      AS observed_at,
-        ((i - 1) % :clients) + 1                             AS src_client_id,
-        CASE WHEN i % 3 = 0 THEN (i % :clients) + 1 END      AS dst_client_id,
+        CASE WHEN kind IN ('inter_interface', 'outbound')
+             THEN ((i - 1) % :clients) + 1 END               AS src_client_id,
+        CASE kind
+            WHEN 'inter_interface' THEN (i % :clients) + 1
+            WHEN 'inbound' THEN ((i - 1) % :clients) + 1
+        END                                                  AS dst_client_id,
         i % 7 = 0                                            AS is_blocked,
         i % 11 = 0                                           AS rule_missing,
         i % 13 = 0                                           AS interface_missing,
         -- The record's address family. A filter-log record reports ONE
         -- ipversion, so both endpoints below are taken from the same family.
         i % :ipv6_every = 0                                  AS is_ipv6,
-        CASE WHEN i % 3 = 0 THEN (i % :clients) + 1
-             ELSE 1000000 + (i % 4000) END                   AS dst_slot
-    FROM counter
+        CASE WHEN kind IN ('inter_interface', 'outbound') THEN ((i - 1) % :clients) + 1
+             ELSE 1000000 + (i % 4000) END                   AS src_slot,
+        CASE kind
+            WHEN 'inter_interface' THEN (i % :clients) + 1
+            WHEN 'inbound' THEN ((i - 1) % :clients) + 1
+            WHEN 'outside' THEN 900000 + :interfaces + 1
+            ELSE 1000000 + (i % 4000)
+        END                                                  AS dst_slot
+    FROM kinded
 ),
 placed AS (
     SELECT
-        i, observed_at, src_client_id, dst_client_id,
+        i, kind, observed_at, src_client_id, dst_client_id,
         is_blocked, rule_missing, interface_missing, is_ipv6,
-        ((src_client_id - 1) % :interfaces) + 1 AS src_interface_id,
+        CASE WHEN src_client_id IS NOT NULL
+             THEN ((src_client_id - 1) % :interfaces) + 1 END AS src_interface_id,
         CASE WHEN dst_client_id IS NOT NULL
              THEN ((dst_client_id - 1) % :interfaces) + 1 END AS dst_interface_id,
+        -- The interface the record was logged on: the source's for a flow leaving
+        -- a client, the upstream interface's for one arriving from outside.
+        CASE WHEN kind IN ('inter_interface', 'outbound')
+             THEN ((src_client_id - 1) % :interfaces) + 1
+             ELSE :interfaces + 1 END                         AS logged_interface_id,
         CASE WHEN is_ipv6 THEN src.address_v6 ELSE src.address_v4 END AS src_address,
         CASE WHEN is_ipv6 THEN dst.address_v6 ELSE dst.address_v4 END AS dst_address
     FROM chosen
-    JOIN synth_address AS src ON src.slot = src_client_id
+    JOIN synth_address AS src ON src.slot = src_slot
     JOIN synth_address AS dst ON dst.slot = dst_slot
 )
 INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device,
@@ -549,7 +691,7 @@ SELECT
     observed_at + 5,
     CASE WHEN interface_missing
          THEN printf('unmapped-device-%d', i)
-         ELSE printf('device-%d', src_interface_id) END,
+         ELSE printf('device-%d', logged_interface_id) END,
     CASE WHEN interface_missing THEN 'not_found' ELSE 'resolved' END,
     src_interface_id,
     dst_interface_id,
@@ -564,15 +706,23 @@ SELECT
     -- v4-against-v6 split is answerable: an address column alone cannot be
     -- classified, and the project forbids inferring an addressing plan.
     CASE WHEN is_ipv6 THEN 6 ELSE 4 END,
-    CASE WHEN is_blocked THEN 'block' ELSE 'pass' END,
-    CASE WHEN i % 2 = 0 THEN 'in' ELSE 'out' END,
-    -- The reason the record was logged. The survey establishes the field and
-    -- not its value set, so these tokens are synthesised here exactly as the
-    -- labels and descriptions above are, rather than asserting a vocabulary
-    -- OPNsense has not published. What the seed has to exercise is that two
-    -- distinct reasons are representable and queryable, and that a record
-    -- whose reason is not the common one is not thereby a rule denial.
-    CASE WHEN i % 11 = 0 THEN 'log-reason-alternative' ELSE 'log-reason-primary' END,
+    -- A refusal is 'block', or 'reject' when pf answered it; a record whose action
+    -- the collector could not name is 'unknown', and is neither allowed nor blocked.
+    CASE WHEN is_blocked AND i % 29 = 0 THEN 'reject'
+         WHEN is_blocked THEN 'block'
+         WHEN i % 37 = 0 THEN 'unknown'
+         ELSE 'pass' END,
+    -- pf's `dir` on the interface the record was logged on. A packet arriving
+    -- from outside is `in` on the upstream interface.
+    CASE WHEN kind IN ('inbound', 'outside') THEN 'in'
+         WHEN i % 2 = 0 THEN 'in' ELSE 'out' END,
+    -- The reason the record was logged, from the established set
+    -- (internal/store/rows.go, LogReasons; survey, "The `reason` field's
+    -- values, read for step 5"): `match` when a rule decided, and one of the
+    -- drops no rule expresses on the records whose rid matches no rule.
+    -- One record in nineteen carries no reason at all, which blocked_decision
+    -- places as a refusal whose reason was not recorded.
+    CASE WHEN i % 11 = 0 THEN 'state-mismatch' WHEN i % 19 = 0 THEN NULL ELSE 'match' END,
     40 + ((i * 37) % 1460),
     CASE WHEN rule_missing
          THEN printf('orphan-rule-label-%d', i)
@@ -595,7 +745,8 @@ FROM placed;
 -- ---------------------------------------------------------------------------
 INSERT INTO dns_resolution (id, lookup_key, client_address, client_id, domain,
                             resolver, action, answer_source, rcode,
-                            dnssec_status, looked_up_at, ingested_at)
+                            dnssec_status, looked_up_at, ingested_at,
+                            interface_id, interface_lookup_state)
 SELECT
     id,
     printf('lookup-uuid-%d', id),
@@ -604,7 +755,9 @@ SELECT
     printf('name-%d.example-zone-%d.invalid', id % 997, id % 13),
     'unbound',
     'pass',
-    CASE WHEN id % 5 = 0 THEN 'cache' ELSE 'recursion' END,
+    -- Unbound's own `source` values, verbatim (survey, data source 5): every one
+    -- the attribution rule admits appears.
+    CASE WHEN id % 5 = 0 THEN 'Cache' WHEN id % 17 = 0 THEN 'Local-data' ELSE 'Recursion' END,
     'NOERROR',
     -- The validation verdict. Synthesised, for the reason the flow reasons
     -- above are: the survey establishes the field and not its value set. One
@@ -612,17 +765,118 @@ SELECT
     -- not "unvalidated" -- the distinction the nullable column exists for.
     CASE WHEN id % 7 = 3 THEN NULL
          ELSE printf('dnssec-status-%d', id % 3) END,
-    observed_at - (1 + (id % 30)),
-    observed_at
+    -- Within the default attribution_max_delay_seconds, as the rule requires.
+    observed_at - (1 + (id % 5)),
+    observed_at,
+    -- The interface behind the lookup's client address, as classification places it.
+    src_interface_id,
+    CASE WHEN src_interface_id IS NULL THEN 'not_found' ELSE 'resolved' END
 FROM flow
 WHERE id % 3 = 2;
 
 INSERT INTO domain_attribution (flow_id, dns_resolution_id, site_name,
                                 correlation_delay_seconds, attributed_at)
 SELECT id, id, printf('name-%d.example-zone-%d.invalid', id % 997, id % 13),
-       1 + (id % 30), observed_at
+       1 + (id % 5), observed_at
 FROM flow
 WHERE id % 3 = 2;
+
+-- A flow observed two seconds after the retention horizon, named by a lookup made two
+-- seconds before it: the purge keeps that lookup, because the attribution of a flow it
+-- keeps still names it. The horizon is read from the setting, as the purge reads it, and
+-- the flow takes the shape of the first flow.
+INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device,
+                  interface_lookup_state, src_interface_id, dst_interface_id,
+                  src_client_id, dst_client_id, src_address, dst_address,
+                  src_port, dst_port, protocol, ip_version, action, direction,
+                  log_reason, packet_bytes, rid, rule_id, rule_lookup_state, traffic_scope)
+SELECT 2000000001, 'log-digest-at-the-horizon', h.horizon + 2, h.horizon + 7, interface_device,
+       interface_lookup_state, src_interface_id, dst_interface_id, src_client_id, dst_client_id,
+       src_address, dst_address, src_port, dst_port, protocol, ip_version, action, direction,
+       log_reason, packet_bytes, rid, rule_id, rule_lookup_state, traffic_scope
+FROM flow
+JOIN (SELECT :now - CAST(value AS INTEGER) AS horizon FROM setting
+      WHERE key = 'retention_seconds') AS h
+WHERE flow.id = 1;
+
+INSERT INTO dns_resolution (id, lookup_key, client_address, client_id, domain,
+                            resolver, action, answer_source, rcode, dnssec_status,
+                            looked_up_at, ingested_at, interface_id, interface_lookup_state)
+SELECT 2000000001, 'lookup-uuid-at-the-horizon', src_address, src_client_id,
+       'name-at-the-horizon.example-zone.invalid', 'unbound', 'pass', 'Recursion', 'NOERROR',
+       NULL, observed_at - 4, observed_at, src_interface_id,
+       CASE WHEN src_interface_id IS NULL THEN 'not_found' ELSE 'resolved' END
+FROM flow WHERE id = 2000000001;
+
+INSERT INTO domain_attribution (flow_id, dns_resolution_id, site_name,
+                                correlation_delay_seconds, attributed_at)
+SELECT 2000000001, 2000000001, 'name-at-the-horizon.example-zone.invalid', 4, observed_at
+FROM flow WHERE id = 2000000001;
+
+-- Lookups from an address no interface holds -- a client the classification could
+-- not place -- in both families. They name no client and their interface is
+-- 'not_found', so no flow is ever attributed from them.
+WITH RECURSIVE counter (n) AS (
+    SELECT 1
+    UNION ALL
+    SELECT n + 1 FROM counter WHERE n < 40
+)
+INSERT INTO dns_resolution (id, lookup_key, client_address, client_id, domain,
+                            resolver, action, answer_source, rcode, dnssec_status,
+                            looked_up_at, ingested_at, interface_id, interface_lookup_state)
+SELECT
+    1100000000 + n,
+    printf('unplaced-lookup-uuid-%d', n),
+    CASE WHEN n % 2 = 0 THEN a.address_v6 ELSE a.address_v4 END,
+    NULL,
+    printf('unplaced-name-%d.example-zone-%d.invalid', n % 23, n % 5),
+    'unbound',
+    'pass',
+    CASE WHEN n % 3 = 0 THEN 'Local' ELSE 'Recursion' END,
+    'NOERROR',
+    NULL,
+    :now - (n * 613),
+    :now - (n * 613) + 2,
+    NULL,
+    'not_found'
+FROM counter
+JOIN synth_address AS a ON a.slot = 1000000 + 3000 + n;
+
+-- Lookups whose `client` was a host name rather than an address, the resolver's
+-- report having replaced the address by its reverse lookup. One in three resolved
+-- through the leases to one address; the others named a host no lease or several
+-- leases held, and keep the logged name in client_address, place nowhere and
+-- attribute nothing. The names are synthesised and match no lease below.
+WITH RECURSIVE counter (n) AS (
+    SELECT 1
+    UNION ALL
+    SELECT n + 1 FROM counter WHERE n < 12
+)
+INSERT INTO dns_resolution (id, lookup_key, client_address, client_hostname, client_resolution,
+                            client_id, domain, resolver, action, answer_source, rcode,
+                            dnssec_status, looked_up_at, ingested_at, interface_id,
+                            interface_lookup_state)
+SELECT
+    1200000000 + n,
+    printf('hostname-lookup-uuid-%d', n),
+    CASE WHEN n % 3 = 0 THEN c.last_address
+         ELSE printf('host-name-%d.example-zone.invalid', n) END,
+    printf('host-name-%d.example-zone.invalid', n),
+    CASE n % 3 WHEN 0 THEN 'lease_hostname' WHEN 1 THEN 'ambiguous_hostname'
+               ELSE 'unknown_hostname' END,
+    CASE WHEN n % 3 = 0 THEN c.id END,
+    printf('hostname-name-%d.example-zone-%d.invalid', n, n % 3),
+    'unbound',
+    'pass',
+    'Recursion',
+    'NOERROR',
+    NULL,
+    :now - (n * 457),
+    :now - (n * 457) + 2,
+    CASE WHEN n % 3 = 0 THEN c.interface_id END,
+    CASE WHEN n % 3 = 0 THEN 'resolved' ELSE 'not_found' END
+FROM counter
+JOIN client AS c ON c.id = ((n - 1) % :clients) + 1;
 
 -- ---------------------------------------------------------------------------
 -- The blocklists the resolver refused lookups against.
@@ -666,7 +920,8 @@ WITH RECURSIVE counter (n) AS (
 )
 INSERT INTO dns_resolution (id, lookup_key, client_address, client_id, domain,
                             resolver, action, answer_source, rcode, dnssec_status,
-                            blocklist_id, looked_up_at, ingested_at)
+                            blocklist_id, looked_up_at, ingested_at,
+                            interface_id, interface_lookup_state)
 SELECT
     1000000000 + n,
     printf('blocked-lookup-uuid-%d', n),
@@ -675,12 +930,14 @@ SELECT
     printf('blocked-name-%d.example-zone-%d.invalid', n % 211, n % 7),
     'unbound',
     CASE WHEN n % 8 = 0 THEN 'drop' ELSE 'block' END,
-    'local-data',
+    'Local',
     'NXDOMAIN',
     CASE WHEN n % 6 = 0 THEN NULL ELSE printf('dnssec-status-%d', n % 3) END,
     CASE WHEN n % 5 = 0 THEN NULL ELSE ((n - 1) % 4) + 1 END,
     :now - ((n * 97) % 86400),
-    :now
+    :now,
+    c.interface_id,
+    'resolved'
 FROM counter
 JOIN client AS c ON c.id = ((n - 1) % :clients) + 1;
 
@@ -855,8 +1112,9 @@ GROUP BY file_number;
 --
 -- No collector writes this table and none will: the only per-pair endpoint
 -- carries neither a port nor a protocol, and `flow` carries both, so these rows
--- are step 5's to compute from `flow`. The seed writes them as that derivation
--- will, which is why this block names no provider.
+-- are step 5's to compute from `flow` (internal/store/derive.sql,
+-- insert_pair_volume). The seed writes them as that derivation does, which is why
+-- this block names no provider; service_port is the flow's destination port.
 --
 -- The de-duplication it has to respect is unchanged, and the seed still exercises
 -- it: a per-pair figure is direction-free, so the seed offers every pair twice
@@ -910,165 +1168,601 @@ FROM doubled
 ORDER BY p, observed_direction;
 
 -- ---------------------------------------------------------------------------
--- The four pre-computed aggregates.
+-- The six aggregate families, four calendar periods each.
 --
--- They are computed from opnview's own stored flows, not from any Insight
--- column: per-address-pair volume on the firewall exists only at daily
--- resolution and only for 62 days, and per-source totals at 300 s resolution
--- are kept one hour (survey, data source 3), so the 1 h and 24 h periods can
--- only come from opnview's own history. computed_at is the freshness stamp.
+-- They are computed from opnview's own stored flows, exactly as the refresh in
+-- internal/store/derive.sql computes them, not from any Insight column:
+-- per-address-pair volume on the firewall exists only at daily resolution and
+-- only for 62 days, and per-source totals at 300 s resolution are kept one hour
+-- (survey, data source 3), so every period can only come from opnview's own
+-- history. computed_at is the freshness stamp.
+--
+-- The periods are calendar slots aligned to UTC: the hour, the day, the ISO week
+-- starting Monday, and the calendar month. The slot of every flow in every period
+-- is written once, into a TEMP table, so the twenty-four statements below share one
+-- definition of a slot rather than twenty-four copies of it. 1970-01-01 was a
+-- Thursday, so the day number plus three, modulo seven, counts days since Monday.
+--
+-- Every family carries the allowed / blocked byte split, the direction and peer
+-- come from classified_flow, and a flow belongs to its INSIDE client.
 -- ---------------------------------------------------------------------------
-INSERT INTO volume_aggregate_1h (period_start_at, period_end_at, src_interface_id,
-                                 dst_interface_id, peer_address, traffic_scope,
-                                 bytes, allowed_connections, blocked_connections, computed_at)
-SELECT
-    (observed_at / 3600) * 3600,
-    (observed_at / 3600) * 3600 + 3600,
-    src_interface_id,
-    dst_interface_id,
-    CASE WHEN dst_interface_id IS NULL THEN dst_address END,
-    traffic_scope,
-    sum(packet_bytes),
-    sum(CASE WHEN action <> 'block' THEN 1 ELSE 0 END),
-    sum(CASE WHEN action = 'block' THEN 1 ELSE 0 END),
-    :now
+CREATE TEMP TABLE seed_flow_slot (
+    flow_id         INTEGER NOT NULL,
+    period          TEXT NOT NULL,
+    period_start_at INTEGER NOT NULL,
+    period_end_at   INTEGER NOT NULL
+);
+
+INSERT INTO seed_flow_slot (flow_id, period, period_start_at, period_end_at)
+SELECT id, '1h', (observed_at / 3600) * 3600, (observed_at / 3600) * 3600 + 3600
 FROM flow
-WHERE src_interface_id IS NOT NULL
-GROUP BY 1, 2, 3, 4, 5, 6;
+UNION ALL
+SELECT id, '24h', (observed_at / 86400) * 86400, (observed_at / 86400) * 86400 + 86400
+FROM flow
+UNION ALL
+SELECT id, '7d', week_start_at, week_start_at + 604800
+FROM (SELECT id,
+             (observed_at / 86400) * 86400 - (((observed_at / 86400) + 3) % 7) * 86400
+                 AS week_start_at
+      FROM flow)
+UNION ALL
+SELECT id, '30d',
+       CAST(strftime('%s', observed_at, 'unixepoch', 'start of month') AS INTEGER),
+       CAST(strftime('%s', observed_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER)
+FROM flow;
+
+INSERT INTO volume_aggregate_1h (period_start_at, period_end_at, src_interface_id,
+    dst_interface_id, peer_address, traffic_scope, traffic_direction, bytes,
+    allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.src_interface_id, f.dst_interface_id,
+       f.peer_address, f.traffic_scope, f.traffic_direction,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '1h'
+GROUP BY s.period_start_at, s.period_end_at, f.src_interface_id, f.dst_interface_id,
+         f.peer_address, f.traffic_scope, f.traffic_direction;
 
 INSERT INTO volume_aggregate_24h (period_start_at, period_end_at, src_interface_id,
-                                  dst_interface_id, peer_address, traffic_scope,
-                                  bytes, allowed_connections, blocked_connections, computed_at)
-SELECT
-    (observed_at / 86400) * 86400,
-    (observed_at / 86400) * 86400 + 86400,
-    src_interface_id,
-    dst_interface_id,
-    CASE WHEN dst_interface_id IS NULL THEN dst_address END,
-    traffic_scope,
-    sum(packet_bytes),
-    sum(CASE WHEN action <> 'block' THEN 1 ELSE 0 END),
-    sum(CASE WHEN action = 'block' THEN 1 ELSE 0 END),
-    :now
-FROM flow
-WHERE src_interface_id IS NOT NULL
-GROUP BY 1, 2, 3, 4, 5, 6;
+    dst_interface_id, peer_address, traffic_scope, traffic_direction, bytes,
+    allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.src_interface_id, f.dst_interface_id,
+       f.peer_address, f.traffic_scope, f.traffic_direction,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '24h'
+GROUP BY s.period_start_at, s.period_end_at, f.src_interface_id, f.dst_interface_id,
+         f.peer_address, f.traffic_scope, f.traffic_direction;
 
 INSERT INTO volume_aggregate_7d (period_start_at, period_end_at, src_interface_id,
-                                 dst_interface_id, peer_address, traffic_scope,
-                                 bytes, allowed_connections, blocked_connections, computed_at)
-SELECT
-    (observed_at / 604800) * 604800,
-    (observed_at / 604800) * 604800 + 604800,
-    src_interface_id,
-    dst_interface_id,
-    CASE WHEN dst_interface_id IS NULL THEN dst_address END,
-    traffic_scope,
-    sum(packet_bytes),
-    sum(CASE WHEN action <> 'block' THEN 1 ELSE 0 END),
-    sum(CASE WHEN action = 'block' THEN 1 ELSE 0 END),
-    :now
-FROM flow
-WHERE src_interface_id IS NOT NULL
-GROUP BY 1, 2, 3, 4, 5, 6;
+    dst_interface_id, peer_address, traffic_scope, traffic_direction, bytes,
+    allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.src_interface_id, f.dst_interface_id,
+       f.peer_address, f.traffic_scope, f.traffic_direction,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '7d'
+GROUP BY s.period_start_at, s.period_end_at, f.src_interface_id, f.dst_interface_id,
+         f.peer_address, f.traffic_scope, f.traffic_direction;
 
 INSERT INTO volume_aggregate_30d (period_start_at, period_end_at, src_interface_id,
-                                  dst_interface_id, peer_address, traffic_scope,
-                                  bytes, allowed_connections, blocked_connections, computed_at)
-SELECT
-    (observed_at / 2592000) * 2592000,
-    (observed_at / 2592000) * 2592000 + 2592000,
-    src_interface_id,
-    dst_interface_id,
-    CASE WHEN dst_interface_id IS NULL THEN dst_address END,
-    traffic_scope,
-    sum(packet_bytes),
-    sum(CASE WHEN action <> 'block' THEN 1 ELSE 0 END),
-    sum(CASE WHEN action = 'block' THEN 1 ELSE 0 END),
-    :now
-FROM flow
-WHERE src_interface_id IS NOT NULL
-GROUP BY 1, 2, 3, 4, 5, 6;
+    dst_interface_id, peer_address, traffic_scope, traffic_direction, bytes,
+    allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.src_interface_id, f.dst_interface_id,
+       f.peer_address, f.traffic_scope, f.traffic_direction,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '30d'
+GROUP BY s.period_start_at, s.period_end_at, f.src_interface_id, f.dst_interface_id,
+         f.peer_address, f.traffic_scope, f.traffic_direction;
 
--- ---------------------------------------------------------------------------
--- The four per-owner aggregates.
---
--- Computed from opnview's own flows joined to client.owner_id, which is the
--- only thing that carries a person: nothing here infers an owner, and the join
--- is from flow so that a flow from an unowned client lands in the NULL slot
--- rather than being dropped. That NULL slot is the unassigned bucket, and it
--- is the majority of the network by design.
---
--- client_count is the distinct clients that contributed to that slot alone. It
--- is not summable across slots and no query below sums it.
--- ---------------------------------------------------------------------------
+-- The per-owner family. Computed from the flows joined to client.owner_id, which
+-- is the only thing that carries a person: nothing here infers an owner, and a
+-- flow from an unowned client lands in the NULL slot rather than being dropped.
+-- That NULL slot is the unassigned bucket, and it is the majority of the network
+-- by design. client_count is the distinct clients of that slot alone; it is not
+-- summable across slots and no query sums it.
+
 INSERT INTO owner_volume_aggregate_1h (period_start_at, period_end_at, owner_id,
-                                       traffic_scope, bytes, allowed_connections,
-                                       blocked_connections, client_count, computed_at)
-SELECT
-    (f.observed_at / 3600) * 3600,
-    (f.observed_at / 3600) * 3600 + 3600,
-    c.owner_id,
-    f.traffic_scope,
-    sum(f.packet_bytes),
-    sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END),
-    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END),
-    count(DISTINCT f.src_client_id),
-    :now
-FROM flow AS f
-JOIN client AS c ON c.id = f.src_client_id
-GROUP BY 1, 2, 3, 4;
+    traffic_scope, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, client_count, computed_at)
+SELECT s.period_start_at, s.period_end_at, c.owner_id, f.traffic_scope,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       count(DISTINCT f.local_client_id),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+JOIN client AS c ON c.id = f.local_client_id
+WHERE s.period = '1h'
+GROUP BY s.period_start_at, s.period_end_at, c.owner_id, f.traffic_scope;
 
 INSERT INTO owner_volume_aggregate_24h (period_start_at, period_end_at, owner_id,
-                                        traffic_scope, bytes, allowed_connections,
-                                        blocked_connections, client_count, computed_at)
-SELECT
-    (f.observed_at / 86400) * 86400,
-    (f.observed_at / 86400) * 86400 + 86400,
-    c.owner_id,
-    f.traffic_scope,
-    sum(f.packet_bytes),
-    sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END),
-    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END),
-    count(DISTINCT f.src_client_id),
-    :now
-FROM flow AS f
-JOIN client AS c ON c.id = f.src_client_id
-GROUP BY 1, 2, 3, 4;
+    traffic_scope, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, client_count, computed_at)
+SELECT s.period_start_at, s.period_end_at, c.owner_id, f.traffic_scope,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       count(DISTINCT f.local_client_id),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+JOIN client AS c ON c.id = f.local_client_id
+WHERE s.period = '24h'
+GROUP BY s.period_start_at, s.period_end_at, c.owner_id, f.traffic_scope;
 
 INSERT INTO owner_volume_aggregate_7d (period_start_at, period_end_at, owner_id,
-                                       traffic_scope, bytes, allowed_connections,
-                                       blocked_connections, client_count, computed_at)
-SELECT
-    (f.observed_at / 604800) * 604800,
-    (f.observed_at / 604800) * 604800 + 604800,
-    c.owner_id,
-    f.traffic_scope,
-    sum(f.packet_bytes),
-    sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END),
-    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END),
-    count(DISTINCT f.src_client_id),
-    :now
-FROM flow AS f
-JOIN client AS c ON c.id = f.src_client_id
-GROUP BY 1, 2, 3, 4;
+    traffic_scope, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, client_count, computed_at)
+SELECT s.period_start_at, s.period_end_at, c.owner_id, f.traffic_scope,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       count(DISTINCT f.local_client_id),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+JOIN client AS c ON c.id = f.local_client_id
+WHERE s.period = '7d'
+GROUP BY s.period_start_at, s.period_end_at, c.owner_id, f.traffic_scope;
 
 INSERT INTO owner_volume_aggregate_30d (period_start_at, period_end_at, owner_id,
-                                        traffic_scope, bytes, allowed_connections,
-                                        blocked_connections, client_count, computed_at)
-SELECT
-    (f.observed_at / 2592000) * 2592000,
-    (f.observed_at / 2592000) * 2592000 + 2592000,
-    c.owner_id,
-    f.traffic_scope,
-    sum(f.packet_bytes),
-    sum(CASE WHEN f.action <> 'block' THEN 1 ELSE 0 END),
-    sum(CASE WHEN f.action = 'block' THEN 1 ELSE 0 END),
-    count(DISTINCT f.src_client_id),
-    :now
-FROM flow AS f
-JOIN client AS c ON c.id = f.src_client_id
-GROUP BY 1, 2, 3, 4;
+    traffic_scope, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, client_count, computed_at)
+SELECT s.period_start_at, s.period_end_at, c.owner_id, f.traffic_scope,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       count(DISTINCT f.local_client_id),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+JOIN client AS c ON c.id = f.local_client_id
+WHERE s.period = '30d'
+GROUP BY s.period_start_at, s.period_end_at, c.owner_id, f.traffic_scope;
+
+-- The per-client family: every client in each direction it has traffic in, and
+-- the distinct addresses at the other end of its flows in that slot.
+
+INSERT INTO client_volume_aggregate_1h (period_start_at, period_end_at, client_id,
+    traffic_direction, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, distinct_peers, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       count(DISTINCT CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address
+                           ELSE f.src_address END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '1h'
+  AND f.local_client_id IS NOT NULL
+GROUP BY s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction;
+
+INSERT INTO client_volume_aggregate_24h (period_start_at, period_end_at, client_id,
+    traffic_direction, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, distinct_peers, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       count(DISTINCT CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address
+                           ELSE f.src_address END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '24h'
+  AND f.local_client_id IS NOT NULL
+GROUP BY s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction;
+
+INSERT INTO client_volume_aggregate_7d (period_start_at, period_end_at, client_id,
+    traffic_direction, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, distinct_peers, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       count(DISTINCT CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address
+                           ELSE f.src_address END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '7d'
+  AND f.local_client_id IS NOT NULL
+GROUP BY s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction;
+
+INSERT INTO client_volume_aggregate_30d (period_start_at, period_end_at, client_id,
+    traffic_direction, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, distinct_peers, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       count(DISTINCT CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address
+                           ELSE f.src_address END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '30d'
+  AND f.local_client_id IS NOT NULL
+GROUP BY s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction;
+
+-- The per-peer family: every client, in each direction, with each address at the
+-- other end of its flows. The client family's distinct_peers is the number of
+-- these rows in the same slot.
+
+INSERT INTO peer_volume_aggregate_1h (period_start_at, period_end_at, client_id,
+    traffic_direction, peer_address, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
+    allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+       CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address ELSE f.src_address END,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '1h'
+  AND f.local_client_id IS NOT NULL
+GROUP BY s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+         CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address ELSE f.src_address END;
+
+INSERT INTO peer_volume_aggregate_24h (period_start_at, period_end_at, client_id,
+    traffic_direction, peer_address, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
+    allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+       CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address ELSE f.src_address END,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '24h'
+  AND f.local_client_id IS NOT NULL
+GROUP BY s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+         CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address ELSE f.src_address END;
+
+INSERT INTO peer_volume_aggregate_7d (period_start_at, period_end_at, client_id,
+    traffic_direction, peer_address, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
+    allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+       CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address ELSE f.src_address END,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '7d'
+  AND f.local_client_id IS NOT NULL
+GROUP BY s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+         CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address ELSE f.src_address END;
+
+INSERT INTO peer_volume_aggregate_30d (period_start_at, period_end_at, client_id,
+    traffic_direction, peer_address, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
+    allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+       CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address ELSE f.src_address END,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN classified_flow AS f ON f.id = s.flow_id
+WHERE s.period = '30d'
+  AND f.local_client_id IS NOT NULL
+GROUP BY s.period_start_at, s.period_end_at, f.local_client_id, f.traffic_direction,
+         CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address ELSE f.src_address END;
+
+-- The per-site family: the flows that carry an attribution, by site name and by
+-- the source client that made the lookup.
+
+INSERT INTO domain_volume_aggregate_1h (period_start_at, period_end_at, site_name,
+    client_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, a.site_name, f.src_client_id,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN flow AS f ON f.id = s.flow_id
+JOIN domain_attribution AS a ON a.flow_id = f.id
+WHERE s.period = '1h'
+GROUP BY s.period_start_at, s.period_end_at, a.site_name, f.src_client_id;
+
+INSERT INTO domain_volume_aggregate_24h (period_start_at, period_end_at, site_name,
+    client_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, a.site_name, f.src_client_id,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN flow AS f ON f.id = s.flow_id
+JOIN domain_attribution AS a ON a.flow_id = f.id
+WHERE s.period = '24h'
+GROUP BY s.period_start_at, s.period_end_at, a.site_name, f.src_client_id;
+
+INSERT INTO domain_volume_aggregate_7d (period_start_at, period_end_at, site_name,
+    client_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, a.site_name, f.src_client_id,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN flow AS f ON f.id = s.flow_id
+JOIN domain_attribution AS a ON a.flow_id = f.id
+WHERE s.period = '7d'
+GROUP BY s.period_start_at, s.period_end_at, a.site_name, f.src_client_id;
+
+INSERT INTO domain_volume_aggregate_30d (period_start_at, period_end_at, site_name,
+    client_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
+    blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, a.site_name, f.src_client_id,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN flow AS f ON f.id = s.flow_id
+JOIN domain_attribution AS a ON a.flow_id = f.id
+WHERE s.period = '30d'
+GROUP BY s.period_start_at, s.period_end_at, a.site_name, f.src_client_id;
+
+-- The per-rule family, keyed on the rule and the interface pair; the flows whose
+-- rid resolved to no rule keep their own NULL slot, so the family sums to every
+-- flow.
+
+INSERT INTO rule_volume_aggregate_1h (period_start_at, period_end_at, rule_id,
+    src_interface_id, dst_interface_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
+    allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.rule_id, f.src_interface_id, f.dst_interface_id,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN flow AS f ON f.id = s.flow_id
+WHERE s.period = '1h'
+GROUP BY s.period_start_at, s.period_end_at, f.rule_id, f.src_interface_id,
+         f.dst_interface_id;
+
+INSERT INTO rule_volume_aggregate_24h (period_start_at, period_end_at, rule_id,
+    src_interface_id, dst_interface_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
+    allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.rule_id, f.src_interface_id, f.dst_interface_id,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN flow AS f ON f.id = s.flow_id
+WHERE s.period = '24h'
+GROUP BY s.period_start_at, s.period_end_at, f.rule_id, f.src_interface_id,
+         f.dst_interface_id;
+
+INSERT INTO rule_volume_aggregate_7d (period_start_at, period_end_at, rule_id,
+    src_interface_id, dst_interface_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
+    allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.rule_id, f.src_interface_id, f.dst_interface_id,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN flow AS f ON f.id = s.flow_id
+WHERE s.period = '7d'
+GROUP BY s.period_start_at, s.period_end_at, f.rule_id, f.src_interface_id,
+         f.dst_interface_id;
+
+INSERT INTO rule_volume_aggregate_30d (period_start_at, period_end_at, rule_id,
+    src_interface_id, dst_interface_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
+    allowed_connections, blocked_connections, unknown_connections, computed_at)
+SELECT s.period_start_at, s.period_end_at, f.rule_id, f.src_interface_id, f.dst_interface_id,
+       sum(f.packet_bytes),
+       sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN f.packet_bytes ELSE 0 END),
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
+       :now
+FROM seed_flow_slot AS s
+JOIN flow AS f ON f.id = s.flow_id
+WHERE s.period = '30d'
+GROUP BY s.period_start_at, s.period_end_at, f.rule_id, f.src_interface_id,
+         f.dst_interface_id;
+
+DROP TABLE seed_flow_slot;
+
+-- ---------------------------------------------------------------------------
+-- The purged part of some hours: what a retention purge removed from flow before
+-- this seed's history begins. The rows reuse the shape of the first thirty flows --
+-- every direction, attributed or not -- placed a week apart, from the hour before
+-- the oldest flow backwards, so some lie beyond a 90-day horizon and some inside
+-- it. The hour slots of those hours are not in the seeded aggregates above, which
+-- are computed from flow alone so the checks that compare them with flow compare
+-- like with like; the refresh adds a purged part to its hour.
+-- ---------------------------------------------------------------------------
+INSERT INTO purged_flow_hour (hour_start_at, src_interface_id, dst_interface_id, src_client_id,
+                              local_client_id, traffic_direction, peer_address, rule_id,
+                              site_name, action, bytes, connections, purged_at)
+SELECT ((:now - :flow_rows * 97 - 3600 - f.id * 604800) / 3600) * 3600,
+       f.src_interface_id,
+       f.dst_interface_id,
+       f.src_client_id,
+       f.local_client_id,
+       f.traffic_direction,
+       CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address
+            WHEN f.dst_interface_id IS NOT NULL THEN f.src_address
+            ELSE f.peer_address END,
+       f.rule_id,
+       a.site_name,
+       f.action,
+       f.packet_bytes,
+       1,
+       :now - :flow_rows * 97
+FROM classified_flow AS f
+LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
+WHERE f.id <= 30;
+
+-- The evidence the classification last placed each of the first flows' addresses
+-- from, at the instant it did, spread over the history so a horizon has some to
+-- purge. The fingerprints are fixture text: nothing reads one but the
+-- classification that wrote it.
+-- Two machines last seen long before a 90-day horizon, named by nothing but the purged
+-- part. The first is named by the purged part of a recent hour -- a purge under a shorter
+-- retention removed its flows -- so the retention purge must keep it while that hour is
+-- kept; the second only by the purged part of an hour whose week and month ended long
+-- ago, which the purge removes, and the machine with it.
+INSERT INTO client (id, identity_kind, identity_key, interface_id, mac, hostname,
+                    vendor_hint, last_address, first_seen_at, last_seen_at)
+SELECT :clients + 3, 'address_in_interface', printf('%d|%s|%d', 1, a.address_v4, :now - 17280000),
+       1, NULL, NULL, NULL, a.address_v4, :now - 17280000, :now - 17000000
+FROM synth_address AS a WHERE a.slot = :clients + 3
+UNION ALL
+SELECT :clients + 4, 'address_in_interface', printf('%d|%s|%d', 1, a.address_v4, :now - 34560000),
+       1, NULL, NULL, NULL, a.address_v4, :now - 34560000, :now - 34000000
+FROM synth_address AS a WHERE a.slot = :clients + 3;
+
+INSERT INTO purged_flow_hour (hour_start_at, src_interface_id, dst_interface_id, src_client_id,
+                              local_client_id, traffic_direction, peer_address, rule_id,
+                              site_name, action, bytes, connections, purged_at)
+SELECT ((:now - 86400) / 3600) * 3600, 1, NULL, :clients + 3, :clients + 3, 'outbound',
+       a.address_v4, NULL, NULL, 'pass', 100, 1, :now - 86400
+FROM synth_address AS a WHERE a.slot = 1000001
+UNION ALL
+SELECT ((:now - 34500000) / 3600) * 3600, 1, NULL, :clients + 4, :clients + 4, 'outbound',
+       a.address_v4, NULL, NULL, 'pass', 100, 1, :now - 34000000
+FROM synth_address AS a WHERE a.slot = 1000001;
+
+-- How far back a purge has purged: the purge that removed the purged part above ran a
+-- day ago and reached back to just before the oldest flow, so no stored flow is older
+-- than the watermark -- which is what the collectors keep true by not storing one.
+INSERT INTO retention_purge (id, purged_before, purged_at)
+VALUES (1, :now - :flow_rows * 97 - 1, :now - 86400);
+
+INSERT INTO address_classification (address, evidence, classified_at)
+SELECT address, printf('seeded-evidence-%d', min(id) % 7), min(observed_at)
+FROM (SELECT id, src_address AS address, observed_at FROM flow WHERE id % 50 = 1
+      UNION ALL
+      SELECT id, dst_address, observed_at FROM flow WHERE id % 50 = 1)
+GROUP BY address;
 
 -- ---------------------------------------------------------------------------
 -- Provider availability. One row per registry row already exists, created by
@@ -1132,6 +1826,13 @@ SET state = 'reachable', probe = 'local dataset file stat',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'geo_asn' AND is_active = 1);
 
+-- The Public Suffix List: a list is held, so the grouping is available. Its probe
+-- is the outcome of the conditional download the refresher makes.
+UPDATE source_availability
+SET state = 'reachable', probe = 'list_not_modified',
+    detail = NULL, checked_at = :now
+WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'public_suffix' AND is_active = 1);
+
 -- Every implementation this installation does not run: probed, not running.
 UPDATE source_availability
 SET state = 'unavailable', probe = 'service status endpoint',
@@ -1141,12 +1842,13 @@ WHERE provider_id IN (SELECT id FROM provider WHERE is_active = 0);
 -- ---------------------------------------------------------------------------
 -- Collection gaps: the intervals opnview knows it did not cover.
 --
--- All three reasons are seeded, because all three are measured failure modes
+-- All four reasons are seeded, because all four are measured failure modes
 -- rather than hypotheses: the filter log has no server-side cursor, an eve.json
--- rotation can discard a watermarked file, and the resolver query endpoint
--- ignores the window it is given. Some are older than a 90-day horizon so the
--- purge has something to remove, and some are recent so it has something to
--- leave alone.
+-- rotation can discard a watermarked file, the resolver query endpoint ignores
+-- the window it is given, and a Public Suffix List download can fail, leaving
+-- the list held since the last refresh in use. Some are older than a 90-day
+-- horizon so the purge has something to remove, and some are recent so it has
+-- something to leave alone.
 --
 -- A gap is attributed to the provider whose data is missing, looked up by kind
 -- and activeness -- never by name.
@@ -1160,6 +1862,7 @@ reasons AS (
     SELECT 1 AS n, 'digest_outside_returned_window' AS reason, 'firewall_log' AS kind
     UNION ALL SELECT 2, 'eve_rotation_lost', 'security_event'
     UNION ALL SELECT 3, 'resolver_window_not_honoured', 'dns_lookup'
+    UNION ALL SELECT 4, 'download_failed', 'public_suffix'
 )
 INSERT INTO collection_gap (provider_id, interval_start_at, interval_end_at,
                             reason, detail, detected_at)
@@ -1171,7 +1874,7 @@ SELECT
     printf('gap-detail-%d', k),
     :now - ((k % 5) * 3600) - ((k % 6) * 8640000)
 FROM counter
-JOIN reasons AS r ON r.n = ((k - 1) % 3) + 1;
+JOIN reasons AS r ON r.n = ((k - 1) % 4) + 1;
 
 -- ---------------------------------------------------------------------------
 -- Sampled measurements: the gauges and the sampled per-pair volume.
@@ -1180,9 +1883,11 @@ JOIN reasons AS r ON r.n = ((k - 1) % 3) + 1;
 -- measure, a unit, a value and an instant. The firewall's own telemetry names
 -- no provider, because the machine reporting on itself implements no external
 -- contract; the per-pair readings name the measurement provider, because that
--- volume is its material. The pair subject is the two addresses in lexicographic order joined
--- by a space, the same canonical ordering pair_volume_observation enforces, and
--- both address families appear among them.
+-- volume is its material. The pair subject is the device, the local address and
+-- the peer address joined by spaces, in that order, because traffic/top reports a
+-- peer's figures as inbound to the local address; both address families appear
+-- among them. The gateway readings are dpinger's delay and loss, keyed by the
+-- gateway's name.
 --
 -- Spread back over five months so a finite retention horizon has something to
 -- remove and something to keep.
@@ -1213,17 +1918,48 @@ JOIN interface AS i ON i.id = ((s - 1) % :interfaces) + 1
 UNION ALL
 SELECT
     (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active = 1),
-    'endpoint_pair',
-    min(CASE WHEN s % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END,
-        CASE WHEN s % :ipv6_every = 0 THEN peer.address_v6 ELSE peer.address_v4 END)
+    'interface_endpoint_pair',
+    printf('device-%d', ((s - 1) % :interfaces) + 1)
     || ' ' ||
-    max(CASE WHEN s % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END,
-        CASE WHEN s % :ipv6_every = 0 THEN peer.address_v6 ELSE peer.address_v4 END),
+    CASE WHEN s % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END
+    || ' ' ||
+    CASE WHEN s % :ipv6_every = 0 THEN peer.address_v6 ELSE peer.address_v4 END,
     'cumulative_bytes_in', 'byte', 100.0 * s,
     :now - (s * 300) - ((s % 6) * 8640000)
 FROM counter
 JOIN synth_address AS local ON local.slot = ((s - 1) % :clients) + 1
-JOIN synth_address AS peer ON peer.slot = 1000000 + s;
+JOIN synth_address AS peer ON peer.slot = 1000000 + s
+UNION ALL
+SELECT NULL, 'interface', i.device, 'errors_in', 'packet', 1.0 * (s % 4),
+       :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter
+JOIN interface AS i ON i.id = ((s - 1) % :interfaces) + 1
+UNION ALL
+SELECT NULL, 'gateway', printf('example-gateway-%d', s % 2), 'delay_milliseconds',
+       'millisecond', 1.0 + (s % 40) / 10.0, :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter
+UNION ALL
+SELECT NULL, 'gateway', printf('example-gateway-%d', s % 2), 'loss_ratio',
+       'ratio', (s % 5) / 100.0, :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter
+UNION ALL
+-- The totals of one local address over all its peers, the only place traffic/top
+-- reports the address's sending.
+SELECT
+    (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active = 1),
+    'interface_endpoint',
+    printf('device-%d', ((s - 1) % :interfaces) + 1)
+    || ' ' ||
+    CASE WHEN s % :ipv6_every = 0 THEN local.address_v6 ELSE local.address_v4 END,
+    'rate_bits_out', 'bit_per_second', 800.0 * s,
+    :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter
+JOIN synth_address AS local ON local.slot = ((s - 1) % :clients) + 1
+UNION ALL
+-- One swap device, its size and its use, in bytes.
+SELECT NULL, 'firewall', 'example-swap-device', 'swap_used_bytes', 'byte',
+       1048576.0 * (s % 64), :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter;
 
 -- ---------------------------------------------------------------------------
 -- Reconciled state: complete sets of things, each asserted complete at an

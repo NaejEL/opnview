@@ -5,7 +5,7 @@
     "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, never by recording a response from an OPNsense firewall. Cycle 4A cannot reach one: credentials are entered in opnview's own interface, which is cycle 4B. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
     "survey_section": "Data source 1 - Filter logs, Response shape",
     "field_list_from": "rulenr, subrulenr, anchorname, rid, interface, reason, action, dir, ipversion, __digest__, __host__, __timestamp__, __spec__, label, tos, ecn, ttl, id, offset, ipflags, protonum, protoname, length, src, dst, srcport, dstport, datalen, tcpflags, seq, ack, urp, tcpopts",
-    "why_these_values": "A JSON array, newest first, as the survey says this endpoint returns rather than an envelope. Five records exercising the cases the model names: a device the interface map knows and one it does not; a rid that matches a discovered rule and one that matches none; both address families; an ISO __timestamp__ (the form measured on a live firewall) and a year-less one (the form the survey says remains possible); a blocked record and passed ones; and an action and a direction outside their vocabularies, which must become unknown.",
+    "why_these_values": "A JSON array, newest first, as the survey says this endpoint returns rather than an envelope. Five records exercising the cases the model names: a device the interface map knows and one it does not; a rid that matches a discovered rule and one that matches none; both address families; an ISO __timestamp__ (the form measured on a live firewall) and a year-less one (the form the survey says remains possible); a blocked record and passed ones; and an action and a direction outside their vocabularies, which must become unknown. The reasons are values of the set established for step 5 from filterlog.c: match, and state-mismatch for a packet no rule decided.",
     "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
   },
   "body": [
@@ -24,7 +24,7 @@
       "srcport": "44321",
       "dstport": "443",
       "rid": "example-rule-label-1",
-      "reason": "example-log-reason-match",
+      "reason": "match",
       "label": "example rule description 1",
       "rulenr": "12",
       "subrulenr": "",
@@ -49,7 +49,7 @@
       "srcport": "51515",
       "dstport": "53",
       "rid": "example-rule-label-2",
-      "reason": "example-log-reason-match"
+      "reason": "match"
     },
     {
       "__digest__": "exampledigest0000000000000000003",
@@ -65,7 +65,7 @@
       "srcport": "44322",
       "dstport": "80",
       "rid": "example-rule-label-not-discovered",
-      "reason": "example-log-reason-other"
+      "reason": "state-mismatch"
     },
     {
       "__digest__": "exampledigest0000000000000000004",
@@ -93,7 +93,7 @@
       "srcport": "443",
       "dstport": "44321",
       "rid": "example-rule-label-1",
-      "reason": "example-log-reason-match"
+      "reason": "match"
     }
   ]
 }

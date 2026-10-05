@@ -6,11 +6,11 @@ import "net/http"
 //
 // IT IS SERVED FROM THE BINARY'S OWN EMBEDDED COPY, and there is exactly one of
 // them. No font, no script, no icon set, no favicon, no analytics beacon and no
-// version check: ROADMAP.md permits opnview two outbound calls — the firewall API
-// and the MaxMind download — and a page that fetched a stylesheet, a font or an icon
-// from anywhere would be a third. That is a privacy and availability rule rather
-// than a performance preference: the owner of the network is entitled to know that
-// looking at his firewall data contacts nobody.
+// version check: ROADMAP.md permits opnview three outbound calls — the firewall API,
+// the MaxMind download and the Public Suffix List download — and a page that fetched
+// a stylesheet, a font or an icon from anywhere would be a fourth. That is a privacy
+// and availability rule rather than a performance preference: the owner of the network
+// is entitled to know that looking at his firewall data contacts nobody.
 //
 // THERE IS NO http.FileServer HERE, deliberately. A file server serves whatever is
 // in a directory, so the set of things reachable would be whatever somebody later
