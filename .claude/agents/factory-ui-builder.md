@@ -59,9 +59,9 @@ table, so skipping it does not save you a round — it costs you one.
 
 ## No resource loads from any host, ever
 
-`opnview` makes exactly two outbound calls: the firewall API on the local
-network, and the MaxMind database download. **A page you produce makes
-neither.**
+`opnview` makes exactly three outbound calls: the firewall API on the local
+network, the MaxMind database download and the Public Suffix List download.
+**A page you produce makes none of them.**
 
 - **Inline is acceptable. External is not.** Styles, scripts, fonts, icons,
   images, map tiles, charting libraries — all of it ships inside the artefact

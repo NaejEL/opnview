@@ -58,9 +58,9 @@ rule recorded in `CLAUDE.md`, and you must report it as such.
      Outside explicit test fixtures, each occurrence is a `critical` issue.
    - **Secrets** — any key, API secret, token, hardcoded OPNsense URL, or
      committed config file holding credentials: `critical` issue.
-   - **Outbound calls** — any URL contacted other than the firewall API and the
-     MaxMind download (CDN, remote fonts, telemetry, version check):
-     `critical` issue.
+   - **Outbound calls** — any URL contacted other than the firewall API, the
+     MaxMind download and the Public Suffix List download (CDN, remote fonts,
+     telemetry, version check): `critical` issue.
    - **Writes to the firewall** — any OPNsense API POST/PUT/DELETE changing its
      configuration, or any file read on the firewall: `critical` issue.
    - **Invented endpoints** — an OPNsense API path with no justification or

@@ -99,8 +99,9 @@ demonstrated need. Every cycle extends the coverage.
 - **No secrets in the repository, no hardcoded key, ever.** Configuration
   (OPNsense URL, API key/secret, MaxMind key) is entered in the web wizard and
   stored outside the repository.
-- **No outbound call** other than the firewall API and the MaxMind database
-  download. No CDN, no telemetry, no version check.
+- **No outbound call** other than the firewall API, the MaxMind database
+  download and the Public Suffix List download. No CDN, no telemetry, no
+  version check.
 - **Write nothing to the firewall.** The OPNsense API is used read-only. Never
   read a file directly on the firewall to work around a source missing from the
   API: report it instead.

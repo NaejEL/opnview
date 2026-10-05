@@ -128,5 +128,5 @@ list of what this environment does *not* prove, are in `ROADMAP.md` under
 
 See `ROADMAP.md` for the eight-step plan and the cross-cutting engineering
 rules (no hardcoded configuration, no secrets in the repo, read-only against
-the firewall, exactly two outbound calls, the observation-point limit
+the firewall, exactly three outbound calls, the observation-point limit
 documented rather than printed on screen).

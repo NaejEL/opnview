@@ -39,9 +39,9 @@ Structural constraints of the project, to restate in every spec they touch:
 - **Observation-point limit.** The application only sees what crosses the
   router; intra-segment traffic is invisible. Any spec covering the display of
   volumes must require that this limit be stated explicitly in the UI.
-- **Exactly two outbound calls are tolerated**: the firewall API on the local
-  network, and the MaxMind database download. Nothing else — no CDN, no
-  telemetry, no version check.
+- **Exactly three outbound calls are tolerated**: the firewall API on the local
+  network, the MaxMind database download, and the Public Suffix List download
+  (`ROADMAP.md`). Nothing else — no CDN, no telemetry, no version check.
 - **The interface is not restated here, because it is written down elsewhere
   and there is exactly one copy of it.** `docs/ui-references.md`,
   `docs/widget-catalogue.md` and `docs/dashboard-format.md` are **binding**,
