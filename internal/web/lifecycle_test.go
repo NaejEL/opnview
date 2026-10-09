@@ -19,6 +19,7 @@ import (
 // collects without a human, or collection stops at every reboot until somebody signs
 // in. Signing out must therefore change nothing about the next pass.
 func TestCollectionDoesNotWaitForASignIn(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	login, password := harness.completeSetup()
 	apiKey, apiSecret := randomHex(t, 12), randomHex(t, 16)
@@ -65,6 +66,7 @@ func sessionCount(t *testing.T, harness *harness) int {
 // package can prove it: cmd/opnview cancels one context, and the HTTP server returning
 // is what lets the database be closed and checked.
 func TestTheServerStopsOnItsContextAndTheDatabaseStaysIntact(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	harness.completeSetup()
 
@@ -136,6 +138,7 @@ func TestTheServerStopsOnItsContextAndTheDatabaseStaysIntact(t *testing.T) {
 // variable, no configuration file and no fixture: everything below goes in through
 // the settings surface, which is the point of the whole cycle.
 func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
+	t.Parallel()
 	// 1. An empty data directory. The schema is applied and the account table is
 	// empty, and the service is up regardless.
 	harness := newHarness(t)
@@ -204,6 +207,7 @@ func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
 // TestTheVerificationEndpointIsTheOneTheRegistryCarries pins the choice, so replacing
 // it is a deliberate act rather than an edit nobody notices.
 func TestTheVerificationEndpointIsTheOneTheRegistryCarries(t *testing.T) {
+	t.Parallel()
 	chosen := verificationEndpoint()
 	if chosen.Path != opnsense.InterfacesInfo.Path {
 		t.Errorf("verification calls %s rather than the endpoint documented beside it",

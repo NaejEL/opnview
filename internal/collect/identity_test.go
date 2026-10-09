@@ -12,6 +12,7 @@ import (
 // truncated instant, so a day boundary that followed the host's zone would mint a different
 // client identity depending on which machine opnview happened to run on.
 func TestDayStartTruncatesToTheUTCDay(t *testing.T) {
+	t.Parallel()
 	instant := time.Date(2026, time.September, 26, 23, 51, 6, 0, time.UTC).Unix()
 	want := time.Date(2026, time.September, 26, 0, 0, 0, 0, time.UTC).Unix()
 	if got := DayStart(instant); got != want {

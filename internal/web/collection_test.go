@@ -228,6 +228,7 @@ func suggestedHarness(t *testing.T) *harness {
 // TestTheCollectionRouteNamesItselfAndLabelsEachCard: one heading names the route,
 // and every card is labelled by a heading naming its kind.
 func TestTheCollectionRouteNamesItselfAndLabelsEachCard(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	page := pageSource(t, h, PathCollection)
 
@@ -253,6 +254,7 @@ func TestTheCollectionRouteNamesItselfAndLabelsEachCard(t *testing.T) {
 // TestAKindWithNoProviderRowProducesNoCard: the cards are the kinds the provider
 // table holds, read at run time.
 func TestAKindWithNoProviderRowProducesNoCard(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	db := h.store.DB()
 	for _, statement := range []string{
@@ -277,6 +279,7 @@ func TestAKindWithNoProviderRowProducesNoCard(t *testing.T) {
 // TestTheCollectionSurfaceReportsEveryFigureItMeasures: every figure the
 // measurement carries is on the card, in the form the measurement gives it.
 func TestTheCollectionSurfaceReportsEveryFigureItMeasures(t *testing.T) {
+	t.Parallel()
 	h := suggestedHarness(t)
 	now := h.clock.Now().Unix()
 	h.recordGap("firewall_log", "pf", store.GapDigestOutsideWindow, now-900, now-840)
@@ -349,6 +352,7 @@ func TestTheCollectionSurfaceReportsEveryFigureItMeasures(t *testing.T) {
 // TestASourceThatIsNotCollectedIsItsOwnStateAndGetsNoSuggestion: records on the
 // table do not make a suggestion for a kind nobody reads.
 func TestASourceThatIsNotCollectedIsItsOwnStateAndGetsNoSuggestion(t *testing.T) {
+	t.Parallel()
 	h := suggestedHarness(t)
 	h.setAvailability("firewall_log", "pf", store.StateUnavailable)
 
@@ -376,6 +380,7 @@ func TestASourceThatIsNotCollectedIsItsOwnStateAndGetsNoSuggestion(t *testing.T)
 // TestTheFillControlIsNotOfferedWithNothingToFillWith: the control is disabled in
 // every card whose outcome carries no pair.
 func TestTheFillControlIsNotOfferedWithNothingToFillWith(t *testing.T) {
+	t.Parallel()
 	fillControl := `name="` + fieldFill + `" value="1" class="secondary"`
 	h := signedInHarness(t)
 	page := pageSource(t, h, PathCollection)
@@ -395,6 +400,7 @@ func TestTheFillControlIsNotOfferedWithNothingToFillWith(t *testing.T) {
 // TestTheFillControlWritesNothingAndFillsTheFields: the suggestion goes into the
 // fields, and nothing is stored or handed to the running service.
 func TestTheFillControlWritesNothingAndFillsTheFields(t *testing.T) {
+	t.Parallel()
 	h := suggestedHarness(t)
 	kind, _ := kindNamed("firewall_log")
 	_, suggestion, _, err := h.server.measureKind(context.Background(), kind)
@@ -440,6 +446,7 @@ func TestTheFillControlWritesNothingAndFillsTheFields(t *testing.T) {
 // TestASavedPairIsStoredAndANonNumberIsRefused: a save writes the two rows, and a
 // figure that is not a positive whole number writes neither.
 func TestASavedPairIsStoredAndANonNumberIsRefused(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	status, _ := statusAndBody(t, h.post(PathCollection, pairForm("firewall_log", "700", "20")))
 	if status != http.StatusOK {
@@ -481,6 +488,7 @@ func TestASavedPairIsStoredAndANonNumberIsRefused(t *testing.T) {
 // TestASavedPairReachesTheRunningServiceWithoutARestart: the live holder and the
 // running collector have the new pair as soon as the save answers.
 func TestASavedPairReachesTheRunningServiceWithoutARestart(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	discard(t, h.post(PathCollection, pairForm("security_event", "1200", "45")))
 
@@ -507,6 +515,7 @@ func TestASavedPairReachesTheRunningServiceWithoutARestart(t *testing.T) {
 // TestASaveIsConfirmedInTheCardItWasSavedIn: the confirmation is drawn in the card
 // that was saved, and nowhere else.
 func TestASaveIsConfirmedInTheCardItWasSavedIn(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	_, page := statusAndBody(t, h.post(PathCollection, pairForm("dhcp_lease", "600", "120")))
 	saved := catalogueText(t, msgCollectionSaved)
@@ -525,6 +534,7 @@ func TestASaveIsConfirmedInTheCardItWasSavedIn(t *testing.T) {
 // TestARefusedFigureIsReportedAgainstTheFieldThatCausedIt: the field that caused a
 // refusal is marked, carries what was typed, and is the only one marked.
 func TestARefusedFigureIsReportedAgainstTheFieldThatCausedIt(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	for _, refused := range []struct {
 		form           url.Values
@@ -564,6 +574,7 @@ func TestARefusedFigureIsReportedAgainstTheFieldThatCausedIt(t *testing.T) {
 // TestAnIntervalNoDurationRepresentsIsRefused: the largest interval a duration
 // holds is accepted, and one second more is refused as too large.
 func TestAnIntervalNoDurationRepresentsIsRefused(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	tooLarge := strconv.FormatInt(config.MaxIntervalSeconds+1, 10)
 	status, page := statusAndBody(t, h.post(PathCollection, pairForm("dns_lookup", "", tooLarge)))
@@ -587,6 +598,7 @@ func TestAnIntervalNoDurationRepresentsIsRefused(t *testing.T) {
 // TestAPageSizeAboveTheCeilingIsStoredAndReported: a page above the firewall's
 // ceiling is stored, and the card says it is above it.
 func TestAPageSizeAboveTheCeilingIsStoredAndReported(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	above := strconv.Itoa(sizing.PageCeilingSecurityEvent + 1)
 	status, page := statusAndBody(t, h.post(PathCollection, pairForm("security_event", above, "60")))
@@ -607,6 +619,7 @@ func TestAPageSizeAboveTheCeilingIsStoredAndReported(t *testing.T) {
 // from the database without changing a byte of it. The session row is left out: it
 // records the reader's activity, which every signed-in request moves.
 func TestDrawingTheSurfaceAndMeasuringWriteNothing(t *testing.T) {
+	t.Parallel()
 	h := suggestedHarness(t)
 	before := databaseBytesExcept(t, h, "session")
 	_ = pageSource(t, h, PathCollection)
@@ -620,6 +633,7 @@ func TestDrawingTheSurfaceAndMeasuringWriteNothing(t *testing.T) {
 // TestTheMeasurementContactsNothing: drawing, measuring, filling and saving make no
 // call to the firewall, and any other destination fails the harness's transport.
 func TestTheMeasurementContactsNothing(t *testing.T) {
+	t.Parallel()
 	h := suggestedHarness(t)
 	before := len(h.fake.received())
 	_ = pageSource(t, h, PathCollection)
@@ -635,6 +649,7 @@ func TestTheMeasurementContactsNothing(t *testing.T) {
 // opnview stored, so it is a lower bound of what the source produced. That is
 // written in docs/data-model.md and printed on no page of the surface.
 func TestTheLowerBoundCaveatIsDocumentedAndNeverPrinted(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../docs/data-model.md")
 	if err != nil {
 		t.Fatalf("reading docs/data-model.md: %v", err)
@@ -750,6 +765,7 @@ func selectedIn(t *testing.T, card, id string) string {
 // TestEachImplementationIsSelectableInItsCard: every implementation of a kind has its
 // own selection in that kind's card, named from the catalogue, showing what is stored.
 func TestEachImplementationIsSelectableInItsCard(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	h.setSelection("dhcp_lease", "kea", config.SelectionOn)
 	card := cardOf(t, pageSource(t, h, PathCollection), "dhcp_lease")
@@ -780,6 +796,7 @@ func TestEachImplementationIsSelectableInItsCard(t *testing.T) {
 // hands the kind to the running collector; a save that sends none leaves them as they
 // are.
 func TestASavedSelectionIsStoredAndAppliedAtOnce(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	form := pairForm("dhcp_lease", "500", "300")
 	form.Set("selection_kea", "on")
@@ -812,6 +829,7 @@ func TestASavedSelectionIsStoredAndAppliedAtOnce(t *testing.T) {
 // TestASelectionThatIsNotOneOfTheThreeIsRefusedAgainstItsField: nothing is stored and
 // nothing applied, and the refusal is drawn against the selection that caused it.
 func TestASelectionThatIsNotOneOfTheThreeIsRefusedAgainstItsField(t *testing.T) {
+	t.Parallel()
 	h := signedInHarness(t)
 	form := pairForm("dhcp_lease", "600", "120")
 	form.Set("selection_kea", "maybe")

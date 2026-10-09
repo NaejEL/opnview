@@ -211,12 +211,19 @@ type Collector struct {
 	// last derivation that placed every address; the mutex guards both.
 	lastRefreshAt     int64
 	onLinkFingerprint string
-	// hostnamesSince is where the next lease pass starts resolving host-name lookups
-	// again: the watermark of the previous one, so a pass resolves only the lookups
-	// ingested since and its work does not grow with those that stay unresolved. It
-	// starts at the collector's creation, so a run does not retry what an earlier run
-	// tried. The mutex guards it.
-	hostnamesSince int64
+	// sampleAbsences holds, per measurement provider, what its last sampling pass could
+	// not read, in words, so the probe round's rewrite of the availability row restates
+	// it rather than erasing it. The mutex guards it.
+	sampleAbsences map[int64]string
+	// pairingWindowSeconds is the leg_pairing_window_seconds setting: how far apart
+	// the two records of one connection may have been logged and still be paired. The
+	// mutex guards it.
+	pairingWindowSeconds int64
+	// leaseFailureLimit is the lease_backend_failure_pass_limit setting, and
+	// leaseFailures how many lease passes in a row each lease backend has failed,
+	// by provider id; see collectLeases. The mutex guards both.
+	leaseFailureLimit int64
+	leaseFailures     map[int64]int64
 	// ingesting holds the ingestion instant of every pass that has stamped rows with
 	// it and has not yet finished writing them, keyed by a sequence number; the
 	// mutex guards both. The refresh never moves its watermark past the oldest of
@@ -252,7 +259,10 @@ func New(client *opnsense.Client, database *store.Store, clock Clock) *Collector
 		maxDelaySeconds: config.DefaultAttributionMaxDelaySeconds,
 		discovery:       newDiscovery(),
 		probed:          map[string][]probedSource{},
-		hostnamesSince:  clock.Now().Unix(),
+
+		pairingWindowSeconds: config.DefaultLegPairingWindowSeconds,
+		leaseFailureLimit:    config.DefaultLeaseBackendFailurePassLimit,
+		leaseFailures:        map[int64]int64{},
 	}
 }
 
@@ -272,6 +282,33 @@ func (c *Collector) Configure(settings config.Config) {
 	if settings.AttributionMaxDelaySeconds > 0 {
 		c.maxDelaySeconds = settings.AttributionMaxDelaySeconds
 	}
+	if settings.LegPairingWindowSeconds >= 0 {
+		c.pairingWindowSeconds = settings.LegPairingWindowSeconds
+	}
+	if settings.LeaseBackendFailurePassLimit > 0 {
+		c.leaseFailureLimit = settings.LeaseBackendFailurePassLimit
+	}
+}
+
+// setSampleAbsence records what one measurement provider's last pass could not read.
+func (c *Collector) setSampleAbsence(providerID int64, absent string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	if c.sampleAbsences == nil {
+		c.sampleAbsences = map[int64]string{}
+	}
+	if absent == "" {
+		delete(c.sampleAbsences, providerID)
+		return
+	}
+	c.sampleAbsences[providerID] = absent
+}
+
+// sampleAbsence is what one provider's last sampling pass could not read, or empty.
+func (c *Collector) sampleAbsence(providerID int64) string {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.sampleAbsences[providerID]
 }
 
 // PageSizes returns the page sizes the collectors use now.

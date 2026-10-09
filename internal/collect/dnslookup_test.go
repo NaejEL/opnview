@@ -48,6 +48,7 @@ func arrangeResolverCollection(t *testing.T) *probeHarness {
 // unwindowed branch, with HTTP 200 and no diagnostic. This is the only thing standing
 // between the product and that.
 func TestTheResolverQueryIsAJSONPostWithIntegerBounds(t *testing.T) {
+	t.Parallel()
 	harness := arrangeResolverCollection(t)
 	if err := harness.collector.CollectDNSLookup(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
@@ -109,6 +110,7 @@ func TestTheResolverQueryIsAJSONPostWithIntegerBounds(t *testing.T) {
 // is that it read the most recent lookups and that this is NOT coverage of the window —
 // nothing anywhere claims an interval it did not cover.
 func TestTheCollectorNeverPresentsWhatItReadAsCoverageOfTheWindow(t *testing.T) {
+	t.Parallel()
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
 
@@ -142,6 +144,7 @@ func TestTheCollectorNeverPresentsWhatItReadAsCoverageOfTheWindow(t *testing.T) 
 // stored; without a content-addressed key each pass would insert them again and multiply
 // every per-client lookup count by the number of passes that saw it.
 func TestTheDeduplicationKeyIsComposedFromTheRowContentBecauseTheIdentifierIsNull(t *testing.T) {
+	t.Parallel()
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
 
@@ -187,6 +190,7 @@ func TestTheDeduplicationKeyIsComposedFromTheRowContentBecauseTheIdentifierIsNul
 // same as a lookup that was allowed, and it is not a row to drop: it is "blocked, list not
 // recorded".
 func TestABlockedLookupNamingNoListIsItsOwnState(t *testing.T) {
+	t.Parallel()
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
 
@@ -221,6 +225,7 @@ func TestABlockedLookupNamingNoListIsItsOwnState(t *testing.T) {
 // from "unvalidated". The resolver reached a verdict on some rows and none on others, and
 // the nullable column exists for exactly that difference.
 func TestALookupWhoseVerdictWasNotReportedStaysDistinguishable(t *testing.T) {
+	t.Parallel()
 	harness := arrangeResolverCollection(t)
 	if err := harness.collector.CollectDNSLookup(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
@@ -242,6 +247,7 @@ func TestALookupWhoseVerdictWasNotReportedStaysDistinguishable(t *testing.T) {
 // newer than the newest row stored, the lookups between the two rotated out before opnview
 // read them. Nothing can recover them, and the loss is recorded rather than smoothed over.
 func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
+	t.Parallel()
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
 
@@ -288,6 +294,7 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 // measurement implies: pages walk further back rather than paging a window, so the collector
 // walks until a page holds nothing new.
 func TestTheCollectorWalksTheRingBufferAndStopsWhenAPageIsAllKnown(t *testing.T) {
+	t.Parallel()
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
 
@@ -329,6 +336,7 @@ func TestTheCollectorWalksTheRingBufferAndStopsWhenAPageIsAllKnown(t *testing.T)
 // instants that matter: the lookup's own instant, which is part of the row and therefore
 // part of its identity, and the instant opnview happened to read it, which is not.
 func TestTheLookupKeyDependsOnTheRowAndNotOnWhenItWasPolled(t *testing.T) {
+	t.Parallel()
 	row := decode.Object{
 		"client":        "example-client-address",
 		"domain":        "example-name.invalid",
@@ -397,6 +405,7 @@ func TestTheLookupKeyDependsOnTheRowAndNotOnWhenItWasPolled(t *testing.T) {
 // TestTheStoredKeysDoNotChangeWhenThePollInstantDoes is the same property at the
 // collector boundary, because that is where a poll time could actually leak in.
 func TestTheStoredKeysDoNotChangeWhenThePollInstantDoes(t *testing.T) {
+	t.Parallel()
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
 

@@ -169,6 +169,7 @@ func (h *probeHarness) activeKeyOf(t *testing.T, kind string) string {
 // TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoData is the
 // table AC16 asks for, one subtest per source.
 func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoData(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		// arrange puts the fake in the state the survey documents as present-but-disabled
@@ -340,6 +341,7 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 // survey separates from present-but-disabled: a 404 on a module endpoint is the normal
 // signal that an optional component is not installed.
 func TestASourceThatAnswers404IsUnavailableAndNotActivated(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	// Nothing is arranged, so every endpoint answers 404.
 	if err := harness.collector.ProbeAll(context.Background()); err == nil {
@@ -374,6 +376,7 @@ func TestASourceThatAnswers404IsUnavailableAndNotActivated(t *testing.T) {
 // nothing for weeks. That is a true reading of a correctly working source, and calling it
 // a fault would be the defect.
 func TestAReachableSourceWithNothingToSayStaysReachable(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	harness.fake.answerFixture(opnsense.IDSStatus, "ids_status_running.json")
 	// An empty array, written here rather than as a fixture because the value is the
@@ -417,6 +420,7 @@ func TestAReachableSourceWithNothingToSayStaysReachable(t *testing.T) {
 // That is stricter as well as still true: it no longer depends on a fixture's configuration, and
 // it keeps working when no shipped implementation can present the ambiguity at all.
 func TestTwoProvidersOfAnExclusiveKindTheFirewallDoesNotSeparateActivateNeitherAndRecordTheAmbiguity(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 
@@ -460,6 +464,7 @@ func TestTwoProvidersOfAnExclusiveKindTheFirewallDoesNotSeparateActivateNeitherA
 // ambiguity: both are read, and neither row carries the sentence about opnview reading neither,
 // because that sentence would be false.
 func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 
@@ -492,6 +497,7 @@ func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *te
 // TestOneBackendTheFirewallSeparatesIsActivated is the other half: when the firewall's
 // own configuration does name one, opnview reads it.
 func TestOneBackendTheFirewallSeparatesIsActivated(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	harness.fake.answerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
 	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
@@ -518,6 +524,7 @@ func TestOneBackendTheFirewallSeparatesIsActivated(t *testing.T) {
 // would be guessing, so the provider is detected, reported, and never read — which also
 // means the two resolvers can never present the ambiguity the DHCP kind can.
 func TestTheDnsmasqResolverIsDetectedAndReportedAndNeverActivated(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	harness.fake.answerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
 	harness.fake.answerFixture(opnsense.UnboundSettings, "unbound_settings.json")
@@ -548,6 +555,7 @@ func TestTheDnsmasqResolverIsDetectedAndReportedAndNeverActivated(t *testing.T) 
 // measured. A 404 says the plugin is not installed here, which is the unavailable state
 // working — not a reason to attempt its lease endpoint.
 func TestTheEndOfLifeISCPluginIsRecordedAsAbsentRatherThanRead(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	if err := harness.collector.ProbeAll(context.Background()); err != nil {
 		t.Logf("the probe round reported: %v", err)
@@ -623,6 +631,7 @@ func reachableAndSeparable(key string) probeable {
 // whatever the probe concluded, and availability is still recorded as the firewall reported
 // it, because a selection is a decision and not a claim about the firewall.
 func TestASourceTheOperatorTurnedOffIsNotCollectedAlthoughItIsReachable(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	harness.fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
@@ -654,6 +663,7 @@ func TestASourceTheOperatorTurnedOffIsNotCollectedAlthoughItIsReachable(t *testi
 // probe used to drop a working source until the next round. Turned on, the source is read
 // whatever the probe concluded, and the availability row says what the probe saw.
 func TestASourceTheOperatorTurnedOnIsCollectedAlthoughTheProbeWouldHaveDroppedIt(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	harness.fake.answer(opnsense.FirewallLog, http.StatusInternalServerError, []byte(`{}`))
@@ -691,6 +701,7 @@ func TestASourceTheOperatorTurnedOnIsCollectedAlthoughTheProbeWouldHaveDroppedIt
 // as found: it gave the unreadable row no selection, so the implementation was activated or
 // not on the probe's word alone, as with no row. The assertions below hold to that build.
 func TestASelectionThatCannotBeReadIsReportedRatherThanTreatedAsAuto(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	harness.selectSource(t, KindDNSLookup, ProviderUnbound, "yes")
@@ -713,6 +724,7 @@ func TestASelectionThatCannotBeReadIsReportedRatherThanTreatedAsAuto(t *testing.
 // round reads neither — and no person could break the tie. Turning one on is that person
 // saying which one: it is read, the other is not, and the ambiguity is recorded nowhere.
 func TestTurningOneOnBreaksTheTieThatUsedToReadNeither(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
@@ -747,6 +759,7 @@ func countingProbeable(key string, runs *int) probeable {
 // selection between two probe rounds, and it is applied at once, from what the last round
 // found, with no probe run and no availability row rewritten.
 func TestASavedSelectionIsAppliedWithoutProbingTheFirewallAgain(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	runs := 0
@@ -794,6 +807,7 @@ func TestASavedSelectionIsAppliedWithoutProbingTheFirewallAgain(t *testing.T) {
 // TestASelectionSavedBeforeAnyProbeRoundWaitsForTheFirst: with nothing probed yet there is
 // nothing to decide from, so nothing is activated until the first round, which applies it.
 func TestASelectionSavedBeforeAnyProbeRoundWaitsForTheFirst(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
@@ -815,6 +829,7 @@ func TestASelectionSavedBeforeAnyProbeRoundWaitsForTheFirst(t *testing.T) {
 // TestASelectionThatCannotBeReadLeavesTheActiveSourcesAsTheyWere: applying a selection that
 // cannot be read is an error, and changes nothing.
 func TestASelectionThatCannotBeReadLeavesTheActiveSourcesAsTheyWere(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))

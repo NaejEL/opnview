@@ -20,6 +20,7 @@ import (
 // not have wandered into collection; and there is no CDN, no telemetry and no version check
 // anywhere in the collection path.
 func TestDiscoveryAndAllFiveCollectorsReachTheFirewallAndNothingElse(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 
@@ -91,6 +92,7 @@ func TestDiscoveryAndAllFiveCollectorsReachTheFirewallAndNothingElse(t *testing.
 // The client refuses a mutating command before a request exists, so this is the recording
 // half: every method the fake saw is a read, and no path names a command that could write.
 func TestNoCollectorWritesToTheFirewall(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)

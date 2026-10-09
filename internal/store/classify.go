@@ -13,6 +13,13 @@ import (
 // Classification: which interface an address belongs to, if any, and which client
 // stands behind it.
 //
+// THIS FIREWALL COMES FIRST. Before any on-link evidence is read, an end whose address
+// this firewall held at the row's instant, or a loopback address, is recognised as this
+// firewall (thisfirewall.go): it records the interface the address belonged to and no
+// client, and it is neither inside nor outside. The decision is per row, because it is
+// taken as of each row's own instant, and it is made inside the statements that place
+// the rows (derive.sql, classify_*).
+//
 // MEMBERSHIP COMES FROM ON-LINK EVIDENCE AND FROM NOTHING ELSE. In order of
 // strength:
 //
@@ -186,13 +193,34 @@ func (s *Store) ReclassifyAll(ctx context.Context, now int64) (Reclassification,
 }
 
 // PurgeUnreferencedClients removes every client that nothing names, that nobody
-// attributed to a person, and that is address-level or behind an upstream
-// interface.
+// attributed to a person, and that is address-level, behind an upstream interface, or
+// at an address this firewall held when the client was last seen there -- the clients
+// the neighbour tables minted from the firewall's own interface entries before the
+// neighbour pass recognised them (defect L2 of
+// specs/SPEC-test-budget-and-two-live-defects.md).
 func (s *Store) PurgeUnreferencedClients(ctx context.Context) (int64, error) {
+	margin, err := heldMargin(ctx, s.db)
+	if err != nil {
+		return 0, err
+	}
 	var total int64
 	for _, name := range []string{"purge_unreferenced_address_level_clients",
 		"purge_unreferenced_upstream_clients"} {
 		removed, err := execNamed(ctx, s.db, name, nil)
+		if err != nil {
+			return total, err
+		}
+		total += removed
+	}
+	var held []string
+	if err := walkDistinct(ctx, s.db, "next_this_firewall_address", func(address string) {
+		held = append(held, address)
+	}); err != nil {
+		return total, err
+	}
+	for _, address := range held {
+		removed, err := execNamed(ctx, s.db, "purge_unreferenced_this_firewall_clients_at_address",
+			map[string]any{"address": address, "held_margin": margin})
 		if err != nil {
 			return total, err
 		}
@@ -230,13 +258,19 @@ func (s *Store) reclassifyChunk(ctx context.Context, addresses []string, now int
 		return result, fmt.Errorf("store: starting a classification: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
+	// Every address runs the same statements, so each is prepared once per chunk.
+	prepared := newPreparedTx(transaction)
 
-	prefixes, err := loadPrefixes(ctx, transaction)
+	prefixes, err := loadPrefixes(ctx, prepared)
+	if err != nil {
+		return result, err
+	}
+	margin, err := heldMargin(ctx, prepared)
 	if err != nil {
 		return result, err
 	}
 	for _, address := range addresses {
-		one, err := classifyAddress(ctx, transaction, address, prefixes, now)
+		one, err := classifyAddress(ctx, prepared, address, prefixes, margin, now)
 		if err != nil {
 			return result, err
 		}
@@ -251,13 +285,25 @@ func (s *Store) reclassifyChunk(ctx context.Context, addresses []string, now int
 // classifyAddress places one address and rewrites every row that names it and
 // needs it.
 func classifyAddress(ctx context.Context, q querier, address string, prefixes []prefixEvidence,
-	now int64) (Reclassification, error) {
+	margin, now int64) (Reclassification, error) {
 	var result Reclassification
 	place, err := placeAddress(ctx, q, address, prefixes)
 	if err != nil {
 		return result, err
 	}
 	interfaceID := place.interfaceID
+
+	// Whether the address is, or ever was, this firewall: the rows naming it are then
+	// decided one by one, as of their own instants, by the statements below.
+	loopback := 0
+	if IsLoopback(address) {
+		loopback = 1
+	}
+	holdings, err := firewallHoldings(ctx, q, address)
+	if err != nil {
+		return result, err
+	}
+	firewall := loopback == 1 || holdings != ""
 
 	var identityClient *int64
 	if interfaceID != nil {
@@ -270,8 +316,12 @@ func classifyAddress(ctx context.Context, q querier, address string, prefixes []
 	}
 
 	// The fingerprint is every input of the outcome: which evidence placed the
-	// address, on which interface, and the strongest identity there.
+	// address, on which interface, the strongest identity there, and when this
+	// firewall held it -- and the margin those holdings are read with.
 	evidence := fmt.Sprintf("%s|%s|%s", place.kind, idText(interfaceID), idText(identityClient))
+	if firewall {
+		evidence += fmt.Sprintf("|this_firewall:%d:%s:%d", loopback, holdings, margin)
+	}
 	var recorded sql.NullString
 	text, err := Statement("classification_evidence")
 	if err != nil {
@@ -282,13 +332,15 @@ func classifyAddress(ctx context.Context, q querier, address string, prefixes []
 		return result, fmt.Errorf("store: classification_evidence: %w", err)
 	}
 	full := !recorded.Valid || recorded.String != evidence
-	if !full && interfaceID == nil {
+	if !full && interfaceID == nil && !firewall {
 		// An outside address whose evidence is unchanged has nothing to place: the
 		// collector stores every end with no interface and no client, which is what
 		// an outside end is, and a lookup from it is placed below only if pending.
+		// An address this firewall ever held is not one: each of its rows is this
+		// firewall or not as of its own instant, so its new rows are placed below.
 		lookups, err := queryInts(ctx, q, "classify_lookup", map[string]any{
 			"address": address, "interface_id": nil, "identity_client_id": nil,
-			"address_client_id": nil, "full": 0,
+			"address_client_id": nil, "full": 0, "loopback": 0, "held_margin": margin,
 		})
 		if err != nil {
 			return result, err
@@ -312,7 +364,7 @@ func classifyAddress(ctx context.Context, q querier, address string, prefixes []
 			// has no client at all: a client nobody refers to would only inflate
 			// the count of machines known behind the interface.
 			_, needed, err := queryOptionalInt(ctx, q, "unclassified_end_at_address",
-				map[string]any{"address": address})
+				map[string]any{"address": address, "loopback": loopback, "held_margin": margin})
 			if err != nil {
 				return result, err
 			}
@@ -343,6 +395,8 @@ func classifyAddress(ctx context.Context, q querier, address string, prefixes []
 		"identity_client_id": optional(identityClient),
 		"address_client_id":  optional(addressClient),
 		"full":               fullFlag,
+		"loopback":           loopback,
+		"held_margin":        margin,
 	}
 	// The purged part of the address-level client a better identity replaces follows
 	// its flows to that identity, so the hours it lies in are recomputed with them.

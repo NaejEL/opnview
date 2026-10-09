@@ -20,6 +20,7 @@ import (
 // rows already stored; without the uniqueness on __digest__ each poll would inflate
 // every volume that sums packet_bytes.
 func TestIngestingTheSamePageTwiceProducesTheSameFlowCount(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	page := examplePage()
@@ -49,6 +50,7 @@ func TestIngestingTheSamePageTwiceProducesTheSameFlowCount(t *testing.T) {
 // alert feed, keyed on (provider_id, provider_event_key) — the key the provider itself
 // guarantees stable.
 func TestIngestingTheSameSecurityEventTwiceProducesTheSameCount(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID, err := database.ProviderID(ctx, "security_event", "suricata")
@@ -86,6 +88,7 @@ func TestIngestingTheSameSecurityEventTwiceProducesTheSameCount(t *testing.T) {
 // must respect: offered under canonical ordering, the two directions of one pair are one
 // row, and the schema rejects a row stored the other way round.
 func TestTheTwoDirectionsOfOnePairCollapseToOneVolume(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -155,6 +158,7 @@ func TestTheTwoDirectionsOfOnePairCollapseToOneVolume(t *testing.T) {
 // WRITING VERB IS ENUMERATED, REPLACE INTO included, which is SQLite's alias for INSERT OR
 // REPLACE and the likeliest way to re-derive a slot.
 func TestOnlyTheDerivationWritesThePairVolumeTable(t *testing.T) {
+	t.Parallel()
 	var offenders []string
 	for _, root := range []string{"../../cmd", "../../internal"} {
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
@@ -199,6 +203,7 @@ func TestOnlyTheDerivationWritesThePairVolumeTable(t *testing.T) {
 // TestThePairVolumeGuardHasTeeth runs the guard's matcher over writers it must refuse and
 // over the two files it must admit.
 func TestThePairVolumeGuardHasTeeth(t *testing.T) {
+	t.Parallel()
 	for _, writer := range []string{
 		"_, err := db.ExecContext(ctx, `INSERT INTO\n\tpair_volume_observation (day_start_at) VALUES (?)`)",
 		`query := "REPLACE INTO " + "pair_volume_observation" + " VALUES (1)"`,
@@ -255,6 +260,7 @@ func pairVolumeWriters(path, source string) []string {
 // plan. The write path computes it so a collector cannot disagree with the schema's
 // CHECK.
 func TestTrafficScopeIsDerivedFromInterfaceMembershipAlone(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	first, second := exampleTwoInterfaces(t, database)
@@ -293,6 +299,7 @@ func TestTrafficScopeIsDerivedFromInterfaceMembershipAlone(t *testing.T) {
 // both are states on the row. Dropping such a row would lose a packet that really
 // crossed the firewall, which is the opposite of what this product is for.
 func TestAFlowWhoseJoinKeysResolveToNothingIsStoredWithItsState(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -332,6 +339,7 @@ func TestAFlowWhoseJoinKeysResolveToNothingIsStoredWithItsState(t *testing.T) {
 // TestAMeasurementOfEachKindRoundTrips is the sampled-measurement table doing the two
 // jobs one table was created for: a firewall gauge, and a sampled per-pair volume.
 func TestAMeasurementOfEachKindRoundTrips(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID, err := database.ProviderID(ctx, "flow_volume", "insight")
@@ -417,6 +425,7 @@ func TestAMeasurementOfEachKindRoundTrips(t *testing.T) {
 // asserted in measurement_test.go, and the full shape table with it; this is the one direction
 // worth keeping here, where the vocabulary assertion used to live.
 func TestAMalformedMeasureTermIsRejected(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	err := database.InsertMeasurementSample(context.Background(), MeasurementSample{
 		SubjectKind: SubjectFirewall, Measure: Measure("example measure nobody declared"),
@@ -430,6 +439,7 @@ func TestAMalformedMeasureTermIsRejected(t *testing.T) {
 // TestACollectionGapIsARowWithItsIntervalAndItsReason is the gap table doing its job: a
 // window opnview did not cover is recorded, not smoothed over and not written as a zero.
 func TestACollectionGapIsARowWithItsIntervalAndItsReason(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID, err := database.ProviderID(ctx, "firewall_log", "pf")
@@ -473,6 +483,7 @@ func TestACollectionGapIsARowWithItsIntervalAndItsReason(t *testing.T) {
 // opnview's own detections, so enumerating them invents nothing — and an open column
 // would let one collector describe a loss in words no screen reads.
 func TestAGapReasonOutsideTheVocabularyIsRejected(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID, err := database.ProviderID(ctx, "firewall_log", "pf")
@@ -494,6 +505,7 @@ func TestAGapReasonOutsideTheVocabularyIsRejected(t *testing.T) {
 // watermark is the only resume point. The uniqueness on (file_id, byte_offset) is what
 // makes a restart unable to double-count.
 func TestAnEveWatermarkResumesWithoutLossOrDoubleCount(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -539,6 +551,7 @@ func TestAnEveWatermarkResumesWithoutLossOrDoubleCount(t *testing.T) {
 // path both carry: relabelling never overwrites discovery, and discovery never
 // overwrites a label.
 func TestADiscoveryRefreshNeverOverwritesAUserLabel(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -588,6 +601,7 @@ func TestADiscoveryRefreshNeverOverwritesAUserLabel(t *testing.T) {
 // the validity start the filter log does not carry, exercised at the storage boundary
 // that implements it.
 func TestAClientReissuedAnAddressAfterTheIdleWindowStaysTwoClients(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	address := "example-address"

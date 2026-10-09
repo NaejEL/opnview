@@ -22,6 +22,7 @@ func setClock(harness *probeHarness, at time.Time) {
 // independent loop -- commits, and only then does the pass store the page. The records
 // the purge removed must not be stored again, so the page counts once.
 func TestAPurgeCommittingDuringAFilterLogPassDoesNotCountTwice(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	ctx := context.Background()
 	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
@@ -76,10 +77,12 @@ func TestAPurgeCommittingDuringAFilterLogPassDoesNotCountTwice(t *testing.T) {
 }
 
 // TestALeasePassResolvesOnlyTheHostNameLookupsSinceThePreviousOne: the work of resolving
-// host names again is bounded to the lookups ingested since the previous lease pass began.
+// host names again is bounded to the lookups no lease pass has examined since they were
+// ingested (the stored mark of the step-5A live corrections, H6).
 // A lookup an earlier pass already tried is not tried again, and one read since -- before
 // the lease that names its host, as at start -- is resolved.
 func TestALeasePassResolvesOnlyTheHostNameLookupsSinceThePreviousOne(t *testing.T) {
+	t.Parallel()
 	harness := arrangeLeaseCollection(t)
 	ctx := context.Background()
 	answer := "Recursion"

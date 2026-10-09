@@ -95,8 +95,9 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | the domain a site name belongs to, one label below its public suffix | **registrable domain** (the Public Suffix List's own term) | `publicsuffix.List.RegistrableDomain`, computed at read time and never stored | <https://publicsuffix.org/list/>, *formal algorithm* |
 | a reading of one local address and one peer on one interface | the `traffic/top` record's `address` and its `details[]` entries | `measurement_sample.subject_kind = 'interface_endpoint_pair'`, key `device local peer` | survey, *What `traffic/top` measures, read from source for step 5*. The kind name is `opnview`'s; the three parts are the endpoint's |
 | a gateway's delay, its deviation and its loss | `delay`, `stddev`, `loss` | `delay_milliseconds`, `delay_stddev_milliseconds`, `loss_ratio` under `subject_kind = 'gateway'` | `/api/routes/gateway/status` (survey, *Gateway status, read from source for step 5*); the measure names carry the unit because the endpoint writes it into the text (`1.2 ms`, `0.0 %`) |
+| the firewall's own addresses, as a source or a destination | **This Firewall** — the rule editor's name for pf's `self` | `this_firewall`: `flow.src_is_this_firewall` / `dst_is_this_firewall`, `security_event.src_is_this_firewall`, `dns_resolution.client_is_this_firewall`, the `this_firewall_address` view, `traffic_scope = 'this_firewall'`, the directions `to_this_firewall` / `from_this_firewall`, the tree node `this_firewall`, and `blocked_decision.target_is_this_firewall` before them | <https://docs.opnsense.org/manual/how-tos/caddy.html>: "Create Firewall rules that allow `HTTP` and `HTTPS` to destination `This Firewall` on `WAN`"; `opnsense/core` 26.7.3, `src/opnsense/mvc/app/library/OPNsense/Firewall/FilterRule.php`, where the stored value `(self)` is rendered as `gettext("This Firewall")`, and `Firewall/Rule.php`, which passes `(self)` to pf unchanged; pf.conf(5), FreeBSD 15.1-RELEASE: "self Expands to all addresses assigned to all interfaces." The *manual/firewall.html* page does not carry the phrase |
 
-**Twenty-three terms are `opnview`'s own, because OPNsense has no word for them.**
+**Twenty-seven terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -114,7 +115,7 @@ vocabulary read off an endpoint:
 | `account` | OPNsense has **users**, and it has **API keys** issued to a user. Neither names a login into a *different* product: an `opnview` account authenticates nobody to the firewall and grants nothing on it | the word is the ordinary one for the thing, and it is deliberately **not** `user`, so that nothing in this schema can be mistaken for the OPNsense user whose API key `opnview` holds. The password columns carry the Argon2id parameters beside the digest because `ROADMAP.md` asks for exactly that; see `account`'s own section |
 | `session` | no product `opnview` reads has a notion of a browser signed in to `opnview`. OPNsense's own web session is its own and is never read here | the word is taken from what the row is. Its primary key is a **digest** of the token rather than the token, so the token exists only in the cookie; `expires_at` is named for the absolute cap it holds, and the sliding idle window is deliberately **not** a column — see that section |
 | `encrypted_credential` | OPNsense names an **API key** and an **API secret**, and MaxMind a **licence key**, but none of them has a word for *a credential this product holds at rest and has to be able to send again*. `setting` cannot be that word: a ciphertext is not a value | the term names what the row is — a credential, encrypted — and the four columns beside the ciphertext (`algorithm`, `key_id`, `nonce`, `updated_at`) are what make it openable and what let a replaced key be told apart from a tampered ciphertext. `name` holds which credential it is, as data, exactly as `provider_key` does |
-| `traffic_direction` (`outbound`, `inbound`, `inter_interface`) | pf's `dir` is **per interface**: a packet leaving a client for the Internet is `in` on the client's interface and `out` on the upstream one, so no OPNsense field says which way a flow crossed the firewall as a whole | the three words are the widget catalogue's scopes. They are derived from interface membership by the `classified_flow` view — the destination outside is outbound, the source outside is inbound, neither is between interfaces — and pf's `dir` enters only to break the tie when both ends are outside. `flow.direction` stays pf's own value |
+| `traffic_direction` (`outbound`, `inbound`, `inter_interface`, `to_this_firewall`, `from_this_firewall`) | pf's `dir` is **per interface**: a packet leaving a client for the Internet is `in` on the client's interface and `out` on the upstream one, so no OPNsense field says which way a flow crossed the firewall as a whole | the first three words are the widget catalogue's scopes. They are derived from interface membership by the `classified_flow` view — the destination outside is outbound, the source outside is inbound, neither is between interfaces — and pf's `dir` enters only to break the tie when both ends are outside. The last two are named after OPNsense's *This Firewall* and say that one end is the firewall itself (decision 6 of the step-5A live corrections). `flow.direction` stays pf's own value |
 | `measurement_sample.subject_kind = 'interface_endpoint'` | `traffic/top` reports, per interface, records keyed by a local `address`, each carrying totals over all its peers (`rate_bits_in`, `rate_bits_out`, `cumulative_bytes_in`, `cumulative_bytes_out`) beside a `details[]` list of peers; neither OPNsense nor `iftop` names the record itself | the record is one local address as read on one interface, so the term is the pair subject without its peer, keyed `device local`. It exists because the local address's sending is reported ONLY as that total, never per peer: without it a client talking to several peers would have no outbound figure at all (survey, *What `traffic/top` measures, read from source for step 5*) |
 | `interface.is_upstream` | OPNsense applies "upstream" to a **gateway** (*System > Gateways*, "Upstream Gateway") and has no word for the interface a gateway sits behind | the widget catalogue's "upstream interface". It is 1 exactly when `interfaces_info` reported a non-empty `gateways[]` for the interface, and nothing else decides it: no name, description or link type |
 | `blocked_decision.engine_kind` | each engine records its own refusal in its own words — pf a `reason`, Unbound a `blocklist`, Suricata an `alert.action` — and nothing names the category of engine that decided | a closed vocabulary, listed under *`blocked_decision`* below, with one value per way a refusal can be told apart, so every refusal has exactly one place and none is guessed into another |
@@ -122,7 +123,11 @@ vocabulary read off an endpoint:
 | `interface.link_local_evidence` | an IPv6 link-local prefix is the same on every interface (RFC 4291, section 2.5.6), and OPNsense has no setting that ties one to an interface for any purpose `opnview` has | named for what it decides: whether a link-local address seen on the interface is **evidence** of membership. The default is no |
 | `purged_flow_hour`, the **purged part** of an hour | the firewall keeps no history `opnview` reads, and has no word for what a retention purge removed | the table holds, per hour and per every key an aggregate family reads, the figures of the flows the purge removed from that hour, so an hour holding the horizon keeps them while it still takes in the flows that remain. "Purged" is the purge's own word (*Purge* below) |
 | `address_classification` and its `evidence` fingerprint | classification is `opnview`'s own derivation; nothing upstream places an address | the row records the evidence an address was last placed from — the kind of evidence, the interface, the strongest identity — so a pass places in full only an address whose evidence changed. "Fingerprint" is the word the discovery pass already used for the same kind of record |
-| `dns_resolution.client_resolution` | the resolver's report silently replaces a querying address by its reverse-lookup name (`opnsense/core` 26.7.3, `scripts/unbound/stats.py`), and says nothing about having done so | the column says what `client` held — an address, or a host name resolved through the leases to one address, to several, or to none — so a lookup that named no single machine is told apart from one that named an address |
+| `dns_resolution.client_resolution` | the resolver's report silently replaces a querying address by its reverse-lookup name (`opnsense/core` 26.7.3, `scripts/unbound/stats.py`), and says nothing about having done so | the column says what `client` held — an address, or a host name resolved through the leases to one address, to several, or to none, or `localhost`, which names this firewall (`this_firewall_hostname`) — so a lookup that named no single machine is told apart from one that named an address |
+| `flow.pair_outcome` (`first_leg`, `second_leg`, `not_paired`) and `flow.paired_flow_id` | pf logs the packet that creates a state on every interface a logging rule creates one on, so one connection is two records; neither pf nor OPNsense has a word for one record being the other's partner, nor for an unpaired record the firewall itself sent | a **leg** is one record of a connection crossing the firewall, as a leg is one stretch of a journey: the first leg is the `in` record on the interface the connection arrived on, the second leg the `out` record on the one it left by. `not_paired` is the only outcome of an unpaired upstream `out` record sourced by this firewall, decision 3 of the step-5A live corrections as amended on 7 October 2026: opnview never claims such a record is the firewall's own traffic; see *Two legs of one connection* |
+| `classified_flow.exit_leg_device`, `volume_aggregate_*.exit_leg_device`, `purged_flow_hour.exit_leg_device` | the same: nothing upstream marks the record a connection left the firewall by | the device a second leg was logged on — the interface the connection **exits** by — kept apart in the volume family so a paired connection counts once in every total and still counts on that interface's own figures |
+| `dhcp_lease.hostname_label` | a lease reports a `hostname` and nothing more; neither OPNsense nor the DHCP servers name its first label | **label** is DNS's own word for one dot-separated part of a name (RFC 1035, section 2.3.1); the column is the first label, lower-cased, a trailing dot removed, which is what a host name the resolver logged is matched on |
+| `dns_resolution.hostname_examined_at` | nothing upstream knows that a lookup's logged host name was resolved again | the instant a lease pass last examined the lookup's host name; `NULL` is the lookup still waiting for one, which is what makes the retry survive a restart and stay bounded |
 | `peer_volume_aggregate_*` and its `peer_address` | no OPNsense figure is keyed by the address at the other end of a client's flows | "peer" is the word `client_volume_aggregate_*.distinct_peers` already used for that address; the family exists so that count is exact in every period. For an outbound or an inbound flow the peer is the volume family's `peer_address`, the outside end; between two interfaces it is the other inside address |
 | `dhcp_lease.generation_key` | OPNsense's lease endpoints report an expiry, and only Kea reports a validity start. None of them reports an identity for a lease **generation**, which is the thing `opnview` needs one row per | the column is named for what it identifies — one generation of one lease — and its value carries the name of what it rests on (`start:`, `expiry:`, `observed_day:`), so a reader can tell a real start from a substitute without consulting the backend. It exists because `starts_at` was doing this job as well as its own, and was honest only because a comment beside it said so |
 
@@ -161,8 +166,8 @@ it by re-running every query against a second seed built with different counts.
 ## Entities
 
 Exactly these entities exist. `blocked_event`, `blocked_decision`,
-`classified_flow` and `state_item_departure` are views; everything else is a
-table.
+`classified_flow`, `state_item_departure` and `this_firewall_address` are views;
+everything else is a table.
 
 <!-- entity-list:begin -->
 ```
@@ -220,6 +225,7 @@ source_availability
 state_item
 state_item_departure
 state_snapshot
+this_firewall_address
 volume_aggregate_1h
 volume_aggregate_24h
 volume_aggregate_30d
@@ -231,13 +237,16 @@ volume_aggregate_7d
 a release of OPNsense makes those records readable. The schema carries nothing
 no source can fill.
 
-**`blocked_event`, `blocked_decision`, `classified_flow` and
-`state_item_departure` are views**, and all for the same reason: each states
-something derivable from rows that already exist, and a stored copy could
-disagree with them. A blocked event is a `flow` with a different action; a
-blocked decision is any refusal of any engine, placed once; a classified flow is
-a `flow` with its direction, inside end and outside end written once as
-expressions; a departure is a fact about two consecutive snapshots of one set.
+**`blocked_event`, `blocked_decision`, `classified_flow`,
+`state_item_departure` and `this_firewall_address` are views**, and all for the
+same reason: each states something derivable from rows that already exist, and a
+stored copy could disagree with them. A blocked event is a `flow` with a different
+action; a blocked decision is any refusal of any engine, placed once; a classified
+flow is a `flow` with its direction, inside end and outside end written once as
+expressions; a departure is a fact about two consecutive snapshots of one set; and
+this firewall's addresses are `interface_address` under the four fields that
+report an address the firewall itself holds, with whether discovery still reports
+each one.
 
 ### Growing and bounded
 
@@ -585,10 +594,18 @@ address normally appears under `addr4` and again in `ipv4[]`, and is stored unde
 both. A link-local entry of `ipv6[]` may carry its zone, which is dropped: the
 address is the same on every interface whatever the zone.
 
-**A change is a new row, and the history is the table.** A row is keyed on
-`(interface, field, address, prefix length)`. A refresh that reads the same value
-moves `last_seen_at`; one that reads a different value inserts a row and leaves
-the predecessor where its last sighting put it. *When did the public address last
+**A change is a new row, and the history is the table.** A row is **one holding**:
+an interface, a field, an address and its prefix length, from the first discovery
+that read it to the last one that read it without a break, keyed on those and
+`first_seen_at`. A refresh that reads the same value, having read it at the previous
+discovery, moves `last_seen_at`; one that reads a different value inserts a row and
+leaves the predecessor where its last sighting put it; and one that reads a value
+again after a discovery that did not read it — released, then re-acquired — starts a
+new row, so the interval between the two holdings is held by neither. The previous
+discovery's instant is read once, before a discovery pass writes anything
+(`store.LatestInterfaceDiscoveryAt`), so the outcome does not depend on the order the
+firewall lists its interfaces in. "Held at an instant", for this firewall, reads one
+row as one holding (*Classification*). *When did the public address last
 change* is therefore the `first_seen_at` of the current row when an earlier row
 exists, and it can only ever come from `opnview` having looked before: no
 endpoint keeps that history.
@@ -596,8 +613,12 @@ endpoint keeps that history.
 **What reads it.** `blocked_decision` and `store.IsFirewallAddress` read every
 address field to say a packet was aimed at the firewall itself;
 `store.ReadPublicAddresses` returns each upstream interface's history, each row
-naming its field. Classification does **not** read it: it reads the networks in
-`interface_network`, below.
+naming its field. Classification reads it **for one purpose**, since the step-5A
+live corrections: the `this_firewall_address` view — every row under `addr4`,
+`addr6`, `ipv4` or `ipv6`, with whether the latest discovery of its interface read
+it — is how an end is recognised as **this firewall**, as of its own instant
+(*Classification*). Membership of every other address comes from the networks in
+`interface_network`, below, and never from this table.
 
 ### `interface_network` — an interface's networks, detected or set by the operator
 
@@ -742,6 +763,20 @@ families. So a client older than the horizon is kept **when, and only when,** on
 those still names it after the rest of the purge has run — the purged part's own
 expired hours are removed first.
 
+**This firewall is never a client, and the neighbour tables list it.**
+`/api/diagnostics/interface/get_arp` and `get_ndp`, read by every lease pass, carry
+this firewall's own interface entries beside its neighbours'. An entry at an address
+the firewall holds at that instant — "held at an instant" as `this_firewall_address`
+defines it, or a loopback address — creates and updates no client (defect L2 of
+`specs/SPEC-test-budget-and-two-live-defects.md`): before that rule each became a
+`mac`-level client at the firewall's own address. Such clients, from a database an
+earlier build wrote, are removed by the next full placement (`ReclassifyAll`) once
+nothing names them and nobody assigned them to an owner, by the same guard as the
+address-level and upstream clients. The statement,
+`purge_unreferenced_this_firewall_clients_at_address`, runs once per address the
+firewall ever held, each found by an index seek (`next_this_firewall_address`), so
+neither `interface_address` nor `client` is scanned.
+
 **Ownership is assigned, never inferred.** `owner_id` is `NULL` until somebody
 attributes the machine, and `owner_assigned_at` records when that happened; a
 `CHECK` rejects a row where one is set and the other is not. Nothing derives an
@@ -858,6 +893,8 @@ no start would insert a fresh row on every pass.
 
 **Retention:** purged by `observed_at`.
 
+**`hostname_label`**, a generated column, is the host name's first label, lower-cased, a trailing dot removed: what a host name the resolver logged as a lookup's client is matched on, by first label on both sides (`dns_resolution`, and the step-5A live corrections, causes H1 and H2). `idx_dhcp_lease_hostname_label` serves that match; it replaced an index on the whole host name.
+
 **Indexes:** `idx_dhcp_lease_observed_at` for the purge and for recency,
 `idx_dhcp_lease_client` for a client's lease history — keyed on `observed_at`
 rather than on `starts_at`, because an index leading on a column that is null for
@@ -870,8 +907,8 @@ servers at once.
 
 **Source:** `/api/diagnostics/firewall/log`, data source 1 — `interface`,
 `action`, `rid`, `label`, `src`, `dst`, `srcport`, `dstport`, `protoname`,
-`protonum`, `length`, `ipversion`, `dir`, `reason` and `__timestamp__`,
-deduplicated on `__digest__`, which is stored as `log_digest`. Every other
+`protonum`, `length`, `ipversion`, `dir`, `reason`, `id`, `seq` and
+`__timestamp__`, deduplicated on `__digest__`, which is stored as `log_digest`. Every other
 field the endpoint returns is accounted for in *API field coverage* below.
 
 **Why it was logged is not what was done to it.** `log_reason` holds the
@@ -895,18 +932,30 @@ an absent or unestablished value is a refusal whose reason was not recorded.
 **establishes** a state, not the rest of the connection (`pf.conf(5)`, FreeBSD
 15.1, `log`; survey, *Which packets a logging rule writes, read for step 5*), so
 `packet_bytes` is the length of that one packet, and every sum of it — every
-aggregate below — is **logged volume**. A connection logged on two interfaces is
-two records. No figure computed from `flow` may be presented as the volume of a
-conversation.
+aggregate below — is **logged volume**. No figure computed from `flow` may be
+presented as the volume of a conversation.
+
+**A connection logged on two interfaces is two records, counted once.** pf writes
+the packet that creates a state on every interface a logging rule creates one on,
+so a client's connection to the Internet is logged `in` on the client's interface
+and `out` on the upstream one. The two are paired (*Two legs of one connection*
+below), and the pair is counted **once, on the client's `in` record**: the `out`
+record, `pair_outcome` `second_leg`, stays in `flow`, counts on the figures of the
+interface it was logged on and in the rule family, and in no other volume figure.
+This is decision 2 of the step-5A live corrections, and it **amends 5A Scope A2
+and its open question OQ4**, which counted every record.
 
 **Identity:** `log_digest`, unique. The endpoint echoes back the record
 matching the digest a poll supplied, so the uniqueness constraint is what makes
 the echo harmless.
 
-**East-west and north-south** are carried by `traffic_scope`, which is
-`east_west` exactly when both `src_interface_id` and `dst_interface_id` are set,
-and `north_south` otherwise. It derives from interface membership and from
-nothing else — no address, no CIDR, no name, no assumed addressing plan. The
+**East-west, north-south and this firewall** are carried by `traffic_scope`, which
+is `this_firewall` when an end is this firewall (`src_is_this_firewall` or
+`dst_is_this_firewall`), `east_west` exactly when both `src_interface_id` and
+`dst_interface_id` are set otherwise, and `north_south` otherwise. It derives from
+interface membership and this firewall's own addresses and from nothing else — no
+address literal, no CIDR, no name, no assumed addressing plan. The third value is
+decision 6 of the step-5A live corrections. The
 collector writes it on every insert; the paragraph below says why it is a plain
 column rather than a generated one.
 
@@ -950,25 +999,31 @@ action
 direction
 dst_address
 dst_client_id
-dst_port
 dst_interface_id
+dst_is_this_firewall
+dst_port
 id
 ingested_at
 interface_device
 interface_lookup_state
+ip_id
 ip_version
 log_digest
 log_reason
 observed_at
 packet_bytes
+paired_flow_id
+pair_outcome
 protocol
 rid
 rule_id
 rule_lookup_state
 src_address
 src_client_id
-src_port
 src_interface_id
+src_is_this_firewall
+src_port
+tcp_seq
 traffic_scope
 ```
 <!-- flow-columns:end -->
@@ -996,6 +1051,9 @@ traffic_scope
 | `rule_id`, `rule_lookup_state` | the Matrix and Blocked queries |
 | `traffic_scope` | Overview, Matrix, Interface, Client, Blocked; the aggregate refresh |
 | `log_reason` | no screen query; the `blocked_decision` view, which places it in `engine_kind`. It stays: it is the filter log's own answer to *why was this line written*, and it is the only thing that separates a packet a rule denied from a packet the firewall dropped for a reason no rule expresses. Without it a malformed-packet drop and a policy denial are the same row, and the denial screens would attribute the first to a rule that made no decision. It is projected by the `blocked_event` view, where that distinction is read |
+| `src_is_this_firewall`, `dst_is_this_firewall` | `classified_flow`, which gives a flow with such an end the directions `to_this_firewall` and `from_this_firewall` and takes it out of the inside and outside ends; the `traffic_scope` `CHECK`; attribution, which never attributes a flow to this firewall; the pairing, which recognises a NATed second leg by its source. Classification writes them (step-5A live corrections) |
+| `ip_id`, `tcp_seq` | the pairing alone (`internal/store/derive.sql`, `pairing_*_candidates`): the filter log's `id` and `seq`, the two fields verified to cross the firewall unchanged. Nothing else reads them, and they stay for that one purpose |
+| `pair_outcome`, `paired_flow_id` | `classified_flow.exit_leg_device`, which keeps a second leg out of every total but its own interface's; attribution; the per-pair volume. `paired_flow_id` names the other record of the pair and carries no foreign key, because the retention purge can remove one record of a pair and keep the other |
 
 Three columns — `log_digest`, `src_port` and `ip_version` — are read by no
 screen query, by no purge statement, by no view and by no aggregate refresh.
@@ -1026,18 +1084,29 @@ A view over `flow` alone, so the planner flattens it and every statement that
 reads it keeps the flow indexes. It adds three things every derivation needs,
 each written **once**, as an expression over the stored columns:
 
-- **`traffic_direction`** — `outbound` when the destination is outside (it has no
-  interface), `inbound` when the source is outside, `inter_interface` when
-  neither is. When **both** ends are outside — an unsolicited packet to the
-  firewall's own upstream address, or one the firewall sends from it —
-  membership cannot decide, and pf's `dir` on the interface the record was logged
-  on does: `out` is outbound, anything else inbound. That tie-break is the only
-  place `dir` enters, so the three directions **partition** the flows exactly. A
-  LAN-to-Internet flow logged `in` on the LAN interface is **outbound**.
+- **`traffic_direction`** — `from_this_firewall` when the source is this firewall,
+  `to_this_firewall` when the destination is and the source is not (decision 6 of
+  the step-5A live corrections); otherwise `outbound` when the destination is
+  outside (it has no interface), `inbound` when the source is outside,
+  `inter_interface` when neither is. When **both** ends are outside — a packet
+  between two outside addresses the firewall forwards — membership cannot decide,
+  and pf's `dir` on the interface the record was logged on does: `out` is
+  outbound, anything else inbound. That tie-break is the only place `dir` enters,
+  so the five directions **partition** the flows exactly. A LAN-to-Internet flow
+  logged `in` on the LAN interface is **outbound**. Before the step-5A live
+  corrections the unsolicited packet to the firewall's own upstream address was
+  the both-outside case; it is `to_this_firewall` now.
 - **`local_interface_id`, `local_client_id`** — the **inside** end: the source when
-  it has an interface, else the destination, else nothing.
+  it has an interface and is not this firewall, else the destination on the same
+  terms, else nothing.
 - **`peer_address`** — the **outside** end: the destination of an outbound flow,
-  the source of an inbound one, and `NULL` between two interfaces.
+  the source of an inbound one, and `NULL` between two interfaces. For a flow
+  with an end that is this firewall it is the other end when that end is outside,
+  and `NULL` when it is inside: this firewall is never a peer.
+- **`exit_leg_device`** — the device a second leg was logged on, `NULL` for every
+  other record. The volume family keys on it, so a second leg counts on that
+  interface's own figures and in no total; every other family but the rule family
+  leaves it out.
 
 ### `blocked_decision` — every refusal of every engine, placed once
 
@@ -1138,28 +1207,71 @@ one: `scripts/unbound/logger.py` fills a `client` table through
 `socket.gethostbyaddr`, and the `details` query of `scripts/unbound/stats.py`
 returns that name in place of the address (`opnsense/core` 26.7.3). A host name
 is resolved back to an address through the DHCP leases **valid at the lookup's
-instant** — a lease under that name, or under its first label, because a reverse
-lookup answers with the fully qualified name and a lease carries the host's own
-label; started, if its start is known; not expired, if its expiry is known.
+instant** — a lease whose host name has the **same first label**, compared without
+regard to case and with a trailing dot removed on **both** sides
+(`dhcp_lease.hostname_label`), because a reverse lookup may answer with a fully
+qualified name, a trailing dot or a bare label and a lease may carry any of the
+three; started, if its start is known; not expired, if its expiry is known. 5A
+compared the logged name and its label with the lease's whole name, so a bare
+logged label never matched a lease carrying `host.domain` (cause H1 of the step-5A
+live corrections) and a trailing dot on either side defeated the match (H2). The
+name `localhost`, which a reverse lookup of a loopback address returns, names
+**this firewall** whatever the leases hold (H4; decision 11).
 `client_resolution` records the outcome: `logged_address` (`client` was an
 address), `lease_hostname` (exactly one address answered; `client_address` is it
-and `client_hostname` the logged name), `ambiguous_hostname` (several did) or
-`unknown_hostname` (none did). In the last two cases `client_address` keeps the
-logged name verbatim, the lookup is placed nowhere, and the attribution reads no
-lookup that is not `logged_address` or `lease_hostname`: a name that does not
-resolve to one address does not say which machine asked. A lookup can be read
-before the lease that names its host — every loop runs at start — so **every lease
-pass resolves again the `ambiguous_hostname` and `unknown_hostname` lookups
-ingested since the previous lease pass began**, each as of its own instant
-(`store.ResolveLoggedHostnames`, over `idx_dns_resolution_unresolved_hostname`); one
-that now resolves is placed and its flows' attribution decided again. The bound is
-deliberate: a lookup an earlier lease pass already tried, with every lease held
-then, is not tried again, so the work of a pass is the lookups read since the last
-one and does not grow with those that never resolve — a host whose name no lease
-carries. A lookup pass in flight holds that starting point back to its own stamp,
-so no lookup falls between two lease passes. A lease the firewall reports only
-after the next lease pass has run would not resolve an older lookup. How often the live resolver logs
-a host name is checked at the step-5 validation.
+and `client_hostname` the logged name), `ambiguous_hostname` (several did),
+`unknown_hostname` (none did) or `this_firewall_hostname` (`localhost`). In the
+last three cases `client_address` keeps the logged name verbatim, and the
+attribution reads no lookup that is not `logged_address` or `lease_hostname`: a
+name that does not resolve to one address does not say which machine asked.
+
+**`client_is_this_firewall`** is 1 when the querier is this firewall — its address
+was held by the firewall at the lookup's instant, or it is a loopback address or
+`localhost` (*Classification*). Such a lookup has no client; it carries the
+interface the address belonged to, or none for the loopback, in which case its
+`interface_lookup_state` is `not_found`.
+
+**The retry, and the restart (cause H6).** A lookup can be read before the lease
+that names its host — every loop runs at start — so **every lease pass resolves
+again the `ambiguous_hostname` and `unknown_hostname` lookups no lease pass has
+examined since they were ingested**, each as of its own instant
+(`store.ResolveLoggedHostnames`), and stamps `hostname_examined_at`. The stamp is
+stored, so the first lease pass after a restart examines what the run before it
+left: 5A kept the point to resume from in memory, starting at the collector's
+creation, and a lookup stored before a restart was never examined again. The
+statement reads `idx_dns_resolution_hostname_unexamined`, a partial index holding
+the lookups still waiting and nothing else, so the work of a pass is bounded by
+what changed, it never rescans every unresolved lookup, and it does not grow with
+those that never resolve — a host whose name no lease carries. **Only a complete
+lease pass examines anything**, and it examines only the lookups ingested before its
+lease read began: a lookup ingested while the leases were being read may postdate
+them, so it waits for the next complete pass. A lookup is examined once by a lease
+pass after it was ingested and not again; a lease the firewall reports only after
+that pass would not resolve it.
+
+**What makes a lease pass complete (defect L1 of
+`specs/SPEC-test-budget-and-two-live-defects.md`).** A pass is complete when it read
+at least one backend's lease table and every active backend it did not read is one of
+two:
+
+- **a backend that cannot be read by design** — one whose implementation answers
+  `ErrUnsupportedRead`, the ISC plugin today. It contributes no lease at this pass or
+  any later one, so it never makes a pass incomplete. Before this rule an ISC plugin
+  active beside Dnsmasq kept every unresolved lookup waiting for a complete pass that
+  could not come;
+- **a backend that has failed on every one of the last
+  `lease_backend_failure_pass_limit` passes** (default 3, see `setting`). Each failure
+  is reported in its `source_availability` row as before, and its detail adds how many
+  lease passes in a row it has failed and the limit, and, once the limit is reached,
+  that unresolved host names are re-examined without it. Until the limit, a failing
+  backend holds the examination back, because one or two failed passes are what a
+  restart costs and examining the lookups then would spend each one's single
+  examination on a partial table; from the limit on, the other backends' leases are
+  the table there is. A backend read again ends its count. The count is kept in
+  memory, so a restart begins it again: the examination is delayed by at most the
+  limit, never forgone. The diagnostic `Unresolved host
+names by cause` in `sql/queries/diagnostics.sql` sorts every `unknown_hostname`
+lookup into the cause that left it so.
 
 **Identity: `lookup_key`, unique — and `opnview` composes it, because the
 endpoint's own identifier does not exist.** `search_queries` returns a `uuid`
@@ -1269,8 +1381,13 @@ low rate, which is the honest outcome:
   client in `[observed_at − max delay, observed_at]` name **exactly one distinct
   domain**; two lookups of that same domain still attribute, two distinct
   domains attribute nothing;
-- **eligible flows** have an outside destination (`dst_interface_id IS NULL`);
-  an east-west flow is never attributed;
+- **eligible flows** have an outside destination (`dst_interface_id IS NULL`), are
+  not to this firewall (`dst_is_this_firewall = 0`), and are not a second leg
+  (`pair_outcome` is not `second_leg`, decision 2); an east-west flow is never
+  attributed, nor a flow to this firewall, and a flow attributed before it became
+  ineligible — its destination placed inside or recognised as this firewall since,
+  or paired as a second leg — loses its attribution at the next pass over its
+  window (`attribution_ineligible`);
 - **eligible lookups** passed (`action = 'pass'`) and were answered by
   `Recursion`, `Cache` or `Local-data`;
 - **the same client** means the same `client_id` where both rows carry one, and
@@ -1289,7 +1406,9 @@ off again therefore finds the history intact.
 **Attribution rate.** One definition, held twice: `store.ReadAttributionRate`
 and the query `-- diagnostic: Attribution rate per client` in
 `sql/queries/diagnostics.sql` both count, as eligible, the flows with an
-**outside** destination, and as named those carrying an attribution. The store
+**outside** destination, a source client, no end that is this firewall — a flow
+from this firewall is outside the per-client rate — and that are not a second leg,
+and as named those carrying an attribution. The store
 function also says whether the rate is **defined** at all: it is **undefined**
 when opnview holds no evidence that a resolver source answered for the window --
 no lookup stored for an instant inside it and no reachable `dns_lookup` probe
@@ -1379,6 +1498,10 @@ destroys the nested alert object, so severity and category are not in the
 record (survey, gap 3); they are resolved through `provider_rule_info`, exactly
 as before. The column exists for a provider that ships severity inside its
 event. The vocabulary is above, under *Severity: one ordered vocabulary*.
+
+**`src_is_this_firewall`** is 1 when the event's source is this firewall, as
+classification decides it for a flow's end (*Classification*): such a source
+carries the interface its address belonged to and no client.
 
 **Retention:** purged by `occurred_at`. There is no detail table to cascade to.
 
@@ -1511,7 +1634,7 @@ the one contract below:
 
 | Family | Key, within a period slot | Closes |
 |---|---|---|
-| `volume_aggregate_*` | source interface, destination interface, outside peer, `traffic_direction` | G3 |
+| `volume_aggregate_*` | source interface, destination interface, outside peer, `traffic_direction`, `exit_leg_device` | G3 |
 | `owner_volume_aggregate_*` | owner of the inside client (NULL = unassigned), `traffic_scope` | G11 |
 | `client_volume_aggregate_*` | inside client, `traffic_direction` | G4 |
 | `domain_volume_aggregate_*` | site name, source client | G5 |
@@ -1549,6 +1672,20 @@ well as its outbound; the domain family on the flow's source client, the machine
 that made the lookup; the rule family on the rule the `rid` resolved to. A flow
 with no inside client is in no owner or client row, and is still in the interface
 and rule families, which therefore sum to every flow.
+
+**This firewall, and the second legs** (decisions 2 and 6 of the step-5A live
+corrections). A flow with an end that is this firewall is its own key in the
+interface family — the directions `to_this_firewall` and `from_this_firewall`, the
+scope `this_firewall` — and is never part of the outside peers; it contributes
+nothing to the client, peer and owner families, since this firewall is never a
+client and never a peer. A **second leg** — the `out` record of a connection whose
+`in` record is counted — is in the interface family only under its own
+`exit_leg_device`, the device it was logged on: every total leaves those rows out,
+and they are that interface's own figure for the connections it carried. It is in
+no client, peer, owner or domain row and in no per-pair volume, and it is in the
+rule family, which counts every record because each is a match of its own rule. The
+interface family therefore still sums to every flow, and its totals — every row
+whose `exit_leg_device` is `NULL` — count every connection once.
 
 **Identity:** one unique index per table over the period start and the key, with
 every NULL-bearing column wrapped in `ifnull`, because SQLite treats NULLs in a
@@ -1696,7 +1833,11 @@ aggregate family reads: both ends' interfaces, the source client, the inside
 client, the traffic direction, the peer (the address at the other end from the
 inside end, or `classified_flow.peer_address` for a flow with no inside end), the
 rule, the attributed site name and the decision, with the summed bytes and the
-number of records. **The purge writes it**, as its first statement and in its own
+number of records. Since the step-5A live corrections it also keeps
+`exit_leg_device`, so a purged second leg still counts on its interface's figures
+only, and the peer of a flow with an end that is this firewall is
+`classified_flow.peer_address`, `NULL` when the other end is not outside: the peer,
+client and owner families read none of those rows. **The purge writes it**, as its first statement and in its own
 transaction, for exactly the flows it is about to delete, so the attribution of
 each is still there. Every hour slot is computed from the flows still present plus
 these rows (*Refresh contract*, rule 6).
@@ -1750,8 +1891,32 @@ the first purge with a finite retention, and `store.PurgedBefore` reads it.
 ### Classification — which interface an address sits behind
 
 `flow` is stored with neither end placed, and **classification** places both, in
-`internal/store/classify.go` over the statements of `derive.sql`. It reads
-**on-link evidence only**, in this order, and the first that answers decides:
+`internal/store/classify.go` over the statements of `derive.sql`.
+
+**This firewall comes first** (step-5A live corrections, item 1). Before any
+on-link evidence is read, an end of a `flow`, the source of a `security_event` or
+the querier of a `dns_resolution` is **this firewall** — OPNsense's *This
+Firewall*, pf's `self`, see *Vocabulary* — when either its address was held by the
+firewall at the row's instant, or it is a loopback address (the IPv4 loopback
+network or the IPv6 loopback address) or the name `localhost`, which are protocol
+constants and not configuration (decision 11). **Held at an instant** is defined by
+the `this_firewall_address` view: an `interface_address` row under `addr4`, `addr6`,
+`ipv4` or `ipv6`, on any interface, with
+`first_seen_at − margin ≤ t` and either `t ≤ last_seen_at + margin` or the row is
+**current** — read by the latest discovery of its interface — where the margin is
+the discovery interval (`refresh_interval_discovery_seconds`, 300 s by default),
+because discovery reads the addresses once per interval and an address can have been
+taken or released at any instant between two reads. An end that is this firewall
+records the interface its address belonged to (the most recently seen holding, then
+the lowest interface id; none for a loopback address) and **no client**, sets
+`*_is_this_firewall`, and is never outside, never a client, never an outside peer
+and never an operator node. The decision is taken row by row, as of each row's own
+instant, inside the statements that place the rows. The 5A behaviour it replaces
+made the firewall's upstream addresses anonymous outside ends and minted a phantom
+address-level client at each of its inside addresses (findings F1).
+
+Every other end reads **on-link evidence only**, in this order, and the first that
+answers decides:
 
 1. a **lease** naming the address;
 2. a **client identity** — DHCP client identifier, then MAC — last seen at the
@@ -1781,7 +1946,13 @@ more are removed, and the new fingerprint recorded. Every statement writes a row
 only when a value changes, so a pass with nothing new writes no row. A change of
 which interfaces are upstream, of a link-local rule or of the networks that count
 is compared before every derivation (`store.OnLinkFingerprint`), and every stored
-address is then placed again — each in full only when its own evidence moved.
+address is then placed again — each in full only when its own evidence moved. **This
+firewall's addresses are part of both fingerprints**: an address it starts holding,
+an address on another interface, or a new discovery interval places every stored
+address again, and an address it ever held has its holdings in its own fingerprint,
+so the phantom clients 5A minted at the firewall's addresses are removed by the
+first such pass once nothing refers to them, and the slots they fed are recomputed.
+`last_seen_at` is left out of both, since it moves at every discovery.
 
 The pass walks the distinct addresses of `flow`, `dns_resolution` and
 `security_event` in sorted order, in chunks of one transaction each, so its
@@ -1793,6 +1964,66 @@ client left with no reference is removed, attribution is re-run for the flows
 touched, and their slots are forced into the next refresh. A first discovery, or a
 discovery whose interfaces or addresses changed, reclassifies everything.
 
+### Two legs of one connection — the pairing
+
+pf writes the packet that creates a state, and a connection crossing the firewall
+creates one on the interface it arrives on and one on the interface it leaves by
+(survey, *Two legs of one connection, read for the step-5A live corrections*). So a
+client's connection to the Internet is logged `in` on the client's interface and
+`out` on the upstream one; over IPv6, and between two interfaces, it is logged once
+per interface with no translation. 5A counted every record (Scope A2, OQ4), and on
+the live firewall most of its outbound volume was counted twice.
+
+**The rule** (`internal/store/pair.go` over the `pairing_*` statements of
+`derive.sql`). An `out` record on an interface is the **second leg** of an `in`
+record on another interface when:
+
+- both carry the same protocol, IP version, destination address and destination
+  port;
+- every logged field verified to cross the firewall unchanged is equal: `ip_id`,
+  the IPv4 identification, and `tcp_seq`, the TCP sequence number
+  (`store.PairingFields` holds the verdict on every candidate field, and a test
+  fails if the pairing reads one whose invariance is unverified);
+- their `observed_at` lie within `leg_pairing_window_seconds` of each other
+  (default 1, decision 4);
+- the `in` record passed;
+- the pair is one-to-one: each record is the other's only candidate.
+
+**Translation.** Under outbound NAT the sources differ: the second leg's source is
+this firewall's upstream address. pf translates before it filters (pf.conf(5));
+that the logged `out` record carries the translated source is what the live run of
+5 October 2026 showed, and the survey marks it so, since no documentation says which
+form of the packet `log` writes. The rule reads nothing of the second leg's source
+under NAT but that it is this firewall. Without NAT — IPv6, and between two
+interfaces — the sources are equal, with their ports, and the same rule pairs them
+(decision 5).
+
+**How it is decided.** From the stored records alone, so the result does not depend
+on the order the records arrived in; again whenever either leg arrives later, because
+every pass that stores or places a record asks for the pairing of its window; and
+idempotently — a pass that changes nothing writes nothing. Each record names its
+partner: `pair_outcome` `first_leg` or `second_leg` and `paired_flow_id`. A partner
+the retention purge removed leaves the other record as it was, which is why
+`paired_flow_id` carries no foreign key.
+
+**The outcomes of an upstream `out` record sourced by this firewall.** Every such
+record has exactly one:
+
+- `second_leg` — the second record of a client connection;
+- `not_paired` — no first leg was found. The record keeps its this-firewall end, but
+  `opnview` **never claims it is the firewall's own traffic** (decision 3, as amended
+  on 7 October 2026): a client connection whose first record opnview cannot see — a
+  rule that does not log, a non-logging automatic port-forward rule, an `rdr pass`,
+  which no ruleset reading can see, a rewritten identification or sequence number, a
+  first leg further than the window — looks exactly the same. An inference from the
+  rules' logging was tried and removed for that reason.
+
+No unpaired record is given a client: its source is this firewall, which never is
+one.
+
+**Counting** is decision 2, under `flow` and *The aggregate families*: a paired
+connection counts once, on its first leg.
+
 ### What step 5B reads — the store's contracts
 
 Step 5B serves widgets over HTTP and computes nothing the store already answers.
@@ -1801,17 +2032,18 @@ seconds, and treats a window as half-open, `[from, to)`.
 
 | Function | Contract |
 |---|---|
-| `ReadVolumeWindow(ctx, from, to, now)` | the volume of a rolling window: whole hours from the 1 h slots, the partial hours at either edge from `flow`. Inside the flow horizon it equals a computation over `flow` alone; beyond it the slots answer, and `Covered` says which interval they cover. `ByDirection` splits it by `traffic_direction` |
+| `ReadVolumeWindow(ctx, from, to, now)` | the volume of a rolling window: whole hours from the 1 h slots, the partial hours at either edge from `flow`. Inside the flow horizon it equals a computation over `flow` alone; beyond it the slots answer, and `Covered` says which interval they cover. `ByDirection` splits it by `traffic_direction`, this firewall's two directions included, so this firewall is its own key and never part of the outside column. **A paired connection counts once** (decision 2): `Total` and `ByDirection` leave out the rows whose `ExitLegDevice` is set, and `ExitLegs` sums those per device — what an interface's own figures add for the connections whose first leg was logged on another interface |
 | `ReadVolumeSeries(ctx, from, to, bucket, now)` | the same window in buckets aligned to one period's slots. The buckets sum to the window total. A bucket inside a covered, gap-free interval with no rows is 0; one outside coverage, or overlapping a `firewall_log` collection gap, is marked `Gap` and carries no figure |
-| `ReadConnectionTree(ctx, from, to, root)` | both sides of the connection tree. Every flow lands in exactly one node per level on each side, with an explicit `none`, `unassigned`, `unplaced:miss`, `unplaced:pending` or `unplaced:no_row` node rather than a dropped flow, so a level always sums to the level above |
-| `ReadAttributionRate(ctx, from, to, clientID)` | the attribution rate of one client, or of all, over the flows with an outside destination. **Undefined** (nil) when opnview holds no evidence that a resolver source answered for the window -- no lookup stored inside it, no reachable `dns_lookup` probe inside it -- or when there is no eligible flow; **0** only when one answered and named nothing |
+| `ReadConnectionTree(ctx, from, to, root)` | both sides of the connection tree. Every flow lands in exactly one node per level on each side, with an explicit `none`, `unassigned`, `unplaced:miss`, `unplaced:pending` or `unplaced:no_row` node rather than a dropped flow, so a level always sums to the level above. **This firewall has a node on each side**, `this_firewall`: an end that is this firewall lands there and never under an operator, an unplaced condition, `interface:none` or `client:none` — inside when the other end is outside, with `this_firewall` again below it for the roots with a second level, and outside when the other end is an inside client. A second leg is left out, its connection being its first leg's |
+| `ReadAttributionRate(ctx, from, to, clientID)` | the attribution rate of one client, or of all, over the flows with an outside destination, a source client, no end that is this firewall, and that are not a second leg. **Undefined** (nil) when opnview holds no evidence that a resolver source answered for the window -- no lookup stored inside it, no reachable `dns_lookup` probe inside it -- or when there is no eligible flow; **0** only when one answered and named nothing |
 | `ReadSiteTotals(ctx, period, from, to)` | the domain family summed over slots, with distinct clients counted, never summed |
 | `publicsuffix.Refresher.Group(sites)` | site totals collapsed into registrable domains; `GroupingUnavailable`, and nothing grouped, before the first successful list download |
 | `ReadOwnerTotals(ctx, period, from, to)` | the owner family summed over slots, the unassigned bucket included, distinct clients counted from the client family |
 | `ReadInterfaceClients(ctx, from, to)` | per interface, the clients seen in the window out of those known |
 | `ReadBlockedDecisionCounts(ctx, from, to)` | the refusals of the window per `engine_kind`; each equals a direct count of its source rows |
 | `ReadRuleLogging(ctx)` | per interface, the rules that do not log; a rule whose `interface` resolves to nothing is counted as unresolved |
-| `ReadPublicAddresses(ctx)` | every upstream interface's address history and its gateways |
+| `ReadPublicAddresses(ctx)` | every upstream interface's address history and its gateways. **The double-NAT limit**: it returns the address the firewall holds and only that. Behind an upstream NAT — an Internet box in router mode, or a carrier-grade NAT at the provider — the firewall does not see its public IPv4 address at all, and nothing opnview reads can supply it: no OPNsense endpoint reports it, and asking a third party would be an outbound call the project does not allow. A screen built on it says so rather than presenting the interface's address as public |
+| `Pair(ctx, from, to, window)` | the pairing of the two records of one connection over a window: see *Two legs of one connection*. Its outcome is on `flow.pair_outcome` and `flow.paired_flow_id` |
 | `ReadCurrentRates(ctx, now)` | the latest sampled rates within `CurrentSampleBound` -- twice the `poll_interval_measurement_seconds` row, read by the store -- per device, client, owner and direction. A device, client and owner sum the **totals of each local address** (`interface_endpoint`), because a local address's outbound figure exists only as that total; `OutMeasured` is false where a summed reading carried none, so an unmeasured outbound is never a 0. Inbound is placed per peer; a local address's outbound total goes to outbound when all its peers are outside, to inter_interface when all are inside, and otherwise to `OutboundUnsplit`, whole. Only local addresses that are inside count for a client, owner or direction, so one conversation read on two interfaces is not counted twice |
 | `ReadClientCurrentRate(ctx, clientID, now)` | one client's current rate, or `RateNoCurrentSample` — never a 0 that means nobody looked |
 | `ReadSampledBytes(ctx, from, to)` | the bytes seen in samples, per device, from the totals of each local address, or `NotSampled`. A second measure, distinct from logged bytes; neither is conversation volume |
@@ -1863,6 +2095,24 @@ attribution pass made after it is set: attributions already stored stay as they
 were computed. The rule it governs is under `domain_attribution`.
 `refresh_interval_public_suffix_list_seconds` (default 86 400) is how often the
 Public Suffix List is checked for a newer copy.
+
+**`leg_pairing_window_seconds` is the pairing window** (default 1, decision 4 of the
+step-5A live corrections): how far apart, in seconds, the two records of one
+connection may have been logged and still be paired. It is a whole number of
+seconds, 0 or more, validated by `internal/config`; the schema writes its default
+row. **`lease_backend_failure_pass_limit` is how long a failing DHCP backend holds the
+host-name retry back** (default 3, defect L1 of
+`specs/SPEC-test-budget-and-two-live-defects.md`): how many lease passes in a row one
+backend may fail before a pass that read every other backend counts as complete, so the
+unresolved host-name lookups are examined without it (`dns_resolution`, *The retry,
+and the restart*). Three passes are a quarter of an hour at the default lease interval
+of five minutes: longer than the one or two failed passes a restart of the backend's
+service or of the firewall costs, and short enough that a backend that is gone for good
+holds nothing back for long. It is a whole number of passes, 1 or more, validated by
+`internal/config`; the schema writes its default row.
+**`refresh_interval_discovery_seconds`** is read by the store as well as by the
+scheduler: it is the margin "held at an instant" allows either side of a sighting of
+this firewall's address, so the two cannot disagree.
 
 **`source_selection_<kind>_<provider_key>` is the operator's selection** of one
 registry row — `auto`, `on` or `off`, exactly as written — described under
@@ -2328,18 +2578,18 @@ encoding that the OPNsense documentation does not support.
 | `dstport` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **stored** — `flow.dst_port` (TCP and UDP records only) |
 | `tos` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the IPv4 type-of-service marking. No entry in `docs/widget-catalogue.md` asks about traffic marking, and a per-packet marking does not aggregate into any figure the product shows |
 | `ecn` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — congestion-notification bits; per-packet transport detail with no question behind it |
-| `ttl` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the per-packet hop budget; it varies inside one conversation and sums to nothing |
-| `id` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the IPv4 fragment identifier |
+| `ttl` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the per-packet hop budget; it varies inside one conversation and sums to nothing. Not a pairing field either: no cited source says what a forwarded packet's logged `ttl` is on each leg (survey, *Two legs of one connection*, marked `UNVERIFIED:`) |
+| `id` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **stored** — `flow.ip_id`, since the step-5A live corrections, which reversed the earlier *not stored*: the IPv4 identification is one of the two logged fields verified to cross the firewall unchanged under OPNsense's defaults — pf rewrites it only under scrub `random-id`, which OPNsense adds only when its IP Random id option is on, off by default (survey, *Two legs of one connection*) — so it is what tells two connections to one destination apart when their two legs are paired. Nothing else reads it |
 | `offset` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the IPv4 fragment offset |
 | `ipflags` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the IPv4 fragmentation flags |
 | `class` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the IPv6 traffic class, the twin of `tos` |
-| `flow` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the IPv6 flow label; it labels a conversation for the routers, and `opnview` identifies one by its endpoints |
-| `hoplimit` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the IPv6 twin of `ttl` |
-| `datalen` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the payload length. `length` is the figure the volume columns sum, and holding both invites a screen summing the wrong one |
+| `flow` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the IPv6 flow label; it labels a conversation for the routers, and `opnview` identifies one by its endpoints. Not a pairing field: whether pf rewrites it is `UNVERIFIED:` (survey, *Two legs of one connection*) |
+| `hoplimit` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the IPv6 twin of `ttl`, and not a pairing field for the same reason |
+| `datalen` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — the payload length. `length` is the figure the volume columns sum, and holding both invites a screen summing the wrong one. Not a pairing field: that a leg logs the same length after scrub's fragment reassembly is `UNVERIFIED:` (survey, *Two legs of one connection*) |
 | `tcpflags` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — judged and left out, recorded so the judgement is visible. No entry in `docs/widget-catalogue.md` reads them, and the one use that would justify the column — telling a scan from a conversation — needs flags aggregated across records the log only emits where a rule logs, so it would answer the question for the logging subset and stay silent elsewhere. A partial answer to a security question is worse than none |
-| `seq` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — per-packet TCP sequencing internals |
+| `seq` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **stored** — `flow.tcp_seq`, since the step-5A live corrections, which reversed the earlier *not stored*: the TCP sequence number is the second logged field verified to cross the firewall unchanged — pf rewrites it only under `modulate state` or `synproxy state`, and an OPNsense rule keeps state by default (survey, *Two legs of one connection*) — and the core parser names it at the position `filterlog` writes it (survey, *Two legs of one connection*, (b)). It pairs the two legs of one connection, and nothing else reads it |
 | `ack` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — per-packet TCP sequencing internals |
-| `urp` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — per-packet TCP urgent pointer |
+| `urp` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — per-packet TCP urgent pointer. On 26.7.3 the parser files `filterlog`'s window under this name, one position early, so the key does not hold what it says (survey, *Two legs of one connection*, (b)) |
 | `tcpopts` | `/api/diagnostics/firewall/log` | Data source 1, Response shape | **not stored** — per-packet TCP options |
 | `action`, `interface_name`, `dir` | `/api/diagnostics/firewall/log_filters` | Data source 1, Response shape | **not stored** — the filter vocabulary the firewall's own UI offers, read from its configuration rather than from the log. `opnview` filters in SQL over the columns it stores |
 
@@ -2481,7 +2731,7 @@ Survey *Runtime discovery* (i) to (v).
 | `log` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.logs_matches`. Dropped until this pass; closed here, because a rule that does not log makes its traffic invisible to `opnview` even though it crossed the router — the second observation-point limit, and otherwise indistinguishable from silence |
 | `is_automatic` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.is_automatic` |
 | `%action`, `%direction` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — these raw twins are what `rule.action` and `rule.direction` are written from; the human-facing fields are localised and are never read by machine logic |
-| `enabled` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — it describes the ruleset as it stands now, while every row that joins to `rule` is a record of a packet that matched when it crossed. The two disagree on every historical row, and `rule` exists to give a `rid` a name rather than to mirror the current ruleset |
+| `enabled` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.enabled`, since the step-5A live corrections, which reversed the earlier *not stored*: as coverage of the field, so a screen listing rules can say one is switched off. Nothing in the derivation reads it, and `rule` still names the `rid` of historical records whatever the rule's state now |
 | `interface` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.interface`, verbatim, since step 5A: configuration keys on a model rule, a description on a legacy row, empty on a floating rule. Which rules bear on a pair of interfaces is still derived from the flows actually observed; this column answers which rules do not log, per interface |
 | `protocol`, `ipprotocol`, `%protocol`, `%ipprotocol` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — a rule's protocol criterion. `flow.protocol` carries the protocol actually observed, and `opnview` never evaluates a criterion |
 | `source_net`, `source_port`, `destination_net`, `destination_port` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — the rule's match criteria, for the same reason: `opnview` joins an observed record to a rule identity and evaluates nothing |

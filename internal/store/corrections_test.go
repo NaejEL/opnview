@@ -56,6 +56,7 @@ func lookupBefore(t *testing.T, network *testNetwork, key string, address string
 // retention_seconds at 600 and now 800 s into its hour, a 77-byte flow at now - 100 is in
 // the current 1h, 24h, 7d and 30d slots of every family.
 func TestARetentionShorterThanAnHourStillFillsTheCurrentSlots(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	if offset := network.now - PeriodHour.SlotStart(network.now); offset != 800 {
@@ -94,6 +95,7 @@ func TestARetentionShorterThanAnHourStillFillsTheCurrentSlots(t *testing.T) {
 // network is refreshed from empty aggregate tables under each retention in turn, so every
 // retention computes the current slots on its own.
 func TestTheCurrentSlotsEqualTheSumsOverFlowWhateverTheRetention(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 3, 7)
 	ctx := context.Background()
 	// Flows over the last day, dense enough that the current hour holds every kind: the
@@ -150,6 +152,7 @@ func TestTheCurrentSlotsEqualTheSumsOverFlowWhateverTheRetention(t *testing.T) {
 
 // TestAnHourHoldingTheHorizonTakesALateFlowAndAReclassification is AC2.
 func TestAnHourHoldingTheHorizonTakesALateFlowAndAReclassification(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	hour := PeriodHour.SlotStart(network.now)
@@ -229,6 +232,7 @@ func TestAnHourHoldingTheHorizonTakesALateFlowAndAReclassification(t *testing.T)
 // from their days, equal the same sums over flow in every family, allowed, blocked and
 // unknown included, and each equals the sum of its day slots.
 func TestTheRolledUpWeekAndMonthEqualADirectComputation(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 3, 9)
 	ctx := context.Background()
 	if err := network.db.SetSetting(ctx, "retention_seconds", "3600", network.now); err != nil {
@@ -277,6 +281,7 @@ func TestTheRolledUpWeekAndMonthEqualADirectComputation(t *testing.T) {
 // counts once, and every figure equals a direct distinct count -- after the flows have been
 // purged, when the finer slots are all there is.
 func TestDistinctPeersIsExactInAComposedAndARolledUpSlot(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	client := network.clients[0]
@@ -337,6 +342,7 @@ func TestDistinctPeersIsExactInAComposedAndARolledUpSlot(t *testing.T) {
 
 // TestTheDataModelCarriesNoLowerBoundForDistinctPeers is AC4, its last part.
 func TestTheDataModelCarriesNoLowerBoundForDistinctPeers(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "data-model.md"))
 	if err != nil {
 		t.Fatalf("reading the data model: %v", err)
@@ -357,6 +363,7 @@ func totalChanges(t *testing.T, database *Store) int64 {
 
 // TestASecondClassificationPassWithNothingChangedWritesNoRow is AC5, its first part.
 func TestASecondClassificationPassWithNothingChangedWritesNoRow(t *testing.T) {
+	t.Parallel()
 	network := populated(t, 2, 6, 200, 86400)
 	ctx := context.Background()
 	provider, err := network.db.ProviderID(ctx, "security_event", "suricata")
@@ -421,6 +428,7 @@ func flowEnds(t *testing.T, database *Store) map[string]string {
 
 // TestALeaseNamingOneAddressReclassifiesThatAddressAlone is AC5, its second part.
 func TestALeaseNamingOneAddressReclassifiesThatAddressAlone(t *testing.T) {
+	t.Parallel()
 	network := populated(t, 2, 6, 200, 86400)
 	ctx := context.Background()
 	var target testClient
@@ -483,6 +491,7 @@ func TestALeaseNamingOneAddressReclassifiesThatAddressAlone(t *testing.T) {
 // TestNetworksAreDetectedWithoutTheLinkLocalPrefix is AC6, its first part, on the store's
 // side: a link-local prefix offered as detected is never stored.
 func TestNetworksAreDetectedWithoutTheLinkLocalPrefix(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 2)
 	ctx := context.Background()
 	if err := network.db.DetectNetworks(ctx, network.inside[0].id, prefixesOf(t,
@@ -535,6 +544,7 @@ func placedOn(t *testing.T, database *Store, address string) int64 {
 // detected one, a removed one stops counting, and each edit, at the next derivation,
 // leaves slots equal to a recomputation.
 func TestOperatorNetworksFollowDecisionD1(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 2)
 	ctx := context.Background()
 	first, second := network.inside[0], network.inside[1]
@@ -622,6 +632,7 @@ func TestOperatorNetworksFollowDecisionD1(t *testing.T) {
 
 // TestALinkLocalAddressIsEvidenceOnlyWhereTheRuleSaysSo is AC6, its fourth part.
 func TestALinkLocalAddressIsEvidenceOnlyWhereTheRuleSaysSo(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 2)
 	ctx := context.Background()
 	first, second := network.inside[0], network.inside[1]
@@ -663,6 +674,7 @@ func TestALinkLocalAddressIsEvidenceOnlyWhereTheRuleSaysSo(t *testing.T) {
 
 // TestTheOperatorsWritePathRefusesAMalformedNetwork is AC6, its fifth part.
 func TestTheOperatorsWritePathRefusesAMalformedNetwork(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 2)
 	ctx := context.Background()
 	for _, text := range []string{"", "not a network", "10.9.0.1/24", "10.9.0.0/33", "10.9.0.0",
@@ -699,6 +711,7 @@ func TestTheOperatorsWritePathRefusesAMalformedNetwork(t *testing.T) {
 
 // TestAHostNameLoggedAsTheClientIsResolvedThroughTheLeases is AC8, on the store's side.
 func TestAHostNameLoggedAsTheClientIsResolvedThroughTheLeases(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	provider, _ := network.db.ProviderID(ctx, "dhcp_lease", "dnsmasq")

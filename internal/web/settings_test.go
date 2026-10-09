@@ -28,6 +28,7 @@ func (h *harness) storeCredentials(apiKey, apiSecret string) *http.Response {
 // this cycle's named risks: the credentials reaching the database but not the running
 // collectors.
 func TestChangingACredentialTakesEffectWithoutARestart(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	login, password := harness.completeSetup()
 	_ = login
@@ -112,6 +113,7 @@ func credentialRowCount(t *testing.T, harness *harness, name string) int {
 // NONE OF THE THREE IS WORKED AROUND OR REPORTED AS SUCCESS, and each is asserted by
 // the string the surface actually renders rather than by an internal value.
 func TestVerificationTellsTheThreeAnswersApart(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	harness.completeSetup()
 	apiKey, apiSecret := randomHex(t, 12), randomHex(t, 16)
@@ -176,6 +178,7 @@ func submitAndRead(t *testing.T, harness *harness, apiKey, apiSecret string) str
 // is here as well, because "no second destination" and "no MaxMind call" are two
 // different mistakes and the second one is the one this cycle could plausibly make.
 func TestNothingButTheFirewallIsContactedDuringTheThreeSurfaces(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	login, password := harness.completeSetup()
 
@@ -243,6 +246,7 @@ func TestNothingButTheFirewallIsContactedDuringTheThreeSurfaces(t *testing.T) {
 // TestAnUnreadableCredentialIsItsOwnStateAndNotAnAbsence is AC14 as the settings
 // surface reports it.
 func TestAnUnreadableCredentialIsItsOwnStateAndNotAnAbsence(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	login, password := harness.completeSetup()
 	assertStatus(t, harness.storeCredentials(randomHex(t, 12), randomHex(t, 16)),
@@ -282,6 +286,7 @@ func TestAnUnreadableCredentialIsItsOwnStateAndNotAnAbsence(t *testing.T) {
 // TestTheTwoStatesAreDistinguishableAtTheSource is AC14 below the interface: the
 // values themselves differ, so nothing downstream has to guess.
 func TestTheTwoStatesAreDistinguishableAtTheSource(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	harness.completeSetup()
 
@@ -319,6 +324,7 @@ func TestTheTwoStatesAreDistinguishableAtTheSource(t *testing.T) {
 // TestSavingTheThemeDoesNotDestroyTheCredentials is the consequence of a secret field
 // that renders empty: an empty submission must leave what is stored alone.
 func TestSavingTheThemeDoesNotDestroyTheCredentials(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	harness.completeSetup()
 	apiKey, apiSecret := randomHex(t, 12), randomHex(t, 16)
@@ -340,6 +346,7 @@ func TestSavingTheThemeDoesNotDestroyTheCredentials(t *testing.T) {
 
 // TestASecretIsNeverRenderedBackIntoThePage asserts what the surface may not say.
 func TestASecretIsNeverRenderedBackIntoThePage(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	login, password := harness.completeSetup()
 	apiKey, apiSecret := randomHex(t, 12), randomHex(t, 16)

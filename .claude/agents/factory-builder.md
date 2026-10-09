@@ -76,6 +76,14 @@ the same environment, use `docker compose run --rm dev <command>` (for example
 `docker compose run --rm dev go test -run TestX ./internal/...`, or
 `docker compose run --rm dev gofmt -w .` to fix formatting).
 
+`checks` is the per-iteration command: the everyday suite, without `-race`,
+whose `go test` wall time must stay under its 60 s budget or the run fails.
+`docker compose run --rm pre-deployment` is the gate run before a deployment —
+`-race` over the whole suite, the tests moved out of `checks` with the
+`predeployment` build tag, the budget's own check and the schema checks with
+their scale seeds and query plans; see `ROADMAP.md`, *Development and test
+environment*.
+
 **Never run `go`, `gofmt` or `sqlite3` on the host, and never report a host
 result as the project result.** A missing host `go` is not a defect and is
 never a reason to stop: the host is not supposed to have one. What *is* a

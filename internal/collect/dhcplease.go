@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -62,7 +63,11 @@ func (c *Collector) CollectDHCPLease(ctx context.Context) error {
 	if err := c.collectNeighbours(ctx, &seen); err != nil {
 		failures = append(failures, err)
 	}
-	if err := c.collectLeases(ctx, &seen); err != nil {
+	// The instant the lease read begins. A lookup ingested at or after it may postdate the
+	// leases this pass reads, so it is left for the next lease pass.
+	leasesReadAt := c.now()
+	complete, err := c.collectLeases(ctx, &seen)
+	if err != nil {
 		failures = append(failures, err)
 	}
 
@@ -71,8 +76,16 @@ func (c *Collector) CollectDHCPLease(ctx context.Context) error {
 	// again, which re-points the rows naming it and decides their attribution again.
 	// A lease can also name the host a lookup logged as its client before the lease
 	// was read, so the lookups whose host name resolved to no single address are
-	// resolved again.
-	if err := c.derive(ctx, derivation{addresses: seen, hostnames: true}); err != nil {
+	// resolved again -- ONLY WHEN THE PASS WAS COMPLETE, as collectLeases decides it.
+	// A lookup is examined once by a lease pass and marked; a pass that read no lease,
+	// or missed a backend that may answer at the next pass, would use that one
+	// examination up against an incomplete table and leave the lookup unresolved for
+	// good (step-5A live corrections, H6).
+	request := derivation{addresses: seen}
+	if complete {
+		request.hostnames, request.hostnamesBefore = true, leasesReadAt
+	}
+	if err := c.derive(ctx, request); err != nil {
 		failures = append(failures, err)
 	}
 
@@ -82,7 +95,24 @@ func (c *Collector) CollectDHCPLease(ctx context.Context) error {
 	return nil
 }
 
-// collectLeases reads every active backend's lease table.
+// collectLeases reads every active backend's lease table, and reports whether the pass
+// is complete: whether the unresolved host-name lookups may be examined against what it
+// read. It is complete when it read at least one backend and every backend it did not
+// read is one of these two (defect L1 of specs/SPEC-test-budget-and-two-live-defects.md):
+//
+//   - a backend that cannot be read by design, which answers ErrUnsupportedRead. It
+//     contributes no lease, at this pass or any later one, so waiting for it would wait
+//     for ever: before this rule an ISC plugin active beside Dnsmasq kept every
+//     unresolved lookup unexamined;
+//   - a backend that has failed on every one of the last lease_backend_failure_pass_limit
+//     passes, this one included. A failure is reported in its availability row, as
+//     before, and the detail says how many passes in a row it has failed and the limit.
+//     Until the limit the pass is incomplete, so one or two failed passes -- a restart --
+//     do not spend each lookup's one examination on a partial table; from the limit on,
+//     the other backends' leases are what there is, and the lookups wait no further.
+//
+// The count of failed passes is kept in memory: a restart begins it again, which delays
+// the examination by at most the limit and never forgoes it.
 //
 // SEVERAL ARE NORMAL, and the deployment is the ordinary one: one server issuing on
 // one VLAN and another on a second, two scopes with no overlap. A machine leased by
@@ -91,55 +121,135 @@ func (c *Collector) CollectDHCPLease(ctx context.Context) error {
 // interface. One failing backend does not stop the others: they are separate
 // servers behind separate endpoints, and letting the first failure end the pass
 // would turn one unreadable server into two.
-func (c *Collector) collectLeases(ctx context.Context, seen *[]string) error {
+func (c *Collector) collectLeases(ctx context.Context, seen *[]string) (bool, error) {
 	sources, err := c.activeSources(ctx, KindDHCPLease)
 	if err != nil {
-		return err
+		return false, err
 	}
 	var failures []error
+	read, waiting := 0, 0
 	for _, active := range sources {
-		if err := c.collectLeasesFrom(ctx, active, seen); err != nil {
+		outcome, err := c.collectLeasesFrom(ctx, active, seen)
+		if err != nil {
 			failures = append(failures, err)
 		}
+		switch outcome {
+		case leaseBackendRead:
+			read++
+		case leaseBackendFailed:
+			waiting++
+		}
 	}
+	complete := read > 0 && waiting == 0
 	if len(failures) > 0 {
-		return fmt.Errorf("collect: the lease read was incomplete: %w", joinErrors(failures))
+		return complete, fmt.Errorf("collect: the lease read was incomplete: %w", joinErrors(failures))
 	}
-	return nil
+	return complete, nil
 }
 
-// collectLeasesFrom reads one backend's lease table.
-func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource, seen *[]string) error {
+// leaseBackendOutcome is what one lease pass made of one backend.
+type leaseBackendOutcome int
+
+const (
+	// leaseBackendRead: its lease table was read.
+	leaseBackendRead leaseBackendOutcome = iota
+	// leaseBackendUnsupported: it cannot be read by design, and contributes no lease.
+	leaseBackendUnsupported
+	// leaseBackendFailed: it failed, on fewer passes in a row than the limit, so the
+	// pass waits for it.
+	leaseBackendFailed
+	// leaseBackendGivenUp: it failed, on every pass up to the limit, so the pass no
+	// longer waits for it.
+	leaseBackendGivenUp
+)
+
+// noteLeaseFailure counts one more failed pass for a backend, and returns the count and
+// the limit in force.
+func (c *Collector) noteLeaseFailure(providerID int64) (int64, int64) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	if c.leaseFailures == nil {
+		c.leaseFailures = map[int64]int64{}
+	}
+	c.leaseFailures[providerID]++
+	return c.leaseFailures[providerID], c.leaseFailureLimit
+}
+
+// clearLeaseFailures ends a backend's run of failed passes.
+func (c *Collector) clearLeaseFailures(providerID int64) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	delete(c.leaseFailures, providerID)
+}
+
+// failedOutcome is a failed backend's outcome: the pass waits for it until it has
+// failed on as many passes in a row as the limit.
+func failedOutcome(failed, limit int64) leaseBackendOutcome {
+	if failed >= limit {
+		return leaseBackendGivenUp
+	}
+	return leaseBackendFailed
+}
+
+// leaseFailureDetail is what a failing backend's availability detail adds about the
+// host-name retry: how many passes in a row it has failed, and the limit.
+func leaseFailureDetail(failed, limit int64) string {
+	if failed >= limit {
+		return fmt.Sprintf("failed on %d lease passes in a row, the limit of %d (setting %s): "+
+			"unresolved host names are re-examined without this backend", failed, limit,
+			config.KeyLeaseBackendFailurePassLimit)
+	}
+	return fmt.Sprintf("failed on %d lease passes in a row; unresolved host names wait for this "+
+		"backend until %d (setting %s)", failed, limit, config.KeyLeaseBackendFailurePassLimit)
+}
+
+// collectLeasesFrom reads one backend's lease table, and reports what the pass made of
+// the backend.
+func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource, seen *[]string) (
+	leaseBackendOutcome, error) {
 	providerKey, providerID := active.providerKey, active.providerID
 	source, registered := leaseSources[providerKey]
 	if !registered {
-		return fmt.Errorf("collect: the active dhcp_lease provider %q has no implementation",
-			providerKey)
+		failed, limit := c.noteLeaseFailure(providerID)
+		return failedOutcome(failed, limit), fmt.Errorf(
+			"collect: the active dhcp_lease provider %q has no implementation", providerKey)
 	}
 
 	observations, result, readErr := source.leases(ctx, c, c.pages().DHCPLease)
 	if errors.Is(readErr, ErrUnsupportedRead) {
 		// The implementation is registered and its material cannot be read. That is a state,
 		// recorded with its reason, and not a failed pass: nothing was attempted.
-		return c.writeAvailability(ctx, providerID, result.state, result.probe, readErr.Error())
-	}
-	if writeErr := c.writeAvailability(ctx, providerID, result.state,
-		result.probe, result.detail); writeErr != nil {
-		return writeErr
+		c.clearLeaseFailures(providerID)
+		return leaseBackendUnsupported, c.writeAvailability(ctx, providerID, result.state,
+			result.probe, readErr.Error())
 	}
 	if readErr != nil {
-		return readErr
+		failed, limit := c.noteLeaseFailure(providerID)
+		detail := leaseFailureDetail(failed, limit)
+		if result.detail != "" {
+			detail = result.detail + "; " + detail
+		}
+		if writeErr := c.writeAvailability(ctx, providerID, result.state,
+			result.probe, detail); writeErr != nil {
+			return failedOutcome(failed, limit), writeErr
+		}
+		return failedOutcome(failed, limit), readErr
+	}
+	c.clearLeaseFailures(providerID)
+	if writeErr := c.writeAvailability(ctx, providerID, result.state,
+		result.probe, result.detail); writeErr != nil {
+		return leaseBackendFailed, writeErr
 	}
 
 	snapshot := c.Discovery()
 	now := c.now()
 	for _, observation := range observations {
 		if err := c.ingestLease(ctx, observation, snapshot, providerID, providerKey, now); err != nil {
-			return err
+			return leaseBackendFailed, err
 		}
 		*seen = append(*seen, observation.Address)
 	}
-	return nil
+	return leaseBackendRead, nil
 }
 
 // ingestLease turns one lease observation into a machine and a lease generation.
@@ -300,6 +410,16 @@ func (c *Collector) ingestNeighbour(ctx context.Context, row decode.Object,
 			return nil
 		}
 	}
+	// The tables list this firewall's own interface entries as well as its neighbours.
+	// An entry at an address the firewall holds at this instant is this firewall, which
+	// is never a client (step-5A live corrections, item 1.2; defect L2 of
+	// specs/SPEC-test-budget-and-two-live-defects.md, where each such entry had become a
+	// MAC-level client), so it creates and updates nothing.
+	if firewall, err := c.store.IsThisFirewallAt(ctx, address, now); err != nil {
+		return err
+	} else if firewall {
+		return nil
+	}
 
 	_, err := c.store.UpsertClient(ctx, store.Client{
 		Identity:    store.ClientIdentity{Kind: store.IdentityMAC, Key: *mac},
@@ -423,4 +543,11 @@ func normaliseLeaseState(row decode.Object) string {
 		}
 	}
 	return "unknown"
+}
+
+// leaseFailurePasses is how many lease passes in a row one backend has failed.
+func (c *Collector) leaseFailurePasses(providerID int64) int64 {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.leaseFailures[providerID]
 }

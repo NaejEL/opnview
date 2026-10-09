@@ -71,6 +71,7 @@ func allowedNumericPatterns() []string {
 
 // TestNoNetworkConfigurationIsWrittenIntoTheProduct is AC19.
 func TestNoNetworkConfigurationIsWrittenIntoTheProduct(t *testing.T) {
+	t.Parallel()
 	root := repositoryRoot(t)
 	inspected := 0
 
@@ -147,6 +148,7 @@ func allowedLine(line string) bool {
 // the credential vocabulary sitting beside a literal value, which is what a
 // hardcoded key looks like.
 func TestNoSecretIsCommitted(t *testing.T) {
+	t.Parallel()
 	root := repositoryRoot(t)
 
 	t.Run("no key file and no database is in the tree", func(t *testing.T) {

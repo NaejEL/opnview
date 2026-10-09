@@ -361,6 +361,39 @@ func (s *Store) OnLinkFingerprint(ctx context.Context) (string, error) {
 		parts = append(parts, fmt.Sprintf("network:%d:%s:%t", evidence.interfaceID, evidence.prefix,
 			evidence.operator))
 	}
+	// This firewall's own addresses, as the recognition reads them: a new address, an
+	// address on another interface, or a new discovery interval changes which rows are
+	// this firewall, so every stored address is placed again (step-5A live
+	// corrections, item 1.5). last_seen_at and is_current are left out: the first moves
+	// at every discovery, and the second only stops a holding from extending past
+	// the instant the address was last seen, which no row already placed precedes by
+	// more than the margin -- see firewall_address_holdings in derive.sql.
+	rows, err = s.db.QueryContext(ctx,
+		`SELECT address, interface_id, first_seen_at FROM this_firewall_address`)
+	if err != nil {
+		return "", fmt.Errorf("store: reading this firewall's addresses: %w", err)
+	}
+	for rows.Next() {
+		var (
+			address            string
+			interfaceID, first int64
+		)
+		if err := rows.Scan(&address, &interfaceID, &first); err != nil {
+			_ = rows.Close()
+			return "", fmt.Errorf("store: reading this firewall's addresses: %w", err)
+		}
+		parts = append(parts, fmt.Sprintf("this_firewall:%s:%d:%d", address, interfaceID, first))
+	}
+	err = rows.Err()
+	_ = rows.Close()
+	if err != nil {
+		return "", fmt.Errorf("store: reading this firewall's addresses: %w", err)
+	}
+	margin, err := heldMargin(ctx, s.db)
+	if err != nil {
+		return "", err
+	}
+	parts = append(parts, fmt.Sprintf("held_margin:%d", margin))
 	sort.Strings(parts)
 	return strings.Join(parts, ";"), nil
 }

@@ -25,6 +25,7 @@ import (
 // discovery, the probe round and the retention purge, each at the interval its own
 // justification carries.
 func TestTheSevenLoopsRunAtTheConfiguredCadences(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	settings := config.Defaults()
 	tasks := harness.collector.Tasks(config.NewLive(settings))
@@ -75,6 +76,7 @@ func TestTheSevenLoopsRunAtTheConfiguredCadences(t *testing.T) {
 
 // TestACollectorThatFailsDoesNotStopTheOthers is the isolation, driven by an injected clock.
 func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
+	t.Parallel()
 	clock := newFixedClock(referenceInstant())
 	failing := errors.New("collect_test: this source is unavailable on this firewall")
 
@@ -145,6 +147,7 @@ func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
 // TestTheRunLoopStopsOnCancellationWithinABoundedDeadline is the shutdown guarantee the
 // service unit depends on.
 func TestTheRunLoopStopsOnCancellationWithinABoundedDeadline(t *testing.T) {
+	t.Parallel()
 	clock := newFixedClock(referenceInstant())
 	tasks := []Task{
 		{Name: "a loop that waits", Interval: FixedInterval(time.Hour), RunAtStart: true,
@@ -174,6 +177,7 @@ func TestTheRunLoopStopsOnCancellationWithinABoundedDeadline(t *testing.T) {
 // TestALoopWithNoCadenceIsNotRun keeps a misconfigured interval from becoming a loop that
 // runs as fast as the processor allows.
 func TestALoopWithNoCadenceIsNotRun(t *testing.T) {
+	t.Parallel()
 	clock := newFixedClock(referenceInstant())
 	var ran atomic.Int64
 	tasks := []Task{
@@ -195,6 +199,7 @@ func TestALoopWithNoCadenceIsNotRun(t *testing.T) {
 // TestAPassThatFailsBecauseTheRunIsStoppingIsNotReported keeps a stop from filling the log
 // with failures that are only the stop itself.
 func TestAPassThatFailsBecauseTheRunIsStoppingIsNotReported(t *testing.T) {
+	t.Parallel()
 	clock := newFixedClock(referenceInstant())
 	reported := make(chan string, 8)
 

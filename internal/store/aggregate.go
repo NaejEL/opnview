@@ -121,6 +121,12 @@ func (s *Store) RefreshAggregatesAt(ctx context.Context, since, watermark, now i
 		return result, err
 	}
 
+	// Every slot of a period runs the same statements, each slot in its own
+	// transaction, so the statements are prepared once for the whole refresh
+	// (statementCache, exec.go).
+	cache := newStatementCache(s.db)
+	defer cache.close()
+
 	for _, period := range Periods() {
 		candidates := map[int64]bool{}
 		for _, hour := range hours {
@@ -144,7 +150,7 @@ func (s *Store) RefreshAggregatesAt(ctx context.Context, since, watermark, now i
 				continue
 			}
 			if !candidates[start] {
-				stale, err := s.slotIsStale(ctx, period, start, end)
+				stale, err := slotIsStale(ctx, cache.direct(), period, start, end)
 				if err != nil {
 					return result, err
 				}
@@ -152,7 +158,10 @@ func (s *Store) RefreshAggregatesAt(ctx context.Context, since, watermark, now i
 					continue
 				}
 			}
-			if err := s.rewriteSlot(ctx, period, start, end, watermark); err != nil {
+			if err := cache.warm(ctx); err != nil {
+				return result, err
+			}
+			if err := s.rewriteSlot(ctx, cache, period, start, end, watermark); err != nil {
 				return result, err
 			}
 			result.Rewritten = append(result.Rewritten, SlotRef{Period: period.Name, Start: start})
@@ -166,8 +175,8 @@ func (s *Store) RefreshAggregatesAt(ctx context.Context, since, watermark, now i
 // purged part, and when it holds rows while neither is left inside it. Equal instants
 // count as stale because one-second stamps cannot be ordered: a row stamped in the
 // second a refresh ran may have committed after the refresh read the slot.
-func (s *Store) slotIsStale(ctx context.Context, period Period, start, end int64) (bool, error) {
-	newest, hasFlows, err := queryOptionalInt(ctx, s.db, "slot_newest_ingested",
+func slotIsStale(ctx context.Context, q querier, period Period, start, end int64) (bool, error) {
+	newest, hasFlows, err := queryOptionalInt(ctx, q, "slot_newest_ingested",
 		map[string]any{"slot_start": start, "slot_end": end})
 	if err != nil {
 		return false, err
@@ -176,7 +185,7 @@ func (s *Store) slotIsStale(ctx context.Context, period Period, start, end int64
 	if err != nil {
 		return false, err
 	}
-	computed, hasRows, err := queryOptionalIntText(ctx, s.db, "slot_computed_at", text,
+	computed, hasRows, err := queryOptionalIntText(ctx, q, "slot_computed_at", text,
 		map[string]any{"slot_start": start})
 	if err != nil {
 		return false, err
@@ -194,12 +203,14 @@ func (s *Store) slotIsStale(ctx context.Context, period Period, start, end int64
 // rewriteSlot replaces one slot of every family, in one transaction: an hour from
 // `flow` and its purged part, any other period composed from its finer period's
 // slots, and the client and owner families regrouped from the slot itself.
-func (s *Store) rewriteSlot(ctx context.Context, period Period, start, end, computedAt int64) error {
+func (s *Store) rewriteSlot(ctx context.Context, cache *statementCache, period Period,
+	start, end, computedAt int64) error {
 	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: starting the %s slot at %d: %w", period.Name, start, err)
 	}
 	defer func() { _ = transaction.Rollback() }()
+	cached := cache.in(transaction)
 
 	parameters := map[string]any{"slot_start": start, "slot_end": end, "now": computedAt}
 	for _, family := range append(append([]string{}, baseFamilies...), regroupedFamilies...) {
@@ -208,7 +219,7 @@ func (s *Store) rewriteSlot(ctx context.Context, period Period, start, end, comp
 		if err != nil {
 			return err
 		}
-		if _, err := execText(ctx, transaction, deletion, text, parameters); err != nil {
+		if _, err := execText(ctx, cached, deletion, text, parameters); err != nil {
 			return err
 		}
 	}
@@ -224,7 +235,7 @@ func (s *Store) rewriteSlot(ctx context.Context, period Period, start, end, comp
 		if err != nil {
 			return err
 		}
-		if _, err := execText(ctx, transaction, name, text, parameters); err != nil {
+		if _, err := execText(ctx, cached, name, text, parameters); err != nil {
 			return err
 		}
 	}
@@ -234,7 +245,7 @@ func (s *Store) rewriteSlot(ctx context.Context, period Period, start, end, comp
 		if err != nil {
 			return err
 		}
-		if _, err := execText(ctx, transaction, name, text, parameters); err != nil {
+		if _, err := execText(ctx, cached, name, text, parameters); err != nil {
 			return err
 		}
 	}
@@ -243,7 +254,7 @@ func (s *Store) rewriteSlot(ctx context.Context, period Period, start, end, comp
 	// the days a rewrite could no longer read whole.
 	if period == PeriodDay {
 		for _, name := range []string{"delete_pair_volume", "insert_pair_volume"} {
-			if _, err := execNamed(ctx, transaction, name, parameters); err != nil {
+			if _, err := execNamed(ctx, cached, name, parameters); err != nil {
 				return err
 			}
 		}

@@ -36,6 +36,7 @@ func (h *harness) setGeoIPProbe(state store.AvailabilityState, probe string) {
 // a save of it or of a licence key wakes the refresh, while a save that changes
 // neither does not.
 func TestTheMaxMindAccountIDIsASettingAndASaveWakesTheRefresh(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.completeSetup()
 
@@ -87,6 +88,7 @@ func TestTheMaxMindAccountIDIsASettingAndASaveWakesTheRefresh(t *testing.T) {
 // TestTheDatasetStateIsTheOneTheRefreshRecorded: each probe the refresh records is
 // its own sentence, and the build of the databases in use is shown as an instant.
 func TestTheDatasetStateIsTheOneTheRefreshRecorded(t *testing.T) {
+	t.Parallel()
 	h := newHarness(t)
 	h.completeSetup()
 	text := pageText(t, h, PathSettings)

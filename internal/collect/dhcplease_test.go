@@ -35,6 +35,7 @@ func arrangeLeaseCollection(t *testing.T) *probeHarness {
 // TestALeasePassStoresEachGenerationAndResolvesTheIdentityCascade is the ingest, and the
 // cascade choosing the most stable level each lease supports.
 func TestALeasePassStoresEachGenerationAndResolvesTheIdentityCascade(t *testing.T) {
+	t.Parallel()
 	harness := arrangeLeaseCollection(t)
 	ctx := context.Background()
 
@@ -92,6 +93,7 @@ func TestALeasePassStoresEachGenerationAndResolvesTheIdentityCascade(t *testing.
 // distinct from every other null, so keying on it would have made every one of those leases
 // insert a fresh row on every pass. This test is what would catch that.
 func TestALeasePassRepeatedStoresNothingNew(t *testing.T) {
+	t.Parallel()
 	harness := arrangeLeaseCollection(t)
 	ctx := context.Background()
 
@@ -124,6 +126,7 @@ func TestALeasePassRepeatedStoresNothingNew(t *testing.T) {
 // because storing a null where a figure belongs and storing a figure where a null belongs are
 // both defects and only one of them used to be visible.
 func TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsStoreNone(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	// Kea, where the figure is real.
@@ -195,6 +198,7 @@ func TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsStoreNone(t
 // only client identity there is, so they are read unconditionally — and this test proves it
 // by reading them with no lease backend active at all.
 func TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
 	harness.fake.answerFixture(opnsense.ARPTable, "get_arp.json")
@@ -249,6 +253,7 @@ func TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs(t *testing.T) {
 // normalise has to be absent rather than wrong, because a wrong second digit would mark a
 // real burned-in address as an unstable identity.
 func TestAMalformedHardwareAddressIsStoredAsAbsentRatherThanStoredWrong(t *testing.T) {
+	t.Parallel()
 	for _, malformed := range []string{
 		"", "not a mac", "0a:11:22:33:44", "0a-11-22-33-44-55", "0a:11:22:33:44:5g",
 		"0A:11:22:33:44:55:66",
@@ -292,6 +297,7 @@ func containsColon(address string) bool {
 // Both routes through the cascade are exercised, because a machine may or may not send a DHCP
 // client identifier and the answer has to hold either way.
 func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	for _, shape := range []struct {
@@ -418,6 +424,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 // For a concurrent kind there is nothing to resolve: every lease says which server issued it,
 // so both are read.
 func TestTwoDHCPServersBothServingAreBothActivated(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
@@ -465,6 +472,7 @@ func TestTwoDHCPServersBothServingAreBothActivated(t *testing.T) {
 // IF THIS TEST FAILS because the cascade was changed deliberately, the expectation below is what
 // records the new answer — and the paragraph in dhcplease.go has to move with it.
 func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)

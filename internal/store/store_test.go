@@ -34,6 +34,7 @@ func openTestStore(t *testing.T) (*Store, string) {
 // unchanged by a second apply, so a restart cannot reset a probed state or undo a
 // setting the user changed.
 func TestApplyingTheSchemaTwiceChangesNothing(t *testing.T) {
+	t.Parallel()
 	database, directory := openTestStore(t)
 	ctx := context.Background()
 
@@ -58,6 +59,7 @@ func TestApplyingTheSchemaTwiceChangesNothing(t *testing.T) {
 // matters most in practice: the defaults are inserted with ON CONFLICT DO NOTHING, so
 // a value somebody changed is not overwritten on the next start.
 func TestASettingSurvivesTheSchemaBeingAppliedAgain(t *testing.T) {
+	t.Parallel()
 	database, directory := openTestStore(t)
 	ctx := context.Background()
 
@@ -88,6 +90,7 @@ func TestASettingSurvivesTheSchemaBeingAppliedAgain(t *testing.T) {
 // availability rows are inserted only for providers that have none, so a restart does
 // not reset every source to "not yet probed" and make a working firewall look broken.
 func TestAProbedAvailabilityRowSurvivesTheSchemaBeingAppliedAgain(t *testing.T) {
+	t.Parallel()
 	database, directory := openTestStore(t)
 	ctx := context.Background()
 
@@ -129,6 +132,7 @@ func TestAProbedAvailabilityRowSurvivesTheSchemaBeingAppliedAgain(t *testing.T) 
 // restart must not meet. The integrity check is run on a freshly reopened database
 // rather than on the one that wrote it, because that is the state the next start sees.
 func TestClosingLeavesNoHotJournalAndAConsistentDatabase(t *testing.T) {
+	t.Parallel()
 	database, directory := openTestStore(t)
 	ctx := context.Background()
 
@@ -165,6 +169,7 @@ func TestClosingLeavesNoHotJournalAndAConsistentDatabase(t *testing.T) {
 // TestClosingTwiceIsNotAnError keeps a deferred close from turning a clean stop into a
 // reported failure.
 func TestClosingTwiceIsNotAnError(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	if err := database.Close(); err != nil {
 		t.Fatalf("the first close failed: %v", err)
@@ -176,6 +181,7 @@ func TestClosingTwiceIsNotAnError(t *testing.T) {
 
 // TestOpeningWithNoDataDirectoryIsRefused is decision 11 at the storage layer.
 func TestOpeningWithNoDataDirectoryIsRefused(t *testing.T) {
+	t.Parallel()
 	if _, err := Open(context.Background(), ""); err == nil {
 		t.Fatal("opening with no data directory succeeded")
 	}
@@ -187,6 +193,7 @@ func TestOpeningWithNoDataDirectoryIsRefused(t *testing.T) {
 // live firewall can decide that. A schema that guessed would be a hardcoded assumption
 // about the installation.
 func TestAFreshDatabaseHasNoActiveProvider(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -208,6 +215,7 @@ func TestAFreshDatabaseHasNoActiveProvider(t *testing.T) {
 // unavailable source is a state rather than an absent row a screen could not tell from
 // a healthy one.
 func TestEveryRegisteredProviderHasExactlyOneAvailabilityRow(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -240,6 +248,7 @@ func TestEveryRegisteredProviderHasExactlyOneAvailabilityRow(t *testing.T) {
 // problem: a lookup that transits both would be counted twice, and dns_resolution.lookup_key
 // carries no provider to tell the two records apart.
 func TestActivatingASecondProviderOfOneKindReplacesTheFirst(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -275,6 +284,7 @@ func TestActivatingASecondProviderOfOneKindReplacesTheFirst(t *testing.T) {
 // TestActivatingAnUnregisteredProviderIsRefused keeps a typo from silently leaving a
 // kind with nothing active.
 func TestActivatingAnUnregisteredProviderIsRefused(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	err := database.SetActiveProviders(context.Background(), "dhcp_lease", "not-a-registered-backend")
 	if err == nil {
@@ -286,6 +296,7 @@ func TestActivatingAnUnregisteredProviderIsRefused(t *testing.T) {
 // schema and the purge both go through, because a splitter that cut a string would
 // corrupt a statement rather than fail loudly.
 func TestSplitStatementsKeepsASemicolonInsideAString(t *testing.T) {
+	t.Parallel()
 	statements := SplitStatements(
 		"SELECT 'a;b';\n-- a comment\nSELECT 'c';\n\n")
 	if len(statements) != 2 {

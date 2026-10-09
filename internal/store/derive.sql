@@ -23,8 +23,15 @@
 --   :link_local     1 when the address being placed is an IPv6 link-local one
 --   :full           1 for a full placement, 0 for an incremental one
 --   :evidence       the evidence fingerprint an address was placed from
---   :hostname, :label, :at  a host name, its first label, and an instant
+--   :label, :at     a host name's first label, and an instant
 --   :resolution     a dns_resolution.client_resolution value
+--   :loopback       1 when the address being placed is a loopback address or
+--                   `localhost`, which is this firewall by definition
+--   :held_margin    the discovery interval, which "held at an instant" allows on
+--                   either side of a sighting (the this_firewall_address view)
+--   :window         the leg-pairing window, in seconds
+--   :device, :dst_address, :dst_port, :protocol, :ip_version, :ip_id, :tcp_seq,
+--   :src_address, :src_port, :src_is_this_firewall  one record's pairing fields
 --
 -- No address, CIDR, interface identifier, device name or description appears
 -- below, and nothing classifies anything by what it is called.
@@ -125,10 +132,29 @@ WHERE c.last_address = :address
 ORDER BY c.last_seen_at DESC, c.id DESC
 LIMIT 1;
 
+-- A flow end at the address that has no client and is not this firewall at the
+-- record's instant: what an address-level identity is minted for. An end that is
+-- this firewall is never a client, so it never calls for one.
 -- statement: unclassified_end_at_address
-SELECT 1 FROM flow WHERE src_address = :address AND src_client_id IS NULL
+SELECT 1
+FROM flow AS f
+WHERE f.src_address = :address
+  AND f.src_client_id IS NULL
+  AND :loopback = 0
+  AND NOT EXISTS (SELECT 1 FROM this_firewall_address AS h
+                  WHERE h.address = f.src_address
+                    AND h.first_seen_at - :held_margin <= f.observed_at
+                    AND (h.is_current = 1 OR h.last_seen_at + :held_margin >= f.observed_at))
 UNION ALL
-SELECT 1 FROM flow WHERE dst_address = :address AND dst_client_id IS NULL
+SELECT 1
+FROM flow AS f
+WHERE f.dst_address = :address
+  AND f.dst_client_id IS NULL
+  AND :loopback = 0
+  AND NOT EXISTS (SELECT 1 FROM this_firewall_address AS h
+                  WHERE h.address = f.dst_address
+                    AND h.first_seen_at - :held_margin <= f.observed_at
+                    AND (h.is_current = 1 OR h.last_seen_at + :held_margin >= f.observed_at))
 LIMIT 1;
 
 -- The evidence an address was last placed from, and its record.
@@ -143,11 +169,47 @@ ON CONFLICT (address) DO UPDATE SET
     classified_at = excluded.classified_at
 WHERE address_classification.evidence IS NOT excluded.evidence;
 
--- The client an end keeps. An outside end keeps none. A strong identity already
--- on the row is kept; otherwise the strongest identity at the address replaces
--- whatever is there, which is how a lease naming an address seen only in flows
--- re-points those flows; otherwise an address-level client already on the row is
--- kept, and an empty end takes the address-level client of the address.
+-- Every holding of an address by this firewall, for the evidence fingerprint
+-- (internal/store/classify.go): which interface, and since when. last_seen_at and
+-- is_current are deliberately not returned. The first moves at every discovery,
+-- and the fingerprint must change only when the holding does. The second turns 0
+-- when discovery stops reporting the address, which ends the holding at
+-- last_seen_at plus the margin; every row already placed as this firewall while it
+-- was current lies before the discovery that noticed, and so within one discovery
+-- interval -- the margin -- of last_seen_at, where it is still held.
+-- statement: firewall_address_holdings
+SELECT h.interface_id, h.first_seen_at
+FROM this_firewall_address AS h
+WHERE h.address = :address
+ORDER BY h.interface_id, h.first_seen_at;
+
+-- Whether this firewall held an address at one instant, as the this_firewall_address
+-- view defines "held at an instant", :held_margin the discovery interval. It is what
+-- the neighbour pass asks of an ARP or NDP entry before it creates a client
+-- (internal/collect/dhcplease.go): the tables list the firewall's own interface
+-- entries, and an entry at an address the firewall holds is this firewall.
+-- statement: this_firewall_held_at
+SELECT 1
+FROM this_firewall_address AS h
+WHERE h.address = :address
+  AND h.first_seen_at - :held_margin <= :at
+  AND (h.is_current = 1 OR h.last_seen_at + :held_margin >= :at)
+LIMIT 1;
+
+-- THIS FIREWALL COMES FIRST. An end whose address this firewall held at the
+-- record's instant -- or a loopback address, :loopback -- is this firewall, before
+-- any on-link evidence is read: it records the interface the address belonged to
+-- (the most recently seen holding, then the lowest interface id; none for a
+-- loopback address) and no client, and it is never outside. "Held at the instant"
+-- is the this_firewall_address view's definition, with :held_margin the discovery
+-- interval.
+--
+-- Every other end keeps the client it had, as before: an outside end keeps none. A
+-- strong identity already on the row is kept; otherwise the strongest identity at
+-- the address replaces whatever is there, which is how a lease naming an address
+-- seen only in flows re-points those flows; otherwise an address-level client
+-- already on the row is kept, and an empty end takes the address-level client of
+-- the address.
 --
 -- With :full = 0 -- the evidence for the address has not changed since it was last
 -- placed -- only the rows with an unplaced end are read: an end the collector
@@ -156,114 +218,185 @@ WHERE address_classification.evidence IS NOT excluded.evidence;
 -- nothing writes nothing.
 -- statement: classify_flow_source
 UPDATE flow
-SET src_interface_id = :interface_id,
-    src_client_id = CASE
-        WHEN :interface_id IS NULL THEN NULL
-        WHEN src_client_id IS NOT NULL
-             AND (SELECT k.identity_kind FROM client AS k WHERE k.id = flow.src_client_id)
-                 <> 'address_in_interface' THEN src_client_id
-        WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
-        WHEN src_client_id IS NOT NULL THEN src_client_id
-        ELSE :address_client_id
-    END,
-    traffic_scope = CASE WHEN :interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
-                         THEN 'east_west' ELSE 'north_south' END
-WHERE src_address = :address
-  AND (:full = 1 OR src_interface_id IS NULL)
-  AND (src_interface_id IS NOT :interface_id
-       OR src_client_id IS NOT (CASE
-        WHEN :interface_id IS NULL THEN NULL
-        WHEN src_client_id IS NOT NULL
-             AND (SELECT k.identity_kind FROM client AS k WHERE k.id = flow.src_client_id)
-                 <> 'address_in_interface' THEN src_client_id
-        WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
-        WHEN src_client_id IS NOT NULL THEN src_client_id
-        ELSE :address_client_id
-    END))
+SET src_interface_id = n.interface_id,
+    src_client_id = n.client_id,
+    src_is_this_firewall = n.this_firewall,
+    traffic_scope = CASE
+        WHEN n.this_firewall = 1 OR flow.dst_is_this_firewall = 1 THEN 'this_firewall'
+        WHEN n.interface_id IS NOT NULL AND flow.dst_interface_id IS NOT NULL THEN 'east_west'
+        ELSE 'north_south'
+    END
+FROM (SELECT p.id,
+             p.this_firewall,
+             CASE WHEN p.this_firewall = 1 THEN p.firewall_interface_id ELSE :interface_id END
+                 AS interface_id,
+             CASE
+                 WHEN p.this_firewall = 1 OR :interface_id IS NULL THEN NULL
+                 WHEN p.client_id IS NOT NULL
+                      AND (SELECT k.identity_kind FROM client AS k WHERE k.id = p.client_id)
+                          <> 'address_in_interface' THEN p.client_id
+                 WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
+                 WHEN p.client_id IS NOT NULL THEN p.client_id
+                 ELSE :address_client_id
+             END AS client_id
+      FROM (SELECT f.id,
+                   f.src_client_id AS client_id,
+                   CASE WHEN :loopback = 1
+                             OR EXISTS (SELECT 1 FROM this_firewall_address AS h
+                                        WHERE h.address = f.src_address
+                                          AND h.first_seen_at - :held_margin <= f.observed_at
+                                          AND (h.is_current = 1
+                                               OR h.last_seen_at + :held_margin >= f.observed_at))
+                        THEN 1 ELSE 0 END AS this_firewall,
+                   (SELECT h.interface_id FROM this_firewall_address AS h
+                    WHERE h.address = f.src_address
+                      AND h.first_seen_at - :held_margin <= f.observed_at
+                      AND (h.is_current = 1 OR h.last_seen_at + :held_margin >= f.observed_at)
+                    ORDER BY h.last_seen_at DESC, h.interface_id
+                    LIMIT 1) AS firewall_interface_id
+            FROM flow AS f
+            WHERE f.src_address = :address
+              AND (:full = 1 OR f.src_interface_id IS NULL)) AS p) AS n
+WHERE flow.id = n.id
+  AND (flow.src_interface_id IS NOT n.interface_id
+       OR flow.src_client_id IS NOT n.client_id
+       OR flow.src_is_this_firewall IS NOT n.this_firewall)
 RETURNING observed_at;
 
 -- statement: classify_flow_destination
 UPDATE flow
-SET dst_interface_id = :interface_id,
-    dst_client_id = CASE
-        WHEN :interface_id IS NULL THEN NULL
-        WHEN dst_client_id IS NOT NULL
-             AND (SELECT k.identity_kind FROM client AS k WHERE k.id = flow.dst_client_id)
-                 <> 'address_in_interface' THEN dst_client_id
-        WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
-        WHEN dst_client_id IS NOT NULL THEN dst_client_id
-        ELSE :address_client_id
-    END,
-    traffic_scope = CASE WHEN src_interface_id IS NOT NULL AND :interface_id IS NOT NULL
-                         THEN 'east_west' ELSE 'north_south' END
-WHERE dst_address = :address
-  AND (:full = 1 OR dst_interface_id IS NULL)
-  AND (dst_interface_id IS NOT :interface_id
-       OR dst_client_id IS NOT (CASE
-        WHEN :interface_id IS NULL THEN NULL
-        WHEN dst_client_id IS NOT NULL
-             AND (SELECT k.identity_kind FROM client AS k WHERE k.id = flow.dst_client_id)
-                 <> 'address_in_interface' THEN dst_client_id
-        WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
-        WHEN dst_client_id IS NOT NULL THEN dst_client_id
-        ELSE :address_client_id
-    END))
+SET dst_interface_id = n.interface_id,
+    dst_client_id = n.client_id,
+    dst_is_this_firewall = n.this_firewall,
+    traffic_scope = CASE
+        WHEN flow.src_is_this_firewall = 1 OR n.this_firewall = 1 THEN 'this_firewall'
+        WHEN flow.src_interface_id IS NOT NULL AND n.interface_id IS NOT NULL THEN 'east_west'
+        ELSE 'north_south'
+    END
+FROM (SELECT p.id,
+             p.this_firewall,
+             CASE WHEN p.this_firewall = 1 THEN p.firewall_interface_id ELSE :interface_id END
+                 AS interface_id,
+             CASE
+                 WHEN p.this_firewall = 1 OR :interface_id IS NULL THEN NULL
+                 WHEN p.client_id IS NOT NULL
+                      AND (SELECT k.identity_kind FROM client AS k WHERE k.id = p.client_id)
+                          <> 'address_in_interface' THEN p.client_id
+                 WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
+                 WHEN p.client_id IS NOT NULL THEN p.client_id
+                 ELSE :address_client_id
+             END AS client_id
+      FROM (SELECT f.id,
+                   f.dst_client_id AS client_id,
+                   CASE WHEN :loopback = 1
+                             OR EXISTS (SELECT 1 FROM this_firewall_address AS h
+                                        WHERE h.address = f.dst_address
+                                          AND h.first_seen_at - :held_margin <= f.observed_at
+                                          AND (h.is_current = 1
+                                               OR h.last_seen_at + :held_margin >= f.observed_at))
+                        THEN 1 ELSE 0 END AS this_firewall,
+                   (SELECT h.interface_id FROM this_firewall_address AS h
+                    WHERE h.address = f.dst_address
+                      AND h.first_seen_at - :held_margin <= f.observed_at
+                      AND (h.is_current = 1 OR h.last_seen_at + :held_margin >= f.observed_at)
+                    ORDER BY h.last_seen_at DESC, h.interface_id
+                    LIMIT 1) AS firewall_interface_id
+            FROM flow AS f
+            WHERE f.dst_address = :address
+              AND (:full = 1 OR f.dst_interface_id IS NULL)) AS p) AS n
+WHERE flow.id = n.id
+  AND (flow.dst_interface_id IS NOT n.interface_id
+       OR flow.dst_client_id IS NOT n.client_id
+       OR flow.dst_is_this_firewall IS NOT n.this_firewall)
 RETURNING observed_at;
 
 -- statement: classify_event_source
 UPDATE security_event
-SET src_interface_id = :interface_id,
-    src_client_id = CASE
-        WHEN :interface_id IS NULL THEN NULL
-        WHEN src_client_id IS NOT NULL
-             AND (SELECT k.identity_kind FROM client AS k WHERE k.id = security_event.src_client_id)
-                 <> 'address_in_interface' THEN src_client_id
-        WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
-        WHEN src_client_id IS NOT NULL THEN src_client_id
-        ELSE :address_client_id
-    END
-WHERE src_address = :address
-  AND (:full = 1 OR src_interface_id IS NULL)
-  AND (src_interface_id IS NOT :interface_id
-       OR src_client_id IS NOT (CASE
-        WHEN :interface_id IS NULL THEN NULL
-        WHEN src_client_id IS NOT NULL
-             AND (SELECT k.identity_kind FROM client AS k WHERE k.id = security_event.src_client_id)
-                 <> 'address_in_interface' THEN src_client_id
-        WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
-        WHEN src_client_id IS NOT NULL THEN src_client_id
-        ELSE :address_client_id
-    END));
+SET src_interface_id = n.interface_id,
+    src_client_id = n.client_id,
+    src_is_this_firewall = n.this_firewall
+FROM (SELECT p.id,
+             p.this_firewall,
+             CASE WHEN p.this_firewall = 1 THEN p.firewall_interface_id ELSE :interface_id END
+                 AS interface_id,
+             CASE
+                 WHEN p.this_firewall = 1 OR :interface_id IS NULL THEN NULL
+                 WHEN p.client_id IS NOT NULL
+                      AND (SELECT k.identity_kind FROM client AS k WHERE k.id = p.client_id)
+                          <> 'address_in_interface' THEN p.client_id
+                 WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
+                 WHEN p.client_id IS NOT NULL THEN p.client_id
+                 ELSE :address_client_id
+             END AS client_id
+      FROM (SELECT e.id,
+                   e.src_client_id AS client_id,
+                   CASE WHEN :loopback = 1
+                             OR EXISTS (SELECT 1 FROM this_firewall_address AS h
+                                        WHERE h.address = e.src_address
+                                          AND h.first_seen_at - :held_margin <= e.occurred_at
+                                          AND (h.is_current = 1
+                                               OR h.last_seen_at + :held_margin >= e.occurred_at))
+                        THEN 1 ELSE 0 END AS this_firewall,
+                   (SELECT h.interface_id FROM this_firewall_address AS h
+                    WHERE h.address = e.src_address
+                      AND h.first_seen_at - :held_margin <= e.occurred_at
+                      AND (h.is_current = 1 OR h.last_seen_at + :held_margin >= e.occurred_at)
+                    ORDER BY h.last_seen_at DESC, h.interface_id
+                    LIMIT 1) AS firewall_interface_id
+            FROM security_event AS e
+            WHERE e.src_address = :address
+              AND (:full = 1 OR e.src_interface_id IS NULL)) AS p) AS n
+WHERE security_event.id = n.id
+  AND (security_event.src_interface_id IS NOT n.interface_id
+       OR security_event.src_client_id IS NOT n.client_id
+       OR security_event.src_is_this_firewall IS NOT n.this_firewall);
 
 -- A lookup is never given a client of its own: an address with no client stays
--- with none, and the lookup still carries its interface.
+-- with none, and the lookup still carries its interface. A lookup whose querier is
+-- this firewall carries the interface the address belonged to and no client.
 -- statement: classify_lookup
 UPDATE dns_resolution
-SET interface_id = :interface_id,
-    interface_lookup_state = CASE WHEN :interface_id IS NULL THEN 'not_found' ELSE 'resolved' END,
-    client_id = CASE
-        WHEN :interface_id IS NULL THEN NULL
-        WHEN client_id IS NOT NULL
-             AND (SELECT k.identity_kind FROM client AS k WHERE k.id = dns_resolution.client_id)
-                 <> 'address_in_interface' THEN client_id
-        WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
-        WHEN client_id IS NOT NULL THEN client_id
-        ELSE :address_client_id
-    END
-WHERE client_address = :address
-  AND (:full = 1 OR interface_lookup_state = 'pending')
-  AND (interface_id IS NOT :interface_id
-       OR interface_lookup_state IS NOT (CASE WHEN :interface_id IS NULL THEN 'not_found'
-                                              ELSE 'resolved' END)
-       OR client_id IS NOT (CASE
-        WHEN :interface_id IS NULL THEN NULL
-        WHEN client_id IS NOT NULL
-             AND (SELECT k.identity_kind FROM client AS k WHERE k.id = dns_resolution.client_id)
-                 <> 'address_in_interface' THEN client_id
-        WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
-        WHEN client_id IS NOT NULL THEN client_id
-        ELSE :address_client_id
-    END))
+SET interface_id = n.interface_id,
+    interface_lookup_state = CASE WHEN n.interface_id IS NULL THEN 'not_found' ELSE 'resolved' END,
+    client_id = n.client_id,
+    client_is_this_firewall = n.this_firewall
+FROM (SELECT p.id,
+             p.this_firewall,
+             CASE WHEN p.this_firewall = 1 THEN p.firewall_interface_id ELSE :interface_id END
+                 AS interface_id,
+             CASE
+                 WHEN p.this_firewall = 1 OR :interface_id IS NULL THEN NULL
+                 WHEN p.client_id IS NOT NULL
+                      AND (SELECT k.identity_kind FROM client AS k WHERE k.id = p.client_id)
+                          <> 'address_in_interface' THEN p.client_id
+                 WHEN :identity_client_id IS NOT NULL THEN :identity_client_id
+                 WHEN p.client_id IS NOT NULL THEN p.client_id
+                 ELSE :address_client_id
+             END AS client_id
+      FROM (SELECT r.id,
+                   r.client_id,
+                   CASE WHEN :loopback = 1
+                             OR EXISTS (SELECT 1 FROM this_firewall_address AS h
+                                        WHERE h.address = r.client_address
+                                          AND h.first_seen_at - :held_margin <= r.looked_up_at
+                                          AND (h.is_current = 1
+                                               OR h.last_seen_at + :held_margin >= r.looked_up_at))
+                        THEN 1 ELSE 0 END AS this_firewall,
+                   (SELECT h.interface_id FROM this_firewall_address AS h
+                    WHERE h.address = r.client_address
+                      AND h.first_seen_at - :held_margin <= r.looked_up_at
+                      AND (h.is_current = 1 OR h.last_seen_at + :held_margin >= r.looked_up_at)
+                    ORDER BY h.last_seen_at DESC, h.interface_id
+                    LIMIT 1) AS firewall_interface_id
+            FROM dns_resolution AS r
+            WHERE r.client_address = :address
+              AND (:full = 1 OR r.interface_lookup_state = 'pending')) AS p) AS n
+WHERE dns_resolution.id = n.id
+  AND (dns_resolution.interface_id IS NOT n.interface_id
+       OR dns_resolution.interface_lookup_state IS NOT (CASE WHEN n.interface_id IS NULL
+                                                             THEN 'not_found' ELSE 'resolved' END)
+       OR dns_resolution.client_id IS NOT n.client_id
+       OR dns_resolution.client_is_this_firewall IS NOT n.this_firewall)
 RETURNING looked_up_at;
 
 -- The purged part follows its flows. When the strongest identity at an address
@@ -327,6 +460,40 @@ WHERE interface_id IN (SELECT id FROM interface WHERE is_upstream = 1)
   AND NOT EXISTS (SELECT 1 FROM purged_flow_hour AS p WHERE p.local_client_id = client.id)
   AND NOT EXISTS (SELECT 1 FROM purged_flow_hour AS p WHERE p.src_client_id = client.id);
 
+-- THE CLIENTS AN EARLIER BUILD MINTED AT THIS FIREWALL'S OWN ADDRESSES FROM THE
+-- NEIGHBOUR TABLES. get_arp and get_ndp list the firewall's own interface
+-- entries, and before the neighbour pass recognised them each became a MAC-level
+-- client at an address the firewall held (defect L2 of
+-- specs/SPEC-test-budget-and-two-live-defects.md). Such a client is one whose last
+-- address this firewall held when it was last seen there -- "held at an instant"
+-- as the this_firewall_address view defines it, :held_margin the discovery
+-- interval -- and it goes once nothing names it and nobody assigned it to an
+-- owner, by the same guard as the two purges above. It runs once per address the
+-- firewall ever held, which are few, each found by one index seek after the last
+-- (next_this_firewall_address), so neither interface_address nor client is
+-- scanned.
+-- statement: next_this_firewall_address
+SELECT min(address)
+FROM interface_address
+WHERE address > :address
+  AND source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6');
+
+-- statement: purge_unreferenced_this_firewall_clients_at_address
+DELETE FROM client
+WHERE last_address = :address
+  AND EXISTS (SELECT 1 FROM this_firewall_address AS h
+              WHERE h.address = :address
+                AND h.first_seen_at - :held_margin <= client.last_seen_at
+                AND (h.is_current = 1 OR h.last_seen_at + :held_margin >= client.last_seen_at))
+  AND owner_id IS NULL
+  AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.src_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM flow AS f WHERE f.dst_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM security_event AS e WHERE e.src_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM dhcp_lease AS l WHERE l.client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM dns_resolution AS r WHERE r.client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM purged_flow_hour AS p WHERE p.local_client_id = client.id)
+  AND NOT EXISTS (SELECT 1 FROM purged_flow_hour AS p WHERE p.src_client_id = client.id);
+
 -- Reclassifying everything walks the distinct addresses one index seek at a
 -- time, each statement returning the next address after :address, so even the
 -- whole-history pass reads an index rather than scanning a growing table.
@@ -366,7 +533,9 @@ WHERE observed_at < (SELECT :now - CAST(value AS INTEGER)
 -- ---------------------------------------------------------------------------
 -- SITE-NAME ATTRIBUTION. The resolver log carries no answer address, so an
 -- attribution is a lookup and a flow by the same client, close in time. A flow
--- is eligible when its destination is outside.
+-- is eligible when its destination is outside -- not inside, and not this
+-- firewall -- and it is not the second record of a connection whose first record
+-- is counted (flow.pair_outcome 'second_leg').
 -- ---------------------------------------------------------------------------
 
 -- statement: attribution_candidates
@@ -375,7 +544,23 @@ FROM flow
 WHERE observed_at >= :from
   AND observed_at <= :to
   AND dst_interface_id IS NULL
+  AND dst_is_this_firewall = 0
+  AND (pair_outcome IS NULL OR pair_outcome <> 'second_leg')
 ORDER BY id;
+
+-- The attributed flows of the window that are no longer eligible: a destination
+-- placed inside or recognised as this firewall since, or a record paired as a
+-- second leg since. Their attribution is removed.
+-- statement: attribution_ineligible
+SELECT f.id, f.observed_at
+FROM flow AS f
+JOIN domain_attribution AS a ON a.flow_id = f.id
+WHERE f.observed_at >= :from
+  AND f.observed_at <= :to
+  AND (f.dst_interface_id IS NOT NULL
+       OR f.dst_is_this_firewall = 1
+       OR f.pair_outcome = 'second_leg')
+ORDER BY f.id;
 
 -- "The same client": the same client_id where both rows carry one, the same
 -- address otherwise. Eligible: a passed lookup answered by recursion, from
@@ -404,42 +589,48 @@ WHERE r.client_address = :address
 -- A HOST NAME LOGGED AS A LOOKUP'S CLIENT. The resolver's query report gives the
 -- name a reverse lookup of the querying address returned instead of the address,
 -- when there was one. It is resolved through the DHCP leases valid at the
--- lookup's instant: a lease under that name, or under the name's first label --
--- a reverse lookup answers with the fully qualified name, and a lease carries the
--- host's own label -- that had started, if its start is known, and had not
--- expired, if its expiry is known. The caller takes the address only when there is
--- exactly one.
+-- lookup's instant: a lease whose host name has the same FIRST LABEL, compared
+-- without regard to case and with a trailing dot removed on both sides
+-- (dhcp_lease.hostname_label) -- a reverse lookup may answer with a fully
+-- qualified name, a trailing dot or a bare label, and a lease may carry any of
+-- them -- that had started, if its start is known, and had not expired, if its
+-- expiry is known. The caller takes the address only when there is exactly one.
 -- ---------------------------------------------------------------------------
 
--- The lookups whose logged host name resolved to no single address when they were
--- read, ingested since :since -- the start of the previous lease pass. A lookup read
--- before the lease that names its host is resolved again by the next lease pass, as
--- of its own instant; one an earlier pass already tried is not tried again, so the
--- work of a pass is the lookups read since the last one and does not grow with the
--- unresolved lookups that accumulate.
+-- The lookups whose logged host name resolved to no single address and that no
+-- lease pass has examined since they were ingested. Each lease pass examines them
+-- as of their own instant and marks them examined, so a lookup read before the
+-- lease that names its host is resolved by the next lease pass -- the first one
+-- after a restart included, since the mark is stored -- and the work of a pass is
+-- the lookups waiting for it, read through a partial index that holds those and
+-- nothing else. Only those ingested before :ingested_before -- the instant the lease
+-- read began -- are examined: one ingested since may postdate the leases read.
 -- statement: unresolved_hostname_lookups
 SELECT id, client_hostname, looked_up_at
 FROM dns_resolution
 WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname')
-  AND ingested_at >= :since
+  AND hostname_examined_at IS NULL
+  AND ingested_at < :ingested_before
 ORDER BY id;
 
--- A new resolution of one such lookup. It is placed again from the address it now
--- names, so its interface and client are cleared and it is pending.
+-- A new resolution of one such lookup, and the mark that a lease pass examined it.
+-- A lookup whose resolution changed is placed again from the address it now names,
+-- so its interface and client are cleared and it is pending.
 -- statement: resolve_hostname_lookup
 UPDATE dns_resolution
 SET client_address = :address,
     client_resolution = :resolution,
-    client_id = NULL,
-    interface_id = NULL,
-    interface_lookup_state = 'pending'
-WHERE id = :lookup_id
-  AND client_resolution IS NOT :resolution;
+    client_id = CASE WHEN client_resolution IS :resolution THEN client_id END,
+    interface_id = CASE WHEN client_resolution IS :resolution THEN interface_id END,
+    interface_lookup_state = CASE WHEN client_resolution IS :resolution
+                                  THEN interface_lookup_state ELSE 'pending' END,
+    hostname_examined_at = :now
+WHERE id = :lookup_id;
 
 -- statement: lease_addresses_for_hostname
 SELECT DISTINCT l.address
 FROM dhcp_lease AS l
-WHERE l.hostname COLLATE NOCASE IN (:hostname, :label)
+WHERE l.hostname_label = :label
   AND (l.starts_at IS NULL OR l.starts_at <= :at)
   AND (l.expires_at IS NULL OR l.expires_at >= :at)
 ORDER BY l.address
@@ -460,6 +651,90 @@ WHERE domain_attribution.dns_resolution_id IS NOT excluded.dns_resolution_id
 
 -- statement: attribution_delete
 DELETE FROM domain_attribution WHERE flow_id = :flow_id;
+
+-- ---------------------------------------------------------------------------
+-- TWO LEGS OF ONE CONNECTION. pf logs the packet that creates a state on every
+-- interface a rule with `log` creates one on, so a connection crossing the
+-- firewall is logged `in` on the interface it arrived on and `out` on the one it
+-- left by (pf.conf(5), `log`; survey, "Two legs of one connection, read for the
+-- step-5A live corrections"). An `out` record is the SECOND LEG of an `in`
+-- record on another interface when both carry the same protocol, IP version,
+-- destination address and destination port, every logged field verified to
+-- survive the crossing unchanged (ip_id, tcp_seq), their instants lie within
+-- :window seconds, the `in` record passed, and each is the other's only
+-- candidate. The sources differ under outbound NAT, where the second leg's source
+-- is this firewall, and are equal without it, with their ports.
+--
+-- The decision is a function of the stored records, so it does not depend on the
+-- order they arrived in, it is taken again when either leg arrives later, and it
+-- writes nothing when nothing changed (internal/store/pair.go).
+-- ---------------------------------------------------------------------------
+
+-- The `out` records of a window, with their pairing fields and what is recorded.
+-- statement: pairing_out_records
+SELECT id, observed_at, interface_device, src_address, src_port, dst_address, dst_port,
+       protocol, ip_version, ip_id, tcp_seq, src_is_this_firewall, pair_outcome, paired_flow_id
+FROM flow
+WHERE observed_at >= :from
+  AND observed_at <= :to
+  AND direction = 'out'
+ORDER BY id;
+
+-- The `in` records one `out` record can be the second leg of. Two are enough to
+-- know it has more than one.
+-- statement: pairing_in_candidates
+SELECT i.id
+FROM flow AS i
+WHERE i.dst_address = :dst_address
+  AND i.observed_at >= :at - :window
+  AND i.observed_at <= :at + :window
+  AND i.direction = 'in'
+  AND i.action = 'pass'
+  AND i.interface_device <> :device
+  AND i.protocol = :protocol
+  AND i.ip_version = :ip_version
+  AND i.dst_port IS :dst_port
+  AND i.ip_id IS :ip_id
+  AND i.tcp_seq IS :tcp_seq
+  AND i.src_is_this_firewall = 0
+  AND (:src_is_this_firewall = 1 OR (i.src_address = :src_address AND i.src_port IS :src_port))
+ORDER BY i.id
+LIMIT 2;
+
+-- The `out` records one `in` record can be the first leg of, the same test seen
+-- from the other side.
+-- statement: pairing_out_candidates
+SELECT o.id
+FROM flow AS o
+WHERE o.dst_address = :dst_address
+  AND o.observed_at >= :at - :window
+  AND o.observed_at <= :at + :window
+  AND o.direction = 'out'
+  AND o.interface_device <> :device
+  AND o.protocol = :protocol
+  AND o.ip_version = :ip_version
+  AND o.dst_port IS :dst_port
+  AND o.ip_id IS :ip_id
+  AND o.tcp_seq IS :tcp_seq
+  AND (o.src_is_this_firewall = 1 OR (o.src_address = :src_address AND o.src_port IS :src_port))
+ORDER BY o.id
+LIMIT 2;
+
+-- The pairing fields of one record, read for the `in` side of a candidate.
+-- statement: pairing_record_fields
+SELECT id, observed_at, interface_device, src_address, src_port, dst_address, dst_port,
+       protocol, ip_version, ip_id, tcp_seq, src_is_this_firewall, pair_outcome, paired_flow_id
+FROM flow
+WHERE id = :flow_id;
+
+-- One record's outcome, written only when it changes.
+-- statement: pairing_record
+UPDATE flow
+SET pair_outcome = :outcome,
+    paired_flow_id = :partner
+WHERE id = :flow_id
+  AND (pair_outcome IS NOT :outcome OR paired_flow_id IS NOT :partner)
+RETURNING observed_at;
 
 -- ---------------------------------------------------------------------------
 -- THE REFRESH. A slot is rewritten whole: its rows are deleted and recomputed,
@@ -543,7 +818,7 @@ DELETE FROM owner_volume_aggregate_@period@ WHERE period_start_at = :slot_start;
 
 -- statement: insert_volume
 INSERT INTO volume_aggregate_1h (period_start_at, period_end_at, src_interface_id,
-    dst_interface_id, peer_address, traffic_scope, traffic_direction, bytes,
+    dst_interface_id, peer_address, traffic_scope, traffic_direction, exit_leg_device, bytes,
     allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections,
     unknown_connections, computed_at)
 SELECT
@@ -552,9 +827,11 @@ SELECT
     u.src_interface_id,
     u.dst_interface_id,
     u.peer_address,
-    CASE WHEN u.src_interface_id IS NOT NULL AND u.dst_interface_id IS NOT NULL
+    CASE WHEN u.traffic_direction IN ('to_this_firewall', 'from_this_firewall') THEN 'this_firewall'
+         WHEN u.src_interface_id IS NOT NULL AND u.dst_interface_id IS NOT NULL
          THEN 'east_west' ELSE 'north_south' END,
     u.traffic_direction,
+    u.exit_leg_device,
     sum(u.bytes),
     sum(CASE WHEN u.action = 'pass' THEN u.bytes ELSE 0 END),
     sum(CASE WHEN u.action IN ('block', 'reject') THEN u.bytes ELSE 0 END),
@@ -565,18 +842,19 @@ SELECT
     :now
 FROM (
     SELECT f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_direction,
-           f.action, f.packet_bytes AS bytes, 1 AS connections
+           f.exit_leg_device, f.action, f.packet_bytes AS bytes, 1 AS connections
     FROM classified_flow AS f
     WHERE f.observed_at >= :slot_start
       AND f.observed_at < :slot_end
     UNION ALL
     SELECT p.src_interface_id, p.dst_interface_id,
            CASE WHEN p.traffic_direction = 'inter_interface' THEN NULL ELSE p.peer_address END,
-           p.traffic_direction, p.action, p.bytes, p.connections
+           p.traffic_direction, p.exit_leg_device, p.action, p.bytes, p.connections
     FROM purged_flow_hour AS p
     WHERE p.hour_start_at = :slot_start
 ) AS u
-GROUP BY u.src_interface_id, u.dst_interface_id, u.peer_address, u.traffic_direction;
+GROUP BY u.src_interface_id, u.dst_interface_id, u.peer_address, u.traffic_direction,
+         u.exit_leg_device;
 
 -- statement: insert_rule
 INSERT INTO rule_volume_aggregate_1h (period_start_at, period_end_at, rule_id,
@@ -633,6 +911,7 @@ FROM (
     JOIN domain_attribution AS a ON a.flow_id = f.id
     WHERE f.observed_at >= :slot_start
       AND f.observed_at < :slot_end
+      AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
     UNION ALL
     SELECT p.site_name, p.src_client_id, p.action, p.bytes, p.connections
     FROM purged_flow_hour AS p
@@ -642,7 +921,11 @@ FROM (
 GROUP BY u.site_name, u.client_id;
 
 -- The peer of a flow is the address at the other end from its inside client: the
--- destination when the client is the source, the source otherwise.
+-- destination when the client is the source, the source otherwise. A flow with an
+-- end that is this firewall contributes nothing here, nor to the client and owner
+-- families regrouped from this one: this firewall is never a client and never a
+-- peer. A second leg contributes nothing either: its connection is counted on its
+-- first leg.
 -- statement: insert_peer
 INSERT INTO peer_volume_aggregate_1h (period_start_at, period_end_at, client_id,
     traffic_direction, peer_address, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
@@ -670,12 +953,16 @@ FROM (
     WHERE f.observed_at >= :slot_start
       AND f.observed_at < :slot_end
       AND f.local_client_id IS NOT NULL
+      AND f.traffic_scope <> 'this_firewall'
+      AND f.exit_leg_device IS NULL
     UNION ALL
     SELECT p.local_client_id, p.traffic_direction, p.peer_address, p.action, p.bytes,
            p.connections
     FROM purged_flow_hour AS p
     WHERE p.hour_start_at = :slot_start
       AND p.local_client_id IS NOT NULL
+      AND p.traffic_direction NOT IN ('to_this_firewall', 'from_this_firewall')
+      AND p.exit_leg_device IS NULL
 ) AS u
 GROUP BY u.client_id, u.traffic_direction, u.peer_address;
 
@@ -690,18 +977,18 @@ GROUP BY u.client_id, u.traffic_direction, u.peer_address;
 
 -- statement: compose_volume
 INSERT INTO volume_aggregate_@period@ (period_start_at, period_end_at, src_interface_id,
-    dst_interface_id, peer_address, traffic_scope, traffic_direction, bytes,
+    dst_interface_id, peer_address, traffic_scope, traffic_direction, exit_leg_device, bytes,
     allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections,
     unknown_connections, computed_at)
 SELECT :slot_start, :slot_end, v.src_interface_id, v.dst_interface_id, v.peer_address,
-       v.traffic_scope, v.traffic_direction, sum(v.bytes), sum(v.allowed_bytes),
+       v.traffic_scope, v.traffic_direction, v.exit_leg_device, sum(v.bytes), sum(v.allowed_bytes),
        sum(v.blocked_bytes), sum(v.unknown_bytes), sum(v.allowed_connections),
        sum(v.blocked_connections), sum(v.unknown_connections), :now
 FROM volume_aggregate_@child@ AS v
 WHERE v.period_start_at >= :slot_start
   AND v.period_start_at < :slot_end
 GROUP BY v.src_interface_id, v.dst_interface_id, v.peer_address, v.traffic_scope,
-         v.traffic_direction;
+         v.traffic_direction, v.exit_leg_device;
 
 -- statement: compose_rule
 INSERT INTO rule_volume_aggregate_@period@ (period_start_at, period_end_at, rule_id,
@@ -791,7 +1078,8 @@ FROM setting
 WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0;
 
 -- The daily per-pair volume, derived from the flows of one UTC day whenever the
--- day's slot is rewritten. This and the retention purge are the only writers of
+-- day's slot is rewritten. A second leg is left out: its connection is counted on
+-- its first leg (decision 2 of the step-5A live corrections). This and the retention purge are the only writers of
 -- pair_volume_observation. It has no purged part: the purge removes a day's rows
 -- once the day starts before the horizon, so the flows a rewrite of such a day
 -- can no longer read are the ones whose rows the purge removes anyway.
@@ -827,6 +1115,7 @@ FROM (
     FROM flow AS f
     WHERE f.observed_at >= :slot_start
       AND f.observed_at < :slot_end
+      AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
     GROUP BY 1, 2, 3, 4
 ) AS p
 JOIN flow AS first ON first.id = p.first_flow_id;

@@ -31,6 +31,7 @@ func arrangeFilterLogCollection(t *testing.T) *probeHarness {
 // TestAFilterLogPassStoresEveryRecordAndResolvesBothJoinKeys is the ingest, and the two
 // first-class join keys resolving or reporting that they did not.
 func TestAFilterLogPassStoresEveryRecordAndResolvesBothJoinKeys(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	ctx := context.Background()
 
@@ -92,6 +93,7 @@ func TestAFilterLogPassStoresEveryRecordAndResolvesBothJoinKeys(t *testing.T) {
 // TestAFilterLogPassRepeatedStoresNothingNew is the de-duplication the digest provides.
 // The endpoint echoes back records already seen, and every poll re-offers the whole page.
 func TestAFilterLogPassRepeatedStoresNothingNew(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	ctx := context.Background()
 
@@ -116,6 +118,7 @@ func TestAFilterLogPassRepeatedStoresNothingNew(t *testing.T) {
 // supplied digest did not appear in the response. Sending it anyway would suggest a
 // resume guarantee that does not exist, and would hide the gap detection that replaces it.
 func TestTheCollectorSendsNoDigestBecauseItIsNotACursor(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	if err := harness.collector.CollectFirewallLog(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
@@ -144,6 +147,7 @@ func TestTheCollectorSendsNoDigestBecauseItIsNotACursor(t *testing.T) {
 // looking, and no endpoint can recover it. The gap is detected rather than assumed, and it
 // is a row rather than silence.
 func TestAPageThatBeginsAfterTheNewestStoredRecordWritesAGapRow(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	ctx := context.Background()
 
@@ -198,6 +202,7 @@ func TestAPageThatBeginsAfterTheNewestStoredRecordWritesAGapRow(t *testing.T) {
 // the one that would make the gap table useless if it were wrong: a gap row on every
 // healthy poll would be noise nobody reads.
 func TestAPageThatOverlapsTheStoredHistoryWritesNoGap(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	ctx := context.Background()
 
@@ -218,6 +223,7 @@ func TestAPageThatOverlapsTheStoredHistoryWritesNoGap(t *testing.T) {
 // outcome table: the collector has to turn each failure into a state, and none of them
 // into an absence of traffic.
 func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name      string
 		status    int
@@ -288,6 +294,7 @@ func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
 // TestACollectorWithNoActiveProviderDoesNothing keeps a pass from reading a source the
 // probe round has just said opnview cannot read.
 func TestACollectorWithNoActiveProviderDoesNothing(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	harness.fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
 

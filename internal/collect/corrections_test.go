@@ -25,6 +25,7 @@ func interfaceIDOf(t *testing.T, database *store.Store, identifier string) int64
 // of the page cannot be stored, the pass returns that error, and the first record --
 // stored before the failure -- is placed, with its scope, and in its slots.
 func TestAFilterLogPassThatFailsPartWayStillPlacesWhatItStored(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
 	page := []any{
@@ -74,6 +75,7 @@ func TestAFilterLogPassThatFailsPartWayStillPlacesWhatItStored(t *testing.T) {
 // part: the entries of ipv4[] and ipv6[] are stored under their own source fields, and
 // the networks they cover are proposed as detected, a link-local one never.
 func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
 	body := interfacesBody(t)
@@ -146,6 +148,7 @@ func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing
 // through the collector: an operator edit is caught by the next derivation, whichever pass
 // runs it, and the slots then equal a direct computation over the reclassified flows.
 func TestAnOperatorNetworkChangesClassificationAtTheNextDerivation(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	ctx := context.Background()
 	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
@@ -190,6 +193,7 @@ func TestAnOperatorNetworkChangesClassificationAtTheNextDerivation(t *testing.T)
 
 // TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt is AC8.
 func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	ctx := context.Background()
 	if err := harness.collector.CollectFirewallLog(ctx); err != nil {

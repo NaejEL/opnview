@@ -115,10 +115,13 @@ inferred from resolver lookups, unconditionally.
 No Go toolchain is installed on the host. The toolchain lives in a Debian
 `trixie-slim` container with the Go version pinned and checksum-verified. The
 four project commands run through one invocation, identical in PowerShell and
-in bash:
+in bash — the everyday suite, whose `go test` wall time has a 60 s budget — and
+the pre-deployment gate (`-race` over the whole suite, the schema checks with
+their scale seeds and query plans) runs before a deployment:
 
 ```
 docker compose run --rm checks
+docker compose run --rm pre-deployment
 ```
 
 Use `docker compose run --rm dev <command>` for anything else in the same

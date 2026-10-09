@@ -99,6 +99,7 @@ func scopeDisagreements(t *testing.T, database *Store) int64 {
 
 // TestAnOutsideAddressSeenOnBothKindsOfInterfaceGetsNoClientAndNoInterface is AC9.
 func TestAnOutsideAddressSeenOnBothKindsOfInterfaceGetsNoClientAndNoInterface(t *testing.T) {
+	t.Parallel()
 	for _, counts := range [][2]int{{2, 4}, {5, 11}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
 			network := newTestNetwork(t, counts[0], counts[1])
@@ -154,6 +155,7 @@ func TestAnOutsideAddressSeenOnBothKindsOfInterfaceGetsNoClientAndNoInterface(t 
 
 // TestDirectionComesFromMembershipAndPartitionsEveryFlow is AC26.
 func TestDirectionComesFromMembershipAndPartitionsEveryFlow(t *testing.T) {
+	t.Parallel()
 	network := populated(t, 3, 9, 400, 3*86400)
 
 	var total, totalConnections int64
@@ -222,6 +224,7 @@ func TestDirectionComesFromMembershipAndPartitionsEveryFlow(t *testing.T) {
 
 // TestALookupIsPlacedFromTheSameEvidenceAsAFlow is AC27.
 func TestALookupIsPlacedFromTheSameEvidenceAsAFlow(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 3, 6)
 	ctx := context.Background()
 	client := network.clients[1]
@@ -269,6 +272,7 @@ func TestALookupIsPlacedFromTheSameEvidenceAsAFlow(t *testing.T) {
 // lookup's querier -- refreshes the aggregates from it, then runs what a first discovery of a
 // run runs.
 func TestReclassifyingAStepFourDatabaseClearsTheRemoteClients(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 3, 7)
 	ctx := context.Background()
 	var remoteClients []int64
@@ -379,6 +383,7 @@ func TestReclassifyingAStepFourDatabaseClearsTheRemoteClients(t *testing.T) {
 
 // TestALeaseNamingAnAddressSeenOnlyInFlowsRepointsItsRows is AC31.
 func TestALeaseNamingAnAddressSeenOnlyInFlowsRepointsItsRows(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	var client testClient

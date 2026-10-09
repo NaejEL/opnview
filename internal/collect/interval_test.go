@@ -67,6 +67,7 @@ func (c *recordingClock) releaseOne() {
 // every wait, so a value saved while the loop runs is the length of the next wait, and a
 // value that is not positive leaves the last good one in force rather than spinning.
 func TestASavedIntervalChangesTheNextScheduledPassWithoutARestart(t *testing.T) {
+	t.Parallel()
 	settings := config.Defaults()
 	settings.FirewallLogInterval = 10 * time.Second
 	live := config.NewLive(settings)
@@ -113,6 +114,7 @@ func TestASavedIntervalChangesTheNextScheduledPassWithoutARestart(t *testing.T) 
 // TestASavedPageSizeReachesARunningCollector: Configure replaces the page sizes of a running
 // collector, and the next pass of each paged read asks the firewall for that page.
 func TestASavedPageSizeReachesARunningCollector(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)

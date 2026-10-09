@@ -34,18 +34,35 @@ const (
 // plan.
 type TrafficScope string
 
-// The two scopes.
+// The three scopes.
 const (
 	// ScopeEastWest is a flow whose both endpoints sit in a discovered interface.
 	ScopeEastWest TrafficScope = "east_west"
-	// ScopeNorthSouth is every other flow.
+	// ScopeNorthSouth is every other flow with no end that is this firewall.
 	ScopeNorthSouth TrafficScope = "north_south"
+	// ScopeThisFirewall is a flow with an end that is this firewall: OPNsense's
+	// "This Firewall", pf's `self` (decision 6 of the step-5A live corrections).
+	ScopeThisFirewall TrafficScope = "this_firewall"
 )
 
-// ScopeOf returns the traffic scope of a flow from its interface membership. It
-// is the one expression the schema's CHECK pins, written once here so a
-// collector cannot disagree with the database.
-func ScopeOf(srcInterfaceID, dstInterfaceID *int64) TrafficScope {
+// The traffic directions classified_flow derives. pf's own `dir` is per interface
+// and is flow.direction; these say which way a flow crossed the firewall as a
+// whole, and the last two that one end is this firewall.
+const (
+	DirectionOutbound         = "outbound"
+	DirectionInbound          = "inbound"
+	DirectionInterInterface   = "inter_interface"
+	DirectionToThisFirewall   = "to_this_firewall"
+	DirectionFromThisFirewall = "from_this_firewall"
+)
+
+// ScopeOf returns the traffic scope of a flow from its interface membership and
+// from whether an end is this firewall. It is the one expression the schema's
+// CHECK pins, written once here so a collector cannot disagree with the database.
+func ScopeOf(srcInterfaceID, dstInterfaceID *int64, srcThisFirewall, dstThisFirewall bool) TrafficScope {
+	if srcThisFirewall || dstThisFirewall {
+		return ScopeThisFirewall
+	}
 	if srcInterfaceID != nil && dstInterfaceID != nil {
 		return ScopeEastWest
 	}
@@ -348,6 +365,9 @@ type Rule struct {
 	// NULL means the source did not report the flag, which is not the same as
 	// "does not log".
 	LogsMatches *bool
+	// Enabled is API field `enabled`; nil means not reported. A disabled rule passes
+	// nothing.
+	Enabled *bool
 	// IsAutomatic is API field `is_automatic`.
 	IsAutomatic bool
 }
@@ -513,6 +533,12 @@ type Flow struct {
 	RuleID *int64
 	// RuleLookupState is whether it resolved. A rid matching no rule is normal.
 	RuleLookupState LookupState
+	// IPID is `id`, the IPv4 identification field; nil on an IPv6 record. It is
+	// stored to pair the two records of one connection, and for nothing else.
+	IPID *int64
+	// TCPSeq is `seq`, the TCP sequence number; nil on a record that is not TCP.
+	// Stored for the same pairing and nothing else.
+	TCPSeq *int64
 }
 
 // DNSResolution is one resolver lookup.
@@ -570,6 +596,10 @@ const (
 	ClientResolutionAmbiguous = "ambiguous_hostname"
 	// ClientResolutionUnknown is a host name no lease named at that instant.
 	ClientResolutionUnknown = "unknown_hostname"
+	// ClientResolutionThisFirewall is a host name that names this firewall:
+	// `localhost`, what a reverse lookup of a loopback address returns. A protocol
+	// constant (decision 11 of the step-5A live corrections), not configuration.
+	ClientResolutionThisFirewall = "this_firewall_hostname"
 )
 
 // SecurityEvent is one event from a provider of the security_event kind.

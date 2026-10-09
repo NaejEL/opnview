@@ -22,6 +22,7 @@ const purgeHorizon = 3600
 // TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer is the retention loop's whole
 // contract, checked over every growing table the purge names.
 func TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -76,6 +77,7 @@ func TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer(t *testing.T) {
 // TestAnUnlimitedHorizonPurgesNothing is the documented meaning of zero, and it is the
 // direction that would be silently destructive if it were wrong.
 func TestAnUnlimitedHorizonPurgesNothing(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -106,6 +108,7 @@ func TestAnUnlimitedHorizonPurgesNothing(t *testing.T) {
 // never the person it was attributed to, and purging a lookup removes the lookup, never
 // the purpose somebody assigned to the list that refused it.
 func TestThePurgeLeavesTheBoundedTablesAndTheUserInputAlone(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	now := int64(1750000000)
@@ -162,6 +165,7 @@ func TestThePurgeLeavesTheBoundedTablesAndTheUserInputAlone(t *testing.T) {
 // TestThePurgeLeavesTheForeignKeysConsistent is the guarantee that nothing survives
 // pointing at a row that has gone.
 func TestThePurgeLeavesTheForeignKeysConsistent(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	now := int64(1750000000)

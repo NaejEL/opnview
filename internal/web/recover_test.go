@@ -12,6 +12,7 @@ import (
 
 // TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse is AC15.
 func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	login, oldPassword := harness.completeSetup()
 	newPassword := randomHex(t, 12)
@@ -93,6 +94,7 @@ func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.
 // TestTheResetIsRefusedWhenThereIsNoKeyFileAtAll is the other half of "by nothing
 // else": an installation with no key to possess authorises nothing.
 func TestTheResetIsRefusedWhenThereIsNoKeyFileAtAll(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	login, password := harness.completeSetup()
 	keyFile, err := os.ReadFile(secret.KeyPath(harness.dataDir))

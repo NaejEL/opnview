@@ -46,6 +46,7 @@ func exampleStateProvider(t *testing.T, database *Store) int64 {
 // would do — and rather than silently dropping it, which is what replacing the rows in place
 // would do. Two complete snapshots, and the departure is a row a screen can read.
 func TestADepartureFromAReconciledSetIsDetectable(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
@@ -144,6 +145,7 @@ func TestADepartureFromAReconciledSetIsDetectable(t *testing.T) {
 // gone. A collector that skipped writing the empty snapshot would leave the previous set looking
 // current for ever, which is the failure this kind's instant exists to prevent.
 func TestAnEmptyReconciledSetReportsEveryThingAsDeparted(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
@@ -172,6 +174,7 @@ func TestAnEmptyReconciledSetReportsEveryThingAsDeparted(t *testing.T) {
 // TestASetObservedOnceReportsNoDeparture is the honest answer to a question that cannot be
 // answered yet: nothing can be said to have left a set seen once.
 func TestASetObservedOnceReportsNoDeparture(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
@@ -197,6 +200,7 @@ func TestASetObservedOnceReportsNoDeparture(t *testing.T) {
 // surveyed tunnel reports peers. Without a set key, a poll of one would read as a departure of
 // everything in the other.
 func TestOneProvidersSetsAreIndependent(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
@@ -236,6 +240,7 @@ func TestOneProvidersSetsAreIndependent(t *testing.T) {
 // needs: the snapshot identity is (provider, set, instant), so the same poll offered twice is
 // one snapshot and one set of members.
 func TestRewritingOneSnapshotOfASetIsIdempotent(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
@@ -265,6 +270,7 @@ func TestRewritingOneSnapshotOfASetIsIdempotent(t *testing.T) {
 // read on a detail screen as an object's fields; a bare string or a list there would be a
 // provider dumping free text into a column the attribute rule says is displayed structurally.
 func TestAReconciledSetRefusesAThingWithNoIdentityOrWithAttributesThatAreNotAnObject(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
@@ -308,6 +314,7 @@ func TestAReconciledSetRefusesAThingWithNoIdentityOrWithAttributesThatAreNotAnOb
 // second member is rejected must leave no snapshot behind at all, rather than a snapshot that
 // states the rest of the set has gone.
 func TestAHalfWrittenReconciledSetIsNotStoredAtAll(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)

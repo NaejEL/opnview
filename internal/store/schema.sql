@@ -410,11 +410,20 @@ CREATE TABLE IF NOT EXISTS interface (
 -- appears twice, once under `addr4` and once in `ipv4[]`, and is stored under
 -- both: each row says what one field reported.
 --
--- A CHANGE IS A NEW ROW AND THE HISTORY IS THE TABLE. A row is keyed on
--- (interface, field, address, prefix length); a refresh that reads the same
--- value moves last_seen_at, and a refresh that reads a different value inserts
--- a row and leaves the predecessor's last_seen_at where the last sighting put
--- it. "When did the public address last change" is therefore the first_seen_at
+-- A CHANGE IS A NEW ROW AND THE HISTORY IS THE TABLE. A row is ONE HOLDING: the
+-- interface, the field, the address and its prefix length, from the first
+-- discovery that read it to the last one that read it without a break. A refresh
+-- that reads the same value, having read it at the previous discovery, moves
+-- last_seen_at; a refresh that reads a different value inserts a row and leaves
+-- the predecessor's last_seen_at where the last sighting put it; and a refresh
+-- that reads a value again after a discovery that did not read it -- the address
+-- was released and re-acquired -- inserts a NEW row from that instant, so the
+-- interval between the two holdings is held by neither (step-5A live corrections:
+-- "held at an instant", the this_firewall_address view, reads one row as one
+-- holding). The previous discovery is the instant the interfaces carried before
+-- this one wrote anything, read once at the start of the pass
+-- (internal/store/write.go, LatestInterfaceDiscoveryAt and UpsertInterfaceAddress),
+-- so the outcome does not depend on the order the interfaces are listed in. "When did the public address last change" is therefore the first_seen_at
 -- of the current row, and it can only come from opnview having looked before:
 -- no endpoint keeps that history.
 --
@@ -442,8 +451,13 @@ CREATE TABLE IF NOT EXISTS interface_address (
     CHECK ((source_field = 'gateways') = (prefix_length IS NULL))
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS uq_interface_address_value
-    ON interface_address (interface_id, source_field, address, ifnull(prefix_length, -1));
+-- One row per holding: the key carries first_seen_at. It replaced an index on the
+-- value alone, which made a re-acquired address reuse its first holding's row, and
+-- the old one is dropped by name.
+DROP INDEX IF EXISTS uq_interface_address_value;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_interface_address_holding
+    ON interface_address (interface_id, source_field, address, ifnull(prefix_length, -1),
+                          first_seen_at);
 -- "This interface's current addresses" and "is this address one of the
 -- firewall's own" are index searches rather than scans of a growing table.
 CREATE INDEX IF NOT EXISTS idx_interface_address_interface
@@ -591,6 +605,13 @@ CREATE TABLE IF NOT EXISTS rule (
     interface     TEXT,
     legacy        INTEGER CHECK (legacy IS NULL OR legacy IN (0, 1)),
     logs_matches  INTEGER CHECK (logs_matches IS NULL OR logs_matches IN (0, 1)),
+    -- enabled is the endpoint's `enabled` field: "1" or "0" on a model rule, which the
+    -- endpoint returns disabled or not, and always "1" on a legacy or automatic row,
+    -- which it returns only when enabled (opnsense/core 26.7.3, Firewall/Filter.xml and
+    -- scripts/filter/list_non_mvc_rules.php). NULL is not reported. Stored as
+    -- coverage of the field: a rule a screen lists can say it is switched off, and
+    -- nothing in the derivation reads it.
+    enabled       INTEGER CHECK (enabled IS NULL OR enabled IN (0, 1)),
     is_automatic  INTEGER NOT NULL DEFAULT 0 CHECK (is_automatic IN (0, 1)),
     discovered_at INTEGER NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800)
 );
@@ -729,6 +750,21 @@ CREATE TABLE IF NOT EXISTS dhcp_lease (
     generation_key TEXT NOT NULL CHECK (length(generation_key) > 0),
     expires_at     INTEGER CHECK (expires_at IS NULL OR (expires_at >= 0 AND expires_at < 4102444800)),
     observed_at    INTEGER NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
+    -- hostname_label is the host name's FIRST LABEL, lower-cased, a trailing dot
+    -- removed: what a host name the resolver logged as a lookup's client is matched
+    -- on. The resolver logs the name a reverse lookup returned, which may be fully
+    -- qualified, carry a trailing dot or be a bare label, and a lease may carry
+    -- any of the three; comparing the first label of both sides matches all of
+    -- them (step-5A live corrections, causes H1 and H2). lower() folds ASCII case
+    -- only, which is the case DNS names fold (RFC 4343). Generated, so it cannot
+    -- disagree with hostname; nothing writes it.
+    hostname_label TEXT GENERATED ALWAYS AS (
+                       lower(CASE
+                                 WHEN instr(rtrim(hostname, '.'), '.') > 0
+                                     THEN substr(rtrim(hostname, '.'), 1,
+                                                 instr(rtrim(hostname, '.'), '.') - 1)
+                                 ELSE rtrim(hostname, '.')
+                             END)) VIRTUAL,
     UNIQUE (address, generation_key, provider_id)
 );
 
@@ -739,8 +775,10 @@ CREATE INDEX IF NOT EXISTS idx_dhcp_lease_observed_at ON dhcp_lease (observed_at
 -- would order that backend's leases arbitrarily.
 CREATE INDEX IF NOT EXISTS idx_dhcp_lease_client ON dhcp_lease (client_id, observed_at);
 -- A host name the resolver logged as a lookup's client, resolved to the address
--- leased under it. Host names compare without regard to case, as DNS names do.
-CREATE INDEX IF NOT EXISTS idx_dhcp_lease_hostname ON dhcp_lease (hostname COLLATE NOCASE);
+-- leased under it, by first label. It replaced an index on the whole host name,
+-- dropped by name.
+DROP INDEX IF EXISTS idx_dhcp_lease_hostname;
+CREATE INDEX IF NOT EXISTS idx_dhcp_lease_hostname_label ON dhcp_lease (hostname_label, address);
 
 -- ---------------------------------------------------------------------------
 -- Flow — one filter-log record, allowed or blocked. The blocked events are a
@@ -749,9 +787,10 @@ CREATE INDEX IF NOT EXISTS idx_dhcp_lease_hostname ON dhcp_lease (hostname COLLA
 -- Source: /api/diagnostics/firewall/log. Survey: data source 1. The record is
 -- deduplicated on __digest__, stored as log_digest.
 --
--- traffic_scope is east-west exactly when both endpoints sit in a discovered
--- interface, and north-south otherwise. It derives from interface membership and
--- from nothing else — no address, no CIDR, no name.
+-- traffic_scope is this_firewall when an end is this firewall, east-west exactly
+-- when both endpoints sit in a discovered interface, and north-south otherwise. It
+-- derives from interface membership and this firewall's own addresses and from
+-- nothing else — no address literal, no CIDR, no name.
 --
 -- MEMBERSHIP IS DECIDED FROM ON-LINK EVIDENCE ONLY, after the record is stored,
 -- by internal/store's classification (docs/data-model.md, "Classification"): a
@@ -801,10 +840,59 @@ CREATE TABLE IF NOT EXISTS flow (
     rule_id                INTEGER REFERENCES rule (id),
     rule_lookup_state      TEXT NOT NULL
                            CHECK (rule_lookup_state IN ('resolved', 'not_found', 'pending')),
+    -- src_is_this_firewall and dst_is_this_firewall say that an end is THIS
+    -- FIREWALL, OPNsense's own term for the firewall's own addresses: the rule
+    -- editor's "This Firewall" (opnsense/core 26.7.3, Firewall/FilterRule.php,
+    -- `(self)` rendered as gettext("This Firewall"); used as a destination on
+    -- https://docs.opnsense.org/manual/how-tos/caddy.html), which the ruleset
+    -- emits to pf as `self`, "all addresses assigned to all interfaces"
+    -- (pf.conf(5), FreeBSD 15.1-RELEASE). An end is this firewall when its address
+    -- was held by the firewall at the record's instant -- interface_address under
+    -- addr4, addr6, ipv4 or ipv6, see the this_firewall_address view -- or is a
+    -- loopback address. Such an end records the interface the address belongs to
+    -- (none for a loopback address) and never a client: the CHECKs below. It is
+    -- never outside either. Classification sets both, docs/data-model.md,
+    -- "Classification"; the collector stores every record with neither set.
+    src_is_this_firewall   INTEGER NOT NULL DEFAULT 0 CHECK (src_is_this_firewall IN (0, 1)),
+    dst_is_this_firewall   INTEGER NOT NULL DEFAULT 0 CHECK (dst_is_this_firewall IN (0, 1)),
+    -- ip_id and tcp_seq are the filter log's `id` (IPv4 identification) and `seq`
+    -- (TCP sequence number), the two logged fields verified to be carried
+    -- unchanged by both legs of one connection under OPNsense's defaults (survey,
+    -- "Two legs of one connection, read for the step-5A live corrections"). They
+    -- are stored for one purpose: pairing the two records of one connection. NULL
+    -- is a record that does not carry the field -- an IPv6 record has no `id`, a
+    -- record that is not TCP no `seq`.
+    ip_id                  INTEGER CHECK (ip_id IS NULL OR (ip_id >= 0 AND ip_id <= 65535)),
+    tcp_seq                INTEGER CHECK (tcp_seq IS NULL OR (tcp_seq >= 0 AND tcp_seq <= 4294967295)),
+    -- pair_outcome and paired_flow_id record what the pairing of the two records of
+    -- one connection decided (docs/data-model.md, "Two legs of one connection"):
+    --   'first_leg'   the `in` record of a client connection whose second record
+    --                 was found; paired_flow_id names that second record
+    --   'second_leg'  the `out` record on another interface that is the second
+    --                 record of the connection paired_flow_id names. It is counted
+    --                 on the interface it was logged on and in the rule family,
+    --                 and in no other figure
+    --   'not_paired'  an unpaired `out` record on an upstream interface sourced by
+    --                 this firewall. It keeps its this-firewall end, but opnview
+    --                 never claims it is the firewall's own traffic rather than a
+    --                 client's NATed connection whose first record it cannot see
+    --                 (decision 3 as amended on 7 October 2026), and no client is
+    --                 assigned to it
+    --   NULL          every other record
+    -- The three values are opnview's own terms: pf and OPNsense log the records
+    -- and have no word for one being the second of a pair. paired_flow_id carries
+    -- no foreign key, deliberately: the retention purge can remove one record of a
+    -- pair and keep the other, and the survivor still says what it was.
+    pair_outcome           TEXT CHECK (pair_outcome IS NULL
+                                       OR pair_outcome IN ('first_leg', 'second_leg', 'not_paired')),
+    paired_flow_id         INTEGER,
     -- traffic_scope is written by the collector and pinned by the CHECK below
-    -- to exactly one expression over interface membership, so no row can carry a
-    -- value that disagrees with its interfaces — the same guarantee a generated
-    -- column gives, demonstrated by a failing insert in the checks.
+    -- to exactly one expression over interface membership and this firewall's
+    -- ends, so no row can carry a value that disagrees with them — the same
+    -- guarantee a generated column gives, demonstrated by a failing insert in the
+    -- checks. 'this_firewall' is the third value, decision 6 of the step-5A live
+    -- corrections: a flow with an end that is this firewall is neither between two
+    -- interfaces nor across the edge.
     --
     -- It is a plain column rather than a generated one for a query-plan
     -- reason, and for no other: SQLite never reports an index as covering for
@@ -815,10 +903,15 @@ CREATE TABLE IF NOT EXISTS flow (
     -- name, no assumed addressing plan.
     traffic_scope          TEXT NOT NULL,
     CHECK (traffic_scope = CASE
+                               WHEN src_is_this_firewall = 1 OR dst_is_this_firewall = 1
+                                   THEN 'this_firewall'
                                WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
                                    THEN 'east_west'
                                ELSE 'north_south'
-                           END)
+                           END),
+    CHECK (src_is_this_firewall = 0 OR src_client_id IS NULL),
+    CHECK (dst_is_this_firewall = 0 OR dst_client_id IS NULL),
+    CHECK ((coalesce(pair_outcome, '') IN ('first_leg', 'second_leg')) = (paired_flow_id IS NOT NULL))
 );
 
 -- Index shape. Column count is close to irrelevant to SQLite read speed; what
@@ -880,15 +973,29 @@ CREATE INDEX IF NOT EXISTS idx_flow_dst_client_observed_at ON flow (dst_client_i
 -- flows exactly.
 --
 -- local_interface_id and local_client_id name the INSIDE end: the source when it
--- has an interface, else the destination, else nothing. peer_address is the
--- OUTSIDE end: the destination of an outbound flow, the source of an inbound one,
--- and NULL between two interfaces.
+-- has an interface and is not this firewall, else the destination on the same
+-- terms, else nothing. peer_address is the OUTSIDE end: the destination of an
+-- outbound flow, the source of an inbound one, and NULL between two interfaces.
 --
--- A view rather than columns: the three are pure functions of the row, and a
--- view over one table is flattened by the planner, so every statement that reads
--- it keeps the flow indexes.
+-- THIS FIREWALL IS NEITHER END KIND, and has two directions of its own
+-- (decision 6 of the step-5A live corrections): 'from_this_firewall' when the
+-- source is this firewall, 'to_this_firewall' when the destination is and the
+-- source is not. Its interface is recorded on the flow, but it is not an inside
+-- end -- it has no client -- and not an outside one: peer_address of such a flow
+-- is the other end when that end is outside, and NULL otherwise.
+--
+-- exit_leg_device is the device a SECOND LEG was logged on (flow.pair_outcome
+-- 'second_leg'), and NULL for every other record. A second leg is counted on that
+-- interface's own figures and in the rule family, and in no other figure, so the
+-- statements that count read it.
+--
+-- A view rather than columns: they are pure functions of the row, and a view
+-- over one table is flattened by the planner, so every statement that reads it
+-- keeps the flow indexes. It is dropped and created again on every apply, so an
+-- edit to its text reaches a database the previous text was applied to.
 -- ---------------------------------------------------------------------------
-CREATE VIEW IF NOT EXISTS classified_flow AS
+DROP VIEW IF EXISTS classified_flow;
+CREATE VIEW classified_flow AS
 SELECT
     id,
     observed_at,
@@ -910,7 +1017,13 @@ SELECT
     rid,
     rule_id,
     traffic_scope,
+    src_is_this_firewall,
+    dst_is_this_firewall,
+    pair_outcome,
+    paired_flow_id,
     CASE
+        WHEN src_is_this_firewall = 1 THEN 'from_this_firewall'
+        WHEN dst_is_this_firewall = 1 THEN 'to_this_firewall'
         WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN 'inter_interface'
         WHEN src_interface_id IS NOT NULL THEN 'outbound'
         WHEN dst_interface_id IS NOT NULL THEN 'inbound'
@@ -918,21 +1031,58 @@ SELECT
         ELSE 'inbound'
     END AS traffic_direction,
     CASE
-        WHEN src_interface_id IS NOT NULL THEN src_interface_id
-        ELSE dst_interface_id
+        WHEN src_is_this_firewall = 0 AND src_interface_id IS NOT NULL THEN src_interface_id
+        WHEN dst_is_this_firewall = 0 THEN dst_interface_id
     END AS local_interface_id,
     CASE
-        WHEN src_interface_id IS NOT NULL THEN src_client_id
-        WHEN dst_interface_id IS NOT NULL THEN dst_client_id
+        WHEN src_is_this_firewall = 0 AND src_interface_id IS NOT NULL THEN src_client_id
+        WHEN dst_is_this_firewall = 0 AND dst_interface_id IS NOT NULL THEN dst_client_id
     END AS local_client_id,
     CASE
+        WHEN src_is_this_firewall = 1 AND dst_is_this_firewall = 1 THEN NULL
+        WHEN src_is_this_firewall = 1 THEN CASE WHEN dst_interface_id IS NULL THEN dst_address END
+        WHEN dst_is_this_firewall = 1 THEN CASE WHEN src_interface_id IS NULL THEN src_address END
         WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL THEN NULL
         WHEN src_interface_id IS NOT NULL THEN dst_address
         WHEN dst_interface_id IS NOT NULL THEN src_address
         WHEN direction = 'out' THEN dst_address
         ELSE src_address
-    END AS peer_address
+    END AS peer_address,
+    CASE WHEN pair_outcome = 'second_leg' THEN interface_device END AS exit_leg_device
 FROM flow;
+
+-- ---------------------------------------------------------------------------
+-- this_firewall_address — every address this firewall held, the interface it
+-- belonged to, and when opnview saw it held.
+--
+-- THE TERM IS OPNSENSE'S, "This Firewall" (see flow.src_is_this_firewall). The
+-- addresses are interface_address under the four fields that report an address
+-- the firewall itself holds -- addr4, addr6, ipv4 and ipv6 -- and never
+-- `gateways`, which are other machines.
+--
+-- "HELD AT AN INSTANT" IS DEFINED HERE AND NOWHERE ELSE, as the derivation reads
+-- it (internal/store/derive.sql, the :held_margin parameter): an address was held
+-- at t when one of its rows has
+--     first_seen_at - margin <= t
+--     and (is_current = 1 or t <= last_seen_at + margin)
+-- where margin is the discovery interval, because discovery reads the addresses
+-- once per interval and an address can have been taken or released at any instant
+-- between two reads. is_current is 1 when the row was read by the latest discovery
+-- of its interface: an address the firewall still holds is held from its first
+-- sighting onward, so a record made after the last discovery is not orphaned by a
+-- discovery that has not run yet.
+-- ---------------------------------------------------------------------------
+DROP VIEW IF EXISTS this_firewall_address;
+CREATE VIEW this_firewall_address AS
+SELECT
+    a.address                                              AS address,
+    a.interface_id                                         AS interface_id,
+    a.first_seen_at                                        AS first_seen_at,
+    a.last_seen_at                                         AS last_seen_at,
+    CASE WHEN a.last_seen_at >= i.last_seen_at THEN 1 ELSE 0 END AS is_current
+FROM interface_address AS a
+JOIN interface AS i ON i.id = a.interface_id
+WHERE a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6');
 
 -- blocked_event — every refused filter-log record: action 'block' or 'reject'. A
 -- record whose action could not be named ('unknown') is not a refusal and is not
@@ -1089,9 +1239,24 @@ CREATE TABLE IF NOT EXISTS blocklist (
 --   'ambiguous_hostname'  a host name that more than one address held a lease
 --                         under at that instant;
 --   'unknown_hostname'    a host name no lease named at that instant.
--- In the last two cases client_address holds the logged name verbatim, the
--- lookup is placed nowhere and attributes nothing: a name that does not resolve
--- to one address does not say which machine asked.
+--   'this_firewall_hostname'  a host name that names this firewall: `localhost`,
+--                         the name a reverse lookup of a loopback address returns.
+--                         It is a protocol constant (decision 11 of the step-5A
+--                         live corrections), not configuration.
+-- In the last three cases client_address holds the logged name verbatim, and in
+-- the two before it the lookup is placed nowhere and attributes nothing: a name
+-- that does not resolve to one address does not say which machine asked.
+--
+-- A host name matches a lease by its FIRST LABEL on both sides, without regard
+-- to case and with a trailing dot removed: dhcp_lease.hostname_label below.
+-- hostname_examined_at is the instant a lease pass last resolved the logged host
+-- name again; NULL until one has, which is what a lease pass reads -- including
+-- the first one after a restart -- so every unresolved lookup is examined again
+-- by one lease pass after it was ingested, and none is scanned twice.
+--
+-- client_is_this_firewall is 1 when the querier is this firewall: its address
+-- was held by the firewall at the lookup's instant, or it is a loopback address
+-- or `localhost` (see flow.src_is_this_firewall). Such a lookup has no client.
 CREATE TABLE IF NOT EXISTS dns_resolution (
     id             INTEGER PRIMARY KEY,
     lookup_key     TEXT NOT NULL UNIQUE,
@@ -1099,8 +1264,12 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
     client_hostname TEXT,
     client_resolution TEXT NOT NULL DEFAULT 'logged_address'
                    CHECK (client_resolution IN ('logged_address', 'lease_hostname',
-                                                'ambiguous_hostname', 'unknown_hostname')),
+                                                'ambiguous_hostname', 'unknown_hostname',
+                                                'this_firewall_hostname')),
     client_id      INTEGER REFERENCES client (id),
+    client_is_this_firewall INTEGER NOT NULL DEFAULT 0 CHECK (client_is_this_firewall IN (0, 1)),
+    hostname_examined_at INTEGER CHECK (hostname_examined_at IS NULL
+                                        OR (hostname_examined_at >= 0 AND hostname_examined_at < 4102444800)),
     domain         TEXT NOT NULL,
     resolver       TEXT NOT NULL CHECK (resolver IN ('unbound', 'dnsmasq')),
     action         TEXT NOT NULL CHECK (action IN ('pass', 'block', 'drop', 'unknown')),
@@ -1114,7 +1283,8 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
     interface_lookup_state TEXT NOT NULL DEFAULT 'pending'
                    CHECK (interface_lookup_state IN ('resolved', 'not_found', 'pending')),
     CHECK ((interface_lookup_state = 'resolved') = (interface_id IS NOT NULL)),
-    CHECK ((client_resolution = 'logged_address') = (client_hostname IS NULL))
+    CHECK ((client_resolution = 'logged_address') = (client_hostname IS NULL)),
+    CHECK (client_is_this_firewall = 0 OR client_id IS NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_looked_up_at ON dns_resolution (looked_up_at);
@@ -1127,12 +1297,18 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_id ON dns_resolution (clien
 -- unattributed blocked lookups at the head of the index instead of omitting
 -- them, so the "list not recorded" rows are served by it too.
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_blocklist ON dns_resolution (blocklist_id, looked_up_at);
--- The lookups whose logged host name did not resolve to one address, ingested since
--- a given instant: what one lease pass resolves again. It replaced an index on
--- (client_resolution, looked_up_at), dropped by name.
+-- The lookups whose logged host name did not resolve to one address and that no
+-- lease pass has examined since they were ingested: what one lease pass resolves
+-- again. A partial index, so it holds exactly the lookups still waiting and
+-- shrinks as a pass examines them, rather than growing with every unresolved
+-- lookup ever stored. It replaced an index on (client_resolution, looked_up_at)
+-- and one on (client_resolution, ingested_at), both dropped by name.
 DROP INDEX IF EXISTS idx_dns_resolution_client_resolution;
-CREATE INDEX IF NOT EXISTS idx_dns_resolution_unresolved_hostname
-    ON dns_resolution (client_resolution, ingested_at);
+DROP INDEX IF EXISTS idx_dns_resolution_unresolved_hostname;
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_hostname_unexamined
+    ON dns_resolution (client_resolution, hostname_examined_at, ingested_at, id)
+    WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname')
+      AND hostname_examined_at IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- Domain attribution — the site name carried by a flow, and the lookup it was
@@ -1276,8 +1452,12 @@ CREATE TABLE IF NOT EXISTS security_event (
     in_interface_device TEXT,
     src_client_id       INTEGER REFERENCES client (id),
     src_interface_id    INTEGER REFERENCES interface (id),
+    -- 1 when the event's source is this firewall, as flow.src_is_this_firewall
+    -- decides it for a record's end; such a source has no client.
+    src_is_this_firewall INTEGER NOT NULL DEFAULT 0 CHECK (src_is_this_firewall IN (0, 1)),
     flow_ref            INTEGER,
-    UNIQUE (provider_id, provider_event_key)
+    UNIQUE (provider_id, provider_event_key),
+    CHECK (src_is_this_firewall = 0 OR src_client_id IS NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_security_event_occurred_at ON security_event (occurred_at);
@@ -1510,8 +1690,15 @@ CREATE INDEX IF NOT EXISTS idx_pair_volume_day ON pair_volume_observation (day_s
 --
 -- The byte figures are LOGGED BYTES, the sum of flow.packet_bytes. pf logs the
 -- packet that establishes a state and not the rest of the connection
--- (pf.conf(5), `log`), and a connection logged on two interfaces counts twice,
--- so these are logged volume and never conversation volume.
+-- (pf.conf(5), `log`), so these are logged volume and never conversation volume.
+--
+-- A CONNECTION LOGGED ON TWO INTERFACES IS COUNTED ONCE, decision 2 of the
+-- step-5A live corrections, which amends 5A Scope A2 and its OQ4: once, on the
+-- client's `in` record. Its second record -- flow.pair_outcome 'second_leg' --
+-- stays in `flow` and counts in the volume family only under its own
+-- exit_leg_device, the interface it was logged on, which is that interface's own
+-- figure; every other family leaves it out but the rule family, which counts
+-- every record because each record is a match of its own rule.
 --
 -- Observation-point limit: traffic between two clients behind one interface
 -- never reaches the firewall and is in none of these figures.
@@ -1529,9 +1716,15 @@ CREATE INDEX IF NOT EXISTS idx_pair_volume_day ON pair_volume_observation (day_s
 -- src_interface_id IS NULLABLE: an inbound flow's source is outside and has no
 -- interface, and the slot key wraps it in ifnull so that slot is unique too.
 -- peer_address is classified_flow.peer_address, the outside end, and
--- traffic_direction the outbound / inbound / inter_interface classification; the
--- CHECKs pin both to the interfaces the row carries. The direction in the key is
--- what closes G3: outbound and inbound are told apart in every period.
+-- traffic_direction the outbound / inbound / inter_interface classification, or
+-- to_this_firewall / from_this_firewall when an end is this firewall, which is
+-- therefore its own key and never part of the outside peers; the CHECKs pin both
+-- to the interfaces the row carries. The direction in the key is what closes G3:
+-- outbound and inbound are told apart in every period.
+--
+-- exit_leg_device is NULL on every row a volume total sums, and the device a
+-- second leg was logged on otherwise: the second records of paired connections,
+-- kept apart so they count on that interface's own figures and nowhere else.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS volume_aggregate_1h (
     id                  INTEGER PRIMARY KEY,
@@ -1540,9 +1733,12 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_1h (
     src_interface_id    INTEGER REFERENCES interface (id),
     dst_interface_id    INTEGER REFERENCES interface (id),
     peer_address        TEXT,
-    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    traffic_scope       TEXT NOT NULL
+                        CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
     traffic_direction   TEXT NOT NULL
-                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
+                                                     'to_this_firewall', 'from_this_firewall')),
+    exit_leg_device     TEXT,
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
     allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
@@ -1553,19 +1749,29 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_1h (
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
-    CHECK (traffic_scope = CASE WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
-                                THEN 'east_west' ELSE 'north_south' END),
-    CHECK ((traffic_direction = 'inter_interface')
-           = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL)),
-    CHECK (src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'),
-    CHECK (src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'),
-    CHECK ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))
+    CHECK (traffic_scope = CASE
+                               WHEN traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+                                   THEN 'this_firewall'
+                               WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
+                                   THEN 'east_west'
+                               ELSE 'north_south' END),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR ((traffic_direction = 'inter_interface')
+               = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR src_interface_id IS NULL OR dst_interface_id IS NOT NULL
+           OR traffic_direction = 'outbound'),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR src_interface_id IS NOT NULL OR dst_interface_id IS NULL
+           OR traffic_direction = 'inbound'),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR ((peer_address IS NULL) = (traffic_direction = 'inter_interface')))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_1h_slot
     ON volume_aggregate_1h (period_start_at, ifnull(src_interface_id, -1),
                             ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
-                            traffic_direction);
+                            traffic_direction, ifnull(exit_leg_device, ''));
 
 CREATE TABLE IF NOT EXISTS volume_aggregate_24h (
     id                  INTEGER PRIMARY KEY,
@@ -1574,9 +1780,12 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_24h (
     src_interface_id    INTEGER REFERENCES interface (id),
     dst_interface_id    INTEGER REFERENCES interface (id),
     peer_address        TEXT,
-    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    traffic_scope       TEXT NOT NULL
+                        CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
     traffic_direction   TEXT NOT NULL
-                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
+                                                     'to_this_firewall', 'from_this_firewall')),
+    exit_leg_device     TEXT,
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
     allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
@@ -1587,19 +1796,29 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_24h (
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
-    CHECK (traffic_scope = CASE WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
-                                THEN 'east_west' ELSE 'north_south' END),
-    CHECK ((traffic_direction = 'inter_interface')
-           = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL)),
-    CHECK (src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'),
-    CHECK (src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'),
-    CHECK ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))
+    CHECK (traffic_scope = CASE
+                               WHEN traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+                                   THEN 'this_firewall'
+                               WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
+                                   THEN 'east_west'
+                               ELSE 'north_south' END),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR ((traffic_direction = 'inter_interface')
+               = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR src_interface_id IS NULL OR dst_interface_id IS NOT NULL
+           OR traffic_direction = 'outbound'),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR src_interface_id IS NOT NULL OR dst_interface_id IS NULL
+           OR traffic_direction = 'inbound'),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR ((peer_address IS NULL) = (traffic_direction = 'inter_interface')))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_24h_slot
     ON volume_aggregate_24h (period_start_at, ifnull(src_interface_id, -1),
                             ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
-                            traffic_direction);
+                            traffic_direction, ifnull(exit_leg_device, ''));
 
 CREATE TABLE IF NOT EXISTS volume_aggregate_7d (
     id                  INTEGER PRIMARY KEY,
@@ -1608,9 +1827,12 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_7d (
     src_interface_id    INTEGER REFERENCES interface (id),
     dst_interface_id    INTEGER REFERENCES interface (id),
     peer_address        TEXT,
-    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    traffic_scope       TEXT NOT NULL
+                        CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
     traffic_direction   TEXT NOT NULL
-                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
+                                                     'to_this_firewall', 'from_this_firewall')),
+    exit_leg_device     TEXT,
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
     allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
@@ -1621,19 +1843,29 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_7d (
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
-    CHECK (traffic_scope = CASE WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
-                                THEN 'east_west' ELSE 'north_south' END),
-    CHECK ((traffic_direction = 'inter_interface')
-           = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL)),
-    CHECK (src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'),
-    CHECK (src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'),
-    CHECK ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))
+    CHECK (traffic_scope = CASE
+                               WHEN traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+                                   THEN 'this_firewall'
+                               WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
+                                   THEN 'east_west'
+                               ELSE 'north_south' END),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR ((traffic_direction = 'inter_interface')
+               = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR src_interface_id IS NULL OR dst_interface_id IS NOT NULL
+           OR traffic_direction = 'outbound'),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR src_interface_id IS NOT NULL OR dst_interface_id IS NULL
+           OR traffic_direction = 'inbound'),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR ((peer_address IS NULL) = (traffic_direction = 'inter_interface')))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_7d_slot
     ON volume_aggregate_7d (period_start_at, ifnull(src_interface_id, -1),
                             ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
-                            traffic_direction);
+                            traffic_direction, ifnull(exit_leg_device, ''));
 
 CREATE TABLE IF NOT EXISTS volume_aggregate_30d (
     id                  INTEGER PRIMARY KEY,
@@ -1642,9 +1874,12 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_30d (
     src_interface_id    INTEGER REFERENCES interface (id),
     dst_interface_id    INTEGER REFERENCES interface (id),
     peer_address        TEXT,
-    traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
+    traffic_scope       TEXT NOT NULL
+                        CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
     traffic_direction   TEXT NOT NULL
-                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
+                        CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
+                                                     'to_this_firewall', 'from_this_firewall')),
+    exit_leg_device     TEXT,
     bytes               INTEGER NOT NULL CHECK (bytes >= 0),
     allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
     blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
@@ -1655,19 +1890,29 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_30d (
     computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
-    CHECK (traffic_scope = CASE WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
-                                THEN 'east_west' ELSE 'north_south' END),
-    CHECK ((traffic_direction = 'inter_interface')
-           = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL)),
-    CHECK (src_interface_id IS NULL OR dst_interface_id IS NOT NULL OR traffic_direction = 'outbound'),
-    CHECK (src_interface_id IS NOT NULL OR dst_interface_id IS NULL OR traffic_direction = 'inbound'),
-    CHECK ((peer_address IS NULL) = (traffic_direction = 'inter_interface'))
+    CHECK (traffic_scope = CASE
+                               WHEN traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+                                   THEN 'this_firewall'
+                               WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
+                                   THEN 'east_west'
+                               ELSE 'north_south' END),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR ((traffic_direction = 'inter_interface')
+               = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR src_interface_id IS NULL OR dst_interface_id IS NOT NULL
+           OR traffic_direction = 'outbound'),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR src_interface_id IS NOT NULL OR dst_interface_id IS NULL
+           OR traffic_direction = 'inbound'),
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR ((peer_address IS NULL) = (traffic_direction = 'inter_interface')))
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_30d_slot
     ON volume_aggregate_30d (period_start_at, ifnull(src_interface_id, -1),
                             ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
-                            traffic_direction);
+                            traffic_direction, ifnull(exit_leg_device, ''));
 
 -- ---------------------------------------------------------------------------
 -- owner_volume_aggregate_* — the same four periods, keyed on the person rather
@@ -2261,7 +2506,10 @@ CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_30d_rule
 --                                       except between interfaces, where it is
 --                                       none;
 --   rule_id, site_name, action          the rule, the attributed site name, the
---                                       decision.
+--                                       decision;
+--   exit_leg_device                     classified_flow's: a second leg counts on
+--                                       its interface's figures and in the rule
+--                                       family only.
 -- bytes and connections are the summed packet_bytes and the number of records.
 --
 -- What the purged part keeps is the flows' classification when they were
@@ -2292,16 +2540,24 @@ CREATE TABLE IF NOT EXISTS purged_flow_hour (
     src_client_id     INTEGER REFERENCES client (id) ON DELETE SET NULL,
     local_client_id   INTEGER REFERENCES client (id) ON DELETE SET NULL,
     traffic_direction TEXT NOT NULL
-                      CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
-    peer_address      TEXT NOT NULL,
+                      CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
+                                                   'to_this_firewall', 'from_this_firewall')),
+    -- NULL only for a flow with an end that is this firewall whose other end is
+    -- not outside: classified_flow's peer_address is NULL there, and the volume
+    -- family keys on that.
+    peer_address      TEXT,
+    -- classified_flow.exit_leg_device: the device a second leg was logged on.
+    exit_leg_device   TEXT,
     rule_id           INTEGER REFERENCES rule (id),
     site_name         TEXT CHECK (site_name IS NULL OR length(site_name) > 0),
     action            TEXT NOT NULL CHECK (action IN ('pass', 'block', 'reject', 'unknown')),
     bytes             INTEGER NOT NULL CHECK (bytes >= 0),
     connections       INTEGER NOT NULL CHECK (connections > 0),
     purged_at         INTEGER NOT NULL CHECK (purged_at >= 0 AND purged_at < 4102444800),
-    CHECK ((traffic_direction = 'inter_interface')
-           = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))
+    CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+           OR ((traffic_direction = 'inter_interface')
+               = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))),
+    CHECK (peer_address IS NOT NULL OR traffic_direction IN ('to_this_firewall', 'from_this_firewall'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_purged_flow_hour_hour ON purged_flow_hour (hour_start_at);
@@ -2709,10 +2965,26 @@ WHERE NOT EXISTS (
 -- have been made and still name it (docs/data-model.md, "Site-name
 -- attribution"). 5 is the maintainer's default; it is a positive whole number,
 -- and internal/config refuses anything else.
+--
+-- leg_pairing_window_seconds: how far apart, in seconds, the two records of one
+-- connection may have been logged and still be paired (decision 4 of the step-5A
+-- live corrections; docs/data-model.md, "Two legs of one connection"). 1 is the
+-- maintainer's default; it is a whole number of seconds, 0 or more, and
+-- internal/config refuses anything else.
+--
+-- lease_backend_failure_pass_limit: how many lease passes in a row one DHCP
+-- backend may fail before a pass that read every other backend counts as complete,
+-- so the unresolved host-name lookups are examined without it (defect L1 of
+-- specs/SPEC-test-budget-and-two-live-defects.md; docs/data-model.md, "Host names
+-- logged as the client"). 3 is the default, a quarter of an hour at the default
+-- lease interval; it is a whole number of passes, 1 or more, and internal/config
+-- refuses anything else.
 INSERT INTO setting (key, value, updated_at) VALUES
     ('retention_seconds', '7776000', CAST(strftime('%s', 'now') AS INTEGER)),
     ('aggregate_mode', 'full', CAST(strftime('%s', 'now') AS INTEGER)),
-    ('attribution_max_delay_seconds', '5', CAST(strftime('%s', 'now') AS INTEGER))
+    ('attribution_max_delay_seconds', '5', CAST(strftime('%s', 'now') AS INTEGER)),
+    ('leg_pairing_window_seconds', '1', CAST(strftime('%s', 'now') AS INTEGER)),
+    ('lease_backend_failure_pass_limit', '3', CAST(strftime('%s', 'now') AS INTEGER))
 ON CONFLICT (key) DO NOTHING;
 
 -- The provider registry, seeded with the implementations that exist and have

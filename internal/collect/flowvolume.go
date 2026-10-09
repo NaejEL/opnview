@@ -83,8 +83,9 @@ func (c *Collector) collectMeasurementFrom(ctx context.Context, active activeSou
 	// answer, so an absent sensor is a recorded fact rather than a missing row nobody can tell
 	// from a quiet one.
 	detail := result.detail
+	absent := ""
 	if len(missing) > 0 {
-		absent := "these firewall telemetry readings did not answer and were not written as " +
+		absent = "these firewall telemetry readings did not answer and were not written as " +
 			"zeroes: " + strings.Join(missing, ", ")
 		if detail == "" {
 			detail = absent
@@ -92,6 +93,10 @@ func (c *Collector) collectMeasurementFrom(ctx context.Context, active activeSou
 			detail += "; " + absent
 		}
 	}
+	// The probe round rewrites this availability row from its own probe, which says
+	// nothing about the readings; what the last pass could not read is kept so the
+	// probe round restates it rather than erasing it.
+	c.setSampleAbsence(providerID, absent)
 	state := result.state
 	if state == "" {
 		state = store.StateReachable

@@ -12,6 +12,7 @@ import (
 
 // TestSignInSucceedsAndItsFailuresAreIndistinguishable is AC8.
 func TestSignInSucceedsAndItsFailuresAreIndistinguishable(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	login, password := harness.completeSetup()
 
@@ -85,6 +86,7 @@ func TestSignInSucceedsAndItsFailuresAreIndistinguishable(t *testing.T) {
 // often enough that the idle window never closes. An implementation carrying only one
 // of them passes one subtest and fails the other.
 func TestASessionExpiresOnBothBoundsAndIsNeverRenewed(t *testing.T) {
+	t.Parallel()
 	lifetimes := auth.DefaultLifetimes()
 
 	t.Run("the sliding idle window", func(t *testing.T) {
@@ -147,6 +149,7 @@ func TestASessionExpiresOnBothBoundsAndIsNeverRenewed(t *testing.T) {
 // pinned as well as the behaviour: a new route declared public without a decision
 // changes the first set and fails.
 func TestEveryRouteIsPublicByDecisionOrRefusesAnUnauthenticatedRequest(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	harness.completeSetup()
 
@@ -233,6 +236,7 @@ func assertRefusesUnauthenticated(t *testing.T, harness *harness, route Route) {
 
 // TestEveryMutatingFormCarriesAFormToken is AC11.
 func TestEveryMutatingFormCarriesAFormToken(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 
 	t.Run("setup without a token", func(t *testing.T) {

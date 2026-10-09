@@ -81,7 +81,7 @@ func newTestNetwork(t *testing.T, interfaceCount, clientCount int) *testNetwork 
 			{InterfaceID: id, SourceField: SourceFieldAddr4, Address: iface.address, PrefixLength: &bits4, AddressFamily: 4},
 			{InterfaceID: id, SourceField: SourceFieldAddr6, Address: iface.v6, PrefixLength: &bits6, AddressFamily: 6},
 		} {
-			if err := database.UpsertInterfaceAddress(ctx, address, network.now-86400); err != nil {
+			if err := database.UpsertInterfaceAddress(ctx, address, nil, network.now-86400); err != nil {
 				t.Fatalf("writing an interface address: %v", err)
 			}
 		}
@@ -108,7 +108,7 @@ func newTestNetwork(t *testing.T, interfaceCount, clientCount int) *testNetwork 
 		{InterfaceID: upstreamID, SourceField: SourceFieldAddr4, Address: "203.0.113.2", PrefixLength: &bits, AddressFamily: 4},
 		{InterfaceID: upstreamID, SourceField: SourceFieldGateways, Address: "203.0.113.1", AddressFamily: 4},
 	} {
-		if err := database.UpsertInterfaceAddress(ctx, address, network.now-86400); err != nil {
+		if err := database.UpsertInterfaceAddress(ctx, address, nil, network.now-86400); err != nil {
 			t.Fatalf("writing an upstream address: %v", err)
 		}
 	}
@@ -178,6 +178,9 @@ type networkFlow struct {
 	direction  string
 	src, dst   string
 	dstPort    *int64
+	srcPort    *int64
+	ipID       *int64
+	tcpSeq     *int64
 	protocol   string
 	action     string
 	reason     *string
@@ -214,6 +217,7 @@ func (n *testNetwork) insert(t *testing.T, specs []networkFlow) []string {
 			SrcAddress: spec.src, DstAddress: spec.dst, DstPort: spec.dstPort, Protocol: spec.protocol,
 			IPVersion: version, Action: spec.action, Direction: spec.direction, LogReason: spec.reason,
 			PacketBytes: spec.bytes, Rid: &rid, RuleID: spec.ruleID, RuleLookupState: state,
+			SrcPort: spec.srcPort, IPID: spec.ipID, TCPSeq: spec.tcpSeq,
 		}); err != nil {
 			t.Fatalf("writing a flow: %v", err)
 		}

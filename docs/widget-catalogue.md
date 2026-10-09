@@ -539,6 +539,15 @@ blocked?
 observed byte volume, the allowed connection count, the blocked connection count
 and the distinct rule descriptions that matched. The right-hand column is
 north-south traffic, where the destination sits in no discovered interface.
+**This firewall has its own row and its own column** (decision 7 of the step-5A
+live corrections): a flow whose destination is one of the firewall's own addresses
+— OPNsense's *This Firewall* — lands in the *this firewall* column, and one whose
+source is lands in the *this firewall* row, never in the north-south column and
+never in an interface's row or column; `traffic_direction` `to_this_firewall` and
+`from_this_firewall` carry them (`docs/data-model.md`, *Classification*). A
+connection logged on two interfaces is counted once, on its client's record
+(decision 2): the matrix reads the rows whose `exit_leg_device` is null, and the
+second legs count only on the figures of the interface they were logged on.
 Interface labels are the user's own label where one is set and the firewall's
 discovered description otherwise — **never a name-based classification**: an
 interface's nature is never inferred from what it is called. Provider:
@@ -555,10 +564,10 @@ is read from `volume_aggregate_7d.bytes`, `.allowed_connections`,
 discovery, *Runtime discovery* (i); rule discovery, *Runtime discovery* (ii).
 
 **Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `scope`
-(`all` | `east_west` | `north_south`); `measure` (`bytes` | `allowed` |
-`blocked`); `interfaces` (an optional list of interface references limiting the
-rows and columns; empty means every discovered interface); `show_rules`
-(boolean).
+(`all` | `east_west` | `north_south` | `this_firewall`); `measure` (`bytes` |
+`allowed` | `blocked`); `interfaces` (an optional list of interface references
+limiting the rows and columns; empty means every discovered interface);
+`show_rules` (boolean).
 
 ### Traffic over time by scope
 
@@ -1343,6 +1352,13 @@ internet sees is not visible from the firewall and `opnview` does not guess
 it."* It never labels a private address as public, and **never fetches the answer
 from an external echo service**: the project allows exactly three outbound
 calls, and an echo service is none of them.
+**The double-NAT limit** (decision 7 of the step-5A live corrections). Behind an
+upstream NAT — an Internet box in router mode, or a carrier-grade NAT at the
+provider — the firewall does not see its public IPv4 address at all, and nothing
+`opnview` reads can supply it: no OPNsense endpoint reports it, and no outbound
+call the project allows could. The
+store's contract says the same (`docs/data-model.md`, *What step 5B reads*,
+`ReadPublicAddresses`), and the step-5 checklist of `ROADMAP.md` records it.
 Since step 5A `interface_address` keeps every address an interface held, with
 the instants `opnview` first and last saw it, so the change time is the
 `first_seen_at` of the current row **when an earlier row exists**. Until one does,

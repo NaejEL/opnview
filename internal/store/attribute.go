@@ -57,6 +57,8 @@ func (s *Store) Attribute(ctx context.Context, from, to, maxDelay, now int64) (A
 		return result, fmt.Errorf("store: starting an attribution: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
+	// The same statements run once per record, so each is prepared once (exec.go).
+	prepared := newPreparedTx(transaction)
 
 	type candidate struct {
 		id         int64
@@ -68,7 +70,7 @@ func (s *Store) Attribute(ctx context.Context, from, to, maxDelay, now int64) (A
 	if err != nil {
 		return result, err
 	}
-	rows, err := transaction.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := prepared.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
 	if err != nil {
 		return result, fmt.Errorf("store: attribution_candidates: %w", err)
 	}
@@ -87,6 +89,43 @@ func (s *Store) Attribute(ctx context.Context, from, to, maxDelay, now int64) (A
 		return result, fmt.Errorf("store: attribution_candidates: %w", err)
 	}
 
+	// A flow attributed earlier that is no longer eligible -- its destination was placed
+	// inside or recognised as this firewall since, or it was paired as a second leg --
+	// loses its attribution.
+	ineligibleText, err := Statement("attribution_ineligible")
+	if err != nil {
+		return result, err
+	}
+	ineligible, err := prepared.QueryContext(ctx, ineligibleText, sql.Named("from", from),
+		sql.Named("to", to))
+	if err != nil {
+		return result, fmt.Errorf("store: attribution_ineligible: %w", err)
+	}
+	type stale struct{ id, observedAt int64 }
+	var stales []stale
+	for ineligible.Next() {
+		var one stale
+		if err := ineligible.Scan(&one.id, &one.observedAt); err != nil {
+			_ = ineligible.Close()
+			return result, fmt.Errorf("store: attribution_ineligible: %w", err)
+		}
+		stales = append(stales, one)
+	}
+	err = ineligible.Err()
+	_ = ineligible.Close()
+	if err != nil {
+		return result, fmt.Errorf("store: attribution_ineligible: %w", err)
+	}
+	for _, one := range stales {
+		changed, err := execNamed(ctx, prepared, "attribution_delete", map[string]any{"flow_id": one.id})
+		if err != nil {
+			return result, err
+		}
+		if changed > 0 {
+			result.FlowInstants = append(result.FlowInstants, one.observedAt)
+		}
+	}
+
 	lookupsText, err := Statement("attribution_lookups")
 	if err != nil {
 		return result, err
@@ -96,7 +135,7 @@ func (s *Store) Attribute(ctx context.Context, from, to, maxDelay, now int64) (A
 		if flow.clientID.Valid {
 			clientID = flow.clientID.Int64
 		}
-		lookups, err := transaction.QueryContext(ctx, lookupsText,
+		lookups, err := prepared.QueryContext(ctx, lookupsText,
 			sql.Named("client_id", clientID), sql.Named("address", flow.address),
 			sql.Named("start", flow.observedAt-maxDelay), sql.Named("end", flow.observedAt))
 		if err != nil {
@@ -133,12 +172,12 @@ func (s *Store) Attribute(ctx context.Context, from, to, maxDelay, now int64) (A
 
 		var changed int64
 		if len(domains) == 1 {
-			changed, err = execNamed(ctx, transaction, "attribution_upsert", map[string]any{
+			changed, err = execNamed(ctx, prepared, "attribution_upsert", map[string]any{
 				"flow_id": flow.id, "lookup_id": latestID, "site_name": domain,
 				"delay": flow.observedAt - latestAt, "now": now,
 			})
 		} else {
-			changed, err = execNamed(ctx, transaction, "attribution_delete",
+			changed, err = execNamed(ctx, prepared, "attribution_delete",
 				map[string]any{"flow_id": flow.id})
 		}
 		if err != nil {
@@ -154,32 +193,38 @@ func (s *Store) Attribute(ctx context.Context, from, to, maxDelay, now int64) (A
 	return result, nil
 }
 
-// ResolveLeaseHostname resolves a host name the resolver logged as a lookup's
-// client to the address leased under it at the instant at: a DHCP lease under that
-// name, or under its first label, that had started -- if its start is known -- and
-// had not expired -- if its expiry is known.
+// ResolveLeaseHostname resolves a host name the resolver logged as a lookup's client to
+// the address leased under it at the instant at: a DHCP lease whose host name has the
+// same first label, compared without regard to case and with a trailing dot removed on
+// both sides, that had started -- if its start is known -- and had not expired -- if
+// its expiry is known.
 //
-// WHY THE FIRST LABEL. The resolver's query report replaces the querying address by
-// what a reverse lookup of it returned (opnsense/core 26.7.3,
+// WHY THE FIRST LABEL, ON BOTH SIDES. The resolver's query report replaces the querying
+// address by what a reverse lookup of it returned (opnsense/core 26.7.3,
 // scripts/unbound/logger.py, socket.gethostbyaddr, joined in by
-// scripts/unbound/stats.py), and a reverse lookup answers with the fully qualified
-// name, while a lease carries the host's own label.
+// scripts/unbound/stats.py). That name may be fully qualified, may carry the trailing
+// dot of an absolute name, or may be a bare label, and a lease may carry any of the
+// three: 5A compared the logged name and its label with the lease's whole name, so a
+// bare logged label never matched a lease carrying `host.domain` (cause H1 of the
+// step-5A live corrections) and a trailing dot on either side defeated both (H2).
 //
-// It returns the address and ClientResolutionLeased when exactly one address
-// matches; otherwise the logged name verbatim and ClientResolutionAmbiguous
-// or ClientResolutionUnknown, which place the lookup nowhere and attribute
-// nothing.
+// `localhost` names this firewall -- it is what a reverse lookup of a loopback address
+// returns (RFC 6761, section 6.3) -- and is ClientResolutionThisFirewall whatever the
+// leases hold (H4; decision 11).
+//
+// It returns the address and ClientResolutionLeased when exactly one address matches;
+// otherwise the logged name verbatim and ClientResolutionAmbiguous,
+// ClientResolutionUnknown or ClientResolutionThisFirewall, which attribute nothing.
 func (s *Store) ResolveLeaseHostname(ctx context.Context, hostname string, at int64) (string, string, error) {
-	label := hostname
-	if dot := strings.IndexByte(hostname, '.'); dot > 0 {
-		label = hostname[:dot]
+	if IsLocalhostName(hostname) {
+		return hostname, ClientResolutionThisFirewall, nil
 	}
+	label := HostnameLabel(hostname)
 	text, err := Statement("lease_addresses_for_hostname")
 	if err != nil {
 		return "", "", err
 	}
-	rows, err := s.db.QueryContext(ctx, text, sql.Named("hostname", hostname),
-		sql.Named("label", label), sql.Named("at", at))
+	rows, err := s.db.QueryContext(ctx, text, sql.Named("label", label), sql.Named("at", at))
 	if err != nil {
 		return "", "", fmt.Errorf("store: lease_addresses_for_hostname: %w", err)
 	}
@@ -205,6 +250,23 @@ func (s *Store) ResolveLeaseHostname(ctx context.Context, hostname string, at in
 	}
 }
 
+// HostnameLabel is a host name's first label, lower-cased in ASCII, a trailing dot
+// removed: the same expression as dhcp_lease.hostname_label, which is what a logged
+// host name is matched on.
+func HostnameLabel(hostname string) string {
+	trimmed := strings.TrimRight(hostname, ".")
+	if dot := strings.IndexByte(trimmed, '.'); dot >= 0 {
+		trimmed = trimmed[:dot]
+	}
+	lowered := []byte(trimmed)
+	for index, character := range lowered {
+		if character >= 'A' && character <= 'Z' {
+			lowered[index] = character + ('a' - 'A')
+		}
+	}
+	return string(lowered)
+}
+
 // HostnameResolution is what one pass of ResolveLoggedHostnames did.
 type HostnameResolution struct {
 	// Addresses are the addresses lookups now resolve to, to be placed.
@@ -212,25 +274,34 @@ type HostnameResolution struct {
 	// Instants are those lookups' instants, which bound the flows whose attribution
 	// has to be decided again.
 	Instants []int64
-	// Examined is how many unresolved lookups the pass resolved again: the ones
-	// ingested since the instant it was given, and no others.
+	// Examined is how many unresolved lookups the pass resolved again: the ones no
+	// lease pass had examined since they were ingested, and no others.
 	Examined int
 }
 
-// ResolveLoggedHostnames resolves again every lookup ingested at or after since whose
-// logged host name named no single address when it was read, each as of its own instant,
-// against the leases held now. A lease pass passes the start of the previous one: a
-// lookup read before the lease that names its host -- every loop runs at start -- is
-// resolved by the next lease pass, and one an earlier pass already tried is not tried
-// again, so the work is bounded by the lookups read since and does not grow with the
-// unresolved ones that accumulate, a host whose name no lease carries for instance.
-func (s *Store) ResolveLoggedHostnames(ctx context.Context, since int64) (HostnameResolution, error) {
+// ResolveLoggedHostnames resolves again every lookup whose logged host name named no
+// single address when it was read and that no lease pass has examined since, each as of
+// its own instant, against the leases held now, and marks it examined at now.
+//
+// Only the lookups ingested before ingestedBefore are examined: the caller passes the
+// instant its lease read began, and a lookup ingested since may postdate the leases it
+// read, so it is left for the next lease pass. The caller runs it only after a lease
+// pass read every active backend: one examination is all a lookup gets.
+//
+// The mark is stored, so the first lease pass after a restart examines what the run
+// before it left unexamined (cause H6 of the step-5A live corrections, which kept the
+// point to resume from in memory, starting at the collector's creation). A lookup is
+// examined once by a lease pass after it was ingested, and not again: the work of a
+// pass is the lookups waiting for it, read through a partial index that holds those
+// and nothing else, and it does not grow with the unresolved lookups that accumulate
+// -- a host whose name no lease carries, for instance.
+func (s *Store) ResolveLoggedHostnames(ctx context.Context, ingestedBefore, now int64) (HostnameResolution, error) {
 	var result HostnameResolution
 	text, err := Statement("unresolved_hostname_lookups")
 	if err != nil {
 		return result, err
 	}
-	rows, err := s.db.QueryContext(ctx, text, sql.Named("since", since))
+	rows, err := s.db.QueryContext(ctx, text, sql.Named("ingested_before", ingestedBefore))
 	if err != nil {
 		return result, fmt.Errorf("store: unresolved_hostname_lookups: %w", err)
 	}
@@ -266,16 +337,32 @@ func (s *Store) ResolveLoggedHostnames(ctx context.Context, since int64) (Hostna
 		if err != nil {
 			return result, err
 		}
-		changed, err := execNamed(ctx, s.db, "resolve_hostname_lookup", map[string]any{
-			"lookup_id": lookup.id, "address": address, "resolution": resolution,
-		})
+		before, err := s.lookupResolution(ctx, lookup.id)
 		if err != nil {
 			return result, err
 		}
-		if changed > 0 && resolution == ClientResolutionLeased {
+		if _, err := execNamed(ctx, s.db, "resolve_hostname_lookup", map[string]any{
+			"lookup_id": lookup.id, "address": address, "resolution": resolution, "now": now,
+		}); err != nil {
+			return result, err
+		}
+		if before != resolution {
+			// The lookup now names another querier, or this firewall, so it is placed
+			// again from what it now holds and the flows it could name are decided
+			// again.
 			result.Addresses = append(result.Addresses, address)
 			result.Instants = append(result.Instants, lookup.lookedUpAt)
 		}
 	}
 	return result, nil
+}
+
+// lookupResolution reads one lookup's client_resolution.
+func (s *Store) lookupResolution(ctx context.Context, id int64) (string, error) {
+	var resolution string
+	if err := s.db.QueryRowContext(ctx, "SELECT client_resolution FROM dns_resolution WHERE id = ?",
+		id).Scan(&resolution); err != nil {
+		return "", fmt.Errorf("store: reading lookup %d: %w", id, err)
+	}
+	return resolution, nil
 }

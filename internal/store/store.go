@@ -150,15 +150,31 @@ func (s *Store) Close() error {
 }
 
 // applySchema applies schema.sql. It is idempotent, so this runs on every start.
+//
+// THE WHOLE FILE IS ONE TRANSACTION. Applied a statement at a time, every DDL
+// statement committed on its own and SQLite reloaded the whole schema after each
+// one, which made a first start cost close to a second on a schema of this size
+// and the same apply in one transaction a few tens of milliseconds (measured on 7
+// October 2026, specs/SPEC-test-budget-and-two-live-defects.md). It is also the
+// stronger guarantee: a start interrupted half-way through leaves the schema it
+// found, never half of the new one.
 func (s *Store) applySchema(ctx context.Context) error {
 	schema, err := sqlFiles.ReadFile("schema.sql")
 	if err != nil {
 		return fmt.Errorf("store: reading the embedded schema: %w", err)
 	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: beginning the schema transaction: %w", err)
+	}
 	for _, statement := range SplitStatements(string(schema)) {
-		if _, err := s.db.ExecContext(ctx, statement); err != nil {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			_ = tx.Rollback()
 			return fmt.Errorf("store: applying the schema: %w\nstatement: %s", err, firstLine(statement))
 		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("store: committing the schema: %w", err)
 	}
 	return nil
 }

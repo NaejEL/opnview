@@ -20,6 +20,7 @@ import (
 // change, which is exactly the plugin-hostile design the promotion removes. So the test reads the
 // schema before and after and asserts that nothing in it moved.
 func TestAProviderCanIntroduceASubjectMeasureAndUnitTheSchemaDidNotShipWith(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -71,6 +72,7 @@ func TestAProviderCanIntroduceASubjectMeasureAndUnitTheSchemaDidNotShipWith(t *t
 // one measure both exist, and a screen grouping by measure would then show one reading twice
 // under two names.
 func TestAMeasurementTermThatIsNotAWellFormedTokenIsRejected(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -104,6 +106,7 @@ func TestAMeasurementTermThatIsNotAWellFormedTokenIsRejected(t *testing.T) {
 // itself — and attributing it to a source would say that source measured the temperature. A
 // reading a provider supplied names that provider, because it is that provider's material.
 func TestAFirewallGaugeNamesNoProviderAndASampledReadingNamesItsOwn(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -155,6 +158,7 @@ func TestAFirewallGaugeNamesNoProviderAndASampledReadingNamesItsOwn(t *testing.T
 // have made every gauge non-idempotent, which is the opposite of what a sampler restarting inside
 // one interval needs. The index wraps the column in ifnull, and both halves are asserted here.
 func TestTwoProvidersReadingOneSubjectAtOneInstantAreTwoReadingsAndOneGaugeIsStillIdempotent(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 

@@ -19,6 +19,7 @@ import (
 // refuses one that does not, and the statement it must carry says outright that it is
 // not a capture.
 func TestEveryFixtureSaysInItsOwnFileThatItIsSynthesisedAndNotACapture(t *testing.T) {
+	t.Parallel()
 	names := fixtureNames(t)
 	if len(names) < 20 {
 		t.Fatalf("only %d fixtures were found, so this check is not reaching them", len(names))
@@ -72,6 +73,7 @@ func TestEveryFixtureSaysInItsOwnFileThatItIsSynthesisedAndNotACapture(t *testin
 // heading somebody renamed. The endpoint registry's own citations are checked the same
 // way in internal/opnsense.
 func TestEveryFixtureNamesASurveySectionThatExists(t *testing.T) {
+	t.Parallel()
 	survey := readSurveyDocument(t)
 	for _, name := range fixtureNames(t) {
 		section := readFixture(t, name).Provenance.SurveySection

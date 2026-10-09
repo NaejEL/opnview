@@ -42,6 +42,7 @@ func assertEveryFamilyEqualsTheFlows(t *testing.T, database *Store, flows []stor
 // into the purged part before any refresh read it, so only the refresh's own reading of the
 // purged part can bring the hour, the day, the week and the month their 77 bytes.
 func TestAPurgeBetweenAPassStoreAndItsRefreshLeavesEverySlotWhole(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	if err := network.db.SetSetting(ctx, "retention_seconds", "600", network.now); err != nil {
@@ -115,6 +116,7 @@ func TestAPurgeBetweenAPassStoreAndItsRefreshLeavesEverySlotWhole(t *testing.T) 
 // places before it purges is every unplaced end of a flow older than the horizon, and
 // nothing of a flow the purge keeps. With an unlimited retention nothing is due.
 func TestThePurgeDueAddressesAreTheUnplacedEndsOfTheFlowsItWillRemove(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	placed, unplaced, kept := network.clients[0], network.clients[1], network.clients[2]

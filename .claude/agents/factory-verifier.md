@@ -36,6 +36,14 @@ rule recorded in `CLAUDE.md`, and you must report it as such.
    output is a formatting failure. `docker compose run --rm dev <command>` runs
    anything else you need in the same environment.
 
+   `checks` is the per-iteration command: the everyday suite, without `-race`,
+   whose `go test` wall time must stay under its 60 s budget or the run fails.
+   `docker compose run --rm pre-deployment` is the gate run before a
+   deployment — `-race` over the whole suite, the tests moved out of `checks`
+   with the `predeployment` build tag, the budget's own check and the schema
+   checks with their scale seeds and query plans; see `ROADMAP.md`,
+   *Development and test environment*.
+
    **No Go toolchain is installed on the host, by design.** A missing host
    `go`, `gofmt` or `sqlite3` is therefore never a defect and never an issue of
    any severity. Never run the project commands on the host, and never record a

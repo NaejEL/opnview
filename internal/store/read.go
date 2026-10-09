@@ -33,12 +33,19 @@ type VolumeKey struct {
 	// end that is outside.
 	SrcInterfaceID *int64
 	DstInterfaceID *int64
-	// PeerAddress is the outside end, nil between two interfaces.
+	// PeerAddress is the outside end, nil between two interfaces, and nil for a flow
+	// with an end that is this firewall when its other end is not outside.
 	PeerAddress *string
-	// TrafficScope is east_west or north_south.
+	// TrafficScope is east_west, north_south or this_firewall.
 	TrafficScope string
-	// TrafficDirection is outbound, inbound or inter_interface.
+	// TrafficDirection is outbound, inbound, inter_interface, to_this_firewall or
+	// from_this_firewall.
 	TrafficDirection string
+	// ExitLegDevice is nil for every row a total counts, and the device a second leg
+	// was logged on otherwise: the second records of paired connections, which count
+	// on that interface's own figures and nowhere else (decision 2 of the step-5A live
+	// corrections). Total and ByDirection leave them out; ExitLegs sums them.
+	ExitLegDevice *string
 }
 
 // VolumeFigures are the summable figures of a volume. Allowed is flow.action = 'pass',
@@ -88,22 +95,45 @@ type VolumeWindow struct {
 	Rows []VolumeRow
 }
 
-// Total sums every row.
+// Total sums every row that counts a connection: every row but the second legs, so a
+// connection logged on two interfaces is counted once.
 func (w VolumeWindow) Total() VolumeFigures {
 	var total VolumeFigures
 	for _, row := range w.Rows {
+		if row.ExitLegDevice != nil {
+			continue
+		}
 		total.add(row.VolumeFigures)
 	}
 	return total
 }
 
-// ByDirection sums the rows per traffic direction.
+// ByDirection sums the rows Total counts, per traffic direction.
 func (w VolumeWindow) ByDirection() map[string]VolumeFigures {
 	sums := map[string]VolumeFigures{}
 	for _, row := range w.Rows {
+		if row.ExitLegDevice != nil {
+			continue
+		}
 		figures := sums[row.TrafficDirection]
 		figures.add(row.VolumeFigures)
 		sums[row.TrafficDirection] = figures
+	}
+	return sums
+}
+
+// ExitLegs sums the second legs per device they were logged on: what an interface's
+// own figures add to the rows that name it, for the connections whose first leg was
+// logged on another interface.
+func (w VolumeWindow) ExitLegs() map[string]VolumeFigures {
+	sums := map[string]VolumeFigures{}
+	for _, row := range w.Rows {
+		if row.ExitLegDevice == nil {
+			continue
+		}
+		figures := sums[*row.ExitLegDevice]
+		figures.add(row.VolumeFigures)
+		sums[*row.ExitLegDevice] = figures
 	}
 	return sums
 }
@@ -184,11 +214,11 @@ func (s *Store) readVolume(ctx context.Context, name string, from, to int64,
 	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var (
-			row      VolumeRow
-			src, dst sql.NullInt64
-			peer     sql.NullString
+			row        VolumeRow
+			src, dst   sql.NullInt64
+			peer, exit sql.NullString
 		)
-		if err := rows.Scan(&src, &dst, &peer, &row.TrafficScope, &row.TrafficDirection,
+		if err := rows.Scan(&src, &dst, &peer, &row.TrafficScope, &row.TrafficDirection, &exit,
 			&row.Bytes, &row.AllowedBytes, &row.BlockedBytes, &row.UnknownBytes,
 			&row.AllowedConnections, &row.BlockedConnections, &row.UnknownConnections); err != nil {
 			return fmt.Errorf("store: %s: %w", name, err)
@@ -198,6 +228,10 @@ func (s *Store) readVolume(ctx context.Context, name string, from, to int64,
 		if peer.Valid {
 			value := peer.String
 			row.PeerAddress = &value
+		}
+		if exit.Valid {
+			value := exit.String
+			row.ExitLegDevice = &value
 		}
 		key := volumeKeyString(row.VolumeKey)
 		if existing, present := sums[key]; present {
@@ -225,8 +259,12 @@ func volumeKeyString(key VolumeKey) string {
 	if key.PeerAddress != nil {
 		peer = "=" + *key.PeerAddress
 	}
+	exit := "-"
+	if key.ExitLegDevice != nil {
+		exit = "=" + *key.ExitLegDevice
+	}
 	return strings.Join([]string{part(key.SrcInterfaceID), part(key.DstInterfaceID), peer,
-		key.TrafficScope, key.TrafficDirection}, "\x1f")
+		key.TrafficScope, key.TrafficDirection, exit}, "\x1f")
 }
 
 // sortedVolumeRows returns the rows in a stable order: by bytes, then by key.
@@ -326,6 +364,10 @@ const (
 	TreeRootOwner     TreeRoot = "owner"
 )
 
+// TreeNodeThisFirewall is the node an end that is this firewall lands under, on
+// whichever side of the tree that end is.
+const TreeNodeThisFirewall = "this_firewall"
+
 // TreeNode is one node of a connection tree. Its figures are the sums of the flows
 // that landed in it, and its children's figures sum to its own.
 type TreeNode struct {
@@ -363,6 +405,15 @@ type Tree struct {
 //     for an address never looked up, or "inter_interface" when neither end is
 //     outside; and below that "site:<name>" or "site:none" -- no site name
 //     inferred.
+//
+// THIS FIREWALL HAS A NODE ON EACH SIDE, "this_firewall", and an end that is this
+// firewall lands there and nowhere else: never under an operator, an unplaced
+// condition, "interface:none" or "client:none". A flow between an inside client and
+// this firewall lands under the client inside and under "this_firewall" outside; a
+// flow between this firewall and an outside address lands under "this_firewall"
+// inside -- with "this_firewall" again below it, for the roots that have a second
+// level -- and under that address's operator outside. A second leg is left out: its
+// connection is the first leg's, which the tree already holds.
 func (s *Store) ReadConnectionTree(ctx context.Context, from, to int64, root TreeRoot) (Tree, error) {
 	var tree Tree
 	switch root {
@@ -393,14 +444,25 @@ func (s *Store) ReadConnectionTree(ctx context.Context, from, to int64, root Tre
 			&site, &connections, &bytes, &blocked); err != nil {
 			return tree, fmt.Errorf("store: read_connection_tree: %w", err)
 		}
+		// An end that is this firewall: inside when the other end is outside (or is this
+		// firewall too), outside when the other end is an inside client.
+		firewall := direction == DirectionToThisFirewall || direction == DirectionFromThisFirewall
+		firewallInside := firewall && (lookupState.Valid || !interfaceID.Valid)
+		firewallOutside := firewall && !lookupState.Valid
+
 		clientKey := keyOr("client", clientID, "none")
 		var first, second string
-		switch root {
-		case TreeRootInterface:
+		switch {
+		case firewallInside:
+			first = TreeNodeThisFirewall
+			if root != TreeRootClient {
+				second = TreeNodeThisFirewall
+			}
+		case root == TreeRootInterface:
 			first, second = keyOr("interface", interfaceID, "none"), clientKey
-		case TreeRootClient:
+		case root == TreeRootClient:
 			first = clientKey
-		case TreeRootOwner:
+		case root == TreeRootOwner:
 			owner := keyOr("owner", ownerID, "unassigned")
 			if !clientID.Valid {
 				owner = "owner:none"
@@ -411,6 +473,8 @@ func (s *Store) ReadConnectionTree(ctx context.Context, from, to int64, root Tre
 
 		var destination string
 		switch {
+		case firewallOutside:
+			destination = TreeNodeThisFirewall
 		case direction == "inter_interface":
 			destination = "inter_interface"
 		case lookupState.Valid && lookupState.String == "resolved":
@@ -921,8 +985,16 @@ type PublicAddress struct {
 }
 
 // ReadPublicAddresses returns every upstream interface's address history. The
-// address the interface holds is what the firewall sees; behind an upstream NAT it
-// is not the address the Internet sees, and nothing here can know that one.
+// address the interface holds is what the firewall sees, and only that.
+//
+// THE DOUBLE-NAT LIMIT. Behind an upstream NAT -- an Internet box in router mode in
+// front of the firewall, or a carrier-grade NAT at the provider -- the firewall does
+// not see its public IPv4 address at all: the upstream interface holds a private or
+// shared address, and the address the Internet sees belongs to a device opnview does
+// not read. Nothing opnview reads can supply it: no OPNsense endpoint reports it, and
+// asking a third party would be an outbound call the project does not allow. A screen
+// built on this function says so rather than presenting the interface's address as
+// public (ROADMAP.md, step-5 checklist; docs/widget-catalogue.md, "Public address").
 func (s *Store) ReadPublicAddresses(ctx context.Context) ([]PublicAddress, error) {
 	interfaces, err := s.readInterfaces(ctx)
 	if err != nil {

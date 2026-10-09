@@ -61,18 +61,24 @@ PRAGMA foreign_keys = ON;
 
 BEGIN IMMEDIATE;
 
+-- A flow with an end that is this firewall keeps classified_flow's peer_address,
+-- the volume family's key, which is NULL when its other end is not outside; it
+-- contributes to no peer, client or owner figure. A second leg keeps the device it
+-- was logged on, exit_leg_device, which is the only volume figure it counts in.
 INSERT INTO purged_flow_hour (hour_start_at, src_interface_id, dst_interface_id, src_client_id,
-                              local_client_id, traffic_direction, peer_address, rule_id,
-                              site_name, action, bytes, connections, purged_at)
+                              local_client_id, traffic_direction, peer_address, exit_leg_device,
+                              rule_id, site_name, action, bytes, connections, purged_at)
 SELECT (f.observed_at / 3600) * 3600,
        f.src_interface_id,
        f.dst_interface_id,
        f.src_client_id,
        f.local_client_id,
        f.traffic_direction,
-       CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address
+       CASE WHEN f.traffic_direction IN ('to_this_firewall', 'from_this_firewall') THEN f.peer_address
+            WHEN f.src_interface_id IS NOT NULL THEN f.dst_address
             WHEN f.dst_interface_id IS NOT NULL THEN f.src_address
             ELSE f.peer_address END,
+       f.exit_leg_device,
        f.rule_id,
        a.site_name,
        f.action,
@@ -86,7 +92,7 @@ WHERE f.observed_at < (
     FROM setting
     WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
 )
-GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
+GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11;
 
 INSERT INTO retention_purge (id, purged_before, purged_at)
 SELECT 1, :now - CAST(value AS INTEGER), :now

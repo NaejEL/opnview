@@ -24,6 +24,7 @@ import (
 // apart in the direction that would fail at runtime: an implementation with no registry row
 // cannot have its availability recorded against anything.
 func TestEveryRegisteredImplementationHasARegistryRow(t *testing.T) {
+	t.Parallel()
 	database := newTestStore(t)
 	ctx := context.Background()
 
@@ -57,6 +58,7 @@ func TestEveryRegisteredImplementationHasARegistryRow(t *testing.T) {
 //     destination, and it has NO registry row at all, precisely so that this test does not have
 //     to be told to ignore one. It is listed here only to say that the absence is deliberate.
 func TestEveryRegistryRowOfACollectedKindHasAnImplementation(t *testing.T) {
+	t.Parallel()
 	database := newTestStore(t)
 	registered := registeredKeysByKind()
 
@@ -82,6 +84,7 @@ func TestEveryRegistryRowOfACollectedKindHasAnImplementation(t *testing.T) {
 // rather than scaffolding: two implementations of each of these kinds exist today, and on the
 // maintainer's own hardware both are running.
 func TestTheKindsWithSeveralImplementationsReallyHaveSeveral(t *testing.T) {
+	t.Parallel()
 	registered := registeredKeysByKind()
 	for kind, minimum := range map[string]int{
 		KindDHCPLease: 3,
@@ -108,6 +111,7 @@ func TestTheKindsWithSeveralImplementationsReallyHaveSeveral(t *testing.T) {
 // probe.go exists for reproducibility of the request sequence and for nothing else, and this
 // is what says so in a way that can fail.
 func TestAnImplementationTheFirewallDoesNotSeparateIsNeverActivatedWhateverItsPosition(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 
@@ -146,6 +150,7 @@ func TestAnImplementationTheFirewallDoesNotSeparateIsNeverActivatedWhateverItsPo
 // a grammar nobody has recorded. A pass that meets one records it and returns no error, because
 // nothing failed: nothing was attempted.
 func TestAnImplementationThatCannotBeReadReportsWhyRatherThanFailingThePass(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 
@@ -159,7 +164,8 @@ func TestAnImplementationThatCannotBeReadReportsWhyRatherThanFailingThePass(t *t
 				return err
 			}
 			var seen []string
-			return harness.collector.collectLeases(ctx, &seen)
+			_, err := harness.collector.collectLeases(ctx, &seen)
+			return err
 		}},
 		{KindDNSLookup, ProviderDnsmasq, func(ctx context.Context) error {
 			if err := harness.store.SetActiveProviders(ctx, KindDNSLookup, ProviderDnsmasq); err != nil {
@@ -182,6 +188,7 @@ func TestAnImplementationThatCannotBeReadReportsWhyRatherThanFailingThePass(t *t
 // TestTheUnreadableImplementationsReturnTheUnsupportedSentinel pins the sentinel itself, so a
 // caller can tell "cannot be read" from "the call failed" without matching on a message.
 func TestTheUnreadableImplementationsReturnTheUnsupportedSentinel(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 
@@ -198,6 +205,7 @@ func TestTheUnreadableImplementationsReturnTheUnsupportedSentinel(t *testing.T) 
 // TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence keeps a registry row that
 // somebody activated by hand, and that no code answers for, from looking like a quiet source.
 func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 
@@ -221,7 +229,7 @@ func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testi
 	}
 
 	var seen []string
-	if err := harness.collector.collectLeases(ctx, &seen); err == nil {
+	if _, err := harness.collector.collectLeases(ctx, &seen); err == nil {
 		t.Fatal("collecting from an active provider with no implementation returned no error")
 	}
 }
@@ -257,6 +265,7 @@ func registeredKeysByKind() map[string][]string {
 // an implementation cannot reach the store, discovery, availability or activation — and that
 // argument is only true while the list below is the whole list.
 func TestThePortGrantsExactlyTheEnumeratedCapabilities(t *testing.T) {
+	t.Parallel()
 	granted := map[string]bool{}
 	port := reflect.TypeOf((*session)(nil)).Elem()
 	for index := 0; index < port.NumMethod(); index++ {
@@ -292,6 +301,7 @@ func TestThePortGrantsExactlyTheEnumeratedCapabilities(t *testing.T) {
 // collect.go states, so this also fails if an implementation is added that reaches past the
 // port on its first day.
 func TestNoImplementationReachesPastThePort(t *testing.T) {
+	t.Parallel()
 	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatalf("reading the package directory: %v", err)

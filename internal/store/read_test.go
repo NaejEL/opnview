@@ -42,6 +42,7 @@ func directWindow(t *testing.T, database *Store, from, to int64) map[string]Volu
 
 // TestTheRollingWindowEqualsADirectComputationInsideTheHorizon is AC22, both halves.
 func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) {
+	t.Parallel()
 	network := populated(t, 3, 10, 1200, 10*86400)
 	ctx := context.Background()
 	random := rand.New(rand.NewSource(5))
@@ -113,6 +114,7 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 
 // TestASeriesSumsToItsWindowAndMarksItsGaps is AC23.
 func TestASeriesSumsToItsWindowAndMarksItsGaps(t *testing.T) {
+	t.Parallel()
 	network := populated(t, 2, 6, 600, 3*86400)
 	ctx := context.Background()
 	from := network.now - 2*86400 - 1700
@@ -185,6 +187,7 @@ func TestASeriesSumsToItsWindowAndMarksItsGaps(t *testing.T) {
 // docs/mockups/check-tree-reconciliation.js: children sum to their parent, and each side's
 // first level sums to every flow of the window.
 func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
+	t.Parallel()
 	network := populated(t, 3, 9, 700, 2*86400)
 	attributeNetwork(t, network)
 	ctx := context.Background()
@@ -271,6 +274,7 @@ func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
 
 // TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary is AC25.
 func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
+	t.Parallel()
 	network := populated(t, 2, 6, 400, 86400)
 	ctx := context.Background()
 	purposes := []any{"advertising", "tracking", "threat", "parental", "other", nil}
@@ -369,8 +373,18 @@ func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 
 // TestTheAttributionRateIsUndefinedWithoutAReachableResolver is AC30.
 func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
+	t.Parallel()
 	network := populated(t, 2, 4, 300, 5*86400)
 	ctx := context.Background()
+	// A record with both ends outside, logged on the upstream interface: the unsolicited
+	// packet to the firewall's own address that used to be one is this firewall's now
+	// (step-5A live corrections, item 1), so the case is written explicitly.
+	port := int64(443)
+	network.classifyAndRefresh(t, network.insert(t, []networkFlow{
+		{observedAt: network.now - 50, device: network.upstream.device, direction: "in",
+			src: outside(3, false), dst: outside(4, false), dstPort: &port, protocol: "tcp",
+			action: "pass", bytes: 90},
+	}))
 	rate, err := network.db.ReadAttributionRate(ctx, network.now-86400, network.now+1, nil)
 	if err != nil {
 		t.Fatalf("reading the rate: %v", err)
@@ -389,8 +403,13 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 	if unsent == 0 {
 		t.Fatal("the window holds no flow with both ends outside, so the eligibility rule has no teeth")
 	}
+	if toFirewall := queryInt(t, network.db, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
+		AND (src_is_this_firewall = 1 OR dst_is_this_firewall = 1)`, network.now-86400, network.now+1); toFirewall == 0 {
+		t.Fatal("the window holds no flow from or to this firewall, so that half of the rule has no teeth")
+	}
 	if sent := queryInt(t, network.db, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
-		AND dst_interface_id IS NULL AND src_client_id IS NOT NULL`, network.now-86400, network.now+1); rate.EligibleFlows != sent {
+		AND dst_interface_id IS NULL AND src_client_id IS NOT NULL
+		AND src_is_this_firewall = 0 AND dst_is_this_firewall = 0`, network.now-86400, network.now+1); rate.EligibleFlows != sent {
 		t.Errorf("the rate counts %d eligible flows, not the %d a client sent outside", rate.EligibleFlows, sent)
 	}
 	unbound, _ := network.db.ProviderID(ctx, "dns_lookup", "unbound")
@@ -450,6 +469,7 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 
 // TestAChangeOfPublicAddressIsANewRowAndTheOldOneKeepsItsLastSighting is AC12.
 func TestAChangeOfPublicAddressIsANewRowAndTheOldOneKeepsItsLastSighting(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 1, 1)
 	ctx := context.Background()
 	bits := int64(24)
@@ -464,7 +484,7 @@ func TestAChangeOfPublicAddressIsANewRowAndTheOldOneKeepsItsLastSighting(t *test
 	} {
 		if err := network.db.UpsertInterfaceAddress(ctx, InterfaceAddress{
 			InterfaceID: network.upstream.id, SourceField: SourceFieldAddr4, Address: step.address,
-			PrefixLength: &bits, AddressFamily: 4}, step.at); err != nil {
+			PrefixLength: &bits, AddressFamily: 4}, nil, step.at); err != nil {
 			t.Fatalf("writing an address: %v", err)
 		}
 	}
@@ -525,6 +545,7 @@ func insertReading(t *testing.T, database *Store, kind SubjectKind, key string, 
 // the address's sending -- so a client talking to several peers has an outbound figure, and
 // the bound is twice the measurement interval the store reads from the setting row.
 func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	const interval = 300
@@ -625,6 +646,7 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 
 // TestAThroughputIsDerivedFromConsecutiveCountersAndAResetIsNotANegativeRate is AC16.
 func TestAThroughputIsDerivedFromConsecutiveCountersAndAResetIsNotANegativeRate(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 1, 1)
 	device := network.inside[0].device
 	for _, sample := range []struct {
@@ -660,6 +682,7 @@ func TestAThroughputIsDerivedFromConsecutiveCountersAndAResetIsNotANegativeRate(
 
 // TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero is AC2's code half.
 func TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 1, 2)
 	ctx := context.Background()
 	client := network.clients[0]
@@ -693,6 +716,7 @@ func TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero(t *testi
 // identifier, a legacy rule's descriptions are left unresolved, and a floating rule is its own
 // count.
 func TestNonLoggingRulesAreCountedPerInterfaceByKey(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 3, 3)
 	ctx := context.Background()
 	no, yes, legacy := false, true, true

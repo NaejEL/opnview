@@ -655,32 +655,89 @@ func uptimeReadable(text string) bool {
 	return err == nil
 }
 
+// The absences of a gateway reading, each named on its own in the measurement provider's
+// availability detail (step-5A live corrections, item 4.2). Every one writes no reading:
+// a gateway figure that is not there is never a zero.
+//
+// The privilege is OPNsense's own name for the ACL page that covers the path:
+// "System: Gateways", whose patterns include api/routes/gateway/status (opnsense/core
+// 26.7.3, src/opnsense/mvc/app/models/OPNsense/Core/ACL/ACL.xml, page-system-gateways).
+// The API answers 401 "Authentication Failed" to a key it does not accept and 403
+// "Forbidden" to a key whose user lacks the page (Base/ApiControllerBase.php).
+//
+// What "~" means is dpinger.inc's own logic (opnsense/core 26.7.3,
+// src/etc/inc/plugins.inc.d/dpinger.inc, dpinger_status): every gateway starts with
+// delay, stddev and loss "~", and they are replaced only when a dpinger process runs for
+// the gateway, its socket opens, and it reports a figure other than a standard deviation
+// and a loss both of 0. A gateway whose monitoring is disabled has no dpinger process,
+// and its status is "none".
+const (
+	gatewayAbsenceDenied = "gateway latency and loss (denied, HTTP %d: the API key's user needs the " +
+		"privilege \"System: Gateways\", which covers /api/routes/gateway/status)"
+	gatewayAbsenceNotFound = "gateway latency and loss (not found, HTTP 404: this firewall has no " +
+		"/api/routes/gateway/status)"
+	// GatewayController::statusAction starts from {"items": [], "status": "failed"} and sets
+	// "ok" only when the configd action interface gateways status returned something
+	// non-empty (opnsense/core 26.7.3, Routes/Api/GatewayController.php), so a firewall with
+	// no gateway configured answers "failed" too: the wording names both. The "no gateway
+	// listed" absence -- "ok" with no item -- cannot arise from that controller; it is kept
+	// for an answer of that shape, which is named rather than read as a failure.
+	gatewayAbsenceFailed = "gateway latency and loss (the endpoint answered \"status\": \"failed\" with " +
+		"no item, which it does both when no gateway is configured and when the configd action " +
+		"interface gateways status returned nothing)"
+	gatewayAbsenceNoGateway = "gateway latency and loss (the endpoint answered \"status\": \"ok\" and listed " +
+		"no gateway)"
+	gatewayAbsenceNoFigure = "gateway latency and loss (%d of %d gateways listed with no figure: " +
+		"dpinger.inc reports \"~\" for delay, stddev and loss when no dpinger process monitors the " +
+		"gateway -- gateway monitoring disabled -- when its socket cannot be read, or before it has " +
+		"measured anything)"
+	gatewayAbsenceUnanswered = "gateway latency and loss (the endpoint did not answer usably: %s)"
+)
+
 // sampleGateways reads /api/routes/gateway/status and returns each gateway's round-trip
 // time, its standard deviation and its packet loss, keyed by the gateway's name.
 //
-// A figure the endpoint reports as "~" -- dpinger has none for that gateway -- or in a form
-// this code cannot read is not written, and a gateway with no figure at all is not written
-// either: no reading is ever a zero standing in for one that did not answer. When the endpoint
-// does not answer, or answers with no gateway, the absence is returned in words for the
-// availability detail, which is where an unavailable reading is recorded.
+// THE HTTP OUTCOME IS KEPT, so each absence is named rather than folded into "did not
+// answer": denied, not found, "status": "failed", no gateway listed, and gateways listed
+// with no figure. A figure the endpoint reports as "~", or in a form this code cannot
+// read, is not written, and a gateway with no figure at all is not written either: no
+// reading is ever a zero standing in for one that did not answer. The absence is
+// returned in words for the availability detail, which is where an unavailable reading
+// is recorded.
 func sampleGateways(ctx context.Context, host session, now int64) ([]store.MeasurementSample, string, error) {
-	body, ok, err := host.readObject(ctx, opnsense.GatewayStatus)
-	if err != nil {
+	response, err := host.call(ctx, opnsense.GatewayStatus, opnsense.RequestOptions{})
+	if err != nil && response.Outcome == "" {
 		return nil, "", err
 	}
-	if !ok {
-		return nil, "gateway latency and loss (the endpoint did not answer)", nil
+	switch response.Outcome {
+	case opnsense.OutcomeOK:
+	case opnsense.OutcomeForbidden:
+		return nil, fmt.Sprintf(gatewayAbsenceDenied, response.StatusCode), nil
+	case opnsense.OutcomeNotFound:
+		return nil, gatewayAbsenceNotFound, nil
+	default:
+		return nil, fmt.Sprintf(gatewayAbsenceUnanswered, response.Detail), nil
+	}
+	var body decode.Object
+	if err := json.Unmarshal(response.Body, &body); err != nil {
+		return nil, fmt.Sprintf(gatewayAbsenceUnanswered, "the body is not a JSON object"), nil
+	}
+	if status, present := decode.String(body, "status"); present && decode.LowerASCII(status) == "failed" {
+		return nil, gatewayAbsenceFailed, nil
 	}
 	items := decode.Objects(body["items"])
 	if len(items) == 0 {
-		return nil, "gateway latency and loss (the endpoint reported no gateway)", nil
+		return nil, gatewayAbsenceNoGateway, nil
 	}
 	var readings []store.MeasurementSample
+	withoutFigure := 0
 	for _, item := range items {
 		name, present := decode.String(item, gatewayNameKey)
 		if !present {
+			withoutFigure++
 			continue
 		}
+		wrote := false
 		for _, reading := range []struct {
 			key     string
 			measure store.Measure
@@ -707,10 +764,14 @@ func sampleGateways(ctx context.Context, host session, now int64) ([]store.Measu
 				Value:       value,
 				SampledAt:   now,
 			})
+			wrote = true
+		}
+		if !wrote {
+			withoutFigure++
 		}
 	}
-	if len(readings) == 0 {
-		return nil, "gateway latency and loss (no gateway reported a figure)", nil
+	if withoutFigure > 0 {
+		return readings, fmt.Sprintf(gatewayAbsenceNoFigure, withoutFigure, len(items)), nil
 	}
 	return readings, "", nil
 }

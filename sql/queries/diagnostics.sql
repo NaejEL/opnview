@@ -34,6 +34,9 @@ WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end
   AND f.src_client_id IS NOT NULL
   AND f.dst_interface_id IS NULL
+  AND f.src_is_this_firewall = 0
+  AND f.dst_is_this_firewall = 0
+  AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
 GROUP BY f.src_client_id
 ORDER BY attribution_rate_percent ASC, client_id ASC;
 
@@ -358,3 +361,165 @@ LEFT JOIN provider AS p ON p.kind = k.kind
 LEFT JOIN collection_gap AS g ON g.provider_id = p.id
      AND g.detected_at >= :window_start AND g.detected_at < :window_end
 GROUP BY k.kind, g.reason;
+
+-- diagnostic: Unresolved host names by cause
+-- Every lookup whose logged host name still names no machine -- client_resolution
+-- 'unknown_hostname' -- in the window, sorted into the first cause that applies, in
+-- this order (step-5A live corrections, item 3.1). The leases are compared as of the
+-- lookup's instant where the cause says so:
+--   this_firewall    the name is `localhost`, which names this firewall
+--   exact_match      a lease carries the logged name exactly, case aside, at the
+--                    lookup's instant
+--   logged_label     a lease carries the logged name's first label, at that instant
+--   both_labels      a lease's first label is the logged name's first label, at that
+--                    instant
+--   trailing_dot     the names are equal once a trailing dot is removed, at that
+--                    instant
+--   not_at_instant   a lease names the host by its first label, but none was valid at
+--                    the lookup's instant
+--   no_lease         no lease names the host at all
+-- The first five are what the matching of the step-5A live corrections resolves, so a
+-- database it has run on holds lookups in the last two only, once a lease pass has
+-- examined them. The query reads the leases once per lookup, which is why it is a
+-- diagnostic and not a statement the collector runs.
+SELECT cause, count(*) AS lookups
+FROM (
+    SELECT
+        CASE
+            WHEN lower(rtrim(r.client_hostname, '.')) = 'localhost' THEN 'this_firewall'
+            WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
+                         WHERE lower(l.hostname) = lower(r.client_hostname)
+                           AND (l.starts_at IS NULL OR l.starts_at <= r.looked_up_at)
+                           AND (l.expires_at IS NULL OR l.expires_at >= r.looked_up_at))
+                THEN 'exact_match'
+            WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
+                         WHERE lower(l.hostname) = lower(CASE
+                                   WHEN instr(r.client_hostname, '.') > 0
+                                       THEN substr(r.client_hostname, 1, instr(r.client_hostname, '.') - 1)
+                                   ELSE r.client_hostname END)
+                           AND (l.starts_at IS NULL OR l.starts_at <= r.looked_up_at)
+                           AND (l.expires_at IS NULL OR l.expires_at >= r.looked_up_at))
+                THEN 'logged_label'
+            WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
+                         WHERE l.hostname_label = lower(CASE
+                                   WHEN instr(r.client_hostname, '.') > 0
+                                       THEN substr(r.client_hostname, 1, instr(r.client_hostname, '.') - 1)
+                                   ELSE r.client_hostname END)
+                           AND (l.starts_at IS NULL OR l.starts_at <= r.looked_up_at)
+                           AND (l.expires_at IS NULL OR l.expires_at >= r.looked_up_at))
+                THEN 'both_labels'
+            WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
+                         WHERE lower(rtrim(l.hostname, '.')) = lower(rtrim(r.client_hostname, '.'))
+                           AND (l.starts_at IS NULL OR l.starts_at <= r.looked_up_at)
+                           AND (l.expires_at IS NULL OR l.expires_at >= r.looked_up_at))
+                THEN 'trailing_dot'
+            WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
+                         WHERE l.hostname_label = lower(CASE
+                                   WHEN instr(rtrim(r.client_hostname, '.'), '.') > 0
+                                       THEN substr(rtrim(r.client_hostname, '.'), 1,
+                                                   instr(rtrim(r.client_hostname, '.'), '.') - 1)
+                                   ELSE rtrim(r.client_hostname, '.') END))
+                THEN 'not_at_instant'
+            ELSE 'no_lease'
+        END AS cause
+    FROM dns_resolution AS r
+    WHERE r.client_resolution = 'unknown_hostname'
+      AND r.looked_up_at >= :window_start
+      AND r.looked_up_at < :window_end
+)
+GROUP BY cause
+ORDER BY cause;
+
+-- diagnostic: live_this_firewall_unmarked
+-- Live validation L2 of the step-5A live corrections: the flows of the window with an
+-- end whose address this firewall held at the flow's instant -- the
+-- this_firewall_address view's definition, with the margin of the discovery interval
+-- setting, 300 s when the row is absent -- that are NOT recorded as this firewall.
+-- Expected 0. A loopback end is recognised from the address form by the code and is
+-- not restated here.
+SELECT count(*) AS unmarked_flows
+FROM flow AS f
+WHERE f.observed_at >= :window_start
+  AND f.observed_at < :window_end
+  AND ((f.src_is_this_firewall = 0
+        AND EXISTS (SELECT 1 FROM this_firewall_address AS h
+                    WHERE h.address = f.src_address
+                      AND h.first_seen_at - coalesce((SELECT CAST(s.value AS INTEGER) FROM setting AS s
+                            WHERE s.key = 'refresh_interval_discovery_seconds'), 300) <= f.observed_at
+                      AND (h.is_current = 1
+                           OR h.last_seen_at + coalesce((SELECT CAST(s.value AS INTEGER) FROM setting AS s
+                            WHERE s.key = 'refresh_interval_discovery_seconds'), 300) >= f.observed_at)))
+    OR (f.dst_is_this_firewall = 0
+        AND EXISTS (SELECT 1 FROM this_firewall_address AS h
+                    WHERE h.address = f.dst_address
+                      AND h.first_seen_at - coalesce((SELECT CAST(s.value AS INTEGER) FROM setting AS s
+                            WHERE s.key = 'refresh_interval_discovery_seconds'), 300) <= f.observed_at
+                      AND (h.is_current = 1
+                           OR h.last_seen_at + coalesce((SELECT CAST(s.value AS INTEGER) FROM setting AS s
+                            WHERE s.key = 'refresh_interval_discovery_seconds'), 300) >= f.observed_at))));
+
+-- diagnostic: live_anonymous_north_south
+-- Live validation L3: the flows of the window counted north-south with neither end
+-- placed -- no interface on either end, neither end this firewall -- and which are not
+-- the second leg of a counted connection. On the live firewall 5A put most of its flows
+-- here, the firewall's own recursion among them; expected about 0. What remains is
+-- traffic between two outside addresses, which a firewall forwards only exceptionally.
+SELECT count(*) AS anonymous_flows,
+       coalesce(sum(f.packet_bytes), 0) AS anonymous_bytes
+FROM flow AS f
+WHERE f.observed_at >= :window_start
+  AND f.observed_at < :window_end
+  AND f.traffic_scope = 'north_south'
+  AND f.src_interface_id IS NULL
+  AND f.dst_interface_id IS NULL
+  AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg');
+
+-- diagnostic: live_upstream_firewall_source_outcomes
+-- Live validation L11: every `out` record of the window on an upstream interface whose
+-- source is this firewall, by pairing outcome, with, for the second legs, how many have
+-- no first leg naming them back. Every record carries exactly one outcome, so a `none`
+-- row is a defect, and `partner_missing` is expected to be 0.
+SELECT coalesce(f.pair_outcome, 'none') AS outcome,
+       count(*) AS records,
+       sum(CASE WHEN f.pair_outcome = 'second_leg'
+                     AND NOT EXISTS (SELECT 1 FROM flow AS p
+                                     WHERE p.id = f.paired_flow_id
+                                       AND p.pair_outcome = 'first_leg'
+                                       AND p.paired_flow_id = f.id)
+                THEN 1 ELSE 0 END) AS partner_missing
+FROM flow AS f
+JOIN interface AS i ON i.device = f.interface_device
+WHERE f.observed_at >= :window_start
+  AND f.observed_at < :window_end
+  AND f.direction = 'out'
+  AND f.src_is_this_firewall = 1
+  AND i.is_upstream = 1
+GROUP BY 1
+ORDER BY 1;
+
+-- diagnostic: live_paired_counted_twice
+-- Live validation L12: the connections of the window counted twice. A paired
+-- connection is counted once, on its first leg (decision 2): its second leg carries
+-- the device it was logged on in classified_flow.exit_leg_device, which keeps it out of
+-- every total, and it carries no attribution. So a second leg with no exit-leg device, a
+-- second leg with an attribution, and a first leg whose partner is not its second leg
+-- are each a connection counted twice or wrongly, and the sum is expected to be 0.
+SELECT (SELECT count(*) FROM classified_flow AS f
+        WHERE f.observed_at >= :window_start
+          AND f.observed_at < :window_end
+          AND f.pair_outcome = 'second_leg'
+          AND f.exit_leg_device IS NULL)
+     + (SELECT count(*) FROM flow AS f
+        JOIN domain_attribution AS a ON a.flow_id = f.id
+        WHERE f.observed_at >= :window_start
+          AND f.observed_at < :window_end
+          AND f.pair_outcome = 'second_leg')
+     + (SELECT count(*) FROM flow AS f
+        WHERE f.observed_at >= :window_start
+          AND f.observed_at < :window_end
+          AND f.pair_outcome = 'first_leg'
+          AND NOT EXISTS (SELECT 1 FROM flow AS p
+                          WHERE p.id = f.paired_flow_id
+                            AND p.pair_outcome = 'second_leg'
+                            AND p.paired_flow_id = f.id))
+       AS counted_twice;

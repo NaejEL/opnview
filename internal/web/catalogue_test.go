@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/auth"
@@ -22,6 +23,7 @@ import (
 // of every rendered page, in every state these surfaces reach, has to BE a catalogue
 // string.
 func TestNoUserVisibleStringIsALiteral(t *testing.T) {
+	t.Parallel()
 	catalogue, err := LoadCatalogue(SourceLanguage)
 	if err != nil {
 		t.Fatalf("loading the catalogue: %v", err)
@@ -198,6 +200,7 @@ func TestNoUserVisibleStringIsALiteral(t *testing.T) {
 // neither is recited on a screen: ROADMAP.md step 7 forbids explanatory copy, and the
 // observation-point limit is explicitly "documented, not printed".
 func TestThereIsNoExplanatoryCopyInTheInterface(t *testing.T) {
+	t.Parallel()
 	forbidden := []string{
 		// The observation-point limit.
 		"only sees what crosses",
@@ -266,6 +269,7 @@ func TestThereIsNoExplanatoryCopyInTheInterface(t *testing.T) {
 
 // TestNothingIsLoadedFromOffHost is AC23.
 func TestNothingIsLoadedFromOffHost(t *testing.T) {
+	t.Parallel()
 	// THE PATTERNS ARE RESOURCE-LOADING POSITIONS, not the characters of a URL. A
 	// settings page legitimately carries an absolute URL: the firewall's, in the field
 	// the operator typed it into, which is data rather than something the page fetches.
@@ -337,6 +341,7 @@ func stripCSSComments(source string) string {
 // theme half, and the rule is ROADMAP.md step 3's and docs/ui-references.md's rather
 // than a new one.
 func TestTheInterfaceFollowsTheOperatingSystemUntilItIsOverridden(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	harness.completeSetup()
 
@@ -453,13 +458,48 @@ type renderedPage struct {
 	document string
 }
 
-// everyRenderedPage renders each surface in each state these tests can reach, so the
+// renderedOnce holds every rendered page, rendered once per package run.
+//
+// FIVE ASSERTIONS READ THE SAME PAGES, and each used to render all of them again:
+// about eleven seconds a rendering, measured on 7 October 2026
+// (specs/SPEC-test-budget-and-two-live-defects.md). What they assert on is the
+// rendered text, which a second rendering does not change, so the pages are rendered
+// by the first test that asks and read by the rest.
+var renderedOnce struct {
+	once sync.Once
+	// pages is every page, and complete whether rendering them reported no failure.
+	pages    []renderedPage
+	complete bool
+	// renderedBy names the test that rendered them, for the failure the others report.
+	renderedBy string
+}
+
+// everyRenderedPage returns each surface in each state these tests can reach,
+// rendered once per package run by renderEveryPage. A rendering that failed fails
+// every test that reads it, naming the test that rendered, rather than handing the
+// others an incomplete list to pass on.
+func everyRenderedPage(t *testing.T) []renderedPage {
+	t.Helper()
+	renderedOnce.once.Do(func() {
+		renderedOnce.renderedBy = t.Name()
+		failedBefore := t.Failed()
+		renderedOnce.pages = renderEveryPage(t)
+		renderedOnce.complete = failedBefore || !t.Failed()
+	})
+	if !renderedOnce.complete {
+		t.Fatalf("rendering every page failed in %s, so there is nothing to assert on",
+			renderedOnce.renderedBy)
+	}
+	return renderedOnce.pages
+}
+
+// renderEveryPage renders each surface in each state these tests can reach, so the
 // assertions above run against what actually ships rather than against a template.
 //
 // THE REFUSALS ARE IN IT AS WELL AS THE HAPPY PAGES. A literal, a sentence of copy or
 // an off-host reference is at least as likely to arrive in an error path, and an
 // error path is the one nobody looks at.
-func everyRenderedPage(t *testing.T) []renderedPage {
+func renderEveryPage(t *testing.T) []renderedPage {
 	t.Helper()
 	var pages []renderedPage
 	add := func(name string, answer *http.Response) {
@@ -690,6 +730,7 @@ func withoutFigures(document string) string {
 // exception to what it is for: the three forms, marked, and nothing else — and
 // every figure the pages actually mark is in one of them.
 func TestOnlyTheThreeFigureFormsThePagesProducePassTheFigureException(t *testing.T) {
+	t.Parallel()
 	for _, figure := range []string{"0", "86400", "0.125", "12.000", "2026-03-14T09:00:00Z"} {
 		if withoutFigures(`<p><span class="figure">`+figure+`</span></p>`) != "<p></p>" {
 			t.Errorf("the figure %q does not pass the exception", figure)

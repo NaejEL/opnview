@@ -52,6 +52,7 @@ func arrangeMeasurementCollection(t *testing.T) *probeHarness {
 // the assertion has teeth: every path element the fake received must be an identifier the
 // firewall reported, and none of them may be a device name.
 func TestThePerPairSamplerSendsInterfaceNamesAndNeverADeviceName(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
@@ -107,6 +108,7 @@ func TestThePerPairSamplerSendsInterfaceNamesAndNeverADeviceName(t *testing.T) {
 // produce. The call is refused, because the alternative is an empty answer that reads as a
 // quiet network.
 func TestTheSamplerRefusesRatherThanSamplingWhenAnArgumentIsADeviceName(t *testing.T) {
+	t.Parallel()
 	snapshot := newDiscovery()
 	snapshot.RefreshedAt = referenceEpoch()
 	snapshot.InterfaceIDByIdentifier["example_if_a"] = 1
@@ -134,6 +136,7 @@ func TestTheSamplerRefusesRatherThanSamplingWhenAnArgumentIsADeviceName(t *testi
 // has to reach the availability row, or a refused sample would be as invisible as the
 // empty answer it prevents.
 func TestASamplerRefusalIsRecordedRatherThanLookingLikeSilence(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	ctx := context.Background()
 
@@ -168,6 +171,7 @@ func TestASamplerRefusalIsRecordedRatherThanLookingLikeSilence(t *testing.T) {
 // TestAReadingOfEachKindRoundTripsThroughTheOneTable is the table doing both jobs it was
 // created for: the per-pair volume nothing upstream keeps, and the firewall's own gauges.
 func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
@@ -239,6 +243,7 @@ func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 // TestASamplingPassRepeatedStoresNothingNew is idempotence inside one interval: a sampler
 // that restarted between two ticks must not double every reading.
 func TestASamplingPassRepeatedStoresNothingNew(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	ctx := context.Background()
 
@@ -266,6 +271,7 @@ func TestASamplingPassRepeatedStoresNothingNew(t *testing.T) {
 // may be written, the availability row must move, and its detail must name the reading that
 // did not answer.
 func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	ctx := context.Background()
 
@@ -318,6 +324,7 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 // tries, the reading has to come out as ABSENT rather than as a zero — because a zero would
 // be a measurement nobody took.
 func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	ctx := context.Background()
 
@@ -362,6 +369,7 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 // produces, and the reason the detail has to say so: the collector cannot tell the two
 // apart, so it must not claim either.
 func TestAnEmptyTrafficSnapshotIsNotReportedAsAnAbsenceOfTraffic(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	harness.fake.answerJSON(opnsense.TrafficTop, map[string]any{})
 

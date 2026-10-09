@@ -181,6 +181,10 @@ type logRecord struct {
 	LogReason   *string
 	PacketBytes int64
 	Rid         *string
+	// IPID and TCPSeq are the two fields verified to cross the firewall unchanged,
+	// which pair the two records of one connection; nil where the record has none.
+	IPID   *int64
+	TCPSeq *int64
 }
 
 // firewallLogSource is one implementation of the firewall_log kind: a source of records of

@@ -21,6 +21,7 @@ import (
 // exotic one. Event identity is (provider_id, provider_event_key), so two sources reporting one
 // intrusion are two attributed rows and no figure is doubled.
 func TestTwoSecurityEventProvidersCanBothBeActive(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -86,6 +87,7 @@ func TestTwoSecurityEventProvidersCanBothBeActive(t *testing.T) {
 // source and report its figures as the whole picture. The accessor refuses instead, and names
 // the plural one.
 func TestAskingForTheSingleActiveProviderOfAConcurrentKindIsRefused(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
@@ -112,6 +114,7 @@ func TestAskingForTheSingleActiveProviderOfAConcurrentKindIsRefused(t *testing.T
 // The index would reject it anyway; refusing here gives the caller a sentence instead of a
 // constraint violation, and says which of the two guarantees it broke.
 func TestActivatingSeveralProvidersOfAnExclusiveKindIsRefused(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	err := database.SetActiveProviders(context.Background(), "dns_lookup", "unbound", "dnsmasq")
 	if err == nil {
@@ -132,6 +135,7 @@ func TestActivatingSeveralProvidersOfAnExclusiveKindIsRefused(t *testing.T) {
 // instead of discovering the constraint by failing. The database is the authority, so the set in
 // code is read back out of the index's own definition and compared.
 func TestTheConcurrentKindsInCodeAreTheOnesTheSchemaExempts(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 
 	var definition string
@@ -201,6 +205,7 @@ func everyKindInCheck(t *testing.T, definition string) []string {
 // provider.kind, so none of the eight surveyed sources that fit its shape had anywhere to
 // announce itself. All three exist now.
 func TestTheMeasurementSampleKindHasARegistryRowAndAnAvailabilityRow(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 

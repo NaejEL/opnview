@@ -326,6 +326,7 @@ func assertTheProbeIsInEverySlot(t *testing.T, harness *probeHarness, observed i
 // refreshed its slots, and only then moves it into the purged part; every slot of every
 // family then equals its purged part plus the flows present.
 func TestAPurgeRequestedBetweenAPassStoreAndItsRefreshWaitsForTheDerivation(t *testing.T) {
+	t.Parallel()
 	harness, observed := arrangeProbeRecord(t)
 	ctx := context.Background()
 
@@ -367,6 +368,7 @@ func TestAPurgeRequestedBetweenAPassStoreAndItsRefreshWaitsForTheDerivation(t *t
 // the next one -- still brings every slot its purged part, from the hours the purge wrote
 // alone.
 func TestWithTheOrderingOffTheNextRefreshStillFillsEverySlot(t *testing.T) {
+	t.Parallel()
 	harness, observed := arrangeProbeRecord(t)
 	ctx := context.Background()
 	harness.collector.hooks.unordered = true
@@ -392,6 +394,7 @@ func TestWithTheOrderingOffTheNextRefreshStillFillsEverySlot(t *testing.T) {
 // membership evidence enters the purged part placed; only the row with none stays
 // unplaced, which is what it is.
 func TestAPurgeBeforeTheFirstDerivationPlacesWhatItRemoves(t *testing.T) {
+	t.Parallel()
 	earlier := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, earlier.fake, earlier.collector)
 	ctx := context.Background()
@@ -552,6 +555,7 @@ func generatedRecord(i, base int, at int64) pageRecord {
 // row is unplaced, every record having an end the interface networks place; and the run
 // ended within its bound.
 func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *testing.T) {
+	t.Parallel()
 	harness := arrangeEveryStoringSource(t)
 	ctx := context.Background()
 	// Nine minutes before a Monday's midnight, so the run crosses an hour, a day and a week.

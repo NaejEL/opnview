@@ -60,9 +60,39 @@ services:
   # The script is run through bash rather than executed directly: Git on
   # Windows records it without the executable bit, so a clone made there would
   # otherwise produce a permission error on a Linux host.
+  #
+  # This is the EVERYDAY suite: gofmt, go vet, go build and go test without
+  # -race, and every test except those moved to the pre-deployment command
+  # below. Its go test wall time has a budget, one constant in ci/checks.sh, and
+  # exceeding it fails the run.
+  #
+  # /tmp IS A TMPFS HERE, and only here. Every test database is created under
+  # t.TempDir, which is /tmp, and on the container's overlay filesystem each
+  # SQLite commit waited about 5 ms on its fsync; on a tmpfs the same commit takes
+  # about 11 us. Nothing the everyday suite asserts depends on a write reaching
+  # a disk. exec is required because go test builds and runs its test binaries
+  # under /tmp. The pre-deployment command keeps the overlay filesystem, so the
+  # whole suite still runs once against a real disk before a deployment.
   checks:
     <<: *dev-base
+    tmpfs:
+      - /tmp:exec,mode=1777
     command: ["bash", "/workspace/ci/checks.sh"]
+
+  # The PRE-DEPLOYMENT command, the gate run before a deployment and not on
+  # every iteration:
+  #
+  #     docker compose run --rm pre-deployment
+  #
+  # It runs go vet and go test -race -count=1 over the whole suite with the
+  # tests moved out of the everyday suite compiled in (the `predeployment` build
+  # tag), the test budget's own check, and the schema checks below with their
+  # 100 000- and 1 000 000-row seeds and their query plans. Its databases live
+  # under /tmp on the overlay filesystem and, for the schema checks, under
+  # /data as the schema-checks service's do.
+  pre-deployment:
+    <<: *dev-base
+    command: ["bash", "/workspace/ci/pre-deployment.sh"]
 
   # The schema checks: migrations, seed, the seven screen queries and their
   # query plans. Separate from `checks` so a schema failure stays

@@ -1,0 +1,36 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. Its SHAPE is the one the survey records from the read-only call of 5 October 2026 against a live OPNsense 26.7 with gateway monitoring disabled; every VALUE in it was written by hand, and no part of that response was copied here. Do not treat this file as evidence of any firewall's gateways.",
+    "survey_section": "Gateway status, read from source for step 5",
+    "field_list_from": "items[] each with name, address, status, loss, delay, stddev, monitor and status_translated, and a top-level status, in the shape the live call of 5 October 2026 returned and opnsense/core 26.7.3 dpinger.inc, dpinger_status, writes: status none and loss, delay and stddev ~ for a gateway no dpinger process monitors",
+    "why_these_values": "Two gateways, one per address family, neither monitored: every figure is ~ and the status is none, as dpinger_status leaves them when the gateway's monitoring is disabled. The collector must write no reading and must name the absence as gateways listed with no figure.",
+    "example_values_are_not_a_network": "Every name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "items": [
+      {
+        "name": "EXAMPLE_UPLINK_V4",
+        "address": "198.51.100.254",
+        "status": "none",
+        "loss": "~",
+        "delay": "~",
+        "stddev": "~",
+        "monitor": "198.51.100.254",
+        "status_translated": "Online"
+      },
+      {
+        "name": "EXAMPLE_UPLINK_V6",
+        "address": "2001:db8:aa::1",
+        "status": "none",
+        "loss": "~",
+        "delay": "~",
+        "stddev": "~",
+        "monitor": "2001:db8:aa::1",
+        "status_translated": "Online"
+      }
+    ],
+    "status": "ok"
+  }
+}

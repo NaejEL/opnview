@@ -58,8 +58,10 @@ const (
 	KeyDHCPLeaseInterval = "poll_interval_dhcp_lease_seconds"
 	// KeyDNSLookupInterval overrides the resolver poll interval.
 	KeyDNSLookupInterval = "poll_interval_dns_lookup_seconds"
-	// KeyDiscoveryInterval overrides the runtime-discovery refresh interval.
-	KeyDiscoveryInterval = "refresh_interval_discovery_seconds"
+	// KeyDiscoveryInterval overrides the runtime-discovery refresh interval. The
+	// store reads the same row as the margin of "held at an instant" for this
+	// firewall's own addresses, so the key lives there.
+	KeyDiscoveryInterval = store.DiscoveryIntervalKey
 	// KeyPurgeInterval overrides the retention-purge interval.
 	KeyPurgeInterval = "purge_interval_seconds"
 	// KeyGeoIPRefreshInterval overrides how often the MaxMind databases are
@@ -74,6 +76,16 @@ const (
 	// KeyAttributionMaxDelay is how long before a flow, in seconds, a resolver lookup
 	// may have been made and still name it. The schema writes its default row.
 	KeyAttributionMaxDelay = "attribution_max_delay_seconds"
+	// KeyLegPairingWindow is how far apart, in seconds, the two records of one
+	// connection may have been logged and still be paired (decision 4 of the step-5A
+	// live corrections). The schema writes its default row.
+	KeyLegPairingWindow = store.PairingWindowKey
+	// KeyLeaseBackendFailurePassLimit is how many lease passes in a row a backend may
+	// fail before a pass that read every other backend counts as complete, so the
+	// unresolved host-name lookups are examined without it (defect L1 of
+	// specs/SPEC-test-budget-and-two-live-defects.md). The schema writes its default
+	// row.
+	KeyLeaseBackendFailurePassLimit = "lease_backend_failure_pass_limit"
 )
 
 // The setting keys of the page sizes: how many records one request asks the
@@ -150,7 +162,7 @@ const (
 	// survey gives no figure, so this one is opnview's own and is stated as
 	// such: it matches the slowest collector, which is the fastest rate at
 	// which a newly discovered interface could matter to an ingest.
-	DefaultDiscoveryInterval = 300 * time.Second
+	DefaultDiscoveryInterval = store.DefaultDiscoveryIntervalSeconds * time.Second
 
 	// DefaultPurgeInterval is 3600 s. No survey section bears on it: the purge
 	// reads no endpoint. It is opnview's own, chosen so that the database is
@@ -230,6 +242,23 @@ const DefaultRetentionSeconds int64 = 7776000
 // constant exists only so a database with no row still behaves.
 const DefaultAttributionMaxDelaySeconds int64 = 5
 
+// DefaultLegPairingWindowSeconds is 1 s, the maintainer's default for how far apart
+// the two records of one connection may have been logged and still be paired
+// (decision 4). It is written in the schema and read from the database; the constant
+// exists only so a database with no row still behaves.
+const DefaultLegPairingWindowSeconds int64 = store.DefaultPairingWindowSeconds
+
+// DefaultLeaseBackendFailurePassLimit is 3 passes: at the default lease interval of
+// five minutes, a backend that has failed for a quarter of an hour stops holding the
+// unresolved host-name lookups back. One or two failed passes are what a restart of
+// the backend's service or of the firewall costs, and examining the lookups against
+// the other backends alone then would spend each lookup's one examination on an
+// incomplete lease table; a backend still failing after three is failing for longer
+// than a restart, and the lookups wait for it no further. Like the pairing window it
+// is written in the schema and read from the database; the constant exists only so a
+// database with no row still behaves.
+const DefaultLeaseBackendFailurePassLimit int64 = 3
+
 // Config is the whole of opnview's runtime configuration.
 type Config struct {
 	// RetentionSeconds is the purge horizon. 0 means unlimited.
@@ -260,6 +289,12 @@ type Config struct {
 	// AttributionMaxDelaySeconds is how long before a flow a resolver lookup may
 	// have been made and still name it.
 	AttributionMaxDelaySeconds int64
+	// LegPairingWindowSeconds is how far apart the two records of one connection may
+	// have been logged and still be paired.
+	LegPairingWindowSeconds int64
+	// LeaseBackendFailurePassLimit is how many lease passes in a row a backend may fail
+	// before the unresolved host-name lookups are examined without it.
+	LeaseBackendFailurePassLimit int64
 }
 
 // Defaults returns the configuration of a database that carries no setting row
@@ -267,19 +302,21 @@ type Config struct {
 // reach opnview through the interface.
 func Defaults() Config {
 	return Config{
-		RetentionSeconds:            DefaultRetentionSeconds,
-		AggregateMode:               "full",
-		FirewallLogInterval:         DefaultFirewallLogInterval,
-		SecurityEventInterval:       DefaultSecurityEventInterval,
-		MeasurementInterval:         DefaultMeasurementInterval,
-		DHCPLeaseInterval:           DefaultDHCPLeaseInterval,
-		DNSLookupInterval:           DefaultDNSLookupInterval,
-		DiscoveryInterval:           DefaultDiscoveryInterval,
-		PurgeInterval:               DefaultPurgeInterval,
-		GeoIPRefreshInterval:        DefaultGeoIPRefreshInterval,
-		GeoLookupInterval:           DefaultGeoLookupInterval,
-		PublicSuffixRefreshInterval: DefaultPublicSuffixRefreshInterval,
-		AttributionMaxDelaySeconds:  DefaultAttributionMaxDelaySeconds,
+		RetentionSeconds:             DefaultRetentionSeconds,
+		AggregateMode:                "full",
+		FirewallLogInterval:          DefaultFirewallLogInterval,
+		SecurityEventInterval:        DefaultSecurityEventInterval,
+		MeasurementInterval:          DefaultMeasurementInterval,
+		DHCPLeaseInterval:            DefaultDHCPLeaseInterval,
+		DNSLookupInterval:            DefaultDNSLookupInterval,
+		DiscoveryInterval:            DefaultDiscoveryInterval,
+		PurgeInterval:                DefaultPurgeInterval,
+		GeoIPRefreshInterval:         DefaultGeoIPRefreshInterval,
+		GeoLookupInterval:            DefaultGeoLookupInterval,
+		PublicSuffixRefreshInterval:  DefaultPublicSuffixRefreshInterval,
+		AttributionMaxDelaySeconds:   DefaultAttributionMaxDelaySeconds,
+		LegPairingWindowSeconds:      DefaultLegPairingWindowSeconds,
+		LeaseBackendFailurePassLimit: DefaultLeaseBackendFailurePassLimit,
 		// The page sizes are defaults a row overrides, like the intervals.
 		FirewallLogPageSize:   DefaultFirewallLogPageSize,
 		SecurityEventPageSize: DefaultSecurityEventPageSize,
@@ -402,6 +439,39 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 				KeyAttributionMaxDelay, seconds)
 		}
 		loaded.AttributionMaxDelaySeconds = seconds
+	}
+
+	// The pairing window is a whole number of seconds, 0 included -- the two records
+	// logged in the same second -- and anything else is refused.
+	if value, present, err := reader.Setting(ctx, KeyLegPairingWindow); err != nil {
+		return loaded, err
+	} else if present {
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return loaded, fmt.Errorf("config: %s is not a whole number of seconds: %w", KeyLegPairingWindow, err)
+		}
+		if seconds < 0 {
+			return loaded, fmt.Errorf("config: %s must be 0 or more whole seconds, got %d",
+				KeyLegPairingWindow, seconds)
+		}
+		loaded.LegPairingWindowSeconds = seconds
+	}
+
+	// The failure limit is a count of lease passes, one or more, and anything else is
+	// refused.
+	if value, present, err := reader.Setting(ctx, KeyLeaseBackendFailurePassLimit); err != nil {
+		return loaded, err
+	} else if present {
+		passes, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return loaded, fmt.Errorf("config: %s is not a whole number of lease passes: %w",
+				KeyLeaseBackendFailurePassLimit, err)
+		}
+		if passes <= 0 {
+			return loaded, fmt.Errorf("config: %s must be one lease pass or more, got %d",
+				KeyLeaseBackendFailurePassLimit, passes)
+		}
+		loaded.LeaseBackendFailurePassLimit = passes
 	}
 
 	return loaded, nil

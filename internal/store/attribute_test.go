@@ -29,6 +29,7 @@ type caseLookup struct {
 
 // TestAttributionFollowsTheRuleExactly is AC29, each outcome on its own flow.
 func TestAttributionFollowsTheRuleExactly(t *testing.T) {
+	t.Parallel()
 	cases := []attributionCase{
 		{name: "one eligible domain in the window", maxDelay: 5, want: "one.example.invalid", delay: 3,
 			lookups: []caseLookup{{3, "one.example.invalid", "pass", "Recursion"}}},
@@ -122,6 +123,7 @@ func TestAttributionFollowsTheRuleExactly(t *testing.T) {
 // TestAttributionIsStoredWhateverTheAggregateModeSays is AC32: the mode withholds names at the
 // API, and the store writes them in both modes.
 func TestAttributionIsStoredWhateverTheAggregateModeSays(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	if err := network.db.SetSetting(ctx, "aggregate_mode", "no_domains", network.now); err != nil {
@@ -160,6 +162,7 @@ func TestAttributionIsStoredWhateverTheAggregateModeSays(t *testing.T) {
 
 // TestPurgingALookupOrAFlowRemovesItsAttribution is AC33.
 func TestPurgingALookupOrAFlowRemovesItsAttribution(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	client := network.clients[0]

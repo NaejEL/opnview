@@ -50,6 +50,7 @@ func upstreamByIdentifier(t *testing.T, database *store.Store) map[string]bool {
 
 // TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway is AC8.
 func TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
 	expected := func(body map[string]any) map[string]bool {
@@ -148,6 +149,7 @@ func render(value *int64) string {
 
 // TestTheClassificationDoesNotDependOnTheOrderRecordsArrive is AC10.
 func TestTheClassificationDoesNotDependOnTheOrderRecordsArrive(t *testing.T) {
+	t.Parallel()
 	var records []any
 	if err := json.Unmarshal(fixtureBody(t, "firewall_log.json"), &records); err != nil {
 		t.Fatalf("decoding the filter-log fixture: %v", err)
@@ -204,6 +206,7 @@ func TestTheClassificationDoesNotDependOnTheOrderRecordsArrive(t *testing.T) {
 
 // TestNonLoggingRulesPerInterfaceEqualADirectCountOverTheFixture is AC13.
 func TestNonLoggingRulesPerInterfaceEqualADirectCountOverTheFixture(t *testing.T) {
+	t.Parallel()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
 	if stored := scalarCount(t, harness.store, "SELECT count(*) FROM rule WHERE interface IS NOT NULL"); stored == 0 {
@@ -253,6 +256,7 @@ func TestNonLoggingRulesPerInterfaceEqualADirectCountOverTheFixture(t *testing.T
 
 // TestOnePairReadOnTwoInterfacesAtOneInstantIsTwoReadings is AC14.
 func TestOnePairReadOnTwoInterfacesAtOneInstantIsTwoReadings(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	pair := func() map[string]any {
 		return map[string]any{"status": "ok", "records": []any{map[string]any{
@@ -284,6 +288,7 @@ func TestOnePairReadOnTwoInterfacesAtOneInstantIsTwoReadings(t *testing.T) {
 
 // TestTelemetryIsSampledFromVerifiedFieldsAndAMissingFieldIsNoSample is AC17.
 func TestTelemetryIsSampledFromVerifiedFieldsAndAMissingFieldIsNoSample(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
@@ -359,13 +364,14 @@ func TestTelemetryIsSampledFromVerifiedFieldsAndAMissingFieldIsNoSample(t *testi
 
 // TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability is AC4's degraded state.
 func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	harness.fake.answer(opnsense.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
 	detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight)
-	if !strings.Contains(detail, "gateway latency and loss (the endpoint did not answer)") {
+	if !strings.Contains(detail, "gateway latency and loss (not found, HTTP 404") {
 		t.Errorf("the availability detail is %q, which does not record the gateway endpoint", detail)
 	}
 	if rows := scalarCount(t, harness.store,
@@ -378,8 +384,8 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 		t.Fatalf("sampling: %v", err)
 	}
 	if detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
-		"gateway latency and loss (the endpoint reported no gateway)") {
-		t.Errorf("an answer with no gateway left the detail %q", detail)
+		"gateway latency and loss (the endpoint answered \"status\": \"failed\"") {
+		t.Errorf("an answer reporting a failure left the detail %q", detail)
 	}
 	if registered := opnsense.GatewayStatus.Path; registered != "/api/routes/gateway/status" {
 		t.Errorf("the gateway endpoint is registered at %s", registered)
@@ -389,6 +395,7 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 // TestAnUnavailableSwapEndpointIsRecordedInTheAvailability is AC4's degraded state for the
 // second endpoint the amendment of 4 October 2026 admits.
 func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
+	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
 	harness.fake.answer(opnsense.SystemSwap, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
@@ -421,6 +428,7 @@ func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 
 // TestTheRefreshRunsAfterEachFilterLogPass is the last part of AC20.
 func TestTheRefreshRunsAfterEachFilterLogPass(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	if err := harness.collector.CollectFirewallLog(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
@@ -458,6 +466,7 @@ func TestTheRefreshRunsAfterEachFilterLogPass(t *testing.T) {
 // ends outside, the shape of a blocked scan of the firewall's own address -- is never
 // forced either. Its closed slot would stay empty for ever.
 func TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	ctx := context.Background()
 	if err := harness.collector.RefreshAggregates(ctx); err != nil {
@@ -509,6 +518,7 @@ func TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot(t *testing.T) {
 // watermark instead -- the stamp of the pass still in flight -- and a stamp equal to a row's
 // counts as stale.
 func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	ctx := context.Background()
 	if err := harness.collector.RefreshAggregates(ctx); err != nil {

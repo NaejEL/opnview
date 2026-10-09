@@ -9,13 +9,17 @@ import (
 	"testing"
 )
 
-// The aggregate families: AC19, AC20, AC21 and AC34.
+// The aggregate families: AC19, AC20, AC21 and AC34, as amended by decisions 2 and 6 of
+// the step-5A live corrections: a flow with an end that is this firewall has its own
+// directions and scope and is no client's, and a second leg counts on the interface it
+// was logged on and in the rule family only.
 
 // storedFlow is a flow as a test reads it back, to recompute every family independently of
 // the derivation statements.
 type storedFlow struct {
 	id                     int64
 	observedAt             int64
+	device                 string
 	srcInterface, dstIface sql.NullInt64
 	srcClient, dstClient   sql.NullInt64
 	srcAddress, dstAddress string
@@ -27,13 +31,17 @@ type storedFlow struct {
 	scope                  string
 	site                   sql.NullString
 	owner                  sql.NullInt64
+	srcFirewall            bool
+	dstFirewall            bool
+	pairOutcome            sql.NullString
 }
 
 func readFlows(t *testing.T, database *Store) []storedFlow {
 	t.Helper()
-	rows, err := database.DB().Query(`SELECT f.id, f.observed_at, f.src_interface_id, f.dst_interface_id,
-		f.src_client_id, f.dst_client_id, f.src_address, f.dst_address, f.dst_port, f.protocol,
-		f.action, f.direction, f.packet_bytes, f.rule_id, f.traffic_scope, a.site_name
+	rows, err := database.DB().Query(`SELECT f.id, f.observed_at, f.interface_device, f.src_interface_id,
+		f.dst_interface_id, f.src_client_id, f.dst_client_id, f.src_address, f.dst_address, f.dst_port,
+		f.protocol, f.action, f.direction, f.packet_bytes, f.rule_id, f.traffic_scope, a.site_name,
+		f.src_is_this_firewall, f.dst_is_this_firewall, f.pair_outcome
 		FROM flow f LEFT JOIN domain_attribution a ON a.flow_id = f.id`)
 	if err != nil {
 		t.Fatalf("reading the flows: %v", err)
@@ -42,9 +50,10 @@ func readFlows(t *testing.T, database *Store) []storedFlow {
 	var flows []storedFlow
 	for rows.Next() {
 		var f storedFlow
-		if err := rows.Scan(&f.id, &f.observedAt, &f.srcInterface, &f.dstIface, &f.srcClient,
+		if err := rows.Scan(&f.id, &f.observedAt, &f.device, &f.srcInterface, &f.dstIface, &f.srcClient,
 			&f.dstClient, &f.srcAddress, &f.dstAddress, &f.dstPort, &f.protocol, &f.action,
-			&f.direction, &f.bytes, &f.ruleID, &f.scope, &f.site); err != nil {
+			&f.direction, &f.bytes, &f.ruleID, &f.scope, &f.site, &f.srcFirewall, &f.dstFirewall,
+			&f.pairOutcome); err != nil {
 			t.Fatalf("reading the flows: %v", err)
 		}
 		flows = append(flows, f)
@@ -64,6 +73,10 @@ func readFlows(t *testing.T, database *Store) []storedFlow {
 // direction is the rule of docs/data-model.md, restated here independently of the view.
 func (f storedFlow) trafficDirection() string {
 	switch {
+	case f.srcFirewall:
+		return "from_this_firewall"
+	case f.dstFirewall:
+		return "to_this_firewall"
 	case f.srcInterface.Valid && f.dstIface.Valid:
 		return "inter_interface"
 	case f.srcInterface.Valid:
@@ -77,7 +90,20 @@ func (f storedFlow) trafficDirection() string {
 	}
 }
 
+// secondLeg says the flow is the second record of a paired connection.
+func (f storedFlow) secondLeg() bool {
+	return f.pairOutcome.Valid && f.pairOutcome.String == "second_leg"
+}
+
+// firewall says an end is this firewall.
+func (f storedFlow) firewall() bool { return f.srcFirewall || f.dstFirewall }
+
+// localClient is the inside client a client, peer or owner figure counts the flow under:
+// none for a flow with an end that is this firewall, and none for a second leg.
 func (f storedFlow) localClient() (int64, bool) {
+	if f.firewall() || f.secondLeg() {
+		return 0, false
+	}
 	switch {
 	case f.srcInterface.Valid:
 		return f.srcClient.Int64, f.srcClient.Valid
@@ -89,6 +115,16 @@ func (f storedFlow) localClient() (int64, bool) {
 
 func (f storedFlow) peer() string {
 	switch f.trafficDirection() {
+	case "from_this_firewall":
+		if f.dstFirewall || f.dstIface.Valid {
+			return ""
+		}
+		return f.dstAddress
+	case "to_this_firewall":
+		if f.srcInterface.Valid {
+			return ""
+		}
+		return f.srcAddress
 	case "inter_interface":
 		return ""
 	case "outbound":
@@ -96,6 +132,14 @@ func (f storedFlow) peer() string {
 	default:
 		return f.srcAddress
 	}
+}
+
+// exitLeg is the device a second leg was logged on, or empty.
+func (f storedFlow) exitLeg() string {
+	if f.secondLeg() {
+		return f.device
+	}
+	return ""
 }
 
 // otherEnd is the address at the other end from the flow's inside client: the
@@ -141,8 +185,8 @@ func expectedFamily(flows []storedFlow, period Period, family string) map[string
 		var key string
 		switch family {
 		case "volume":
-			key = fmt.Sprintf("%d|%s|%s|%s|%s", slot, nullable(flow.srcInterface), nullable(flow.dstIface),
-				flow.peer(), flow.trafficDirection())
+			key = fmt.Sprintf("%d|%s|%s|%s|%s|%s", slot, nullable(flow.srcInterface), nullable(flow.dstIface),
+				flow.peer(), flow.trafficDirection(), flow.exitLeg())
 		case "owner":
 			if _, ok := flow.localClient(); !ok {
 				continue
@@ -155,7 +199,7 @@ func expectedFamily(flows []storedFlow, period Period, family string) map[string
 			}
 			key = fmt.Sprintf("%d|%d|%s", slot, client, flow.trafficDirection())
 		case "domain":
-			if !flow.site.Valid {
+			if !flow.site.Valid || flow.secondLeg() {
 				continue
 			}
 			key = fmt.Sprintf("%d|%s|%s", slot, flow.site.String, nullable(flow.srcClient))
@@ -183,7 +227,8 @@ func storedFamily(t *testing.T, database *Store, period Period, family string) m
 	switch family {
 	case "volume":
 		query = `SELECT period_start_at || '|' || ifnull(src_interface_id, 'null') || '|' ||
-			ifnull(dst_interface_id, 'null') || '|' || ifnull(peer_address, '') || '|' || traffic_direction`
+			ifnull(dst_interface_id, 'null') || '|' || ifnull(peer_address, '') || '|' || traffic_direction ||
+			'|' || ifnull(exit_leg_device, '')`
 	case "owner":
 		query = `SELECT period_start_at || '|' || ifnull(owner_id, 'null') || '|' || traffic_scope`
 	case "client":
@@ -258,6 +303,7 @@ func attributeNetwork(t *testing.T, network *testNetwork) {
 
 // TestEverySlotOfEveryFamilyEqualsTheSameSumsOverFlow is AC19.
 func TestEverySlotOfEveryFamilyEqualsTheSameSumsOverFlow(t *testing.T) {
+	t.Parallel()
 	for _, counts := range [][3]int{{2, 5, 300}, {4, 13, 900}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
 			// Forty days back, so slots of every period, months included, are closed and open.
@@ -351,6 +397,7 @@ func currentSlots(now int64, extra ...int64) []string {
 // TestTheRefreshRewritesExactlyTheSlotsTheContractNames is AC20, its first three parts; the
 // fourth -- the refresh runs after each filter-log pass -- is in internal/collect.
 func TestTheRefreshRewritesExactlyTheSlotsTheContractNames(t *testing.T) {
+	t.Parallel()
 	network := populated(t, 2, 6, 200, 60*86400)
 	ctx := context.Background()
 	computedAt := func() map[string]int64 {
@@ -433,6 +480,7 @@ func TestTheRefreshRewritesExactlyTheSlotsTheContractNames(t *testing.T) {
 
 // TestADistinctCountIsNeverSummedAcrossSlots is AC21.
 func TestADistinctCountIsNeverSummedAcrossSlots(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	if _, err := network.db.DB().Exec(`INSERT INTO owner (id, display_name, created_at, updated_at)
@@ -518,6 +566,7 @@ func mustStatementNames(t *testing.T) []string {
 
 // TestThePairVolumeIsDerivedFromFlowOnTheRealDestinationPort is AC34, its first two parts.
 func TestThePairVolumeIsDerivedFromFlowOnTheRealDestinationPort(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	a, b := network.clients[0], network.clients[2]
@@ -567,6 +616,7 @@ func TestThePairVolumeIsDerivedFromFlowOnTheRealDestinationPort(t *testing.T) {
 // not drop them from the slot. It is composed from its days, which the purge keeps as long as
 // the month, and it still takes in a flow ingested after the purge.
 func TestAMonthStraddlingTheHorizonKeepsWhatThePurgeRemoved(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	month := PeriodMonth.SlotStart(network.now)

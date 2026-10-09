@@ -582,11 +582,21 @@ section 'AC13, AC14, AC15 — interfaces, classification and tunnels'
 SCOPES="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
     "SELECT group_concat(traffic_scope, ',') FROM (SELECT traffic_scope FROM (" \
     ") ORDER BY traffic_scope);")")"
-check 'AC13 the Overview query classifies flows east-west and north-south' 'east_west,north_south' "$SCOPES"
-check 'AC13 every stored traffic_scope agrees with interface membership' '0' \
+# Decision 6 of the step-5A live corrections adds the third scope, a flow with an end
+# that is this firewall; the seed fills it.
+check 'AC13 the Overview query classifies flows east-west, north-south and this firewall' \
+    'east_west,north_south,this_firewall' "$SCOPES"
+check 'AC13 every stored traffic_scope agrees with interface membership and this firewall' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE traffic_scope <> (CASE
+        WHEN src_is_this_firewall = 1 OR dst_is_this_firewall = 1 THEN 'this_firewall'
         WHEN src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL
         THEN 'east_west' ELSE 'north_south' END);")"
+expect_sql_failure 'LC-AC4 a flow with an end that is this firewall cannot claim another scope' "$MAIN_DB" \
+    "UPDATE flow SET traffic_scope = 'north_south' WHERE traffic_scope = 'this_firewall';"
+expect_sql_failure 'LC-AC4 an end that is this firewall cannot carry a client' "$MAIN_DB" \
+    "UPDATE flow SET dst_client_id = 1 WHERE dst_is_this_firewall = 1;"
+check_ge 'LC-AC4 the third scope passes the CHECK, and the seed fills it' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE traffic_scope = 'this_firewall';")"
 expect_sql_failure 'AC13 a traffic_scope disagreeing with interface membership is rejected' "$MAIN_DB" \
     "UPDATE flow SET traffic_scope = 'east_west' WHERE traffic_scope = 'north_south';"
 
@@ -1409,17 +1419,22 @@ check 'G11-AC5 every one of the four per-owner periods carries an unassigned slo
 # the destination -- so an inbound flow now counts for the machine it reached
 # rather than for nobody. The comparison is against that, and is unchanged in
 # strength: every byte of every flow with an inside client, and no other.
+# AMENDED by decisions 2 and 6 of the step-5A live corrections: a flow with an end that
+# is this firewall is no client's, and a second leg counts on its own interface only.
 check 'G11-AC5 the per-owner aggregate totals agree with the flows behind them' \
-    "$(q "$MAIN_DB" 'SELECT sum(f.packet_bytes) FROM classified_flow f
-        JOIN client c ON c.id = f.local_client_id;')" \
+    "$(q "$MAIN_DB" "SELECT sum(f.packet_bytes) FROM classified_flow f
+        JOIN client c ON c.id = f.local_client_id
+        WHERE f.traffic_scope <> 'this_firewall' AND f.exit_leg_device IS NULL;")" \
     "$(q "$MAIN_DB" 'SELECT sum(bytes) FROM owner_volume_aggregate_24h;')"
 check 'G11-AC5 an unowned client lands in the unassigned slot rather than being dropped' \
-    "$(q "$MAIN_DB" 'SELECT sum(f.packet_bytes) FROM classified_flow f
-        JOIN client c ON c.id = f.local_client_id WHERE c.owner_id IS NULL;')" \
+    "$(q "$MAIN_DB" "SELECT sum(f.packet_bytes) FROM classified_flow f
+        JOIN client c ON c.id = f.local_client_id WHERE c.owner_id IS NULL
+        AND f.traffic_scope <> 'this_firewall' AND f.exit_leg_device IS NULL;")" \
     "$(q "$MAIN_DB" 'SELECT sum(bytes) FROM owner_volume_aggregate_24h WHERE owner_id IS NULL;')"
 check 'G11-AC5 the allowed and blocked bytes of a per-owner slot are the flows split by action' \
     "$(q "$MAIN_DB" "SELECT sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END)
-        FROM classified_flow f JOIN client c ON c.id = f.local_client_id;")" \
+        FROM classified_flow f JOIN client c ON c.id = f.local_client_id
+        WHERE f.traffic_scope <> 'this_firewall' AND f.exit_leg_device IS NULL;")" \
     "$(q "$MAIN_DB" 'SELECT sum(blocked_bytes) FROM owner_volume_aggregate_24h;')"
 
 # ===========================================================================
@@ -3113,7 +3128,7 @@ for db in "$MAIN_DB" "$ALT_DB"; do
         "$(q "$db" "SELECT group_concat(link_local_evidence, ',') FROM
             (SELECT DISTINCT link_local_evidence FROM interface ORDER BY 1);")"
     check "C5A-AC8 $tag: dns_resolution carries every client resolution" \
-        'ambiguous_hostname,lease_hostname,logged_address,unknown_hostname' \
+        'ambiguous_hostname,lease_hostname,logged_address,this_firewall_hostname,unknown_hostname' \
         "$(q "$db" "SELECT group_concat(client_resolution, ',') FROM
             (SELECT DISTINCT client_resolution FROM dns_resolution ORDER BY 1);")"
     check "C5A-AC4 $tag: every client slot's distinct_peers is its peer rows, in every period" '0' \
@@ -3124,8 +3139,8 @@ for db in "$MAIN_DB" "$ALT_DB"; do
                 (SELECT count(*) FROM peer_volume_aggregate_30d p WHERE p.period_start_at = c.period_start_at
                    AND p.client_id = c.client_id AND p.traffic_direction = c.traffic_direction));")"
     for p in 1h 24h 7d 30d; do
-        check "S5A-AC35 $tag: volume_aggregate_$p carries all three traffic directions" \
-            'inbound,inter_interface,outbound' \
+        check "S5A-AC35 $tag: volume_aggregate_$p carries all five traffic directions" \
+            'from_this_firewall,inbound,inter_interface,outbound,to_this_firewall' \
             "$(q "$db" "SELECT group_concat(traffic_direction, ',') FROM
                 (SELECT DISTINCT traffic_direction FROM volume_aggregate_$p ORDER BY 1);")"
         check_ge "S5A-AC35 $tag: volume_aggregate_$p carries an inbound slot with no source interface" 1 \
@@ -3187,9 +3202,12 @@ section 'S5A-AC19, S5A-AC25, S5A-AC26 — the seeded aggregates, refusals and di
 # ===========================================================================
 # Every family of every period sums to the same flows: the interface and rule
 # families to every flow, the owner and client families to every flow with an
-# inside client, the domain family to every attributed flow.
+# inside client, the domain family to every attributed flow. Decisions 2 and 6 of the
+# step-5A live corrections amend the client and owner families: a flow with an end that
+# is this firewall is no client's, and a second leg counts on its own interface only.
 FLOW_BYTES="$(q "$MAIN_DB" 'SELECT sum(packet_bytes) FROM flow;')"
-INSIDE_BYTES="$(q "$MAIN_DB" 'SELECT sum(packet_bytes) FROM classified_flow WHERE local_client_id IS NOT NULL;')"
+INSIDE_BYTES="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM classified_flow WHERE local_client_id IS NOT NULL
+    AND traffic_scope <> 'this_firewall' AND exit_leg_device IS NULL;")"
 NAMED_BYTES="$(q "$MAIN_DB" 'SELECT sum(f.packet_bytes) FROM flow f JOIN domain_attribution a ON a.flow_id = f.id;')"
 for p in 1h 24h 7d 30d; do
     check "S5A-AC19 volume_aggregate_$p sums to every flow" "$FLOW_BYTES" \
@@ -3240,20 +3258,124 @@ check 'S5A-AC25 the list-not-recorded count equals a direct count' \
 check_ge 'S5A-AC25 a refusal aimed at the firewall itself is told apart' 1 \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM blocked_decision WHERE target_is_this_firewall = 1;')"
 
-# AC26: the three directions partition the flows, for bytes and for connections.
-check 'S5A-AC26 inbound, outbound and inter-interface bytes sum to every byte' "$FLOW_BYTES" \
+# AC26: the directions partition the flows, for bytes and for connections. Decision 6
+# of the step-5A live corrections adds the two directions of this firewall, so the
+# partition is of five.
+check 'S5A-AC26 the five directions sum to every byte' "$FLOW_BYTES" \
     "$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM classified_flow
-        WHERE traffic_direction IN ('inbound', 'outbound', 'inter_interface');")"
-check 'S5A-AC26 inbound, outbound and inter-interface connections are every flow' \
+        WHERE traffic_direction IN ('inbound', 'outbound', 'inter_interface',
+                                    'to_this_firewall', 'from_this_firewall');")"
+check 'S5A-AC26 the five directions are every flow' \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM flow;')" \
     "$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
-        WHERE traffic_direction IN ('inbound', 'outbound', 'inter_interface');")"
+        WHERE traffic_direction IN ('inbound', 'outbound', 'inter_interface',
+                                    'to_this_firewall', 'from_this_firewall');")"
+check 'S5A-AC26 a flow with an end that is this firewall is in one of its two directions, and only it' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM flow WHERE src_is_this_firewall = 1 OR dst_is_this_firewall = 1;')" \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
+        WHERE traffic_direction IN ('to_this_firewall', 'from_this_firewall');")"
 check_ge 'S5A-AC26 a flow leaving a client is outbound although pf logged it in' 1 \
     "$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
         WHERE traffic_direction = 'outbound' AND direction = 'in' AND src_interface_id IS NOT NULL;")"
 check_ge 'S5A-AC26 a flow with neither end inside is placed by pf dir' 1 \
     "$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
-        WHERE src_interface_id IS NULL AND dst_interface_id IS NULL AND traffic_direction = 'inbound';")"
+        WHERE src_interface_id IS NULL AND dst_interface_id IS NULL AND traffic_direction = 'inbound'
+          AND src_is_this_firewall = 0 AND dst_is_this_firewall = 0;")"
+
+# ===========================================================================
+section 'LC-AC2 .. LC-AC17 — the step-5A live corrections, on both seeds'
+# ===========================================================================
+# The criteria of specs/SPEC-step-5a-live-corrections.md the seeded databases can carry:
+# this firewall as an end, the two legs of one connection and their outcomes, the
+# counting of decision 2, the setting of decision 4, and the diagnostics of the live
+# validation, executed. The Go suite carries the rest against generated networks.
+diag_file() {
+    grep -l -- "-- diagnostic: $1\$" "$WORK"/diag/*.sql | head -n 1
+}
+for db in "$MAIN_DB" "$ALT_DB"; do
+    tag="$(basename "$db" .db)"
+    check_ge "LC-AC2 $tag: flows of both directions of this firewall are seeded" 2 \
+        "$(q "$db" "SELECT count(DISTINCT traffic_direction) FROM classified_flow
+            WHERE traffic_direction IN ('to_this_firewall', 'from_this_firewall');")"
+    check "LC-AC2 $tag: no end that is this firewall carries a client" '0' \
+        "$(q "$db" "SELECT count(*) FROM flow WHERE (src_is_this_firewall = 1 AND src_client_id IS NOT NULL)
+            OR (dst_is_this_firewall = 1 AND dst_client_id IS NOT NULL);")"
+    check "LC-AC2 $tag: every end held by the firewall at its instant is recorded as this firewall" '0' \
+        "$(run_query "$db" "$(diag_file live_this_firewall_unmarked)" | tr -d ' ')"
+    check_ge "LC-AC2 $tag: a security event and a lookup from this firewall are seeded" 2 \
+        "$(q "$db" "SELECT (SELECT count(*) > 0 FROM security_event WHERE src_is_this_firewall = 1)
+            + (SELECT count(*) > 0 FROM dns_resolution WHERE client_is_this_firewall = 1);")"
+    check "LC-AC2 $tag: no security event or lookup from this firewall carries a client" '0' \
+        "$(q "$db" "SELECT (SELECT count(*) FROM security_event WHERE src_is_this_firewall = 1
+                              AND src_client_id IS NOT NULL)
+            + (SELECT count(*) FROM dns_resolution WHERE client_is_this_firewall = 1
+                 AND client_id IS NOT NULL);")"
+    # LC-AC4: this firewall is its own key, and never part of the outside column.
+    check "LC-AC4 $tag: this firewall's volume key equals a direct sum over flow" \
+        "$(q "$db" "SELECT sum(packet_bytes) FROM flow
+            WHERE (src_is_this_firewall = 1 OR dst_is_this_firewall = 1)
+              AND (pair_outcome IS NULL OR pair_outcome <> 'second_leg');")" \
+        "$(q "$db" "SELECT sum(bytes) FROM volume_aggregate_30d
+            WHERE traffic_direction IN ('to_this_firewall', 'from_this_firewall')
+              AND exit_leg_device IS NULL;")"
+    check "LC-AC4 $tag: the outside column holds no flow with an end that is this firewall" '0' \
+        "$(q "$db" "SELECT count(*) FROM volume_aggregate_1h
+            WHERE traffic_direction IN ('inbound', 'outbound') AND traffic_scope = 'this_firewall';")"
+    # LC-AC9, LC-AC10: the pairs name each other, and every upstream `out` record sourced
+    # by this firewall has exactly one outcome.
+    check "LC-AC9 $tag: every paired leg's partner names it back" '0' \
+        "$(q "$db" "SELECT count(*) FROM flow AS f
+            WHERE f.pair_outcome IN ('first_leg', 'second_leg')
+              AND NOT EXISTS (SELECT 1 FROM flow AS p WHERE p.id = f.paired_flow_id
+                                AND p.paired_flow_id = f.id AND p.pair_outcome <> f.pair_outcome);")"
+    check_ge "LC-AC9 $tag: pairs of both families are seeded" 2 \
+        "$(q "$db" "SELECT count(DISTINCT ip_version) FROM flow WHERE pair_outcome = 'second_leg';")"
+    check "LC-AC10 $tag: every upstream out record sourced by this firewall has one outcome" '' \
+        "$(run_query "$db" "$(diag_file live_upstream_firewall_source_outcomes)" | awk -F'|' '$1 == "none" || $3 != 0')"
+    check "LC-AC10 $tag: both outcomes are seeded, and only they" 'not_paired,second_leg' \
+        "$(q "$db" "SELECT group_concat(pair_outcome, ',') FROM (SELECT DISTINCT f.pair_outcome FROM flow AS f
+            JOIN interface AS i ON i.device = f.interface_device
+            WHERE f.direction = 'out' AND f.src_is_this_firewall = 1 AND i.is_upstream = 1 ORDER BY 1);")"
+    check "LC-AC10 $tag: no unpaired record carries a client" '0' \
+        "$(q "$db" "SELECT count(*) FROM flow WHERE pair_outcome = 'not_paired'
+            AND src_client_id IS NOT NULL;")"
+    # LC-AC11: decision 2. The volume family's totals count a connection once; its
+    # second legs sit under their own exit_leg_device; the rule family counts every record.
+    check "LC-AC11 $tag: the exit legs of the volume family are exactly the second legs" \
+        "$(q "$db" "SELECT sum(packet_bytes) FROM flow WHERE pair_outcome = 'second_leg';")" \
+        "$(q "$db" "SELECT sum(bytes) FROM volume_aggregate_24h WHERE exit_leg_device IS NOT NULL;")"
+    check "LC-AC11 $tag: every exit leg sits under the device it was logged on" '0' \
+        "$(q "$db" "SELECT count(*) FROM volume_aggregate_1h AS v WHERE v.exit_leg_device IS NOT NULL
+            AND v.exit_leg_device NOT IN (SELECT interface_device FROM flow WHERE pair_outcome = 'second_leg');")"
+    check "LC-AC11 $tag: no second leg is counted twice" '0' \
+        "$(run_query "$db" "$(diag_file live_paired_counted_twice)" | tr -d ' ')"
+    check_ge "LC-AC7 $tag: the verified invariant fields are filled" 2 \
+        "$(q "$db" "SELECT (SELECT count(*) > 0 FROM flow WHERE ip_id IS NOT NULL)
+            + (SELECT count(*) > 0 FROM flow WHERE tcp_seq IS NOT NULL);")"
+    check "LC-AC10 $tag: no record is labelled this firewall's own traffic" '0' \
+        "$(q "$db" "SELECT count(*) FROM flow
+            WHERE pair_outcome IS NOT NULL AND pair_outcome NOT IN ('first_leg', 'second_leg', 'not_paired');")"
+    check "LC-AC10 $tag: no schema object remains for the removed rule-logging inference" '' \
+        "$(q "$db" "SELECT group_concat(name) FROM sqlite_master
+            WHERE instr(name, 'pass_rule') > 0 OR instr(ifnull(sql, ''), 'this_firewall_traffic') > 0;")"
+    check "LC-AC14 $tag: unresolved lookups waiting for a lease pass and examined ones are both seeded" '2' \
+        "$(q "$db" "SELECT count(DISTINCT hostname_examined_at IS NULL) FROM dns_resolution
+            WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname');")"
+    check "LC-AC12 $tag: the pairing window is a setting row whose default is 1" '1' \
+        "$(q "$db" "SELECT value FROM setting WHERE key = 'leg_pairing_window_seconds';")"
+    check_ge "LC-AC13 $tag: the unresolved host-name diagnostic executes and sorts every lookup" 1 \
+        "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | wc -l | tr -d ' ')"
+    check "LC-AC13 $tag: every unresolved lookup lands in exactly one cause" \
+        "$(q "$db" "SELECT count(*) FROM dns_resolution WHERE client_resolution = 'unknown_hostname'
+            AND looked_up_at >= $WINDOW_START AND looked_up_at < $WINDOW_END;")" \
+        "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | awk -F'|' '{ s += $2 } END { print s + 0 }')"
+    check_ge "LC-AC2 $tag: the anonymous north-south diagnostic executes" 1 \
+        "$(run_query "$db" "$(diag_file live_anonymous_north_south)" | wc -l | tr -d ' ')"
+done
+expect_sql_failure 'LC-AC9 a paired leg must name its partner' "$MAIN_DB" \
+    "UPDATE flow SET paired_flow_id = NULL WHERE pair_outcome = 'second_leg';"
+expect_sql_failure 'LC-AC10 an outcome outside the three is rejected, the removed one included' "$MAIN_DB" \
+    "UPDATE flow SET pair_outcome = 'this_firewall_traffic' WHERE pair_outcome = 'not_paired';"
 
 # ===========================================================================
 section 'S5A-AC1, AC2, AC5, AC28, AC37 — the documents step 5A edits'

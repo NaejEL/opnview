@@ -141,7 +141,42 @@ docker compose run --rm checks
 ```
 
 That string is **identical in PowerShell and in bash**: it carries no quoting,
-and it needs no knowledge of the host `PATH`. `docker compose run --rm dev
+and it needs no knowledge of the host `PATH`.
+
+**Two commands: the everyday suite and the pre-deployment command** (the
+maintainer's test budget of 7 October 2026,
+`specs/SPEC-test-budget-and-two-live-defects.md`).
+
+- **`docker compose run --rm checks` is the everyday suite**, run by builders and
+  verifiers on every iteration: `gofmt -l .`, `go vet ./...`, `go build ./...` and
+  `go test -count=1 ./...` without `-race`, every test except those moved to the
+  pre-deployment command. **Its `go test` wall time has a budget of 60 s**, the one
+  constant `TEST_BUDGET_SECONDS` in `ci/checks.sh`: the script measures the time,
+  prints it beside the container's CPU count so a slower or busier machine is
+  identifiable, and fails above the budget with a message that names it. `-count=1`
+  makes the time the suite's rather than a cache hit's. Its `/tmp`, where every test
+  database is created, is a tmpfs: each SQLite commit waited about 5 ms on its
+  fsync on the container's overlay filesystem, and nothing the everyday suite
+  asserts depends on a write reaching a disk.
+- **`docker compose run --rm pre-deployment` is the gate run before a
+  deployment**, not on every iteration. It runs `go vet` and
+  `go test -race -count=1` over the whole suite with the moved tests compiled in,
+  the test budget's own check (`ci/budget-self-test.sh`, which runs `checks` with
+  a test-only sleep one second past the budget and requires it to fail naming the
+  budget), and `sql/schema-checks.sh` — the schema, the seeds at 100 000 and
+  1 000 000 flow rows, the screen queries and every statement's query plan. Its
+  `/tmp` is the overlay filesystem, so the whole suite meets a real disk once
+  before a deployment.
+- **Moving a test out of the everyday suite** is done with the `predeployment`
+  build tag, which the pre-deployment command passes to `go vet` and `go test`,
+  never by deleting or skipping the test, and the test says why in a comment
+  beside the tag. **No test is moved today**: measured on 7 October 2026 the
+  everyday suite went from 341 s to about 12 s of `go test` wall time on 16 CPUs by
+  applying the schema in one transaction, preparing each statement once per
+  derivation, running the tests in parallel, rendering the web pages once per
+  package and putting `/tmp` on a tmpfs, so nothing had to leave it.
+
+`docker compose run --rm dev
 bash` opens an interactive shell in the same environment, and
 `.devcontainer/devcontainer.json` reuses the same `dev` service so VS Code
 "Reopen in Container" gives the editor that toolchain too. The Go module cache,
@@ -170,7 +205,7 @@ container run says nothing about deployment.
 |2|Data model and SQLite schema|Schema + model document|Done|
 |3|Static HTML mockup — overview|HTML file for a representative canvas, fake data|Done|
 |4|Backend: collection and storage|Collectors + persistence + tests|Done — validated against a live OPNsense 26.7 on 3 October 2026|
-|5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|In progress — 5A (correlation, classification, aggregation) implemented, awaiting verification; 5B (HTTP API) to do|
+|5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|In progress — 5A (correlation, classification, aggregation) implemented, **not yet validated live**: its first live run, on 5 October 2026, measured the defects `specs/SPEC-step-5a-live-corrections.md` corrects, and the next cycle attributes site names from the resolver cache; 5B (HTTP API) to do|
 |6|Backend: alerts and client correlation|Alert model + API + tests|To do|
 |7|Full frontend|Canvases, widgets, dashboard import/export|To do|
 |8|Install, packaging, documentation|`ct/install.sh`, compose, README|To do|
@@ -408,22 +443,42 @@ is honest.
 was verified from the `opnsense/core` 26.7.3 source, the surveyed documentation
 and synthesised fixtures. The following are probed against a live OPNsense at
 this step's validation, and each finding is recorded in
-`docs/opnsense-api-survey.md`:
+`docs/opnsense-api-survey.md`. The first live run, on 5 October 2026, answered
+some; each item says which, **in proportions only** — no installation's names,
+addresses or counts are recorded here.
 
-- the field names `/api/routes/gateway/status` returns, and the `~` it writes
-  in place of a reading it does not have;
-- the response of `/api/diagnostics/system/systemSwap`;
-- the time span one `traffic/top` sample covers, which the sampled-bytes
-  measure is defined from;
-- whether a tunnel carrying `gateways[]` — a VPN client with a gateway — is
-  classified as upstream, and whether that is right on that installation;
-- whether `iftop`, behind `traffic/top`, reports a client talking to another
-  interface on both interfaces, counting its rate twice;
-- the FreeBSD release wording of `pf.conf(5)` against the `releng` link the
-  survey cites for the release OPNsense 26.7 ships;
-- how often Unbound logs a host name rather than an address as a lookup's
-  `client`, which decides how many lookups go through the DHCP leases and how
-  many stay unresolved.
+- **Gateway status — answered for the shape, open for the figures.** The field
+  names `/api/routes/gateway/status` returns are the ones read from source, and
+  the `~` it writes in place of a reading it does not have was observed on every
+  gateway of an installation whose gateway monitoring was disabled. Each absence
+  is now named in the availability detail. Samples from a monitored gateway have
+  not been observed yet.
+- **Open:** the response of `/api/diagnostics/system/systemSwap`.
+- **Open:** the time span one `traffic/top` sample covers, which the sampled-bytes
+  measure is defined from.
+- **Upstream detection — answered.** An interface carrying `gateways[]` is
+  classified upstream, and the classification was right on the installation
+  probed; whether a tunnel carrying `gateways[]` — a VPN client with a gateway —
+  is right as upstream stays to be seen on an installation that has one. Most of its flows then turned out to be the firewall's own: about seven
+  in ten flows had the firewall's upstream address as an end and no other end
+  placed, which is what *This Firewall* recognition and the pairing of the two legs
+  of one connection now handle (`specs/SPEC-step-5a-live-corrections.md`).
+- **Open:** whether `iftop`, behind `traffic/top`, reports a client talking to
+  another interface on both interfaces, counting its rate twice.
+- **Open:** the FreeBSD release wording of `pf.conf(5)` against the `releng` link
+  the survey cites for the release OPNsense 26.7 ships.
+- **Share of host-name queriers — answered.** Unbound logged a host name rather
+  than an address for a minority of lookups, and about one lookup in twenty stayed
+  `unknown_hostname` although leases were collected; the matching by first label on
+  both sides, `localhost` as this firewall and the stored retry address the causes
+  the code admitted, and the diagnostic `Unresolved host names by cause` sorts the
+  rest.
+- **Double NAT and carrier-grade NAT — a new item, and a limit.** Behind an
+  upstream NAT the firewall does not see its public IPv4 address, and nothing
+  `opnview` reads can supply it: no OPNsense endpoint reports it and no outbound
+  call the project allows could. The *Public address* widget and the
+  `ReadPublicAddresses` contract state it rather than present the upstream
+  interface's address as public.
 
 ### Step 6 — Backend: alerts and client correlation
 

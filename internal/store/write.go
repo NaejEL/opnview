@@ -218,17 +218,57 @@ func (s *Store) UpsertInterface(ctx context.Context, iface Interface, now int64)
 // gateway behind it, as of now. A value read again moves its last_seen_at; a new
 // value is a new row, and its predecessor keeps the last instant it was seen, so
 // a change of address is history rather than an overwrite.
-func (s *Store) UpsertInterfaceAddress(ctx context.Context, address InterfaceAddress, now int64) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO interface_address (interface_id, source_field, address, prefix_length,
-		                                address_family, first_seen_at, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (interface_id, source_field, address, ifnull(prefix_length, -1))
-		 DO UPDATE SET last_seen_at = max(interface_address.last_seen_at, excluded.last_seen_at)`,
-		address.InterfaceID, address.SourceField, address.Address, address.PrefixLength,
-		address.AddressFamily, now, now)
+//
+// A ROW IS ONE HOLDING. The value's latest row is continued only when the previous
+// discovery read it too. previousDiscovery is that discovery's instant, which the caller
+// captures BEFORE its pass writes anything -- LatestInterfaceDiscoveryAt -- so it does not
+// depend on the order the pass writes the interfaces in; nil means there was none, and
+// the latest row is continued. A value read again after a discovery that did not read
+// it -- released, then re-acquired -- starts a new row at now, so the interval between
+// the two holdings belongs to neither and "held at an instant" (the
+// this_firewall_address view) does not span it. A discovery that failed writes nothing,
+// moves no interface's last_seen_at, and so breaks no holding.
+func (s *Store) UpsertInterfaceAddress(ctx context.Context, address InterfaceAddress,
+	previousDiscovery *int64, now int64) error {
+	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: writing an address of interface %d: %w", address.InterfaceID, err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+
+	var (
+		latestID   int64
+		latestSeen int64
+	)
+	err = transaction.QueryRowContext(ctx,
+		`SELECT id, last_seen_at FROM interface_address
+		 WHERE interface_id = ? AND source_field = ? AND address = ?
+		   AND ifnull(prefix_length, -1) = ifnull(?, -1)
+		 ORDER BY first_seen_at DESC LIMIT 1`,
+		address.InterfaceID, address.SourceField, address.Address, address.PrefixLength).
+		Scan(&latestID, &latestSeen)
+	found := err == nil
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("store: reading an address of interface %d: %w", address.InterfaceID, err)
+	}
+	if found && (previousDiscovery == nil || latestSeen >= *previousDiscovery) {
+		_, err = transaction.ExecContext(ctx,
+			"UPDATE interface_address SET last_seen_at = max(last_seen_at, ?) WHERE id = ?", now, latestID)
+	} else {
+		_, err = transaction.ExecContext(ctx,
+			`INSERT INTO interface_address (interface_id, source_field, address, prefix_length,
+			                                address_family, first_seen_at, last_seen_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT (interface_id, source_field, address, ifnull(prefix_length, -1), first_seen_at)
+			 DO UPDATE SET last_seen_at = max(interface_address.last_seen_at, excluded.last_seen_at)`,
+			address.InterfaceID, address.SourceField, address.Address, address.PrefixLength,
+			address.AddressFamily, now, now)
+	}
+	if err != nil {
+		return fmt.Errorf("store: writing an address of interface %d: %w", address.InterfaceID, err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("store: committing an address of interface %d: %w", address.InterfaceID, err)
 	}
 	return nil
 }
@@ -255,8 +295,8 @@ func (s *Store) UpsertInterfaceMapEntry(ctx context.Context, device, description
 func (s *Store) UpsertRule(ctx context.Context, rule Rule, now int64) (int64, error) {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO rule (pf_label, description, action, direction, interface, legacy,
-		                   logs_matches, is_automatic, discovered_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                   logs_matches, enabled, is_automatic, discovered_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (pf_label) DO UPDATE SET
 		     description   = excluded.description,
 		     action        = excluded.action,
@@ -264,10 +304,12 @@ func (s *Store) UpsertRule(ctx context.Context, rule Rule, now int64) (int64, er
 		     interface     = excluded.interface,
 		     legacy        = excluded.legacy,
 		     logs_matches  = excluded.logs_matches,
+		     enabled       = excluded.enabled,
 		     is_automatic  = excluded.is_automatic,
 		     discovered_at = excluded.discovered_at`,
 		rule.PfLabel, rule.Description, rule.Action, rule.Direction, rule.Interface,
-		boolToNullableInt(rule.Legacy), boolToNullableInt(rule.LogsMatches), boolToInt(rule.IsAutomatic), now)
+		boolToNullableInt(rule.Legacy), boolToNullableInt(rule.LogsMatches), boolToNullableInt(rule.Enabled),
+		boolToInt(rule.IsAutomatic), now)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing rule %s: %w", rule.PfLabel, err)
 	}
@@ -393,14 +435,17 @@ func (s *Store) InsertDHCPLease(ctx context.Context, providerID int64, lease DHC
 // row's interfaces. The schema's CHECK would reject one anyway; this makes the
 // rejection unreachable rather than merely caught.
 func (s *Store) InsertFlow(ctx context.Context, flow Flow) error {
+	// A record is stored with neither end recognised as this firewall: that is
+	// classification's to decide, from the addresses the firewall held at the
+	// record's instant (classify.go).
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO flow (log_digest, observed_at, ingested_at, interface_device,
 		                   interface_lookup_state, src_interface_id, dst_interface_id,
 		                   src_client_id, dst_client_id, src_address, dst_address,
 		                   src_port, dst_port, protocol, ip_version, action, direction,
 		                   log_reason, packet_bytes, rid, rule_id, rule_lookup_state,
-		                   traffic_scope)
-		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		                   ip_id, tcp_seq, traffic_scope)
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 WHERE NOT EXISTS (SELECT 1 FROM retention_purge WHERE purged_before > ?)
 		 ON CONFLICT (log_digest) DO NOTHING`,
 		flow.LogDigest, flow.ObservedAt, flow.IngestedAt, flow.InterfaceDevice,
@@ -408,7 +453,8 @@ func (s *Store) InsertFlow(ctx context.Context, flow Flow) error {
 		flow.SrcClientID, flow.DstClientID, flow.SrcAddress, flow.DstAddress,
 		flow.SrcPort, flow.DstPort, flow.Protocol, flow.IPVersion, flow.Action,
 		flow.Direction, flow.LogReason, flow.PacketBytes, flow.Rid, flow.RuleID,
-		string(flow.RuleLookupState), string(ScopeOf(flow.SrcInterfaceID, flow.DstInterfaceID)),
+		string(flow.RuleLookupState), flow.IPID, flow.TCPSeq,
+		string(ScopeOf(flow.SrcInterfaceID, flow.DstInterfaceID, false, false)),
 		flow.ObservedAt)
 	if err != nil {
 		return fmt.Errorf("store: writing a flow: %w", err)
@@ -468,11 +514,20 @@ func (s *Store) UpsertBlocklist(ctx context.Context, name string, now int64) (in
 // the purge has applied is not stored, checked inside the insert for the reason
 // InsertFlow gives: the resolver's buffer keeps offering lookups the purge removed.
 func (s *Store) InsertDNSResolution(ctx context.Context, lookup DNSResolution) error {
+	_, err := s.StoreDNSResolution(ctx, lookup)
+	return err
+}
+
+// StoreDNSResolution is InsertDNSResolution, reporting whether the lookup was stored:
+// false when its lookup_key is already held or it is older than the purge horizon.
+// The resolver collector decides from it, and not from the lookup's instant, whether a
+// row was new: two different lookups can share an instant.
+func (s *Store) StoreDNSResolution(ctx context.Context, lookup DNSResolution) (bool, error) {
 	var blocklistID *int64
 	if lookup.BlocklistName != "" {
 		id, err := s.UpsertBlocklist(ctx, lookup.BlocklistName, lookup.IngestedAt)
 		if err != nil {
-			return err
+			return false, err
 		}
 		blocklistID = &id
 	}
@@ -480,7 +535,7 @@ func (s *Store) InsertDNSResolution(ctx context.Context, lookup DNSResolution) e
 	if resolution == "" {
 		resolution = ClientResolutionLoggedAddress
 	}
-	_, err := s.db.ExecContext(ctx,
+	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO dns_resolution (lookup_key, client_address, client_hostname,
 		                             client_resolution, client_id, domain, resolver,
 		                             action, answer_source, rcode, dnssec_status, blocklist_id,
@@ -493,9 +548,13 @@ func (s *Store) InsertDNSResolution(ctx context.Context, lookup DNSResolution) e
 		lookup.Action, lookup.AnswerSource, lookup.Rcode, lookup.DNSSECStatus, blocklistID,
 		lookup.LookedUpAt, lookup.IngestedAt, lookup.LookedUpAt)
 	if err != nil {
-		return fmt.Errorf("store: writing a resolver lookup: %w", err)
+		return false, fmt.Errorf("store: writing a resolver lookup: %w", err)
 	}
-	return nil
+	stored, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("store: writing a resolver lookup: %w", err)
+	}
+	return stored > 0, nil
 }
 
 // NewestDNSResolutionAt returns the newest looked_up_at stored, and whether there
@@ -801,4 +860,16 @@ func boolToNullableInt(value *bool) *int64 {
 	}
 	rendered := boolToInt(*value)
 	return &rendered
+}
+
+// LatestInterfaceDiscoveryAt returns the instant of the latest discovery that wrote the
+// interfaces -- every interface of one discovery carries its instant in last_seen_at --
+// and whether there was one. A discovery pass reads it before it writes anything, and
+// hands it to UpsertInterfaceAddress as the previous discovery.
+func (s *Store) LatestInterfaceDiscoveryAt(ctx context.Context) (int64, bool, error) {
+	var latest sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, "SELECT max(last_seen_at) FROM interface").Scan(&latest); err != nil {
+		return 0, false, fmt.Errorf("store: reading the latest discovery: %w", err)
+	}
+	return latest.Int64, latest.Valid, nil
 }

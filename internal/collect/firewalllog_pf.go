@@ -164,9 +164,33 @@ func (pfFilterLog) records(ctx context.Context, host session, pageSize int) ([]l
 			LogReason:   decode.StringPointer(row, "reason"),
 			PacketBytes: packetBytes,
 			Rid:         decode.StringPointer(row, "rid"),
+			IPID:        pairingField(row, "id", ipVersion == 4, 65535),
+			TCPSeq:      pairingField(row, "seq", true, 4294967295),
 		})
 	}
 	return records, result, nil
+}
+
+// pairingField reads one of the two fields that pair the records of one connection:
+// `id`, the IPv4 identification, and `seq`, the TCP sequence number. Both are written
+// by filterlog at fixed positions -- "ipversion, tos, ecn, ttl, id, ..." and, on TCP,
+// "srcport, dstport, datalen, flags, seq, ..." (opnsense/ports 26.7.3,
+// opnsense/filterlog/files/description.txt) -- and read_log.py names them `id` and
+// `seq` at the same positions (opnsense/core 26.7.3, src/opnsense/scripts/filter/
+// read_log.py, fields_ipv4 and fields_ipv4_tcp). Its names drift only past `ack`: the
+// window is filed under `urp` and the urgent pointer under `tcpopts`, neither of which
+// is read. A field the record does not carry -- `id` on IPv6, `seq` off TCP -- or that
+// is not a whole number within its width is stored as no value, never as a zero a
+// pairing could match on.
+func pairingField(row decode.Object, key string, applies bool, maximum int64) *int64 {
+	if !applies {
+		return nil
+	}
+	value, present := decode.Int(row, key)
+	if !present || value < 0 || value > maximum {
+		return nil
+	}
+	return &value
 }
 
 // normaliseFilterAction maps pf's action onto the closed vocabulary the schema constrains.

@@ -3,6 +3,7 @@ package collect
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/NaejEL/opnview/internal/store"
 )
@@ -15,6 +16,7 @@ import (
 // a record the purge has passed is not stored again, so it is never both in `flow` and in
 // the purged part.
 func TestARecordStoredAgainAfterItsPurgeIsNotCountedTwice(t *testing.T) {
+	t.Parallel()
 	harness := arrangeFilterLogCollection(t)
 	ctx := context.Background()
 	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
@@ -50,6 +52,7 @@ func TestARecordStoredAgainAfterItsPurgeIsNotCountedTwice(t *testing.T) {
 // so a lookup naming its client by host name can be read before the lease that resolves it.
 // The lease pass resolves it then, as of the lookup's instant, and places it.
 func TestAHostNameLookupReadBeforeItsLeaseIsResolvedByTheLeasePass(t *testing.T) {
+	t.Parallel()
 	harness := arrangeLeaseCollection(t)
 	ctx := context.Background()
 	answer := "Recursion"
@@ -69,6 +72,9 @@ func TestAHostNameLookupReadBeforeItsLeaseIsResolvedByTheLeasePass(t *testing.T)
 		t.Fatalf("writing the lookup: %v", err)
 	}
 
+	// The lease pass runs after the lookup was read: a lookup stamped in the very second the
+	// lease read begins may postdate the leases read, and waits for the next pass.
+	setClock(harness, referenceInstant().Add(time.Second))
 	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("collecting the leases: %v", err)
 	}

@@ -87,6 +87,16 @@ func (c *Collector) discoverInterfaces(ctx context.Context, snapshot *Discovery)
 		return fmt.Errorf("collect: reading %s: %w", opnsense.InterfacesInfo.Path, err)
 	}
 
+	// The previous discovery's instant, read before this pass writes anything: an
+	// address read then and now continues its holding, whatever order the interfaces are
+	// listed and written in.
+	var previousDiscovery *int64
+	if latest, found, err := c.store.LatestInterfaceDiscoveryAt(ctx); err != nil {
+		return err
+	} else if found {
+		previousDiscovery = &latest
+	}
+
 	now := c.now()
 	for _, row := range rows {
 		identifier, hasIdentifier := decode.String(row, "identifier")
@@ -129,7 +139,7 @@ func (c *Collector) discoverInterfaces(ctx context.Context, snapshot *Discovery)
 		}
 		addresses, networks := interfaceAddresses(row, id, gateways)
 		for _, address := range addresses {
-			if err := c.store.UpsertInterfaceAddress(ctx, address, now); err != nil {
+			if err := c.store.UpsertInterfaceAddress(ctx, address, previousDiscovery, now); err != nil {
 				return err
 			}
 		}
@@ -358,6 +368,7 @@ func (c *Collector) discoverRules(ctx context.Context, snapshot *Discovery) erro
 			Action:      normaliseRuleAction(rawTwin(row, "action")),
 			Direction:   normaliseRuleDirection(rawTwin(row, "direction")),
 			LogsMatches: decode.Flag(row, "log"),
+			Enabled:     decode.Flag(row, "enabled"),
 			Interface:   ruleInterface(row),
 			Legacy:      decode.Flag(row, "legacy"),
 			IsAutomatic: decode.FlagOrFalse(decode.Flag(row, "is_automatic")),

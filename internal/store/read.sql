@@ -20,16 +20,18 @@
 
 -- statement: read_volume_slots
 SELECT src_interface_id, dst_interface_id, peer_address, traffic_scope, traffic_direction,
+       exit_leg_device,
        sum(bytes), sum(allowed_bytes), sum(blocked_bytes), sum(unknown_bytes),
        sum(allowed_connections), sum(blocked_connections), sum(unknown_connections)
 FROM volume_aggregate_1h
 WHERE period_start_at >= :from
   AND period_start_at < :to
-GROUP BY src_interface_id, dst_interface_id, peer_address, traffic_scope, traffic_direction;
+GROUP BY src_interface_id, dst_interface_id, peer_address, traffic_scope, traffic_direction,
+         exit_leg_device;
 
 -- statement: read_volume_flows
 SELECT f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope,
-       f.traffic_direction,
+       f.traffic_direction, f.exit_leg_device,
        sum(f.packet_bytes),
        sum(CASE WHEN f.action = 'pass' THEN f.packet_bytes ELSE 0 END),
        sum(CASE WHEN f.action IN ('block', 'reject') THEN f.packet_bytes ELSE 0 END),
@@ -41,7 +43,7 @@ FROM classified_flow AS f
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
 GROUP BY f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope,
-         f.traffic_direction;
+         f.traffic_direction, f.exit_leg_device;
 
 -- statement: read_earliest_slot
 SELECT min(period_start_at) FROM volume_aggregate_1h;
@@ -81,6 +83,7 @@ LEFT JOIN geo_asn AS g ON g.address = f.peer_address
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
+  AND f.exit_leg_device IS NULL
 GROUP BY 1, 2, 3, 4, 5, 6, 7;
 
 -- ---------------------------------------------------------------------------
@@ -88,8 +91,9 @@ GROUP BY 1, 2, 3, 4, 5, 6, 7;
 -- ---------------------------------------------------------------------------
 
 -- The eligible flows: those a client sent to an outside destination. A flow with
--- no source client -- both ends outside, an unsolicited packet to the firewall's
--- own address -- was sent by nobody the resolver could have named a site for.
+-- no source client -- both ends outside -- was sent by nobody the resolver could
+-- have named a site for. A flow from or to this firewall is not a client's, and a
+-- second leg is the same connection as its first leg, which is the one counted.
 -- The diagnostic "Attribution rate per client" counts the same flows.
 -- statement: read_attribution_rate
 SELECT count(*),
@@ -102,6 +106,9 @@ WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.dst_interface_id IS NULL
   AND f.src_client_id IS NOT NULL
+  AND f.src_is_this_firewall = 0
+  AND f.dst_is_this_firewall = 0
+  AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
   AND (:client_id IS NULL OR f.src_client_id = :client_id);
 
 -- The evidence that a resolver source answered for [from, to]: a lookup stored

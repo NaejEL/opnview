@@ -19,6 +19,7 @@ import (
 // page, after it checked the digest -- is seen by that insert. Both the flow and the
 // lookup inserts obey it, and a record at or after the watermark is stored as before.
 func TestARecordOlderThanThePurgeWatermarkIsRefusedByTheInsertItself(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 2)
 	ctx := context.Background()
 	if err := network.db.SetSetting(ctx, "retention_seconds", "600", network.now); err != nil {
@@ -53,6 +54,7 @@ func TestARecordOlderThanThePurgeWatermarkIsRefusedByTheInsertItself(t *testing.
 // TestTheDataModelCountsTheAggregateFamiliesTheSchemaHas: the document's count of the
 // aggregate tables and families is the schema's.
 func TestTheDataModelCountsTheAggregateFamiliesTheSchemaHas(t *testing.T) {
+	t.Parallel()
 	schema, err := sqlFiles.ReadFile("schema.sql")
 	if err != nil {
 		t.Fatalf("reading the schema: %v", err)
@@ -97,11 +99,14 @@ func TestTheDataModelCountsTheAggregateFamiliesTheSchemaHas(t *testing.T) {
 	}
 }
 
-// TestReResolvingHostNamesIsBoundedToTheLookupsIngestedSince: a lease pass resolves again
-// only the unresolved host-name lookups ingested since the previous one began, so its work
-// does not grow with the unresolved lookups that accumulate -- a host whose name no lease
-// ever carries -- while a lookup read before the lease that names it is still resolved.
-func TestReResolvingHostNamesIsBoundedToTheLookupsIngestedSince(t *testing.T) {
+// TestReResolvingHostNamesIsBoundedToTheLookupsNotYetExamined: a lease pass resolves again
+// only the unresolved host-name lookups no lease pass has examined since they were
+// ingested, so its work does not grow with the unresolved lookups that accumulate -- a
+// host whose name no lease ever carries -- while a lookup read before the lease that names
+// it is still resolved. The bound is now the stored mark rather than the start of the
+// previous pass, which a restart lost (step-5A live corrections, H6).
+func TestReResolvingHostNamesIsBoundedToTheLookupsNotYetExamined(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 2)
 	ctx := context.Background()
 	since := network.now - 600
@@ -116,6 +121,15 @@ func TestReResolvingHostNamesIsBoundedToTheLookupsIngestedSince(t *testing.T) {
 			t.Fatalf("writing an old lookup: %v", err)
 		}
 	}
+	// The previous lease pass examined the fifty.
+	first, err := network.db.ResolveLoggedHostnames(ctx, since, since)
+	if err != nil {
+		t.Fatalf("resolving: %v", err)
+	}
+	if first.Examined != 50 {
+		t.Fatalf("the first pass examined %d lookups, not the 50 waiting", first.Examined)
+	}
+
 	recent := "example-late.example.invalid"
 	if err := network.db.InsertDNSResolution(ctx, DNSResolution{
 		LookupKey: "example-recent", ClientAddress: recent, ClientHostname: &recent,
@@ -133,12 +147,12 @@ func TestReResolvingHostNamesIsBoundedToTheLookupsIngestedSince(t *testing.T) {
 		t.Fatalf("writing the lease: %v", err)
 	}
 
-	result, err := network.db.ResolveLoggedHostnames(ctx, since)
+	result, err := network.db.ResolveLoggedHostnames(ctx, network.now, network.now)
 	if err != nil {
 		t.Fatalf("resolving: %v", err)
 	}
 	if result.Examined != 1 {
-		t.Errorf("the pass examined %d lookups; only the one ingested since the previous pass is due", result.Examined)
+		t.Errorf("the pass examined %d lookups; only the one no pass has examined is due", result.Examined)
 	}
 	if len(result.Addresses) != 1 || result.Addresses[0] != network.clients[1].address {
 		t.Errorf("the late-leased lookup resolved to %v, not %s", result.Addresses, network.clients[1].address)
@@ -146,5 +160,12 @@ func TestReResolvingHostNamesIsBoundedToTheLookupsIngestedSince(t *testing.T) {
 	if resolved := queryInt(t, network.db, `SELECT count(*) FROM dns_resolution
 		WHERE lookup_key = 'example-recent' AND client_resolution = 'lease_hostname'`); resolved != 1 {
 		t.Error("the lookup read before its lease was not resolved")
+	}
+	again, err := network.db.ResolveLoggedHostnames(ctx, network.now+300, network.now+300)
+	if err != nil {
+		t.Fatalf("resolving: %v", err)
+	}
+	if again.Examined != 0 {
+		t.Errorf("a third pass examined %d lookups that earlier passes had examined", again.Examined)
 	}
 }

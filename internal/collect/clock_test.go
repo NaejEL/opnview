@@ -31,6 +31,7 @@ func oldestObserved(t *testing.T, harness *probeHarness) int64 {
 // firewall on UTC and from one on CEST is stored two hours apart, because the CEST
 // firewall wrote its local time and discovery measured how far that is from UTC.
 func TestTheFilterLogIsStoredInUTCWhateverTheFirewallsZone(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 
 	onUTC := arrangeFilterLogCollection(t)
@@ -60,6 +61,7 @@ func TestTheFilterLogIsStoredInUTCWhateverTheFirewallsZone(t *testing.T) {
 // discovery measures the offset itself, and with no clock to measure it from it
 // stores nothing rather than a guessed time.
 func TestNoFilterLogLineIsStoredBeforeTheOffsetIsKnown(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	harness := arrangeFilterLogCollection(t)
 

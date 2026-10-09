@@ -5,8 +5,8 @@ import (
 	"fmt"
 )
 
-// The derivation that follows a collection pass: classification, site-name
-// attribution, and the aggregate refresh.
+// The derivation that follows a collection pass: classification, the pairing of the
+// two records of one connection, site-name attribution, and the aggregate refresh.
 //
 // WHY IT FOLLOWS THE PASS RATHER THAN RUNNING INSIDE IT. A flow's ends are placed
 // from on-link evidence, and the evidence for one record can arrive in a record
@@ -14,7 +14,8 @@ import (
 // record is stored first with neither end placed, and once the whole pass is
 // stored every address it touched is placed from everything held, in sorted
 // order. That is what makes the result independent of the order the records
-// arrived in. The same holds of attribution: a lookup is usually read after the
+// arrived in. The same holds of the pairing, which needs both legs and whether
+// an end is this firewall, and of attribution: a lookup is usually read after the
 // flow it names, because the resolver is polled less often than the filter log,
 // so the resolver pass decides again on every flow its lookups could name.
 //
@@ -31,14 +32,24 @@ type derivation struct {
 	attribute     bool
 	attributeFrom int64
 	attributeTo   int64
+	// pairFrom and pairTo bound the records whose pairing is decided again; pair
+	// says whether there are any. A pass that stores records asks for them, and so
+	// does a classification that moved a record, since whether a source is this
+	// firewall is part of the rule.
+	pair     bool
+	pairFrom int64
+	pairTo   int64
 	// everything reclassifies every address any row carries, which is what a
 	// change of the upstream interfaces or of the networks that count calls for.
 	// derive sets it itself when what classification reads of the interfaces has
 	// changed since the last derivation that placed every address.
 	everything bool
 	// hostnames resolves again the lookups whose logged host name named no single
-	// address, which a lease pass calls for.
-	hostnames bool
+	// address, which a lease pass that read every active backend calls for, and only
+	// those ingested before hostnamesBefore, the instant its lease read began: a lookup
+	// ingested since may postdate the leases read, and waits for the next pass.
+	hostnames       bool
+	hostnamesBefore int64
 }
 
 // widen extends the attribution window to cover [from, to].
@@ -49,6 +60,16 @@ func (d *derivation) widen(from, to int64) {
 	}
 	d.attributeFrom = min(d.attributeFrom, from)
 	d.attributeTo = max(d.attributeTo, to)
+}
+
+// widenPairing extends the pairing window to cover [from, to].
+func (d *derivation) widenPairing(from, to int64) {
+	if !d.pair {
+		d.pair, d.pairFrom, d.pairTo = true, from, to
+		return
+	}
+	d.pairFrom = min(d.pairFrom, from)
+	d.pairTo = max(d.pairTo, to)
 }
 
 // spanOf returns the smallest and largest of some instants.
@@ -93,18 +114,12 @@ func (c *Collector) deriveLocked(ctx context.Context, request derivation) error 
 	c.mutex.RUnlock()
 
 	if request.hostnames {
-		// From the watermark of the previous lease pass: a lookup pass in flight then
-		// held it back to its own stamp, so no lookup is skipped between two passes.
-		c.mutex.RLock()
-		since := c.hostnamesSince
-		c.mutex.RUnlock()
-		resolved, err := c.store.ResolveLoggedHostnames(ctx, since)
+		// Every lookup no lease pass has examined since it was ingested -- the mark is
+		// stored, so a restart loses none -- as of its own instant.
+		resolved, err := c.store.ResolveLoggedHostnames(ctx, request.hostnamesBefore, now)
 		if err != nil {
 			return err
 		}
-		c.mutex.Lock()
-		c.hostnamesSince = max(c.hostnamesSince, watermark)
-		c.mutex.Unlock()
 		request.addresses = append(request.addresses, resolved.Addresses...)
 		if low, high, ok := spanOf(resolved.Instants); ok {
 			request.widen(low, high+maxDelay)
@@ -128,6 +143,23 @@ func (c *Collector) deriveLocked(ctx context.Context, request derivation) error 
 		placed, lookups = result.FlowInstants, result.LookupInstants
 	}
 	forced = append(forced, placed...)
+
+	// A record whose end became, or stopped being, this firewall may pair differently;
+	// the pairing then decides the records of the window again, before attribution,
+	// because a second leg is not attributed.
+	if low, high, ok := spanOf(placed); ok {
+		request.widenPairing(low, high)
+	}
+	if request.pair {
+		paired, err := c.store.Pair(ctx, request.pairFrom, request.pairTo, c.pairingWindow())
+		if err != nil {
+			return err
+		}
+		forced = append(forced, paired.FlowInstants...)
+		if low, high, ok := spanOf(paired.FlowInstants); ok {
+			request.widen(low, high)
+		}
+	}
 
 	// A flow whose source client changed may now match other lookups, and a lookup
 	// whose client changed may now match other flows.
@@ -185,7 +217,7 @@ func (c *Collector) onLinkChanged(ctx context.Context) (bool, error) {
 // rows placed, attributed and in their slots, and its own error is still returned,
 // joined with the derivation's if that failed too.
 func (c *Collector) deriveAfter(ctx context.Context, request derivation, passErr error) error {
-	if len(request.addresses) == 0 && !request.attribute {
+	if len(request.addresses) == 0 && !request.attribute && !request.pair {
 		if passErr != nil {
 			return passErr
 		}
@@ -271,6 +303,13 @@ func (c *Collector) attributionMaxDelay() int64 {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	return c.maxDelaySeconds
+}
+
+// pairingWindow is the leg_pairing_window_seconds setting in force.
+func (c *Collector) pairingWindow() int64 {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.pairingWindowSeconds
 }
 
 // ReclassifyEverything places every address any stored row carries and refreshes

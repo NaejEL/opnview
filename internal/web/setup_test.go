@@ -17,6 +17,7 @@ import (
 // package: the service comes up against a database with no account, and the setup
 // surface is the thing that is reachable.
 func TestAFreshInstallationHasNoAccountAndRunsAnyway(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 
 	count, err := harness.store.CountAccounts(context.Background())
@@ -55,6 +56,7 @@ func TestAFreshInstallationHasNoAccountAndRunsAnyway(t *testing.T) {
 
 // TestTheSetupSurfaceDemandsTheTokenAndSpendsItOnce is AC4.
 func TestTheSetupSurfaceDemandsTheTokenAndSpendsItOnce(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	password := randomHex(t, 12)
 
@@ -110,6 +112,7 @@ func TestTheSetupSurfaceDemandsTheTokenAndSpendsItOnce(t *testing.T) {
 // TestASpentTokenIsRefusedOnItsOwn asserts the single-use property of the token
 // independently of the account, so neither refusal can hide behind the other.
 func TestASpentTokenIsRefusedOnItsOwn(t *testing.T) {
+	t.Parallel()
 	token, err := auth.NewSetupToken()
 	if err != nil {
 		t.Fatalf("generating a setup token: %v", err)
@@ -129,6 +132,7 @@ func TestASpentTokenIsRefusedOnItsOwn(t *testing.T) {
 
 // TestTheSetupTokenIsNeverWrittenIntoTheDatabase is AC4's storage half.
 func TestTheSetupTokenIsNeverWrittenIntoTheDatabase(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	token := harness.setupToken.Token()
 	harness.completeSetup()
@@ -144,6 +148,7 @@ func TestTheSetupTokenIsNeverWrittenIntoTheDatabase(t *testing.T) {
 // IT IS ASSERTED THREE WAYS, because the hole has three shapes: a check only on the
 // GET, a token that is still valid, and a state that a restart resets.
 func TestTheSetupSurfaceClosesPermanently(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	harness.completeSetup()
 	password := randomHex(t, 12)
@@ -224,6 +229,7 @@ func TestTheSetupSurfaceClosesPermanently(t *testing.T) {
 // Exactly one of them may create an account; every other one is refused, and the
 // installation holds one account whichever of them won.
 func TestConcurrentSetupsCarryingOneTokenCreateOneAccount(t *testing.T) {
+	t.Parallel()
 	installation := newHarness(t)
 	password := randomHex(t, 12)
 	const racers = 8
@@ -299,6 +305,7 @@ func TestConcurrentSetupsCarryingOneTokenCreateOneAccount(t *testing.T) {
 // TestSetupRefusesAWeakOrMistypedPassword keeps the two new-credential rules from
 // drifting, and asserts that a refusal creates nothing.
 func TestSetupRefusesAWeakOrMistypedPassword(t *testing.T) {
+	t.Parallel()
 	harness := newHarness(t)
 	long := randomHex(t, 12)
 

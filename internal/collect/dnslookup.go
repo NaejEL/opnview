@@ -95,27 +95,31 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 			if span > 0 && (record.LookedUpAt < windowStart || record.LookedUpAt > now) {
 				outsideRequestedWindow++
 			}
-			if hasStored && record.LookedUpAt <= newestStored {
-				// Already inside the stored history. The row may still be a different lookup at
-				// the same instant, so the insert is what decides; what this does not do is stop
-				// the page, because the buffer is not ordered by anything opnview controls.
-				continue
-			}
-			newOnThisPage++
 
+			// THE INSERT DECIDES whether a row is new, whatever its instant: the identity is
+			// lookup_key, and a different lookup can share the instant of the newest one
+			// stored -- or of any older one, since the buffer is not ordered by anything
+			// opnview controls. 5A skipped every row at or before the newest stored instant
+			// without inserting it, and lost such a lookup (step-5A live corrections, F6).
 			lookup, err := c.buildDNSResolution(ctx, record, providerKey, now)
 			if err != nil {
 				return c.deriveAfter(ctx, stored, err)
 			}
-			if err := c.store.InsertDNSResolution(ctx, lookup); err != nil {
+			inserted, err := c.store.StoreDNSResolution(ctx, lookup)
+			if err != nil {
 				return c.deriveAfter(ctx, stored, err)
 			}
+			if !inserted {
+				continue
+			}
+			newOnThisPage++
 			stored.addresses = append(stored.addresses, lookup.ClientAddress)
 			stored.widen(record.LookedUpAt, record.LookedUpAt+c.attributionMaxDelay())
 		}
 		if newOnThisPage == 0 {
-			// Every row on this page was already inside the stored history, so the pages behind
-			// it are older still.
+			// Every row on this page was already stored, so the pages behind it, which are
+			// older still, were stored by an earlier pass: the page stop is unchanged, only
+			// what counts as new now comes from the insert.
 			break
 		}
 	}

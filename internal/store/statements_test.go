@@ -16,6 +16,7 @@ import (
 // TestEveryStatementPreparesForEveryPeriod is the statement files' own check: every named
 // statement, and every period of every template, is valid SQL against the schema.
 func TestEveryStatementPreparesForEveryPeriod(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	names := mustStatementNames(t)
@@ -81,6 +82,7 @@ func TestEveryStatementPreparesForEveryPeriod(t *testing.T) {
 // TestTheStatementParserRefusesWhatItCannotRun keeps two statements in one block, and an
 // empty block, from reaching the database.
 func TestTheStatementParserRefusesWhatItCannotRun(t *testing.T) {
+	t.Parallel()
 	for _, text := range []string{
 		"-- statement: two\nSELECT 1;\nSELECT 2;\n",
 		"-- statement: empty\n-- only a comment\n",
@@ -107,6 +109,7 @@ var quotedLiteral = regexp.MustCompile(`'([^']*)'`)
 // flow.log_reason with a literal, in the schema, the statements, the queries and the Go
 // sources, names only values of the established set; and the scan has teeth.
 func TestNoCodeMatchesALogReasonOutsideTheEstablishedSet(t *testing.T) {
+	t.Parallel()
 	established := map[string]bool{}
 	for _, reason := range LogReasons {
 		established[reason] = true
@@ -170,6 +173,7 @@ func logReasonsOutsideTheSet(source string, established map[string]bool) []strin
 // TestTheEligibleAnswerSourcesAreTheEstablishedOnes keeps the attribution statement and the
 // recorded set in step.
 func TestTheEligibleAnswerSourcesAreTheEstablishedOnes(t *testing.T) {
+	t.Parallel()
 	text, err := Statement("attribution_lookups")
 	if err != nil {
 		t.Fatalf("reading the statement: %v", err)

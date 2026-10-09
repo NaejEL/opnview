@@ -16,6 +16,7 @@ import (
 // all would be an account nobody created, a session nobody signed in to, or a
 // credential nobody typed.
 func TestASecondApplySeedsNoAccountNoSessionAndNoCredential(t *testing.T) {
+	t.Parallel()
 	directory := t.TempDir()
 	ctx := context.Background()
 
@@ -85,6 +86,7 @@ func TestASecondApplySeedsNoAccountNoSessionAndNoCredential(t *testing.T) {
 // exist yet is created rather than refused, because a first start against a fresh
 // installation has nothing there.
 func TestTheDataDirectoryIsCreated(t *testing.T) {
+	t.Parallel()
 	nested := t.TempDir() + "/not/yet/there"
 	database, err := Open(context.Background(), nested)
 	if err != nil {
@@ -97,6 +99,7 @@ func TestTheDataDirectoryIsCreated(t *testing.T) {
 
 // TestOverwritingACredentialLeavesNoPriorCiphertext is AC16's storage clause.
 func TestOverwritingACredentialLeavesNoPriorCiphertext(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	database := openTemporary(t)
 
@@ -145,6 +148,7 @@ func TestOverwritingACredentialLeavesNoPriorCiphertext(t *testing.T) {
 // TestAPasswordChangeRevokesEverySessionOfThatAccount: a password change whose old
 // sessions survive has changed nothing for whoever was holding one.
 func TestAPasswordChangeRevokesEverySessionOfThatAccount(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	database := openTemporary(t)
 
@@ -177,6 +181,7 @@ func TestAPasswordChangeRevokesEverySessionOfThatAccount(t *testing.T) {
 // TestDeletingAnAccountCascadesToItsSessions: the foreign key is what makes a session
 // unable to outlive the account it belongs to.
 func TestDeletingAnAccountCascadesToItsSessions(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	database := openTemporary(t)
 
@@ -201,6 +206,7 @@ func TestDeletingAnAccountCascadesToItsSessions(t *testing.T) {
 
 // TestASessionCannotNameAnAccountThatDoesNotExist.
 func TestASessionCannotNameAnAccountThatDoesNotExist(t *testing.T) {
+	t.Parallel()
 	database := openTemporary(t)
 	err := database.CreateSession(context.Background(), Session{
 		TokenDigest: randomValue(t, 32), AccountID: 999_999_999,
@@ -220,6 +226,7 @@ func TestASessionCannotNameAnAccountThatDoesNotExist(t *testing.T) {
 // reach the constraint. The constraint still matters: it is what a second write path
 // added later would meet.
 func TestASecondAccountWithTheSameLoginIsRefused(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	database := openTemporary(t)
 	hash := somePasswordHash(t)
@@ -247,6 +254,7 @@ func TestASecondAccountWithTheSameLoginIsRefused(t *testing.T) {
 // CreateAccount's own statement now, and this drives the two steps in the order that
 // exposed the window: a caller that has just seen an empty table inserts anyway.
 func TestCreateAccountRefusesASecondAccountWhateverItsLogin(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	database := openTemporary(t)
 
@@ -276,6 +284,7 @@ func TestCreateAccountRefusesASecondAccountWhateverItsLogin(t *testing.T) {
 // TestDeletingASettingLeavesNoRow: an empty value must be an absent row rather than a
 // row holding the empty string, or "not configured" is two states.
 func TestDeletingASettingLeavesNoRow(t *testing.T) {
+	t.Parallel()
 	ctx := context.Background()
 	database := openTemporary(t)
 

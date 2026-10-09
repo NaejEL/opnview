@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/store"
 )
 
 // settingTable is a SettingReader backed by a map, so this package is tested without
@@ -316,6 +318,37 @@ func TestTheAttributionDelayIsAPositiveWholeNumberOfSeconds(t *testing.T) {
 	}
 }
 
+// TestTheLegPairingWindowIsAValidatedSettingWhoseDefaultIsOne is AC12 of the step-5A
+// live corrections: 1 with no row, the schema's own row is 1, a row is read, 0 is
+// accepted, and a malformed value is refused by name.
+func TestTheLegPairingWindowIsAValidatedSettingWhoseDefaultIsOne(t *testing.T) {
+	ctx := context.Background()
+	loaded, err := Load(ctx, settingTable{rows: map[string]string{}})
+	if err != nil || loaded.LegPairingWindowSeconds != 1 || Defaults().LegPairingWindowSeconds != 1 {
+		t.Errorf("with no row the pairing window is %d (%v), not 1", loaded.LegPairingWindowSeconds, err)
+	}
+	database, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("opening a database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if value, present, err := database.Setting(ctx, KeyLegPairingWindow); err != nil || !present || value != "1" {
+		t.Errorf("the schema's row is %q (present %t, %v), not 1", value, present, err)
+	}
+	for value, want := range map[string]int64{"2": 2, "0": 0} {
+		loaded, err := Load(ctx, settingTable{rows: map[string]string{KeyLegPairingWindow: value}})
+		if err != nil || loaded.LegPairingWindowSeconds != want {
+			t.Errorf("a row of %s gave %d (%v)", value, loaded.LegPairingWindowSeconds, err)
+		}
+	}
+	for _, value := range []string{"-1", "1.5", "one second", ""} {
+		if _, err := Load(ctx, settingTable{rows: map[string]string{KeyLegPairingWindow: value}}); err == nil ||
+			!strings.Contains(err.Error(), KeyLegPairingWindow) {
+			t.Errorf("the window %q was accepted, or refused without naming the key: %v", value, err)
+		}
+	}
+}
+
 // TestThePublicSuffixListIsCheckedOnceADayByDefault is the refresh interval of the third
 // outbound call: publicsuffix.org asks for no more than one download a day.
 func TestThePublicSuffixListIsCheckedOnceADayByDefault(t *testing.T) {
@@ -326,5 +359,38 @@ func TestThePublicSuffixListIsCheckedOnceADayByDefault(t *testing.T) {
 		KeyPublicSuffixRefreshInterval: "172800"}})
 	if err != nil || loaded.PublicSuffixRefreshInterval != 48*time.Hour {
 		t.Errorf("a row of two days gave %s (%v)", loaded.PublicSuffixRefreshInterval, err)
+	}
+}
+
+// TestTheLeaseBackendFailureLimitIsAValidatedSettingWhoseDefaultIsThree is the setting of
+// defect L1 (specs/SPEC-test-budget-and-two-live-defects.md): 3 with no row, the schema's
+// own row is 3, a row is read, and anything but a whole number of passes, one or more, is
+// refused by name.
+func TestTheLeaseBackendFailureLimitIsAValidatedSettingWhoseDefaultIsThree(t *testing.T) {
+	ctx := context.Background()
+	loaded, err := Load(ctx, settingTable{rows: map[string]string{}})
+	if err != nil || loaded.LeaseBackendFailurePassLimit != 3 || Defaults().LeaseBackendFailurePassLimit != 3 {
+		t.Errorf("with no row the limit is %d (%v), not 3", loaded.LeaseBackendFailurePassLimit, err)
+	}
+	database, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("opening a database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if value, present, err := database.Setting(ctx, KeyLeaseBackendFailurePassLimit); err != nil ||
+		!present || value != "3" {
+		t.Errorf("the schema's row is %q (present %t, %v), not 3", value, present, err)
+	}
+	for value, want := range map[string]int64{"1": 1, "12": 12} {
+		loaded, err := Load(ctx, settingTable{rows: map[string]string{KeyLeaseBackendFailurePassLimit: value}})
+		if err != nil || loaded.LeaseBackendFailurePassLimit != want {
+			t.Errorf("a row of %s gave %d (%v)", value, loaded.LeaseBackendFailurePassLimit, err)
+		}
+	}
+	for _, value := range []string{"0", "-1", "1.5", "three passes", ""} {
+		if _, err := Load(ctx, settingTable{rows: map[string]string{KeyLeaseBackendFailurePassLimit: value}}); err == nil ||
+			!strings.Contains(err.Error(), KeyLeaseBackendFailurePassLimit) {
+			t.Errorf("the limit %q was accepted, or refused without naming the key: %v", value, err)
+		}
 	}
 }

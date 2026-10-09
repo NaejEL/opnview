@@ -13,6 +13,7 @@ func utc(year int, month time.Month, day, hour, minute int) int64 {
 
 // TestAMonthSlotIsTheCalendarMonthOfAnyLength covers months of 28, 29, 30 and 31 days.
 func TestAMonthSlotIsTheCalendarMonthOfAnyLength(t *testing.T) {
+	t.Parallel()
 	for _, month := range []struct {
 		name  string
 		start int64
@@ -45,6 +46,7 @@ func TestAMonthSlotIsTheCalendarMonthOfAnyLength(t *testing.T) {
 // TestAnISOWeekSpanningAYearBoundaryIsOneSlot is the ISO week that starts on Monday 28
 // December 2026 and ends on Sunday 3 January 2027.
 func TestAnISOWeekSpanningAYearBoundaryIsOneSlot(t *testing.T) {
+	t.Parallel()
 	monday := utc(2026, time.December, 28, 0, 0)
 	if weekday := time.Unix(monday, 0).UTC().Weekday(); weekday != time.Monday {
 		t.Fatalf("the reference day is a %s", weekday)
@@ -72,6 +74,7 @@ func TestAnISOWeekSpanningAYearBoundaryIsOneSlot(t *testing.T) {
 // TestAnHourCrossingMidnightUTCEndsAtMidnight puts the last hour of a day and the first of
 // the next on the right sides of the day boundary.
 func TestAnHourCrossingMidnightUTCEndsAtMidnight(t *testing.T) {
+	t.Parallel()
 	lateHour := utc(2026, time.October, 3, 23, 0)
 	midnight := utc(2026, time.October, 4, 0, 0)
 	if start := PeriodHour.SlotStart(utc(2026, time.October, 3, 23, 30)); start != lateHour {
@@ -100,6 +103,7 @@ func TestAnHourCrossingMidnightUTCEndsAtMidnight(t *testing.T) {
 
 // TestSlotsCoverAWindowInOrder lists the slots overlapping a window.
 func TestSlotsCoverAWindowInOrder(t *testing.T) {
+	t.Parallel()
 	from := utc(2026, time.October, 3, 22, 30)
 	to := utc(2026, time.October, 4, 1, 15)
 	slots := PeriodHour.Slots(from, to)

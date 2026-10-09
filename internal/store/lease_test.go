@@ -37,6 +37,7 @@ func leaseProviders(t *testing.T, database *Store) (int64, int64) {
 // normalised vocabulary of response shapes, not an identity for a server, and the concurrency
 // rule is stated in terms of the provider.
 func TestOneAddressLeasedByTwoServersIsTwoLeases(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	first, second := leaseProviders(t, database)
@@ -76,6 +77,7 @@ func TestOneAddressLeasedByTwoServersIsTwoLeases(t *testing.T) {
 // start. Adding the provider to that identity must not have reintroduced the problem from the
 // other side: two servers each re-polling a start-less lease is still two rows in total.
 func TestARePollOfALeaseWithNoValidityStartIsStillIdempotentUnderTwoServers(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	first, second := leaseProviders(t, database)
@@ -116,6 +118,7 @@ func TestARePollOfALeaseWithNoValidityStartIsStillIdempotentUnderTwoServers(t *t
 // provider.display_name, so a screen prints the server's name without parsing a composite or
 // inferring a server from a backend token.
 func TestALeaseNamesTheServerThatIssuedIt(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	first, second := leaseProviders(t, database)
@@ -177,6 +180,7 @@ func TestALeaseNamesTheServerThatIssuedIt(t *testing.T) {
 // column is mandatory, because a lease is issued by a server and an unattributed one could not
 // answer the question the screen now asks.
 func TestALeaseWithNoIssuingServerIsRejected(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	startsAt := int64(1750000000)
 	err := database.InsertDHCPLease(context.Background(), 999999999, DHCPLease{

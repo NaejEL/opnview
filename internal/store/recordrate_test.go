@@ -62,6 +62,7 @@ func closeTo(got, want float64) bool { return math.Abs(got-want) < 1e-9 }
 // The source clock and the ingested clock are given different spans on purpose,
 // so a measurement that read one column for both would fail.
 func TestTheRecordRateIsMeasuredPerKindOverBothClocks(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	window := RecordRateWindow{StartAt: 1750000000, EndAt: 1750003600}
@@ -172,6 +173,7 @@ func TestTheRecordRateIsMeasuredPerKindOverBothClocks(t *testing.T) {
 // reports the purge horizon in force, read from the same database, so that a
 // reader can tell a quiet day from a day the purge already removed.
 func TestTheWindowIsBoundedByTheRetentionHorizon(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	window := RecordRateWindow{StartAt: 1750000000, EndAt: 1750086400}
@@ -217,6 +219,7 @@ func TestTheWindowIsBoundedByTheRetentionHorizon(t *testing.T) {
 // is a state to show; reporting it as nought per second would size a page on
 // nothing and look exactly like a measured quiet source.
 func TestAWindowWithNoRecordIsAStateAndNotARateOfNought(t *testing.T) {
+	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	window := RecordRateWindow{StartAt: 1750000000, EndAt: 1750003600}

@@ -37,6 +37,7 @@ func arrangeAlertCollection(t *testing.T) *probeHarness {
 // the pair the provider guarantees stable. The ingestion coordinate is not a column on the
 // event table: it lives in the cursor, which answers a different question.
 func TestAnAlertPassStoresEveryEventAndComposesItsProviderKey(t *testing.T) {
+	t.Parallel()
 	harness := arrangeAlertCollection(t)
 	ctx := context.Background()
 
@@ -92,6 +93,7 @@ func TestAnAlertPassStoresEveryEventAndComposesItsProviderKey(t *testing.T) {
 // nothing new. A third pass is offered a page with a NEW record at a higher offset, which
 // must be stored, and the older ones, which must not.
 func TestTheCursorResumesWithoutLossOrDoubleCountAcrossShiftingOffsets(t *testing.T) {
+	t.Parallel()
 	harness := arrangeAlertCollection(t)
 	ctx := context.Background()
 
@@ -143,6 +145,7 @@ func TestTheCursorResumesWithoutLossOrDoubleCountAcrossShiftingOffsets(t *testin
 // TestARotationThatDiscardedAWatermarkedFileIsRecordedAsLostAndAsAGap is the permanent
 // loss, recorded twice and reset never.
 func TestARotationThatDiscardedAWatermarkedFileIsRecordedAsLostAndAsAGap(t *testing.T) {
+	t.Parallel()
 	harness := arrangeAlertCollection(t)
 	ctx := context.Background()
 
@@ -205,6 +208,7 @@ func TestARotationThatDiscardedAWatermarkedFileIsRecordedAsLostAndAsAGap(t *test
 // Concluding "lost" there would invent a permanent gap out of a failed call, so nothing is
 // concluded and the state is recorded instead.
 func TestAnUnreadableRotationListConcludesNoLoss(t *testing.T) {
+	t.Parallel()
 	harness := arrangeAlertCollection(t)
 	ctx := context.Background()
 
@@ -238,6 +242,7 @@ func TestAnUnreadableRotationListConcludesNoLoss(t *testing.T) {
 // current, with nothing to report. A reachable engine with a narrow ruleset and no alerts
 // is a true reading, and the collector must not treat it as a fault.
 func TestAnEmptyAlertFeedFromARunningEngineStaysReachable(t *testing.T) {
+	t.Parallel()
 	harness := arrangeAlertCollection(t)
 	harness.fake.answerJSON(opnsense.QueryAlerts, map[string]any{
 		"rows": []any{}, "total_rows": 0, "origin": "example-eve-current",

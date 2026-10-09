@@ -110,6 +110,8 @@ func (c *Collector) storeFirewallLog(ctx context.Context, records []logRecord, s
 		}
 		stored.addresses = append(stored.addresses, record.SrcAddress, record.DstAddress)
 		stored.widen(record.ObservedAt, record.ObservedAt)
+		// Its other leg may be stored already, by this pass or an earlier one.
+		stored.widenPairing(record.ObservedAt, record.ObservedAt)
 	}
 
 	// The gap test.
@@ -194,5 +196,7 @@ func buildFlow(record logRecord, snapshot Discovery, now int64) store.Flow {
 		Rid:                  record.Rid,
 		RuleID:               ruleID,
 		RuleLookupState:      ruleState,
+		IPID:                 record.IPID,
+		TCPSeq:               record.TCPSeq,
 	}
 }

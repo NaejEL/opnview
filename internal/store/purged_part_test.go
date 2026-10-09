@@ -16,6 +16,7 @@ import (
 // again after its purge: the purge records the furthest point it has purged to, and that
 // watermark only moves forward, even when the retention is lengthened later.
 func TestThePurgeRecordsHowFarBackItHasPurged(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 2)
 	ctx := context.Background()
 	if _, found, err := network.db.PurgedBefore(ctx); err != nil || found {
@@ -46,6 +47,7 @@ func TestThePurgeRecordsHowFarBackItHasPurged(t *testing.T) {
 // whose flows in an hour were purged, the purged part moves to the better identity as the
 // flows would have, and the client, peer and owner families keep every byte and every peer.
 func TestALeaseNamingAPurgedAddressMovesItsPurgedPart(t *testing.T) {
+	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	var client testClient
@@ -106,6 +108,7 @@ func TestALeaseNamingAPurgedAddressMovesItsPurgedPart(t *testing.T) {
 // every flow ever ingested, the purged ones included: no family loses a client's bytes to
 // the client being purged, and none loses a site name to its lookup being purged first.
 func TestAPurgeUnderAShortRetentionKeepsEveryFamilyWhole(t *testing.T) {
+	t.Parallel()
 	for _, retention := range []int64{1800, 600, 1} {
 		t.Run(fmt.Sprintf("retention %d", retention), func(t *testing.T) {
 			network := newTestNetwork(t, 2, 6)
@@ -193,6 +196,7 @@ func checklistGaps(paragraph string) []string {
 
 // TestRoadmapStepFiveCarriesTheLiveValidationChecklist is AC12.
 func TestRoadmapStepFiveCarriesTheLiveValidationChecklist(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "ROADMAP.md"))
 	if err != nil {
 		t.Fatalf("reading the roadmap: %v", err)
