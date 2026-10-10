@@ -10,20 +10,26 @@
 -- diagnostic: Attribution rate per client
 -- How often a flow leaving a client could be given a site name. The rate is
 -- the honest figure the roadmap requires the UI to expose: site names are
--- inferred from resolver-lookup correlation and nothing else on OPNsense 26.7,
--- so a client using encrypted DNS, or a cached name, shows up here as poorly
--- attributed rather than mis-attributed.
+-- inferred from the resolver -- its lookups, and its cache's answers -- and
+-- nothing else on OPNsense 26.7, so a client using encrypted DNS, or a name
+-- cached on the client, shows up here as poorly attributed rather than
+-- mis-attributed.
 --
 -- The eligible flows are those store.ReadAttributionRate counts, and no others:
 -- the flows with an OUTSIDE destination. An east-west flow is never attributed
 -- (docs/data-model.md, the correlation rule), so counting it would lower the rate
 -- for a reason that has nothing to do with naming. Whether the rate is DEFINED --
 -- whether a resolver source answered for the window at all -- is the store
--- function's to say; this diagnostic reports the counts.
+-- function's to say; this diagnostic reports the counts. The named flows are
+-- counted per method too, resolver_cache_answer and lookup_timing, and the two
+-- sum to attributed_count.
 SELECT
     f.src_client_id                                                  AS client_id,
     count(*)                                                         AS flow_count,
     sum(CASE WHEN a.flow_id IS NULL THEN 0 ELSE 1 END)               AS attributed_count,
+    sum(CASE WHEN a.method = 'resolver_cache_answer' THEN 1 ELSE 0 END)
+                                                                     AS named_by_resolver_cache_answer,
+    sum(CASE WHEN a.method = 'lookup_timing' THEN 1 ELSE 0 END)      AS named_by_lookup_timing,
     round(100.0 * sum(CASE WHEN a.flow_id IS NULL THEN 0 ELSE 1 END) / count(*), 2)
                                                                      AS attribution_rate_percent,
     avg(a.correlation_delay_seconds)                                 AS mean_correlation_delay_seconds,
@@ -363,10 +369,14 @@ LEFT JOIN collection_gap AS g ON g.provider_id = p.id
 GROUP BY k.kind, g.reason;
 
 -- diagnostic: Unresolved host names by cause
--- Every lookup whose logged host name still names no machine -- client_resolution
--- 'unknown_hostname' -- in the window, sorted into the first cause that applies, in
--- this order (step-5A live corrections, item 3.1). The leases are compared as of the
--- lookup's instant where the cause says so:
+-- Every lookup whose logged host name named no machine through the leases --
+-- client_resolution 'unknown_hostname', and 'local_data_hostname', which the
+-- resolver's local data resolved where no lease did -- in the window, sorted into the
+-- first cause that applies, in this order (step-5A live corrections, item 3.1, and
+-- scope D of specs/SPEC-resolver-cache-attribution.md). The leases are compared as of
+-- the lookup's instant where the cause says so:
+--   local_data       resolved by local data: exactly one address answered for the
+--                    name in the resolver's local data held at the lookup's instant
 --   this_firewall    the name is `localhost`, which names this firewall
 --   exact_match      a lease carries the logged name exactly, case aside, at the
 --                    lookup's instant
@@ -377,15 +387,20 @@ GROUP BY k.kind, g.reason;
 --                    instant
 --   not_at_instant   a lease names the host by its first label, but none was valid at
 --                    the lookup's instant
---   no_lease         no lease names the host at all
--- The first five are what the matching of the step-5A live corrections resolves, so a
--- database it has run on holds lookups in the last two only, once a lease pass has
--- examined them. The query reads the leases once per lookup, which is why it is a
--- diagnostic and not a statement the collector runs.
+--   local_data_not_at_instant
+--                    the local data names the host by its first label, but held no
+--                    such record at the lookup's instant
+--   neither_lease_nor_local_data
+--                    neither a lease nor the local data names the host at all
+-- The five after local_data are what the matching of the step-5A live corrections
+-- resolves, so a database it has run on holds unresolved lookups in the last three
+-- only, once a pass has examined them. The query reads the leases once per lookup, which is
+-- why it is a diagnostic and not a statement the collector runs.
 SELECT cause, count(*) AS lookups
 FROM (
     SELECT
         CASE
+            WHEN r.client_resolution = 'local_data_hostname' THEN 'local_data'
             WHEN lower(rtrim(r.client_hostname, '.')) = 'localhost' THEN 'this_firewall'
             WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
                          WHERE lower(l.hostname) = lower(r.client_hostname)
@@ -420,10 +435,18 @@ FROM (
                                                    instr(rtrim(r.client_hostname, '.'), '.') - 1)
                                    ELSE rtrim(r.client_hostname, '.') END))
                 THEN 'not_at_instant'
-            ELSE 'no_lease'
+            WHEN EXISTS (SELECT 1 FROM resource_record_observation AS o
+                         WHERE o.held_in = 'local_data'
+                           AND o.host_label = lower(CASE
+                                   WHEN instr(rtrim(r.client_hostname, '.'), '.') > 0
+                                       THEN substr(rtrim(r.client_hostname, '.'), 1,
+                                                   instr(rtrim(r.client_hostname, '.'), '.') - 1)
+                                   ELSE rtrim(r.client_hostname, '.') END))
+                THEN 'local_data_not_at_instant'
+            ELSE 'neither_lease_nor_local_data'
         END AS cause
     FROM dns_resolution AS r
-    WHERE r.client_resolution = 'unknown_hostname'
+    WHERE r.client_resolution IN ('unknown_hostname', 'local_data_hostname')
       AND r.looked_up_at >= :window_start
       AND r.looked_up_at < :window_end
 )
@@ -523,3 +546,385 @@ SELECT (SELECT count(*) FROM classified_flow AS f
                             AND p.pair_outcome = 'second_leg'
                             AND p.paired_flow_id = f.id))
        AS counted_twice;
+
+-- ---------------------------------------------------------------------------
+-- The live validation of specs/SPEC-resolver-cache-attribution.md. Each one restates
+-- the rule of internal/store/attribute.go in SQL, independently of the code, so a
+-- disagreement between the two shows up as a count:
+--   * an eligible flow is the attribution's candidate: an outside destination that is
+--     not this firewall, and not the second leg of a counted connection;
+--   * an eligible lookup passed, was answered by Recursion, Cache or Local-data, and
+--     named one address; it is the flow's client's when both carry the same client id,
+--     or the same address where either carries none;
+--   * names compare lower-cased with a trailing dot removed, and a CNAME chain is
+--     followed through at most 11 links, Unbound's max-query-restarts default;
+--   * the two windows are the attribution_max_delay_seconds and
+--     attribution_max_cache_answer_delay_seconds rows, 5 and 3600 when absent.
+-- The flow's destination is compared as the filter log stored it, which is the
+-- canonical text form the resolver's records are stored in.
+-- ---------------------------------------------------------------------------
+
+-- diagnostic: live_single_exact_candidate_unattributed
+-- V3: the eligible flows of the window whose exact candidates -- the lookups by their
+-- client, inside the cache-answer delay and inside the coverage of a CNAME path from the
+-- looked-up name to an A or AAAA record of the destination covering the flow -- name
+-- exactly one distinct domain, and which carry no resolver_cache_answer attribution.
+-- Expected 0.
+WITH RECURSIVE
+windows AS (
+    SELECT coalesce((SELECT CAST(value AS INTEGER) FROM setting
+                     WHERE key = 'attribution_max_cache_answer_delay_seconds'), 3600) AS cap
+),
+eligible AS (
+    SELECT f.id, f.observed_at, f.src_client_id, f.src_address, f.dst_address
+    FROM flow AS f
+    WHERE f.observed_at >= :window_start
+      AND f.observed_at < :window_end
+      AND f.dst_interface_id IS NULL
+      AND f.dst_is_this_firewall = 0
+      AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
+),
+paths (flow_id, observed_at, name, covered_from, held_in, links) AS (
+    SELECT e.id, e.observed_at, o.owner_name, o.covered_from_at, o.held_in, 0
+    FROM eligible AS e
+    JOIN resource_record_observation AS o
+      ON o.address = e.dst_address
+     AND o.rrtype IN ('A', 'AAAA')
+     AND o.covered_until_at >= e.observed_at
+     AND o.covered_from_at <= e.observed_at
+    UNION
+    SELECT p.flow_id, p.observed_at, c.owner_name, max(p.covered_from, c.covered_from_at), 'cache',
+           p.links + 1
+    FROM paths AS p
+    JOIN resource_record_observation AS c
+      ON c.rrtype = 'CNAME'
+     AND c.value = p.name
+     AND c.held_in = 'cache'
+     AND c.covered_until_at >= p.observed_at
+     AND c.covered_from_at <= p.observed_at
+    WHERE p.held_in = 'cache'
+      AND p.links < 11
+),
+exact AS (
+    SELECT DISTINCT p.flow_id, lower(rtrim(r.domain, '.')) AS name
+    FROM paths AS p
+    JOIN eligible AS e ON e.id = p.flow_id
+    JOIN dns_resolution AS r
+      ON lower(rtrim(r.domain, '.')) = p.name
+     AND r.looked_up_at >= max(p.covered_from, e.observed_at - (SELECT cap FROM windows))
+     AND r.looked_up_at <= e.observed_at
+    WHERE r.action = 'pass'
+      AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
+      AND r.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname')
+      AND ((e.src_client_id IS NOT NULL AND r.client_id = e.src_client_id)
+           OR (r.client_address = e.src_address AND (r.client_id IS NULL OR e.src_client_id IS NULL)))
+      AND (p.held_in = 'cache' OR r.answer_source = 'Local-data')
+),
+single AS (
+    SELECT flow_id FROM exact GROUP BY flow_id HAVING count(DISTINCT name) = 1
+)
+SELECT count(*) AS unattributed_flows
+FROM single AS s
+LEFT JOIN domain_attribution AS a ON a.flow_id = s.flow_id
+WHERE a.flow_id IS NULL OR a.method <> 'resolver_cache_answer';
+
+-- diagnostic: live_single_timing_candidate_unattributed
+-- V4: the eligible flows of the window with no exact candidate, whose lookups by their
+-- client in [observed_at - attribution_max_delay_seconds, observed_at] name exactly one
+-- distinct domain, whose latest such lookup no cache evidence contradicts -- the cache
+-- held answers of the destination's family for its name at its instant and the
+-- destination was not one -- and which carry no lookup_timing attribution. Expected 0.
+WITH RECURSIVE
+windows AS (
+    SELECT coalesce((SELECT CAST(value AS INTEGER) FROM setting
+                     WHERE key = 'attribution_max_delay_seconds'), 5) AS timing,
+           coalesce((SELECT CAST(value AS INTEGER) FROM setting
+                     WHERE key = 'attribution_max_cache_answer_delay_seconds'), 3600) AS cap
+),
+eligible AS (
+    SELECT f.id, f.observed_at, f.src_client_id, f.src_address, f.dst_address
+    FROM flow AS f
+    WHERE f.observed_at >= :window_start
+      AND f.observed_at < :window_end
+      AND f.dst_interface_id IS NULL
+      AND f.dst_is_this_firewall = 0
+      AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
+),
+paths (flow_id, observed_at, name, covered_from, held_in, links) AS (
+    SELECT e.id, e.observed_at, o.owner_name, o.covered_from_at, o.held_in, 0
+    FROM eligible AS e
+    JOIN resource_record_observation AS o
+      ON o.address = e.dst_address
+     AND o.rrtype IN ('A', 'AAAA')
+     AND o.covered_until_at >= e.observed_at
+     AND o.covered_from_at <= e.observed_at
+    UNION
+    SELECT p.flow_id, p.observed_at, c.owner_name, max(p.covered_from, c.covered_from_at), 'cache',
+           p.links + 1
+    FROM paths AS p
+    JOIN resource_record_observation AS c
+      ON c.rrtype = 'CNAME'
+     AND c.value = p.name
+     AND c.held_in = 'cache'
+     AND c.covered_until_at >= p.observed_at
+     AND c.covered_from_at <= p.observed_at
+    WHERE p.held_in = 'cache'
+      AND p.links < 11
+),
+exact AS (
+    SELECT DISTINCT p.flow_id
+    FROM paths AS p
+    JOIN eligible AS e ON e.id = p.flow_id
+    JOIN dns_resolution AS r
+      ON lower(rtrim(r.domain, '.')) = p.name
+     AND r.looked_up_at >= max(p.covered_from, e.observed_at - (SELECT cap FROM windows))
+     AND r.looked_up_at <= e.observed_at
+    WHERE r.action = 'pass'
+      AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
+      AND r.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname')
+      AND ((e.src_client_id IS NOT NULL AND r.client_id = e.src_client_id)
+           OR (r.client_address = e.src_address AND (r.client_id IS NULL OR e.src_client_id IS NULL)))
+      AND (p.held_in = 'cache' OR r.answer_source = 'Local-data')
+),
+timed AS (
+    SELECT e.id AS flow_id, e.dst_address, r.domain, r.looked_up_at, r.lookup_key, r.answer_source
+    FROM eligible AS e
+    JOIN dns_resolution AS r
+      ON r.client_id = e.src_client_id
+     AND r.looked_up_at >= e.observed_at - (SELECT timing FROM windows)
+     AND r.looked_up_at <= e.observed_at
+    WHERE r.action = 'pass'
+      AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
+      AND r.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname')
+    UNION ALL
+    SELECT e.id, e.dst_address, r.domain, r.looked_up_at, r.lookup_key, r.answer_source
+    FROM eligible AS e
+    JOIN dns_resolution AS r
+      ON r.client_address = e.src_address
+     AND r.looked_up_at >= e.observed_at - (SELECT timing FROM windows)
+     AND r.looked_up_at <= e.observed_at
+    WHERE r.action = 'pass'
+      AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
+      AND r.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname')
+      AND (r.client_id IS NULL OR e.src_client_id IS NULL)
+),
+single AS (
+    SELECT flow_id FROM timed GROUP BY flow_id HAVING count(DISTINCT domain) = 1
+),
+latest AS (
+    SELECT t.flow_id, t.dst_address, lower(rtrim(t.domain, '.')) AS name, t.looked_up_at,
+           t.answer_source
+    FROM timed AS t
+    JOIN single AS s ON s.flow_id = t.flow_id
+    WHERE t.flow_id NOT IN (SELECT flow_id FROM exact)
+      AND NOT EXISTS (SELECT 1 FROM timed AS u
+                      WHERE u.flow_id = t.flow_id
+                        AND (u.looked_up_at > t.looked_up_at
+                             OR (u.looked_up_at = t.looked_up_at AND u.lookup_key > t.lookup_key)))
+),
+forward (flow_id, name, links) AS (
+    SELECT flow_id, name, 0 FROM latest
+    UNION
+    SELECT w.flow_id, c.value, w.links + 1
+    FROM forward AS w
+    JOIN latest AS l ON l.flow_id = w.flow_id
+    JOIN resource_record_observation AS c
+      ON c.owner_name = w.name
+     AND c.rrtype = 'CNAME'
+     AND c.held_in = 'cache'
+     AND c.covered_until_at >= l.looked_up_at
+     AND c.covered_from_at <= l.looked_up_at
+    WHERE w.links < 11
+),
+answers AS (
+    SELECT w.flow_id, o.address, l.dst_address
+    FROM forward AS w
+    JOIN latest AS l ON l.flow_id = w.flow_id
+    JOIN resource_record_observation AS o
+      ON o.owner_name = w.name
+     AND o.rrtype IN ('A', 'AAAA')
+     AND o.covered_until_at >= l.looked_up_at
+     AND o.covered_from_at <= l.looked_up_at
+    WHERE (o.held_in = 'cache' OR l.answer_source = 'Local-data')
+      AND (instr(o.address, ':') > 0) = (instr(l.dst_address, ':') > 0)
+),
+contradicted AS (
+    SELECT flow_id FROM answers
+    GROUP BY flow_id
+    HAVING sum(CASE WHEN address = dst_address THEN 1 ELSE 0 END) = 0
+)
+SELECT count(*) AS unattributed_flows
+FROM latest AS l
+LEFT JOIN domain_attribution AS a ON a.flow_id = l.flow_id
+WHERE l.flow_id NOT IN (SELECT flow_id FROM contradicted)
+  AND (a.flow_id IS NULL OR a.method <> 'lookup_timing');
+
+-- diagnostic: live_exact_evidence_mismatch
+-- V5: the resolver_cache_answer attributions of the window whose evidence does not hold:
+-- no address observation, or one that is not an A or AAAA record of the flow's
+-- destination covering both the lookup and the flow, or a local-data record named for a
+-- lookup not answered from Local-data or for another name, or a cache record the
+-- looked-up name does not reach through CNAMEs covering both instants. Expected 0.
+WITH RECURSIVE
+attributed AS (
+    SELECT a.flow_id, f.observed_at, f.dst_address, r.looked_up_at,
+           lower(rtrim(r.domain, '.')) AS name, r.answer_source, o.id AS observation_id,
+           o.owner_name, o.address, o.rrtype, o.held_in, o.covered_from_at, o.covered_until_at
+    FROM domain_attribution AS a
+    JOIN flow AS f ON f.id = a.flow_id
+    JOIN dns_resolution AS r ON r.id = a.dns_resolution_id
+    LEFT JOIN resource_record_observation AS o ON o.id = a.address_observation_id
+    WHERE a.method = 'resolver_cache_answer'
+      AND f.observed_at >= :window_start
+      AND f.observed_at < :window_end
+),
+reach (flow_id, name, links) AS (
+    SELECT flow_id, name, 0 FROM attributed
+    UNION
+    SELECT w.flow_id, c.value, w.links + 1
+    FROM reach AS w
+    JOIN attributed AS t ON t.flow_id = w.flow_id
+    JOIN resource_record_observation AS c
+      ON c.owner_name = w.name
+     AND c.rrtype = 'CNAME'
+     AND c.held_in = 'cache'
+     AND c.covered_until_at >= t.observed_at
+     AND c.covered_from_at <= t.looked_up_at
+    WHERE w.links < 11
+)
+SELECT count(*) AS mismatched_attributions
+FROM attributed AS t
+WHERE t.observation_id IS NULL
+   OR t.rrtype NOT IN ('A', 'AAAA')
+   OR t.address <> t.dst_address
+   OR t.covered_from_at > t.looked_up_at
+   OR t.covered_until_at < t.observed_at
+   OR (t.held_in = 'local_data' AND (t.answer_source IS NOT 'Local-data' OR t.owner_name <> t.name))
+   OR (t.held_in = 'cache'
+       AND NOT EXISTS (SELECT 1 FROM reach AS w WHERE w.flow_id = t.flow_id AND w.name = t.owner_name));
+
+-- diagnostic: live_timing_fallback_other_family_cached
+-- Informational, added by specs/SPEC-resolver-cache-closing.md, scope 5: the
+-- lookup_timing attributions of the window whose named domain had, at the flow's
+-- instant, resolver evidence in the other address family only. The evidence is what
+-- the attribution rule reads: the A and AAAA observations reached from the looked-up
+-- name through the cache's CNAME observations, at most 11 links, every one covering the
+-- flow's instant -- local-data records counting for a lookup answered from Local-data,
+-- and only those of the looked-up name itself (decision 6): no CNAME is followed into
+-- the local data (specs/SPEC-resolver-cache-follow-ups.md, scope 1, stated at
+-- MaxCNAMELinks in internal/store/records.go). A flow counted here had none of the destination's family and at least
+-- one of the other: the resolver held the name, in the family the client did not use,
+-- so the exact method could not name the flow and timing did. A large count says the
+-- clients reach names over the family the cache read sees less of.
+WITH RECURSIVE
+timed AS (
+    SELECT a.flow_id, f.observed_at, f.dst_address, lower(rtrim(r.domain, '.')) AS name,
+           r.answer_source
+    FROM domain_attribution AS a
+    JOIN flow AS f ON f.id = a.flow_id
+    JOIN dns_resolution AS r ON r.id = a.dns_resolution_id
+    WHERE a.method = 'lookup_timing'
+      AND f.observed_at >= :window_start
+      AND f.observed_at < :window_end
+),
+reach (flow_id, name, links) AS (
+    SELECT flow_id, name, 0 FROM timed
+    UNION
+    SELECT w.flow_id, c.value, w.links + 1
+    FROM reach AS w
+    JOIN timed AS t ON t.flow_id = w.flow_id
+    JOIN resource_record_observation AS c
+      ON c.owner_name = w.name
+     AND c.rrtype = 'CNAME'
+     AND c.held_in = 'cache'
+     AND c.covered_from_at <= t.observed_at
+     AND c.covered_until_at >= t.observed_at
+    WHERE w.links < 11
+),
+families AS (
+    SELECT t.flow_id,
+           sum(CASE WHEN (instr(o.address, ':') > 0) = (instr(t.dst_address, ':') > 0)
+                    THEN 1 ELSE 0 END) AS same_family,
+           sum(CASE WHEN (instr(o.address, ':') > 0) <> (instr(t.dst_address, ':') > 0)
+                    THEN 1 ELSE 0 END) AS other_family
+    FROM timed AS t
+    JOIN reach AS w ON w.flow_id = t.flow_id
+    JOIN resource_record_observation AS o
+      ON o.owner_name = w.name
+     AND o.rrtype IN ('A', 'AAAA')
+     AND o.covered_from_at <= t.observed_at
+     AND o.covered_until_at >= t.observed_at
+    WHERE o.held_in = 'cache' OR (t.answer_source = 'Local-data' AND w.links = 0)
+    GROUP BY t.flow_id
+)
+SELECT count(*) AS timing_fallbacks_other_family_cached
+FROM families
+WHERE same_family = 0
+  AND other_family > 0;
+
+-- diagnostic: live_cache_evidence_coverage
+-- V6, informational: the eligible flows of the window -- those the attribution rate
+-- counts -- and how many of them have their destination in an A or AAAA record of the
+-- cache covering the flow's instant. A low share says the polls miss records inserted
+-- and expired between two of them, or that clients resolve elsewhere.
+SELECT count(*) AS eligible_flows,
+       sum(CASE WHEN EXISTS (SELECT 1 FROM resource_record_observation AS o
+                             WHERE o.address = f.dst_address
+                               AND o.rrtype IN ('A', 'AAAA')
+                               AND o.held_in = 'cache'
+                               AND o.covered_until_at >= f.observed_at
+                               AND o.covered_from_at <= f.observed_at)
+                THEN 1 ELSE 0 END) AS covered_flows,
+       round(100.0 * sum(CASE WHEN EXISTS (SELECT 1 FROM resource_record_observation AS o
+                                           WHERE o.address = f.dst_address
+                                             AND o.rrtype IN ('A', 'AAAA')
+                                             AND o.held_in = 'cache'
+                                             AND o.covered_until_at >= f.observed_at
+                                             AND o.covered_from_at <= f.observed_at)
+                              THEN 1 ELSE 0 END) / max(count(*), 1), 1) AS covered_percent
+FROM flow AS f
+WHERE f.observed_at >= :window_start
+  AND f.observed_at < :window_end
+  AND f.src_client_id IS NOT NULL
+  AND f.dst_interface_id IS NULL
+  AND f.src_is_this_firewall = 0
+  AND f.dst_is_this_firewall = 0
+  AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg');
+
+-- diagnostic: live_resolver_records_per_hour
+-- V7: the observations of the resolver's records started per hour of the window, per
+-- part of the resolver. It grows with the distinct records the resolver held and with
+-- their comings and goings, not with the number of polls: a record seen by consecutive
+-- polls is one observation. The read's size, time and counts by type are in the
+-- provider's availability detail ("Source availability").
+SELECT (o.first_seen_at / 3600) * 3600 AS hour_start_at,
+       o.held_in AS held_in,
+       count(*) AS observations_started
+FROM resource_record_observation AS o
+WHERE o.covered_until_at >= :window_start
+  AND o.first_seen_at >= :window_start
+  AND o.first_seen_at < :window_end
+GROUP BY 1, 2
+ORDER BY 1, 2;
+
+-- diagnostic: live_client_resolution_counts
+-- V8, first half: the lookups of the window by what their `client` field held. The
+-- second half is "Unresolved host names by cause".
+SELECT client_resolution, count(*) AS lookups
+FROM dns_resolution
+WHERE looked_up_at >= :window_start
+  AND looked_up_at < :window_end
+GROUP BY client_resolution
+ORDER BY client_resolution;
+
+-- diagnostic: live_processor_samples
+-- V9: the processor readings of the window. None is the measurement provider's
+-- availability detail naming the cause -- denied, not found, no event in time, an
+-- event that could not be read -- never a zero.
+SELECT count(*) AS samples,
+       min(sampled_at) AS first_sampled_at,
+       max(sampled_at) AS last_sampled_at
+FROM measurement_sample
+WHERE measure = 'cpu_use_ratio'
+  AND sampled_at >= :window_start
+  AND sampled_at < :window_end;

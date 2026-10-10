@@ -115,10 +115,14 @@ Five, all read through the OPNsense REST API:
 |Suricata `eve.json` (`alert` only)|alerts|no|
 |NetFlow / Insight|volumes per address pair, daily|yes|
 |DHCP leases|hostnames and MACs|yes|
-|Resolver DNS lookups (Unbound or Dnsmasq)|site names (sole source)|yes|
+|Resolver DNS lookups (Unbound or Dnsmasq), and the resolver's cache and local data (Unbound)|site names (sole source); host names no lease names|the lookups yes, the cache and local data no|
 
 The Suricata and resolver rows read differently from the original plan: see
-the step-1 findings below.
+the step-1 findings below. The resolver row gained its cache and its local data
+in step 5 (`specs/SPEC-resolver-cache-attribution.md`): the cache supplies the
+answer addresses the query report does not carry, so a site name can rest on
+exact evidence, and the local data names hosts no DHCP lease names. Both are read
+from `/api/unbound/diagnostics/*` and need no setting turned on.
 
 ## Development and test environment
 
@@ -205,7 +209,7 @@ container run says nothing about deployment.
 |2|Data model and SQLite schema|Schema + model document|Done|
 |3|Static HTML mockup — overview|HTML file for a representative canvas, fake data|Done|
 |4|Backend: collection and storage|Collectors + persistence + tests|Done — validated against a live OPNsense 26.7 on 3 October 2026|
-|5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|In progress — 5A (correlation, classification, aggregation) implemented, **not yet validated live**: its first live run, on 5 October 2026, measured the defects `specs/SPEC-step-5a-live-corrections.md` corrects, and the next cycle attributes site names from the resolver cache; 5B (HTTP API) to do|
+|5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|In progress — 5A (correlation, classification, aggregation) implemented, **not yet validated live**: its first live run, on 5 October 2026, measured the defects `specs/SPEC-step-5a-live-corrections.md` corrects; the resolver-cache cycle (`specs/SPEC-resolver-cache-attribution.md`) attributes site names from the resolver cache first and by timing as the fallback, records the method on each attribution, resolves host names through local data and reads the processor from its stream, **implemented, not yet validated live**; 5B (HTTP API) to do|
 |6|Backend: alerts and client correlation|Alert model + API + tests|To do|
 |7|Full frontend|Canvases, widgets, dashboard import/export|To do|
 |8|Install, packaging, documentation|`ct/install.sh`, compose, README|To do|
@@ -417,12 +421,16 @@ every step** above. Prerequisite: the containerised toolchain described under
   (`docs/opnsense-api-survey.md`, *The per-pair data is a live snapshot, not
   history*, and *What `traffic/top` measures, read from source for step 5*).
 - East-west / north-south classification, presented separately.
-- **Site names, sole path on 26.7**: correlating resolver lookups with
-  subsequent flows. Suricata cannot serve this (step 1, finding 2), so the
-  heuristic is no longer a fallback — it is the only path. Its limits —
-  client-side caching, shared CDNs, DNS-over-TLS and DNS-over-HTTPS — are
-  documented unconditionally, and an attribution rate is exposed per client.
-  Never invent a domain: fall back to IP, country and operator.
+- **Site names, sole path on 26.7**: the resolver. Suricata cannot serve this
+  (step 1, finding 2). Since the resolver-cache cycle, exact evidence first — the
+  resolver's cache shows the flow's destination among the answers of the name its
+  client looked up (`resolver_cache_answer`) — and correlating resolver lookups
+  with subsequent flows as the fallback (`lookup_timing`); the method is recorded
+  on each attribution. Both are inferences. Their limits — client-side caching,
+  shared CDNs, DNS-over-TLS and DNS-over-HTTPS, and for the cache a record the
+  polls miss — are documented unconditionally, and an attribution rate is exposed
+  per client and per method. Never invent a domain: fall back to IP, country and
+  operator.
 - Client resolution through DHCP leases.
 - Geo and ASN enrichment.
 - HTTP API for the widget catalogue: **one endpoint per widget type**, taking
@@ -473,6 +481,20 @@ addresses or counts are recorded here.
   both sides, `localhost` as this firewall and the stored retry address the causes
   the code admitted, and the diagnostic `Unresolved host names by cause` sorts the
   rest.
+- **Attribution rate — measured, and the reason for the resolver-cache cycle.**
+  About a fifth to under a third of the eligible flows were named by timing alone;
+  the main loss was several distinct names looked up by the same client inside
+  the five-second window. The resolver's cache dump answered, read-only, in under
+  a second; by type, A and AAAA records about a third each, NS about a quarter.
+  **Open:** the rate with the cache's exact evidence, per method; the share of
+  eligible flows whose destination the cache covered (`live_cache_evidence_coverage`);
+  how the observations grow per hour; and the share of `unknown_hostname` lookups
+  the local data resolves.
+- **The processor figure — answered for the source.** `getActivity` carries no
+  numeric processor field and the earlier reading of it never produced a value;
+  `/api/diagnostics/cpu_usage/stream` answers as a server-sent event stream, about
+  one event a second, never ending. **Open:** samples from it on a live firewall,
+  or the named cause of their absence.
 - **Double NAT and carrier-grade NAT — a new item, and a limit.** Behind an
   upstream NAT the firewall does not see its public IPv4 address, and nothing
   `opnview` reads can supply it: no OPNsense endpoint reports it and no outbound

@@ -114,7 +114,9 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 			}
 			newOnThisPage++
 			stored.addresses = append(stored.addresses, lookup.ClientAddress)
-			stored.widen(record.LookedUpAt, record.LookedUpAt+c.attributionMaxDelay())
+			// A lookup can name a flow up to the timing delay after it, and through the
+			// resolver's cache up to the cache-answer cap after it.
+			stored.widen(record.LookedUpAt, record.LookedUpAt+c.attributionWindows().Reach())
 		}
 		if newOnThisPage == 0 {
 			// Every row on this page was already stored, so the pages behind it, which are
@@ -175,8 +177,9 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 	// scripts/unbound/stats.py, the `details` query, over the `client` table
 	// scripts/unbound/logger.py fills through socket.gethostbyaddr). Such a name is
 	// resolved back to an address through the DHCP leases valid at the lookup's
-	// instant, and only when exactly one address answers; otherwise the lookup names
-	// no machine, and the resolution is recorded either way.
+	// instant, or, when no lease names it, through the resolver's local data held then,
+	// and only when exactly one address answers; otherwise the lookup names no machine,
+	// and the resolution is recorded either way.
 	clientAddress := record.ClientAddress
 	resolution := store.ClientResolutionLoggedAddress
 	var clientHostname *string
@@ -184,7 +187,7 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 		if _, err := netip.ParseAddr(clientAddress); err != nil {
 			logged := clientAddress
 			clientHostname = &logged
-			clientAddress, resolution, err = c.store.ResolveLeaseHostname(ctx, logged, record.LookedUpAt)
+			clientAddress, resolution, err = c.store.ResolveLoggedHostname(ctx, logged, record.LookedUpAt)
 			if err != nil {
 				return store.DNSResolution{}, err
 			}
@@ -193,7 +196,7 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 
 	var clientID *int64
 	if clientAddress != "" && (resolution == store.ClientResolutionLoggedAddress ||
-		resolution == store.ClientResolutionLeased) {
+		resolution == store.ClientResolutionLeased || resolution == store.ClientResolutionLocalData) {
 		id, _, found, err := c.store.ClientRefByAddressSince(ctx, clientAddress,
 			now-AddressIdleWindow)
 		if err != nil {

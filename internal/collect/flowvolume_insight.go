@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -65,8 +67,6 @@ var (
 	unverifiedMemoryUsedKeys = []string{"used", "memory_used", "used_bytes", "active"}
 	// unverifiedMemoryRatioKeys is a percentage the endpoint may report directly.
 	unverifiedMemoryRatioKeys = []string{"used_percent", "usage", "memory_usage_percent"}
-	// unverifiedCPUKeys is a processor figure, reported as a percentage.
-	unverifiedCPUKeys = []string{"cpu", "cpu_usage", "used", "total"}
 	// unverifiedTemperatureKeys is one sensor's reading.
 	unverifiedTemperatureKeys = []string{"temperature", "temp", "value"}
 	// unverifiedSensorNameKeys labels the sensor a reading came from.
@@ -404,15 +404,13 @@ func sampleFirewallTelemetry(ctx context.Context, host session, snapshot Discove
 		add("", store.MeasureMemoryUseRatio, store.UnitRatio, ratio)
 	}
 
-	// The processor.
-	if body, ok, err := host.readObject(ctx, opnsense.Activity); err != nil {
+	// The processor, from its event stream.
+	if ratio, absent, err := readProcessorRatio(ctx, host); err != nil {
 		return nil, nil, err
-	} else if !ok {
-		missing = append(missing, "processor (the endpoint did not answer)")
-	} else if value, _, present := decode.FirstFloat(body, unverifiedCPUKeys...); !present {
-		missing = append(missing, "processor (the endpoint answered with no figure this code could read)")
+	} else if absent != "" {
+		missing = append(missing, absent)
 	} else {
-		add("", store.MeasureCPUUseRatio, store.UnitRatio, percentToRatio(value))
+		add("", store.MeasureCPUUseRatio, store.UnitRatio, ratio)
 	}
 
 	// Temperature, one reading per sensor. A firewall with no sensor answers with nothing, and
@@ -712,6 +710,9 @@ func sampleGateways(ctx context.Context, host session, now int64) ([]store.Measu
 	switch response.Outcome {
 	case opnsense.OutcomeOK:
 	case opnsense.OutcomeForbidden:
+		if response.StatusCode == http.StatusUnauthorized {
+			return nil, "gateway latency and loss (" + authenticationFailed + ")", nil
+		}
 		return nil, fmt.Sprintf(gatewayAbsenceDenied, response.StatusCode), nil
 	case opnsense.OutcomeNotFound:
 		return nil, gatewayAbsenceNotFound, nil
@@ -851,4 +852,90 @@ func parseLossRatio(text string) (float64, bool) {
 		return 0, false
 	}
 	return value / 100, true
+}
+
+// The processor's event stream, read with a bound (survey, "Processor stream, read from
+// source for the resolver-cache cycle").
+//
+// /api/diagnostics/cpu_usage/stream streams scripts/system/cpu.py, which runs
+// `iostat -w 1 cpu` and prints one event per line of iostat: "event: message" and
+// "data: {total, user, nice, sys, intr, idle}", integer percentages, `total` being the
+// five columns' sum less `idle`. It never ends, and iostat's FIRST line is not a current
+// reading: "The first statistics that are printed are averaged over the system uptime"
+// (iostat(8), FreeBSD).
+const (
+	// processorStreamEvents is two: the first event is the average since boot and is
+	// discarded, and the second is the first one-second interval -- the current reading.
+	processorStreamEvents = 2
+	// processorStreamWithin is five seconds: the first event comes as soon as configd has
+	// started the script and the second one second later (`iostat -w 1`), so five covers
+	// that second, the script's start-up and the network with room to spare, while
+	// staying far below the client's thirty-second timeout and the measurement interval.
+	processorStreamWithin = 5 * time.Second
+	// processorPrivilege is the ACL page that admits api/diagnostics/cpu_usage/*, as
+	// models/OPNsense/Core/ACL/ACL.xml names it at 26.7.3.
+	processorPrivilege = `"Lobby: Dashboard" (page-system-login-logout)`
+)
+
+// processorEvent is one event of the stream: the two fields the reading is derived from.
+type processorEvent struct {
+	Total *float64 `json:"total"`
+	Idle  *float64 `json:"idle"`
+}
+
+// readProcessorRatio reads the processor's use as a 0-to-1 ratio, or the named reason it
+// could not.
+//
+// THE DERIVATION: total / (total + idle), from the second event. `total` is the busy
+// columns' sum -- user, nice, sys and intr -- and `idle` the rest, so the ratio is the busy
+// share of the interval. It is not total / 100, because iostat rounds each column on its
+// own and their sum is not always exactly 100.
+//
+// Each absence is named on its own and none is a zero: authentication failed (401), naming
+// no privilege; denied (403), naming the privilege; not found; no current event within the bound; an event that cannot be read.
+func readProcessorRatio(ctx context.Context, host session) (float64, string, error) {
+	response, err := host.stream(ctx, opnsense.CPUUsageStream, opnsense.StreamBound{
+		Events: processorStreamEvents, Within: processorStreamWithin,
+	})
+	if err != nil && response.Outcome == "" {
+		return 0, "", err
+	}
+	switch response.Outcome {
+	case opnsense.OutcomeOK:
+	case opnsense.OutcomeForbidden:
+		if response.StatusCode == http.StatusUnauthorized {
+			return 0, "processor (" + authenticationFailed + ")", nil
+		}
+		return 0, fmt.Sprintf("processor (denied, HTTP %d: the API key's user lacks the privilege %s, "+
+			"whose pattern api/diagnostics/cpu_usage/* admits the stream)", response.StatusCode,
+			processorPrivilege), nil
+	case opnsense.OutcomeNotFound:
+		return 0, "processor (not found, HTTP 404: this firewall does not answer " +
+			opnsense.CPUUsageStream.Path + ")", nil
+	default:
+		return 0, "processor (the stream answered " + string(response.Outcome) + ": " +
+			response.Detail + ")", nil
+	}
+	if len(response.Events) < processorStreamEvents {
+		switch {
+		case len(response.Events) == 0 && response.EndedBy == opnsense.StreamEndedByServer:
+			return 0, "processor (the stream ended before any event)", nil
+		case len(response.Events) == 0:
+			return 0, fmt.Sprintf("processor (no event within %d s)", int(processorStreamWithin.Seconds())), nil
+		case response.EndedBy == opnsense.StreamEndedByServer:
+			return 0, "processor (the stream ended after the first event, which is iostat's average " +
+				"since boot and not a current reading)", nil
+		default:
+			return 0, fmt.Sprintf("processor (no event after the first within %d s; the first is "+
+				"iostat's average since boot and not a current reading)",
+				int(processorStreamWithin.Seconds())), nil
+		}
+	}
+	var event processorEvent
+	current := response.Events[processorStreamEvents-1]
+	if err := json.Unmarshal(current, &event); err != nil || event.Total == nil || event.Idle == nil ||
+		*event.Total < 0 || *event.Idle < 0 || *event.Total+*event.Idle <= 0 {
+		return 0, "processor (an event that could not be read as {total, idle})", nil
+	}
+	return *event.Total / (*event.Total + *event.Idle), "", nil
 }

@@ -282,6 +282,40 @@ func RawString(record Object, key string) string {
 	return value
 }
 
+// Shape is the JSON shape a field arrived in. String and RawString read an absent field,
+// a JSON null and an empty string alike, and render a number as text; a caller to which
+// those differences carry meaning reads the shape beside the value.
+type Shape int
+
+// The shapes a field can arrive in.
+const (
+	// ShapeAbsent is a key the object does not hold.
+	ShapeAbsent Shape = iota
+	// ShapeNull is a key holding JSON null.
+	ShapeNull
+	// ShapeString is a key holding a JSON string, empty or not.
+	ShapeString
+	// ShapeOther is a key holding a number, a boolean, an array or an object.
+	ShapeOther
+)
+
+// TextField reads a field together with its shape: the string verbatim, untrimmed, when
+// the field is a JSON string, and empty for every other shape.
+func TextField(record Object, key string) (string, Shape) {
+	raw, present := record[key]
+	switch typed := raw.(type) {
+	case string:
+		return typed, ShapeString
+	case nil:
+		if present {
+			return "", ShapeNull
+		}
+		return "", ShapeAbsent
+	default:
+		return "", ShapeOther
+	}
+}
+
 // EpochPointer reads an instant a source already expresses as epoch seconds.
 func EpochPointer(row Object, key string) *int64 {
 	raw, present := row[key]

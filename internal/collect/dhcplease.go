@@ -81,9 +81,18 @@ func (c *Collector) CollectDHCPLease(ctx context.Context) error {
 	// or missed a backend that may answer at the next pass, would use that one
 	// examination up against an incomplete table and leave the lookup unresolved for
 	// good (step-5A live corrections, H6).
+	//
+	// The resolver's local data names hosts too, so when a local-data source is in use
+	// the examination also waits until it has been read after the lookups were ingested
+	// (hostnamesources.go).
 	request := derivation{addresses: seen}
 	if complete {
-		request.hostnames, request.hostnamesBefore = true, leasesReadAt
+		before, examine, err := c.noteLeaseRead(ctx, leasesReadAt)
+		if err != nil {
+			failures = append(failures, err)
+		} else if examine {
+			request.hostnames, request.hostnamesBefore = true, before
+		}
 	}
 	if err := c.derive(ctx, request); err != nil {
 		failures = append(failures, err)

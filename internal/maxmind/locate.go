@@ -89,8 +89,8 @@ func isPublic(address netip.Addr) bool {
 	return address.IsValid() && address.IsGlobalUnicast() && !address.IsPrivate()
 }
 
-// Tasks returns the two loops: the refresh, woken early by a save on the settings
-// surface, and the lookups. Both read their interval from the live configuration
+// Tasks returns the loops: the refresh, woken early by a save on the settings
+// surface, and the lookups. Each reads their interval from the live configuration
 // before every wait.
 func Tasks(settings *config.Live, refresher *Refresher, locator *Locator) []collect.Task {
 	return []collect.Task{

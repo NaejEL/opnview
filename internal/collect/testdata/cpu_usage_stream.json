@@ -1,0 +1,31 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md and the opnsense/core 26.7.3 source it cites, never by recording a response from an OPNsense firewall. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Processor stream, read from source for the resolver-cache cycle",
+    "field_list_from": "the data of each server-sent event scripts/system/cpu.py prints for /api/diagnostics/cpu_usage/stream at opnsense/core 26.7.3: total, user, nice, sys, intr and idle, integer percentages, total being their sum less idle. The fake serves each object below as 'event: message' and 'data: <object>' followed by a blank line, which is the stream's framing.",
+    "why_these_values": "Two events, as the read takes them. The first stands for iostat's average since boot and must be discarded; the second is the current reading, whose total and idle give 25 / (25 + 75) = 0.25. The values are synthesised and chosen so the two events give different ratios.",
+    "example_values_are_not_a_network": "Every figure below is synthesised for this fixture and describes no firewall."
+  },
+  "body": {
+    "events": [
+      {
+        "total": 9,
+        "user": 3,
+        "nice": 0,
+        "sys": 5,
+        "intr": 1,
+        "idle": 91
+      },
+      {
+        "total": 25,
+        "user": 10,
+        "nice": 1,
+        "sys": 12,
+        "intr": 2,
+        "idle": 75
+      }
+    ]
+  }
+}

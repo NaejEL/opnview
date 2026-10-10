@@ -20,6 +20,12 @@
 --   :from, :to      an observed_at window, both ends included
 --   :start, :end    a looked_up_at window, both ends included
 --   :client_id, :flow_id, :lookup_id, :site_name, :delay, :now
+--   :method, :observation_id  an attribution's method and the address observation
+--                   it matched, or NULL
+--   :name           a domain name compared as the resolver's records store it
+--   :provider_id, :held_in, :owner_name, :rrtype, :value, :address, :host_label,
+--   :seen_at, :covered_from, :until, :previous_at, :id  one resolver record of one
+--                   poll, and the poll's place among its provider's polls
 --   :link_local     1 when the address being placed is an IPv6 link-local one
 --   :full           1 for a full placement, 0 for an incremental one
 --   :evidence       the evidence fingerprint an address was placed from
@@ -531,15 +537,18 @@ WHERE observed_at < (SELECT :now - CAST(value AS INTEGER)
   AND dst_interface_id IS NULL;
 
 -- ---------------------------------------------------------------------------
--- SITE-NAME ATTRIBUTION. The resolver log carries no answer address, so an
--- attribution is a lookup and a flow by the same client, close in time. A flow
--- is eligible when its destination is outside -- not inside, and not this
+-- SITE-NAME ATTRIBUTION. The query report carries no answer address and the
+-- resolver's cache does, so an attribution is exact evidence first -- a lookup
+-- whose name the cache shows answering with the flow's destination over the whole
+-- interval from the lookup to the flow -- and, failing that, a lookup and a flow by
+-- the same client, close in time (internal/store/attribute.go holds the rule). A
+-- flow is eligible when its destination is outside -- not inside, and not this
 -- firewall -- and it is not the second record of a connection whose first record
 -- is counted (flow.pair_outcome 'second_leg').
 -- ---------------------------------------------------------------------------
 
 -- statement: attribution_candidates
-SELECT id, observed_at, src_client_id, src_address
+SELECT id, observed_at, src_client_id, src_address, dst_address
 FROM flow
 WHERE observed_at >= :from
   AND observed_at <= :to
@@ -564,26 +573,131 @@ ORDER BY f.id;
 
 -- "The same client": the same client_id where both rows carry one, the same
 -- address otherwise. Eligible: a passed lookup answered by recursion, from
--- cache, or from local data such as a host override.
+-- cache, or from local data such as a host override, whose client named one
+-- address -- logged as one, or a host name a lease or the local data resolved.
 -- statement: attribution_lookups
-SELECT r.id, r.domain, r.looked_up_at
+SELECT r.id, r.domain, r.looked_up_at, r.lookup_key, r.answer_source
 FROM dns_resolution AS r
 WHERE r.client_id = :client_id
   AND r.looked_up_at >= :start
   AND r.looked_up_at <= :end
   AND r.action = 'pass'
   AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
-  AND r.client_resolution IN ('logged_address', 'lease_hostname')
+  AND r.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname')
 UNION ALL
-SELECT r.id, r.domain, r.looked_up_at
+SELECT r.id, r.domain, r.looked_up_at, r.lookup_key, r.answer_source
 FROM dns_resolution AS r
 WHERE r.client_address = :address
   AND r.looked_up_at >= :start
   AND r.looked_up_at <= :end
   AND r.action = 'pass'
   AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
-  AND r.client_resolution IN ('logged_address', 'lease_hostname')
+  AND r.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname')
   AND (r.client_id IS NULL OR :client_id IS NULL);
+
+-- ---------------------------------------------------------------------------
+-- THE RESOLVER'S RECORDS, the evidence the resolver-cache attribution reads. A
+-- record covers an instant when its coverage interval holds it. Names are
+-- compared as the records store them (store.DNSName): lower-cased, no trailing dot.
+-- ---------------------------------------------------------------------------
+
+-- The A and AAAA records holding one address and covering an instant: the names a
+-- flow's destination was an answer of, in the cache or in the local data.
+-- statement: resource_records_of_address
+SELECT o.id, o.held_in, o.owner_name, o.rrtype, o.value, o.address,
+       o.covered_from_at, o.covered_until_at, o.first_seen_at
+FROM resource_record_observation AS o
+WHERE o.address = :address
+  AND o.rrtype IN ('A', 'AAAA')
+  AND o.covered_until_at >= :at
+  AND o.covered_from_at <= :at;
+
+-- The cache's CNAME records pointing at one name and covering an instant: one link
+-- of the climb from an answer's name to the name a client looked up.
+-- statement: resource_record_cname_owners
+SELECT o.id, o.held_in, o.owner_name, o.rrtype, o.value, o.address,
+       o.covered_from_at, o.covered_until_at, o.first_seen_at
+FROM resource_record_observation AS o
+WHERE o.rrtype = 'CNAME'
+  AND o.value = :name
+  AND o.covered_until_at >= :at
+  AND o.covered_from_at <= :at;
+
+-- Every record of one name covering an instant: one step of the descent from a
+-- looked-up name to its addresses.
+-- statement: resource_records_of_name
+SELECT o.id, o.held_in, o.owner_name, o.rrtype, o.value, o.address,
+       o.covered_from_at, o.covered_until_at, o.first_seen_at
+FROM resource_record_observation AS o
+WHERE o.owner_name = :name
+  AND o.covered_until_at >= :at
+  AND o.covered_from_at <= :at;
+
+-- The eligible lookups of one name by one client inside a window: what an answer's
+-- name is matched against. The name is compared through the expression
+-- idx_dns_resolution_domain_name indexes.
+-- statement: attribution_name_lookups
+SELECT r.id, r.domain, r.looked_up_at, r.lookup_key, r.answer_source
+FROM dns_resolution AS r
+WHERE lower(rtrim(r.domain, '.')) = :name
+  AND r.looked_up_at >= :start
+  AND r.looked_up_at <= :end
+  AND r.action = 'pass'
+  AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
+  AND r.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname')
+  AND ((:client_id IS NOT NULL AND r.client_id = :client_id)
+       OR (r.client_address = :address AND (r.client_id IS NULL OR :client_id IS NULL)));
+
+-- The local data naming a host at an instant: the addresses of the A and AAAA records
+-- whose owner, and of the PTR records whose target, has the host name's first label.
+-- The caller takes the address only when there is exactly one.
+-- statement: local_data_addresses_for_hostname
+SELECT DISTINCT o.address
+FROM resource_record_observation AS o
+WHERE o.held_in = 'local_data'
+  AND o.host_label = :label
+  AND o.covered_until_at >= :at
+  AND o.covered_from_at <= :at
+ORDER BY o.address
+LIMIT 2;
+
+-- The last successful poll of one provider's records.
+-- statement: resource_record_read_at
+SELECT read_at FROM resource_record_read WHERE provider_id = :provider_id;
+
+-- The observation a record seen again extends: the one the previous successful poll
+-- saw.
+-- statement: resource_record_current
+SELECT o.id, o.covered_until_at
+FROM resource_record_observation AS o
+WHERE o.provider_id = :provider_id
+  AND o.owner_name = :owner_name
+  AND o.rrtype = :rrtype
+  AND o.value = :value
+  AND o.last_seen_at = :previous_at
+ORDER BY o.first_seen_at DESC
+LIMIT 1;
+
+-- statement: resource_record_extend
+UPDATE resource_record_observation
+SET last_seen_at = max(last_seen_at, :seen_at),
+    covered_until_at = max(covered_until_at, :until)
+WHERE id = :id;
+
+-- statement: resource_record_insert
+INSERT INTO resource_record_observation (provider_id, held_in, owner_name, rrtype, value,
+                                         address, host_label, first_seen_at, last_seen_at,
+                                         covered_from_at, covered_until_at)
+VALUES (:provider_id, :held_in, :owner_name, :rrtype, :value, :address, :host_label,
+        :seen_at, :seen_at, :covered_from, :until)
+ON CONFLICT (provider_id, owner_name, rrtype, value, first_seen_at) DO UPDATE SET
+    last_seen_at = max(resource_record_observation.last_seen_at, excluded.last_seen_at),
+    covered_until_at = max(resource_record_observation.covered_until_at, excluded.covered_until_at);
+
+-- statement: resource_record_read_upsert
+INSERT INTO resource_record_read (provider_id, read_at)
+VALUES (:provider_id, :seen_at)
+ON CONFLICT (provider_id) DO UPDATE SET read_at = max(resource_record_read.read_at, excluded.read_at);
 
 -- ---------------------------------------------------------------------------
 -- A HOST NAME LOGGED AS A LOOKUP'S CLIENT. The resolver's query report gives the
@@ -638,16 +752,21 @@ LIMIT 2;
 
 -- statement: attribution_upsert
 INSERT INTO domain_attribution (flow_id, dns_resolution_id, site_name,
-                                correlation_delay_seconds, attributed_at)
-VALUES (:flow_id, :lookup_id, :site_name, :delay, :now)
+                                correlation_delay_seconds, attributed_at, method,
+                                address_observation_id)
+VALUES (:flow_id, :lookup_id, :site_name, :delay, :now, :method, :observation_id)
 ON CONFLICT (flow_id) DO UPDATE SET
     dns_resolution_id = excluded.dns_resolution_id,
     site_name = excluded.site_name,
     correlation_delay_seconds = excluded.correlation_delay_seconds,
-    attributed_at = excluded.attributed_at
+    attributed_at = excluded.attributed_at,
+    method = excluded.method,
+    address_observation_id = excluded.address_observation_id
 WHERE domain_attribution.dns_resolution_id IS NOT excluded.dns_resolution_id
    OR domain_attribution.site_name IS NOT excluded.site_name
-   OR domain_attribution.correlation_delay_seconds IS NOT excluded.correlation_delay_seconds;
+   OR domain_attribution.correlation_delay_seconds IS NOT excluded.correlation_delay_seconds
+   OR domain_attribution.method IS NOT excluded.method
+   OR domain_attribution.address_observation_id IS NOT excluded.address_observation_id;
 
 -- statement: attribution_delete
 DELETE FROM domain_attribution WHERE flow_id = :flow_id;

@@ -1,8 +1,8 @@
 // Package collect reads the five sources, decides which implementation of each
 // kind opnview reads, records what it could not read, and writes the result.
 //
-// THE FILE NAMES ARE THE SEAM, AND THE LISTING IS THE DOCUMENTATION. There are
-// not five collectors here: there are five KINDS, and several of them already have
+// THE FILE NAMES ARE THE SEAM, AND THE LISTING IS THE DOCUMENTATION. There is
+// not one collector per source here: there are KINDS, and several of them already have
 // more than one implementation. So every file is named for exactly one of three
 // things, and `ls` is enough to tell which:
 //
@@ -56,7 +56,7 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 )
 
-// The provider kinds, which are the nine the schema constrains `provider.kind` to.
+// The provider kinds, which are the eleven the schema constrains `provider.kind` to.
 const (
 	// KindPublicSuffix is the Public Suffix List. This package neither probes nor
 	// reads it: internal/publicsuffix does, and the third outbound destination lives
@@ -90,6 +90,16 @@ const (
 	// No implementation is registered for it: the kind gives such a source a
 	// destination, and writing a connector for one is not this cycle's work.
 	KindReconciledState = "reconciled_state"
+	// KindResolverCache is the records a resolver holds in its cache: the answer
+	// addresses the query report does not carry. "Cache" is Unbound's own word
+	// (unbound-control(8), dump_cache). It admits several active providers, since
+	// every record it stores names the provider that read it.
+	KindResolverCache = "resolver_cache"
+	// KindResolverLocalData is the records a resolver serves from its local data,
+	// host overrides among them: Unbound's own words again (unbound.conf(5),
+	// local-data; unbound-control(8), list_local_data). Concurrent for the same
+	// reason.
+	KindResolverLocalData = "resolver_local_data"
 )
 
 // The provider keys the schema registers. They are data, not configuration:
@@ -114,6 +124,15 @@ const (
 	// ProviderUnbound is the Unbound resolver.
 	ProviderUnbound = "unbound"
 )
+
+// authenticationFailed is the wording of an HTTP 401, whichever endpoint answered it.
+// ApiControllerBase's beforeExecuteRoute (opnsense/core 26.7.3,
+// mvc/app/controllers/OPNsense/Base/ApiControllerBase.php) answers 401 "Authentication
+// Failed" only when the key and secret do not authenticate, and 403 "Forbidden" when they
+// do but the ACL refuses the page. A 401 therefore names no privilege: granting one would
+// not cure it.
+const authenticationFailed = "authentication failed (HTTP 401): the firewall did not accept the API " +
+	"key and secret"
 
 // Clock is the time the scheduler and the collectors read. It is an interface so
 // that a test drives every loop deterministically instead of sleeping.
@@ -173,7 +192,7 @@ func newDiscovery() Discovery {
 	}
 }
 
-// Collector holds everything the five collectors share: the one HTTP client, the
+// Collector holds everything the collectors share: the one HTTP client, the
 // store, the clock, and the discovery snapshot they join against.
 type Collector struct {
 	client *opnsense.Client
@@ -205,6 +224,23 @@ type Collector struct {
 	// maxDelaySeconds is the attribution_max_delay_seconds setting: how long before a
 	// flow a lookup may have been made and still name it. The mutex guards it.
 	maxDelaySeconds int64
+	// cacheAnswerDelaySeconds is the attribution_max_cache_answer_delay_seconds
+	// setting: how long before a flow, at most, a lookup may have been made and still
+	// name it through the resolver's records. The mutex guards it.
+	cacheAnswerDelaySeconds int64
+	// readDetails holds, per provider of the two resolver-record kinds, what its last
+	// read recorded in words -- the counts, the size, the time, or the absence -- so the
+	// probe round's rewrite of the availability row restates it rather than erasing it.
+	// The mutex guards it.
+	readDetails map[int64]string
+	// leaseReadAt and localDataReadAt are the instants the last complete lease pass and
+	// the last successful local-data pass of this run began, zero before either; and
+	// localDataFailed whether the last local-data pass failed. The unresolved host-name
+	// lookups are examined only once every source in use has been read after they were
+	// ingested; see hostnameBound. The mutex guards all three.
+	leaseReadAt     int64
+	localDataReadAt int64
+	localDataFailed bool
 	// lastRefreshAt is the instant of the last successful aggregate refresh, and
 	// onLinkFingerprint what classification read of the interfaces themselves --
 	// which are upstream, their link-local rule, the networks that count -- at the
@@ -260,6 +296,9 @@ func New(client *opnsense.Client, database *store.Store, clock Clock) *Collector
 		discovery:       newDiscovery(),
 		probed:          map[string][]probedSource{},
 
+		cacheAnswerDelaySeconds: config.DefaultCacheAnswerDelaySeconds,
+		readDetails:             map[int64]string{},
+
 		pairingWindowSeconds: config.DefaultLegPairingWindowSeconds,
 		leaseFailureLimit:    config.DefaultLeaseBackendFailurePassLimit,
 		leaseFailures:        map[int64]int64{},
@@ -282,6 +321,9 @@ func (c *Collector) Configure(settings config.Config) {
 	if settings.AttributionMaxDelaySeconds > 0 {
 		c.maxDelaySeconds = settings.AttributionMaxDelaySeconds
 	}
+	if settings.CacheAnswerDelaySeconds > 0 {
+		c.cacheAnswerDelaySeconds = settings.CacheAnswerDelaySeconds
+	}
 	if settings.LegPairingWindowSeconds >= 0 {
 		c.pairingWindowSeconds = settings.LegPairingWindowSeconds
 	}
@@ -302,6 +344,23 @@ func (c *Collector) setSampleAbsence(providerID int64, absent string) {
 		return
 	}
 	c.sampleAbsences[providerID] = absent
+}
+
+// setReadDetail records what one resolver-record provider's last read said.
+func (c *Collector) setReadDetail(providerID int64, detail string) {
+	c.mutex.Lock()
+	defer c.mutex.Unlock()
+	if c.readDetails == nil {
+		c.readDetails = map[int64]string{}
+	}
+	c.readDetails[providerID] = detail
+}
+
+// readDetail is what one resolver-record provider's last read said, or empty.
+func (c *Collector) readDetail(providerID int64) string {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.readDetails[providerID]
 }
 
 // sampleAbsence is what one provider's last sampling pass could not read, or empty.

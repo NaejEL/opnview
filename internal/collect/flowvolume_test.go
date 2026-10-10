@@ -33,7 +33,8 @@ func arrangeMeasurementCollection(t *testing.T) *probeHarness {
 	harness.fake.answerFixture(opnsense.SystemTemperature, "system_temperature.json")
 	harness.fake.answerFixture(opnsense.SystemTime, "system_time.json")
 	harness.fake.answerFixture(opnsense.SystemDisk, "system_disk.json")
-	harness.fake.answerFixture(opnsense.Activity, "activity.json")
+	// The processor figure's source since the resolver-cache cycle: a stream that never ends.
+	harness.fake.answerStreamFixture(opnsense.CPUUsageStream, "cpu_usage_stream.json")
 	harness.fake.answerFixture(opnsense.GatewayStatus, "gateway_status.json")
 	harness.fake.answerFixture(opnsense.SystemSwap, "system_swap.json")
 	if err := harness.collector.probeMeasurement(context.Background()); err != nil {
@@ -331,12 +332,17 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 	// Every telemetry endpoint answers with a well-formed body whose keys are none of the
 	// ones the collector tries.
 	for _, endpoint := range []opnsense.Endpoint{
-		opnsense.SystemResources, opnsense.SystemTime, opnsense.Activity,
+		opnsense.SystemResources, opnsense.SystemTime,
 	} {
 		harness.fake.answerJSON(endpoint, map[string]any{
 			"a_key_no_candidate_list_names": 1, "another": "two",
 		})
 	}
+	// The processor's stream answers too, with events whose fields are none of the two
+	// the reading is derived from.
+	harness.fake.answerStream(opnsense.CPUUsageStream, [][]byte{
+		[]byte(`{"a_key_no_candidate_list_names":1}`), []byte(`{"another":"two"}`),
+	}, true)
 	harness.fake.answerJSON(opnsense.SystemDisk,
 		map[string]any{"devices": []any{map[string]any{"a_key_no_candidate_list_names": 1}}})
 	harness.fake.answerJSON(opnsense.TrafficInterface, map[string]any{

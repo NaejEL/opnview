@@ -1,0 +1,21 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md and the opnsense/core 26.7.3 source it cites, never by recording a response from an OPNsense firewall. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Resolver cache and local data, read from source for the resolver-cache cycle",
+    "field_list_from": "{status, data: [{name, ttl, type, rrtype, value}]} as Unbound/Api/DiagnosticsController.php listlocaldataAction returns scripts/unbound/wrapper.py -d at opnsense/core 26.7.3: the owner is `name` here, ttl the configured TTL, type the CLASS, value the record data's first field.",
+    "why_these_values": "One host named by an A record, an AAAA record and the two PTR records that map its addresses back, in both IP versions; a TXT record, counted and not stored. The records are a template a test extends with its own, rather than a population.",
+    "example_values_are_not_a_network": "Every name and address below is synthesised for this fixture: the names are under the reserved .test top-level domain (RFC 6761) and the addresses are documentation addresses (RFC 5737, RFC 3849). None of them describes anyone's network, and no code under test presupposes any of them."
+  },
+  "body": {
+    "status": "ok",
+    "data": [
+      {"name": "host-a.example.test.", "ttl": "3600", "type": "IN", "rrtype": "A", "value": "192.0.2.20"},
+      {"name": "host-a.example.test.", "ttl": "3600", "type": "IN", "rrtype": "AAAA", "value": "2001:db8::20"},
+      {"name": "20.2.0.192.in-addr.arpa.", "ttl": "3600", "type": "IN", "rrtype": "PTR", "value": "host-a.example.test."},
+      {"name": "0.2.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.", "ttl": "3600", "type": "IN", "rrtype": "PTR", "value": "host-a.example.test."},
+      {"name": "example.test.", "ttl": "3600", "type": "IN", "rrtype": "TXT", "value": "\"example\""}
+    ]
+  }
+}

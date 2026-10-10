@@ -83,7 +83,7 @@ Five, all read through the OPNsense REST API:
 |Suricata `eve.json`|alerts|no|
 |NetFlow / Insight|volumes per address pair, daily|yes|
 |DHCP leases|hostnames and MACs|yes|
-|Resolver DNS lookups|site names|yes|
+|Resolver DNS lookups, and the resolver's cache and local data|site names; host names no lease names|the lookups yes, the cache and local data no|
 
 The resolver may be Unbound or Dnsmasq, and the DHCP server likewise —
 `opnview` detects which one is active. Suricata may be absent, installed but
@@ -92,9 +92,16 @@ what is not.
 
 ### Site names are inferred, not observed
 
-`opnview` names sites by correlating a resolver lookup with the flow that
-follows it towards the resolved address. That is an inference, and the
-limitations section below says where it fails.
+`opnview` names sites from the resolver, by one of two methods, and records which
+on every name. The first is exact evidence: the resolver's **cache**, read every
+minute, holds the addresses each name resolved to, so a flow towards an address
+the cache held for a name its client looked up is named after that name —
+`resolver_cache_answer`. When the cache says nothing either way, the second
+method, `lookup_timing`, names a flow after the single name its client looked up
+in the few seconds before it. Both are **inferences**: the cache shows the client
+could have been told that address when it asked for that name, not that the flow
+was for it, and a client that looked up two names answering with the same address
+is named after neither. The limitations section below says where both fail.
 
 It was meant to be a fallback. Suricata's `tls` events carry the SNI and its
 `dns` events the query, both alongside the real pre-NAT source address —
@@ -108,9 +115,11 @@ neither is available on OPNsense 26.7:
   every other event type, and the generic log endpoint cannot open a file not
   named `.log`.
 
-Suricata therefore contributes alerts and nothing else. There is no second
-method to switch between, so the UI does not pretend there is one: it says
-that names are inferred, and shows the attribution rate. The evidence is in
+Suricata therefore contributes alerts and nothing else, and the resolver remains
+the only source of site names — its lookups and, since the resolver-cache cycle,
+its cache. There is still no observed-name method, so the UI does not pretend
+there is one: it says that names are inferred, shows the attribution rate, and
+says per name which of the two methods inferred it. The evidence is in
 [docs/opnsense-api-survey.md](docs/opnsense-api-survey.md).
 
 For the heuristic to work at all the resolver has to be logging its queries.
@@ -171,7 +180,28 @@ which bypasses the resolver entirely and leaves no lookup to correlate. An
 attribution rate is displayed per client, and no domain is ever invented when
 the correlation fails — you get the IP, the country and the operator instead.
 There is no observed-name path to fall back on: see
-[Site names](#site-names-are-inferred-not-observed).
+[Site names](#site-names-are-inferred-not-observed). The cache-based method has
+limits of its own: a record the resolver cached and dropped between two of
+`opnview`'s reads is never seen, and a record evicted before its TTL is taken to
+have been held until the TTL ran out.
+
+**Reading the resolver's cache records every name the firewall's resolver
+resolved.** Not only the names your clients looked up while `opnview` was reading
+the query report: every name the resolver held in its cache, with the addresses it
+resolved to, and every host override in its local data. They are stored in the
+database like everything else, so they are governed by the same retention, and the
+aggregate mode — no domain names — withholds them from the screens as it does the
+site names, without stopping them being stored.
+
+**A power cut can roll back the last moments of collected history.** The database
+runs SQLite in write-ahead-log mode with `synchronous = NORMAL`, a trade the
+maintainer approved on 9 October 2026 for the write rate a collector needs: a
+transaction committed shortly before a power loss or an operating-system crash may
+be rolled back when the database recovers; the database is not corrupted; and a
+crash of `opnview` itself loses nothing
+([sqlite.org, `PRAGMA synchronous`](https://www.sqlite.org/pragma.html#pragma_synchronous);
+[sqlite.org, write-ahead log](https://www.sqlite.org/wal.html)). Most of what is
+lost the next polls read again.
 
 **Alert coverage is per interface.** Suricata may be absent, installed but
 stopped, or running on only some interfaces. Alerts exist for the interfaces it
@@ -238,6 +268,13 @@ The tool reconstructs per-client browsing history: that is its function, not a
 side effect. It is complete by default. Configurable retention and aggregate
 mode — volumes, interfaces, countries, operators, without domain names — are
 options, not imposed guardrails.
+
+It also keeps the resolver's cache: **every name the firewall's resolver resolved,
+for any client and for the firewall itself, with the addresses it resolved to**,
+and the resolver's local data — host overrides included. That is what lets a site
+name rest on the address a name actually resolved to. It is subject to the same
+retention, and the aggregate mode withholds it at the interface while it is still
+stored.
 
 In a workplace setting, informing the people concerned is a legal obligation
 in most jurisdictions.

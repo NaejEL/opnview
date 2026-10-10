@@ -45,14 +45,20 @@ router and appears nowhere in this schema. Every volume figure is therefore a
 lower bound, and every screen that displays one must say so.
 
 **Site names are inferred.** Every row of `domain_attribution` is an inference
-from resolver correlation: a resolver lookup made by a client shortly before a
-flow from that client to the address the lookup returned. There is no second
-method on OPNsense 26.7. Suricata exposes no `dns` event type, and its `tls`
-and `http` events, although they can be written to `eve.json`, cannot be read
-back through the API (survey, gaps 1 and 2). Client-side caching, shared
-content networks, DNS-over-TLS and DNS-over-HTTPS each break the correlation,
-and a client using an external encrypted resolver can only be named by address,
-country and operator.
+from resolver correlation, by one of two methods, and the method is recorded on the row
+(`domain_attribution.method`; specs/SPEC-resolver-cache-attribution.md, which
+amends this paragraph). `resolver_cache_answer`: a lookup made by a client, and the
+resolver's cache showing the flow's destination among the answers of the name it
+looked up over the whole interval from the lookup to the flow. `lookup_timing`, the
+5A method and the fallback: a lookup made by a client shortly before a flow from
+that client, with no other name looked up in the window. Both remain inferences:
+the cache shows the client could have been told the destination when it asked for
+the name, not that the flow was for it. Suricata exposes no `dns` event type, and
+its `tls` and `http` events, although they can be written to `eve.json`, cannot be
+read back through the API (survey, gaps 1 and 2), so the resolver is still the only
+source of site names. Client-side caching, shared content networks, DNS-over-TLS and
+DNS-over-HTTPS each break the inference, and a client using an external encrypted
+resolver can only be named by address, country and operator.
 
 **Provisional columns.** The survey carries `UNVERIFIED:` markers on the ISC
 lease contract, on the grammar of the Unbound and Dnsmasq query-log lines, and
@@ -95,9 +101,14 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | the domain a site name belongs to, one label below its public suffix | **registrable domain** (the Public Suffix List's own term) | `publicsuffix.List.RegistrableDomain`, computed at read time and never stored | <https://publicsuffix.org/list/>, *formal algorithm* |
 | a reading of one local address and one peer on one interface | the `traffic/top` record's `address` and its `details[]` entries | `measurement_sample.subject_kind = 'interface_endpoint_pair'`, key `device local peer` | survey, *What `traffic/top` measures, read from source for step 5*. The kind name is `opnview`'s; the three parts are the endpoint's |
 | a gateway's delay, its deviation and its loss | `delay`, `stddev`, `loss` | `delay_milliseconds`, `delay_stddev_milliseconds`, `loss_ratio` under `subject_kind = 'gateway'` | `/api/routes/gateway/status` (survey, *Gateway status, read from source for step 5*); the measure names carry the unit because the endpoint writes it into the text (`1.2 ms`, `0.0 %`) |
+| the records a resolver holds and has not expired | **cache** — Unbound's own word: `unbound-control dump_cache`, "The contents of the cache is printed" (unbound-control(8)); OPNsense's action is `dumpcache` | `provider.kind = 'resolver_cache'`, `resource_record_observation.held_in = 'cache'` | `/api/unbound/diagnostics/dumpcache` (survey, *Resolver cache and local data, read from source for the resolver-cache cycle*) |
+| the records a resolver serves from its own configuration, host overrides among them | **local data** — unbound.conf(5), `local-data:`; unbound-control(8), `list_local_data` | `provider.kind = 'resolver_local_data'`, `resource_record_observation.held_in = 'local_data'` | `/api/unbound/diagnostics/listlocaldata` (same section) |
+| one record of either: its owner name, its type and its data | **resource record**, **owner name**, **RRtype** (RFC 1034, section 3.6; RFC 1035, section 3.2); the endpoints' `host` (dump) or `name` (local data), `rrtype` and `value` | `resource_record_observation` and its `owner_name`, `rrtype`, `value` | same two endpoints; the owner name is lower-cased and loses its trailing dot (RFC 4343), and `rrtype` and `value` keep the endpoint's names |
+| the record's class | `type` in both endpoints — the class `IN`, **not** the record type | not stored: every record either endpoint returns is of class IN, and the field is never read as the type | `scripts/unbound/wrapper.py`, whose regular expression captures `(IN)` into `type` |
+| the seconds a cached record has left | `ttl` (a string in the dump) | read into `resource_record_observation.covered_until_at` as the poll's instant plus it | same endpoint |
 | the firewall's own addresses, as a source or a destination | **This Firewall** — the rule editor's name for pf's `self` | `this_firewall`: `flow.src_is_this_firewall` / `dst_is_this_firewall`, `security_event.src_is_this_firewall`, `dns_resolution.client_is_this_firewall`, the `this_firewall_address` view, `traffic_scope = 'this_firewall'`, the directions `to_this_firewall` / `from_this_firewall`, the tree node `this_firewall`, and `blocked_decision.target_is_this_firewall` before them | <https://docs.opnsense.org/manual/how-tos/caddy.html>: "Create Firewall rules that allow `HTTP` and `HTTPS` to destination `This Firewall` on `WAN`"; `opnsense/core` 26.7.3, `src/opnsense/mvc/app/library/OPNsense/Firewall/FilterRule.php`, where the stored value `(self)` is rendered as `gettext("This Firewall")`, and `Firewall/Rule.php`, which passes `(self)` to pf unchanged; pf.conf(5), FreeBSD 15.1-RELEASE: "self Expands to all addresses assigned to all interfaces." The *manual/firewall.html* page does not carry the phrase |
 
-**Twenty-seven terms are `opnview`'s own, because OPNsense has no word for them.**
+**Thirty-four terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -130,6 +141,13 @@ vocabulary read off an endpoint:
 | `dns_resolution.hostname_examined_at` | nothing upstream knows that a lookup's logged host name was resolved again | the instant a lease pass last examined the lookup's host name; `NULL` is the lookup still waiting for one, which is what makes the retry survive a restart and stay bounded |
 | `peer_volume_aggregate_*` and its `peer_address` | no OPNsense figure is keyed by the address at the other end of a client's flows | "peer" is the word `client_volume_aggregate_*.distinct_peers` already used for that address; the family exists so that count is exact in every period. For an outbound or an inbound flow the peer is the volume family's `peer_address`, the outside end; between two interfaces it is the other inside address |
 | `dhcp_lease.generation_key` | OPNsense's lease endpoints report an expiry, and only Kea reports a validity start. None of them reports an identity for a lease **generation**, which is the thing `opnview` needs one row per | the column is named for what it identifies — one generation of one lease — and its value carries the name of what it rests on (`start:`, `expiry:`, `observed_day:`), so a reader can tell a real start from a substitute without consulting the backend. It exists because `starts_at` was doing this job as well as its own, and was honest only because a comment beside it said so |
+| `domain_attribution.method` (`resolver_cache_answer`, `lookup_timing`) | neither OPNsense nor Unbound infers a site name, so neither has a word for how one was inferred | the maintainer's decision 5 of the resolver-cache cycle: `resolver_cache_answer` says the evidence is the resolver cache's **answer** to the name looked up, and `lookup_timing` says the evidence is only the **timing** of the lookup before the flow. The column reverses 5A decision D3, which had refused a column with one possible value |
+| `domain_attribution.address_observation_id` | nothing upstream names the record an inference rests on | the A or AAAA observation whose address is the flow's destination: the **address observation** a `resolver_cache_answer` matched, named so the evidence can be checked |
+| `dns_resolution.client_resolution = 'local_data_hostname'` | the query report says nothing about having replaced an address by a name, and nothing about where else the name could be resolved | decision 5 again: the host name was resolved through the resolver's **local data**, Unbound's word, after no lease named it; it sits beside `lease_hostname`, which names the leases the same way |
+| the **coverage interval**, `resource_record_observation.covered_from_at` and `covered_until_at` | the dump gives what the cache holds at one instant and the seconds each record has left; nothing says since when a record was held | the interval over which the polls allow the resolver to have held the record: from the last successful poll before the first poll that saw it, to the latest poll plus its `ttl` (the latest poll, for local data). It is a derivation of the polls, and "covered" says that rather than claiming the record was held throughout |
+| `resource_record_observation.held_in` (`cache`, `local_data`) | the two endpoints return the same shape and nothing says which part of the resolver a record lives in | the part of the resolver the record was held in, in Unbound's own words; it repeats the provider's kind because every search starts from it |
+| `resource_record_observation.host_label` | a local-data record carries a name and nothing more | **label** is DNS's word (RFC 1035, section 2.3.1), and the column is the first label of the host name the record names -- the owner of an A or AAAA record, the target of a PTR record -- exactly as `dhcp_lease.hostname_label` is for a lease |
+| `resource_record_read` | no endpoint says when it was last read successfully | the last successful **read** of one provider's records, kept so the start of a coverage interval survives a failed poll and a restart |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
@@ -162,6 +180,21 @@ an interface, a client or a rule by what it is called.
 **Zero assumed counts.** Nothing in the schema or in the queries presumes a
 number of interfaces, clients, owners, rules or address families. The checks prove
 it by re-running every query against a second seed built with different counts.
+
+**Durability: `synchronous = NORMAL` beside WAL.** `internal/store` opens the
+database with `journal_mode(WAL)` and `synchronous(NORMAL)`, approved by the
+maintainer on 9 October 2026 (`specs/SPEC-resolver-cache-attribution.md`, scope G).
+In WAL mode NORMAL syncs the write-ahead log at a checkpoint rather than at every
+commit, which took a commit from about 5 ms to about 13 µs in the development
+container. The trade, as sqlite.org states it
+(<https://www.sqlite.org/pragma.html#pragma_synchronous>,
+<https://www.sqlite.org/wal.html>, *Performance Considerations*): a transaction
+committed shortly before a **power loss or an operating-system crash may be rolled
+back** when the database recovers; the database **is not corrupted** — "WAL mode is
+safe from corruption with synchronous=NORMAL"; and an **application crash alone loses
+nothing** — "Transactions are durable across application crashes regardless of the
+synchronous setting". What a power loss can cost is the last moments of collected
+history, much of which the next polls read again.
 
 ## Entities
 
@@ -212,6 +245,8 @@ peer_volume_aggregate_7d
 provider
 provider_rule_info
 purged_flow_hour
+resource_record_observation
+resource_record_read
 retention_purge
 rule
 rule_volume_aggregate_1h
@@ -287,6 +322,7 @@ peer_volume_aggregate_24h
 peer_volume_aggregate_30d
 peer_volume_aggregate_7d
 purged_flow_hour
+resource_record_observation
 rule_volume_aggregate_1h
 rule_volume_aggregate_24h
 rule_volume_aggregate_30d
@@ -313,6 +349,7 @@ interface_network
 owner
 provider
 provider_rule_info
+resource_record_read
 retention_purge
 rule
 session
@@ -332,7 +369,7 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `retention_purge` | exactly one row, the furthest horizon the purge has applied |
 | `interface_network` | one row per network an interface has carried, detected by discovery or set by the operator; a firewall has a few per interface |
 | `rule` | one row per rule in the running ruleset |
-| `provider` | one row per implementation the project knows of; ten today, and a new one is an `INSERT`, not a stream |
+| `provider` | one row per implementation the project knows of; fifteen today, and a new one is an `INSERT`, not a stream |
 | `provider_rule_info` | one row per (provider, rule identity) seen at least once; a rule set holds tens of thousands at most, and the table only ever holds the ones actually observed |
 | `source_availability` | exactly one row per `provider` row, for the life of the database |
 | `eve_ingest_cursor` | one watermark per rotated `eve.json` file; the firewall keeps the current file plus four archives |
@@ -340,6 +377,7 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `account` | one row per opnview login, created by hand in the setup surface |
 | `session` | one row per session issued and not yet expired and collected; a browser holds one |
 | `encrypted_credential` | one row per named credential opnview has to send somewhere; two exist |
+| `resource_record_read` | one row per provider of the two resolver-record kinds that has been read successfully; four are registered |
 
 `client` is classified as growing, not bounded: an address reissued to another
 machine creates a new identity rather than updating an existing one, so the
@@ -359,9 +397,10 @@ Registering a provider is an `INSERT` into `provider` plus an `INSERT` into
 `CHECK` on the registry constrains `kind`, because a kind is code `opnview`
 ships and not data a deployment supplies.
 
-The eleven rows the schema registers, with the survey section that established
+The fifteen rows the schema registers, with the survey section that established
 each one. **Each is one IMPLEMENTATION of a kind, and the kind is the seam:**
-`dhcp_lease` has three and `dns_lookup` has two, and on the firewall the survey
+`dhcp_lease` has three and `dns_lookup`, `resolver_cache` and
+`resolver_local_data` have two each, and on the firewall the survey
 probed Dnsmasq serves DHCP with Kea disabled while Unbound and Dnsmasq are both
 running as resolvers. `internal/collect` carries one interface per kind and one
 file per implementation, each registering itself against the `provider_key`
@@ -378,7 +417,11 @@ below, so adding a backend is one file plus one row here.
 | `dns_lookup` | `unbound` | `/api/unbound/overview/search_queries` | data source 5 |
 | `dns_lookup` | `dnsmasq` | `/api/diagnostics/log/core/dnsmasq` | data source 5, `UNVERIFIED:` |
 | `geo_asn` | `maxmind_geolite2` | the GeoLite2 City and ASN databases | the second of the three outbound calls the project allows |
-| `measurement_sample` | `insight` | `/api/diagnostics/traffic/top/<interface names>`, the six system-gauge endpoints and, since step 5A, `/api/routes/gateway/status` | *The telemetry the data model calls gaps G9 and G10 exists*, *The per-pair data is a live snapshot, not history*, and *Gateway status, read from source for step 5* |
+| `measurement_sample` | `insight` | `/api/diagnostics/traffic/top/<interface names>`, the system-gauge endpoints, since step 5A `/api/routes/gateway/status`, and since the resolver-cache cycle `/api/diagnostics/cpu_usage/stream` for the processor | *The telemetry the data model calls gaps G9 and G10 exists*, *The per-pair data is a live snapshot, not history*, *Gateway status, read from source for step 5* and *Processor stream, read from source for the resolver-cache cycle* |
+| `resolver_cache` | `unbound` | `/api/unbound/diagnostics/dumpcache` | *Resolver cache and local data, read from source for the resolver-cache cycle* |
+| `resolver_cache` | `dnsmasq` | none: no cache read through the API, reported as that named state | same section |
+| `resolver_local_data` | `unbound` | `/api/unbound/diagnostics/listlocaldata` | same section |
+| `resolver_local_data` | `dnsmasq` | none: no local-data read through the API, reported as that named state | same section |
 | `public_suffix` | `public_suffix_list` | <https://publicsuffix.org/list/public_suffix_list.dat>, conditional GET | the third of the three outbound calls, added by step 5A; MPL 2.0 (`internal/publicsuffix`) |
 
 **Two kinds have no implementation, each for its own recorded reason, and
@@ -397,9 +440,9 @@ probed" for ever, and a screen would show a source nobody is looking at. The
 kind exists so the ten surveyed state-shaped sources have a destination, and
 writing a connector for one of them is a later cycle's work.
 
-**Two kinds have several providers**, and that is what makes the registry real
-rather than notional: `dns_lookup` has Unbound and Dnsmasq, `dhcp_lease` has
-Kea, Dnsmasq and ISC dhcpd. Step-1 detection already tells them apart, and
+**Four kinds have several providers**, and that is what makes the registry real
+rather than notional: `dns_lookup`, `resolver_cache` and `resolver_local_data`
+have Unbound and Dnsmasq, `dhcp_lease` has Kea, Dnsmasq and ISC dhcpd. Step-1 detection already tells them apart, and
 `dhcp_lease.backend` and `dns_resolution.resolver` already record which one a
 row came from.
 
@@ -462,7 +505,9 @@ vocabulary's adequacy for a second provider is unproven until one is surveyed.
 ### `provider` — the registry
 
 One row per implementation that can feed `opnview`, keyed
-`(kind, provider_key)`. `kind` is constrained to the eight above.
+`(kind, provider_key)`. `kind` is constrained to the eleven `docs/architecture.md`
+names: the nine before the resolver-cache cycle, and `resolver_cache` and
+`resolver_local_data`, which it added.
 
 **`is_active` is not reachability.** It says which implementation `opnview`
 actually reads for that kind; `source_availability.state` says which ones can
@@ -477,7 +522,8 @@ the identity of its destination rows includes the provider* — is stated, kind 
 kind, in `docs/architecture.md` under *Activeness, and what is still exclusive*,
 and it is enforced by the partial unique index
 `uq_provider_active_per_exclusive_kind` over `kind` where `is_active = 1` and the
-kind is not one of the four the rule exempts. Marking a second provider of an
+kind is not one of the six the rule exempts — the four it exempted before, and the
+two resolver-record kinds, whose rows name the provider that read them. Marking a second provider of an
 **exclusive** kind active fails; marking a second provider of a concurrent kind
 active succeeds, and both are read.
 
@@ -1217,13 +1263,25 @@ logged label never matched a lease carrying `host.domain` (cause H1 of the step-
 live corrections) and a trailing dot on either side defeated the match (H2). The
 name `localhost`, which a reverse lookup of a loopback address returns, names
 **this firewall** whatever the leases hold (H4; decision 11).
+**A host name no lease names is resolved through the resolver's local data
+(scope D of `specs/SPEC-resolver-cache-attribution.md`).** The A and AAAA records
+of `resource_record_observation` held in `local_data` whose owner name, and the
+PTR records whose target, has the logged name's first label — the same rule as the
+leases, through `host_label` — and that the local data held at the lookup's instant
+(`store.ResolveLoggedHostname`). Exactly one address answering gives
+`local_data_hostname`; two give `ambiguous_hostname`. Two leases naming the host
+are ambiguous whatever the local data holds: they already say two machines carried
+the name.
 `client_resolution` records the outcome: `logged_address` (`client` was an
-address), `lease_hostname` (exactly one address answered; `client_address` is it
-and `client_hostname` the logged name), `ambiguous_hostname` (several did),
-`unknown_hostname` (none did) or `this_firewall_hostname` (`localhost`). In the
-last three cases `client_address` keeps the logged name verbatim, and the
-attribution reads no lookup that is not `logged_address` or `lease_hostname`: a
-name that does not resolve to one address does not say which machine asked.
+address), `lease_hostname` (exactly one address answered through the leases;
+`client_address` is it and `client_hostname` the logged name), `local_data_hostname`
+(no lease named it and exactly one address answered through the local data; the
+same two columns), `ambiguous_hostname` (several did), `unknown_hostname` (neither
+a lease nor the local data named it) or `this_firewall_hostname` (`localhost`). In
+the last three cases `client_address` keeps the logged name verbatim, and the
+attribution reads no lookup that is not `logged_address`, `lease_hostname` or
+`local_data_hostname`: a name that does not resolve to one address does not say
+which machine asked.
 
 **`client_is_this_firewall`** is 1 when the querier is this firewall — its address
 was held by the firewall at the lookup's instant, or it is a loopback address or
@@ -1249,6 +1307,19 @@ them, so it waits for the next complete pass. A lookup is examined once by a lea
 pass after it was ingested and not again; a lease the firewall reports only after
 that pass would not resolve it.
 
+**With the local data in use, the examination waits for both sources.** Since the
+resolver-cache cycle a lookup's single examination resolves through the leases
+and then the local data, so when a `resolver_local_data` provider is active it
+waits until both have been read after the lookup was ingested: a complete lease
+pass examines only the lookups ingested before the earlier of its own read and the
+last local-data read, and a local-data pass examines, the same way, once a
+complete lease pass has run in this process (or at once when no lease backend is
+active). A provider's first local-data poll ever covers no instant before its own,
+so it does not count as such a read. A local-data pass that failed does not hold the
+lookups back; its failure is in its own availability row. The instants are kept in
+memory, so after a restart the examination waits until both sources have been read
+once — at most the slower interval — and loses nothing, because the mark is stored.
+
 **What makes a lease pass complete (defect L1 of
 `specs/SPEC-test-budget-and-two-live-defects.md`).** A pass is complete when it read
 at least one backend's lease table and every active backend it did not read is one of
@@ -1271,7 +1342,9 @@ two:
   memory, so a restart begins it again: the examination is delayed by at most the
   limit, never forgone. The diagnostic `Unresolved host
 names by cause` in `sql/queries/diagnostics.sql` sorts every `unknown_hostname`
-lookup into the cause that left it so.
+lookup into the cause that left it so, and every `local_data_hostname` lookup into
+its own bin, *resolved by local data*; its last bin is now *neither a lease nor
+local data names the host*.
 
 **Identity: `lookup_key`, unique — and `opnview` composes it, because the
 endpoint's own identifier does not exist.** `search_queries` returns a `uuid`
@@ -1349,38 +1422,66 @@ and `idx_dns_resolution_blocklist` so "which list refused what, over this
 period" is an index search rather than a scan of a growing table. That index's
 leading column is NULL-bearing, and SQLite keeps the unattributed blocked
 lookups at its head rather than omitting them, so it serves the *list not
-recorded* rows too.
+recorded* rows too. `idx_dns_resolution_domain_name`, on
+`(lower(rtrim(domain, '.')), looked_up_at)`, is the resolver-cache attribution's
+search from the names an address was held under to the lookups of those names; it
+indexes the comparison itself, so no second copy of the domain is stored.
 
 ### `domain_attribution` — the site name a flow was given
 
 **Identity:** `flow_id`, the primary key. One flow carries at most one site
 name.
 
-**There is no provenance or method column, deliberately.** Its absence is
-asserted by the checks against the column list. On 26.7 every attribution is
-inferred from resolver correlation and there is no second method to tell it
-apart from, so a provenance field would have exactly one possible value and
-would state nothing. What the model carries instead is stronger: the lookup
-itself, as a mandatory foreign key — an attribution cannot exist without the
-resolver lookup it came from, and inserting one fails — and
-`correlation_delay_seconds`, the delay between that lookup and the flow, stored
-and queryable, so a wide delay can be treated as a weak attribution.
+**The method is recorded on every attribution: `method`, constrained by a `CHECK`
+to `resolver_cache_answer` or `lookup_timing`.** This **reverses decision D3** of
+`specs/SPEC-correlation-classification-aggregation.md`, which refused a method
+column because every attribution then came from one method and a field with one
+possible value states nothing. The resolver-cache cycle
+(`specs/SPEC-resolver-cache-attribution.md`, C3) added the second method, so the
+checks now assert the column, its `CHECK` and both values in the seeds, where they
+used to assert its absence. `address_observation_id` names the A or AAAA record a
+`resolver_cache_answer` matched, and a `CHECK` requires it exactly for that method.
+What the model carried before it still carries: the lookup itself, as a mandatory
+foreign key — an attribution cannot exist without the resolver lookup it came from,
+and inserting one fails — and `correlation_delay_seconds`, the delay between that
+lookup and the flow, stored and queryable, so a wide delay can be treated as a weak
+attribution.
 
 **A flow with no attribution is a first-class case**, not an omission: the
 Client query returns it with its address, country and operator and a null site
 name.
 
-**The correlation rule, written once in `internal/store/derive.sql`.** The
-resolver log carries **no answer address** — `search_queries` reports who asked
-and for what, never what the answer was (survey, data source 5, *Response
-shape*) — so a flow cannot be matched to the lookup that produced its
-destination. The rule is therefore strict, and its outcome on a busy client is a
-low rate, which is the honest outcome:
+**The rule, written once in `internal/store/attribute.go` and
+`internal/store/derive.sql`.** The query report carries **no answer address** —
+`search_queries` reports who asked and for what, never what the answer was (survey,
+data source 5, *Response shape*) — and the resolver's **cache** does: it holds the
+A, AAAA and CNAME records of the names it resolved, with the seconds each has left
+(`resource_record_observation`). So the rule takes **exact evidence first** and
+falls back on timing:
 
-- a flow gets an attribution **exactly when** the eligible lookups by the same
-  client in `[observed_at − max delay, observed_at]` name **exactly one distinct
-  domain**; two lookups of that same domain still attribute, two distinct
-  domains attribute nothing;
+- **exact evidence, `resolver_cache_answer`.** An eligible lookup of `D` by the
+  flow's client, made at most `attribution_max_cache_answer_delay_seconds` (default
+  3600) before the flow, is an **exact candidate** when the flow's destination is
+  among `D`'s answer addresses **over the whole interval from the lookup to the
+  flow**: the cache's CNAME observations from `D`, every link's coverage interval
+  holding both instants, lead to an A or AAAA observation of the destination whose
+  coverage holds both too. A CNAME chain is followed through at most 11 links,
+  Unbound's own `max-query-restarts` default, and a loop yields nothing. For a
+  lookup answered from `Local-data`, a local-data A or AAAA record of `D` holding
+  the destination counts as well (decision 6). The flow is attributed
+  `resolver_cache_answer` **exactly when its exact candidates name exactly one
+  distinct domain**; two or more — a shared content-network address the client
+  reached under two names it looked up — give no row. The window is the evidence's
+  own validity, and the setting only caps it (decision 2);
+- **timing, `lookup_timing`, the fallback.** With no exact candidate, the 5A rule
+  unchanged: a flow gets an attribution **exactly when** the eligible lookups by the
+  same client in `[observed_at − max delay, observed_at]` name **exactly one
+  distinct domain**; two lookups of that same domain still attribute, two distinct
+  domains attribute nothing. **It is suppressed by contradicting evidence**
+  (decision 3): when the cache held answers of the destination's address family for
+  that domain at the referenced lookup's instant, and the destination was not among
+  them, no row is written. Answers of the other family say nothing about this
+  destination and suppress nothing;
 - **eligible flows** have an outside destination (`dst_interface_id IS NULL`), are
   not to this firewall (`dst_is_this_firewall = 0`), and are not a second leg
   (`pair_outcome` is not `second_leg`, decision 2); an east-west flow is never
@@ -1388,39 +1489,137 @@ low rate, which is the honest outcome:
   ineligible — its destination placed inside or recognised as this firewall since,
   or paired as a second leg — loses its attribution at the next pass over its
   window (`attribution_ineligible`);
-- **eligible lookups** passed (`action = 'pass'`) and were answered by
-  `Recursion`, `Cache` or `Local-data`;
+- **eligible lookups** passed (`action = 'pass'`), were answered by
+  `Recursion`, `Cache` or `Local-data`, and named one address
+  (`client_resolution` is `logged_address`, `lease_hostname` or
+  `local_data_hostname`);
 - **the same client** means the same `client_id` where both rows carry one, and
   the same address otherwise;
 - the **max delay** is the `attribution_max_delay_seconds` row of `setting`,
   default 5, a positive whole number;
-- `site_name` is that domain **verbatim** — a domain is never invented — the
-  referenced lookup is the latest of them, and `correlation_delay_seconds` is
-  never negative.
+- `site_name` is the domain the client looked up, **verbatim** — never a CNAME
+  target, and a domain is never invented — the referenced lookup is the latest of
+  the matching ones, the lookup key breaking a tie so no choice depends on the
+  order rows were stored in, and `correlation_delay_seconds` is never negative;
+- **late arrival** is decided again: a pass that stores lookups re-derives the
+  flows up to the larger of the two delays after them, and a pass that stores
+  resolver records re-derives the flows inside the interval over which what the
+  resolver held changed, so the result is independent of the order flows, lookups
+  and records arrive in;
+- **re-pointing and ineligibility apply to both methods**, and a second derivation
+  over the same rows writes nothing.
 
-**`aggregate_mode = 'no_domains'` does not change what is written.**
-Attributions and `domain_volume_aggregate_*` are stored whatever the mode; the
-mode withholds names at the API, which is step 5B's. A user who turns the mode
-off again therefore finds the history intact.
+**`aggregate_mode = 'no_domains'` does not change what is written** (decision 7).
+Attributions, `domain_volume_aggregate_*` and the resolver's records in
+`resource_record_observation` are stored whatever the mode; the mode withholds
+names at the API, which is step 5B's. A user who turns the mode off again
+therefore finds the history intact.
 
 **Attribution rate.** One definition, held twice: `store.ReadAttributionRate`
 and the query `-- diagnostic: Attribution rate per client` in
 `sql/queries/diagnostics.sql` both count, as eligible, the flows with an
 **outside** destination, a source client, no end that is this firewall — a flow
 from this firewall is outside the per-client rate — and that are not a second leg,
-and as named those carrying an attribution. The store
-function also says whether the rate is **defined** at all: it is **undefined**
-when opnview holds no evidence that a resolver source answered for the window --
-no lookup stored for an instant inside it and no reachable `dns_lookup` probe
-inside it -- because the availability row holds only the latest probe, and a
-resolver reachable now says nothing about last week. With coverage and nothing
-named it is 0. It is the figure the UI must expose per client.
+and as named those carrying an attribution — **per method as well**
+(`NamedByCacheAnswer`, `NamedByLookupTiming`; the diagnostic's
+`named_by_resolver_cache_answer` and `named_by_lookup_timing`), the two summing to
+the named total. The store function also says whether the rate is **defined** at
+all: it is **undefined** when opnview holds no evidence that a resolver source
+answered for the window -- no lookup stored for an instant inside it and no
+reachable `dns_lookup` probe inside it -- because the availability row holds only
+the latest probe, and a resolver reachable now says nothing about last week. With
+coverage and nothing named it is 0. That meaning is 5A's and is unchanged; beside
+it, `CacheCovered` says whether the cache was read for the window — a cache record
+whose coverage interval meets it — and so whether the exact method could have
+named anything. It is the figure the UI must expose per client.
 
 **Retention:** removed by the cascade of either parent, and by its own
-`attributed_at`.
+`attributed_at`. The address observation it names is kept by the purge for as long
+as it is (`resource_record_observation`).
 
-**Indexes:** the primary key, plus `idx_domain_attribution_resolution` so the
-cascade from a purged lookup is an index search.
+**Indexes:** the primary key, `idx_domain_attribution_resolution` so the cascade
+from a purged lookup is an index search, and
+`idx_domain_attribution_address_observation` so the purge's question "does an
+attribution name this record" is one too.
+
+### `resource_record_observation` — one record the resolver held, over the polls that saw it
+
+**Source:** the active providers of two kinds — `resolver_cache`, reading
+`/api/unbound/diagnostics/dumpcache`, and `resolver_local_data`, reading
+`/api/unbound/diagnostics/listlocaldata` (survey, *Resolver cache and local data,
+read from source for the resolver-cache cycle*). The dump's fields are `host`,
+`ttl`, `type`, `rrtype` and `value`, the local data's `name`, `ttl`, `type`,
+`rrtype` and `value`; `type` is the record's **class**, `IN`, and is never read as
+its type. The cache's **A, AAAA and CNAME** records are stored, and the local
+data's **A, AAAA and PTR** records; every other type is counted in the read's
+availability detail, with the response's size and the time the read took, and not
+stored. A record whose `ttl` is not a whole number of seconds (cache) or whose
+`value` is not valid for its type — an A record that is not an IPv4 address, a PTR
+record whose owner encodes no address — is skipped and counted.
+
+**Columns:** `held_in` (`cache` or `local_data`); `owner_name`, lower-cased with
+the trailing dot removed (RFC 4343); `rrtype` verbatim; `value`, the address in
+canonical text form (RFC 5952) or the target name normalised like the owner;
+`address`, the address the record maps a name to — an A or AAAA record's value, the
+address a PTR record's owner encodes (RFC 1035, section 3.5; RFC 3596, section 2.5),
+NULL for a CNAME; `host_label`, for local data only, the first label of the host
+name the record names; `first_seen_at` and `last_seen_at`, the first and latest
+polls that saw it; and the **coverage interval**.
+
+**The coverage interval** (`covered_from_at`, `covered_until_at`) is `opnview`'s
+own derivation (*Vocabulary*). It runs from the **last successful poll before the
+first poll that saw the record** — read from `resource_record_read`, so a failed
+poll or a restart leaves it at that earlier successful poll, and with none it is the
+first poll's own instant — to the **latest poll's instant plus the `ttl` it
+reported**, the seconds the resolver will serve it no longer than. Local data has no
+remaining TTL — its `ttl` is the configured one — so its interval ends at the latest
+poll that saw it. A record evicted before its TTL makes the upper bound an
+over-statement, recorded under *Limitations* in the README; a record inserted and
+expired between two polls is never seen.
+
+**Bounded growth.** A record seen by two consecutive successful polls of its
+provider is **one** observation, extended: `last_seen_at` moves to the newer poll
+and `covered_until_at` to the later of the two bounds. A record that reappears after
+a poll that did not hold it starts a new observation. The table therefore grows
+with the distinct records the resolver held and their comings and goings, not with
+the number of polls — the diagnostic `live_resolver_records_per_hour` shows it.
+
+**Identity:** `(provider_id, owner_name, rrtype, value, first_seen_at)`. It
+includes the provider, so both kinds admit several concurrently active providers.
+
+**Why the local data is not a `state_snapshot`.** Scope D asked for
+`state_snapshot` and `state_item` to be reused where they fit, and local data is a
+complete set replaced on every poll — the reconciled shape. They do not fit, for two
+reasons the attribute rule and the growth rule state: a host name is **matched** on
+(its first label, against the name a lookup logged), and `state_item.attributes` is
+tier 2 of the attribute rule — displayed, never filtered on or joined; and a snapshot
+per poll grows with the number of polls, which is exactly what this table's bounded
+growth exists to avoid. "What the local data held at instant T" is the coverage
+interval's question, answered by the same columns as the cache's.
+
+**Retention:** purged by `covered_until_at` — a record whose coverage ended before
+the horizon can no longer have been held at any instant the history keeps —
+**except one an attribution of a surviving flow names**; the flows go first, taking
+their attributions with them, and the foreign key from `domain_attribution` makes
+forgetting the exception an error rather than a dangling id.
+
+**Indexes:** `idx_resource_record_observation_address` (`address`,
+`covered_until_at`), where the exact attribution starts from a flow's destination;
+`idx_resource_record_observation_cname_target`, partial on CNAME records, the climb
+from an answer's name back to the names that pointed at it;
+`idx_resource_record_observation_owner`, the descent from a looked-up name to its
+addresses; `idx_resource_record_observation_host_label`, partial on local data, the
+resolution of a logged host name; and `idx_resource_record_observation_covered_until`
+for the purge and the coverage read. No statement scans the table, at either seed
+size.
+
+### `resource_record_read` — the last successful poll of each resolver-record provider
+
+One row per provider of `resolver_cache` and `resolver_local_data` that has been
+read successfully: `read_at`, the instant of its last successful poll. It is what
+makes the coverage interval's lower bound survive a failed poll and a restart. A
+poll that was refused, not found, undecodable or answered a failed status does not
+move it. **Bounded**, never purged.
 
 ### `geo_asn` — the geo and ASN enrichment of one address
 
@@ -2035,7 +2234,8 @@ seconds, and treats a window as half-open, `[from, to)`.
 | `ReadVolumeWindow(ctx, from, to, now)` | the volume of a rolling window: whole hours from the 1 h slots, the partial hours at either edge from `flow`. Inside the flow horizon it equals a computation over `flow` alone; beyond it the slots answer, and `Covered` says which interval they cover. `ByDirection` splits it by `traffic_direction`, this firewall's two directions included, so this firewall is its own key and never part of the outside column. **A paired connection counts once** (decision 2): `Total` and `ByDirection` leave out the rows whose `ExitLegDevice` is set, and `ExitLegs` sums those per device — what an interface's own figures add for the connections whose first leg was logged on another interface |
 | `ReadVolumeSeries(ctx, from, to, bucket, now)` | the same window in buckets aligned to one period's slots. The buckets sum to the window total. A bucket inside a covered, gap-free interval with no rows is 0; one outside coverage, or overlapping a `firewall_log` collection gap, is marked `Gap` and carries no figure |
 | `ReadConnectionTree(ctx, from, to, root)` | both sides of the connection tree. Every flow lands in exactly one node per level on each side, with an explicit `none`, `unassigned`, `unplaced:miss`, `unplaced:pending` or `unplaced:no_row` node rather than a dropped flow, so a level always sums to the level above. **This firewall has a node on each side**, `this_firewall`: an end that is this firewall lands there and never under an operator, an unplaced condition, `interface:none` or `client:none` — inside when the other end is outside, with `this_firewall` again below it for the roots with a second level, and outside when the other end is an inside client. A second leg is left out, its connection being its first leg's |
-| `ReadAttributionRate(ctx, from, to, clientID)` | the attribution rate of one client, or of all, over the flows with an outside destination, a source client, no end that is this firewall, and that are not a second leg. **Undefined** (nil) when opnview holds no evidence that a resolver source answered for the window -- no lookup stored inside it, no reachable `dns_lookup` probe inside it -- or when there is no eligible flow; **0** only when one answered and named nothing |
+| `ReadAttributionRate(ctx, from, to, clientID)` | the attribution rate of one client, or of all, over the flows with an outside destination, a source client, no end that is this firewall, and that are not a second leg. **Undefined** (nil) when opnview holds no evidence that a resolver source answered for the window -- no lookup stored inside it, no reachable `dns_lookup` probe inside it -- or when there is no eligible flow; **0** only when one answered and named nothing. Since the resolver-cache cycle it also returns the named flows **per method**, `NamedByCacheAnswer` and `NamedByLookupTiming`, which sum to `NamedFlows`, and `CacheCovered`, whether a cache record's coverage interval meets the window; the per-client diagnostic counts the same figures. The method of each attribution is a column of `domain_attribution`, so a site-name preset carries it per record |
+| `AnswerAddresses(ctx, name, at)` | the addresses the resolver's cache held for a name at an instant, through CNAME observations each covering it, at most 11 links; a loop yields nothing beyond the names before it |
 | `ReadSiteTotals(ctx, period, from, to)` | the domain family summed over slots, with distinct clients counted, never summed |
 | `publicsuffix.Refresher.Group(sites)` | site totals collapsed into registrable domains; `GroupingUnavailable`, and nothing grouped, before the first successful list download |
 | `ReadOwnerTotals(ctx, period, from, to)` | the owner family summed over slots, the unassigned bucket included, distinct clients counted from the client family |
@@ -2093,6 +2293,15 @@ long before a flow a lookup by the same client may be and still name it. It is a
 positive whole number, validated by `internal/config`, and it governs every
 attribution pass made after it is set: attributions already stored stay as they
 were computed. The rule it governs is under `domain_attribution`.
+**`attribution_max_cache_answer_delay_seconds` caps the exact window** (default
+3600, decision 2 of `specs/SPEC-resolver-cache-attribution.md`): how long before a
+flow, at most, a lookup may have been made and still name it through the
+resolver's cache. The evidence's own coverage is the window, and this setting only
+bounds it. It is a positive whole number, validated by `internal/config`, and the
+schema writes its default row. **`poll_interval_resolver_cache_seconds`** (default
+60) and **`poll_interval_resolver_local_data_seconds`** (default 300) are how often
+the resolver's cache and its local data are read (decision 4); like every interval
+they are positive whole numbers of seconds validated by `internal/config`.
 `refresh_interval_public_suffix_list_seconds` (default 86 400) is how often the
 Public Suffix List is checked for a newer copy.
 
@@ -2278,9 +2487,29 @@ search per provider.
 volume, and `/api/diagnostics/system/systemResources`,
 `/api/diagnostics/system/systemTemperature`,
 `/api/diagnostics/system/systemTime`, `/api/diagnostics/system/systemDisk`,
-`/api/diagnostics/activity/getActivity` and
+`/api/diagnostics/cpu_usage/stream` and
 `/api/diagnostics/traffic/interface` for the firewall's own gauges. Survey,
 *Verified against a live firewall, 2026-09-27*.
+
+**The processor, corrected by the resolver-cache cycle.** The processor figure was
+read, until then, from `/api/diagnostics/activity/getActivity` under invented keys
+(`cpu`, `cpu_usage`, `used`, `total`) that no field of that endpoint carries — its
+body is top's header lines as text and the process list — so it never produced a
+value. `opnview` no longer registers `getActivity`
+(`specs/SPEC-resolver-cache-closing.md`, scope 2); the survey keeps what it answers,
+as research. The figure is now read from **`/api/diagnostics/cpu_usage/stream`** (survey,
+*Processor stream, read from source for the resolver-cache cycle*): a server-sent
+event stream of `iostat -w 1 cpu`, one event a second, each
+`{"total", "user", "nice", "sys", "intr", "idle"}` in whole percentages, `total`
+being their sum less `idle`. The stream never ends, so it is read with a bound — two
+events within five seconds, then closed — and **the derivation is
+`total / (total + idle)` of the second event**, stored as `cpu_use_ratio`: the first
+event is iostat's average since boot (iostat(8)), not a current reading, and the
+ratio is taken against `total + idle` rather than 100 because iostat rounds each
+column on its own. Each absence is named on its own in the measurement provider's
+availability detail and writes no reading: denied, naming the privilege "Lobby:
+Dashboard"; not found; no event within the bound; only the since-boot event; an
+event that cannot be read.
 
 **IT IS A PROVIDER KIND, and it is the kind most of the ecosystem fits.** Of the
 ~34 data-producing sources surveyed in the plugin ecosystem, **eight of the ten
@@ -2705,6 +2934,27 @@ The three backend lease endpoints, survey *Data source 4*, *Response shape*.
 | `process_name` | `/api/diagnostics/log/core/resolver`, `/api/diagnostics/log/core/dnsmasq` | Data source 5, Response shape | **not stored** — it names the daemon that wrote the line, which `dns_resolution.resolver` already records per row |
 | response shape | `/api/unbound/overview/totals/<maximum>` | Data source 5, Endpoints | **not stored** — *the survey lists the endpoint and gives no response shape.* It is not called, and nothing can be stored from a shape nobody has read |
 
+### The resolver's cache and local data, and the processor stream
+
+`/api/unbound/diagnostics/dumpcache`, `/api/unbound/diagnostics/listlocaldata` and
+`/api/diagnostics/cpu_usage/stream`, survey *Resolver cache and local data, read
+from source for the resolver-cache cycle* and *Processor stream, read from source
+for the resolver-cache cycle*.
+
+| API field | Endpoint | Survey section | Verdict |
+|---|---|---|---|
+| `status` | `/api/unbound/diagnostics/dumpcache`, `/api/unbound/diagnostics/listlocaldata` | Resolver cache and local data, read from source for the resolver-cache cycle | **stored** — `source_availability.state` and `source_availability.detail`: anything but `ok` is the named absence "the resolver answered status …", and nothing else of the answer is stored |
+| `host` | `/api/unbound/diagnostics/dumpcache` | Resolver cache and local data, read from source for the resolver-cache cycle | **stored** — `resource_record_observation.owner_name`, lower-cased with its trailing dot removed |
+| `name` | `/api/unbound/diagnostics/listlocaldata` | Resolver cache and local data, read from source for the resolver-cache cycle | **stored** — `resource_record_observation.owner_name`, normalised as `host` is, and its first label in `resource_record_observation.host_label` for an A or AAAA record |
+| `ttl` | `/api/unbound/diagnostics/dumpcache` | Resolver cache and local data, read from source for the resolver-cache cycle | **stored** — as `resource_record_observation.covered_until_at`, the poll's instant plus the seconds the record has left; a record whose `ttl` is not a whole number of seconds is skipped and counted |
+| `ttl` | `/api/unbound/diagnostics/listlocaldata` | Resolver cache and local data, read from source for the resolver-cache cycle | **not stored** — the TTL the local data is configured with, not a time remaining; a local-data record is covered while consecutive polls see it |
+| `type` | `/api/unbound/diagnostics/dumpcache`, `/api/unbound/diagnostics/listlocaldata` | Resolver cache and local data, read from source for the resolver-cache cycle | **not stored** — the record's **class**, `IN` on every record either endpoint returns, and never read as the record's type |
+| `rrtype` | `/api/unbound/diagnostics/dumpcache`, `/api/unbound/diagnostics/listlocaldata` | Resolver cache and local data, read from source for the resolver-cache cycle | **stored** — `resource_record_observation.rrtype` for A, AAAA and CNAME (cache) and A, AAAA and PTR (local data); every other type is counted in `source_availability.detail` and not stored |
+| `value` | `/api/unbound/diagnostics/dumpcache`, `/api/unbound/diagnostics/listlocaldata` | Resolver cache and local data, read from source for the resolver-cache cycle | **stored** — `resource_record_observation.value`, and `resource_record_observation.address` for an address record; a value not valid for its type is skipped and counted |
+| `total`, `idle` | `/api/diagnostics/cpu_usage/stream` | Processor stream, read from source for the resolver-cache cycle | **stored** — `measurement_sample.value` under `cpu_use_ratio`, as `total / (total + idle)` of the second event |
+| `user`, `nice`, `sys`, `intr` | `/api/diagnostics/cpu_usage/stream` | Processor stream, read from source for the resolver-cache cycle | **not stored** — their sum is `total`, which is; no screen splits the processor's use by mode |
+| `headers`, `details` | `/api/diagnostics/activity/getActivity` | Processor stream, read from source for the resolver-cache cycle | **not stored** — top's header lines as text and the process list; neither carries a processor figure as a number, and `opnview` no longer registers the endpoint (`specs/SPEC-resolver-cache-closing.md`, scope 2); the row is kept as research |
+
 ### Runtime discovery
 
 Survey *Runtime discovery* (i) to (v).
@@ -2805,8 +3055,9 @@ horizon from `setting`, and removes rows older than it from every growing table:
 `flow`, `dns_resolution`, `domain_attribution`, `security_event`, `dhcp_lease`,
 `client`, `pair_volume_observation`, `geo_asn`, `collection_gap`,
 `measurement_sample`, `state_snapshot`, `interface_address`,
-`address_classification`, `purged_flow_hour` and the twenty-four aggregates — six
-families of four periods each. **Its first statement records the purged part**:
+`address_classification`, `purged_flow_hour`, `resource_record_observation` — by
+`covered_until_at`, the end of its coverage interval — and the twenty-four
+aggregates — six families of four periods each. **Its first statement records the purged part**:
 before any flow is deleted, the figures of the flows it is about to delete are
 added to `purged_flow_hour`, per hour and per every key an aggregate family reads,
 so an hour slot computed afterwards still counts them. An hour or a day slot, and
@@ -2815,7 +3066,10 @@ the calendar month holding it, because a week or a month is composed from them. 
 client the purged part still names is not removed, so no family loses its bytes,
 and a lookup that an attribution of a surviving flow names is kept, so no flow
 loses its site name while it is kept: the lookup can lie up to the attribution
-delay before the horizon while its flow lies after it. The purge also records the
+delay before the horizon while its flow lies after it. A resolver record an
+attribution of a surviving flow names is kept for the same reason, and the foreign
+key from `domain_attribution.address_observation_id` makes forgetting that an error.
+The purge also records the
 furthest horizon it has applied in `retention_purge`, which the flow and lookup
 inserts read inside the insert statement, so a record the purge already removed is
 never stored again, whenever the purge commits.
@@ -2823,7 +3077,8 @@ never stored again, whenever the purge commits.
 **The purge is ordered against the passes.** A running service purges through
 `collect.Collector.Purge`, the retention-purge loop's only work, and never through
 `store.Purge` directly. Every pass that stores rows — the filter log, the resolver,
-the leases and neighbours, the security events — holds the collector's purge lock
+the resolver's cache and local data, the leases and neighbours, the security events
+— holds the collector's purge lock
 for reading from before it stores its first row until its derivation has ended; the
 purge holds it for writing, and the derivation lock as well, so it never runs while
 a pass is between storing its rows and the end of its derivation, never runs during
@@ -2846,14 +3101,15 @@ Bounded tables are never purged, so a surviving observation always joins to an
 interface, a client, a rule and an interface-map entry — and, for a security
 event, to the provider that contributed it and to the rule-info entry that
 gives it a severity. `provider`, `provider_rule_info`, `source_availability`,
-`owner`, `blocklist` and `interface_network` are bounded by the installation, not
+`resource_record_read`, `owner`, `blocklist` and `interface_network` are bounded by
+the installation, not
 by time, and are never purged: purging a client removes the machine, never the person it was
 attributed to, and purging a lookup removes the lookup, never the purpose
 somebody assigned to the list that refused it.
 
 Afterwards, `PRAGMA foreign_key_check` returns no rows: `domain_attribution`
-is removed by the `ON DELETE CASCADE` of both its parents, and nothing else
-points at a purgeable row.
+is removed by the `ON DELETE CASCADE` of both its parents, the resolver records it
+names are kept while it is, and nothing else points at a purgeable row.
 
 With `retention_seconds = 0` the purge removes nothing at all. Both directions
 are asserted by row counts before and after.

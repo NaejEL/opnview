@@ -3,6 +3,8 @@ package collect
 import (
 	"context"
 	"fmt"
+
+	"github.com/NaejEL/opnview/internal/store"
 )
 
 // The derivation that follows a collection pass: classification, the pairing of the
@@ -97,7 +99,10 @@ func (c *Collector) derive(ctx context.Context, request derivation) error {
 // (purge.go).
 func (c *Collector) deriveLocked(ctx context.Context, request derivation) error {
 	now, watermark := c.refreshInstant()
-	maxDelay := c.attributionMaxDelay()
+	windows := c.attributionWindows()
+	// How far after a lookup a flow may lie and still be named by it, under either
+	// method: a lookup whose client changed may now name any flow that far after it.
+	maxDelay := windows.Reach()
 
 	// An interface that became or stopped being upstream, a link-local rule, or a
 	// network discovery detected or the operator added, removed or confirmed: each
@@ -170,7 +175,7 @@ func (c *Collector) deriveLocked(ctx context.Context, request derivation) error 
 		request.widen(low, high+maxDelay)
 	}
 	if request.attribute {
-		result, err := c.store.Attribute(ctx, request.attributeFrom, request.attributeTo, maxDelay, now)
+		result, err := c.store.AttributeWith(ctx, request.attributeFrom, request.attributeTo, windows, now)
 		if err != nil {
 			return err
 		}
@@ -303,6 +308,17 @@ func (c *Collector) attributionMaxDelay() int64 {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	return c.maxDelaySeconds
+}
+
+// attributionWindows are the two attribution settings in force: the timing delay and the
+// cache-answer cap.
+func (c *Collector) attributionWindows() store.AttributionWindows {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return store.AttributionWindows{
+		LookupTimingDelay: c.maxDelaySeconds,
+		CacheAnswerDelay:  c.cacheAnswerDelaySeconds,
+	}
 }
 
 // pairingWindow is the leg_pairing_window_seconds setting in force.

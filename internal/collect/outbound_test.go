@@ -7,7 +7,7 @@ import (
 	"github.com/NaejEL/opnview/internal/opnsense"
 )
 
-// TestDiscoveryAndAllFiveCollectorsReachTheFirewallAndNothingElse is the one-outbound-
+// TestDiscoveryAndEveryCollectorReachTheFirewallAndNothingElse is the one-outbound-
 // destination rule, exercised over the whole of this cycle's collection rather than one
 // call at a time.
 //
@@ -19,7 +19,7 @@ import (
 // What this rules out, concretely: the MaxMind download belongs to internal/maxmind and must
 // not have wandered into collection; and there is no CDN, no telemetry and no version check
 // anywhere in the collection path.
-func TestDiscoveryAndAllFiveCollectorsReachTheFirewallAndNothingElse(t *testing.T) {
+func TestDiscoveryAndEveryCollectorReachTheFirewallAndNothingElse(t *testing.T) {
 	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
@@ -42,7 +42,6 @@ func TestDiscoveryAndAllFiveCollectorsReachTheFirewallAndNothingElse(t *testing.
 	fake.answerFixture(opnsense.SystemTemperature, "system_temperature.json")
 	fake.answerFixture(opnsense.SystemTime, "system_time.json")
 	fake.answerFixture(opnsense.SystemDisk, "system_disk.json")
-	fake.answerFixture(opnsense.Activity, "activity.json")
 	fake.answerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
 	fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
 	fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")

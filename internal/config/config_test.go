@@ -394,3 +394,41 @@ func TestTheLeaseBackendFailureLimitIsAValidatedSettingWhoseDefaultIsThree(t *te
 		}
 	}
 }
+
+// TestTheResolverCacheSettingsAreValidated is decisions 2 and 4 of
+// specs/SPEC-resolver-cache-attribution.md: the cache-answer cap defaults to 3600 and the
+// schema writes that row; the cache is read every 60 s and the local data every 300 s by
+// default; each is a positive whole number of seconds, read from its row, and anything
+// else is refused by name.
+func TestTheResolverCacheSettingsAreValidated(t *testing.T) {
+	ctx := context.Background()
+	loaded, err := Load(ctx, settingTable{rows: map[string]string{}})
+	if err != nil || loaded.CacheAnswerDelaySeconds != 3600 || loaded.ResolverCacheInterval != time.Minute ||
+		loaded.ResolverLocalDataInterval != 5*time.Minute {
+		t.Errorf("with no row the settings are %d, %v and %v (%v)", loaded.CacheAnswerDelaySeconds,
+			loaded.ResolverCacheInterval, loaded.ResolverLocalDataInterval, err)
+	}
+	database, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("opening a database: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if value, present, err := database.Setting(ctx, KeyCacheAnswerDelay); err != nil || !present || value != "3600" {
+		t.Errorf("the schema's row is %q (present %t, %v), not 3600", value, present, err)
+	}
+	loaded, err = Load(ctx, settingTable{rows: map[string]string{KeyCacheAnswerDelay: "600",
+		KeyResolverCacheInterval: "30", KeyResolverLocalDataInterval: "900"}})
+	if err != nil || loaded.CacheAnswerDelaySeconds != 600 || loaded.ResolverCacheInterval != 30*time.Second ||
+		loaded.ResolverLocalDataInterval != 15*time.Minute {
+		t.Errorf("the rows gave %d, %v and %v (%v)", loaded.CacheAnswerDelaySeconds,
+			loaded.ResolverCacheInterval, loaded.ResolverLocalDataInterval, err)
+	}
+	for _, key := range []string{KeyCacheAnswerDelay, KeyResolverCacheInterval, KeyResolverLocalDataInterval} {
+		for _, value := range []string{"0", "-60", "1.5", "an hour", ""} {
+			if _, err := Load(ctx, settingTable{rows: map[string]string{key: value}}); err == nil ||
+				!strings.Contains(err.Error(), key) {
+				t.Errorf("%s = %q was accepted, or refused without naming the key: %v", key, value, err)
+			}
+		}
+	}
+}

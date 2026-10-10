@@ -779,10 +779,12 @@ SELECT
 FROM flow
 WHERE id % 3 = 2;
 
+-- Every one by timing, the 5A method; the resolver's cache names some of them exactly,
+-- further down, once the flows' final classification is written.
 INSERT INTO domain_attribution (flow_id, dns_resolution_id, site_name,
-                                correlation_delay_seconds, attributed_at)
+                                correlation_delay_seconds, attributed_at, method)
 SELECT id, id, printf('name-%d.example-zone-%d.invalid', id % 997, id % 13),
-       1 + (id % 5), observed_at
+       1 + (id % 5), observed_at, 'lookup_timing'
 FROM flow
 WHERE id % 3 = 2;
 
@@ -790,6 +792,8 @@ WHERE id % 3 = 2;
 -- seconds before it: the purge keeps that lookup, because the attribution of a flow it
 -- keeps still names it. The horizon is read from the setting, as the purge reads it, and
 -- the flow takes the shape of the first flow.
+-- Like flow 2000000002 below, it lies outside the live-validation window, and
+-- sql/schema-checks.sh (RC-FOLLOW-AC4) fails if it ever moves inside it.
 INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device,
                   interface_lookup_state, src_interface_id, dst_interface_id,
                   src_client_id, dst_client_id, src_address, dst_address,
@@ -814,8 +818,9 @@ SELECT 2000000001, 'lookup-uuid-at-the-horizon', src_address, src_client_id,
 FROM flow WHERE id = 2000000001;
 
 INSERT INTO domain_attribution (flow_id, dns_resolution_id, site_name,
-                                correlation_delay_seconds, attributed_at)
-SELECT 2000000001, 2000000001, 'name-at-the-horizon.example-zone.invalid', 4, observed_at
+                                correlation_delay_seconds, attributed_at, method)
+SELECT 2000000001, 2000000001, 'name-at-the-horizon.example-zone.invalid', 4, observed_at,
+       'lookup_timing'
 FROM flow WHERE id = 2000000001;
 
 -- Lookups from an address no interface holds -- a client the classification could
@@ -1382,6 +1387,274 @@ SELECT 1300000100, 'this-firewall-localhost-lookup-uuid', 'localhost', 'localhos
 UPDATE dns_resolution
 SET hostname_examined_at = ingested_at + 60
 WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname') AND id % 2 = 0;
+
+-- ---------------------------------------------------------------------------
+-- The resolver's records: its cache and its local data
+-- (specs/SPEC-resolver-cache-attribution.md).
+--
+-- The cache and the local data of the one resolver are active, and each has been
+-- read successfully; resource_record_read holds that last poll.
+-- ---------------------------------------------------------------------------
+UPDATE provider SET is_active = 1
+WHERE kind IN ('resolver_cache', 'resolver_local_data') AND provider_key = 'unbound';
+
+INSERT INTO resource_record_read (provider_id, read_at)
+SELECT id, :now FROM provider
+WHERE kind IN ('resolver_cache', 'resolver_local_data') AND provider_key = 'unbound';
+
+-- The cache held the answer of one attributed flow in four: for those, the name the
+-- client looked up answered with the flow's destination over the whole interval from
+-- the lookup to the flow, so the flow is named by resolver_cache_answer. Half of them
+-- reach it directly, an A or AAAA record of the looked-up name; the other half through
+-- a CNAME to a name of their own. Every eligible flow so named is an outside
+-- destination of a client, not this firewall and not a second leg, as the rule asks;
+-- each record covers from thirty seconds before its lookup to thirty seconds after its
+-- flow, which is no other flow's instant. Every name is synthesised and every address
+-- is the seed's own.
+CREATE TEMP TABLE cache_named (
+    flow_id     INTEGER PRIMARY KEY,
+    domain      TEXT NOT NULL,
+    destination TEXT NOT NULL,
+    looked_up_at INTEGER NOT NULL,
+    observed_at INTEGER NOT NULL,
+    chained     INTEGER NOT NULL
+);
+
+INSERT INTO cache_named (flow_id, domain, destination, looked_up_at, observed_at, chained)
+SELECT f.id, r.domain, f.dst_address, r.looked_up_at, f.observed_at, (f.id / 12) % 2
+FROM flow AS f
+JOIN domain_attribution AS a ON a.flow_id = f.id
+JOIN dns_resolution AS r ON r.id = a.dns_resolution_id
+WHERE f.id % 12 = 11
+  AND f.src_client_id IS NOT NULL
+  AND f.dst_interface_id IS NULL
+  AND f.dst_is_this_firewall = 0
+  AND f.src_is_this_firewall = 0
+  AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg');
+
+-- The address records. The id is derived from the flow's, so the attribution can name
+-- it below without a search.
+INSERT INTO resource_record_observation (id, provider_id, held_in, owner_name, rrtype, value,
+                                         address, host_label, first_seen_at, last_seen_at,
+                                         covered_from_at, covered_until_at)
+SELECT 3000000000 + c.flow_id,
+       (SELECT id FROM provider WHERE kind = 'resolver_cache' AND provider_key = 'unbound'),
+       'cache',
+       CASE WHEN c.chained = 1 THEN printf('edge-%d.example-cdn.invalid', c.flow_id)
+            ELSE lower(rtrim(c.domain, '.')) END,
+       CASE WHEN instr(c.destination, ':') > 0 THEN 'AAAA' ELSE 'A' END,
+       c.destination, c.destination, NULL,
+       c.looked_up_at - 20, c.observed_at + 10, c.looked_up_at - 30, c.observed_at + 30
+FROM cache_named AS c;
+
+-- The CNAME of the looked-up name, for the chained half.
+INSERT INTO resource_record_observation (id, provider_id, held_in, owner_name, rrtype, value,
+                                         address, host_label, first_seen_at, last_seen_at,
+                                         covered_from_at, covered_until_at)
+SELECT 4000000000 + c.flow_id,
+       (SELECT id FROM provider WHERE kind = 'resolver_cache' AND provider_key = 'unbound'),
+       'cache', lower(rtrim(c.domain, '.')), 'CNAME',
+       printf('edge-%d.example-cdn.invalid', c.flow_id), NULL, NULL,
+       c.looked_up_at - 20, c.observed_at + 10, c.looked_up_at - 30, c.observed_at + 30
+FROM cache_named AS c
+WHERE c.chained = 1;
+
+UPDATE domain_attribution
+SET method = 'resolver_cache_answer',
+    address_observation_id = 3000000000 + flow_id
+WHERE flow_id IN (SELECT flow_id FROM cache_named);
+
+DROP TABLE cache_named;
+
+-- Records the cache held that no attributed flow names, in both families, so the
+-- purge and the coverage read have unnamed rows too: one per external slot in a
+-- hundred, each seen by two consecutive polls a minute apart.
+WITH RECURSIVE counter (n) AS (
+    SELECT 1
+    UNION ALL
+    SELECT n + 1 FROM counter WHERE n < 40
+)
+INSERT INTO resource_record_observation (provider_id, held_in, owner_name, rrtype, value,
+                                         address, host_label, first_seen_at, last_seen_at,
+                                         covered_from_at, covered_until_at)
+SELECT (SELECT id FROM provider WHERE kind = 'resolver_cache' AND provider_key = 'unbound'),
+       'cache', printf('unnamed-%d.example-cdn.invalid', n),
+       CASE WHEN n % 2 = 0 THEN 'AAAA' ELSE 'A' END,
+       CASE WHEN n % 2 = 0 THEN a.address_v6 ELSE a.address_v4 END,
+       CASE WHEN n % 2 = 0 THEN a.address_v6 ELSE a.address_v4 END,
+       NULL,
+       :now - n * 86400, :now - n * 86400 + 60, :now - n * 86400 - 60, :now - n * 86400 + 360
+FROM counter
+JOIN synth_address AS a ON a.slot = 1000000 + 3500 + n;
+
+-- RC-AC14's two branches, at every seed size (specs/SPEC-resolver-cache-closing.md,
+-- scope 4). The purge removes a record whose coverage ended before the horizon, except
+-- one a surviving attribution names.
+--
+-- The keep branch. A flow observed three seconds after the horizon, of the first flow's
+-- shape -- so it survives the purge -- named by resolver_cache_answer through a cache
+-- record whose coverage ended before the horizon. The rule never writes such a row: the
+-- record it names covers the flow. It is planted, outside the live-validation window, so
+-- that the purge's reference exclusion is what keeps the record; without it the
+-- foreign key refuses the purge outright. The horizon is read from the setting, as the
+-- purge reads it.
+-- sql/schema-checks.sh (RC-FOLLOW-AC4) fails if any of these rows moves inside the
+-- live-validation window.
+INSERT INTO flow (id, log_digest, observed_at, ingested_at, interface_device,
+                  interface_lookup_state, src_interface_id, dst_interface_id,
+                  src_client_id, dst_client_id, src_address, dst_address,
+                  src_port, dst_port, protocol, ip_version, action, direction,
+                  log_reason, packet_bytes, rid, rule_id, rule_lookup_state, traffic_scope)
+SELECT 2000000002, 'log-digest-kept-resolver-record', h.horizon + 3, h.horizon + 8, interface_device,
+       interface_lookup_state, src_interface_id, dst_interface_id, src_client_id, dst_client_id,
+       src_address, dst_address, src_port, dst_port, protocol, ip_version, action, direction,
+       log_reason, packet_bytes, rid, rule_id, rule_lookup_state, traffic_scope
+FROM flow
+JOIN (SELECT :now - CAST(value AS INTEGER) AS horizon FROM setting
+      WHERE key = 'retention_seconds') AS h
+WHERE flow.id = 1;
+
+INSERT INTO dns_resolution (id, lookup_key, client_address, client_id, domain,
+                            resolver, action, answer_source, rcode, dnssec_status,
+                            looked_up_at, ingested_at, interface_id, interface_lookup_state)
+SELECT 2000000002, 'lookup-uuid-kept-resolver-record', src_address, src_client_id,
+       'kept-record.example-zone.invalid', 'unbound', 'pass', 'Recursion', 'NOERROR',
+       NULL, observed_at - 4, observed_at, src_interface_id,
+       CASE WHEN src_interface_id IS NULL THEN 'not_found' ELSE 'resolved' END
+FROM flow WHERE id = 2000000002;
+
+INSERT INTO resource_record_observation (provider_id, held_in, owner_name, rrtype, value,
+                                         address, host_label, first_seen_at, last_seen_at,
+                                         covered_from_at, covered_until_at)
+SELECT (SELECT id FROM provider WHERE kind = 'resolver_cache' AND provider_key = 'unbound'),
+       'cache', 'kept-record.example-zone.invalid',
+       CASE WHEN instr(f.dst_address, ':') > 0 THEN 'AAAA' ELSE 'A' END,
+       f.dst_address, f.dst_address, NULL,
+       f.observed_at - 600, f.observed_at - 540, f.observed_at - 660, f.observed_at - 240
+FROM flow AS f WHERE f.id = 2000000002;
+
+INSERT INTO domain_attribution (flow_id, dns_resolution_id, site_name,
+                                correlation_delay_seconds, attributed_at, method,
+                                address_observation_id)
+SELECT 2000000002, 2000000002, 'kept-record.example-zone.invalid', 4, f.observed_at,
+       'resolver_cache_answer',
+       (SELECT id FROM resource_record_observation WHERE owner_name = 'kept-record.example-zone.invalid')
+FROM flow AS f WHERE f.id = 2000000002;
+
+-- The purge branch. Records the cache held that nothing names, whose coverage ended
+-- before the horizon, one per family: the purge removes them at every seed size,
+-- including the smaller ones whose flows all lie after the horizon.
+WITH RECURSIVE counter (n) AS (
+    SELECT 1
+    UNION ALL
+    SELECT n + 1 FROM counter WHERE n < 2
+)
+INSERT INTO resource_record_observation (provider_id, held_in, owner_name, rrtype, value,
+                                         address, host_label, first_seen_at, last_seen_at,
+                                         covered_from_at, covered_until_at)
+SELECT (SELECT id FROM provider WHERE kind = 'resolver_cache' AND provider_key = 'unbound'),
+       'cache', printf('expired-unnamed-%d.example-cdn.invalid', n),
+       CASE WHEN n % 2 = 0 THEN 'AAAA' ELSE 'A' END,
+       CASE WHEN n % 2 = 0 THEN a.address_v6 ELSE a.address_v4 END,
+       CASE WHEN n % 2 = 0 THEN a.address_v6 ELSE a.address_v4 END,
+       NULL,
+       h.horizon - 3600 * n, h.horizon - 3600 * n + 60, h.horizon - 3600 * n - 60,
+       h.horizon - 3600 * n + 360
+FROM counter
+JOIN synth_address AS a ON a.slot = 1000000 + 3560 + n
+JOIN (SELECT :now - CAST(value AS INTEGER) AS horizon FROM setting
+      WHERE key = 'retention_seconds') AS h;
+
+-- The local data: a host override for a few clients, in both families -- an A or AAAA
+-- record of the host name, and the PTR record that maps the address back, its owner the
+-- reverse name of the address (RFC 1035, section 3.5; RFC 3596, section 2.5) computed
+-- from the slot the address was synthesised from. Each covers the half hour around the
+-- lookup that names its host below.
+WITH RECURSIVE counter (n) AS (
+    SELECT 13
+    UNION ALL
+    SELECT n + 1 FROM counter WHERE n < 16
+),
+-- The clients are chosen so both families appear whatever the counts: a client's
+-- family follows its position within its interface (see the clients above), and the
+-- first client of every interface is an IPv6 one, the next an IPv4 one.
+host AS (
+    SELECT n, c.id AS slot, c.last_address AS address,
+           printf('local-host-%d', n) AS label,
+           :now - (n * 457) - 7 AS at
+    FROM counter
+    JOIN client AS c ON c.id = CASE WHEN n % 2 = 1 THEN n - 12 ELSE n - 12 + :interfaces END
+)
+INSERT INTO resource_record_observation (provider_id, held_in, owner_name, rrtype, value,
+                                         address, host_label, first_seen_at, last_seen_at,
+                                         covered_from_at, covered_until_at)
+SELECT (SELECT id FROM provider WHERE kind = 'resolver_local_data' AND provider_key = 'unbound'),
+       'local_data', printf('%s.example-zone.invalid', h.label),
+       CASE WHEN instr(h.address, ':') > 0 THEN 'AAAA' ELSE 'A' END,
+       h.address, h.address, h.label, h.at - 600, h.at + 600, h.at - 900, h.at + 900
+FROM host AS h
+UNION ALL
+SELECT (SELECT id FROM provider WHERE kind = 'resolver_local_data' AND provider_key = 'unbound'),
+       'local_data',
+       CASE WHEN instr(h.address, ':') > 0
+            THEN printf('%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.'
+                        || '%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.%x.ip6.arpa',
+                        (h.slot % 65536) % 16, ((h.slot % 65536) / 16) % 16,
+                        ((h.slot % 65536) / 256) % 16, ((h.slot % 65536) / 4096) % 16,
+                        ((h.slot * 29) % 65536) % 16, (((h.slot * 29) % 65536) / 16) % 16,
+                        (((h.slot * 29) % 65536) / 256) % 16, (((h.slot * 29) % 65536) / 4096) % 16,
+                        ((h.slot * 23) % 65536) % 16, (((h.slot * 23) % 65536) / 16) % 16,
+                        (((h.slot * 23) % 65536) / 256) % 16, (((h.slot * 23) % 65536) / 4096) % 16,
+                        ((h.slot * 19) % 65536) % 16, (((h.slot * 19) % 65536) / 16) % 16,
+                        (((h.slot * 19) % 65536) / 256) % 16, (((h.slot * 19) % 65536) / 4096) % 16,
+                        ((h.slot * 17) % 65536) % 16, (((h.slot * 17) % 65536) / 16) % 16,
+                        (((h.slot * 17) % 65536) / 256) % 16, (((h.slot * 17) % 65536) / 4096) % 16,
+                        ((h.slot * 13) % 65536) % 16, (((h.slot * 13) % 65536) / 16) % 16,
+                        (((h.slot * 13) % 65536) / 256) % 16, (((h.slot * 13) % 65536) / 4096) % 16,
+                        ((h.slot * 11) % 65536) % 16, (((h.slot * 11) % 65536) / 16) % 16,
+                        (((h.slot * 11) % 65536) / 256) % 16, (((h.slot * 11) % 65536) / 4096) % 16,
+                        ((h.slot * 7) % 65536) % 16, (((h.slot * 7) % 65536) / 16) % 16,
+                        (((h.slot * 7) % 65536) / 256) % 16, (((h.slot * 7) % 65536) / 4096) % 16)
+            ELSE printf('%d.%d.%d.%d.in-addr.arpa', h.slot % 256, (h.slot / 256) % 256,
+                        (h.slot / 65536) % 256, (h.slot / 16777216) % 256) END,
+       'PTR', printf('%s.example-zone.invalid', h.label), h.address, h.label,
+       h.at - 600, h.at + 600, h.at - 900, h.at + 900
+FROM host AS h;
+
+-- The lookups whose logged host name no lease named and the local data did, at their
+-- instant, with one address: their client is that address. And one more of the same
+-- host, at an instant the local data held no record of it, which stays unknown. Their
+-- answers are not eligible to name a flow -- the query report's Local source -- so they
+-- add no candidate to any flow's attribution.
+WITH RECURSIVE counter (n) AS (
+    SELECT 13
+    UNION ALL
+    SELECT n + 1 FROM counter WHERE n < 17
+)
+INSERT INTO dns_resolution (id, lookup_key, client_address, client_hostname, client_resolution,
+                            client_id, domain, resolver, action, answer_source, rcode,
+                            dnssec_status, looked_up_at, ingested_at, interface_id,
+                            interface_lookup_state)
+SELECT
+    1200000000 + n,
+    printf('hostname-lookup-uuid-%d', n),
+    CASE WHEN n < 17 THEN c.last_address ELSE 'local-host-13.example-zone.invalid' END,
+    CASE WHEN n < 17 THEN printf('local-host-%d.example-zone.invalid', n)
+         ELSE 'local-host-13.example-zone.invalid' END,
+    CASE WHEN n < 17 THEN 'local_data_hostname' ELSE 'unknown_hostname' END,
+    CASE WHEN n < 17 THEN c.id END,
+    printf('hostname-name-%d.example-zone-%d.invalid', n, n % 3),
+    'unbound',
+    'pass',
+    'Local',
+    'NOERROR',
+    NULL,
+    CASE WHEN n < 17 THEN :now - (n * 457) - 7 ELSE :now - (13 * 457) - 7 + 3600 END,
+    CASE WHEN n < 17 THEN :now - (n * 457) - 5 ELSE :now - (13 * 457) - 5 + 3600 END,
+    CASE WHEN n < 17 THEN c.interface_id END,
+    CASE WHEN n < 17 THEN 'resolved' ELSE 'not_found' END
+FROM counter
+JOIN client AS c ON c.id = CASE WHEN n % 2 = 1 THEN n - 12 ELSE n - 12 + :interfaces END;
 
 -- ---------------------------------------------------------------------------
 -- The six aggregate families, four calendar periods each.

@@ -7,11 +7,12 @@ stops there. It is a seam document, not a plugin specification.
 The authority on the schema is `internal/store/schema.sql`; on the sources,
 `docs/opnsense-api-survey.md`; on the entities, `docs/data-model.md`.
 
-## Nine kinds
+## Eleven kinds
 
 A **kind** is a contract `opnview` implements: a shape of material, with a
-normalised destination in the schema. Exactly nine exist, and the `provider`
-table constrains its `kind` column to them.
+normalised destination in the schema. Exactly eleven exist, and the `provider`
+table constrains its `kind` column to them. The resolver-cache cycle added the last
+two (`specs/SPEC-resolver-cache-attribution.md`, decision 1).
 
 <!-- provider-kinds:begin -->
 ```
@@ -23,6 +24,8 @@ geo_asn
 measurement_sample
 public_suffix
 reconciled_state
+resolver_cache
+resolver_local_data
 security_event
 ```
 <!-- provider-kinds:end -->
@@ -38,8 +41,10 @@ security_event
 | `measurement_sample` | one numeric reading of one subject at one instant | `measurement_sample` |
 | `reconciled_state` | the complete set of things of one type, as of one instant | `state_snapshot` and `state_item`, with `state_item_departure` over them |
 | `public_suffix` | the rule set a registrable domain is computed from | **no row**: one list file on disk, read by `internal/publicsuffix` to group site names at read time |
+| `resolver_cache` | the records a resolver holds in its cache — the answer addresses of the names it resolved, which the query report of `dns_lookup` does not carry | `resource_record_observation` (held in `cache`), feeding `domain_attribution`'s `resolver_cache_answer` method |
+| `resolver_local_data` | the records a resolver serves from its own local data, host overrides among them | `resource_record_observation` (held in `local_data`), feeding host-name resolution (`dns_resolution.client_resolution = 'local_data_hostname'`) and the exact evidence of a lookup answered from Local-data |
 
-**The last two are the survey's finding rather than a design instinct.** Of the
+**`measurement_sample` and `reconciled_state` are the survey's finding rather than a design instinct.** Of the
 ~34 data-producing sources the plugin ecosystem exposes, **eight of the ten that
 fit an existing shape fit `measurement_sample`** — per-peer transfer counters,
 frontend and backend counters, per-interface volume, UPS, SMART and sensor
@@ -66,10 +71,21 @@ download that failed is a `collection_gap` with the reason `download_failed`,
 while the list held since the last refresh stays in use). It is exclusive, because
 two lists would be two answers to one question.
 
+**`resolver_cache` and `resolver_local_data` are two kinds and not one more
+method of `dns_lookup`**, because each has its own material, its own cadence and its
+own availability: a resolver whose cache cannot be read still reports its lookups,
+and the reverse, and a screen has to be able to say which of the two is missing.
+"Cache" and "local data" are Unbound's own words (unbound-control(8), `dump_cache`
+and `list_local_data`; unbound.conf(5), `local-data:`). Unbound implements both;
+Dnsmasq is registered for both and reports the named state "this resolver offers no
+cache read through the API" (or "no local-data read"), because OPNsense 26.7.3
+exposes neither for it. Adding a resolver is one implementation file and one
+registry row per kind.
+
 A **provider** is one implementation of one kind. It is a row in the `provider`
 registry, identified by `(kind, provider_key)`. Several providers of one kind
-exist today: Unbound and Dnsmasq both supply `dns_lookup`; Kea, Dnsmasq and ISC
-dhcpd all supply `dhcp_lease`.
+exist today: Unbound and Dnsmasq both supply `dns_lookup`, `resolver_cache` and
+`resolver_local_data`; Kea, Dnsmasq and ISC dhcpd all supply `dhcp_lease`.
 
 **No provider name appears in the schema as an identifier.** Not as a table
 name, not as a column name. A provider name is a value — a registry row, or a
@@ -126,6 +142,8 @@ nobody could decompose.
 | `measurement_sample` | `(subject, measure, sampled_at, provider)` | **yes** |
 | `reconciled_state` | `(provider_id, set_key, captured_at)` | **yes** |
 | `public_suffix` | one list file on disk, no row | no |
+| `resolver_cache` | `(provider_id, owner_name, rrtype, value, first_seen_at)` of `resource_record_observation` | **yes** |
+| `resolver_local_data` | the same, of the same table | **yes** |
 
 **`dhcp_lease` is concurrent, and the deployment is the ordinary one:** one
 server issuing on one VLAN and another on a second, two scopes with no overlap.
@@ -152,7 +170,7 @@ a lookup that transited two resolvers would be two records nothing could tell
 apart from two lookups.
 
 It is enforced by a partial unique index over `kind` where `is_active = 1` **and
-the kind is not one of the four**, and mirrored in `internal/store/kinds.go` so
+the kind is not one of the six marked yes above**, and mirrored in `internal/store/kinds.go` so
 the probe round can activate every qualifying provider of a concurrent kind
 instead of discovering the constraint by failing. The database is the authority,
 and a test reads the index's own definition back and asserts the two agree.

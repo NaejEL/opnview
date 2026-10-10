@@ -92,9 +92,22 @@ func Open(ctx context.Context, dataDir string) (*Store, error) {
 	// true of the file would mean a wal_checkpoint(TRUNCATE) after every
 	// credential write; that was weighed and not taken. See the README's
 	// limitations, and AC16 of specs/SPEC-accounts-and-settings.md.
+	//
+	// synchronous is NORMAL beside WAL, approved by the maintainer on 9 October
+	// 2026 (specs/SPEC-resolver-cache-attribution.md, scope G). In WAL mode NORMAL
+	// syncs the write-ahead log at each checkpoint rather than at each commit
+	// (https://www.sqlite.org/pragma.html#pragma_synchronous), which took a commit
+	// from about 5 ms to about 13 us in the development container. The trade, as
+	// sqlite.org states it (https://www.sqlite.org/wal.html, "Performance
+	// Considerations", and the pragma page): a transaction committed shortly
+	// before a power loss or an operating-system crash may be rolled back when the
+	// database recovers; the database is NOT corrupted; and an application crash
+	// alone loses nothing, because a committed transaction is in the write-ahead
+	// log the operating system holds. What could be lost is the last moments of
+	// collected history, which the next polls largely read again.
 	source := "file:" + filepath.ToSlash(path) +
-		"?_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)" +
-		"&_pragma=secure_delete(FAST)"
+		"?_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)&_pragma=foreign_keys(1)" +
+		"&_pragma=busy_timeout(5000)&_pragma=secure_delete(FAST)"
 
 	db, err := sql.Open("sqlite", source)
 	if err != nil {

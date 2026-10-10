@@ -687,7 +687,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 	case <-time.After(10 * time.Minute):
 		stacks := make([]byte, 1<<20)
 		stacks = stacks[:runtime.Stack(stacks, true)]
-		t.Fatalf("the four loops did not finish within ten minutes, which is a deadlock:\n%s", stacks)
+		t.Fatalf("the loops did not finish within ten minutes, which is a deadlock:\n%s", stacks)
 	}
 	close(failures)
 	for err := range failures {

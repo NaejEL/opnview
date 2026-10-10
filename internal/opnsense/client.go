@@ -63,6 +63,10 @@ var (
 	// ErrNoBaseURL is returned when the client has no firewall to talk to, which
 	// is the normal state until credentials are entered.
 	ErrNoBaseURL = errors.New("opnsense: no firewall base URL is configured")
+	// ErrStreamEndpoint is returned when Call is asked for an endpoint that streams,
+	// or Stream for one that does not. A stream has no end for Call to read to, and
+	// an ordinary answer has no events for Stream to count.
+	ErrStreamEndpoint = errors.New("opnsense: the endpoint's answer is not read this way")
 	// ErrEmptyArgument is returned when a positional path argument is empty. An
 	// empty path element would silently change which command the router reaches.
 	ErrEmptyArgument = errors.New("opnsense: positional argument is empty")
@@ -78,9 +82,25 @@ var (
 
 // mutatingCommands is the list docs/opnsense-api-survey.md names under "GET
 // versus POST, and the read-only guarantee": the commands opnview never calls.
+//
+// `dnsbl` and `reconfigure_general` were added by the resolver-cache cycle, which
+// read every action of two Unbound controllers at opnsense/core 26.7.3,
+// DiagnosticsController.php and ServiceController.php (survey, "Resolver cache and
+// local data, read from source for the resolver-cache cycle"). The other Unbound
+// controllers, SettingsController.php and OverviewController.php, were not audited
+// for this list, and this list does not claim to cover them; opnview calls none of
+// their paths, because the endpoint registry admits none.
+// Unbound/Api/ServiceController.php's dnsblAction runs `unbound dnsbl`, which
+// rebuilds the blocklists, and reconfigureGeneralAction reloads DNS and restarts
+// DHCP. Neither is the plain `reconfigure` the list already held, so neither was
+// refused. Unbound/Api/DiagnosticsController.php has no mutating action at that tag:
+// stats, dumpcache, dumpinfra, listlocaldata, listlocalzones and listinsecure read,
+// and testBlocklist only matches a name against the lists. The cache is flushed by the
+// configd action `unbound cache`, which no API action reaches.
 var mutatingCommands = []string{
 	"set", "add", "del", "toggle", "reconfigure",
 	"start", "stop", "restart", "clear", "drop_alert_log", "del_lease",
+	"dnsbl", "reconfigure_general",
 }
 
 // MutatingCommand returns the mutating command a path names, or the empty
@@ -278,6 +298,9 @@ func (c *Client) Call(ctx context.Context, ep Endpoint, opt RequestOptions) (Res
 	}
 	if command := MutatingCommand(ep.Path); command != "" {
 		return response, fmt.Errorf("%w: %s in %s", ErrMutatingCommand, command, ep.Path)
+	}
+	if ep.Stream {
+		return response, fmt.Errorf("%w: %s streams, and is read with Stream", ErrStreamEndpoint, ep.Path)
 	}
 	if credentials.BaseURL == "" {
 		return response, ErrNoBaseURL

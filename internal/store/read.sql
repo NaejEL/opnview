@@ -95,11 +95,15 @@ GROUP BY 1, 2, 3, 4, 5, 6, 7;
 -- have named a site for. A flow from or to this firewall is not a client's, and a
 -- second leg is the same connection as its first leg, which is the one counted.
 -- The diagnostic "Attribution rate per client" counts the same flows.
+-- The named flows are counted per method as well, and the two counts sum to the named
+-- total because the method column admits exactly two values.
 -- statement: read_attribution_rate
 SELECT count(*),
        count(a.flow_id),
        avg(a.correlation_delay_seconds),
-       max(a.correlation_delay_seconds)
+       max(a.correlation_delay_seconds),
+       coalesce(sum(CASE WHEN a.method = 'resolver_cache_answer' THEN 1 ELSE 0 END), 0),
+       coalesce(sum(CASE WHEN a.method = 'lookup_timing' THEN 1 ELSE 0 END), 0)
 FROM flow AS f
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 WHERE f.observed_at >= :from
@@ -128,6 +132,19 @@ SELECT (SELECT count(*) FROM (SELECT 1 FROM dns_resolution AS r
           AND s.state = 'reachable'
           AND s.checked_at >= :from
           AND s.checked_at <= :to);
+
+-- The evidence that the resolver's cache was read for [from, to]: a record of the cache
+-- whose coverage interval meets the window. A poll stores every record the cache held,
+-- so a window no observation meets is one no successful poll covered -- or one in
+-- which the cache held nothing, which a working resolver does not do.
+-- statement: read_cache_coverage
+SELECT count(*)
+FROM (SELECT 1
+      FROM resource_record_observation AS o
+      WHERE o.covered_until_at >= :from
+        AND o.covered_from_at <= :to
+        AND o.held_in = 'cache'
+      LIMIT 1);
 
 -- statement: read_site_totals
 SELECT site_name,

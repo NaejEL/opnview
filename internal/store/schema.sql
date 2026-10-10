@@ -186,12 +186,26 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 --                   /api/diagnostics/system/systemTemperature,
 --                   /api/diagnostics/system/systemTime,
 --                   /api/diagnostics/system/systemDisk,
---                   /api/diagnostics/activity/getActivity,
+--                   /api/diagnostics/cpu_usage/stream (the processor; it
+--                   replaced /api/diagnostics/activity/getActivity, which
+--                   carries no numeric processor field),
 --                   /api/diagnostics/traffic/interface and
 --                   /api/diagnostics/traffic/top/<interface names>
 --                   ("The telemetry the data model calls gaps G9 and G10
 --                   exists", and "The per-pair data is a live snapshot, not
 --                   history")
+--   resolver_cache  /api/unbound/diagnostics/dumpcache ("Resolver cache and
+--                   local data, read from source for the resolver-cache
+--                   cycle"): the records the resolver holds in its cache and
+--                   the answer addresses of the names it resolved, which the
+--                   query report does not carry. "Cache" is Unbound's own word
+--                   (unbound-control(8), dump_cache).
+--   resolver_local_data
+--                   /api/unbound/diagnostics/listlocaldata (same section): the
+--                   records the resolver serves from its local data, host
+--                   overrides among them. "Local data" is Unbound's own word
+--                   (unbound.conf(5), local-data; unbound-control(8),
+--                   list_local_data).
 --   public_suffix   the Public Suffix List, downloaded from publicsuffix.org,
 --                   the third of the three outbound calls the project allows.
 --                   It supplies no row of observed data: it is the rule set
@@ -254,6 +268,9 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 --   geo_asn             geo_asn.address                             no
 --   measurement_sample  (subject, measure, sampled_at, provider)    YES
 --   reconciled_state    (provider_id, set_key, captured_at)         YES
+--   resolver_cache      (provider_id, owner_name, rrtype, value,    YES
+--                        first_seen_at) of resource_record_observation
+--   resolver_local_data the same, of the same table                  YES
 --   public_suffix       one list file on disk, no row                no
 --
 -- dhcp_lease IS CONCURRENT, AND THE DEPLOYMENT IS THE ORDINARY ONE: one server
@@ -285,7 +302,8 @@ CREATE TABLE IF NOT EXISTS provider (
                   CHECK (kind IN ('firewall_log', 'security_event', 'flow_volume',
                                   'dhcp_lease', 'dns_lookup', 'geo_asn',
                                   'measurement_sample', 'reconciled_state',
-                                  'public_suffix')),
+                                  'public_suffix', 'resolver_cache',
+                                  'resolver_local_data')),
     provider_key  TEXT NOT NULL,
     display_name  TEXT NOT NULL,
     is_active     INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
@@ -310,7 +328,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_active_per_exclusive_kind
     ON provider (kind)
     WHERE is_active = 1
       AND kind NOT IN ('security_event', 'dhcp_lease', 'measurement_sample',
-                       'reconciled_state');
+                       'reconciled_state', 'resolver_cache', 'resolver_local_data');
 
 -- ---------------------------------------------------------------------------
 -- Interface — one interface as OPNsense defines it: a VLAN, a physical link or
@@ -1238,21 +1256,33 @@ CREATE TABLE IF NOT EXISTS blocklist (
 --                         logged name, verbatim.
 --   'ambiguous_hostname'  a host name that more than one address held a lease
 --                         under at that instant;
---   'unknown_hostname'    a host name no lease named at that instant.
+--   'unknown_hostname'    a host name neither a lease nor the resolver's local
+--                         data named at that instant.
+--   'local_data_hostname' a host name no lease named, and exactly one address
+--                         answered for it in the resolver's local data held at
+--                         the lookup's instant (resource_record_observation,
+--                         held_in 'local_data': an A or AAAA record whose owner
+--                         name, or a PTR record whose target, has the same first
+--                         label); client_address is that address and
+--                         client_hostname the logged name. The term is
+--                         opnview's own (docs/data-model.md, Vocabulary).
 --   'this_firewall_hostname'  a host name that names this firewall: `localhost`,
 --                         the name a reverse lookup of a loopback address returns.
 --                         It is a protocol constant (decision 11 of the step-5A
 --                         live corrections), not configuration.
--- In the last three cases client_address holds the logged name verbatim, and in
--- the two before it the lookup is placed nowhere and attributes nothing: a name
+-- In 'ambiguous_hostname', 'unknown_hostname' and 'this_firewall_hostname'
+-- client_address holds the logged name verbatim, and in the first two of them the
+-- lookup is placed nowhere and attributes nothing: a name
 -- that does not resolve to one address does not say which machine asked.
 --
 -- A host name matches a lease by its FIRST LABEL on both sides, without regard
 -- to case and with a trailing dot removed: dhcp_lease.hostname_label below.
--- hostname_examined_at is the instant a lease pass last resolved the logged host
--- name again; NULL until one has, which is what a lease pass reads -- including
--- the first one after a restart -- so every unresolved lookup is examined again
--- by one lease pass after it was ingested, and none is scanned twice.
+-- The resolver's local data is matched by the same rule, on the first label of the
+-- record's host name. hostname_examined_at is the instant a pass last resolved the
+-- logged host name again; NULL until one has, which is what a lease pass or a
+-- local-data pass reads -- including the first one after a restart -- so every
+-- unresolved lookup is examined again once both sources in use have been read
+-- after it was ingested, and none is scanned twice.
 --
 -- client_is_this_firewall is 1 when the querier is this firewall: its address
 -- was held by the firewall at the lookup's instant, or it is a loopback address
@@ -1265,7 +1295,8 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
     client_resolution TEXT NOT NULL DEFAULT 'logged_address'
                    CHECK (client_resolution IN ('logged_address', 'lease_hostname',
                                                 'ambiguous_hostname', 'unknown_hostname',
-                                                'this_firewall_hostname')),
+                                                'this_firewall_hostname',
+                                                'local_data_hostname')),
     client_id      INTEGER REFERENCES client (id),
     client_is_this_firewall INTEGER NOT NULL DEFAULT 0 CHECK (client_is_this_firewall IN (0, 1)),
     hostname_examined_at INTEGER CHECK (hostname_examined_at IS NULL
@@ -1291,6 +1322,14 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_looked_up_at ON dns_resolution (lo
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_client ON dns_resolution (client_address, looked_up_at);
 -- The attribution's lookup by the same client, and re-pointing a client identity.
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_id ON dns_resolution (client_id, looked_up_at);
+-- The lookups of one name, compared as the resolver's records are: without regard
+-- to case and with a trailing dot removed (RFC 4343, section 3: DNS names compare
+-- case-insensitively in ASCII). It is what the resolver-cache attribution searches,
+-- from the names an answer address was held under to the lookups of those names. An
+-- index on the expression rather than a second column: the expression is the
+-- comparison, and a stored copy of the domain could disagree with the domain.
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_domain_name
+    ON dns_resolution (lower(rtrim(domain, '.')), looked_up_at);
 
 -- "Which list refused what, over this period" is an index search rather than a
 -- scan of a growing table. The NULL-bearing leading column keeps the
@@ -1311,26 +1350,162 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_hostname_unexamined
       AND hostname_examined_at IS NULL;
 
 -- ---------------------------------------------------------------------------
--- Domain attribution — the site name carried by a flow, and the lookup it was
--- inferred from.
+-- Resource record observation — one record the resolver held, in its cache or in
+-- its local data, over the interval opnview's polls saw it.
 --
--- There is deliberately NO provenance or method column. On 26.7 every
--- attribution is inferred from resolver-lookup correlation and there is no
--- second method to tell it apart from: Suricata exposes no dns event type and
--- its tls / http events cannot be read back (survey, gaps 1 and 2). A field
--- with one possible value states nothing. What is carried instead is the
--- lookup itself — a mandatory foreign key, so an attribution cannot exist
--- without it — and the delay between that lookup and the flow, so the
--- attribution can be judged.
+-- Sources, both in docs/opnsense-api-survey.md, "Resolver cache and local data,
+-- read from source for the resolver-cache cycle":
+--   held_in 'cache'       /api/unbound/diagnostics/dumpcache, the resolver_cache
+--                         kind: `unbound-control dump_cache`, one {host, ttl,
+--                         type, rrtype, value} per record, `ttl` the seconds
+--                         remaining. Only A, AAAA and CNAME records are stored;
+--                         every other rrtype is counted in the read's
+--                         availability detail and not stored.
+--   held_in 'local_data'  /api/unbound/diagnostics/listlocaldata, the
+--                         resolver_local_data kind: `unbound-control
+--                         list_local_data`, one {name, ttl, type, rrtype, value}
+--                         per record. A, AAAA and PTR records are stored.
+-- The endpoint's `type` is the record's CLASS (IN), never its type, and is not
+-- stored: every record either endpoint returns is of class IN. "Resource record",
+-- "owner name", "RRtype" and "label" are DNS's own words (RFC 1034, section
+-- 3.6; RFC 1035, section 3.2.2).
 --
--- THE RULE, written once in internal/store/derive.sql and stated in
--- docs/data-model.md: the resolver log carries no answer address, so a flow gets
--- an attribution exactly when the eligible lookups by the same client in
--- [observed_at - max delay, observed_at] name exactly one distinct domain. The
--- flow must have an outside destination; the lookup must have passed, answered
--- by Recursion, Cache or Local-data. site_name is that domain verbatim, and
--- the referenced lookup is the latest of them. The max delay is the
--- attribution_max_delay_seconds row of `setting`.
+--   owner_name   the endpoint's `host` (cache) or `name` (local data), lower-cased
+--                in ASCII with the trailing dot removed: DNS names compare
+--                without regard to case (RFC 4343) and the dump writes absolute
+--                names.
+--   rrtype       the endpoint's `rrtype`, verbatim.
+--   value        the endpoint's `value`: for A and AAAA the address in its
+--                canonical text form (RFC 5952 for IPv6, which is the form
+--                inet_ntop writes and the filter log reports); for CNAME and PTR
+--                the target name, normalised as owner_name is. A record whose
+--                value is not an address of its rrtype's family is skipped and
+--                counted, never stored.
+--   address      the address the record maps a name to: the value of an A or
+--                AAAA record, and for a PTR record the address its owner name
+--                encodes (RFC 1035, section 3.5; RFC 3596, section 2.5). NULL for
+--                a CNAME, which maps a name to a name.
+--   host_label   for local data only: the first label of the host name the
+--                record names -- the owner of an A or AAAA record, the target of
+--                a PTR record -- which is what a host name the query report
+--                logged as a lookup's client is matched on, exactly as
+--                dhcp_lease.hostname_label is. NULL for the cache.
+--
+-- THE COVERAGE INTERVAL, covered_from_at to covered_until_at, is opnview's own
+-- derivation and its own term (docs/data-model.md, Vocabulary): the interval over
+-- which the resolver can be taken to have held the record.
+--   covered_from_at   the instant of the LAST SUCCESSFUL POLL BEFORE the first poll
+--                     that saw the record, read from resource_record_read when
+--                     that poll was stored. Across a failed poll or a restart it
+--                     is that earlier successful poll; with none, the first
+--                     poll's own instant. The record may have entered the cache
+--                     at any moment after that poll, so the bound is the earliest
+--                     the polls allow, not a claim that it was held then.
+--   first_seen_at, last_seen_at  the first and the latest poll that saw it.
+--   covered_until_at  for the cache, the latest poll's instant plus the `ttl` it
+--                     reported: the resolver serves the record no longer than
+--                     that. An eviction before the TTL makes this an
+--                     over-statement, which is recorded as a limitation. For
+--                     local data, which has no remaining TTL -- its `ttl` is the
+--                     configured one -- the latest poll that saw it.
+--
+-- BOUNDED GROWTH. A record seen by two consecutive successful polls of its
+-- provider is ONE observation whose interval is extended; one that reappears after
+-- a poll that did not hold it starts a new observation. So the table grows with the
+-- distinct records the resolver held and with their comings and goings, not with
+-- the number of polls. It is a growing table, purged by covered_until_at, and an
+-- observation an attribution still names is kept.
+--
+-- The identity includes the provider, so the two kinds admit several concurrently
+-- active providers (see `provider`); held_in repeats what the provider's kind
+-- says, because every search below starts from it.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS resource_record_observation (
+    id               INTEGER PRIMARY KEY,
+    provider_id      INTEGER NOT NULL REFERENCES provider (id),
+    held_in          TEXT NOT NULL CHECK (held_in IN ('cache', 'local_data')),
+    owner_name       TEXT NOT NULL CHECK (length(owner_name) > 0
+                                          AND owner_name = lower(owner_name)
+                                          AND substr(owner_name, -1) <> '.'),
+    rrtype           TEXT NOT NULL CHECK (rrtype IN ('A', 'AAAA', 'CNAME', 'PTR')),
+    value            TEXT NOT NULL CHECK (length(value) > 0),
+    address          TEXT,
+    host_label       TEXT,
+    first_seen_at    INTEGER NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
+    last_seen_at     INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
+    covered_from_at  INTEGER NOT NULL CHECK (covered_from_at >= 0 AND covered_from_at < 4102444800),
+    covered_until_at INTEGER NOT NULL CHECK (covered_until_at >= 0 AND covered_until_at < 4102444800),
+    CHECK ((held_in = 'cache' AND rrtype IN ('A', 'AAAA', 'CNAME'))
+           OR (held_in = 'local_data' AND rrtype IN ('A', 'AAAA', 'PTR'))),
+    CHECK ((address IS NULL) = (rrtype = 'CNAME')),
+    CHECK ((host_label IS NULL) = (held_in = 'cache')),
+    CHECK (covered_from_at <= first_seen_at AND first_seen_at <= last_seen_at
+           AND last_seen_at <= covered_until_at),
+    UNIQUE (provider_id, owner_name, rrtype, value, first_seen_at)
+);
+
+-- The names an address was held under: where the resolver-cache attribution starts.
+CREATE INDEX IF NOT EXISTS idx_resource_record_observation_address
+    ON resource_record_observation (address, covered_until_at);
+-- The names a CNAME pointed at a name from: the climb from an address to the names
+-- a client may have looked up.
+CREATE INDEX IF NOT EXISTS idx_resource_record_observation_cname_target
+    ON resource_record_observation (value, covered_until_at)
+    WHERE rrtype = 'CNAME';
+-- The records of one name: the descent from a looked-up name to its addresses.
+CREATE INDEX IF NOT EXISTS idx_resource_record_observation_owner
+    ON resource_record_observation (owner_name, covered_until_at);
+-- The local data naming a host: the resolution of a logged host name no lease names.
+CREATE INDEX IF NOT EXISTS idx_resource_record_observation_host_label
+    ON resource_record_observation (host_label, covered_until_at)
+    WHERE held_in = 'local_data';
+-- The purge, and whether any record was held over a window.
+CREATE INDEX IF NOT EXISTS idx_resource_record_observation_covered_until
+    ON resource_record_observation (covered_until_at);
+
+-- Resource record read — the last successful poll of each provider of the two kinds
+-- above. It is what makes the coverage interval's lower bound survive a failed poll
+-- and a restart: a record first seen by a poll starts covered from the instant this
+-- row held before that poll. Bounded: one row per provider of the two kinds.
+CREATE TABLE IF NOT EXISTS resource_record_read (
+    provider_id INTEGER PRIMARY KEY REFERENCES provider (id),
+    read_at     INTEGER NOT NULL CHECK (read_at >= 0 AND read_at < 4102444800)
+);
+
+-- ---------------------------------------------------------------------------
+-- Domain attribution — the site name carried by a flow, the lookup it was
+-- inferred from, and the method that inferred it.
+--
+-- THE METHOD IS RECORDED ON EACH ATTRIBUTION, which reverses decision D3 of
+-- specs/SPEC-correlation-classification-aggregation.md. Until the resolver-cache
+-- cycle there was one method and a column with one possible value stated
+-- nothing; the resolver's cache now supplies the answer addresses the query
+-- report lacks, so two methods exist and a reader must be able to tell them
+-- apart (specs/SPEC-resolver-cache-attribution.md, decision 8 of the step-5A live
+-- corrections). Both remain inferences.
+--
+-- THE RULE, written once in internal/store/attribute.go and derive.sql and stated
+-- in docs/data-model.md. A flow is eligible when its destination is outside, it is
+-- no second leg, and it has a source client; a lookup is eligible when it passed,
+-- was answered by Recursion, Cache or Local-data, and names its client.
+--   'resolver_cache_answer'  EXACT EVIDENCE FIRST. An eligible lookup of D by the
+--       flow's client, at most attribution_max_cache_answer_delay_seconds before
+--       the flow, is an exact candidate when the flow's destination is among D's
+--       answer addresses over the whole interval from the lookup to the flow: the
+--       cache's CNAME observations from D, each covering that interval, lead to an
+--       A or AAAA observation of the destination covering it too -- and, for a
+--       lookup answered from Local-data, a local-data A or AAAA record of D counts
+--       as well. The flow is attributed exactly when its exact candidates name one
+--       distinct domain; address_observation_id names the A or AAAA observation
+--       matched.
+--   'lookup_timing'  THE 5A RULE, AS THE FALLBACK, when there is no exact
+--       candidate: the eligible lookups by the same client in [observed_at -
+--       attribution_max_delay_seconds, observed_at] name exactly one distinct
+--       domain. It is suppressed when the cache held answers of the destination's
+--       address family for that domain at the lookup's instant and the destination
+--       was not among them: evidence that contradicts it.
+-- site_name is the domain the client looked up, verbatim -- never a CNAME target
+-- -- and the referenced lookup is the latest of the matching ones.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS domain_attribution (
     flow_id                   INTEGER PRIMARY KEY
@@ -1339,10 +1514,19 @@ CREATE TABLE IF NOT EXISTS domain_attribution (
                               REFERENCES dns_resolution (id) ON DELETE CASCADE,
     site_name                 TEXT NOT NULL,
     correlation_delay_seconds INTEGER NOT NULL CHECK (correlation_delay_seconds >= 0),
-    attributed_at             INTEGER NOT NULL CHECK (attributed_at >= 0 AND attributed_at < 4102444800)
+    attributed_at             INTEGER NOT NULL CHECK (attributed_at >= 0 AND attributed_at < 4102444800),
+    method                    TEXT NOT NULL
+                              CHECK (method IN ('resolver_cache_answer', 'lookup_timing')),
+    -- No ON DELETE: the purge keeps an observation an attribution names, and the
+    -- foreign key is what makes forgetting that an error rather than a dangling id.
+    address_observation_id    INTEGER REFERENCES resource_record_observation (id),
+    CHECK ((method = 'resolver_cache_answer') = (address_observation_id IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS idx_domain_attribution_resolution ON domain_attribution (dns_resolution_id);
+-- Whether an observation is named by an attribution, which is what the purge asks.
+CREATE INDEX IF NOT EXISTS idx_domain_attribution_address_observation
+    ON domain_attribution (address_observation_id);
 
 -- ---------------------------------------------------------------------------
 -- Geo / ASN — the geo and ASN enrichment of one address.
@@ -2958,13 +3142,23 @@ WHERE NOT EXISTS (
 -- the roadmap asks for — volumes, interfaces, countries and operators, with no
 -- domain name read at all. The Map screen query is that query, and it reads
 -- neither dns_resolution nor domain_attribution. It changes what is SHOWN and
--- never what is stored: attributions and the domain family are written in both
--- modes, and the API withholds them.
+-- never what is stored: attributions, the domain family and the resolver's
+-- records in resource_record_observation are written in both modes, and the API
+-- withholds them (decision 7 of specs/SPEC-resolver-cache-attribution.md, as 5A D4
+-- decided for attributions).
 --
 -- attribution_max_delay_seconds: how long before a flow a resolver lookup may
 -- have been made and still name it (docs/data-model.md, "Site-name
 -- attribution"). 5 is the maintainer's default; it is a positive whole number,
 -- and internal/config refuses anything else.
+--
+-- attribution_max_cache_answer_delay_seconds: how long before a flow, at most, a
+-- lookup may have been made and still name it through the resolver's cache, when
+-- the cache shows the flow's destination among the lookup's answers over the whole
+-- interval (decision 2 of specs/SPEC-resolver-cache-attribution.md; docs/data-model.md,
+-- "Site-name attribution"). The evidence's own validity is the window and this is its
+-- cap. 3600 is the maintainer's default; it is a positive whole number, and
+-- internal/config refuses anything else.
 --
 -- leg_pairing_window_seconds: how far apart, in seconds, the two records of one
 -- connection may have been logged and still be paired (decision 4 of the step-5A
@@ -2983,6 +3177,7 @@ INSERT INTO setting (key, value, updated_at) VALUES
     ('retention_seconds', '7776000', CAST(strftime('%s', 'now') AS INTEGER)),
     ('aggregate_mode', 'full', CAST(strftime('%s', 'now') AS INTEGER)),
     ('attribution_max_delay_seconds', '5', CAST(strftime('%s', 'now') AS INTEGER)),
+    ('attribution_max_cache_answer_delay_seconds', '3600', CAST(strftime('%s', 'now') AS INTEGER)),
     ('leg_pairing_window_seconds', '1', CAST(strftime('%s', 'now') AS INTEGER)),
     ('lease_backend_failure_pass_limit', '3', CAST(strftime('%s', 'now') AS INTEGER))
 ON CONFLICT (key) DO NOTHING;
@@ -3029,7 +3224,15 @@ INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at
     -- The Public Suffix List, downloaded from publicsuffix.org by
     -- internal/publicsuffix: the third of the three outbound calls the project
     -- allows, and the one implementation of the public_suffix kind.
-    ('public_suffix',  'public_suffix_list', 'Public Suffix List',  0, CAST(strftime('%s', 'now') AS INTEGER))
+    ('public_suffix',  'public_suffix_list', 'Public Suffix List',  0, CAST(strftime('%s', 'now') AS INTEGER)),
+    -- The resolver's cache and its local data, one row per resolver for each: Unbound
+    -- answers both reads; Dnsmasq is registered so that its state -- it offers no
+    -- cache or local-data read through the API -- is probed and named rather than
+    -- absent.
+    ('resolver_cache', 'unbound',           'Unbound cache',        0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('resolver_cache', 'dnsmasq',           'Dnsmasq cache',        0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('resolver_local_data', 'unbound',      'Unbound local data',   0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('resolver_local_data', 'dnsmasq',      'Dnsmasq local data',   0, CAST(strftime('%s', 'now') AS INTEGER))
 ON CONFLICT (kind, provider_key) DO NOTHING;
 
 -- THE reconciled_state KIND HAS NO REGISTRY ROW, AND THAT IS NOT AN OMISSION.

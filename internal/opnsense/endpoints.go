@@ -82,6 +82,12 @@ type Endpoint struct {
 	// Note records what the survey says about this endpoint that a caller has
 	// to know and cannot read off the path.
 	Note string
+	// Stream marks an endpoint that answers with a server-sent event stream which
+	// never ends of its own accord. Such an endpoint is read only through
+	// Client.Stream, which stops after a bounded number of events or a bounded time;
+	// Client.Call refuses it, because Call reads a body to its end and this body has
+	// none. Survey, "Processor stream, read from source for the resolver-cache cycle".
+	Stream bool
 }
 
 // The upstream citations. Each is a URL the survey's own tables or References
@@ -117,6 +123,19 @@ const (
 	docsRoutes      = "https://docs.opnsense.org/development/api/core/routes.html"
 	srcSystemSwap   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php"
 	srcSwapInfo     = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/system/swapinfo.py"
+
+	// The resolver's cache and local data: the controller, the configd actions it runs,
+	// the script those actions run, and the ACL page that admits the paths.
+	srcUnboundDiag    = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/DiagnosticsController.php"
+	srcUnboundActions = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_unbound.conf"
+	srcUnboundWrapper = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/wrapper.py"
+	srcUnboundACL     = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/ACL/ACL.xml"
+	// The processor stream: the controller, the configd action, its script and the ACL
+	// page that admits the path.
+	srcCPUUsage      = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/CpuUsageController.php"
+	srcSystemActions = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_system.conf"
+	srcCPUScript     = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/system/cpu.py"
+	srcCoreACL       = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Core/ACL/ACL.xml"
 )
 
 // The survey sections. "Verified" is the section measured against a live
@@ -132,6 +151,8 @@ const (
 	sectionVerified  = "Verified against a live firewall, 2026-09-27"
 	sectionGateway   = "Gateway status, read from source for step 5"
 	sectionSwap      = "Swap, read from source for step 5"
+	sectionCache     = "Resolver cache and local data, read from source for the resolver-cache cycle"
+	sectionCPU       = "Processor stream, read from source for the resolver-cache cycle"
 )
 
 // The registry. Every entry is reachable only through these variables, so a
@@ -337,11 +358,16 @@ var (
 		Note: "unbound.general.enabled.",
 	}
 
-	// SystemResources, SystemTemperature, SystemTime, SystemDisk and Activity
-	// are the telemetry the data model recorded as gaps G9 and G10. The survey
-	// establishes that all five answer on a live firewall and does NOT establish
-	// their field names, which is why internal/collect extracts from them
-	// tolerantly and marks the key names UNVERIFIED.
+	// SystemResources, SystemTemperature, SystemTime and SystemDisk are the
+	// telemetry the data model recorded as gaps G9 and G10. The survey establishes
+	// that all four answer on a live firewall and does NOT establish their field
+	// names, which is why internal/collect extracts from them tolerantly and marks
+	// the key names UNVERIFIED.
+	//
+	// /api/diagnostics/activity/getActivity, registered beside them until the
+	// resolver-cache cycle, is no longer registered: none of its fields carries a
+	// processor figure as a number (survey, items A1-A6 of the resolver-cache cycle),
+	// the processor figure comes from CPUUsageStream, and nothing else was read from it.
 	SystemResources = Endpoint{
 		Path: "/api/diagnostics/system/systemResources", Method: http.MethodGet,
 		SurveySection: sectionVerified, UpstreamURL: docsDiagnostics,
@@ -364,13 +390,6 @@ var (
 		Path: "/api/diagnostics/system/systemDisk", Method: http.MethodGet,
 		SurveySection: sectionVerified, UpstreamURL: docsDiagnostics,
 		Note: "Filesystem usage. Field names not established by the survey.",
-	}
-	// Activity is the process activity view, which is where a CPU figure comes
-	// from.
-	Activity = Endpoint{
-		Path: "/api/diagnostics/activity/getActivity", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: docsDiagnostics,
-		Note: "Process activity. Field names not established by the survey.",
 	}
 
 	// GatewayStatus is the first of the two firewall endpoints step 5 adds: each gateway's
@@ -396,6 +415,57 @@ var (
 			"entry per /dev/ line of swapinfo -k and no Total line; {swap: []} with no swap " +
 			"device. Script: " + srcSwapInfo + ". Listed in " + docsDiagnostics,
 	}
+
+	// UnboundDumpCache is the resolver's cache: every record Unbound holds and has not
+	// expired. dumpcacheAction (GET, no write) runs the configd action `unbound dumpcache`,
+	// which is wrapper.py -c over `unbound-control dump_cache`: one {host, ttl, type,
+	// rrtype, value} per line holding the class IN, `ttl` the seconds REMAINING as a
+	// string of digits, `type` the CLASS and never the record type, which is `rrtype`
+	// (wrapper.py, lines 65-68). A row whose `ttl` is null is NOT a record: it is a line of
+	// the dump's message-cache section, which Unbound's dump_msg_ref (daemon/cachedump.c)
+	// prints as `name class type flags`, with no TTL and no record data. The regular
+	// expression matches it with its optional TTL group absent, re.split yields None, and
+	// json.dumps writes null; `value` is then the flags, typically "0". The answer is {status: "ok", data: [...]}, or {status:
+	// "failed"} with no data when the script printed nothing -- which it does when Unbound
+	// is not running. Admitted by the ACL page "Services: Unbound" (page-services-unbound,
+	// pattern api/unbound/*).
+	UnboundDumpCache = Endpoint{
+		Path: "/api/unbound/diagnostics/dumpcache", Method: http.MethodGet,
+		SurveySection: sectionCache, UpstreamURL: srcUnboundDiag,
+		Note: "{status, data: [{host, ttl, type, rrtype, value}]}; ttl is the remaining seconds as a " +
+			"string, or null on a message-cache reference line (dump_msg_ref, daemon/cachedump.c), " +
+			"which is not a record; type is the class. configd: " + srcUnboundActions + " [dumpcache]; script: " +
+			srcUnboundWrapper + "; ACL: " + srcUnboundACL,
+	}
+	// UnboundListLocalData is the resolver's local data: host overrides and every other
+	// `local-data:` record Unbound serves. listlocaldataAction (GET, no write) runs the
+	// configd action `unbound listlocaldata`, which is wrapper.py -d over `unbound-control
+	// list_local_data`: one {name, ttl, type, rrtype, value} per line of five or more
+	// whitespace-separated fields, `value` the first field of the record data only. The
+	// owner name is `name` here and `host` in the cache dump. Same envelope and ACL page as
+	// the cache dump.
+	UnboundListLocalData = Endpoint{
+		Path: "/api/unbound/diagnostics/listlocaldata", Method: http.MethodGet,
+		SurveySection: sectionCache, UpstreamURL: srcUnboundDiag,
+		Note: "{status, data: [{name, ttl, type, rrtype, value}]}; ttl is the configured TTL, type is " +
+			"the class. configd: " + srcUnboundActions + " [listlocaldata]; script: " +
+			srcUnboundWrapper + "; ACL: " + srcUnboundACL,
+	}
+	// CPUUsageStream is the processor figure, as a server-sent event stream that never
+	// ends. streamAction (GET, no write) streams the configd action `system cpu stream`
+	// with an interval of 1, which is scripts/system/cpu.py running `iostat -w 1 cpu` and
+	// printing, per line, "event: message" and "data: {total, user, nice, sys, intr,
+	// idle}" -- integer percentages, total being their sum less idle. iostat's first line
+	// is the average since boot (iostat(8)), so the first event is not a current reading.
+	// Admitted by the ACL page "Lobby: Dashboard" (page-system-login-logout, pattern
+	// api/diagnostics/cpu_usage/*).
+	CPUUsageStream = Endpoint{
+		Path: "/api/diagnostics/cpu_usage/stream", Method: http.MethodGet, Stream: true,
+		SurveySection: sectionCPU, UpstreamURL: srcCPUUsage,
+		Note: "text/event-stream, one event about every second and no end; read only with a bound. " +
+			"configd: " + srcSystemActions + " [cpu.stream]; script: " + srcCPUScript + "; ACL: " +
+			srcCoreACL,
+	}
 )
 
 // Registry is every endpoint opnview may call, and nothing else. Client refuses
@@ -411,8 +481,9 @@ func Registry() []Endpoint {
 		DnsmasqLeases, DnsmasqStatus, DnsmasqSettings,
 		ISCStatus, ARPTable, NDPTable,
 		SearchQueries, UnboundIsEnabled, UnboundStatus, UnboundSettings,
-		SystemResources, SystemTemperature, SystemTime, SystemDisk, Activity,
+		SystemResources, SystemTemperature, SystemTime, SystemDisk,
 		GatewayStatus, SystemSwap,
+		UnboundDumpCache, UnboundListLocalData, CPUUsageStream,
 	}
 }
 
@@ -421,7 +492,8 @@ func Registry() []Endpoint {
 func registered(ep Endpoint) bool {
 	for _, known := range Registry() {
 		if known.Path == ep.Path && known.Method == ep.Method &&
-			known.Encoding == ep.Encoding && known.Argument == ep.Argument {
+			known.Encoding == ep.Encoding && known.Argument == ep.Argument &&
+			known.Stream == ep.Stream {
 			return true
 		}
 	}

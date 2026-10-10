@@ -32,6 +32,10 @@ var concurrentKinds = map[string]struct{}{
 	"dhcp_lease":         {},
 	"measurement_sample": {},
 	"reconciled_state":   {},
+	// resource_record_observation is keyed by (provider_id, owner_name, rrtype,
+	// value, first_seen_at): every record says which provider's poll saw it.
+	"resolver_cache":      {},
+	"resolver_local_data": {},
 }
 
 // KindAdmitsSeveralActiveProviders reports whether more than one provider of a

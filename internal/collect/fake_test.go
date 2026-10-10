@@ -1,6 +1,7 @@
 package collect
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -71,8 +72,18 @@ type fakeFirewall struct {
 
 	mutex    sync.Mutex
 	replies  map[string]reply
+	streams  map[string]streamReply
 	requests []recorded
 	unknown  []string
+}
+
+// streamReply is a canned server-sent event stream: the events' data, each written as
+// "event: message", "data: <data>" and a blank line, and then either the end of the
+// stream or, when forever is set, silence until the reader closes the connection -- which
+// is what the firewall's stream does.
+type streamReply struct {
+	events  [][]byte
+	forever bool
 }
 
 // newFakeFirewall starts a fake. Every registry path answers 404 until a reply is
@@ -125,8 +136,24 @@ func (f *fakeFirewall) serve(writer http.ResponseWriter, request *http.Request) 
 		f.unknown = append(f.unknown, request.URL.Path)
 	}
 	answer, configured := f.replies[matched]
+	stream, streams := f.streams[matched]
 	f.mutex.Unlock()
 
+	if matched != "" && streams {
+		writer.Header().Set("Content-Type", "text/event-stream")
+		writer.WriteHeader(http.StatusOK)
+		flusher, _ := writer.(http.Flusher)
+		for _, event := range stream.events {
+			_, _ = writer.Write([]byte("event: message\ndata: " + string(event) + "\n\n"))
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		if stream.forever {
+			<-request.Context().Done()
+		}
+		return
+	}
 	if matched == "" || !configured {
 		writer.WriteHeader(http.StatusNotFound)
 		_, _ = writer.Write([]byte(`{"errorMessage":"Endpoint not found","errorTitle":"Not Found"}`))
@@ -141,6 +168,39 @@ func (f *fakeFirewall) answer(endpoint opnsense.Endpoint, status int, body []byt
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 	f.replies[endpoint.Path] = reply{status: status, body: body}
+}
+
+// answerStream configures a server-sent event stream for one endpoint.
+func (f *fakeFirewall) answerStream(endpoint opnsense.Endpoint, events [][]byte, forever bool) {
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	if f.streams == nil {
+		f.streams = map[string]streamReply{}
+	}
+	f.streams[endpoint.Path] = streamReply{events: events, forever: forever}
+}
+
+// answerStreamFixture configures a stream from a labelled fixture whose body is
+// {"events": [...]}: one event per element, the element as its data, and the stream then
+// held open, as the firewall's is.
+func (f *fakeFirewall) answerStreamFixture(endpoint opnsense.Endpoint, name string) {
+	f.t.Helper()
+	var body struct {
+		Events []json.RawMessage `json:"events"`
+	}
+	if err := json.Unmarshal(fixtureBody(f.t, name), &body); err != nil {
+		f.t.Fatalf("decoding the stream fixture %s: %v", name, err)
+	}
+	events := make([][]byte, 0, len(body.Events))
+	for _, event := range body.Events {
+		// One line per event, as the script prints it: a data line cannot hold a newline.
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, event); err != nil {
+			f.t.Fatalf("compacting an event of %s: %v", name, err)
+		}
+		events = append(events, compact.Bytes())
+	}
+	f.answerStream(endpoint, events, true)
 }
 
 // answerFixture configures the reply for one endpoint from a labelled fixture.

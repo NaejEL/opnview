@@ -67,11 +67,15 @@ They bind the *model*: they govern what a figure means. They are **not** UI copy
    and is invisible to all five sources, so **every byte, packet and connection
    figure is a lower bound**. One preset is exempt and says so:
    *Interface throughput*.
-2. **Site names are inferred.** On OPNsense 26.7 a site name comes from
-   correlating a resolver lookup with a flow that followed it, and from nothing
-   else: Suricata exposes no `dns` event type and its `tls` / `http` events
-   cannot be read back (`docs/opnsense-api-survey.md`, *Gaps and alternatives*,
-   gaps 1 and 2).
+2. **Site names are inferred.** On OPNsense 26.7 a site name comes from the
+   resolver and from nothing else — with or without the cache's address evidence:
+   either the resolver's cache shows the flow's destination among the answers of
+   the name a lookup asked for (`resolver_cache_answer`), or, failing that, the
+   lookup is the only one its client made shortly before the flow
+   (`lookup_timing`). The method is recorded on every attribution
+   (`domain_attribution.method`) and both are inferences. Suricata exposes no `dns`
+   event type and its `tls` / `http` events cannot be read back
+   (`docs/opnsense-api-survey.md`, *Gaps and alternatives*, gaps 1 and 2).
 
 ---
 
@@ -500,7 +504,7 @@ the build, not a decoration in this document, and
 | `owner_activity` | `cards` | Per-person activity | composes `-- diagnostic: Clients per owner` with `-- screen: Interface` | — |
 | `top_sites` | `table` | Top sites | none applies | — |
 | `sites_by_client` | `matrix` | Sites by client | replaces the site-name half of `-- screen: Client` | — |
-| `attribution_rate_per_client` | `table` | Attribution rate per client | `-- diagnostic: Attribution rate per client`, aligned by step 5A with `store.ReadAttributionRate` (outside destinations only) | — |
+| `attribution_rate_per_client` | `table` | Attribution rate per client | `-- diagnostic: Attribution rate per client`, aligned by step 5A with `store.ReadAttributionRate` (outside destinations only), with a column per method since the resolver-cache cycle | — |
 | `passed_traffic_world_map` | `map` | Passed-traffic world map | adapts `-- screen: Map` | — |
 | `blocked_traffic_world_map` | `map` | Blocked-traffic world map | adapts `-- screen: Map` **and** `-- screen: Alerts` | G7, G8 |
 | `destination_countries` | `table` | Destination countries | reuses `-- screen: Map` | — |
@@ -675,13 +679,16 @@ site name where a resolver lookup could be correlated. A record with no
 attribution is shown with a null site name and its address, country and operator
 — never omitted, because an unattributed destination is a fact rather than a gap
 in the table. The correlation delay is shown per attributed row, so a wide delay
-reads as a weak attribution. Providers: `firewall_log`, `dns_lookup`, `geo_asn`,
+reads as a weak attribution, and so is the **method** that inferred each site
+name — the resolver cache's answer or lookup timing — rendered in step 7.
+Providers: `firewall_log`, `dns_lookup`, `resolver_cache`, `geo_asn`,
 `dhcp_lease`.
 
 **Data** — `flow.id`, `flow.observed_at`, `flow.dst_address`, `flow.dst_port`,
 `flow.protocol`, `flow.action`, `flow.traffic_scope`, `flow.packet_bytes`,
 `flow.src_client_id`, `flow.interface_device`, `flow.interface_lookup_state`;
-`domain_attribution.site_name`, `domain_attribution.correlation_delay_seconds`;
+`domain_attribution.site_name`, `domain_attribution.correlation_delay_seconds`,
+`domain_attribution.method`;
 `geo_asn.lookup_state`, `geo_asn.country_code`, `geo_asn.operator`,
 `geo_asn.dataset_build_at`; `interface_map.description`. Sources: *Data source 1
 — Filter logs*; *Data source 5 — Resolver DNS lookups*; geo and ASN enrichment,
@@ -822,12 +829,14 @@ hidden; totals below exclude them"*.
 
 **Binding** — Inferred site names ranked by attributed flows, with the number of
 distinct clients that reached them, the byte volume, and the country and operator
-behind the address. Each row expands to the clients behind it. Providers:
-`dns_lookup`, `firewall_log`, `geo_asn`.
+behind the address. Each row expands to the clients behind it, and each record
+carries the method that inferred its name, rendered in step 7. Providers:
+`dns_lookup`, `resolver_cache`, `firewall_log`, `geo_asn`.
 
 **Data** — `domain_attribution.site_name`, `domain_attribution.flow_id`,
 `domain_attribution.dns_resolution_id`,
-`domain_attribution.correlation_delay_seconds`; `flow.observed_at`,
+`domain_attribution.correlation_delay_seconds`, `domain_attribution.method`;
+`flow.observed_at`,
 `flow.src_client_id`, `flow.src_interface_id`, `flow.packet_bytes`,
 `flow.dst_address`; `dns_resolution.domain`, `dns_resolution.client_address`,
 `dns_resolution.looked_up_at`; `geo_asn.country_code`, `geo_asn.operator`.
@@ -852,10 +861,12 @@ family carries a 30 d top-sites list beyond the `retention_seconds` horizon.
 **Binding** — Clients down the side, their top inferred site names across, each
 cell carrying the flow count and the byte volume. A client with no attributed
 flows keeps its row with an explicit *"no site name could be inferred"* and its
-attribution rate beside it. Providers: `dns_lookup`, `firewall_log`,
-`dhcp_lease`.
+attribution rate beside it. Each record carries the method that inferred its
+name, rendered in step 7. Providers: `dns_lookup`, `resolver_cache`,
+`firewall_log`, `dhcp_lease`.
 
-**Data** — `domain_attribution.site_name`, `domain_attribution.flow_id`;
+**Data** — `domain_attribution.site_name`, `domain_attribution.flow_id`,
+`domain_attribution.method`;
 `flow.src_client_id`, `flow.src_interface_id`, `flow.observed_at`,
 `flow.packet_bytes`; `client.hostname`, `client.last_address`,
 `client.identity_kind`, `client.unstable_identity`; `dns_resolution.domain`,
@@ -878,8 +889,11 @@ attribution rate beside it. Providers: `dns_lookup`, `firewall_log`,
 **Question** — How much of this client's traffic can be named at all, and how
 much should I therefore distrust the site lists?
 
-**Binding** — One row per client: flow count, attributed count, attribution rate
-as a percentage, mean and maximum correlation delay. Ordered worst-first, so the
+**Binding** — One row per client: flow count, attributed count, **the attributed
+count per method** — named by the resolver cache's answer, named by lookup timing,
+the two summing to the attributed count — attribution rate as a percentage, mean
+and maximum correlation delay, and whether the resolver's cache was read over the
+period at all (`store.ReadAttributionRate`, `CacheCovered`). Ordered worst-first, so the
 clients whose site lists are least trustworthy are the ones the reader sees. A
 client at or near zero is annotated with the likely cause — encrypted DNS
 (DNS-over-TLS or DNS-over-HTTPS), a client-side cache, or a resolver other than
@@ -889,9 +903,12 @@ gap 8. Provider: `dns_lookup`.
 **Data** — `flow.src_client_id`, `flow.observed_at`, `flow.id`, and
 `flow.dst_interface_id`, because only a flow with an outside destination is
 eligible (`docs/data-model.md`, the correlation rule);
-`domain_attribution.flow_id`, `domain_attribution.correlation_delay_seconds`;
-`client.hostname`, `client.last_address`, `client.identity_kind`. Source: *Data
-source 5 — Resolver DNS lookups*.
+`domain_attribution.flow_id`, `domain_attribution.correlation_delay_seconds`,
+`domain_attribution.method`; `resource_record_observation.covered_until_at` and
+`covered_from_at` for whether the cache was read over the period;
+`client.hostname`, `client.last_address`, `client.identity_kind`. Sources: *Data
+source 5 — Resolver DNS lookups*; *Resolver cache and local data, read from source
+for the resolver-cache cycle*.
 
 **Parameters** — `period`; `interfaces` (optional); `clients` (optional);
 `limit`; `sort` (`worst_first` | `best_first` | `by_volume`).
@@ -1421,8 +1438,12 @@ not knowable when this preset is written.** Provider: `measurement_sample`.
 `/api/diagnostics/system/systemResources`,
 `/api/diagnostics/system/systemTemperature`,
 `/api/diagnostics/system/systemTime`, `/api/diagnostics/system/systemDisk`,
-`/api/diagnostics/activity/getActivity`, `/api/diagnostics/traffic/interface`
-(`docs/opnsense-api-survey.md`, *Verified against a live firewall, 2026-09-27*).
+`/api/diagnostics/cpu_usage/stream`, `/api/diagnostics/traffic/interface`
+(`docs/opnsense-api-survey.md`, *Verified against a live firewall, 2026-09-27*,
+and *Processor stream, read from source for the resolver-cache cycle*).
+`/api/diagnostics/activity/getActivity`, listed here until the resolver-cache
+cycle, carries no processor figure as a number, and `opnview` no longer
+registers it (`specs/SPEC-resolver-cache-closing.md`, scope 2).
 Gateway latency and loss remain `UNVERIFIED:` — see Part 5.
 
 **Parameters** — `metrics` (any subset of `uptime`, `cpu`, `memory`, `swap`,

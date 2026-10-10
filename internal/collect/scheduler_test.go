@@ -15,16 +15,18 @@ import (
 //
 // The property under test is failure isolation. A firewall with no Suricata, a resolver with
 // its reporting off, a lease backend the firewall does not separate — each of those makes one
-// collector fail every pass, and none of them may stall the other four. Without that, a
+// collector fail every pass, and none of them may stall the others. Without that, a
 // product installed on an ordinary firewall would stop collecting the filter log because the
 // intrusion-detection engine is not installed.
 //
 // The clock is injected, so nothing here sleeps.
 
-// TestTheSevenLoopsRunAtTheConfiguredCadences pins the wiring: five collectors, runtime
-// discovery, the probe round and the retention purge, each at the interval its own
-// justification carries.
-func TestTheSevenLoopsRunAtTheConfiguredCadences(t *testing.T) {
+// TestEveryLoopRunsAtItsConfiguredCadence pins the wiring: every collector, runtime
+// discovery, the probe round, the retention purge and the resolver's cache and local-data
+// reads, each at the interval its own justification carries. The loops are the keys of
+// the map below and nowhere else, so adding one is adding a key, and this comment and the
+// test's name state no count to fall out of date.
+func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 	t.Parallel()
 	harness := newProbeHarness(t)
 	settings := config.Defaults()
@@ -39,6 +41,9 @@ func TestTheSevenLoopsRunAtTheConfiguredCadences(t *testing.T) {
 		"DHCP leases":         settings.DHCPLeaseInterval,
 		"resolver lookups":    settings.DNSLookupInterval,
 		"retention purge":     settings.PurgeInterval,
+		// The two reads of the resolver-cache cycle, at decision 4's 60 s and 300 s.
+		"resolver cache":      settings.ResolverCacheInterval,
+		"resolver local data": settings.ResolverLocalDataInterval,
 	}
 	if len(tasks) != len(wanted) {
 		t.Fatalf("the scheduler has %d loops, want %d", len(tasks), len(wanted))
@@ -104,8 +109,8 @@ func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
 		}
 	}()
 
-	// Three rounds. Each round waits until all four loops are waiting for a tick and then
-	// wakes all four, so every loop gets the same number of passes and a loop that had
+	// Three rounds. Each round waits until every loop is waiting for a tick and then
+	// wakes them all, so every loop gets the same number of passes and a loop that had
 	// stalled would be visible as a missing waiter rather than as a low count.
 	const rounds = 3
 	for round := 0; round < rounds; round++ {

@@ -21,7 +21,19 @@ var (
 	leaseSources         = map[string]leaseSource{}
 	lookupSources        = map[string]lookupSource{}
 	measurementSources   = map[string]measurementSource{}
+	cacheSources         = map[string]resolverCacheSource{}
+	localDataSources     = map[string]resolverLocalDataSource{}
 )
+
+// registerCacheSource adds one implementation of the resolver_cache kind.
+func registerCacheSource(source resolverCacheSource) {
+	cacheSources[source.providerKey()] = source
+}
+
+// registerLocalDataSource adds one implementation of the resolver_local_data kind.
+func registerLocalDataSource(source resolverLocalDataSource) {
+	localDataSources[source.providerKey()] = source
+}
 
 // registerFirewallLogSource adds one implementation of the firewall_log kind.
 func registerFirewallLogSource(source firewallLogSource) {

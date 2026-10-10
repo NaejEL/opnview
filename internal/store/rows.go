@@ -594,8 +594,13 @@ const (
 	// ClientResolutionAmbiguous is a host name several addresses held a
 	// lease under at that instant.
 	ClientResolutionAmbiguous = "ambiguous_hostname"
-	// ClientResolutionUnknown is a host name no lease named at that instant.
+	// ClientResolutionUnknown is a host name neither a lease nor the resolver's
+	// local data named at that instant.
 	ClientResolutionUnknown = "unknown_hostname"
+	// ClientResolutionLocalData is a host name no lease named and exactly one
+	// address answered for in the resolver's local data held at that instant. The
+	// term is opnview's own (docs/data-model.md, Vocabulary).
+	ClientResolutionLocalData = "local_data_hostname"
 	// ClientResolutionThisFirewall is a host name that names this firewall:
 	// `localhost`, what a reverse lookup of a loopback address returns. A protocol
 	// constant (decision 11 of the step-5A live corrections), not configuration.

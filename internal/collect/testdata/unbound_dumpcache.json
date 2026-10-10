@@ -1,0 +1,30 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md and the opnsense/core 26.7.3 source it cites, never by recording a response from an OPNsense firewall. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Resolver cache and local data, read from source for the resolver-cache cycle",
+    "field_list_from": "{status, data: [{host, ttl, type, rrtype, value}]} as Unbound/Api/DiagnosticsController.php dumpcacheAction returns scripts/unbound/wrapper.py -c at opnsense/core 26.7.3: ttl the seconds remaining as a string, or null on a message-cache reference line, type the CLASS (IN) and never the record type, which is rrtype.",
+    "why_these_values": "One record of every rrtype the shape admits -- A, AAAA, CNAME, NS, RRSIG, SOA, NSEC3, DS, HTTPS and NSEC -- so a test can show only A, AAAA and CNAME are stored; one A record whose value is not an IPv4 address, to be skipped and counted; and, after the records as the dump prints them, three message-cache references of the shape wrapper.py 26.7.3 (lines 65-68) writes for the lines Unbound's dump_msg_ref (daemon/cachedump.c) prints as name, class, type and flags: ttl null and value the flags, \"0\", each naming an rrset the records above already hold, to be counted under their own wording and never stored. The records are a template: the tests multiply them by a count they take as a parameter, in both IP versions, rather than relying on how many lines are here.",
+    "example_values_are_not_a_network": "Every name and address below is synthesised for this fixture: the names are under the reserved example.com, example.net and example.org (RFC 2606) and the addresses are documentation addresses (RFC 5737, RFC 3849). None of them describes anyone's network, and no code under test presupposes any of them."
+  },
+  "body": {
+    "status": "ok",
+    "data": [
+      {"host": "www.example.com.", "ttl": "300", "type": "IN", "rrtype": "CNAME", "value": "edge.example.net."},
+      {"host": "edge.example.net.", "ttl": "60", "type": "IN", "rrtype": "A", "value": "192.0.2.10"},
+      {"host": "edge.example.net.", "ttl": "60", "type": "IN", "rrtype": "AAAA", "value": "2001:db8::10"},
+      {"host": "example.com.", "ttl": "86400", "type": "IN", "rrtype": "NS", "value": "ns1.example.org."},
+      {"host": "example.com.", "ttl": "86400", "type": "IN", "rrtype": "RRSIG", "value": "NS 13 2 86400 20261101000000 20261001000000 1 example.com. AAAA"},
+      {"host": "example.com.", "ttl": "3600", "type": "IN", "rrtype": "SOA", "value": "ns1.example.org. hostmaster.example.org. 1 7200 3600 1209600 3600"},
+      {"host": "example.org.", "ttl": "3600", "type": "IN", "rrtype": "NSEC3", "value": "1 0 0 - EXAMPLE A RRSIG"},
+      {"host": "example.org.", "ttl": "3600", "type": "IN", "rrtype": "DS", "value": "1 13 2 00"},
+      {"host": "service.example.com.", "ttl": "300", "type": "IN", "rrtype": "HTTPS", "value": "1 . alpn=h2"},
+      {"host": "example.org.", "ttl": "3600", "type": "IN", "rrtype": "NSEC", "value": "a.example.org. A RRSIG NSEC"},
+      {"host": "badvalue.example.com.", "ttl": "300", "type": "IN", "rrtype": "A", "value": "2001:db8::11"},
+      {"host": "www.example.com.", "ttl": null, "type": "IN", "rrtype": "CNAME", "value": "0"},
+      {"host": "edge.example.net.", "ttl": null, "type": "IN", "rrtype": "A", "value": "0"},
+      {"host": "edge.example.net.", "ttl": null, "type": "IN", "rrtype": "AAAA", "value": "0"}
+    ]
+  }
+}

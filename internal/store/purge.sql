@@ -22,7 +22,8 @@
 -- PRAGMA foreign_key_check returns no rows.
 --
 -- What survives: interface, owner, blocklist, rule, interface_map, provider,
--- provider_rule_info, source_availability, eve_ingest_cursor and setting are
+-- provider_rule_info, source_availability, eve_ingest_cursor,
+-- resource_record_read and setting are
 -- bounded reference and state tables and are never purged. owner and blocklist
 -- in particular carry user input rather than observations: purging a client
 -- removes the machine, never the person it was attributed to, and purging a
@@ -53,9 +54,9 @@
 -- filter-log page keeps offering records the purge removed, and one stored again
 -- would be counted twice, in flow and in the purged part.
 --
--- A CLIENT THE PURGED PART NAMES IS KEPT, and a lookup an attribution of a
--- surviving flow names is kept, so no family loses a client's bytes or a flow's
--- site name to the purge while the slot that holds them is kept.
+-- A CLIENT THE PURGED PART NAMES IS KEPT, and a lookup or a resolver record an
+-- attribution of a surviving flow names is kept, so no family loses a client's
+-- bytes or a flow's site name to the purge while the slot that holds them is kept.
 
 PRAGMA foreign_keys = ON;
 
@@ -127,6 +128,21 @@ WHERE looked_up_at < (
     WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
 )
   AND NOT EXISTS (SELECT 1 FROM domain_attribution a WHERE a.dns_resolution_id = dns_resolution.id);
+
+-- A record the resolver held is purged once its coverage interval ended before the
+-- horizon: the resolver can no longer have held it for any instant the history still
+-- keeps. An observation an attribution of a surviving flow names is kept, for the
+-- reason the lookup above is: deleting it would leave that attribution naming
+-- nothing, which the foreign key refuses. The flows above go first, taking their
+-- attributions with them.
+DELETE FROM resource_record_observation
+WHERE covered_until_at < (
+    SELECT :now - CAST(value AS INTEGER)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+)
+  AND NOT EXISTS (SELECT 1 FROM domain_attribution a
+                  WHERE a.address_observation_id = resource_record_observation.id);
 
 -- security_event is purged by occurred_at, like every other observation. It
 -- has no provider-named detail table to follow: the one thing such a table

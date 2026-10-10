@@ -46,8 +46,11 @@ Every `POST` endpoint `opnview` uses is listed here, and each is a **read-only s
 | `/api/unbound/overview/search_queries` | needs a JSON body carrying **integer** `timeStart`/`timeEnd` (see below and data source 5) | No — reads the query-report database | https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/OverviewController.php |
 
 Each row is also documented in full in the data-source section that uses it. No other `POST` endpoint is called. `opnview` never calls `set`,
-`add`, `del`, `toggle`, `reconfigure`, `start`, `stop`, `restart`, `clear`, `drop_alert_log`, `del_lease` or any other mutating command —
-the enforceable form of the read-only rule in `ROADMAP.md`.
+`add`, `del`, `toggle`, `reconfigure`, `start`, `stop`, `restart`, `clear`, `drop_alert_log`, `del_lease`, `dnsbl`, `reconfigure_general`
+or any other mutating command — the enforceable form of the read-only rule in `ROADMAP.md`. The last two were added by the resolver-cache
+cycle, which read every action of two Unbound controllers, `DiagnosticsController.php` and `ServiceController.php` (*Resolver cache and
+local data, read from source for the resolver-cache cycle*, item A4). The other Unbound controllers, `SettingsController.php` and
+`OverviewController.php`, were not audited for this list, which does not claim to cover them; `opnview` calls none of their paths.
 
 **Pagination envelope.** Grid searches take `current` (1-based page), `rowCount` (page size; `-1` means all rows), `searchPhrase` and
 `sort`, and return `{"total": …, "rowCount": …, "current": …, "rows": [ … ]}`, `total` being the count after filtering. `opnview` sends
@@ -588,6 +591,12 @@ derived `status` and category metadata — exactly the shape the site-name fallb
 `{timestamp, severity, process_name, line}`, `line` being the resolver's own free text. `UNVERIFIED:` the grammar of Unbound's and Dnsmasq's
 query-log lines — neither is a documented stable contract, and a regex over `line` is inherently fragile.
 
+**No answer address, here; one elsewhere since the resolver-cache cycle.** No field of `search_queries` says which address a name resolved
+to, and that remains true. The resolver as a whole does have an answer-address source: its cache, read through
+`/api/unbound/diagnostics/dumpcache`, holds the A, AAAA and CNAME records of the names it resolved, with the seconds each has left. Joined to a
+lookup by the looked-up name and to a flow by the destination address, it is the exact evidence the `resolver_cache_answer` method
+attributes from. See *Resolver cache and local data, read from source for the resolver-cache cycle*.
+
 **The value sets, read for step 5.** The query report stores `action` and `source` as integers and `scripts/unbound/stats.py` maps them
 (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/stats.py): `action` is `Pass`, `Block` or `Drop`, and `source`
 is `Recursion`, `Local`, `Local-data` or `Cache`, capitalised exactly so. The module that writes them,
@@ -874,6 +883,14 @@ verbatim against the endpoint registry `opnview` ships; the probes and their
 results are unchanged. **The gap is in the schema, which has no table for a
 sampled gauge, not in the API.**
 
+*Corrected by the resolver-cache cycle.* `getActivity` answers, and it carries
+no processor figure as a number: its body is top's header lines as text and the
+process list. The processor figure is read from
+`/api/diagnostics/cpu_usage/stream` instead; see *Processor stream, read from
+source for the resolver-cache cycle*. `opnview` no longer registers
+`getActivity` (`specs/SPEC-resolver-cache-closing.md`, scope 2): what it answers
+is kept here as research.
+
 **`systemTime`, read on a live OPNsense 26.7 on 3 October 2026.** The answer is
 one object of five fields, and none of them is a number:
 
@@ -963,15 +980,140 @@ configd action `interface gateways status`. So on 26.7.3 `ok` always comes with 
 configd action prints an empty object when no gateway exists; its script was not read. The "no gateway listed" absence below — `ok` with no
 item — cannot arise from that controller and is kept only so that an answer of that shape is named rather than misread.
 
-**The absences are named, each on its own.** The measurement provider's availability detail says which of five held: **denied** — HTTP 401,
-*"Authentication Failed"*, or 403, *"Forbidden"*, when the key's user lacks the page (`Base/ApiControllerBase.php`) — naming the privilege as
+**The absences are named, each on its own.** The measurement provider's availability detail says which of five held: **denied** — HTTP 403,
+*"Forbidden"*, when the key authenticates but its user lacks the page (`Base/ApiControllerBase.php`) — naming the privilege as
 OPNsense names it, **"System: Gateways"**, the ACL page whose patterns include `api/routes/gateway/status`
 (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Core/ACL/ACL.xml, `page-system-gateways`); **not found**,
 HTTP 404; **`"status": "failed"`**, worded as covering both no gateway configured and a configd failure; **no gateway listed** (`ok` with no
-item); and **gateways listed with no figure**. The live firewall's empty detail had a second
+item); and **gateways listed with no figure**. An HTTP 401, *"Authentication Failed"*, is a key or secret the firewall does not accept,
+not a missing privilege, and is worded as a failed authentication. The live firewall's empty detail had a second
 cause, in `opnview`: the probe round rewrote the provider's availability from its own probe, which reads no reading, and erased what the
 sampling pass had recorded. The probe round now restates the last pass's absences. The docs.opnsense.org pages on the API name no status
 code for a refusal; the codes are the controller's.
+
+### Resolver cache and local data, read from source for the resolver-cache cycle
+
+Read at `opnsense/core` tag **26.7.3** for `specs/SPEC-resolver-cache-attribution.md`, scope A, on 9 October 2026. Both endpoints exist at
+that tag under these paths; nothing below is inferred.
+
+| Path | Method | Parameters | Citation |
+|---|---|---|---|
+| `/api/unbound/diagnostics/dumpcache` | GET | none | https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/DiagnosticsController.php |
+| `/api/unbound/diagnostics/listlocaldata` | GET | none | https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/DiagnosticsController.php |
+
+**A1 — the controller actions.** `dumpcacheAction` and `listlocaldataAction` of `Unbound/Api/DiagnosticsController.php` each start from
+`$ret['status'] = "failed"`, run one configd action, `json_decode` its trimmed output, and set `$ret['data']` and `$ret['status'] = 'ok'`
+only when the decode is not `null`. Neither reads the request or gates on `isPost()`, so a GET reaches them and neither has a write path.
+
+**A2 — the configd actions and the script.** `src/opnsense/service/conf/actions.d/actions_unbound.conf`
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_unbound.conf) maps `[dumpcache]` to
+`/usr/local/opnsense/scripts/unbound/wrapper.py -c` and `[listlocaldata]` to `wrapper.py -d`, both `type:script_output`. The script
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/wrapper.py) first checks that `/var/run/unbound.pid` names a live
+process and exits 1 with no output otherwise — which is why the controller then answers `{"status": "failed"}` with no `data` — and runs
+`/usr/local/sbin/unbound-control -c /var/unbound/unbound.conf`:
+
+- `-c` wraps **`unbound-control dump_cache`**. Each output line is split by `^(\S+)\s+(?:([\d]*)\s+)?(IN)\s+(\S+)\s+(.*)$`; a line is kept
+  when it contains `IN`, does not start with `msg`, and splits into more than five parts, and becomes `{host, ttl, type, rrtype, value}`.
+  `type` is the regular expression's `(IN)` — the record's **class**, never its type, which is `rrtype`. `ttl` is a string of digits, or **`null`**
+  where the line carried none: the optional group `(?:([\d]*)\s+)?` then takes no part in the match, `re.split` yields `None` for it, and
+  `json.dumps` writes `None` as `null` (wrapper.py, lines 65–68). A line with two whitespace runs and no digits between them yields `null`
+  too, since the regular expression skips the optional group before it backtracks `\s+`. **A row whose `ttl` is `null` is not a record.**
+  `dump_cache` prints the rrset cache, then the message cache; every `msg` line is followed by one line per rrset the cached answer refers
+  to, which `dump_msg_ref` in Unbound's `daemon/cachedump.c` (https://github.com/NLnetLabs/unbound/blob/master/daemon/cachedump.c) prints
+  as `name class type flags` — no TTL and no record data. The script drops the `msg` line and keeps the reference line, which holds `IN`:
+  it becomes a row with `ttl` `null` and `value` the flags, typically `"0"`. Found live on 10 October 2026, when a third of a real dump's
+  A, AAAA and CNAME rows had a `null` ttl: every one came after every row with a digit ttl, every one had `value` `"0"`, and every
+  (host, rrtype) among them also had rows with a digit ttl. These rows carry no evidence the rrset section does not hold, and the collector
+  counts them under their own wording without storing them (`specs/SPEC-resolver-cache-follow-ups.md`, scope 5). Unbound prints the TTL of a cached record as the time it has left (the live shape below). The
+  `;rrset` header lines and the `msg` lines are dropped; nothing else is filtered, so every record type the cache holds is returned.
+- `-d` wraps **`unbound-control list_local_data`** ("List the local data RRs in use", unbound-control(8)). Each line is split on whitespace
+  and becomes `{name, ttl, type, rrtype, value}` when it has five fields or more; `value` is the **first field of the record data only**, which
+  for an A, AAAA or PTR record is the whole of it. The owner is `name` here and `host` in the dump. `ttl` is the TTL the local data is
+  configured with, not a time remaining.
+
+**A3 — the ACL privilege.** `models/OPNsense/Unbound/ACL/ACL.xml`
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/ACL/ACL.xml) admits `api/unbound/*` under the
+page **"Services: Unbound"** (`page-services-unbound`), and no narrower page names `api/unbound/diagnostics`.
+`ApiControllerBase::beforeExecuteRoute` answers a key that authenticates but whose user lacks that page with HTTP 403, `{"status":403,
+"message":"Forbidden"}`, after `ACL::isPageAccessible` refuses the URI; it answers 401, `{"status":401,"message":"Authentication Failed"}`,
+only when authentication itself fails — a key or secret the firewall does not accept, or a malformed `Authorization` header. A 403 is
+therefore the missing privilege, and a 401 says nothing about privileges.
+
+**A4 — every other action of the controller.** `statsAction` (`unbound stats`, `unbound-control stats_noreset`), `dumpinfraAction`
+(`dump_infra`), `listlocalzonesAction` (`list_local_zones`), `listinsecureAction` (`list_insecure`) read and write nothing, and
+`testBlocklistAction` takes a POST and only matches a name against the blocklists (`scripts/unbound-dnsbl/dnsbl_match.py`). **No action of
+this controller mutates.** The cache is flushed and reloaded by the configd action `[cache]` (`scripts/unbound/cache.sh`), which no API
+action reaches. The neighbouring `Unbound/Api/ServiceController.php`, read for the same item, has two mutating actions whose names the
+read-only list did not hold: `dnsblAction` (`unbound dnsbl`, rebuilding the blocklists) and `reconfigureGeneralAction` (`dns reload` and
+`dhcpd restart`), both gated on `isPost()`. Both names, `dnsbl` and `reconfigure_general`, are now in `mutatingCommands`
+(`internal/opnsense/client.go`).
+
+**A6 — the live shape.** Measured by the maintainer's orchestrator, read-only, on 9 October 2026; shapes and proportions only. The dump
+answered HTTP 200 in under a second with `{"status":"ok","data":[{"host","ttl","type","rrtype","value"}, …]}`, `ttl` a string of seconds
+remaining and `type` the class `IN`. By `rrtype`: A about a third, AAAA about a third, NS about a quarter, then RRSIG, CNAME, SOA, NSEC3, DS,
+HTTPS and NSEC. `listlocaldata` was not measured; its shape above is the script's.
+
+**What opnview reads, and what it does not.** The `resolver_cache` kind reads the dump and stores its A, AAAA and CNAME records; the
+`resolver_local_data` kind reads the local data and stores its A, AAAA and PTR records; every other type is counted in the read's
+availability detail and not stored (`docs/data-model.md`, `resource_record_observation`). Each absence is named on its own and stores
+nothing: authentication failed (401), denied (403, naming the privilege above), not found (404), undecodable (no `{status, data}` envelope), and a `status` that
+is not `ok`. The Dnsmasq module exposes no read of either at this tag — its API controllers are `LeasesController`, `ServiceController` and
+`SettingsController` and its configd actions start, stop, restart, report status and list leases and DHCP options — so the Dnsmasq row of
+each kind reports "this resolver offers no cache read through the API" or "no local-data read".
+
+**This corrects data source 5.** That section says the query report carries no answer address, and it still does not. The resolver as a
+whole now has an answer-address source: the cache dump, joined to a lookup by the looked-up name and to a flow by the destination address
+(`docs/data-model.md`, `domain_attribution`).
+
+### Processor stream, read from source for the resolver-cache cycle
+
+Read at `opnsense/core` tag **26.7.3** on 9 October 2026, for scope A and E of the same specification.
+
+| Path | Method | Parameters | Citation |
+|---|---|---|---|
+| `/api/diagnostics/cpu_usage/stream` | GET | none | https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/CpuUsageController.php |
+| `/api/diagnostics/activity/getActivity` | GET | none | https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/ActivityController.php |
+
+**A1 — the controller actions.** `CpuUsageController::streamAction` returns `$this->configdStream('system cpu stream', ['1'], ['Content-Type:
+text/event-stream', 'Cache-Control: no-cache'])`; `ApiControllerBase::configdStream` hands the response the stream from
+`Backend::configdpStream` with a poll timeout of 2 s. The sibling `getCPUTypeAction` (`get_c_p_u_type`) returns the processor model from
+`system sysctl values`. `ActivityController::getActivityAction` returns `json_decode` of the configd action `system diag activity json`.
+None reads the request or writes.
+
+**A2 — the configd actions and the scripts.** `actions_system.conf`
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_system.conf) maps `[cpu.stream]` to
+`/usr/local/opnsense/scripts/system/cpu.py --interval %s`, **`type:stream_output`**, and `[diag.activity]` to `scripts/system/activity.py %s`.
+`cpu.py` (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/system/cpu.py) runs `iostat -w <interval> cpu`, skips the two
+header lines, and for every other line prints `event: message`, `data: {"total", "user", "nice", "sys", "intr", "idle"}` and a blank line,
+flushing each: the five columns as **integer percentages** and `total` their sum less `idle`. It loops until iostat ends, which it does not:
+**the stream never ends**, and its cadence is the interval, one second. iostat(8) states that "The first statistics that are printed are
+averaged over the system uptime", so **the first event is the average since boot** and not a current reading. `activity.py` runs
+`top -aHSTn -d2 999999` and prints `{"headers": [...], "details": [...]}`: top's header lines as text — one of them its `CPU:` line — and one
+object per process keyed by top's column names. **No field of `getActivity` carries a processor figure as a number.**
+
+**A3 — the ACL privileges.** `models/OPNsense/Core/ACL/ACL.xml`
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Core/ACL/ACL.xml) admits `api/diagnostics/cpu_usage/*`
+under the page **"Lobby: Dashboard"** (`page-system-login-logout`). `models/OPNsense/Diagnostics/ACL/ACL.xml` admits
+`api/diagnostics/activity/*` under **"Diagnostics: System Activity"** (`page-diagnostics-system-activity`).
+
+**A4 — the other actions.** `CpuUsageController` has `getCPUTypeAction` and `streamAction`; `ActivityController` has `getActivityAction`
+alone. None mutates.
+
+**A5 — what the client does differently for the stream.** It asks with `Accept: text/event-stream`, reads events as they arrive rather than
+reading a body to its end, and closes the connection after a bounded number of events or a bounded time, whichever comes first; the bound is
+kept below the client's overall timeout, so a silent stream is reported as "no event in time" and not as a transport failure
+(`internal/opnsense/stream.go`). `opnview` reads two events within five seconds and derives the processor's use from the second as
+`total / (total + idle)` (`internal/collect/flowvolume_insight.go`).
+
+**A6 — the live shape.** Measured by the maintainer's orchestrator, read-only, on 9 October 2026; shapes only. `systemResources` returns
+memory and nothing about the processor. The stream answered `event: message` / `data: {"total","user","nice","sys","intr","idle"}` about
+once a second and never ended. `getActivity` answered `{"headers":[…],"details":[…]}`, one line of `headers` being top's `CPU:` text and
+`details` the whole process list. `get_c_p_u_type` returned the processor model.
+
+**This corrects the earlier reading of the processor figure.** Until this cycle `opnview` read `getActivity` for invented keys (`cpu`,
+`cpu_usage`, `used`, `total`), which no field of it carries; that reading never produced a value. **`opnview` no longer registers
+`getActivity`** (`specs/SPEC-resolver-cache-closing.md`, scope 2): nothing was read from it but that figure, and a registry entry nothing
+reads is a path the client would admit for no purpose. What it answers stays recorded above, as research.
 
 ### Suricata, on that firewall
 
@@ -1222,3 +1364,18 @@ Source — `github.com/opnsense/core`, tag `26.7.3`:
 - `scripts/unbound/stats.py` — query detail fields — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/stats.py
 - `scripts/unbound/logger.py` — query store schema and 7-day truncation — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/logger.py
 - `scripts/syslog/log_matcher.py` — log filename resolution; why `eve.json` is unreachable — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/syslog/log_matcher.py
+- `Unbound/Api/DiagnosticsController.php` — `dumpcache`, `listlocaldata` and the controller's other actions — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/DiagnosticsController.php
+- `actions.d/actions_unbound.conf` — `[dumpcache]`, `[listlocaldata]`, `[cache]` — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_unbound.conf
+- `scripts/unbound/wrapper.py` — `dump_cache` and `list_local_data` parsed into records — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/wrapper.py
+- `models/OPNsense/Unbound/ACL/ACL.xml` — the page "Services: Unbound" — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/ACL/ACL.xml
+- `Diagnostics/Api/CpuUsageController.php` — the processor stream and model — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/CpuUsageController.php
+- `Diagnostics/Api/ActivityController.php` — `getActivity`, recorded as research and not registered — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/ActivityController.php
+- `actions.d/actions_system.conf` — `[cpu.stream]`, `[diag.activity]` — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_system.conf
+- `scripts/system/cpu.py` — the event stream — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/system/cpu.py
+- `models/OPNsense/Core/ACL/ACL.xml` — the page "Lobby: Dashboard" admitting `api/diagnostics/cpu_usage/*` — https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Core/ACL/ACL.xml
+
+Unbound and FreeBSD manuals:
+
+- unbound-control(8), `dump_cache` and `list_local_data` — https://nlnetlabs.nl/documentation/unbound/unbound-control/
+- unbound.conf(5), `local-data` and `max-query-restarts` (default 11, `util/config_file.c`) — https://nlnetlabs.nl/documentation/unbound/unbound.conf/
+- iostat(8), FreeBSD: "The first statistics that are printed are averaged over the system uptime" — https://man.freebsd.org/cgi/man.cgi?query=iostat&sektion=8

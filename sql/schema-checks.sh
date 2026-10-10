@@ -47,6 +47,9 @@ DATA_DIR="${OPNVIEW_DATA_DIR:-/data}"
 SCHEMA_FILE="$REPO_ROOT/internal/store/schema.sql"
 PURGE_FILE="$REPO_ROOT/internal/store/purge.sql"
 WORK="$(mktemp -d)"
+# A recursive removal, kept by decision 9 of specs/SPEC-resolver-cache-attribution.md: it
+# names one exact path, the directory mktemp created for this run alone, with no glob, so
+# it can remove nothing the run did not make.
 trap 'rm -rf "$WORK"' EXIT
 
 MAIN_DB="$DATA_DIR/schema-checks-main.db"
@@ -100,6 +103,9 @@ SCALE_FLOW_ROWS=1000000
 
 WINDOW_END=$NOW
 WINDOW_START=$((NOW - 86400))
+# The flows sql/seed.sql plants in a shape the attribution rule never writes, for RC-AC14
+# and the horizon checks; they must stay outside the window above (RC-FOLLOW-AC4).
+PLANTED_FLOW_IDS='2000000001, 2000000002'
 INTERFACE_ID=1
 CLIENT_ID=3
 
@@ -292,7 +298,66 @@ printf -- 'data directory  : %s\n' "$DATA_DIR"
 printf -- 'sqlite3         : %s\n' "$(sqlite3 --version)"
 
 mkdir -p "$DATA_DIR"
-rm -f "$DATA_DIR"/schema-checks-*.db "$DATA_DIR"/schema-checks-*.db-wal "$DATA_DIR"/schema-checks-*.db-shm
+
+# THE DATABASES THIS SCRIPT DECLARED, AND NOTHING ELSE, ARE REMOVED -- each by its exact
+# path, with its -wal and -shm companions (specs/SPEC-resolver-cache-attribution.md,
+# scope F). /data is shared: the live service's database lives in the same volume, and a
+# glob here would remove whatever else matched it. So every path is named, and a database
+# this list does not declare survives a run, which the check below proves.
+DECLARED_DATABASES="$MAIN_DB $REPEAT_DB $ALT_DB $PURGE_DB $UNLIMITED_DB $INDEX_DB $FRESH_DB
+$REGISTER_DB $SCALE_DB $MEAS_DB $STATE_DB $LEASE_DB $RATE_DB"
+remove_declared_databases() {
+    rm -f -- "$MAIN_DB" "$MAIN_DB-wal" "$MAIN_DB-shm"
+    rm -f -- "$REPEAT_DB" "$REPEAT_DB-wal" "$REPEAT_DB-shm"
+    rm -f -- "$ALT_DB" "$ALT_DB-wal" "$ALT_DB-shm"
+    rm -f -- "$PURGE_DB" "$PURGE_DB-wal" "$PURGE_DB-shm"
+    rm -f -- "$UNLIMITED_DB" "$UNLIMITED_DB-wal" "$UNLIMITED_DB-shm"
+    rm -f -- "$INDEX_DB" "$INDEX_DB-wal" "$INDEX_DB-shm"
+    rm -f -- "$FRESH_DB" "$FRESH_DB-wal" "$FRESH_DB-shm"
+    rm -f -- "$REGISTER_DB" "$REGISTER_DB-wal" "$REGISTER_DB-shm"
+    rm -f -- "$SCALE_DB" "$SCALE_DB-wal" "$SCALE_DB-shm"
+    rm -f -- "$MEAS_DB" "$MEAS_DB-wal" "$MEAS_DB-shm"
+    rm -f -- "$STATE_DB" "$STATE_DB-wal" "$STATE_DB-shm"
+    rm -f -- "$LEASE_DB" "$LEASE_DB-wal" "$LEASE_DB-shm"
+    rm -f -- "$RATE_DB" "$RATE_DB-wal" "$RATE_DB-shm"
+}
+
+# AC19: an undeclared database beside the declared ones survives the removal. The
+# sentinel's name would have matched the glob this replaced; it is created here, checked,
+# and removed by its own exact path.
+UNDECLARED_DB="$DATA_DIR/schema-checks-undeclared-sentinel.db"
+: > "$UNDECLARED_DB"
+: > "$UNDECLARED_DB-wal"
+for db in $DECLARED_DATABASES; do
+    : > "$db"
+    : > "$db-wal"
+    : > "$db-shm"
+done
+remove_declared_databases
+LEFT_BEHIND=''
+for db in $DECLARED_DATABASES; do
+    for companion in "$db" "$db-wal" "$db-shm"; do
+        [ -e "$companion" ] && LEFT_BEHIND="$LEFT_BEHIND $companion"
+    done
+done
+if [ -e "$UNDECLARED_DB" ] && [ -e "$UNDECLARED_DB-wal" ]; then
+    UNDECLARED_SURVIVED='yes'
+else
+    UNDECLARED_SURVIVED='no'
+fi
+rm -f -- "$UNDECLARED_DB" "$UNDECLARED_DB-wal"
+
+# ===========================================================================
+section 'RC-AC19 — the databases are removed by exact path, and nothing else is'
+# ===========================================================================
+check 'RC-AC19 thirteen databases are declared' '13' \
+    "$(printf -- '%s\n' $DECLARED_DATABASES | grep -c .)"
+check 'RC-AC19 every declared database and its -wal and -shm companions were removed' '' "$LEFT_BEHIND"
+check 'RC-AC19 an undeclared database beside them survived the removal' 'yes' "$UNDECLARED_SURVIVED"
+# The pattern is assembled from pieces so this line does not match itself.
+DELETE_GLOB_PATTERN='(r''m|unl''ink)[^#]*\*'
+check 'RC-AC19 no deletion under sql/ or ci/ names a wildcard' '' \
+    "$(grep -rnE "$DELETE_GLOB_PATTERN" "$REPO_ROOT/sql" "$REPO_ROOT/ci" | head -n 5)"
 
 # ===========================================================================
 section 'AC1, AC4 — the schema applies cleanly, and re-applying changes nothing'
@@ -662,13 +727,26 @@ section 'AC18, AC19 — site-name attribution'
 # ===========================================================================
 expect_sql_failure 'AC18 an attribution without its resolver lookup is rejected' "$MAIN_DB" \
     "INSERT INTO domain_attribution (flow_id, dns_resolution_id, site_name,
-        correlation_delay_seconds, attributed_at)
-     VALUES (1, 999999999, 'ac18', 1, $NOW);"
+        correlation_delay_seconds, attributed_at, method)
+     VALUES (1, 999999999, 'ac18', 1, $NOW, 'lookup_timing');"
 check_ge 'AC18 the delay between the lookup and the flow is stored and queryable' 1 \
     "$(q "$MAIN_DB" 'SELECT count(*) FROM domain_attribution WHERE correlation_delay_seconds > 0;')"
-check 'AC18 domain_attribution carries no provenance or method column' '' \
-    "$(q "$MAIN_DB" "SELECT name FROM pragma_table_info('domain_attribution')
-        WHERE lower(name) GLOB '*provenance*' OR lower(name) GLOB '*method*';")"
+# 'AC18 domain_attribution carries no provenance or method column' is REPLACED, by name,
+# by the four assertions below: the resolver-cache cycle reversed 5A decision D3, and the
+# method is now recorded on every attribution (specs/SPEC-resolver-cache-attribution.md,
+# C3 and AC12).
+check 'RC-AC12 (replaces AC18 no-method) domain_attribution carries the method and the observation it matched' \
+    'address_observation_id,method' \
+    "$(q "$MAIN_DB" "SELECT group_concat(name, ',') FROM (SELECT name FROM pragma_table_info('domain_attribution')
+        WHERE name IN ('method', 'address_observation_id') ORDER BY name);")"
+expect_sql_failure 'RC-AC12 a method outside the two is rejected' "$MAIN_DB" \
+    "UPDATE domain_attribution SET method = 'suricata_dns'
+     WHERE flow_id = (SELECT min(flow_id) FROM domain_attribution);"
+expect_sql_failure 'RC-AC12 a resolver_cache_answer attribution must name its address observation' "$MAIN_DB" \
+    "UPDATE domain_attribution SET method = 'resolver_cache_answer', address_observation_id = NULL
+     WHERE flow_id = (SELECT min(flow_id) FROM domain_attribution WHERE method = 'lookup_timing');"
+# Both methods seeded at both seed sizes: asserted under "RC-AC12, RC-AC15, RC-AC17",
+# once the alternative and the scale databases exist.
 
 CLIENT_ROWS_NO_SITE="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/04_Client.sql" \
     'SELECT count(*) FROM (' \
@@ -1588,7 +1666,8 @@ rule_volume_aggregate_1h:period_end_at rule_volume_aggregate_24h:period_end_at
 rule_volume_aggregate_7d:period_end_at rule_volume_aggregate_30d:period_end_at
 peer_volume_aggregate_1h:period_end_at peer_volume_aggregate_24h:period_end_at
 peer_volume_aggregate_7d:period_end_at peer_volume_aggregate_30d:period_end_at
-purged_flow_hour:hour_start_at address_classification:classified_at'
+purged_flow_hour:hour_start_at address_classification:classified_at
+resource_record_observation:covered_until_at'
 for t in $PURGEABLE; do
     tbl="${t%%:*}"
     col="${t##*:}"
@@ -1643,7 +1722,56 @@ OLD_LOOKUPS_NAMED="$(q "$PURGE_DB" "SELECT group_concat(id, ',') FROM (SELECT r.
                     AND a.attributed_at >= $CUTOFF)
     ORDER BY r.id);")"
 BEFORE_NEW_ALERT="$(q "$PURGE_DB" "SELECT count(*) FROM security_event WHERE occurred_at >= $CUTOFF;")"
+# RC-AC14: a resolver record whose coverage ended before the horizon is kept exactly when
+# an attribution of a flow the purge keeps names it. Both branches are exercised on every
+# seed -- this one, the alternative and the scale one (specs/SPEC-resolver-cache-closing.md,
+# scope 4): the seed plants a surviving attribution naming a record that ended before the
+# horizon, and records that ended before it which nothing names.
+#
+# The two sets are kept in a table of the database being purged, rc_ac14_old, rather
+# than passed as id lists: at the scale seed the records nothing names number in the
+# hundred thousands, past what one sqlite3 argument carries. Every check reads a count,
+# so a query that fails reads empty and fails the check rather than passing it.
+#
+# rc_ac14_before <db> <tag> -- records both sets before the purge, and checks the seed
+# holds a row in each, so neither branch passes for want of a row. RC14_NAMED is the ids
+# of the named set, a handful, for the exact-set check of the main seed below.
+rc_ac14_before() {
+    q "$1" "DROP TABLE IF EXISTS rc_ac14_old;
+        CREATE TABLE rc_ac14_old AS
+        SELECT o.id AS id,
+               EXISTS (SELECT 1 FROM domain_attribution a JOIN flow f ON f.id = a.flow_id
+                       WHERE a.address_observation_id = o.id AND f.observed_at >= $CUTOFF
+                         AND a.attributed_at >= $CUTOFF) AS named
+        FROM resource_record_observation AS o
+        WHERE o.covered_until_at < $CUTOFF;" > /dev/null
+    RC14_NAMED="$(q "$1" "SELECT group_concat(id, ',') FROM
+        (SELECT id FROM rc_ac14_old WHERE named = 1 ORDER BY id);")"
+    check_ge "RC-AC14 $2: the seed holds a resolver record ended before the horizon that a surviving attribution names" 1 \
+        "$(q "$1" 'SELECT count(*) FROM rc_ac14_old WHERE named = 1;')"
+    check_ge "RC-AC14 $2: the seed holds resolver records ended before the horizon that nothing surviving names" 1 \
+        "$(q "$1" 'SELECT count(*) FROM rc_ac14_old WHERE named = 0;')"
+}
+# rc_ac14_after <db> <tag> <purge exit status> -- the keep branch and the purge branch,
+# then the table is dropped. Without the purge's reference exclusion, the foreign key
+# refuses the purge outright (purge.sql turns foreign_keys on), so the keep branch
+# requires the purge to have completed as well as the named records to remain.
+rc_ac14_after() {
+    check "RC-AC14 $2: keep branch: the purge completed and no record ended before the horizon a surviving attribution names is missing" \
+        '0|0' \
+        "$3|$(q "$1" 'SELECT count(*) FROM rc_ac14_old WHERE named = 1
+            AND id NOT IN (SELECT id FROM resource_record_observation);')"
+    check "RC-AC14 $2: purge branch: no record ended before the horizon that nothing surviving names remains" '0' \
+        "$(q "$1" 'SELECT count(*) FROM rc_ac14_old WHERE named = 0
+            AND id IN (SELECT id FROM resource_record_observation);')"
+    q "$1" 'DROP TABLE rc_ac14_old;' > /dev/null
+    check "RC-AC14 $2: the foreign keys are consistent after the purge" '' "$(q "$1" 'PRAGMA foreign_key_check;')"
+}
+rc_ac14_before "$PURGE_DB" 'schema-checks-main'
+OLD_OBSERVATIONS_NAMED="$RC14_NAMED"
 run_purge "$PURGE_DB"
+PURGE_STATUS=$?
+rc_ac14_after "$PURGE_DB" 'schema-checks-main' "$PURGE_STATUS"
 # RESTATED by step 5A. An hour or a day slot is now kept, beyond its own end, for as
 # long as the ISO week and the calendar month holding it, because a week or a month
 # straddling the horizon is composed from them (docs/data-model.md, refresh rule 6).
@@ -1688,6 +1816,12 @@ for t in $PURGEABLE; do
                 "$OLD_LOOKUPS_NAMED" \
                 "$(q "$PURGE_DB" "SELECT group_concat(id, ',') FROM
                     (SELECT id FROM dns_resolution WHERE $col < $CUTOFF ORDER BY id);")"
+            ;;
+        resource_record_observation)
+            check "RC-AC14 the purge kept exactly the resolver records ended before the horizon a surviving attribution names" \
+                "$OLD_OBSERVATIONS_NAMED" \
+                "$(q "$PURGE_DB" "SELECT group_concat(id, ',') FROM
+                    (SELECT id FROM resource_record_observation WHERE $col < $CUTOFF ORDER BY id);")"
             ;;
         *)
             check "AC31 the purge removed every $tbl row older than the horizon" '0' \
@@ -2000,9 +2134,11 @@ PROVIDER_NAME_IDENTIFIERS="$(q "$MAIN_DB" "
     FROM sqlite_master m
     LEFT JOIN pragma_table_info(m.name) i
     WHERE lower(m.name) GLOB '*maxmind*' OR lower(m.name) GLOB '*crowdsec*'
-       OR lower(m.name) GLOB '*zenarmor*' OR lower(m.name) GLOB '*suricata*'
+       OR instr(lower(m.name), 'zenarmor') > 0
+       OR lower(m.name) GLOB '*suricata*'
        OR lower(i.name) GLOB '*maxmind*' OR lower(i.name) GLOB '*crowdsec*'
-       OR lower(i.name) GLOB '*zenarmor*' OR lower(i.name) GLOB '*suricata*';")"
+       OR instr(lower(i.name), 'zenarmor') > 0
+       OR lower(i.name) GLOB '*suricata*';")"
 check 'PN-AC20 no provider name appears in any table, index or column name' '' \
     "$PROVIDER_NAME_IDENTIFIERS"
 check_ge 'PN-AC20 a provider name does appear as a value, in the registry' 1 \
@@ -2063,12 +2199,14 @@ check 'VOC-AC4 a freshly migrated database attributes nothing to anybody' '0' \
 check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
     "$(q "$FRESH_DB" 'SELECT count(*) FROM provider WHERE is_active = 1;')"
 
-expect_sql_failure 'PN-AC9 a registry row whose kind is outside the nine is rejected' "$FRESH_DB" \
+# Restated by the resolver-cache cycle, whose decision 1 added two kinds: nine became
+# eleven, here and in the registry check below.
+expect_sql_failure 'PN-AC9 a registry row whose kind is outside the eleven is rejected' "$FRESH_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
      VALUES ('telepathy', 'pn-ac9', 'PN-AC9', 0, $NOW);"
 extract_block "$ARCH_DOC" '<!-- provider-kinds:begin -->' '<!-- provider-kinds:end -->' |
     sort > "$WORK/doc_kinds.txt"
-check 'PN-AC9 the document lists exactly nine kinds' '9' \
+check 'PN-AC9 the document lists exactly eleven kinds' '11' \
     "$(wc -l < "$WORK/doc_kinds.txt" | tr -d ' ')"
 q "$MAIN_DB" 'SELECT DISTINCT kind FROM provider ORDER BY kind;' | sort > "$WORK/db_kinds.txt"
 if diff -u "$WORK/doc_kinds.txt" "$WORK/db_kinds.txt" > "$WORK/kinds.diff"; then
@@ -2096,15 +2234,17 @@ KIND_COUNT="$(q "$MAIN_DB" 'SELECT count(DISTINCT kind) FROM provider;')"
 #   A KIND ADMITS SEVERAL CONCURRENTLY ACTIVE PROVIDERS EXACTLY WHEN THE IDENTITY
 #   OF ITS DESTINATION ROWS INCLUDES THE PROVIDER.
 #
-# Four kinds qualify -- security_event, dhcp_lease, measurement_sample and
-# reconciled_state -- and the rest are exclusive. What changed is which kinds are
+# Six kinds qualify -- security_event, dhcp_lease, measurement_sample,
+# reconciled_state, and since the resolver-cache cycle resolver_cache and
+# resolver_local_data, whose records name the provider that read them -- and the
+# rest are exclusive. What changed is which kinds are
 # exempt, and what the seed's active set looks like now that one of them is a kind
 # this installation really runs two of: the seed used to activate exactly one
 # provider per kind and now activates two dhcp_lease providers, so the active set
 # is asserted by name below rather than as a count.
 EXCLUSIVE_PREDICATE="p.kind NOT IN ('security_event', 'dhcp_lease', 'measurement_sample',
-                                    'reconciled_state')"
-check 'PN-AC12 the registry holds a provider of every one of the nine kinds' '9' "$KIND_COUNT"
+                                    'reconciled_state', 'resolver_cache', 'resolver_local_data')"
+check 'PN-AC12 the registry holds a provider of every one of the eleven kinds' '11' "$KIND_COUNT"
 # The active set is asserted as a SET rather than as a count derived from the kind
 # count, and that is the restatement: the seed used to activate exactly one provider
 # per kind, and it now models a two-DHCP-server estate, so a count alone would no
@@ -2118,6 +2258,8 @@ geo_asn/maxmind_geolite2
 measurement_sample/insight
 public_suffix/public_suffix_list
 reconciled_state/example-state-source
+resolver_cache/unbound
+resolver_local_data/unbound
 security_event/suricata'
 check 'PN-AC12 the seed activates exactly the providers it names' "$EXPECTED_ACTIVE"     "$(q "$MAIN_DB" "SELECT kind || '/' || provider_key FROM provider
         WHERE is_active = 1 ORDER BY kind, provider_key;")"
@@ -2143,7 +2285,8 @@ check 'PN-AC12 the exclusivity index exists under its new name' '1' \
 check 'PN-AC12 the index that admitted one provider per kind is gone' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM sqlite_master
         WHERE type = 'index' AND name = 'uq_provider_active_per_kind';")"
-for exempt in security_event dhcp_lease measurement_sample reconciled_state; do
+for exempt in security_event dhcp_lease measurement_sample reconciled_state \
+              resolver_cache resolver_local_data; do
     if q "$MAIN_DB" "SELECT sql FROM sqlite_master
             WHERE name = 'uq_provider_active_per_exclusive_kind';" |
             grep -qF "'$exempt'"; then
@@ -3009,6 +3152,7 @@ split_statements() {
         file != "" && index($0, "--") != 1 { print >> file }
     ' "$src"
 }
+# Kept by decision 9: one exact path inside this run's own mktemp directory, no glob.
 rm -rf "$WORK/statements"
 split_statements "$DERIVE_FILE" "$WORK/statements"
 split_statements "$READ_FILE" "$WORK/statements"
@@ -3127,8 +3271,9 @@ for db in "$MAIN_DB" "$ALT_DB"; do
     check "C5A-AC6 $tag: the link-local rule carries both values" '0,1' \
         "$(q "$db" "SELECT group_concat(link_local_evidence, ',') FROM
             (SELECT DISTINCT link_local_evidence FROM interface ORDER BY 1);")"
+    # Amended by the resolver-cache cycle: local_data_hostname is the sixth resolution.
     check "C5A-AC8 $tag: dns_resolution carries every client resolution" \
-        'ambiguous_hostname,lease_hostname,logged_address,this_firewall_hostname,unknown_hostname' \
+        'ambiguous_hostname,lease_hostname,local_data_hostname,logged_address,this_firewall_hostname,unknown_hostname' \
         "$(q "$db" "SELECT group_concat(client_resolution, ',') FROM
             (SELECT DISTINCT client_resolution FROM dns_resolution ORDER BY 1);")"
     check "C5A-AC4 $tag: every client slot's distinct_peers is its peer rows, in every period" '0' \
@@ -3365,8 +3510,11 @@ for db in "$MAIN_DB" "$ALT_DB"; do
         "$(q "$db" "SELECT value FROM setting WHERE key = 'leg_pairing_window_seconds';")"
     check_ge "LC-AC13 $tag: the unresolved host-name diagnostic executes and sorts every lookup" 1 \
         "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | wc -l | tr -d ' ')"
+    # Amended by the resolver-cache cycle (scope D3): the diagnostic sorts the lookups the
+    # local data resolved as well, into their own bin.
     check "LC-AC13 $tag: every unresolved lookup lands in exactly one cause" \
-        "$(q "$db" "SELECT count(*) FROM dns_resolution WHERE client_resolution = 'unknown_hostname'
+        "$(q "$db" "SELECT count(*) FROM dns_resolution
+            WHERE client_resolution IN ('unknown_hostname', 'local_data_hostname')
             AND looked_up_at >= $WINDOW_START AND looked_up_at < $WINDOW_END;")" \
         "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | awk -F'|' '{ s += $2 } END { print s + 0 }')"
     check_ge "LC-AC2 $tag: the anonymous north-south diagnostic executes" 1 \
@@ -3376,6 +3524,172 @@ expect_sql_failure 'LC-AC9 a paired leg must name its partner' "$MAIN_DB" \
     "UPDATE flow SET paired_flow_id = NULL WHERE pair_outcome = 'second_leg';"
 expect_sql_failure 'LC-AC10 an outcome outside the three is rejected, the removed one included' "$MAIN_DB" \
     "UPDATE flow SET pair_outcome = 'this_firewall_traffic' WHERE pair_outcome = 'not_paired';"
+
+# ===========================================================================
+section 'RC-AC12, RC-AC13, RC-AC15, RC-AC17 — the resolver-cache cycle, on the seeds'
+# ===========================================================================
+# The criteria of specs/SPEC-resolver-cache-attribution.md the seeded databases can
+# carry: both methods at both seed sizes, every new table and column filled in both
+# address families, the live validation's diagnostics executed with their expected
+# zeros, the per-method counts summing to the named total, and the local-data bin.
+for db in "$MAIN_DB" "$ALT_DB" "$SCALE_DB"; do
+    tag="$(basename "$db" .db)"
+    check "RC-AC12 $tag: both methods are seeded" 'lookup_timing,resolver_cache_answer' \
+        "$(q "$db" "SELECT group_concat(method, ',') FROM (SELECT DISTINCT method FROM domain_attribution ORDER BY 1);")"
+    # specs/SPEC-resolver-cache-follow-ups.md, scope 4: the rows the seed plants for
+    # RC-AC14 and the horizon checks -- flows the rule never names as they are named, their
+    # lookups, their attributions and the resolver record they name -- lie outside the
+    # live-validation window, so no diagnostic run over the window counts them. The first
+    # check says they are there, so the second cannot pass for want of a row; both compare
+    # with an exact value, so a query that fails reads empty and fails its check.
+    check "RC-FOLLOW-AC4 $tag: the planted flows, their attributions and the record they name are seeded" \
+        '2|2|2|1' \
+        "$(q "$db" "SELECT (SELECT count(*) FROM flow WHERE id IN ($PLANTED_FLOW_IDS))
+            || '|' || (SELECT count(*) FROM domain_attribution WHERE flow_id IN ($PLANTED_FLOW_IDS))
+            || '|' || (SELECT count(*) FROM dns_resolution WHERE id IN
+                       (SELECT dns_resolution_id FROM domain_attribution WHERE flow_id IN ($PLANTED_FLOW_IDS)))
+            || '|' || (SELECT count(*) FROM resource_record_observation WHERE id IN
+                       (SELECT address_observation_id FROM domain_attribution WHERE flow_id IN ($PLANTED_FLOW_IDS)));")"
+    check "RC-FOLLOW-AC4 $tag: no planted row lies inside the live-validation window" '0' \
+        "$(q "$db" "SELECT (SELECT count(*) FROM flow WHERE id IN ($PLANTED_FLOW_IDS)
+                AND observed_at >= $WINDOW_START AND observed_at <= $NOW)
+            + (SELECT count(*) FROM domain_attribution WHERE flow_id IN ($PLANTED_FLOW_IDS)
+                AND attributed_at >= $WINDOW_START AND attributed_at <= $NOW)
+            + (SELECT count(*) FROM dns_resolution WHERE id IN
+                (SELECT dns_resolution_id FROM domain_attribution WHERE flow_id IN ($PLANTED_FLOW_IDS))
+                AND looked_up_at >= $WINDOW_START AND looked_up_at <= $NOW)
+            + (SELECT count(*) FROM resource_record_observation WHERE id IN
+                (SELECT address_observation_id FROM domain_attribution WHERE flow_id IN ($PLANTED_FLOW_IDS))
+                AND covered_until_at >= $WINDOW_START AND covered_from_at <= $NOW);")"
+done
+for db in "$MAIN_DB" "$ALT_DB"; do
+    tag="$(basename "$db" .db)"
+    check "RC-AC15 $tag: the resolver's records are held in both parts" 'cache,local_data' \
+        "$(q "$db" "SELECT group_concat(held_in, ',') FROM (SELECT DISTINCT held_in FROM resource_record_observation ORDER BY 1);")"
+    check "RC-AC15 $tag: every stored record type is seeded" 'A,AAAA,CNAME,PTR' \
+        "$(q "$db" "SELECT group_concat(rrtype, ',') FROM (SELECT DISTINCT rrtype FROM resource_record_observation ORDER BY 1);")"
+    check "RC-AC15 $tag: the cache's address records are seeded in both families" '2' \
+        "$(q "$db" "SELECT count(DISTINCT instr(address, ':') > 0) FROM resource_record_observation
+            WHERE held_in = 'cache' AND rrtype IN ('A', 'AAAA');")"
+    check "RC-AC15 $tag: the local data's records are seeded in both families" '2' \
+        "$(q "$db" "SELECT count(DISTINCT instr(address, ':') > 0) FROM resource_record_observation
+            WHERE held_in = 'local_data';")"
+    check "RC-AC15 $tag: every local-data record carries its host label, and no cache record does" '0' \
+        "$(q "$db" "SELECT count(*) FROM resource_record_observation
+            WHERE (held_in = 'local_data') <> (host_label IS NOT NULL);")"
+    check "RC-AC15 $tag: each resolver-record provider's last successful poll is recorded" '2' \
+        "$(q "$db" 'SELECT count(*) FROM resource_record_read;')"
+    check "RC-AC15 $tag: the cache-named attributions are seeded in both families" '2' \
+        "$(q "$db" "SELECT count(DISTINCT instr(f.dst_address, ':') > 0) FROM domain_attribution AS a
+            JOIN flow AS f ON f.id = a.flow_id WHERE a.method = 'resolver_cache_answer';")"
+    check_ge "RC-AC15 $tag: a cache-named attribution reaches its address through a CNAME" 1 \
+        "$(q "$db" "SELECT count(*) FROM domain_attribution AS a
+            JOIN resource_record_observation AS o ON o.id = a.address_observation_id
+            JOIN dns_resolution AS r ON r.id = a.dns_resolution_id
+            WHERE o.owner_name <> lower(rtrim(r.domain, '.'));")"
+    check "RC-AC15 $tag: the seed is consistent" '' "$(q "$db" 'PRAGMA foreign_key_check;')"
+    for diagnostic in live_single_exact_candidate_unattributed live_single_timing_candidate_unattributed \
+                      live_exact_evidence_mismatch; do
+        check "RC-AC15 $tag: $diagnostic is 0 on the seed" '0' \
+            "$(run_query "$db" "$(diag_file "$diagnostic")" | tr -d ' ')"
+    done
+    # The diagnostics' teeth: an attribution taken away is one the first two count, and
+    # an observation pointed at the wrong address is one the third counts.
+    cp "$db" "$WORK/teeth.db"
+    sqlite3 "$WORK/teeth.db" "DELETE FROM domain_attribution WHERE flow_id = (SELECT min(a.flow_id)
+        FROM domain_attribution AS a JOIN flow AS f ON f.id = a.flow_id
+        WHERE a.method = 'resolver_cache_answer' AND f.observed_at >= $WINDOW_START);
+        DELETE FROM domain_attribution WHERE flow_id = (SELECT min(a.flow_id)
+        FROM domain_attribution AS a JOIN flow AS f ON f.id = a.flow_id
+        WHERE a.method = 'lookup_timing' AND f.observed_at >= $WINDOW_START
+          AND f.dst_interface_id IS NULL AND f.dst_is_this_firewall = 0 AND f.src_client_id IS NOT NULL);
+        UPDATE resource_record_observation SET address = 'not-the-destination'
+        WHERE id = (SELECT min(a.address_observation_id) FROM domain_attribution AS a
+                    JOIN flow AS f ON f.id = a.flow_id
+                    WHERE a.method = 'resolver_cache_answer' AND f.observed_at >= $WINDOW_START);" > /dev/null
+    for diagnostic in live_single_exact_candidate_unattributed live_single_timing_candidate_unattributed \
+                      live_exact_evidence_mismatch; do
+        check_ge "RC-AC15 $tag: $diagnostic counts a defect planted in a copy" 1 \
+            "$(run_query "$WORK/teeth.db" "$(diag_file "$diagnostic")" | tr -d ' ')"
+    done
+    rm -f -- "$WORK/teeth.db"
+    # live_timing_fallback_other_family_cached (specs/SPEC-resolver-cache-closing.md, AC5):
+    # executed on the seed, and a case planted in a copy is counted -- a cache record of
+    # the other family than the destination's, for the name of the window's first
+    # lookup_timing attribution, covering that flow's instant. The flows are 97 s apart,
+    # so the record covers no other flow's instant. Its address is the seed's own: the
+    # smallest outside destination of the other family, so no address is written here
+    # (AC34).
+    OTHER_FAMILY_BASE="$(run_query "$db" "$(diag_file live_timing_fallback_other_family_cached)" | tr -d ' ')"
+    cp "$db" "$WORK/other-family.db"
+    sqlite3 "$WORK/other-family.db" "INSERT INTO resource_record_observation (provider_id, held_in,
+            owner_name, rrtype, value, address, host_label, first_seen_at, last_seen_at,
+            covered_from_at, covered_until_at)
+        SELECT (SELECT id FROM provider WHERE kind = 'resolver_cache' AND provider_key = 'unbound'),
+               'cache', lower(rtrim(r.domain, '.')),
+               CASE WHEN instr(f.dst_address, ':') > 0 THEN 'A' ELSE 'AAAA' END,
+               x.address, x.address, NULL, f.observed_at - 20, f.observed_at - 10, f.observed_at - 30, f.observed_at + 30
+        FROM domain_attribution AS a
+        JOIN flow AS f ON f.id = a.flow_id
+        JOIN dns_resolution AS r ON r.id = a.dns_resolution_id
+        JOIN (SELECT min(dst_address) AS address, instr(dst_address, ':') > 0 AS is_v6
+              FROM flow WHERE dst_interface_id IS NULL GROUP BY 2) AS x
+          ON x.is_v6 <> (instr(f.dst_address, ':') > 0)
+        WHERE a.flow_id = (SELECT min(b.flow_id) FROM domain_attribution AS b
+                           JOIN flow AS g ON g.id = b.flow_id
+                           WHERE b.method = 'lookup_timing'
+                             AND g.observed_at >= $WINDOW_START AND g.observed_at < $WINDOW_END);" > /dev/null
+    check "RC-CLOSE-AC5 $tag: live_timing_fallback_other_family_cached counts a case planted in a copy" \
+        "$((OTHER_FAMILY_BASE + 1))" \
+        "$(run_query "$WORK/other-family.db" "$(diag_file live_timing_fallback_other_family_cached)" | tr -d ' ')"
+    rm -f -- "$WORK/other-family.db" "$WORK/other-family.db-wal" "$WORK/other-family.db-shm"
+    for diagnostic in live_cache_evidence_coverage live_resolver_records_per_hour \
+                      live_client_resolution_counts live_processor_samples; do
+        check_ge "RC-AC15 $tag: $diagnostic executes" 1 \
+            "$(run_query "$db" "$(diag_file "$diagnostic")" | wc -l | tr -d ' ')"
+    done
+    # RC-AC13: the per-method columns of the per-client diagnostic sum to its named count,
+    # and equal a direct count of the window's attributions by method.
+    DIAG_ATTR_FILE="$(diag_file 'Attribution rate per client')"
+    check "RC-AC13 $tag: the per-method counts sum to the named count, client by client" '0' \
+        "$(run_query "$db" "$(wrap_query "$DIAG_ATTR_FILE" 'SELECT count(*) FROM (' \
+            ') WHERE named_by_resolver_cache_answer + named_by_lookup_timing <> attributed_count;')")"
+    check "RC-AC13 $tag: the diagnostic's per-method totals equal a direct count" \
+        "$(q "$db" "SELECT sum(a.method = 'resolver_cache_answer') || '|' || sum(a.method = 'lookup_timing')
+            FROM flow AS f JOIN domain_attribution AS a ON a.flow_id = f.id
+            WHERE f.observed_at >= $WINDOW_START AND f.observed_at < $WINDOW_END
+              AND f.src_client_id IS NOT NULL AND f.dst_interface_id IS NULL
+              AND f.src_is_this_firewall = 0 AND f.dst_is_this_firewall = 0
+              AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg');")" \
+        "$(run_query "$db" "$(wrap_query "$DIAG_ATTR_FILE" \
+            'SELECT sum(named_by_resolver_cache_answer) || '"'|'"' || sum(named_by_lookup_timing) FROM (' ')')")"
+    # RC-AC17: the local-data bin of the unresolved host-name diagnostic, executed.
+    check "RC-AC17 $tag: the unresolved host-name diagnostic has its local-data bins" \
+        'local_data,local_data_not_at_instant' \
+        "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | awk -F'|' '
+            $1 == "local_data" || $1 == "local_data_not_at_instant" { print $1 }' | sort | tr '\n' ',' | sed 's/,$//')"
+done
+# RC-AC14 on the two other seeds (the main one is checked with the purge above). The
+# alternative database is purged in a copy under the run's own mktemp directory; the
+# scale database is purged in place, because nothing reads it after this point and a
+# copy of it would cost a second scale database for nothing.
+cp "$ALT_DB" "$WORK/purge-alt.db"
+RC14_PURGE_TARGETS="$WORK/purge-alt.db:schema-checks-alt $SCALE_DB:schema-checks-scale"
+for target in $RC14_PURGE_TARGETS; do
+    db="${target%%:*}"
+    tag="${target##*:}"
+    sqlite3 "$db" "UPDATE setting SET value = '7776000' WHERE key = 'retention_seconds';" > /dev/null
+    rc_ac14_before "$db" "$tag"
+    run_purge "$db"
+    rc_ac14_after "$db" "$tag" "$?"
+done
+rm -f -- "$WORK/purge-alt.db" "$WORK/purge-alt.db-wal" "$WORK/purge-alt.db-shm"
+check 'RC-AC4 the two resolver-record kinds each register both resolvers' \
+    'resolver_cache:dnsmasq,resolver_cache:unbound,resolver_local_data:dnsmasq,resolver_local_data:unbound' \
+    "$(q "$FRESH_DB" "SELECT group_concat(kind || ':' || provider_key, ',') FROM
+        (SELECT kind, provider_key FROM provider WHERE kind LIKE 'resolver%' ORDER BY 1, 2);")"
+check 'RC-AC12 the cache-answer cap is a setting row whose default is 3600' '3600' \
+    "$(q "$FRESH_DB" "SELECT value FROM setting WHERE key = 'attribution_max_cache_answer_delay_seconds';")"
 
 # ===========================================================================
 section 'S5A-AC1, AC2, AC5, AC28, AC37 — the documents step 5A edits'
@@ -3459,6 +3773,79 @@ else
     fail 'C5A-AC11 G13 is not recorded as closed by the ipv4 and ipv6 source fields'
 fi
 check 'C5A-AC11 three gaps remain open' '3' "$OPEN_ROWS"
+
+# ===========================================================================
+section 'RC-AC1, RC-AC21 — the documents the resolver-cache cycle edits'
+# ===========================================================================
+for needle in '### Resolver cache and local data, read from source for the resolver-cache cycle' \
+              '### Processor stream, read from source for the resolver-cache cycle' \
+              'blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/DiagnosticsController.php' \
+              'blob/26.7.3/src/opnsense/service/conf/actions.d/actions_unbound.conf' \
+              'blob/26.7.3/src/opnsense/scripts/unbound/wrapper.py' \
+              'blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/ACL/ACL.xml' \
+              'blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/CpuUsageController.php' \
+              'blob/26.7.3/src/opnsense/service/conf/actions.d/actions_system.conf' \
+              'blob/26.7.3/src/opnsense/scripts/system/cpu.py' \
+              'blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Core/ACL/ACL.xml' \
+              'blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/ActivityController.php' \
+              '**A1 —' '**A2 —' '**A3 —' '**A4 —' '**A5 —' '**A6 —'; do
+    if grep -qF -- "$needle" "$SURVEY"; then
+        pass "RC-AC1 the survey records: $needle"
+    else
+        fail "RC-AC1 the survey does not record: $needle"
+    fi
+done
+# Vocabulary: the count sentence of the terms that are opnview's own equals the rows of
+# its table, and every term this cycle added has a row.
+VOCAB_ROWS="$(awk '/terms are `opnview`.s own, because OPNsense has no word for them/ { f = 1; next }
+    f && /^\| Term \|/ { t = 1; next }
+    t && /^\|---/ { next }
+    t && /^\|/ { n++ }
+    t && !/^\|/ { print n; exit }' "$DOC")"
+# The word "ter"+"ms" is split so this line does not match the wildcard-deletion check.
+VOCAB_SED='s/^\*\*\([A-Z][a-z-]*\) ter''ms are `opnview`.s own.*/\1/p'
+VOCAB_WORD="$(sed -n "$VOCAB_SED" "$DOC" | head -n 1)"
+VOCAB_NUMBER="$(printf -- '%s\n' "$VOCAB_WORD" | awk '
+    BEGIN { split("twenty twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty thirty-one thirty-two thirty-three thirty-four thirty-five thirty-six thirty-seven thirty-eight thirty-nine forty", w, " ") }
+    { for (i = 1; i <= 21; i++) if (tolower($0) == w[i]) print 19 + i }')"
+check 'RC-AC21 the count of opnview-own terms equals the rows of their table' "$VOCAB_ROWS" "$VOCAB_NUMBER"
+VOCAB_SECTION="$(awk '/^## Vocabulary/ { f = 1 } /^## Conventions/ { f = 0 } f' "$DOC")"
+for term in 'domain_attribution.method' 'resolver_cache_answer' 'lookup_timing' \
+            'domain_attribution.address_observation_id' 'local_data_hostname' 'coverage interval' \
+            'resource_record_observation.held_in' 'resource_record_observation.host_label' \
+            'resource_record_read' 'resolver_cache' 'resolver_local_data' 'owner name'; do
+    if printf -- '%s' "$VOCAB_SECTION" | grep -qF -- "$term"; then
+        pass "RC-AC21 Vocabulary has a row for $term"
+    else
+        fail "RC-AC21 Vocabulary has no row for $term"
+    fi
+done
+for needle in 'There is no second method on OPNsense 26.7' 'There is deliberately NO provenance or method column'; do
+    if grep -qF -- "$needle" "$DOC" "$SCHEMA_FILE"; then
+        fail "RC-AC21 a document still says: $needle"
+    else
+        pass "RC-AC21 no document still says: $needle"
+    fi
+done
+for needle in 'every name the firewall' 'synchronous = NORMAL' 'resolver_cache_answer'; do
+    if grep -qF -- "$needle" "$REPO_ROOT/README.md"; then
+        pass "RC-AC21 the README states: $needle"
+    else
+        fail "RC-AC21 the README does not state: $needle"
+    fi
+done
+for needle in 'resolver_cache_answer' 'lookup_timing' 'named_by_resolver_cache_answer'; do
+    if grep -qF -- "$needle" "$CATALOGUE" "$DOC"; then
+        pass "RC-AC21 the catalogue and the data model carry: $needle"
+    else
+        fail "RC-AC21 the catalogue and the data model do not carry: $needle"
+    fi
+done
+if grep -qF 'SPEC-resolver-cache-attribution.md' "$REPO_ROOT/ROADMAP.md"; then
+    pass 'RC-AC21 the roadmap records the resolver-cache cycle'
+else
+    fail 'RC-AC21 the roadmap does not record the resolver-cache cycle'
+fi
 
 # ===========================================================================
 section 'FC-AC1 to FC-AC5 — the API field coverage table stays honest'

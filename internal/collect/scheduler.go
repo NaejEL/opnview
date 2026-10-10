@@ -11,10 +11,10 @@ import (
 
 // The scheduler.
 //
-// FIVE COLLECTOR LOOPS AT THE SURVEYED CADENCES, plus runtime discovery and the
+// ONE LOOP PER COLLECTOR AT THE SURVEYED CADENCES, plus runtime discovery and the
 // retention purge. Each loop runs in its own goroutine and each failure is isolated:
 // a collector that returns an error is reported and its loop continues, and the
-// other four are untouched. One unavailable source never stalls the others, which
+// others are untouched. One unavailable source never stalls the others, which
 // is the thing that would otherwise happen first — a firewall with no Suricata would
 // stop the filter log.
 //
@@ -69,9 +69,11 @@ func FixedInterval(interval time.Duration) func() time.Duration {
 	return func() time.Duration { return interval }
 }
 
-// Tasks returns the seven loops, wired to one collector and one live configuration.
+// Tasks returns the loops, wired to one collector and one live configuration: the
+// collectors, the two reads of the resolver's records, runtime discovery, the probe
+// round and the retention purge.
 //
-// The five collector cadences are the intervals internal/config carries, each of
+// The collector cadences are the intervals internal/config carries, each of
 // which names the survey section that justifies it beside its constant. They are
 // not restated here, so the justification cannot drift from the number. Each task
 // reads its own field of settings before every wait, through config.Live, so a
@@ -124,6 +126,22 @@ func (c *Collector) Tasks(settings *config.Live) []Task {
 			Name:       "resolver lookups",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DNSLookupInterval }),
 			Run:        c.CollectDNSLookup,
+			RunAtStart: true,
+		},
+		{
+			// The resolver's cache, every minute by default: decision 4 of
+			// specs/SPEC-resolver-cache-attribution.md, the cadence of the lookups it
+			// gives answer addresses to.
+			Name:       "resolver cache",
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.ResolverCacheInterval }),
+			Run:        c.CollectResolverCache,
+			RunAtStart: true,
+		},
+		{
+			// The resolver's local data, every five minutes by default: decision 4 again.
+			Name:       "resolver local data",
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.ResolverLocalDataInterval }),
+			Run:        c.CollectResolverLocalData,
 			RunAtStart: true,
 		},
 		{

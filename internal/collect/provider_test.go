@@ -252,6 +252,12 @@ func registeredKeysByKind() map[string][]string {
 	for key := range lookupSources {
 		registered[KindDNSLookup] = append(registered[KindDNSLookup], key)
 	}
+	for key := range cacheSources {
+		registered[KindResolverCache] = append(registered[KindResolverCache], key)
+	}
+	for key := range localDataSources {
+		registered[KindResolverLocalData] = append(registered[KindResolverLocalData], key)
+	}
 	return registered
 }
 
@@ -274,6 +280,9 @@ func TestThePortGrantsExactlyTheEnumeratedCapabilities(t *testing.T) {
 
 	for _, capability := range []string{
 		"call", "serviceState", "readObject", "readCollection", "normaliser", "now",
+		// The bounded read of the one endpoint that streams, the processor's: call reads
+		// a body to its end and that body has none (resolver-cache cycle, scope E).
+		"stream",
 	} {
 		if !granted[capability] {
 			t.Errorf("the port no longer grants %q, which an implementation needs", capability)

@@ -32,6 +32,10 @@ func TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 		arrange func(fake *fakeFirewall)
 		wording string
 	}{
+		{"authentication failed", func(fake *fakeFirewall) {
+			fake.answer(opnsense.GatewayStatus, http.StatusUnauthorized,
+				[]byte(`{"status":401,"message":"Authentication Failed"}`))
+		}, "gateway latency and loss (authentication failed (HTTP 401): the firewall did not accept the API key and secret)"},
 		{"denied", func(fake *fakeFirewall) {
 			fake.answer(opnsense.GatewayStatus, http.StatusForbidden, []byte(`{"status":403,"message":"Forbidden"}`))
 		}, "gateway latency and loss (denied, HTTP 403: the API key's user needs the privilege \"System: Gateways\""},

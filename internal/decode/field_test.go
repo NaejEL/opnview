@@ -1,6 +1,7 @@
 package decode
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -380,7 +381,7 @@ func TestTheDnsmasqLeaseRowReadsBackFieldForField(t *testing.T) {
 // TestFirstFloatNamesTheKeyThatAnswered is how an UNVERIFIED assumption is kept honest.
 //
 // The verified section establishes that the telemetry endpoints ANSWER — systemResources,
-// systemTemperature, systemTime, systemDisk, getActivity, traffic/interface — and does not
+// systemTemperature, systemTime, systemDisk, traffic/interface — and does not
 // establish their field names at all. So the candidate list is an assumption, and returning the
 // key that answered is what lets a later pass record which one a real firewall uses instead of
 // guessing a second time. A candidate list where none matches must report absence, because a
@@ -589,3 +590,38 @@ func boolean(value bool) *bool { return &value }
 
 // number returns an addressable integer, for the tables above.
 func number(value int64) *int64 { return &value }
+
+// TestTextFieldKeepsNullApartFromTheEmptyStringAndRawStringIsUnchanged is the decoding half
+// of specs/SPEC-resolver-cache-follow-ups.md, scope 5: TextField tells a JSON null, an
+// absent key, a string and any other shape apart, while RawString still reads null and
+// absent as the empty string and renders a number, as its existing callers rely on.
+func TestTextFieldKeepsNullApartFromTheEmptyStringAndRawStringIsUnchanged(t *testing.T) {
+	t.Parallel()
+	var row Object
+	if err := json.Unmarshal([]byte(`{"null": null, "empty": "", "digits": " 300 ", "number": 300, "flag": true}`),
+		&row); err != nil {
+		t.Fatal(err)
+	}
+	for _, testCase := range []struct {
+		key       string
+		wantText  string
+		wantShape Shape
+		wantRaw   string
+	}{
+		{"null", "", ShapeNull, ""},
+		{"absent", "", ShapeAbsent, ""},
+		{"empty", "", ShapeString, ""},
+		{"digits", " 300 ", ShapeString, "300"},
+		{"number", "", ShapeOther, "300"},
+		{"flag", "", ShapeOther, "true"},
+	} {
+		text, shape := TextField(row, testCase.key)
+		if text != testCase.wantText || shape != testCase.wantShape {
+			t.Errorf("TextField(%q) = %q, %d; want %q, %d", testCase.key, text, shape, testCase.wantText,
+				testCase.wantShape)
+		}
+		if raw := RawString(row, testCase.key); raw != testCase.wantRaw {
+			t.Errorf("RawString(%q) = %q; want %q", testCase.key, raw, testCase.wantRaw)
+		}
+	}
+}

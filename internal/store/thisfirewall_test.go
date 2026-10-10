@@ -473,8 +473,11 @@ func TestAFlowToThisFirewallIsNeverAttributedAndAFlowFromItIsOutsideTheRate(t *t
 			for rows.Next() {
 				var id, at int64
 				var client any
-				var address string
-				if err := rows.Scan(&id, &at, &client, &address); err != nil {
+				// The destination is the fifth column since the resolver-cache cycle: the
+				// exact evidence is searched from it.
+				var address, destination string
+				if err := rows.Scan(&id, &at, &client, &address, &destination); err != nil {
+					_ = rows.Close()
 					t.Fatal(err)
 				}
 				candidateIDs = append(candidateIDs, id)
@@ -522,10 +525,11 @@ func TestAnAttributionMadeBeforeTheFirewallWasRecognisedIsRemoved(t *testing.T) 
 	}); err != nil {
 		t.Fatalf("writing a lookup: %v", err)
 	}
-	// The attribution 5A wrote, when the destination was an unplaced end.
+	// The attribution 5A wrote, when the destination was an unplaced end. 5A had one
+	// method, which the method column now names.
 	if _, err := network.db.DB().ExecContext(ctx, `INSERT INTO domain_attribution (flow_id, dns_resolution_id,
-		site_name, correlation_delay_seconds, attributed_at)
-		SELECT f.id, r.id, 'example.invalid', 2, ? FROM flow AS f, dns_resolution AS r
+		site_name, correlation_delay_seconds, attributed_at, method)
+		SELECT f.id, r.id, 'example.invalid', 2, ?, 'lookup_timing' FROM flow AS f, dns_resolution AS r
 		WHERE r.lookup_key = 'example-stale'`, network.now); err != nil {
 		t.Fatalf("writing the stale attribution: %v", err)
 	}

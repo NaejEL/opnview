@@ -566,8 +566,17 @@ func (l *treeLevel) nodes() []*TreeNode {
 type AttributionRate struct {
 	// EligibleFlows are the flows with an outside destination in the window.
 	EligibleFlows int64
-	// NamedFlows are those that carry an attribution.
+	// NamedFlows are those that carry an attribution, by either method.
 	NamedFlows int64
+	// NamedByCacheAnswer and NamedByLookupTiming are NamedFlows per method; they sum to
+	// it.
+	NamedByCacheAnswer  int64
+	NamedByLookupTiming int64
+	// CacheCovered says whether the resolver's cache was read for the window: a record
+	// of the cache whose coverage interval meets it. Without it no flow of the window
+	// could have been named from exact evidence, and a low count of resolver_cache_answer
+	// means that rather than poor evidence.
+	CacheCovered bool
 	// Rate is NamedFlows / EligibleFlows. It is nil -- UNDEFINED, not 0 -- when no
 	// resolver source answered for the window, because then nothing could have named
 	// a flow, and when there is no eligible flow to divide by.
@@ -593,6 +602,12 @@ type AttributionRate struct {
 // neither a stored lookup nor a reachable probe inside it is undefined, whatever the
 // resolver's state is now; one with a lookup is defined even if the resolver is
 // unreachable now. With coverage and no attribution, the rate is 0.
+//
+// The named flows are also counted per method, resolver_cache_answer and lookup_timing,
+// and the two sum to NamedFlows. Whether the resolver's cache was read for the window is
+// reported beside them, as CacheCovered: it does not change whether the rate is defined,
+// which stays the 5A meaning, but it says whether the exact method could have named
+// anything.
 func (s *Store) ReadAttributionRate(ctx context.Context, from, to int64, clientID *int64) (
 	AttributionRate, error) {
 	var result AttributionRate
@@ -602,6 +617,12 @@ func (s *Store) ReadAttributionRate(ctx context.Context, from, to int64, clientI
 		return result, err
 	}
 	result.ResolverCovered = covered > 0
+	cacheCovered, _, err := queryOptionalInt(ctx, s.db, "read_cache_coverage",
+		map[string]any{"from": from, "to": to})
+	if err != nil {
+		return result, err
+	}
+	result.CacheCovered = cacheCovered > 0
 
 	text, err := Statement("read_attribution_rate")
 	if err != nil {
@@ -613,7 +634,7 @@ func (s *Store) ReadAttributionRate(ctx context.Context, from, to int64, clientI
 	)
 	if err := s.db.QueryRowContext(ctx, text, sql.Named("from", from), sql.Named("to", to),
 		sql.Named("client_id", optional(clientID))).Scan(&result.EligibleFlows, &result.NamedFlows,
-		&mean, &maximum); err != nil {
+		&mean, &maximum, &result.NamedByCacheAnswer, &result.NamedByLookupTiming); err != nil {
 		return result, fmt.Errorf("store: read_attribution_rate: %w", err)
 	}
 	if mean.Valid {

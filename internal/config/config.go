@@ -58,6 +58,11 @@ const (
 	KeyDHCPLeaseInterval = "poll_interval_dhcp_lease_seconds"
 	// KeyDNSLookupInterval overrides the resolver poll interval.
 	KeyDNSLookupInterval = "poll_interval_dns_lookup_seconds"
+	// KeyResolverCacheInterval overrides how often the resolver's cache is read.
+	KeyResolverCacheInterval = "poll_interval_resolver_cache_seconds"
+	// KeyResolverLocalDataInterval overrides how often the resolver's local data is
+	// read.
+	KeyResolverLocalDataInterval = "poll_interval_resolver_local_data_seconds"
 	// KeyDiscoveryInterval overrides the runtime-discovery refresh interval. The
 	// store reads the same row as the margin of "held at an instant" for this
 	// firewall's own addresses, so the key lives there.
@@ -76,6 +81,10 @@ const (
 	// KeyAttributionMaxDelay is how long before a flow, in seconds, a resolver lookup
 	// may have been made and still name it. The schema writes its default row.
 	KeyAttributionMaxDelay = "attribution_max_delay_seconds"
+	// KeyCacheAnswerDelay is how long before a flow, in seconds, a resolver lookup may
+	// have been made and still name it through the resolver's cache (decision 2 of
+	// specs/SPEC-resolver-cache-attribution.md). The schema writes its default row.
+	KeyCacheAnswerDelay = store.CacheAnswerDelayKey
 	// KeyLegPairingWindow is how far apart, in seconds, the two records of one
 	// connection may have been logged and still be paired (decision 4 of the step-5A
 	// live corrections). The schema writes its default row.
@@ -97,9 +106,9 @@ const (
 // interval was configurable and the page was a constant, so half of the pair was
 // out of the operator's reach; these rows put it back.
 //
-// The other two collectors take no page size, for reasons of the API rather than
-// of opnview: the per-pair sampler reads a snapshot with no paging at all, and
-// the resolver endpoint answers with its whole ring buffer up to a limit the
+// The per-pair sampler and the resolver's query report take no page size, for
+// reasons of the API rather than of opnview: the per-pair sampler reads a snapshot
+// with no paging at all, and the resolver endpoint answers with its whole ring buffer up to a limit the
 // firewall fixes.
 //
 // A page size above what the firewall serves is accepted here and reported on
@@ -156,6 +165,18 @@ const (
 	// of the last 1000 lookups, so a slow poll loses the oldest of them
 	// outright.
 	DefaultDNSLookupInterval = 60 * time.Second
+
+	// DefaultResolverCacheInterval is 60 s, the maintainer's decision 4 of
+	// specs/SPEC-resolver-cache-attribution.md: the cache read pairs with the lookup read,
+	// and a record inserted and expired between two polls is never seen, so the cadence
+	// is the lookups'. The dump's cost grows with the cache, which is why the read's
+	// availability detail records its size and its time.
+	DefaultResolverCacheInterval = 60 * time.Second
+
+	// DefaultResolverLocalDataInterval is 300 s, decision 4 again: local data is
+	// configuration -- host overrides, registered leases -- and changes on the scale of
+	// minutes to hours, like the leases it is read beside.
+	DefaultResolverLocalDataInterval = 300 * time.Second
 
 	// DefaultDiscoveryInterval is 300 s. Survey, "Runtime discovery":
 	// "Everything here is read at startup and refreshed periodically." The
@@ -242,6 +263,12 @@ const DefaultRetentionSeconds int64 = 7776000
 // constant exists only so a database with no row still behaves.
 const DefaultAttributionMaxDelaySeconds int64 = 5
 
+// DefaultCacheAnswerDelaySeconds is 3600 s, the maintainer's default cap on how long
+// before a flow a lookup may have been made and still name it through the resolver's
+// cache (decision 2). It is written in the schema and read from the database; the
+// constant exists only so a database with no row still behaves.
+const DefaultCacheAnswerDelaySeconds int64 = store.DefaultCacheAnswerDelaySeconds
+
 // DefaultLegPairingWindowSeconds is 1 s, the maintainer's default for how far apart
 // the two records of one connection may have been logged and still be paired
 // (decision 4). It is written in the schema and read from the database; the constant
@@ -266,14 +293,18 @@ type Config struct {
 	// AggregateMode is `full` or `no_domains`.
 	AggregateMode string
 
-	// FirewallLogInterval and the six below are the loop cadences.
+	// FirewallLogInterval and the intervals below it are the loop cadences.
 	FirewallLogInterval   time.Duration
 	SecurityEventInterval time.Duration
 	MeasurementInterval   time.Duration
 	DHCPLeaseInterval     time.Duration
 	DNSLookupInterval     time.Duration
-	DiscoveryInterval     time.Duration
-	PurgeInterval         time.Duration
+	// ResolverCacheInterval and ResolverLocalDataInterval are the two resolver-record
+	// reads.
+	ResolverCacheInterval     time.Duration
+	ResolverLocalDataInterval time.Duration
+	DiscoveryInterval         time.Duration
+	PurgeInterval             time.Duration
 	// GeoIPRefreshInterval and GeoLookupInterval are the two MaxMind cadences.
 	GeoIPRefreshInterval time.Duration
 	GeoLookupInterval    time.Duration
@@ -289,6 +320,9 @@ type Config struct {
 	// AttributionMaxDelaySeconds is how long before a flow a resolver lookup may
 	// have been made and still name it.
 	AttributionMaxDelaySeconds int64
+	// CacheAnswerDelaySeconds is how long before a flow, at most, a resolver lookup may
+	// have been made and still name it through the resolver's cache.
+	CacheAnswerDelaySeconds int64
 	// LegPairingWindowSeconds is how far apart the two records of one connection may
 	// have been logged and still be paired.
 	LegPairingWindowSeconds int64
@@ -309,6 +343,9 @@ func Defaults() Config {
 		MeasurementInterval:          DefaultMeasurementInterval,
 		DHCPLeaseInterval:            DefaultDHCPLeaseInterval,
 		DNSLookupInterval:            DefaultDNSLookupInterval,
+		ResolverCacheInterval:        DefaultResolverCacheInterval,
+		ResolverLocalDataInterval:    DefaultResolverLocalDataInterval,
+		CacheAnswerDelaySeconds:      DefaultCacheAnswerDelaySeconds,
 		DiscoveryInterval:            DefaultDiscoveryInterval,
 		PurgeInterval:                DefaultPurgeInterval,
 		GeoIPRefreshInterval:         DefaultGeoIPRefreshInterval,
@@ -370,6 +407,8 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		{KeyMeasurementInterval, &loaded.MeasurementInterval},
 		{KeyDHCPLeaseInterval, &loaded.DHCPLeaseInterval},
 		{KeyDNSLookupInterval, &loaded.DNSLookupInterval},
+		{KeyResolverCacheInterval, &loaded.ResolverCacheInterval},
+		{KeyResolverLocalDataInterval, &loaded.ResolverLocalDataInterval},
 		{KeyDiscoveryInterval, &loaded.DiscoveryInterval},
 		{KeyPurgeInterval, &loaded.PurgeInterval},
 		{KeyGeoIPRefreshInterval, &loaded.GeoIPRefreshInterval},
@@ -439,6 +478,21 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 				KeyAttributionMaxDelay, seconds)
 		}
 		loaded.AttributionMaxDelaySeconds = seconds
+	}
+
+	// The cache-answer cap is a positive whole number of seconds, like the delay above.
+	if value, present, err := reader.Setting(ctx, KeyCacheAnswerDelay); err != nil {
+		return loaded, err
+	} else if present {
+		seconds, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return loaded, fmt.Errorf("config: %s is not a whole number of seconds: %w", KeyCacheAnswerDelay, err)
+		}
+		if seconds <= 0 {
+			return loaded, fmt.Errorf("config: %s must be a positive whole number of seconds, got %d",
+				KeyCacheAnswerDelay, seconds)
+		}
+		loaded.CacheAnswerDelaySeconds = seconds
 	}
 
 	// The pairing window is a whole number of seconds, 0 included -- the two records

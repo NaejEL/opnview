@@ -308,6 +308,11 @@ items are listed with their reason and are not built.
    - `correlation_delay_seconds` is never negative.
    - No provenance column is added: the lookup foreign key and the delay are
      the stored provenance. The API-level constant method field is 5B's.
+   - *Reversed on 9 October 2026 by `specs/SPEC-resolver-cache-attribution.md`,
+     C3:* the resolver's cache added a second method, so `domain_attribution`
+     now records the method on each attribution (`resolver_cache_answer` or
+     `lookup_timing`) in a column constrained by a `CHECK`, beside the lookup
+     foreign key and the delay, which stay.
 4. **`aggregate_mode = no_domains`** does **not** change what is written.
    Attributions and domain aggregates are stored, and 5B withholds them at the
    API. `docs/data-model.md` states this.
@@ -359,6 +364,11 @@ client counts as parameters and carry both IP versions.
   and `/api/diagnostics/system/systemSwap` (amended 4 October 2026). Each is a
   read-only GET, cited, recorded in the survey, and degrades to
   `source_availability` when unavailable. A test covers that state for each.
+  *Amended on 9 October 2026 by `specs/SPEC-resolver-cache-attribution.md`,
+  AC3:* `/api/unbound/diagnostics/dumpcache`,
+  `/api/unbound/diagnostics/listlocaldata` and
+  `/api/diagnostics/cpu_usage/stream` are admitted as well, on the same terms,
+  each verified at `opnsense/core` 26.7.3.
 - [ ] AC5 — The `log_reason` values are recorded with citations. No code
   matches on a value outside the recorded set, and a test fails if one does.
 
@@ -510,7 +520,11 @@ client counts as parameters and carry both IP versions.
   - explicit remainders on truncation;
   - map, tree and Sankey reconciliation at response level.
 - `no_domains` withheld at the API.
-- A constant attribution-method field (`resolver_lookup`) in responses.
+- ~~A constant attribution-method field (`resolver_lookup`) in responses.~~
+  Replaced on 9 October 2026 by `specs/SPEC-resolver-cache-attribution.md`:
+  the method is stored per attribution (`domain_attribution.method`,
+  `resolver_cache_answer` or `lookup_timing`), and 5B returns that stored
+  per-record method rather than a constant.
 - The questions that go with these:
   - which presets get an endpoint;
   - GET or a read-only POST, and CSRF for the latter;

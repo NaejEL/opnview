@@ -11,7 +11,7 @@ import (
 
 // The provider seam.
 //
-// THERE ARE NOT FIVE COLLECTORS. THERE ARE FIVE KINDS, AND SEVERAL OF THEM ALREADY HAVE
+// THERE IS NOT ONE COLLECTOR PER SOURCE. THERE ARE KINDS, AND SEVERAL OF THEM ALREADY HAVE
 // MORE THAN ONE IMPLEMENTATION. The schema's registry says so and has since the
 // provider-neutral pass: `dhcp_lease` holds Kea, Dnsmasq and the end-of-life ISC plugin,
 // and `dns_lookup` holds Unbound and Dnsmasq. On the firewall the survey probed, Dnsmasq
@@ -115,6 +115,13 @@ type session interface {
 	// used, looking under the wrapper keys the caller names.
 	readCollection(ctx context.Context, endpoint opnsense.Endpoint, wrapperKeys ...string) (
 		[]decode.Object, bool, error)
+
+	// stream reads a server-sent event stream within a bound and closes it. It is the
+	// second outbound capability, and it exists because one endpoint answers with a
+	// stream that never ends: call reads a body to its end and this body has none
+	// (survey, "Processor stream, read from source for the resolver-cache cycle").
+	stream(ctx context.Context, endpoint opnsense.Endpoint, bound opnsense.StreamBound) (
+		opnsense.StreamResponse, error)
 
 	// normaliser returns the timestamp normaliser for this instant. It carries the
 	// reference time the one year-less timestamp shape needs, which an implementation
@@ -307,6 +314,51 @@ type lookupSource interface {
 	// honours it is a separate matter, and the kind never presents the answer as coverage
 	// of it.
 	requestedSpanSeconds() int64
+}
+
+// rawRecord is one record of a resolver's records as its endpoint returned it, before the
+// kind normalises it: the owner name, the TTL text, the record type and the value, under
+// whatever field names the endpoint uses for them. The endpoint's CLASS is not carried:
+// it is IN on every record both surveyed endpoints return, and it must never be read as
+// the type.
+//
+// TTLShape keeps what TTL's text alone cannot: whether the endpoint wrote the ttl as a
+// string, as JSON null, as something else, or not at all. In Unbound's cache dump a null
+// ttl is a message-cache reference rather than a record (resolvercache_unbound.go).
+type rawRecord struct {
+	OwnerName string
+	TTL       string
+	TTLShape  decode.Shape
+	RRType    string
+	Value     string
+}
+
+// recordDump is what one read of a resolver's records returned.
+type recordDump struct {
+	// Records are every record the endpoint returned, of every type: the kind counts the
+	// types it does not store rather than the implementation dropping them unseen.
+	Records []rawRecord
+	// ResponseBytes is the size of the answer, which the availability detail reports:
+	// the dump's cost on the firewall grows with the size of what it dumps.
+	ResponseBytes int
+}
+
+// resolverCacheSource is one implementation of the resolver_cache kind: a source of the
+// records a resolver holds in its cache, with the seconds each has left.
+type resolverCacheSource interface {
+	providerKey() string
+	probe(ctx context.Context, host session) (probeResult, error)
+	// cache returns every record the cache holds now, or ErrUnsupportedRead.
+	cache(ctx context.Context, host session) (recordDump, probeResult, error)
+}
+
+// resolverLocalDataSource is one implementation of the resolver_local_data kind: a source
+// of the records a resolver serves from its own local data.
+type resolverLocalDataSource interface {
+	providerKey() string
+	probe(ctx context.Context, host session) (probeResult, error)
+	// localData returns every record of the local data now, or ErrUnsupportedRead.
+	localData(ctx context.Context, host session) (recordDump, probeResult, error)
 }
 
 // measurementSource is one implementation of the measurement_sample kind.

@@ -83,6 +83,25 @@ func lookupProbeables() []probeable {
 	return sortedProbeables(probeables)
 }
 
+// cacheProbeables returns the registered implementations of the resolver_cache kind.
+func cacheProbeables() []probeable {
+	probeables := make([]probeable, 0, len(cacheSources))
+	for key, source := range cacheSources {
+		probeables = append(probeables, probeable{providerKey: key, run: source.probe})
+	}
+	return sortedProbeables(probeables)
+}
+
+// localDataProbeables returns the registered implementations of the resolver_local_data
+// kind.
+func localDataProbeables() []probeable {
+	probeables := make([]probeable, 0, len(localDataSources))
+	for key, source := range localDataSources {
+		probeables = append(probeables, probeable{providerKey: key, run: source.probe})
+	}
+	return sortedProbeables(probeables)
+}
+
 // sortedProbeables orders implementations by their registry key.
 //
 // It is ordering for REPRODUCIBILITY and not for preference: a Go map iterates in a random
@@ -113,6 +132,8 @@ func (c *Collector) ProbeAll(ctx context.Context) error {
 		c.probeMeasurement,
 		c.probeDHCPLease,
 		c.probeDNSLookup,
+		c.probeResolverCache,
+		c.probeResolverLocalData,
 	} {
 		if err := probe(ctx); err != nil {
 			failures = append(failures, err)
@@ -147,6 +168,16 @@ func (c *Collector) probeDHCPLease(ctx context.Context) error {
 // probeDNSLookup probes every implementation of the dns_lookup kind.
 func (c *Collector) probeDNSLookup(ctx context.Context) error {
 	return c.resolveKind(ctx, KindDNSLookup, lookupProbeables())
+}
+
+// probeResolverCache probes every implementation of the resolver_cache kind.
+func (c *Collector) probeResolverCache(ctx context.Context) error {
+	return c.resolveKind(ctx, KindResolverCache, cacheProbeables())
+}
+
+// probeResolverLocalData probes every implementation of the resolver_local_data kind.
+func (c *Collector) probeResolverLocalData(ctx context.Context) error {
+	return c.resolveKind(ctx, KindResolverLocalData, localDataProbeables())
 }
 
 // probedSource is one implementation as a probe round found it: its registry row and what
@@ -209,6 +240,15 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 				detail = absent
 			} else {
 				detail += "; " + absent
+			}
+		}
+		// And what the last read of a resolver's records said, for the same reason: the
+		// counts, the size and the time of the dump, or the absence that stopped it.
+		if read := c.readDetail(entry.providerID); read != "" {
+			if detail == "" {
+				detail = read
+			} else {
+				detail += "; " + read
 			}
 		}
 		state := entry.result.state
@@ -456,6 +496,13 @@ func (c *Collector) readCollection(ctx context.Context, endpoint opnsense.Endpoi
 		return nil, false, nil
 	}
 	return rows, true, nil
+}
+
+// stream reads one server-sent event stream within a bound. It is the port's second
+// outbound capability, and it hands over a bounded read and its events, nothing more.
+func (c *Collector) stream(ctx context.Context, endpoint opnsense.Endpoint,
+	bound opnsense.StreamBound) (opnsense.StreamResponse, error) {
+	return c.client.Stream(ctx, endpoint, bound)
 }
 
 // quoteForDetail renders a value the firewall reported for an availability detail, so a reader
