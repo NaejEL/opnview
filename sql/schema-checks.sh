@@ -3271,9 +3271,10 @@ for db in "$MAIN_DB" "$ALT_DB"; do
     check "C5A-AC6 $tag: the link-local rule carries both values" '0,1' \
         "$(q "$db" "SELECT group_concat(link_local_evidence, ',') FROM
             (SELECT DISTINCT link_local_evidence FROM interface ORDER BY 1);")"
-    # Amended by the resolver-cache cycle: local_data_hostname is the sixth resolution.
+    # Amended by the resolver-cache cycle: local_data_hostname is the sixth resolution; and by
+    # group C of specs/SPEC-step-5b-widget-api.md: dual_stack_hostname is the seventh.
     check "C5A-AC8 $tag: dns_resolution carries every client resolution" \
-        'ambiguous_hostname,lease_hostname,local_data_hostname,logged_address,this_firewall_hostname,unknown_hostname' \
+        'ambiguous_hostname,dual_stack_hostname,lease_hostname,local_data_hostname,logged_address,this_firewall_hostname,unknown_hostname' \
         "$(q "$db" "SELECT group_concat(client_resolution, ',') FROM
             (SELECT DISTINCT client_resolution FROM dns_resolution ORDER BY 1);")"
     check "C5A-AC4 $tag: every client slot's distinct_peers is its peer rows, in every period" '0' \
@@ -3511,15 +3512,30 @@ for db in "$MAIN_DB" "$ALT_DB"; do
     check_ge "LC-AC13 $tag: the unresolved host-name diagnostic executes and sorts every lookup" 1 \
         "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | wc -l | tr -d ' ')"
     # Amended by the resolver-cache cycle (scope D3): the diagnostic sorts the lookups the
-    # local data resolved as well, into their own bin.
+    # local data resolved as well, into their own bin. Amended again by group C of
+    # specs/SPEC-step-5b-widget-api.md: the dual-stack lookups have a bin of their own too.
     check "LC-AC13 $tag: every unresolved lookup lands in exactly one cause" \
         "$(q "$db" "SELECT count(*) FROM dns_resolution
-            WHERE client_resolution IN ('unknown_hostname', 'local_data_hostname')
+            WHERE client_resolution IN ('unknown_hostname', 'local_data_hostname', 'dual_stack_hostname')
             AND looked_up_at >= $WINDOW_START AND looked_up_at < $WINDOW_END;")" \
         "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | awk -F'|' '{ s += $2 } END { print s + 0 }')"
+    # AC38 of specs/SPEC-step-5b-widget-api.md: the dual-stack bin, executed on the seed, holds
+    # exactly the dual-stack lookups of the window.
+    check "5B-AC38 $tag: the unresolved host-name diagnostic has its dual-stack bin" \
+        "dual_stack|$(q "$db" "SELECT count(*) FROM dns_resolution
+            WHERE client_resolution = 'dual_stack_hostname'
+            AND looked_up_at >= $WINDOW_START AND looked_up_at < $WINDOW_END;")" \
+        "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | awk -F'|' '$1 == "dual_stack" { print $1 "|" $2 }')"
+    check "5B-AC38 $tag: the seed carries a lookup the local data resolved by its querying family" '1' \
+        "$(q "$db" "SELECT count(*) FROM dns_resolution WHERE client_family = 6
+            AND client_resolution = 'local_data_hostname';")"
     check_ge "LC-AC2 $tag: the anonymous north-south diagnostic executes" 1 \
         "$(run_query "$db" "$(diag_file live_anonymous_north_south)" | wc -l | tr -d ' ')"
 done
+expect_sql_failure '5B-AC38 a querying family other than 4 or 6 is rejected' "$MAIN_DB" \
+    "UPDATE dns_resolution SET client_family = 5 WHERE id = 1300000200;"
+expect_sql_failure '5B-AC38 a resolution outside the seven is rejected' "$MAIN_DB" \
+    "UPDATE dns_resolution SET client_resolution = 'dual_stack' WHERE id = 1300000200;"
 expect_sql_failure 'LC-AC9 a paired leg must name its partner' "$MAIN_DB" \
     "UPDATE flow SET paired_flow_id = NULL WHERE pair_outcome = 'second_leg';"
 expect_sql_failure 'LC-AC10 an outcome outside the three is rejected, the removed one included' "$MAIN_DB" \

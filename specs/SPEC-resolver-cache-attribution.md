@@ -439,8 +439,14 @@ failing on `8a9e870` first. No test is weakened, skipped or moved.
 
 - [ ] AC16 — An `unknown_hostname` lookup that local data names with exactly
   one address resolves to `local_data_hostname`, when the data arrives later
-  and across a restart. Two addresses give `ambiguous_hostname`. The retry
-  reads only its partial index.
+  and across a restart. ~~Two addresses give `ambiguous_hostname`.~~ *Amended by
+  C3 of `specs/SPEC-step-5b-widget-api.md`:* two addresses of one family, or one
+  A and one AAAA whose querying family cannot be established, give
+  `ambiguous_hostname`; one A and one AAAA with the family established give
+  `local_data_hostname` with the address of that family. *By decision 15 of the
+  same spec, the case whose family cannot be established is the distinct state
+  `dual_stack_hostname` rather than `ambiguous_hostname`.* The retry reads only
+  its partial index.
 - [ ] AC17 — The local-data bin exists, and `schema-checks` executes it on the
   seed.
 

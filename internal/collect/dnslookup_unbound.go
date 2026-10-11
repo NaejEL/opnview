@@ -157,6 +157,7 @@ func (unboundLookups) lookups(ctx context.Context, host session, page int) (
 		records = append(records, lookupRecord{
 			DeduplicationKey: unboundLookupKey(row, lookedUpAt),
 			ClientAddress:    decode.RawString(row, "client"),
+			ClientFamily:     unboundQueryFamily(decode.RawString(row, "family")),
 			Domain:           domain,
 			Action:           action,
 			AnswerSource:     decode.StringPointer(row, "source"),
@@ -202,4 +203,30 @@ func unboundLookupKey(row decode.Object, lookedUpAt int64) string {
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, unitSeparator)))
 	return "content:" + hex.EncodeToString(sum[:])
+}
+
+// unboundQueryFamily turns a query-report row's `family` into the family stored on the
+// lookup: `ip4` is 4 and `ip6` is 6; anything else -- `unix`, an empty or absent field --
+// is nil, which is no evidence. It is not part of the de-duplication key above, so a row
+// stored before the field was read keeps its key.
+//
+// THE FIELD IS THE QUERYING ADDRESS'S FAMILY, AND IT SURVIVES THE HOST NAME. The report
+// row is the `query` table's row (opnsense/core 26.7.3, scripts/unbound/stats.py, the
+// `details` query, SELECT * over `query`), whose `family`
+// scripts/unbound-dnsbl/lib/__init__.py fills from the reply's comm_reply.family;
+// Unbound's pythonmod/interface.i maps that from the socket address's ss_family to "ip4",
+// "ip6" or "unix". stats.py replaces only `client` by the reverse-resolved host name, so
+// `family` still says which family asked. docs/opnsense-api-survey.md, "The querying
+// family behind a logged host name, read from source for step 5B".
+func unboundQueryFamily(value string) *int64 {
+	var family int64
+	switch value {
+	case "ip4":
+		family = 4
+	case "ip6":
+		family = 6
+	default:
+		return nil
+	}
+	return &family
 }

@@ -1388,6 +1388,26 @@ UPDATE dns_resolution
 SET hostname_examined_at = ingested_at + 60
 WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname') AND id % 2 = 0;
 
+-- Two lookups logged under a host name the local data held under one IPv4 and one IPv6
+-- address (group C of specs/SPEC-step-5b-widget-api.md): one whose row reported no
+-- querying family, which stays dual_stack_hostname and waits for a lease pass, and one
+-- whose row reported the IPv6 family, resolved to the AAAA address. The names are
+-- synthesised and match no lease.
+INSERT INTO dns_resolution (id, lookup_key, client_address, client_hostname, client_resolution,
+                            client_family, client_id, domain, resolver, action, answer_source,
+                            rcode, dnssec_status, looked_up_at, ingested_at, interface_id,
+                            interface_lookup_state)
+SELECT 1300000200, 'dual-stack-lookup-uuid-1', 'dual-stack-host.example-zone.invalid',
+       'dual-stack-host.example-zone.invalid', 'dual_stack_hostname', NULL, NULL,
+       'dual-stack-name-1.example-zone.invalid', 'unbound', 'pass', 'Recursion', 'NOERROR', NULL,
+       :now - 444, :now - 442, NULL, 'not_found'
+UNION ALL
+SELECT 1300000201, 'dual-stack-lookup-uuid-2', a.address_v6,
+       'dual-stack-host.example-zone.invalid', 'local_data_hostname', 6, NULL,
+       'dual-stack-name-2.example-zone.invalid', 'unbound', 'pass', 'Recursion', 'NOERROR', NULL,
+       :now - 555, :now - 553, NULL, 'not_found'
+FROM synth_address AS a WHERE a.slot = :clients + 2;
+
 -- ---------------------------------------------------------------------------
 -- The resolver's records: its cache and its local data
 -- (specs/SPEC-resolver-cache-attribution.md).

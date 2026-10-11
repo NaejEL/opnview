@@ -1270,10 +1270,29 @@ CREATE TABLE IF NOT EXISTS blocklist (
 --                         the name a reverse lookup of a loopback address returns.
 --                         It is a protocol constant (decision 11 of the step-5A
 --                         live corrections), not configuration.
--- In 'ambiguous_hostname', 'unknown_hostname' and 'this_firewall_hostname'
--- client_address holds the logged name verbatim, and in the first two of them the
--- lookup is placed nowhere and attributes nothing: a name
+--   'dual_stack_hostname' a host name no lease named, for which the local data held
+--                         exactly two addresses at the lookup's instant, one IPv4 and
+--                         one IPv6, under one name -- a host override with an A and an
+--                         AAAA record names one machine -- and the lookup's querying
+--                         family was not reported, so which of the two asked is not
+--                         known (group C of specs/SPEC-step-5b-widget-api.md, decision
+--                         15). With the family reported, the lookup resolves to the
+--                         address of that family as 'local_data_hostname'. The term
+--                         is opnview's own (docs/data-model.md, Vocabulary).
+-- In 'ambiguous_hostname', 'unknown_hostname', 'dual_stack_hostname' and
+-- 'this_firewall_hostname' client_address holds the logged name verbatim, and in the
+-- first three of them the lookup is placed nowhere and attributes nothing: a name
 -- that does not resolve to one address does not say which machine asked.
+--
+-- client_family is the family of the querying address, 4 or 6, as the resolver's
+-- query report gives it in the `family` field of each row: Unbound's own family of
+-- the reply's address, `ip4` or `ip6` (opnsense/core 26.7.3,
+-- scripts/unbound-dnsbl/lib/__init__.py, Query, from comm_reply.family, which
+-- Unbound's pythonmod/interface.i maps from the socket address's ss_family). It is
+-- the querying address's family even where the report replaced that address by a
+-- host name, which makes it the evidence the dual-stack rule reads, recorded per
+-- lookup. NULL when the row carried none: a Dnsmasq lookup, a `unix` socket, an
+-- absent field.
 --
 -- A host name matches a lease by its FIRST LABEL on both sides, without regard
 -- to case and with a trailing dot removed: dhcp_lease.hostname_label below.
@@ -1296,7 +1315,9 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
                    CHECK (client_resolution IN ('logged_address', 'lease_hostname',
                                                 'ambiguous_hostname', 'unknown_hostname',
                                                 'this_firewall_hostname',
-                                                'local_data_hostname')),
+                                                'local_data_hostname',
+                                                'dual_stack_hostname')),
+    client_family  INTEGER CHECK (client_family IS NULL OR client_family IN (4, 6)),
     client_id      INTEGER REFERENCES client (id),
     client_is_this_firewall INTEGER NOT NULL DEFAULT 0 CHECK (client_is_this_firewall IN (0, 1)),
     hostname_examined_at INTEGER CHECK (hostname_examined_at IS NULL
@@ -1342,11 +1363,17 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_blocklist ON dns_resolution (block
 -- shrinks as a pass examines them, rather than growing with every unresolved
 -- lookup ever stored. It replaced an index on (client_resolution, looked_up_at)
 -- and one on (client_resolution, ingested_at), both dropped by name.
+--
+-- A 'dual_stack_hostname' lookup waits here too: a lease naming its host may be read
+-- after it, and a lease wins over the local data. Its querying family is stored with
+-- it (client_family), so the pass that examines it again decides it as ingest would
+-- have. As every schema change before step 8 is, the predicate is edited in place and
+-- reaches a database that is rebuilt (decision 12 of the step-5A live corrections).
 DROP INDEX IF EXISTS idx_dns_resolution_client_resolution;
 DROP INDEX IF EXISTS idx_dns_resolution_unresolved_hostname;
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_hostname_unexamined
     ON dns_resolution (client_resolution, hostname_examined_at, ingested_at, id)
-    WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname')
+    WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname', 'dual_stack_hostname')
       AND hostname_examined_at IS NULL;
 
 -- ---------------------------------------------------------------------------

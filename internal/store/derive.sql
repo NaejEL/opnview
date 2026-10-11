@@ -649,17 +649,25 @@ WHERE lower(rtrim(r.domain, '.')) = :name
        OR (r.client_address = :address AND (r.client_id IS NULL OR :client_id IS NULL)));
 
 -- The local data naming a host at an instant: the addresses of the A and AAAA records
--- whose owner, and of the PTR records whose target, has the host name's first label.
--- The caller takes the address only when there is exactly one.
+-- whose owner, and of the PTR records whose target, has the host name's first label,
+-- each with the full names it was held under -- the owner of an A or AAAA record, the
+-- target of a PTR record -- compared as DNS names are, without regard to case and with
+-- a trailing dot removed. The caller takes the address when there is exactly one, and,
+-- when there are one IPv4 and one IPv6 address under one name, the address of the
+-- lookup's querying family (the dual-stack rule). Three rows are enough to tell those
+-- cases from every other.
 -- statement: local_data_addresses_for_hostname
-SELECT DISTINCT o.address
+SELECT o.address,
+       json_group_array(DISTINCT lower(rtrim(CASE WHEN o.rrtype = 'PTR' THEN o.value
+                                                  ELSE o.owner_name END, '.'))) AS names
 FROM resource_record_observation AS o
 WHERE o.held_in = 'local_data'
   AND o.host_label = :label
   AND o.covered_until_at >= :at
   AND o.covered_from_at <= :at
+GROUP BY o.address
 ORDER BY o.address
-LIMIT 2;
+LIMIT 3;
 
 -- The last successful poll of one provider's records.
 -- statement: resource_record_read_at
@@ -720,9 +728,9 @@ ON CONFLICT (provider_id) DO UPDATE SET read_at = max(resource_record_read.read_
 -- nothing else. Only those ingested before :ingested_before -- the instant the lease
 -- read began -- are examined: one ingested since may postdate the leases read.
 -- statement: unresolved_hostname_lookups
-SELECT id, client_hostname, looked_up_at
+SELECT id, client_hostname, looked_up_at, client_family
 FROM dns_resolution
-WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname')
+WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname', 'dual_stack_hostname')
   AND hostname_examined_at IS NULL
   AND ingested_at < :ingested_before
 ORDER BY id;

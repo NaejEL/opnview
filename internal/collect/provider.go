@@ -290,11 +290,16 @@ type lookupRecord struct {
 	// firewall returns, so its key is composed from the row's content.
 	DeduplicationKey string
 	ClientAddress    string
-	Domain           string
-	Action           string
-	AnswerSource     *string
-	Rcode            *string
-	DNSSECStatus     *string
+	// ClientFamily is the family of the querying address, 4 or 6, where the source reports
+	// one -- even when ClientAddress is the host name its reverse lookup returned; nil
+	// otherwise. It is what decides a host name the local data holds under one IPv4 and
+	// one IPv6 address (store.ResolveLoggedHostname).
+	ClientFamily *int64
+	Domain       string
+	Action       string
+	AnswerSource *string
+	Rcode        *string
+	DNSSECStatus *string
 	// BlocklistName is empty when the source named no list, which for a blocked lookup is
 	// its own state rather than an absence.
 	BlocklistName string

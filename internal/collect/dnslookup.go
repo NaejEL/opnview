@@ -187,7 +187,8 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 		if _, err := netip.ParseAddr(clientAddress); err != nil {
 			logged := clientAddress
 			clientHostname = &logged
-			clientAddress, resolution, err = c.store.ResolveLoggedHostname(ctx, logged, record.LookedUpAt)
+			clientAddress, resolution, err = c.store.ResolveLoggedHostname(ctx, logged, record.ClientFamily,
+				record.LookedUpAt)
 			if err != nil {
 				return store.DNSResolution{}, err
 			}
@@ -216,6 +217,7 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 		ClientAddress:    clientAddress,
 		ClientHostname:   clientHostname,
 		ClientResolution: resolution,
+		ClientFamily:     record.ClientFamily,
 		ClientID:         clientID,
 		Domain:           record.Domain,
 		Resolver:         resolver,

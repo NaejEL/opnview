@@ -537,14 +537,14 @@ func (s *Store) StoreDNSResolution(ctx context.Context, lookup DNSResolution) (b
 	}
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO dns_resolution (lookup_key, client_address, client_hostname,
-		                             client_resolution, client_id, domain, resolver,
+		                             client_resolution, client_family, client_id, domain, resolver,
 		                             action, answer_source, rcode, dnssec_status, blocklist_id,
 		                             looked_up_at, ingested_at)
-		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 WHERE NOT EXISTS (SELECT 1 FROM retention_purge WHERE purged_before > ?)
 		 ON CONFLICT (lookup_key) DO NOTHING`,
 		lookup.LookupKey, lookup.ClientAddress, lookup.ClientHostname, resolution,
-		lookup.ClientID, lookup.Domain, lookup.Resolver,
+		lookup.ClientFamily, lookup.ClientID, lookup.Domain, lookup.Resolver,
 		lookup.Action, lookup.AnswerSource, lookup.Rcode, lookup.DNSSECStatus, blocklistID,
 		lookup.LookedUpAt, lookup.IngestedAt, lookup.LookedUpAt)
 	if err != nil {

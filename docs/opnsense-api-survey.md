@@ -616,6 +616,55 @@ that name or under its first label — and only when exactly one address answers
 (`docs/data-model.md`, `dns_resolution`). `UNVERIFIED:` how often a live firewall logs a host name rather than an address; it is on the
 step-5 validation list in `ROADMAP.md`.
 
+### The querying family behind a logged host name, read from source for step 5B
+
+*Read for group C of `specs/SPEC-step-5b-widget-api.md` (C1).* The question: when the report gives a host name in place of the querying
+address, and the resolver's local data holds that name under one A and one AAAA record — a host override for one dual-stack machine — can
+read-only evidence say which of the two addresses asked? Three candidates were examined, from `opnsense/core` 26.7.3 and Unbound's source.
+
+**(iii) — the row itself carries the querying family. Verified from source; this is what `opnview` builds on.**
+
+- The `query` table the report reads has a `family` column beside `client`
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/logger.py, `_setup_db`, and the pipe line written by
+  https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound-dnsbl/lib/log.py, `log_entry`, whose fields are
+  `Query.request`: `created_at, client, family, type, domain`).
+- `Query` fills `client` and `family` together, from the same Unbound reply structure: `repinfo.addr` and `repinfo.family`, or
+  `qstate.mesh_info.reply_list.query_reply.addr` and `.family`
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound-dnsbl/lib/__init__.py, class `Query`).
+- Unbound's Python module maps that `family` from the socket address's `ss_family`: `AF_INET` is `"ip4"`, `AF_INET6` is `"ip6"`,
+  `AF_UNIX` is `"unix"`, anything else `None`
+  (https://github.com/NLnetLabs/unbound/blob/release-1.24.0/pythonmod/interface.i, `_sockaddr_storage_family`, and `comm_reply`'s
+  `family` property; unchanged on `master`). Unbound sets `IPV6_V6ONLY` on its IPv6 sockets by default
+  (https://github.com/NLnetLabs/unbound/blob/release-1.24.0/services/listen_dnsport.c, `create_udp_sock` and `create_tcp_accept_sock`),
+  so an IPv4 querier arrives on an IPv4 socket and is reported `ip4`, not as an IPv4-mapped IPv6 address.
+- The report returns the column: `stats.py details` runs `SELECT * FROM query LEFT JOIN client ...`, replaces **only** `client` by the
+  reverse-resolved `hostname`, and drops only `hostname` and `ipaddr`
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/stats.py, `handle_details`); `searchQueriesAction` passes
+  every field through `searchRecordsetBase`, which copies each record's keys as they are
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/OverviewController.php and
+  https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Base/ApiControllerBase.php).
+
+So every `search_queries` row carries `family`, and on a row whose `client` is a host name it is still the family of the address that
+asked. `opnview` stores it as `dns_resolution.client_family` and resolves the dual-stack case by it (`docs/data-model.md`,
+`dns_resolution`). **`UNVERIFIED:`** that a live 26.7 firewall's rows carry the field with these values — read from source, not yet
+observed; live check L9 of the step-5B spec observes it. The Unbound release OPNsense 26.7 ships is also `UNVERIFIED:` here; the mapping is
+the same in the two Unbound sources cited.
+
+**(i) — finding the lookup again under each candidate address. Not usable; nothing is built on it.** The source does filter on the stored
+querying address: with `client`, `timeStart` and `timeEnd` all accepted, `searchQueriesAction` runs `unbound qstats query`
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_unbound.conf, `[qstats.query]`:
+`stats.py details --client %s --start %s --end %s`), and `handle_details` filters `WHERE q.client = ?` on the raw `query.client`, the
+address before the host-name join. But the windowed branch was **not honoured** on a live firewall (*The resolver window is not honoured at
+all*, below: the same span came back whatever was asked), so `UNVERIFIED:` that the branch is reachable on 26.7 at all; and the report is a
+ring buffer of the last 1000 lookups, so a lookup may be gone before a second query could look for it. It would also cost one request per
+candidate address per lookup. Candidate (iii) answers the same question from the row already read.
+
+**(ii) — local-data PTR records naming the host for one family only. Not evidence of the querier.** A PTR record maps an address to a name;
+that the local data holds a PTR for only the IPv4 address says how the override was configured, not which address asked. It is also what
+`logger.py` reads through `socket.gethostbyaddr` for whichever address asked, so the name in the report says nothing about the family
+either. `UNVERIFIED:` whether OPNsense writes a PTR record for each address of a host override; the conclusion does not depend on it.
+Nothing is built on it.
+
 ### Retention on the firewall
 
 Unbound query reporting writes to an embedded database **truncated to the last 7 days**, hourly, with a periodic compaction pass — a hard

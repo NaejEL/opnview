@@ -108,7 +108,7 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | the seconds a cached record has left | `ttl` (a string in the dump) | read into `resource_record_observation.covered_until_at` as the poll's instant plus it | same endpoint |
 | the firewall's own addresses, as a source or a destination | **This Firewall** — the rule editor's name for pf's `self` | `this_firewall`: `flow.src_is_this_firewall` / `dst_is_this_firewall`, `security_event.src_is_this_firewall`, `dns_resolution.client_is_this_firewall`, the `this_firewall_address` view, `traffic_scope = 'this_firewall'`, the directions `to_this_firewall` / `from_this_firewall`, the tree node `this_firewall`, and `blocked_decision.target_is_this_firewall` before them | <https://docs.opnsense.org/manual/how-tos/caddy.html>: "Create Firewall rules that allow `HTTP` and `HTTPS` to destination `This Firewall` on `WAN`"; `opnsense/core` 26.7.3, `src/opnsense/mvc/app/library/OPNsense/Firewall/FilterRule.php`, where the stored value `(self)` is rendered as `gettext("This Firewall")`, and `Firewall/Rule.php`, which passes `(self)` to pf unchanged; pf.conf(5), FreeBSD 15.1-RELEASE: "self Expands to all addresses assigned to all interfaces." The *manual/firewall.html* page does not carry the phrase |
 
-**Thirty-four terms are `opnview`'s own, because OPNsense has no word for them.**
+**Thirty-five terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -144,6 +144,7 @@ vocabulary read off an endpoint:
 | `domain_attribution.method` (`resolver_cache_answer`, `lookup_timing`) | neither OPNsense nor Unbound infers a site name, so neither has a word for how one was inferred | the maintainer's decision 5 of the resolver-cache cycle: `resolver_cache_answer` says the evidence is the resolver cache's **answer** to the name looked up, and `lookup_timing` says the evidence is only the **timing** of the lookup before the flow. The column reverses 5A decision D3, which had refused a column with one possible value |
 | `domain_attribution.address_observation_id` | nothing upstream names the record an inference rests on | the A or AAAA observation whose address is the flow's destination: the **address observation** a `resolver_cache_answer` matched, named so the evidence can be checked |
 | `dns_resolution.client_resolution = 'local_data_hostname'` | the query report says nothing about having replaced an address by a name, and nothing about where else the name could be resolved | decision 5 again: the host name was resolved through the resolver's **local data**, Unbound's word, after no lease named it; it sits beside `lease_hostname`, which names the leases the same way |
+| `dns_resolution.client_resolution = 'dual_stack_hostname'` | none: neither OPNsense nor Unbound names a host held under one address of each family | decision 15 of `specs/SPEC-step-5b-widget-api.md`: *dual stack* is the RFC 4213 term for a host with both an IPv4 and an IPv6 address, which is exactly what the local data says the name is; `_hostname` keeps it beside the other states of a logged host name |
 | the **coverage interval**, `resource_record_observation.covered_from_at` and `covered_until_at` | the dump gives what the cache holds at one instant and the seconds each record has left; nothing says since when a record was held | the interval over which the polls allow the resolver to have held the record: from the last successful poll before the first poll that saw it, to the latest poll plus its `ttl` (the latest poll, for local data). It is a derivation of the polls, and "covered" says that rather than claiming the record was held throughout |
 | `resource_record_observation.held_in` (`cache`, `local_data`) | the two endpoints return the same shape and nothing says which part of the resolver a record lives in | the part of the resolver the record was held in, in Unbound's own words; it repeats the provider's kind because every search starts from it |
 | `resource_record_observation.host_label` | a local-data record carries a name and nothing more | **label** is DNS's word (RFC 1035, section 2.3.1), and the column is the first label of the host name the record names -- the owner of an A or AAAA record, the target of a PTR record -- exactly as `dhcp_lease.hostname_label` is for a lease |
@@ -1269,19 +1270,43 @@ of `resource_record_observation` held in `local_data` whose owner name, and the
 PTR records whose target, has the logged name's first label — the same rule as the
 leases, through `host_label` — and that the local data held at the lookup's instant
 (`store.ResolveLoggedHostname`). Exactly one address answering gives
-`local_data_hostname`; two give `ambiguous_hostname`. Two leases naming the host
-are ambiguous whatever the local data holds: they already say two machines carried
-the name.
+`local_data_hostname`; two addresses of one family, or any three, give
+`ambiguous_hostname`. Two leases naming the host are ambiguous whatever the local
+data holds: they already say two machines carried the name.
+**The dual-stack case** (group C of `specs/SPEC-step-5b-widget-api.md`, decision
+15). A host override with an A and an AAAA record names one machine, and used to
+make every lookup logged under its name `ambiguous_hostname`. When the local data
+held **exactly one IPv4 and one IPv6 address under one name** at the lookup's
+instant — the owner of an A or AAAA record, or the target of a PTR record, compared
+without regard to case and with a trailing dot removed — the lookup's **querying
+family** decides: `client_family`, 4 or 6, read from the `family` field the query
+report carries on every row (`docs/opnsense-api-survey.md`, *The querying family
+behind a logged host name, read from source for step 5B*). With it, the lookup
+resolves to the address of that family as `local_data_hostname`. Without it — a row
+that reported no family, or `unix` — the lookup is **`dual_stack_hostname`**, its
+own state rather than a merge into `ambiguous_hostname`, because it is a different
+fact: one machine, two addresses, and no evidence which one asked. Nothing is
+guessed. The evidence is recorded **per lookup**, in `client_family`, so the retry
+below decides a waiting lookup from the same evidence ingest had. Two addresses of
+one family stay ambiguous, two addresses that share a first label but no name are two
+hosts and stay ambiguous, and a lease still wins.
 `client_resolution` records the outcome: `logged_address` (`client` was an
 address), `lease_hostname` (exactly one address answered through the leases;
 `client_address` is it and `client_hostname` the logged name), `local_data_hostname`
-(no lease named it and exactly one address answered through the local data; the
-same two columns), `ambiguous_hostname` (several did), `unknown_hostname` (neither
-a lease nor the local data named it) or `this_firewall_hostname` (`localhost`). In
-the last three cases `client_address` keeps the logged name verbatim, and the
-attribution reads no lookup that is not `logged_address`, `lease_hostname` or
-`local_data_hostname`: a name that does not resolve to one address does not say
-which machine asked.
+(no lease named it and exactly one address answered through the local data, or one
+of each family did and the querying family chose; the same two columns),
+`ambiguous_hostname` (several did), `dual_stack_hostname` (one of each family did,
+under one name, and the querying family was not reported), `unknown_hostname`
+(neither a lease nor the local data named it) or `this_firewall_hostname`
+(`localhost`). In the last four cases `client_address` keeps the logged name
+verbatim, and the attribution reads no lookup that is not `logged_address`,
+`lease_hostname` or `local_data_hostname`: a name that does not resolve to one
+address does not say which machine asked.
+**`client_family`** is the querying address's family, 4 or 6, as the query report's
+`family` field gives it (`ip4`, `ip6`), on every lookup whose row carries one, the
+address-logged ones included; NULL for a Dnsmasq lookup, a `unix` socket or an
+absent field. A `CHECK` holds it to 4 and 6. It is not part of `lookup_key`, so a
+lookup stored before the field was read keeps its key.
 
 **`client_is_this_firewall`** is 1 when the querier is this firewall — its address
 was held by the firewall at the lookup's instant, or it is a loopback address or
@@ -1291,8 +1316,9 @@ interface the address belonged to, or none for the loopback, in which case its
 
 **The retry, and the restart (cause H6).** A lookup can be read before the lease
 that names its host — every loop runs at start — so **every lease pass resolves
-again the `ambiguous_hostname` and `unknown_hostname` lookups no lease pass has
-examined since they were ingested**, each as of its own instant
+again the `ambiguous_hostname`, `dual_stack_hostname` and `unknown_hostname` lookups
+no lease pass has examined since they were ingested**, each as of its own instant
+and with its own stored querying family
 (`store.ResolveLoggedHostnames`), and stamps `hostname_examined_at`. The stamp is
 stored, so the first lease pass after a restart examines what the run before it
 left: 5A kept the point to resume from in memory, starting at the collector's
@@ -1344,7 +1370,11 @@ two:
 names by cause` in `sql/queries/diagnostics.sql` sorts every `unknown_hostname`
 lookup into the cause that left it so, and every `local_data_hostname` lookup into
 its own bin, *resolved by local data*; its last bin is now *neither a lease nor
-local data names the host*.
+local data names the host*. Since group C of `specs/SPEC-step-5b-widget-api.md` every
+`dual_stack_hostname` lookup has a bin of its own too, `dual_stack`: the local data
+named one machine under one address of each family and the lookup reported no
+querying family. A `local_data_hostname` lookup the querying family resolved stays in
+the `local_data` bin, since it is resolved.
 
 **Identity: `lookup_key`, unique — and `opnview` composes it, because the
 endpoint's own identifier does not exist.** `search_queries` returns a `uuid`

@@ -449,7 +449,10 @@ func localDataRows(hostname, address string) []map[string]any {
 // TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater is AC16 through the
 // collector, in both families and across a restart: the lookup is stored unresolved, the
 // local data naming its host arrives at a later pass, and that pass resolves it to
-// local_data_hostname. Two addresses give ambiguous_hostname.
+// local_data_hostname. Two addresses of one family give ambiguous_hostname, and, as AC16
+// is amended by group C of specs/SPEC-step-5b-widget-api.md, one A and one AAAA with no
+// querying family reported give dual_stack_hostname (the family cases are in
+// dualstack_test.go).
 func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
@@ -461,7 +464,10 @@ func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 		{"one IPv4 address", []string{"192.0.2.40"}, false, store.ClientResolutionLocalData},
 		{"one IPv6 address", []string{"2001:db8::40"}, false, store.ClientResolutionLocalData},
 		{"one address, across a restart", []string{"2001:db8::41"}, true, store.ClientResolutionLocalData},
-		{"two addresses", []string{"192.0.2.42", "2001:db8::42"}, false, store.ClientResolutionAmbiguous},
+		{"two addresses of one family", []string{"192.0.2.42", "192.0.2.43"}, false,
+			store.ClientResolutionAmbiguous},
+		{"one A and one AAAA, no family reported", []string{"192.0.2.44", "2001:db8::44"}, false,
+			store.ClientResolutionDualStack},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()

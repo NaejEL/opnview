@@ -370,13 +370,21 @@ GROUP BY k.kind, g.reason;
 
 -- diagnostic: Unresolved host names by cause
 -- Every lookup whose logged host name named no machine through the leases --
--- client_resolution 'unknown_hostname', and 'local_data_hostname', which the
--- resolver's local data resolved where no lease did -- in the window, sorted into the
+-- client_resolution 'unknown_hostname', 'local_data_hostname', which the
+-- resolver's local data resolved where no lease did, and 'dual_stack_hostname',
+-- which it held under two families -- in the window, sorted into the
 -- first cause that applies, in this order (step-5A live corrections, item 3.1, and
 -- scope D of specs/SPEC-resolver-cache-attribution.md). The leases are compared as of
 -- the lookup's instant where the cause says so:
 --   local_data       resolved by local data: exactly one address answered for the
---                    name in the resolver's local data held at the lookup's instant
+--                    name in the resolver's local data held at the lookup's instant,
+--                    or one IPv4 and one IPv6 address of one name did and the lookup
+--                    reported its querying family (group C of
+--                    specs/SPEC-step-5b-widget-api.md)
+--   dual_stack       the local data held one IPv4 and one IPv6 address of one name
+--                    at the lookup's instant, and the lookup reported no querying
+--                    family, so which of the two asked is not known
+--                    (dual_stack_hostname)
 --   this_firewall    the name is `localhost`, which names this firewall
 --   exact_match      a lease carries the logged name exactly, case aside, at the
 --                    lookup's instant
@@ -401,6 +409,7 @@ FROM (
     SELECT
         CASE
             WHEN r.client_resolution = 'local_data_hostname' THEN 'local_data'
+            WHEN r.client_resolution = 'dual_stack_hostname' THEN 'dual_stack'
             WHEN lower(rtrim(r.client_hostname, '.')) = 'localhost' THEN 'this_firewall'
             WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
                          WHERE lower(l.hostname) = lower(r.client_hostname)
@@ -446,7 +455,7 @@ FROM (
             ELSE 'neither_lease_nor_local_data'
         END AS cause
     FROM dns_resolution AS r
-    WHERE r.client_resolution IN ('unknown_hostname', 'local_data_hostname')
+    WHERE r.client_resolution IN ('unknown_hostname', 'local_data_hostname', 'dual_stack_hostname')
       AND r.looked_up_at >= :window_start
       AND r.looked_up_at < :window_end
 )
