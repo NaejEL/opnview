@@ -110,6 +110,7 @@ at every call, any path the plugins and the core have not declared.
 | `cadence_seconds`, `min_cadence_seconds` | How often a pass runs, for `reconciled_state` and a kind of the plugin's own. A kind whose cadence the collection surface sets refuses one (`cadence_invalid`). |
 | `triggered_by` | Core notifications that also run a pass, for a provider that states its own cadence: below. |
 | `probe`, `read` | The declarative form, below. A provider declaring neither is served by the script. |
+| `live` | A live pass, for a `measurement_sample` provider served by a script: *Live pass*, below. |
 
 **A provider is served by the script, or declared.** A script exports, under the kind's name, the
 functions the kind's contract lists. A provider whose source is one endpoint answering rows can
@@ -130,6 +131,44 @@ read as `epoch`, `iso_time`, `syslog_time`, `filter_log_time` (instants; the fir
 applied), `port`, `mac`, `now` (the pass's own instant) or `shape` (the JSON shape the field arrived
 in); or a constant `value`. A field the record does not have is refused (`mapping_field_unknown`),
 and so is a required field left unmapped (`mapping_field_missing`).
+
+### Live pass
+
+A `measurement_sample` provider served by a script may declare a **live pass**: a second pass that
+reads only the endpoints it names, run at a cadence the plugin declares as a setting, and only while
+somebody looks at a live figure -- while the core's live-interest lease holds (`docs/widget-api.md`,
+*Live figures*). Its readings are stored as **fine samples**, marked with the cadence they were taken
+at and purged after `live_sample_retention_seconds`; the baseline `sample` pass runs at the
+measurement interval throughout, whether anyone looks or not.
+
+```json
+"settings": [
+  { "key": "live_cadence_seconds", "type": "integer", "default": 10, "min": 2, "max": 300,
+    "label": "plugin.insight.setting.live_cadence_seconds" }
+],
+"providers": [
+  { "kind": "measurement_sample", "display_name": "NetFlow / Insight sampling",
+    "live": { "function": "live", "cadence_setting": "live_cadence_seconds",
+              "endpoints": ["traffic_top", "traffic_interface"] } }
+]
+```
+
+| Key | What it is |
+|---|---|
+| `function` | The function the script exports under the kind's name, called as `sample` is -- `(host, discovery, now)` -- and answering a `sample_answer`. |
+| `cadence_setting` | A declared `integer` setting with a `default` and a `min` of at least 1: the live cadence, in seconds. The cadence in force is never below that `min`, nor below the `floor_seconds` of the endpoints the pass reads. |
+| `endpoints` | The only endpoints the live pass may read, by their names; a stream is refused. |
+
+The live pass's requests carry the live cadence as their max age, so the broker classes them
+real-time at or below its threshold (5 s by default) and coalesces every reader of one datum into one
+call. **Stamp each reading with the answer's `fetched_at`** (`readObject` answers one too), not with
+`now`: when the baseline pass falls due during live mode the broker serves it the live pass's answer
+from the mirror, and the same capture stamped with the same instant is promoted to a baseline sample
+rather than stored twice. A live pass declared on another kind or on a declarative provider, naming a
+function the script does not export, a cadence setting that is not such an integer, or an endpoint the
+manifest does not declare or declares as a stream, is refused (`live_pass_invalid`). In a plugin's own
+tests, `t.call(kind, function, ...)` calls a live pass's function as the service does: under its
+default cadence, reading only its endpoints.
 
 ### Notifications
 
@@ -224,7 +263,7 @@ Every function is handed the **host** first, then the arguments its contract lis
 |---|---|
 | `host.call(name, options)` | Asks for a declared endpoint's answer. `options` may carry `query`, `form`, `json` and `arguments`, and `max_age_seconds` and `after` (below). Answers `{endpoint, outcome, ok, status_code, detail, value, decodable, body, body_bytes, availability_outcome, served_from, fetched_at, age_seconds, gaps, replaced_by, error, refused, json()}`. |
 | `host.readCollection(name, ...wrappers)` | Calls an endpoint and reads its rows exactly as the core reads a collection: `{rows, ok, error}`. |
-| `host.readObject(name)` | Calls an endpoint and reads its object: `{object, ok, error}`. |
+| `host.readObject(name)` | Calls an endpoint and reads its object: `{object, ok, fetched_at, error}`, `fetched_at` the instant the answer was fetched, which the mirror may have held. |
 | `host.serviceState(name)` | Reads an OPNsense service status: `{running, state, outcome, detail, error}`. |
 | `host.stream(name, {events, within_seconds})` | Reads a bounded server-sent event stream: `{events, values, outcome, ended_by, error}`. |
 | `host.events(name, cursor)` | The events of a stream's shared subscription received after a cursor the script holds, without waiting: `{values, events, cursor, connected, gaps, error}`. The first call subscribes. |
@@ -354,7 +393,8 @@ override reaches the running loop.
 Settings are written through `POST /api/plugins/<name>/settings` and listed by
 `GET /api/plugins` (`docs/widget-api.md`). A value outside its declaration is refused with a closed
 condition naming the key (`unknown_setting`, `invalid_setting_value`, `setting_out_of_range`), and
-nothing is written. **A secret is stored encrypted with the key file beside the database, and no
+nothing is written. A `null` value removes a setting that is not a secret, as emptying its field on
+the settings page does, and its declared default is in force again. **A secret is stored encrypted with the key file beside the database, and no
 endpoint ever returns it**: the listing says only whether it is set.
 
 ## Fetching and files
@@ -468,6 +508,7 @@ a recorded answer in `testdata/`, `{"__provenance__": {...}, "body": ...}`; `fil
 | `unique_key_without_time` | A table with a time column has a primary key or a unique index that omits it. |
 | `widget_missing` | A widget the manifest names has no directory. |
 | `string_outside_namespace` | A catalogue string is outside the plugin's namespace. |
+| `live_pass_invalid` | A live pass is declared where it cannot run, or names a function, a cadence setting or an endpoint wrongly: see *Live pass*. |
 
 ## OPNsense versions
 
@@ -745,6 +786,7 @@ is a number, a string or `null`: an integer sum is a number, and a comparison is
 | `coverFlows(state)`, `coverFlowsState(state)` | Records the coverage of a reading of the flows alone, and the named state when part of the window lies past the retention horizon (`""` for none). |
 | `earliest(name)` | The instant one of the core's `widget_earliest_*` statements reads, or `null`: `widget_earliest_flow`, `widget_earliest_lookup`, `widget_earliest_security_event` and `widget_earliest_sample` are the oldest record each source kind keeps. |
 | `availability()`, `gaps()` | The availability and the gaps the response carries. |
+| `availabilitySince()` | When each registered provider's current state began, by `"<kind>/<provider key>"`: `{after_at, by_at, state}`, the state began after `after_at` and by `by_at` -- the two checks of opnview's own that bound the change, never an exact instant -- or, with both `null`, `state` naming why: `state_change_not_observed` (no check has seen the state begin) or `state_unknown` (no availability row). |
 | `readGaps(kinds, window)` | The gaps of other kinds or another window. |
 | `kindCondition(kind)` | The condition of a provider kind: its active providers' best. |
 | `hourFreshness(from, to)` | Records the freshness of the 1 h slots of `[from, to)`. |
@@ -841,8 +883,25 @@ totals and not the method.
 
 | Function | What it answers |
 |---|---|
-| `rows()` | The window's site figures, filtered by the request's `interfaces` and `clients` references: `[{site, client_id, interface_id, method, country_code, asn, operator, flows, bytes, delay_sum, delay_max}]`. `method` is `resolver_cache_answer`, `lookup_timing`, or `not_recorded_beyond_flow_horizon` for a row read from the slots, whose delays are `null`. Reading them records the window's coverage, and the named state `site_methods_not_recorded_beyond_flow_horizon` when slots were read. |
-| `accumulate(name, rows)` | The table row a list of those rows sums to, named `name`: `{name, flows, bytes, clients, client_ids, methods, mean_delay_seconds, max_delay_seconds, country_code, asn, operator}`. `methods` is the named flows per method; the delays are `null` when no row was timed; the country and operator are those that carried most of the row's bytes, `null` when none of its destinations was placed. |
+| `rows()` | The window's site figures over its eligible flows (the attribution rate's rule), filtered by the request's `interfaces` and `clients` references: `[{site, client_id, interface_id, method, country_code, asn, operator, flows, bytes, delay_sum, delay_max}]`. `method` is `resolver_cache_answer`, `lookup_timing`, or `not_recorded_beyond_flow_horizon` for a row read from the slots, whose delays are `null`. Reading them records the window's coverage, and the named state `site_methods_not_recorded_beyond_flow_horizon` when slots were read. |
+| `accumulate(name, rows)` | The table row a list of those rows sums to, named `name`: `{kind, name, flows, bytes, clients, client_ids, methods, mean_delay_seconds, max_delay_seconds, country_code, asn, operator}`, `kind` being `site`. `methods` is the named flows per method; the delays are `null` when no row was timed; the country and operator are those that carried most of the row's bytes, `null` when none of its destinations was placed. |
+| `addresses()` | The window's eligible flows no site name was inferred for, per destination address, filtered as `rows()` is: `[{address, client_id, interface_id, lookup_state, country_code, asn, operator, flows, bytes}]`; `lookup_state` is `resolved`, `miss`, `pending`, or `no_row` for an address never looked up. Eligible is the attribution rate's rule (`host.attribution`), so a partly named address gives its named flows to the site rows and the rest here, and the site rows read from the flows and these rows make the window's eligible flows. No aggregate keeps these rows per address, so a window reaching past the flow horizon records the named state `unnamed_destinations_beyond_flow_horizon` and its purged hours have none. |
+| `accumulateAddress(address, rows)` | The table row of one address: `{kind, address, flows, bytes, clients, client_ids, lookup_state, country_code, asn, operator}`, `kind` being `address`. |
+
+#### `host.flows`
+
+The window's flows by their columns, whichever source wrote them: the parts of a composition by
+protocol, service port or blocking reason, its recent part, and the destination levels of a
+connection tree. A filter is `{scope, interfaces, clients}`: a traffic scope (`all`, or absent, for
+every one) and id lists, `null` for no restriction. Every figure counts each connection once.
+
+| Member | What it answers |
+|---|---|
+| `parts(filter)` | The window's flows per direction, protocol, destination port and decision: `[{traffic_direction, protocol, port, decision}` and their summable figures`]`. |
+| `recent(seconds, filter)` | The logged flows of the trailing `seconds` before now, in buckets of at least a second (a sixtieth of the span, rounded up): `{from, to, bucket_seconds, complete_until, buckets, parts}`. `complete_until` is when the filter log's active provider last ended a pass healthy, `null` when none did; `buckets` is `[{from, to, gap}]`, a bucket after `complete_until`, before the earliest flow kept or meeting a collection gap being a gap, never a zero; `parts` is `[{bucket_start, traffic_direction, protocol, port, decision, interface_id, client_id}` and their summable figures`]`. |
+| `destinations()` | The window's connections per inside end, direction, outside destination, site name, port and protocol: `[{interface_id, client_id, owner_id, traffic_direction, peer_address, lookup_state, asn, site_name, port, protocol, connections, bytes, blocked, blocked_bytes, newest}]`. Under `aggregate_mode = no_domains` the core reads no site name at all, so every `site_name` is `null` and the answer is the one a database with no attribution would give. |
+| `serviceKey(protocol, port)` | The key of a service, its port and protocol together, as IANA identifies a service by both: `port:53/udp`, and `port:not_recorded` when no port was logged. |
+| `decisions` | The decisions of a logged record, by name: `allowed`, the `blocked_decision` view's `firewall_rule`, `firewall_no_rule` and `firewall_reason_not_recorded` for a refused one, and `unknown` for an action nobody read. |
 
 #### `host.attribution`
 
@@ -870,10 +929,13 @@ never a client, and a second leg is its first leg's connection.
 
 #### `host.rates`
 
-The current rates, from the latest `traffic/top` samples of Insight: a second measure, `sampled`,
-never summed with the logged one. A subject with no current sample reads its named absence,
-`no_current_sample`, never a rate of `0`. Every rate is `{state, measure, in_bits_per_second,
-out_bits_per_second, out_measured, sampled_at}`.
+The current rates, from the latest samples of the `measurement_sample` kind, fine or baseline,
+whichever provider wrote them: a second measure, `sampled`, never summed with the logged one. A
+subject with no current sample reads its named absence, `no_current_sample`, and one older than twice
+its cadence `stale_sample`, its figures beside it; never a rate of `0`. Every rate is `{state,
+measure, in_bits_per_second, out_bits_per_second, out_measured, sampled_at, span_seconds,
+cadence_seconds, lower_bound}` (`docs/widget-api.md`, *Live figures*). Reading one renews the
+live-interest lease.
 
 | Function | What it answers |
 |---|---|
@@ -897,6 +959,7 @@ is an id list, or `null` for no restriction, as `host.refs.ids` answers it.
 | `placement(geo)` | `""` for an address placed with coordinates, otherwise its unplaced bin: `miss`, `pending`, `no_row` or `no_coordinates`. |
 | `placementState(geo)` | The bin of an address the geolocation did not resolve: `miss`, `pending` or `no_row`. |
 | `bins(reasons)` | Unplaced bins, every reason present even at zero: `{add(reason, figures, addresses), list(), total()}`. `list()` is `[{reason, addresses, volume}]` in the order the reasons were first named; `total()` the summable figures of every bin. |
+| `bins(reasons, true)` | The same bins, listing their addresses: `addAddress(reason, address, figures)` adds one address's figures, an address counting once however often it is added, and each bin of `list()` also carries `members`, `[{address, volume}]` by bytes then address, summing to the bin. A destination nothing names is shown by its address, never folded into a count alone. |
 | `reasons` | The unplaced bins, by name: `miss`, `pending`, `no_row`, `no_coordinates`, `east_west`, `this_firewall` (`this_firewall_without_outside_end`), `other_endpoint`. |
 
 #### `host.mapfilters`
@@ -977,6 +1040,12 @@ arithmetic on the address, never by a guess about a name.
 answer carries a domain name: a widget built on them declares `"no_domains": "whole"` and is withheld
 entirely, and one that shows a name beside other figures sets it to `null` and records the field
 with `host.envelope.withhold`. `host.query.carriesDomain` says which statements read one.
+**The core enforces it for a widget that is not built in**, so its author has nothing to do: under
+`no_domains`, a call of `host.query.rows` or `host.query.row` on a statement that carries a domain
+name is not run, the script is stopped (an interruption no `catch` intercepts), and the answer is
+withheld whole -- condition `withheld_by_aggregate_mode`, `data` null, `"data"` in `withheld`
+(maintainer's decision, 12 October 2026). A third party's widget that checks
+`host.query.carriesDomain` first and reads another statement instead keeps its answer.
 
 ### Testing a widget
 

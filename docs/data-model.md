@@ -170,6 +170,9 @@ vocabulary read off an endpoint:
 | a **datum** (`opnsense.mirror_datum`) | an endpoint answers one request at a time; nothing names "one endpoint called with one set of identifying parameters, on one firewall" | **datum**, the thing the broker refreshes, serves and records reads of; two requests differing only by a page or a window are one datum (A10) |
 | the **max age** of a request | OPNsense answers now, every time, and has no notion of an answer young enough | **max age** is HTTP's own word for how old a stored answer may be and still be served (RFC 9111, section 5.2.1.1), and it means that here (A11) |
 | the **freshness floor** of an endpoint | nothing upstream says how often an endpoint may usefully be asked | the shortest interval an endpoint is refreshed at -- the largest of its declared floor and its median latency -- below which a request is served at the floor's age (A12) |
+| **live interest**, the lease a request for a live figure renews (`live_interest_seconds`) | OPNsense's dashboard polls the firewall itself and has no notion of a reader asking a third party for a live figure | it says what the lease stands for: somebody's interest in a live figure, which lapses when nobody renews it |
+| the **live cadence** of a live pass, and the **live pass** itself | OPNsense has one cadence per widget of its own dashboard and no notion of a second pass that runs only while someone looks | **live** is the word the mockup's strip and the spec use; the cadence is the declaring plugin's setting (`docs/plugins.md`, *Live pass*) |
+| a **fine sample**, `measurement_sample.live_cadence_seconds IS NOT NULL` | nothing upstream keeps a reading at all, so it has no word for two resolutions of one | **fine** against **baseline**: a sample taken at the live cadence, kept `live_sample_retention_seconds`, beside the samples of the measurement interval |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
@@ -257,6 +260,7 @@ measurement_sample
 opnview_downtime
 opnview_heartbeat
 owner
+owner_reassigned_hour
 owner_volume_aggregate_1h
 owner_volume_aggregate_24h
 owner_volume_aggregate_30d
@@ -376,6 +380,7 @@ interface_map
 interface_network
 opnview_heartbeat
 owner
+owner_reassigned_hour
 plugin_aside_table
 plugin_state
 plugin_table
@@ -396,6 +401,7 @@ Why each bounded table is bounded, and may therefore be scanned:
 |---|---|
 | `interface` | one row per discovered interface; a firewall has tens, not millions |
 | `owner` | one row per person the user created; a household or an office has tens, and a row is only ever created by hand |
+| `owner_reassigned_hour` | one row per hour slot a change of ownership invalidated, from the change to the next refresh of the aggregates, which deletes the rows it read; seconds at most, and a change is made by hand (*Refresh contract*, rule 3) |
 | `blocklist` | one row per distinct list name the resolver has reported; a resolver subscribes to tens of lists, not millions |
 | `interface_map` | one row per raw device name the firewall reports |
 | `retention_purge` | exactly one row, the furthest horizon the purge has applied |
@@ -930,7 +936,11 @@ would leave that flow unable to name a machine, and removing one the purged part
 a kept hour names would take its bytes out of the client, peer, owner and domain
 families. So a client older than the horizon is kept **when, and only when,** one of
 those still names it after the rest of the purge has run — the purged part's own
-expired hours are removed first.
+expired hours are removed first. **A client somebody assigned to a person is never
+purged** (C1 of `specs/SPEC-backend-completion-plugins.md`): the assignment is user
+input, so the machine outlives the retention as the person does, and is still there to
+be listed, reassigned or unassigned when it next appears. Unassigned, it is purged as
+before.
 
 **This firewall is never a client, and the neighbour tables list it.**
 `/api/diagnostics/interface/get_arp` and `get_ndp`, read by every lease pass, carry
@@ -2175,9 +2185,19 @@ ingesting concurrently, which passes `now` as the watermark:
    instants of every flow it touched, so a slot a flow moved **out of** is
    recomputed as well as the slot it moved into. Reassigning a client to another
    owner invalidates every slot holding one of its flows, because ownership is an
-   attribute of the person and not of the flow; the code path that will assign
-   owners (step 7) passes those flows' instants as forced instants, and none
-   exists yet.
+   attribute of the person and not of the flow, and no flow's `ingested_at` moves,
+   so rule 4 cannot see it. **The write that changes ownership records those slots
+   itself** (`internal/store/owners.go`): assigning, reassigning or unassigning a
+   client records, in the same transaction, every kept 1 h slot of the client family
+   holding the client's traffic -- beyond the flow horizon as well as inside it --
+   in `owner_reassigned_hour`, and deleting a person records every slot of the
+   owner family that person stood in and removes those rows. The next refresh
+   reads the recorded hours as forced instants, rewriting the hour and the day,
+   week and month holding it, and deletes exactly the rows it read once it has
+   rewritten them, so a change made while it runs waits for the next one. Until
+   then the widget API's `freshness` counts each such hour in `stale_slots`. It is
+   the one recorded invalidation of the contract: the change it records leaves no
+   trace in the flows for the recognition rule to find.
 4. `computed_at` is the refresh's **watermark**, not its clock: the instant
    before which every flow stamped with an `ingested_at` is known to have been
    committed when the slot was read. A filter-log pass stamps every row with the
@@ -2191,7 +2211,9 @@ ingesting concurrently, which passes `now` as the watermark:
    cannot be ordered, so equal is stale -- or it holds rows while neither a flow nor
    a purged part remains inside it. The refresh selects slots from the
    `ingested_at` and the `purged_at` of the previous refresh's watermark onward.
-   That comparison is the recognition rule; no dirty flag exists. Two tests
+   That comparison is the recognition rule; no dirty flag exists for anything the
+   flows record, and a change of ownership, which they do not, is recorded as rule 3
+   says. Two tests
    reproduce the race it closes: a refresh running before a pass's row commits, and
    one running between two rows of one pass while the slot already holds the first.
 
@@ -2333,6 +2355,16 @@ and lookup inserts refuse such a record, inside the insert statement (see
 `purged_flow_hour`). It only moves forward. The purge writes it; it is absent until
 the first purge with a finite retention, and `store.PurgedBefore` reads it.
 **Retention:** bounded, one row, never purged.
+
+### `owner_reassigned_hour` — an hour slot a change of ownership invalidated
+
+One row per hour slot a change of ownership invalidated and no refresh has rewritten
+yet: `hour_start_at`, the hour, and `recorded_at`, when the change was made. A change
+of ownership moves no flow's `ingested_at`, so the recognition rule cannot see it; the
+write that makes it records the slots here, the next refresh reads them as forced
+instants and deletes exactly the rows it read, and the widget API counts them stale
+until then (*Refresh contract*, rule 3). The term is `opnview`'s own: no product it
+reads has owners. **Retention:** bounded, emptied by the refresh, never purged.
 
 ### Classification — which interface an address sits behind
 
@@ -2863,6 +2895,22 @@ volume, and `/api/diagnostics/system/systemResources`,
 `/api/diagnostics/cpu_usage/stream` and
 `/api/diagnostics/traffic/interface` for the firewall's own gauges. Survey,
 *Verified against a live firewall, 2026-09-27*.
+
+**Fine and baseline samples (C3 of the backend-completion cycle).** A baseline sample
+is taken by the `sample` pass at `poll_interval_measurement_seconds`, whether anyone
+looks or not, and follows `retention_seconds`. A **fine sample** is taken by a
+provider's live pass (`docs/plugins.md`, *Live pass*) at its live cadence, only while
+the live-interest lease holds, and carries that cadence in `live_cadence_seconds`;
+the purge removes it after `live_sample_retention_seconds` (an hour by default), to
+the exact second. Both are written at the instant the firewall's answer was fetched.
+When the baseline pass falls due during live mode, the broker serves it the live
+pass's answer from the mirror, so it writes the same readings at the same instant,
+and the conflict **promotes** the fine row to a baseline one (`live_cadence_seconds`
+set to null) instead of storing it twice: one round of calls serves both, the
+baseline series has no hole, and no reading is counted twice. Nothing summarises the
+fine samples before they are purged (the maintainer's answer (a) to open question 1).
+A current rate is read from the newest reading of either kind and judged stale past
+twice its own cadence (`docs/widget-api.md`, *Live figures*).
 
 **The processor, corrected by the resolver-cache cycle.** The processor figure was
 read, until then, from `/api/diagnostics/activity/getActivity` under invented keys
@@ -3437,7 +3485,8 @@ added to `purged_flow_hour`, per hour and per every key an aggregate family read
 so an hour slot computed afterwards still counts them. An hour or a day slot, and
 an hour's purged part, is kept beyond its own end for as long as the ISO week and
 the calendar month holding it, because a week or a month is composed from them. A
-client the purged part still names is not removed, so no family loses its bytes,
+client the purged part still names is not removed, so no family loses its bytes, a
+client assigned to a person is not removed either (*`client`*, *Retention*),
 and a lookup that an attribution of a surviving flow names is kept, so no flow
 loses its site name while it is kept: the lookup can lie up to the attribution
 delay before the horizon while its flow lies after it. A resolver record an

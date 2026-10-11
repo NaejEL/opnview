@@ -53,12 +53,15 @@ test("site names are ranked by attributed flows, with the window's attribution b
   t.equal(answer.status, 200, "the status");
   var data = answer.body.data;
   t.equal(data.grouping, "site_name", "not grouped");
-  t.equal(data.rows.map(function (row) { return [row.name, row.flows.value, row.clients]; }),
-    [["example.org", 2, 1], ["example.net", 1, 1]], "the ranking");
+  t.equal(data.rows.map(function (row) { return [row.kind, row.name || row.address, row.flows.value, row.clients]; }),
+    [["site", "example.org", 2, 1], ["site", "example.net", 1, 1], ["address", "203.0.113.7", 1, 1]],
+    "the ranking, the flow no name was inferred for shown by its address");
+  t.equal([data.rows[2].lookup_state, data.rows[2].country_code, data.rows[2].asn, data.rows[2].operator],
+    ["no_row", null, null, null], "the address never looked up says so");
   t.equal(data.rows[0].client_ids, [10], "who reached example.org");
   t.equal(data.rows[0].methods, { resolver_cache_answer: 0, lookup_timing: 2, not_recorded_beyond_flow_horizon: 0 },
     "its flows per method");
-  t.equal([data.total.members, data.total.count.value], [2, 3], "the total");
+  t.equal([data.total.members, data.total.count.value], [3, 4], "the total: every eligible flow");
   t.equal([data.attribution.eligible_flows.value, data.attribution.named_flows.value, data.attribution.rate],
     [4, 3, 0.75], "the window's attribution");
   t.golden("two_sites.json", answer.raw);
@@ -68,13 +71,32 @@ test("limit and min_flows set names aside, and the parts make the total", functi
   seed(t);
   var data = t.widget("top_sites", { limit: 1 }).body.data;
   t.equal(data.rows.map(function (row) { return row.name; }), ["example.org"], "the first name alone");
-  t.equal([data.remainder.members, data.remainder.count.value], [1, 1], "example.net past the limit");
+  t.equal([data.remainder.members, data.remainder.count.value], [2, 2], "example.net and the address past the limit");
   var minimum = t.widget("top_sites", { min_flows: 2 }).body.data;
-  t.equal([minimum.below_min_flows.members, minimum.below_min_flows.count.value], [1, 1], "example.net below it");
+  t.equal([minimum.below_min_flows.members, minimum.below_min_flows.count.value], [2, 2],
+    "example.net and the address below it");
 });
 
 test("a client reference narrows the names to that client's", function (t) {
   seed(t);
   var data = t.widget("top_sites", { clients: [{ kind: "client", by: "mac", value: "00:11:22:33:44:66" }] }).body.data;
   t.equal(data.rows.map(function (row) { return row.name; }), ["example.net"], "client 11's name");
+});
+
+test("a partly named address gives its named flows to the site and the rest to its address row",
+  function (t) {
+    seed(t);
+    t.sql("INSERT INTO geo_asn (address, provider_id, lookup_state, country_code, asn, operator, " +
+      "dataset_build_at, looked_up_at) VALUES ('203.0.113.7', (SELECT id FROM provider WHERE kind = " +
+      "'ip_geolocation' ORDER BY id LIMIT 1), 'resolved', 'NL', 64500, 'Example Operator', :at, :at)",
+      { at: AT - 600 });
+    var data = t.widget("top_sites").body.data;
+    var address = data.rows.filter(function (row) { return row.kind === "address"; });
+    t.equal(address.map(function (row) {
+      return [row.address, row.flows.value, row.bytes.value, row.country_code, row.asn, row.operator, row.lookup_state];
+    }), [["203.0.113.7", 1, 500, "NL", 64500, "Example Operator", "resolved"]],
+    "the address's unnamed flow, with its operator and its country");
+    var sum = data.rows.reduce(function (total, row) { return total + row.flows.value; }, 0);
+    t.equal(sum + data.remainder.count.value + data.below_min_flows.count.value,
+      data.attribution.eligible_flows.value, "the rows make the eligible flows");
 });

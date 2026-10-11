@@ -56,6 +56,10 @@ test("both sides sum to the same total, and each node's children sum to the node
   data.outside.forEach(function (node) {
     t.equal(sum(node.children), node.bytes.value, node.key + " sums to its children");
   });
+  t.equal(data.outside.map(function (node) {
+    return node.children.map(function (child) { return [child.key, child.address, child.lookup_state]; });
+  }), [[["address:203.0.113.7", "203.0.113.7", "miss"]], [["address:203.0.113.8", "203.0.113.8", "no_row"]]],
+  "each destination no name was inferred for is a node of its own, by its address");
   t.golden("three_flows.json", answer.raw);
 });
 
@@ -68,6 +72,21 @@ test("include_blocked = false leaves blocked connections out whole, and depth = 
     t.equal(shallow.inside.map(function (node) { return node.key; }), ["client:10", "client:11"], "the clients");
     t.assert(shallow.inside.every(function (node) { return !("children" in node); }), "no second level");
   });
+
+test("depth = 3 adds the service, port and protocol together, below each destination", function (t) {
+  seed(t);
+  t.sql("UPDATE flow SET dst_port = 443 WHERE id = 1", {});
+  var data = t.widget("connection_tree", { period: "1h", depth: 3 }).body.data;
+  var services = data.outside[0].children[0].children;
+  t.equal(services.map(function (node) {
+    return [node.key, "port" in node ? node.port : null, "protocol" in node ? node.protocol : null, node.bytes.value];
+  }),
+    [["port:443/tcp", 443, "tcp", 3000], ["port:not_recorded", null, null, 200]],
+    "the services of 203.0.113.7, summing to it");
+  t.assert(data.inside.every(function (node) {
+    return node.children.every(function (child) { return !("children" in child); });
+  }), "the inside side keeps its two levels");
+});
 
 test("limit_per_level folds the rest into a remainder node that keeps the level whole", function (t) {
   seed(t);

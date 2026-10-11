@@ -111,7 +111,9 @@ exports.widget = {
     var reasons = host.peers.reasons;
     var flows = leftFlows(host, left, host.params.text("scope"), host.refs.ids("interfaces"));
 
-    var unnamed = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row]);
+    // Each unnamed bin lists its addresses with their figures, which sum to the bin: a destination the
+    // right-hand side cannot name is still shown by its address (C2).
+    var unnamed = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row], true);
     var pairs = {};
     var pairList = [];
     var nodes = {};
@@ -142,7 +144,7 @@ exports.widget = {
       } else {
         var geo = host.services.geolocation(flow.peer);
         if (geo.lookup_state !== "resolved") {
-          unnamed.add(host.peers.placementState(geo), flow.figures, 1);
+          unnamed.addAddress(host.peers.placementState(geo), flow.peer, flow.figures);
           other = host.figures.add(other, flow.figures);
           return;
         }

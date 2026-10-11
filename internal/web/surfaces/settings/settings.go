@@ -204,11 +204,9 @@ func (s *surface) handleSettingsSubmit(writer http.ResponseWriter, request *http
 	verification := msgVerifyNotAttempted
 	switch card {
 	case settingsCardFirewall:
-		if firewallURL != "" {
-			if err := validateFirewallURL(firewallURL); err != nil {
-				refuse(msgFirewallURLInvalid)
-				return
-			}
+		if refusal := firewallURLRefusal(firewallURL); refusal != "" {
+			refuse(refusal)
+			return
 		}
 		// THE FETCH BUTTON STORES NOTHING. It connects, shows the fingerprint of the
 		// certificate the firewall presents, and redraws the form with it in the field;
@@ -220,50 +218,17 @@ func (s *surface) handleSettingsSubmit(writer http.ResponseWriter, request *http
 			s.showPresentedCertificate(writer, request, firewallURL)
 			return
 		}
-		// Normalised rather than refused for its punctuation: OPNsense displays a
-		// fingerprint colon-separated and upper-case, and that is what a reader pastes.
-		fingerprint, err := opnsense.ParseFingerprint(fingerprintTyped)
-		if err != nil {
-			refuse(msgFingerprintInvalid)
+		fingerprint, refusal := firewallCredentialRefusal(apiKey, apiSecret, fingerprintTyped)
+		if refusal != "" {
+			refuse(refusal)
 			return
 		}
-		// A secret with no key beside it cannot authenticate anything, and storing one
-		// would leave the surface reporting a readable credential that cannot be used.
-		if apiSecret != "" && apiKey == "" {
-			refuse(msgAPIKeyRequired)
-			return
-		}
-		for _, write := range []struct{ key, value string }{
-			{config.KeyOPNsenseBaseURL, firewallURL},
-			{config.KeyOPNsenseAPIKey, apiKey},
-			{config.KeyOPNsenseCertificateFingerprint, fingerprint},
-		} {
-			if err := s.writeSetting(ctx, write.key, write.value, now); err != nil {
-				s.FailInternal(writer, request, err)
-				return
-			}
-		}
-		if err := s.storeSecret(ctx, store.CredentialOPNsenseAPISecret, apiSecret, now); err != nil {
-			s.FailInternal(writer, request, err)
-			return
-		}
-		// THE LIVE HOLDER, through the same path start-up uses. This is what makes
-		// the change reach the running collectors.
-		credentials, _, err := config.LoadFirewallCredentials(ctx, s.store, s.unsealer())
+		var err error
+		verification, err = s.saveFirewall(ctx, firewallURL, apiKey, apiSecret, fingerprint, now)
 		if err != nil {
 			s.FailInternal(writer, request, err)
 			return
 		}
-		s.credentials.Set(credentials)
-		// The pooled connections were shaken hands over the PREVIOUS fingerprint, and
-		// the certificate is checked once per handshake. Without this, correcting a pin
-		// would leave a connection open that the new pin does not accept, and the
-		// verification below would report a firewall that answers on a trust decision
-		// that is no longer in force.
-		s.client.CloseIdleConnections()
-		// One call to the firewall, and the only one this package makes. It is the
-		// first of the permitted outbound calls and not another; see verify.go.
-		verification = s.verify(ctx)
 
 	case settingsCardGeolocation:
 		// MaxMind account IDs are numbers; anything else would only be refused by
@@ -306,25 +271,20 @@ func (s *surface) handleSettingsSubmit(writer http.ResponseWriter, request *http
 		// surface's intervals do: the configuration is loaded again and handed to the
 		// live holder, which the loop asks before every wait.
 		if changed {
-			if err := s.store.SetSetting(ctx, config.KeyPublicSuffixRefreshInterval,
-				seconds, now); err != nil {
-				s.FailInternal(writer, request, err)
-				return
-			}
-			if err := s.ApplyConfiguration(ctx); err != nil {
+			if err := s.savePublicSuffixInterval(ctx, seconds, now); err != nil {
 				s.FailInternal(writer, request, err)
 				return
 			}
 		}
 
 	case settingsCardAppearance:
-		parsedTheme, err := web.ParseTheme(request.PostFormValue("theme"))
+		refusal, err := s.saveTheme(ctx, request.PostFormValue("theme"), now)
 		if err != nil {
-			refuse(msgThemeUnknown)
+			s.FailInternal(writer, request, err)
 			return
 		}
-		if err := s.store.SetSetting(ctx, config.KeyTheme, string(parsedTheme), now); err != nil {
-			s.FailInternal(writer, request, err)
+		if refusal != "" {
+			refuse(refusal)
 			return
 		}
 	}

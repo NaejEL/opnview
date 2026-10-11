@@ -681,54 +681,28 @@ func (s *surface) savePolledKind(writer http.ResponseWriter, request *http.Reque
 	}
 	intervalName := cardFieldName(kind.Kind, fieldInterval)
 	secondsText, refusal := web.TypedDuration(draft[intervalName], draft[web.UnitFieldName(intervalName)])
-	var seconds int64
-	if refusal == "" {
-		seconds, refusal = web.TypedIntervalSeconds(secondsText)
-	}
 	if refusal != "" {
 		refuse(intervalName, refusal)
 		return
 	}
-	selections := map[string]config.Selection{}
+	sent := map[string]string{}
 	for _, provider := range providers {
-		field := cardFieldName(kind.Kind, fieldSelectionPrefix+provider.ProviderKey)
-		value, sent := draft[field]
-		if !sent {
-			continue
+		if value, present := draft[cardFieldName(kind.Kind, fieldSelectionPrefix+provider.ProviderKey)]; present {
+			sent[provider.ProviderKey] = value
 		}
-		selection, err := config.ParseSelection(value)
-		if err != nil {
-			refuse(field, msgCollectionValueInvalid)
-			return
-		}
-		selections[provider.ProviderKey] = selection
 	}
-
-	now := s.now().UTC().Unix()
-	if err := s.store.SetSetting(ctx, kind.IntervalKey, strconv.FormatInt(seconds, 10), now); err != nil {
-		s.FailInternal(writer, request, err)
+	edit, refusal, refused := checkPolledEdit(providers, secondsText, sent)
+	if refusal != "" {
+		field := intervalName
+		if provider, isSelection := strings.CutPrefix(refused, editFieldSelection); isSelection {
+			field = cardFieldName(kind.Kind, fieldSelectionPrefix+provider)
+		}
+		refuse(field, refusal)
 		return
 	}
-	for _, provider := range providers {
-		selection, chosen := selections[provider.ProviderKey]
-		if !chosen {
-			continue
-		}
-		if err := s.store.SetSetting(ctx, config.KeySourceSelection(kind.Kind, provider.ProviderKey),
-			string(selection), now); err != nil {
-			s.FailInternal(writer, request, err)
-			return
-		}
-	}
-	if err := s.ApplyConfiguration(ctx); err != nil {
+	if err := s.savePolledEdit(ctx, kind, providers, edit); err != nil {
 		s.FailInternal(writer, request, err)
 		return
-	}
-	if s.collector != nil {
-		if err := s.collector.Reselect(ctx, kind.Kind); err != nil {
-			s.FailInternal(writer, request, err)
-			return
-		}
 	}
 	s.finishCollectionSave(writer, request, &collectionPage{draft: draft, except: kind.Kind,
 		settings: &settingsFeedback{card: kind.Kind, notice: msgCollectionSaved}}, kind.Kind)
@@ -751,51 +725,29 @@ func (s *surface) saveSettingCard(writer http.ResponseWriter, request *http.Requ
 		s.renderCollectionPage(writer, request, http.StatusBadRequest, &collectionPage{draft: draft,
 			settings: &settingsFeedback{card: spec.ID, refused: field, refusal: refusal}}, "")
 	}
-	values := map[string]string{}
-	for _, setting := range spec.Settings {
+	values, refusal, refused := checkSettingCard(ctx, s.store, spec, func(setting settingSpec) (string, messageKey) {
 		seconds := strings.TrimSpace(draft[setting.Key])
 		if setting.Duration {
-			var refusal messageKey
-			if seconds, refusal = web.TypedDuration(seconds, draft[web.UnitFieldName(setting.Key)]); refusal != "" {
-				refuse(setting.Key, refusal)
-				return
-			}
+			return web.TypedDuration(seconds, draft[web.UnitFieldName(setting.Key)])
 		}
-		if refusal := typedSetting(ctx, s.store, setting, seconds); refusal != "" {
-			refuse(setting.Key, refusal)
-			return
-		}
-		values[setting.Key] = seconds
-	}
-	// And all of them together, which is what will be in force.
-	if !web.AcceptedByLoad(ctx, s.store, values) {
-		refuse(spec.Settings[0].Key, spec.Settings[0].RefusalKey)
+		return seconds, ""
+	})
+	if refusal != "" {
+		refuse(refused, refusal)
 		return
 	}
-
-	if horizon, present := values[config.KeyRetentionSeconds]; present &&
-		request.PostFormValue(fieldConfirm) != horizon {
-		settings, err := s.Configuration(ctx)
-		if err != nil {
-			s.FailInternal(writer, request, err)
-			return
-		}
-		if shortens(settings.RetentionSeconds, horizon) {
-			s.renderCollectionPage(writer, request, http.StatusOK, &collectionPage{draft: draft,
-				settings: &settingsFeedback{card: spec.ID, notice: msgRetentionConfirm, confirm: true,
-					pending: values}}, "")
-			return
-		}
+	confirm, err := s.needsRetentionConfirmation(ctx, values, request.PostFormValue(fieldConfirm))
+	if err != nil {
+		s.FailInternal(writer, request, err)
+		return
 	}
-
-	now := s.now().UTC().Unix()
-	for _, setting := range spec.Settings {
-		if err := s.store.SetSetting(ctx, setting.Key, values[setting.Key], now); err != nil {
-			s.FailInternal(writer, request, err)
-			return
-		}
+	if confirm {
+		s.renderCollectionPage(writer, request, http.StatusOK, &collectionPage{draft: draft,
+			settings: &settingsFeedback{card: spec.ID, notice: msgRetentionConfirm, confirm: true,
+				pending: values}}, "")
+		return
 	}
-	if err := s.ApplyConfiguration(ctx); err != nil {
+	if err := s.saveSettingValues(ctx, spec, values); err != nil {
 		s.FailInternal(writer, request, err)
 		return
 	}

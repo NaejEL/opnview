@@ -148,6 +148,7 @@
         "state": "named",
         "sites": [
           {
+            "kind": "site",
             "name": "example.org",
             "flows": {
               "measure": "logged",
@@ -170,6 +171,28 @@
             },
             "mean_delay_seconds": 3,
             "max_delay_seconds": 4,
+            "country_code": null,
+            "asn": null,
+            "operator": null
+          },
+          {
+            "kind": "address",
+            "address": "203.0.113.7",
+            "flows": {
+              "measure": "logged",
+              "lower_bound": true,
+              "value": 1
+            },
+            "bytes": {
+              "measure": "logged",
+              "lower_bound": true,
+              "value": 500
+            },
+            "clients": 1,
+            "client_ids": [
+              10
+            ],
+            "lookup_state": "no_row",
             "country_code": null,
             "asn": null,
             "operator": null
@@ -248,6 +271,7 @@
         "state": "named",
         "sites": [
           {
+            "kind": "site",
             "name": "example.net",
             "flows": {
               "measure": "logged",

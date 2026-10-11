@@ -145,6 +145,10 @@ exports.widget = {
         interface: row.interface_id === null ? null : host.installation.interface(row.interface_id),
         target: target,
         target_kind: row.target_kind,
+        // An address target's port and protocol, null where the record logged none and for a
+        // domain target.
+        port: row.port,
+        protocol: row.protocol,
         target_is_this_firewall: row.target_is_this_firewall === 1 || row.target_is_this_firewall === true
       };
     });

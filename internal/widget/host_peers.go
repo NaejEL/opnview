@@ -27,6 +27,11 @@ import (
 //	host.peers.bins(reasons)            unplaced bins, each reason present even at zero: {add(reason,
 //	                                    figures, addresses), list(), total()}; list() is [{reason,
 //	                                    addresses, volume}] in the order the reasons were first named
+//	host.peers.bins(reasons, true)      the same, listing each bin's addresses: addAddress(reason,
+//	                                    address, figures) adds one address's figures, an address
+//	                                    counting once however often it is added, and each bin of
+//	                                    list() carries members: [{address, volume}], by bytes then
+//	                                    address, summing to the bin
 //	host.peers.reasons                  the unplaced bins, by name: miss, pending, no_row,
 //	                                    no_coordinates, east_west, this_firewall, other_endpoint
 //
@@ -104,8 +109,18 @@ func init() {
 			return call.vm.ToValue(PlacementState(call.peerGeoOf(arguments.Argument(0))))
 		})
 		call.function(area, "bins", func(arguments goja.FunctionCall) goja.Value {
-			bins := NewUnplacedBins(call.textsOf(arguments.Argument(0), "the reasons")...)
+			reasons := call.textsOf(arguments.Argument(0), "the reasons")
+			bins := NewUnplacedBins(reasons...)
+			if !absent(arguments.Argument(1)) && arguments.Argument(1).ToBoolean() {
+				bins = NewListedUnplacedBins(reasons...)
+			}
 			object := call.vm.NewObject()
+			call.function(object, "addAddress", func(arguments goja.FunctionCall) goja.Value {
+				reason := call.textOf(arguments.Argument(0), "the reason")
+				address := call.textOf(arguments.Argument(1), "the address")
+				bins.AddAddress(reason, address, call.figuresOf(arguments.Argument(2), "the figures"))
+				return goja.Undefined()
+			})
 			call.function(object, "add", func(arguments goja.FunctionCall) goja.Value {
 				reason := call.textOf(arguments.Argument(0), "the reason")
 				figures := call.figuresOf(arguments.Argument(1), "the figures")

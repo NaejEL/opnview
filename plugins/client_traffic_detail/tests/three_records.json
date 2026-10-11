@@ -179,7 +179,10 @@
       "in_bits_per_second": null,
       "out_bits_per_second": null,
       "out_measured": false,
-      "sampled_at": null
+      "sampled_at": null,
+      "span_seconds": null,
+      "cadence_seconds": null,
+      "lower_bound": true
     },
     "leases": [],
     "records": [

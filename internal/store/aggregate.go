@@ -118,6 +118,13 @@ func (s *Store) RefreshAggregatesAt(ctx context.Context, since, watermark, now i
 	if err != nil {
 		return result, err
 	}
+	// The hours a change of ownership invalidated (owners.go): forced, like the instants a
+	// re-pointed identity forces, and forgotten once this refresh has rewritten them.
+	reassigned, err := readReassignedHours(ctx, s.db)
+	if err != nil {
+		return result, err
+	}
+	forced = append(append([]int64(nil), forced...), reassigned.hours...)
 	horizon, bounded, err := queryOptionalInt(ctx, s.db, "flow_horizon", map[string]any{"now": now})
 	if err != nil {
 		return result, err
@@ -172,6 +179,9 @@ func (s *Store) RefreshAggregatesAt(ctx context.Context, since, watermark, now i
 			}
 			result.Rewritten = append(result.Rewritten, SlotRef{Period: period.Name, Start: start})
 		}
+	}
+	if err := forgetReassignedHours(ctx, s.db, reassigned.ids); err != nil {
+		return result, err
 	}
 	// Every slot rewritten is committed: the listeners hear which periods changed.
 	if len(result.Rewritten) > 0 {

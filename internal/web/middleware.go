@@ -62,6 +62,10 @@ func (s *Server) guard(route Route) http.HandlerFunc {
 				return
 			}
 			if exists {
+				if route.JSON {
+					RefuseJSON(writer, http.StatusForbidden, ConditionSetupClosed, "")
+					return
+				}
 				s.refuseSetupClosed(writer, request)
 				return
 			}
@@ -101,9 +105,23 @@ func (s *Server) guard(route Route) http.HandlerFunc {
 		}
 
 		// 4. The key file, on the one route authorised by possession of it.
-		if route.Access == AccessKeyFile && !s.keyFilePresented(request) {
-			s.refuseKeyFile(writer, request, route)
-			return
+		if route.Access == AccessKeyFile {
+			// A page presents the key file as a form field, a JSON write as its body's
+			// "key_file" member; the handler still reads the whole body.
+			presented := ""
+			if route.JSON {
+				presented, request = keyFileFromJSON(request)
+			} else {
+				presented = request.PostFormValue("key_file")
+			}
+			if !s.keyFileMatches(presented) {
+				if route.JSON {
+					RefuseJSON(writer, http.StatusForbidden, ConditionKeyFileRefused, "")
+					return
+				}
+				s.refuseKeyFile(writer, request, route)
+				return
+			}
 		}
 
 		route.Handler(writer, request)
@@ -164,13 +182,24 @@ const HeaderCSRFToken = "X-CSRF-Token"
 // wrong, another session's, or sent from another origin.
 const ConditionCSRFRefused = "csrf_refused"
 
-// jsonProofValid is the form token rule for a JSON write. A JSON write is made by the application
-// with a session, so the expected token is always the session's own; it travels in a header, which
+// jsonProofValid is the form token rule for a JSON write. With a session the expected token is the
+// session's own; it travels in a header, which
 // a page of another origin cannot set without the browser asking this server first; the body is
 // JSON, which no plain HTML form can send; and an Origin header, when the browser sends one, names
 // this server's own host.
+//
+// WITHOUT A SESSION -- the JSON setup, sign-in and reset, the only JSON writes a reader with no
+// session reaches -- the expected token is the one in this browser's own cookie, exactly as a
+// page's form is compared with it (formTokenValid); the application reads it from
+// GET /api/session, which sets that cookie as a page draw does.
 func (s *Server) jsonProofValid(request *http.Request, session *store.Session) bool {
-	if session == nil || session.CSRFToken == "" {
+	expected := ""
+	if session != nil {
+		expected = session.CSRFToken
+	} else if cookie, err := request.Cookie(cookieCSRF); err == nil {
+		expected = cookie.Value
+	}
+	if expected == "" {
 		return false
 	}
 	if mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type")); err != nil ||
@@ -187,20 +216,19 @@ func (s *Server) jsonProofValid(request *http.Request, session *store.Session) b
 		return false
 	}
 	submitted := request.Header.Get(HeaderCSRFToken)
-	return submitted != "" && subtle.ConstantTimeCompare([]byte(submitted), []byte(session.CSRFToken)) == 1
+	return submitted != "" && subtle.ConstantTimeCompare([]byte(submitted), []byte(expected)) == 1
 }
 
-// keyFilePresented reports whether the request carried the contents of the key
+// keyFileMatches reports whether what the request presented is the contents of the key
 // file beside the database.
 //
 // A MISSING KEY FILE REFUSES RATHER THAN ACCEPTING ANYTHING. If this installation
 // has no key file, there is nothing to possess and so nothing authorises a reset:
 // the box is nil and every submission fails.
-func (s *Server) keyFilePresented(request *http.Request) bool {
+func (s *Server) keyFileMatches(presented string) bool {
 	if s.box == nil {
 		return false
 	}
-	presented := request.PostFormValue("key_file")
 	if presented == "" {
 		return false
 	}

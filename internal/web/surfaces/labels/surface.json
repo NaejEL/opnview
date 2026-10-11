@@ -1,0 +1,4 @@
+{
+  "name": "labels",
+  "description": "The labels the user gives interfaces and the purposes the user gives blocklists, in JSON."
+}

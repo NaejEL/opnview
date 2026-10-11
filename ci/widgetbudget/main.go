@@ -47,12 +47,13 @@ func main() {
 	label := flag.String("label", "", "the seed's name, for the report")
 	budgetDay := flag.Duration("budget-24h", 0, "the budget of a 24h response")
 	budgetMonth := flag.Duration("budget-30d", 0, "the budget of a 30d response")
+	budgetLive := flag.Duration("budget-live", 0, "the budget of the live part of a response; zero times none")
 	flag.Parse()
 	if *database == "" || *now == 0 || *budgetDay == 0 || *budgetMonth == 0 {
 		fmt.Fprintln(os.Stderr, "widgetbudget: -database, -now, -budget-24h and -budget-30d are required")
 		os.Exit(2)
 	}
-	if err := run(*database, *now, *label, map[string]time.Duration{"24h": *budgetDay, "30d": *budgetMonth}); err != nil {
+	if err := run(*database, *now, *label, map[string]time.Duration{"24h": *budgetDay, "30d": *budgetMonth, "live": *budgetLive}); err != nil {
 		fmt.Fprintln(os.Stderr, "widgetbudget:", err)
 		os.Exit(1)
 	}
@@ -101,6 +102,11 @@ func run(dsn string, now int64, label string, budgets map[string]time.Duration) 
 	}
 	if err := timeDatasets(ctx, service, label, budgets, &counts); err != nil {
 		return err
+	}
+	if budgets["live"] > 0 {
+		if err := timeLive(ctx, database, now, label, budgets["live"], &counts); err != nil {
+			return err
+		}
 	}
 	switch {
 	case counts.over > 0 && counts.empty > 0:

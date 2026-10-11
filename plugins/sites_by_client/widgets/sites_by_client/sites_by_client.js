@@ -1,21 +1,27 @@
 // sites_by_client: clients down the side, their top inferred site names across, each cell carrying
 // the flow count, the logged bytes and the named flows per method; a client with no attributed flow
 // keeps its row and says no site name could be inferred, with its attribution rate beside it
-// (docs/widget-catalogue.md, "Sites by client"). Withheld whole under aggregate_mode = no_domains
+// (docs/widget-catalogue.md, "Sites by client"). A destination no name was inferred for is a cell of
+// its own, by its address with its operator and country, ranked with the names and truncated by the
+// same sites_per_client and min_flows. Withheld whole under aggregate_mode = no_domains
 // (decision 6).
 
-// bySiteRank orders a client's sites by flows, most first, then by name in byte order.
+// bySiteRank orders a client's sites and addresses by flows, most first, then the site rows before
+// the address rows, each by its name or address in byte order.
 function bySiteRank(host) {
   return function (a, b) {
     if (a.flows.value !== b.flows.value) {
       return a.flows.value > b.flows.value ? -1 : 1;
     }
-    return host.figures.compare(a.name, b.name);
+    if (a.kind !== b.kind) {
+      return a.kind === "site" ? -1 : 1;
+    }
+    return a.kind === "site" ? host.figures.compare(a.name, b.name) : host.figures.compare(a.address, b.address);
   };
 }
 
-// totalFlows is a client row's named flows: those shown, those past the limit and those below
-// min_flows.
+// totalFlows is a client row's eligible flows: those shown, those past the limit and those below
+// min_flows, named or by address.
 function totalFlows(row) {
   var total = row.remainder.count.value + row.below_min_flows.count.value;
   row.sites.forEach(function (site) {
@@ -45,6 +51,26 @@ exports.widget = {
       }
       sites.get(row.site).push(row);
     });
+    // The destinations of each client no name was inferred for, by address: each a cell of its own,
+    // ranked with the names, never one unnamed bucket (C2).
+    var addressesPerClient = new Map();
+    var addresses = host.sites.addresses();
+    addresses.forEach(function (row) {
+      if (row.client_id === null) {
+        return;
+      }
+      if (!addressesPerClient.has(row.client_id)) {
+        addressesPerClient.set(row.client_id, new Map());
+      }
+      var byAddress = addressesPerClient.get(row.client_id);
+      if (!byAddress.has(row.address)) {
+        byAddress.set(row.address, []);
+      }
+      byAddress.get(row.address).push(row);
+      if (!perClient.has(row.client_id)) {
+        perClient.set(row.client_id, new Map());
+      }
+    });
     // A client with eligible flows and no named one keeps its row.
     host.attribution.clients().forEach(function (id) {
       if (!perClient.has(id)) {
@@ -63,8 +89,12 @@ exports.widget = {
         return;
       }
       var sites = [];
+      var named = perClient.get(id).size;
       perClient.get(id).forEach(function (siteRows, name) {
         sites.push(host.sites.accumulate(name, siteRows));
+      });
+      (addressesPerClient.get(id) || new Map()).forEach(function (addressRows, address) {
+        sites.push(host.sites.accumulateAddress(address, addressRows));
       });
       sites.sort(bySiteRank(host));
       var shown = [];
@@ -86,7 +116,7 @@ exports.widget = {
       // The members in the order the matrix's rows have always been written in.
       var entry = {
         client: info,
-        state: sites.length === 0 ? "no_site_name_inferred" : "named",
+        state: named === 0 ? "no_site_name_inferred" : "named",
         sites: shown,
         remainder: host.figures.remainder(restMembers, null, rest),
         below_min_flows: host.figures.remainder(belowMembers, null, below)
@@ -105,6 +135,6 @@ exports.widget = {
       }
       return a.client.id - b.client.id;
     });
-    return { data: { rows: answer }, has_rows: rows.length > 0 };
+    return { data: { rows: answer }, has_rows: rows.length > 0 || addresses.length > 0 };
   }
 };

@@ -39,7 +39,7 @@ func init() {
 		},
 		Routes: func(host web.Host) []web.Route {
 			s := newSurface(host)
-			return []web.Route{
+			return append(s.apiRoutes(), []web.Route{
 				{Method: http.MethodGet, Pattern: web.PathSetup, Access: web.AccessPublic,
 					RequiresNoAccount: true, Page: pageSetup, Handler: s.handleSetupForm},
 				{Method: http.MethodPost, Pattern: web.PathSetup, Access: web.AccessPublic,
@@ -59,7 +59,7 @@ func init() {
 					Page: pageRecover, Handler: s.handleRecoverForm},
 				{Method: http.MethodPost, Pattern: web.PathRecover, Access: web.AccessKeyFile,
 					Page: pageRecover, Handler: s.handleRecoverSubmit},
-			}
+			}...)
 		},
 		Notices:  []web.MessageKey{msgSetupDone, msgPasswordReset, msgSignedOut},
 		Refusals: []web.MessageKey{msgSignInRefused},

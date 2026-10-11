@@ -35,12 +35,12 @@ func init() {
 		Pages: []web.Page{{Name: pageSettings, TitleKey: msgTitleSettings, Refusal: refusalView}},
 		Routes: func(host web.Host) []web.Route {
 			s := newSurface(host)
-			return []web.Route{
+			return append([]web.Route{
 				{Method: http.MethodGet, Pattern: web.PathSettings, Access: web.AccessAuthenticated,
 					Handler: s.handleSettingsForm},
 				{Method: http.MethodPost, Pattern: web.PathSettings, Access: web.AccessAuthenticated,
 					Page: pageSettings, Handler: s.handleSettingsSubmit},
-			}
+			}, s.apiRoutes()...)
 		},
 		Tab:     &web.Tab{Page: pageSettings, Path: web.PathSettings, TitleKey: msgTitleSettings, Order: 10},
 		Notices: []web.MessageKey{msgSettingsSaved},

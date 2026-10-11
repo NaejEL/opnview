@@ -129,6 +129,9 @@ type ProviderDeclaration struct {
 	// without a script. A provider declaring neither is served by the script.
 	Probe *ProbeDeclaration `json:"probe,omitempty"`
 	Read  *ReadDeclaration  `json:"read,omitempty"`
+	// Live declares a live pass: a pass reading only live endpoints, run at a live cadence while
+	// somebody looks at a live figure (live.go, docs/plugins.md "Live pass"). Optional.
+	Live *LiveDeclaration `json:"live,omitempty"`
 }
 
 // ProbeDeclaration is a declarative probe.

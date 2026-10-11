@@ -264,6 +264,9 @@ type Collector struct {
 	services services
 	// hooks are the test hooks of the purge's ordering, zero outside a test.
 	hooks orderingHooks
+	// live is the live sampling: the lease it runs under and when each live pass last ran
+	// (live.go).
+	live liveSampling
 }
 
 // New returns a collector. The client is the only thing in opnview that builds an

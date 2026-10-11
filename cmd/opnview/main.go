@@ -40,6 +40,7 @@ import (
 	"github.com/NaejEL/opnview/internal/buildinfo"
 	"github.com/NaejEL/opnview/internal/collect"
 	"github.com/NaejEL/opnview/internal/config"
+	livelease "github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/secret"
@@ -62,6 +63,16 @@ const shutdownDeadline = 20 * time.Second
 const httpGrace = 5 * time.Second
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "measure-cost" {
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+		err := runMeasureCost(ctx, os.Args[2:], os.Stdout, os.Stderr)
+		stop()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", buildinfo.AppName, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "plugin" {
 		if err := runPluginCommand(context.Background(), os.Args[2:], os.Stdout); err != nil {
 			fmt.Fprintf(os.Stderr, "%s: %v\n", buildinfo.AppName, err)
@@ -260,6 +271,13 @@ func run() (err error) {
 	if err != nil {
 		return err
 	}
+	// THE LIVE-INTEREST LEASE: renewed by every request for a live figure, read by the live sampling
+	// loop, its length the live_interest_seconds the live holder carries (internal/live).
+	interest := livelease.New(func() time.Duration {
+		return time.Duration(live.Get().LiveInterestSeconds) * time.Second
+	})
+	server.Widgets().SetLiveInterest(interest)
+	collector.SetLiveInterest(interest)
 	// A refused operator widget is reported with its reason and the service starts without it.
 	for _, refusal := range server.Widgets().Refusals() {
 		fmt.Fprintf(os.Stderr, "%s: operator widget not loaded: %v\n", buildinfo.AppName, &refusal)

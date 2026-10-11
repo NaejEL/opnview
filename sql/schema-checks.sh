@@ -3797,18 +3797,20 @@ section 'S5B-AC18 — every served widget type answers within its response budge
 # reported beside its budget, and a figure over its budget fails the run. P-AC20 of
 # specs/SPEC-backend-completion-plugins.md adds the default query of every core dataset of
 # the data catalogue, under the same budgets. ci/widgetbudget opens the seed through the
-# store, as the product does, which only reads it.
+# store, as the product does, which only reads it. C-AC14 adds, on the 1 000 000-row seed,
+# the live part of a response -- the current rates and the rolling strip -- whose median is
+# held to 100 ms.
 budget_seed() {
-    local db="$1" label="$2" day="$3" month="$4"
+    local db="$1" label="$2" day="$3" month="$4" live="${5:-0}"
     if (cd "$REPO_ROOT" && go run ./ci/widgetbudget -database "$(dsn "$db")" -now "$NOW" -label "$label" \
-        -budget-24h "$day" -budget-30d "$month"); then
+        -budget-24h "$day" -budget-30d "$month" -budget-live "$live"); then
         pass "S5B-AC18 every served type answers within its budget on the $label seed"
     else
         fail "S5B-AC18 a served type is over its response budget on the $label seed"
     fi
 }
 budget_seed "$MAIN_DB" 100k 250ms 500ms
-budget_seed "$SCALE_DB" 1m 1s 2s
+budget_seed "$SCALE_DB" 1m 1s 2s 100ms
 
 # ===========================================================================
 section 'S5B-AC35 — the wall time of ReclassifyEverything at the 1 000 000-row seed'

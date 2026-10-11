@@ -1208,6 +1208,97 @@ against a live firewall.
   load (`docs/plugins.md`, *OPNsense versions*) until a read-only source is found. UNVERIFIED: whether
   another endpoint reports an installed package's version without a catalogue update.
 
+### Live rate endpoints, read from source for C3 (backend completion)
+
+Read from the 26.7.3 source on 11 October 2026 for the live rate (C3 and C4 of
+`specs/SPEC-backend-completion-plugins.md`); none of it is measured on a live firewall yet.
+
+- **`traffic/top` is one capture of about two seconds per call, whatever the interface count.**
+  `traffic_top.py` submits one `iftop -nNb -i <device> -s 2 -t` per interface to a
+  `ThreadPoolExecutor` and waits for all of them, each with a 10-second timeout
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/interfaces/traffic_top.py).
+  The captures run concurrently, so a call lasts about two seconds plus the script's start-up, and
+  no answer is fresher than its capture: **2 seconds is the lower bound of the live cadence**, and
+  the `insight` plugin declares it as the endpoint's `floor_seconds`. iftop is run **without `-P`**,
+  so its lines carry addresses and no port: neither the endpoint nor any figure derived from it can
+  give a rate by port or by protocol.
+- **`traffic/interface`** is the configd action `interface show traffic`, `traffic_stats.php`
+  with no argument: one read of `legacy_interface_stats()` per enabled, non-virtual interface,
+  cumulative counters, with the instant `time` of the read
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/interfaces/traffic_stats.php).
+- **`/api/diagnostics/traffic/stream/<interval>`, `TrafficController::streamAction`.**
+  UNVERIFIED: against a live firewall. In source it is the configd stream `interface stream traffic`,
+  `traffic_stats.php <interval>` with `type:stream_output`
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_interface.conf):
+  a loop printing, every `max(1, interval)` seconds, one `event: message` whose data is
+  `{interfaces: {<identifier>: {inbytes, outbytes, inpkts, outpkts, inerrs, outerrs, collisions,
+  name}}, time}` -- the **increase** of each counter since the previous event, the first event
+  measured against the counters read at the script's start. The controller holds the connection for
+  `interval + 1` seconds of inactivity. **Nothing is built on it this cycle** (the maintainer's
+  decision): the live pass polls `traffic/interface`.
+- **The pf state table: two read actions, neither built.**
+  - `POST /api/diagnostics/firewall/query_states`, `FirewallController::queryStatesAction`
+    (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/FirewallController.php),
+    is the configd action `filter list states`, `list_states.py` over `lib/states.py`'s
+    `query_states`, which runs `/sbin/pfctl -vvs state` and reads `/tmp/rules.debug`
+    (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/filter/lib/states.py). Each row
+    carries `iface`, `proto`, `src_addr`/`src_port`, `dst_addr`/`dst_port`, `nat_addr`/`nat_port`,
+    `direction`, `state`, `age`, `expires`, the rule `label`, and `pkts` and `bytes` as
+    **cumulative `[in, out]` pairs since the state was created**. It writes nothing: the read actions
+    beside it, `del_state`, `kill_states`, `flush_states` and `flush_sources`, are separate commands
+    the client's mutating list refuses.
+  - `POST /api/diagnostics/firewall/query_pf_top`, `queryPfTopAction`, is `filter diag top`,
+    `pftop.py` over `query_top`: `pftop -w 1000 -b -v long 200000`, rows of `proto`, `dir`,
+    addresses and ports, `state`, `age`, `expire`, `pkts`, `bytes` (rounded to K, M or G) and `avg`
+    (bytes per second over the state's whole life), with a configd `cache_ttl` of 30 seconds
+    (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_filter.conf).
+  - **Verdict.** Both read without side effect, and a rate by port and protocol could be derived from
+    the difference of a state's cumulative bytes between two `query_states` reads. They are **not
+    built**: each call walks the whole state table on the firewall (`pfctl -vvs state`), its cost at
+    a live cadence is unmeasured (LV-C has not run), `query_pf_top`'s figures are 30 seconds stale at
+    best and its `avg` is a lifetime mean, not a rate, and the push sources planned next (NetFlow v9
+    and IPFIX received by opnview itself, `ROADMAP.md`) carry the rate by port and protocol per flow,
+    which would supersede a state-table poller. `docs/widget-api.md`, *Live figures*, states the rate
+    by port or protocol as unavailable.
+
+### LV-C: measuring the firewall-side cost
+
+The live cadence's default and every built-in freshness floor are to be the **finest interval adding
+at most 2 processor percentage points over the idle baseline** on a live firewall (C3.0 and LV-C of
+`specs/SPEC-backend-completion-plugins.md`). Until that measurement is run, they are conservative
+defaults marked pending LV-C: the `insight` plugin's `live_cadence_seconds` is 10 s, and the only
+floor declared, `traffic/top`'s 2 s, is the capture span above, a fact of the source and not a cost.
+
+`opnview measure-cost` measures it, read-only, beside the running service: it reads the firewall's
+address and credentials from the installation's database (no instance lock, read-only transactions)
+and its key file, and asks the firewall only through the broker, under its read-only rule. It
+subscribes to `/api/diagnostics/cpu_usage/stream` for the whole run, samples it alone for the idle
+baseline, then polls the endpoint at each candidate cadence, finest first, for the given duration.
+An endpoint taking interface names is polled with every interface identifier at once, as the
+`insight` plugin polls it.
+
+```
+docker compose run --rm dev go build -o /tmp/opnview ./cmd/opnview
+/tmp/opnview measure-cost --data-dir <data-dir> --database <connection> \
+    --endpoint /api/diagnostics/traffic/top --idle 15m --duration 15m --cadences 2s,5s,10s,30s,60s
+```
+
+`--method` names the method where a path has two entries; `--query key=value` and `--form key=value`
+(repeatable) add a poll's parameters. The endpoint must be in the compiled registry or a built-in
+plugin's manifest. It prints JSON on standard output and its progress on standard error:
+
+| Field | Meaning |
+|---|---|
+| `idle` | the baseline: `processor_samples`, `processor_percent` |
+| `cadences[]` | per candidate: `cadence_seconds`, `polls`, `failures`, `processor_percent`, `added_points` over the baseline, `latency_median_ms`, `latency_p95_ms`, `response_bytes_median`, `within_threshold` |
+| `floor_seconds` | the finest cadence adding at most `threshold_points` (2) with no failed poll, or null |
+
+A processor reading is `total / (total + idle)` of one stream event, the stream's first event --
+iostat's average since boot -- discarded, as the `insight` plugin reads it. The report holds
+proportions and timings only; what it finds is recorded here as such, and the floors are then written
+into the built-in manifests with a citation of the measurement. One endpoint is measured per run:
+runs of several endpoints at once are separable only if their costs are shown to be (Risk 37).
+
 ### Suricata, on that firewall
 
 `enabled: 1`, running on two internal interfaces and not on WAN —

@@ -130,17 +130,34 @@ func (s *surface) typedPublicSuffixInterval(request *http.Request) (seconds stri
 	if refusal != "" {
 		return "", false, refusal
 	}
+	return s.publicSuffixInterval(request.Context(), secondsText)
+}
+
+// publicSuffixInterval reads a refresh interval in seconds, as the page and the JSON route both
+// carry it once its unit is applied: refused as every interval is, and then by config.Load.
+// changed is false when it is the interval already in force.
+func (s *surface) publicSuffixInterval(ctx context.Context, secondsText string) (seconds string, changed bool,
+	refusal messageKey) {
 	parsed, refusal := web.TypedIntervalSeconds(secondsText)
 	if refusal != "" {
 		return "", false, refusal
 	}
-	if !web.AcceptedByLoad(request.Context(), s.store,
+	if !web.AcceptedByLoad(ctx, s.store,
 		map[string]string{fieldPublicSuffixInterval: secondsText}) {
 		return "", false, msgCollectionValueInvalid
 	}
-	settings, err := s.Configuration(request.Context())
+	settings, err := s.Configuration(ctx)
 	if err == nil && time.Duration(parsed)*time.Second == settings.PublicSuffixRefreshInterval {
 		return secondsText, false, ""
 	}
 	return secondsText, true, ""
+}
+
+// savePublicSuffixInterval stores a refresh interval and hands the configuration to the running
+// loop, which asks the live holder before every wait.
+func (s *surface) savePublicSuffixInterval(ctx context.Context, seconds string, now int64) error {
+	if err := s.store.SetSetting(ctx, config.KeyPublicSuffixRefreshInterval, seconds, now); err != nil {
+		return err
+	}
+	return s.ApplyConfiguration(ctx)
 }

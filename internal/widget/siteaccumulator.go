@@ -7,6 +7,9 @@ import (
 
 // siteTableRow is one site name, or one registrable domain grouping several.
 type siteTableRow struct {
+	// Kind is DestinationKindSite: a table ranking site rows and address rows together says which
+	// each row is.
+	Kind string `json:"kind"`
 	Name string `json:"name"`
 	// SiteNames are the names a registrable-domain row groups.
 	SiteNames []string     `json:"site_names,omitempty"`
@@ -37,7 +40,7 @@ type SiteAccumulator struct {
 }
 
 func NewSiteAccumulator(name string) *SiteAccumulator {
-	return &SiteAccumulator{row: siteTableRow{Name: name, Flows: LoggedCount(0), Bytes: LoggedCount(0)},
+	return &SiteAccumulator{row: siteTableRow{Kind: DestinationKindSite, Name: name, Flows: LoggedCount(0), Bytes: LoggedCount(0)},
 		clients: map[int64]bool{}, geoBytes: map[string]int64{}, geo: map[string][3]any{}}
 }
 

@@ -71,6 +71,11 @@ const (
 	// is not its own: plugin.<name>.*, provider.<kind>.<key> of a provider it declares, or
 	// collection.kind.<kind> of a kind of its own. A plugin cannot redefine a word of the core's.
 	RefusalStringOutsideNamespace = "string_outside_namespace"
+	// RefusalLivePassInvalid is a live pass declared by a provider of a kind that has none, by a
+	// provider no script serves, naming a function the script does not export, a cadence setting
+	// that is not a declared integer setting with a default and a lower bound of at least one
+	// second, or an endpoint the manifest does not declare or declares as a stream.
+	RefusalLivePassInvalid = "live_pass_invalid"
 )
 
 // Refusal is one plugin the loader would not load, with its closed code.

@@ -339,3 +339,22 @@ func yesNo(value bool) messageKey {
 	}
 	return msgNo
 }
+
+// verbatimDetail is a provider's availability detail as data, null when there is none: the JSON
+// answer carries it verbatim, as the page draws it, and nothing reads it.
+func verbatimDetail(row store.SourceRow) *string {
+	if !row.HasDetail {
+		return nil
+	}
+	detail := row.Detail
+	return &detail
+}
+
+// verbatimGapDetail is a collection gap's detail as data, null when there is none.
+func verbatimGapDetail(gap store.RecentGap) *string {
+	if !gap.HasDetail {
+		return nil
+	}
+	detail := gap.Detail
+	return &detail
+}

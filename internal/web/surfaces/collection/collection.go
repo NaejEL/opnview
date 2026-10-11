@@ -181,81 +181,30 @@ func (s *surface) handleCollectionSubmit(writer http.ResponseWriter, request *ht
 
 	// Every figure and every selection is checked before anything is stored.
 	secondsText, refusal := web.TypedDuration(draft[intervalName], draft[web.UnitFieldName(intervalName)])
-	var seconds int64
-	if refusal == "" {
-		seconds, refusal = web.TypedIntervalSeconds(secondsText)
-	}
 	if refusal != "" {
 		refuse(refusal, intervalName)
 		return
 	}
-	var pageSize int
-	if kind.PageIsAdjustable() {
-		pageSize, refusal = typedPageSize(draft[pageName])
-		if refusal != "" {
-			refuse(refusal, pageName)
-			return
-		}
-	}
-	selections := make(map[string]config.Selection, len(providers))
+	sent := map[string]string{}
 	for _, provider := range providers {
-		field := cardFieldName(kind.Kind, fieldSelectionPrefix+provider.ProviderKey)
-		value, sent := draft[field]
-		if !sent {
-			continue
-		}
-		selection, err := config.ParseSelection(value)
-		if err != nil {
-			refuse(msgCollectionValueInvalid, field)
-			return
-		}
-		selections[provider.ProviderKey] = selection
-	}
-
-	// A page size above the firewall's ceiling is STORED and reported as above it:
-	// refusing it would hide the measurement that shows why it was typed. The
-	// interval was bounded above already, by what a duration can hold.
-	now := s.now().UTC().Unix()
-	if kind.PageIsAdjustable() {
-		if err := s.store.SetSetting(ctx, kind.PageSizeKey, strconv.Itoa(pageSize),
-			now); err != nil {
-			s.FailInternal(writer, request, err)
-			return
+		if value, present := draft[cardFieldName(kind.Kind, fieldSelectionPrefix+provider.ProviderKey)]; present {
+			sent[provider.ProviderKey] = value
 		}
 	}
-	if err := s.store.SetSetting(ctx, kind.IntervalKey, strconv.FormatInt(seconds, 10),
-		now); err != nil {
-		s.FailInternal(writer, request, err)
+	edit, refusal, refused := checkKindEdit(kind, providers, secondsText, draft[pageName], sent)
+	if refusal != "" {
+		field := intervalName
+		if refused == editFieldPageSize {
+			field = pageName
+		} else if provider, isSelection := strings.CutPrefix(refused, editFieldSelection); isSelection {
+			field = cardFieldName(kind.Kind, fieldSelectionPrefix+provider)
+		}
+		refuse(refusal, field)
 		return
 	}
-	for _, provider := range providers {
-		selection, chosen := selections[provider.ProviderKey]
-		if !chosen {
-			continue
-		}
-		if err := s.store.SetSetting(ctx, config.KeySourceSelection(kind.Kind, provider.ProviderKey),
-			string(selection), now); err != nil {
-			s.FailInternal(writer, request, err)
-			return
-		}
-	}
-
-	// THE RUNNING SERVICE, through the same path start-up uses. This is what makes
-	// a saved pair reach the scheduler and the collectors without a restart. Were
-	// it skipped, the rows would be stored and nothing would read them until the
-	// service started again.
-	if err := s.ApplyConfiguration(ctx); err != nil {
+	if err := s.saveKindEdit(ctx, kind, providers, edit); err != nil {
 		s.FailInternal(writer, request, err)
 		return
-	}
-	// The selections are applied at once, from what the last probe round found,
-	// without contacting the firewall: a source turned on or off is read, or stops
-	// being read, from the next pass.
-	if s.collector != nil {
-		if err := s.collector.Reselect(ctx, kind.Kind); err != nil {
-			s.FailInternal(writer, request, err)
-			return
-		}
 	}
 	// The saved card shows what is now in force, read back from the rows just written
 	// rather than echoed from the form; every other card keeps what was typed in it.

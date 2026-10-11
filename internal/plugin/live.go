@@ -1,0 +1,253 @@
+package plugin
+
+import (
+	"context"
+	"math"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/NaejEL/opnview/internal/collect/measurement"
+	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/store"
+)
+
+// The live pass (C3 of the backend-completion cycle, docs/plugins.md "Live pass").
+//
+// A provider may declare, beside its kind's functions, a live pass: one exported function of the
+// kind's namespace that reads only the live endpoints it names, run by the host at the live cadence
+// a declared setting holds -- and only while somebody looks at a live figure (internal/live). Its
+// requests carry that cadence as their max age, so the broker classes them real-time when the
+// cadence is at or below its threshold and coalesces them with every other reader of the same
+// datum; the cadence is never served below an endpoint's freshness floor, which the broker applies.
+// Its records are the kind's own, stored marked as fine samples.
+//
+// Only a kind whose records a fine sample can be is accepted: measurement_sample, today's only
+// sampled kind. A live pass on any other kind is refused at load, with its reason.
+
+// LiveDeclaration is a provider's live pass.
+type LiveDeclaration struct {
+	// Function is the function of the kind's namespace the live pass calls. It is called as the
+	// kind's read function is, and returns that function's answer.
+	Function string `json:"function"`
+	// CadenceSetting is the key of the plugin's declared integer setting holding the live cadence,
+	// in seconds. Its default is the cadence with no row, and its min the lowest it may take.
+	CadenceSetting string `json:"cadence_setting"`
+	// Endpoints are the only endpoints the live pass may read, by their manifest names.
+	Endpoints []string `json:"endpoints"`
+}
+
+// liveKinds are the kinds a live pass may be declared on, each with the answer record its live
+// function returns: the answer of the kind's read function.
+var liveKinds = map[string]string{measurement.Kind: "sample_answer"}
+
+// LiveKinds lists the kinds accepting a live pass, for the documentation's test.
+func LiveKinds() []string {
+	kinds := make([]string, 0, len(liveKinds))
+	for kind := range liveKinds {
+		kinds = append(kinds, kind)
+	}
+	sort.Strings(kinds)
+	return kinds
+}
+
+// liveBinding is a checked live pass.
+type liveBinding struct {
+	function string
+	// settingKey is where the cadence is stored (<plugin>_<key>); fallback its default; minimum its
+	// lower bound.
+	settingKey        string
+	fallback, minimum int64
+	// floor is the highest freshness floor of the live endpoints, in whole seconds.
+	floor int64
+	only  map[string]bool
+	// kind is the kind of the provider declaring it.
+	kind string
+}
+
+// ListedLive is a provider's live pass, in the plugin listing.
+type ListedLive struct {
+	Function       string   `json:"function"`
+	CadenceSetting string   `json:"cadence_setting"`
+	Endpoints      []string `json:"endpoints"`
+}
+
+// checkLive checks a provider's live pass and returns its binding; nil with no live pass.
+func checkLive(plugin *Plugin, declaration ProviderDeclaration, exports map[string]map[string]string) (
+	*liveBinding, *Refusal) {
+	live := declaration.Live
+	if live == nil {
+		return nil, nil
+	}
+	if _, accepted := liveKinds[declaration.Kind]; !accepted {
+		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the %s kind has no live pass: only %v accept one",
+			declaration.Kind, LiveKinds())
+	}
+	if declaration.Probe != nil || declaration.Read != nil || plugin.script == nil {
+		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the %s provider's live pass needs a script, and "+
+			"the provider is declarative", declaration.Kind)
+	}
+	if !namePattern.MatchString(live.Function) || exports[declaration.Kind][live.Function] != "function" {
+		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the script does not export the live function %s.%s",
+			declaration.Kind, live.Function)
+	}
+	var setting *SettingDeclaration
+	for index := range plugin.manifest.Settings {
+		if plugin.manifest.Settings[index].Key == live.CadenceSetting {
+			setting = &plugin.manifest.Settings[index]
+		}
+	}
+	if setting == nil || setting.Type != "integer" || setting.Min == nil || *setting.Min < 1 || setting.Default == nil {
+		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the live cadence setting %q is not a declared "+
+			"integer setting with a default and a min of at least 1 second", live.CadenceSetting)
+	}
+	fallback, ok := integerOf(setting.Default)
+	if !ok || float64(fallback) < *setting.Min {
+		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the live cadence setting %q has a default below "+
+			"its min", live.CadenceSetting)
+	}
+	if len(live.Endpoints) == 0 {
+		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the live pass names no endpoint")
+	}
+	only := map[string]bool{}
+	floor := int64(0)
+	for _, name := range live.Endpoints {
+		if _, declared := plugin.endpoints[name]; !declared {
+			return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the live pass names the endpoint %q, which the "+
+				"manifest does not declare", name)
+		}
+		for _, endpoint := range plugin.manifest.Endpoints {
+			if endpoint.Name == name && int64(math.Ceil(endpoint.FloorSeconds)) > floor {
+				floor = int64(math.Ceil(endpoint.FloorSeconds))
+			}
+			if endpoint.Name == name && endpoint.Stream {
+				return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the live pass names the stream %q; a live "+
+					"pass reads answers", name)
+			}
+		}
+		only[name] = true
+	}
+	return &liveBinding{function: live.Function, settingKey: StorageKey(plugin.Name, live.CadenceSetting),
+		fallback: fallback, minimum: int64(math.Ceil(*setting.Min)), floor: floor, only: only, kind: declaration.Kind}, nil
+}
+
+// listedLive renders a live pass for the listing; nil with none.
+func listedLive(declaration ProviderDeclaration) *ListedLive {
+	if declaration.Live == nil {
+		return nil
+	}
+	endpoints := append([]string{}, declaration.Live.Endpoints...)
+	sort.Strings(endpoints)
+	return &ListedLive{Function: declaration.Live.Function, CadenceSetting: declaration.Live.CadenceSetting,
+		Endpoints: endpoints}
+}
+
+// liveMeasurementAdapter is a measurement_sample plugin declaring a live pass: a
+// measurement.LiveSource.
+type liveMeasurementAdapter struct {
+	measurementAdapter
+	script *script
+	live   *liveBinding
+}
+
+// LiveCadence names the cadence setting, its default, its lower bound and its endpoints' floor.
+func (a liveMeasurementAdapter) LiveCadence() (string, int64, int64, int64) {
+	return a.live.settingKey, a.live.fallback, a.live.minimum, a.live.floor
+}
+
+// Live runs the live pass, its requests accepting an answer at most cadence old.
+func (a liveMeasurementAdapter) Live(ctx context.Context, session provider.Session, snapshot provider.Discovery,
+	providerID, now int64, cadence time.Duration) ([]store.MeasurementSample, []string, provider.Result, error) {
+	live := a.measurementAdapter
+	live.invoker = liveInvoker{script: a.script, namespace: measurement.Kind, maxAge: cadence, only: a.live.only}
+	return live.sampleWith(ctx, session, a.live.function, snapshot, providerID, now)
+}
+
+// liveInvoker calls a live function: the script's, under the live pass's max age and endpoints.
+type liveInvoker struct {
+	script    *script
+	namespace string
+	maxAge    time.Duration
+	only      map[string]bool
+}
+
+func (i liveInvoker) invoke(ctx context.Context, session provider.Session, function string,
+	arguments ...any) (any, []error, *failure) {
+	return i.script.callLive(ctx, session, i.namespace, function, i.maxAge, i.only, arguments...)
+}
+
+// LivePass is one loaded provider's live pass: what the collector runs and the rolling strip is
+// bucketed by.
+type LivePass struct {
+	Plugin, Kind, ProviderKey string
+	// SettingKey is where the cadence is stored, Fallback its value with no row and Minimum its
+	// lower bound; FloorSeconds is the highest freshness floor of its endpoints, below which the
+	// broker never serves it.
+	SettingKey        string
+	Fallback, Minimum int64
+	FloorSeconds      int64
+}
+
+// Cadence is the live cadence in force: the stored setting -- its default with no row or an
+// unreadable one, never below its lower bound -- raised to the endpoints' freshness floor.
+func (p LivePass) Cadence(ctx context.Context, reader interface {
+	Setting(ctx context.Context, key string) (string, bool, error)
+}) time.Duration {
+	return time.Duration(EffectiveLiveCadence(ctx, reader, p.SettingKey, p.Fallback, p.Minimum, p.FloorSeconds)) *
+		time.Second
+}
+
+// EffectiveLiveCadence reads a live cadence setting, in whole seconds: the default with no row or
+// one that is not a whole number, never below the minimum, raised to the floor.
+func EffectiveLiveCadence(ctx context.Context, reader interface {
+	Setting(ctx context.Context, key string) (string, bool, error)
+}, key string, fallback, minimum, floor int64) int64 {
+	seconds := fallback
+	if reader != nil {
+		if text, present, err := reader.Setting(ctx, key); err == nil && present {
+			if parsed, err := strconv.ParseInt(strings.TrimSpace(text), 10, 64); err == nil {
+				seconds = parsed
+			}
+		}
+	}
+	if seconds < minimum {
+		seconds = minimum
+	}
+	if seconds < floor {
+		seconds = floor
+	}
+	return seconds
+}
+
+// LivePasses lists every loaded provider's live pass, built-ins first.
+func (l *Loaded) LivePasses() []LivePass {
+	var passes []LivePass
+	for _, loaded := range l.plugins {
+		for _, declaration := range loaded.manifest.Providers {
+			key := declaration.Key
+			if key == "" {
+				key = loaded.Name
+			}
+			binding := loaded.lives[key]
+			if binding == nil {
+				continue
+			}
+			passes = append(passes, LivePass{Plugin: loaded.Name, Kind: declaration.Kind, ProviderKey: key,
+				SettingKey: binding.settingKey, Fallback: binding.fallback, Minimum: binding.minimum,
+				FloorSeconds: binding.floor})
+		}
+	}
+	return passes
+}
+
+// liveOf is the live pass of the plugin's provider of a kind whose function it is, nil otherwise:
+// what a plugin's own test calls when it calls that function (testrun.go).
+func (p *Plugin) liveOf(kind, function string) *liveBinding {
+	for _, binding := range p.lives {
+		if binding.kind == kind && binding.function == function {
+			return binding
+		}
+	}
+	return nil
+}

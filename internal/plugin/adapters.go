@@ -335,7 +335,13 @@ func (a measurementAdapter) Probe(ctx context.Context, session provider.Session)
 
 func (a measurementAdapter) Sample(ctx context.Context, session provider.Session, snapshot provider.Discovery,
 	providerID, now int64) ([]store.MeasurementSample, []string, provider.Result, error) {
-	checked, result, err := a.run(ctx, session, "sample", "sample_answer", DiscoveryView(snapshot), now)
+	return a.sampleWith(ctx, session, "sample", snapshot, providerID, now)
+}
+
+// sampleWith runs a function answering a sample_answer: sample, or a live pass's function.
+func (a measurementAdapter) sampleWith(ctx context.Context, session provider.Session, function string,
+	snapshot provider.Discovery, providerID, now int64) ([]store.MeasurementSample, []string, provider.Result, error) {
+	checked, result, err := a.run(ctx, session, function, "sample_answer", DiscoveryView(snapshot), now)
 	if err != nil {
 		return nil, nil, result, err
 	}
@@ -543,6 +549,10 @@ func addToSet(set *sources.Set, manifest provider.Manifest, base adapter, plugin
 	case resolverlocaldata.Kind:
 		return set.AddResolverLocalData(manifest, dumpAdapter{adapter: base, function: "local_data"})
 	case measurement.Kind:
+		if live := plugin.lives[manifest.Key]; live != nil {
+			return set.AddMeasurement(manifest, liveMeasurementAdapter{measurementAdapter: measurementAdapter{base},
+				script: plugin.script, live: live})
+		}
 		return set.AddMeasurement(manifest, measurementAdapter{base})
 	case ipgeolocation.Kind:
 		return set.AddIPGeolocation(manifest, ipGeolocationAdapter{base})

@@ -39,10 +39,9 @@ const (
 	DefaultMeasurementIntervalSeconds = 300
 )
 
-// CurrentSampleBound is how far back a sample still counts as current: twice the
-// configured measurement interval, read from the setting row. One missed sampling
-// pass therefore does not turn a rate into "no current sample"; two do.
-func (s *Store) CurrentSampleBound(ctx context.Context) (int64, error) {
+// MeasurementIntervalSeconds reads the configured baseline sampling interval: the
+// cadence every baseline sample was taken at.
+func (s *Store) MeasurementIntervalSeconds(ctx context.Context) (int64, error) {
 	interval := int64(DefaultMeasurementIntervalSeconds)
 	value, present, err := s.Setting(ctx, MeasurementIntervalKey)
 	if err != nil {
@@ -55,6 +54,17 @@ func (s *Store) CurrentSampleBound(ctx context.Context) (int64, error) {
 				MeasurementIntervalKey, value)
 		}
 		interval = parsed
+	}
+	return interval, nil
+}
+
+// CurrentSampleBound is how far back a sample still counts as current: twice the
+// configured measurement interval, read from the setting row. One missed sampling
+// pass therefore does not turn a rate into "no current sample"; two do.
+func (s *Store) CurrentSampleBound(ctx context.Context) (int64, error) {
+	interval, err := s.MeasurementIntervalSeconds(ctx)
+	if err != nil {
+		return 0, err
 	}
 	return 2 * interval, nil
 }
@@ -73,6 +83,10 @@ type CurrentRate struct {
 	// OldestSampledAt and SampledAt bound the instants of the readings summed.
 	OldestSampledAt int64
 	SampledAt       int64
+	// CadenceSeconds is the cadence the readings summed were taken at: a fine sample's
+	// live cadence, a baseline sample's measurement interval -- the coarsest of them
+	// when several are summed. It is what the rate's age is judged against (Stale).
+	CadenceSeconds int64
 	// outSeen and outMissing count the readings summed with and without an
 	// outbound figure.
 	outSeen, outMissing int
@@ -81,24 +95,35 @@ type CurrentRate struct {
 // Total is the two directions together.
 func (r CurrentRate) Total() float64 { return r.InBitsPerSecond + r.OutBitsPerSecond }
 
-func (r *CurrentRate) stamp(sampledAt int64) {
+// Stale reports whether the rate is older than its cadence allows: its oldest reading
+// was taken more than two cadences before now. One missed pass is tolerated, two are
+// not -- the same rule CurrentSampleBound applies to the baseline. A stale rate is a
+// named state with its figures beside it, never a rate of 0.
+func (r CurrentRate) Stale(now int64) bool {
+	return r.CadenceSeconds > 0 && now-r.OldestSampledAt > 2*r.CadenceSeconds
+}
+
+func (r *CurrentRate) stamp(sampledAt, cadence int64) {
 	if r.SampledAt == 0 || sampledAt > r.SampledAt {
 		r.SampledAt = sampledAt
 	}
 	if r.OldestSampledAt == 0 || sampledAt < r.OldestSampledAt {
 		r.OldestSampledAt = sampledAt
 	}
+	if cadence > r.CadenceSeconds {
+		r.CadenceSeconds = cadence
+	}
 }
 
 // addIn adds an inbound figure.
-func (r *CurrentRate) addIn(in float64, sampledAt int64) {
-	r.stamp(sampledAt)
+func (r *CurrentRate) addIn(in float64, sampledAt, cadence int64) {
+	r.stamp(sampledAt, cadence)
 	r.InBitsPerSecond += in
 }
 
 // addOut adds an outbound figure, or records that a reading carried none.
-func (r *CurrentRate) addOut(out *float64, sampledAt int64) {
-	r.stamp(sampledAt)
+func (r *CurrentRate) addOut(out *float64, sampledAt, cadence int64) {
+	r.stamp(sampledAt, cadence)
 	if out == nil {
 		r.outMissing++
 	} else {
@@ -109,9 +134,9 @@ func (r *CurrentRate) addOut(out *float64, sampledAt int64) {
 }
 
 // add adds one subject's two figures.
-func (r *CurrentRate) add(in float64, out *float64, sampledAt int64) {
-	r.addIn(in, sampledAt)
-	r.addOut(out, sampledAt)
+func (r *CurrentRate) add(in float64, out *float64, sampledAt, cadence int64) {
+	r.addIn(in, sampledAt, cadence)
+	r.addOut(out, sampledAt, cadence)
 }
 
 // CurrentRates are the current rates per subject. A subject absent from a map has
@@ -134,11 +159,19 @@ type CurrentRates struct {
 	OutboundUnsplit CurrentRate
 }
 
+func newCurrentRates() CurrentRates {
+	return CurrentRates{
+		ByClient: map[int64]CurrentRate{}, ByDevice: map[string]CurrentRate{},
+		ByOwner: map[int64]CurrentRate{}, ByDirection: map[string]CurrentRate{},
+	}
+}
+
 // endpointReading is the latest totals of one local address on one device.
 type endpointReading struct {
 	device, local string
 	in, out       *float64
 	sampledAt     int64
+	cadence       int64
 }
 
 // pairReading is the latest reading of one interface endpoint pair.
@@ -146,10 +179,122 @@ type pairReading struct {
 	device, local, peer string
 	in                  *float64
 	sampledAt           int64
+	cadence             int64
 }
 
-// ReadCurrentRates reads the rates sampled within CurrentSampleBound of now and
-// keeps each subject's latest reading.
+// rateRow is one row of read_pair_rates.
+type rateRow struct {
+	kind, key, measure string
+	value              float64
+	sampledAt          int64
+	// cadence is the live cadence of a fine sample, or the measurement interval.
+	cadence int64
+}
+
+// readRateRows reads the rate readings of both sampled subjects taken in [from, to].
+// The rows are read by SUBJECT KIND AND MEASURE, never by provider: whichever
+// provider of the measurement_sample kind wrote a rate is read the same way.
+func (s *Store) readRateRows(ctx context.Context, from, to, interval int64) ([]rateRow, error) {
+	text, err := Statement("read_pair_rates")
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.reader.QueryContext(ctx, text, sql.Named("since", from), sql.Named("now", to))
+	if err != nil {
+		return nil, fmt.Errorf("store: read_pair_rates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var result []rateRow
+	for rows.Next() {
+		var (
+			row  rateRow
+			live NullInt64
+		)
+		if err := rows.Scan(&row.kind, &row.key, &row.measure, &row.value, &row.sampledAt, &live); err != nil {
+			return nil, fmt.Errorf("store: read_pair_rates: %w", err)
+		}
+		row.cadence = interval
+		if live.Valid {
+			row.cadence = live.Int64
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: read_pair_rates: %w", err)
+	}
+	return result, nil
+}
+
+// latestReadings keeps each subject's latest reading among the rows.
+func latestReadings(rows []rateRow) (map[string]*endpointReading, map[string]*pairReading) {
+	endpoints := map[string]*endpointReading{}
+	pairs := map[string]*pairReading{}
+	for _, row := range rows {
+		parts := strings.Split(row.key, " ")
+		figure := row.value
+		switch {
+		case SubjectKind(row.kind) == SubjectInterfaceEndpoint && len(parts) == 2:
+			reading, present := endpoints[row.key]
+			if !present || row.sampledAt > reading.sampledAt {
+				reading = &endpointReading{device: parts[0], local: parts[1], sampledAt: row.sampledAt,
+					cadence: row.cadence}
+				endpoints[row.key] = reading
+			} else if row.sampledAt < reading.sampledAt {
+				continue
+			}
+			switch Measure(row.measure) {
+			case MeasureRateBitsIn:
+				reading.in = &figure
+			case MeasureRateBitsOut:
+				reading.out = &figure
+			}
+		case SubjectKind(row.kind) == SubjectInterfaceEndpointPair && len(parts) == 3:
+			reading, present := pairs[row.key]
+			if !present || row.sampledAt > reading.sampledAt {
+				reading = &pairReading{device: parts[0], local: parts[1], peer: parts[2], sampledAt: row.sampledAt,
+					cadence: row.cadence}
+				pairs[row.key] = reading
+			} else if row.sampledAt < reading.sampledAt {
+				continue
+			}
+			if Measure(row.measure) == MeasureRateBitsIn {
+				reading.in = &figure
+			}
+		}
+	}
+	return endpoints, pairs
+}
+
+// rateSplitter places local addresses inside or outside, caching every answer for the
+// life of one read.
+type rateSplitter struct {
+	store    *Store
+	prefixes []prefixEvidence
+	inside   map[string]bool
+}
+
+func (s *Store) newRateSplitter(ctx context.Context) (*rateSplitter, error) {
+	prefixes, err := loadPrefixes(ctx, s.reader)
+	if err != nil {
+		return nil, err
+	}
+	return &rateSplitter{store: s, prefixes: prefixes, inside: map[string]bool{}}, nil
+}
+
+func (r *rateSplitter) isInside(ctx context.Context, address string) (bool, error) {
+	if known, present := r.inside[address]; present {
+		return known, nil
+	}
+	interfaceID, err := membership(ctx, r.store.reader, address, r.prefixes)
+	if err != nil {
+		return false, err
+	}
+	r.inside[address] = interfaceID != nil
+	return interfaceID != nil, nil
+}
+
+// split turns one set of readings into rates per device and per direction, and, when
+// withClients is true, per client and per owner.
 //
 // The totals of each local address -- the interface_endpoint subject -- are what a
 // device, a client and an owner sum, because a local address's outbound figure
@@ -162,71 +307,9 @@ type pairReading struct {
 // outbound total of a local address goes to outbound when every peer it was read
 // with is outside, to inter_interface when every one is inside, and to
 // OutboundUnsplit otherwise.
-func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, error) {
-	result := CurrentRates{
-		ByClient: map[int64]CurrentRate{}, ByDevice: map[string]CurrentRate{},
-		ByOwner: map[int64]CurrentRate{}, ByDirection: map[string]CurrentRate{},
-	}
-	bound, err := s.CurrentSampleBound(ctx)
-	if err != nil {
-		return result, err
-	}
-	text, err := Statement("read_pair_rates")
-	if err != nil {
-		return result, err
-	}
-	rows, err := s.reader.QueryContext(ctx, text, sql.Named("since", now-bound), sql.Named("now", now))
-	if err != nil {
-		return result, fmt.Errorf("store: read_pair_rates: %w", err)
-	}
-	endpoints := map[string]*endpointReading{}
-	pairs := map[string]*pairReading{}
-	for rows.Next() {
-		var (
-			kind, key, measure string
-			value              float64
-			sampledAt          int64
-		)
-		if err := rows.Scan(&kind, &key, &measure, &value, &sampledAt); err != nil {
-			_ = rows.Close()
-			return result, fmt.Errorf("store: read_pair_rates: %w", err)
-		}
-		parts := strings.Split(key, " ")
-		figure := value
-		switch {
-		case SubjectKind(kind) == SubjectInterfaceEndpoint && len(parts) == 2:
-			reading, present := endpoints[key]
-			if !present || sampledAt > reading.sampledAt {
-				reading = &endpointReading{device: parts[0], local: parts[1], sampledAt: sampledAt}
-				endpoints[key] = reading
-			} else if sampledAt < reading.sampledAt {
-				continue
-			}
-			switch Measure(measure) {
-			case MeasureRateBitsIn:
-				reading.in = &figure
-			case MeasureRateBitsOut:
-				reading.out = &figure
-			}
-		case SubjectKind(kind) == SubjectInterfaceEndpointPair && len(parts) == 3:
-			reading, present := pairs[key]
-			if !present || sampledAt > reading.sampledAt {
-				reading = &pairReading{device: parts[0], local: parts[1], peer: parts[2], sampledAt: sampledAt}
-				pairs[key] = reading
-			} else if sampledAt < reading.sampledAt {
-				continue
-			}
-			if Measure(measure) == MeasureRateBitsIn {
-				reading.in = &figure
-			}
-		}
-	}
-	err = rows.Err()
-	_ = rows.Close()
-	if err != nil {
-		return result, fmt.Errorf("store: read_pair_rates: %w", err)
-	}
-
+func (r *rateSplitter) split(ctx context.Context, endpoints map[string]*endpointReading,
+	pairs map[string]*pairReading, withClients bool) (CurrentRates, error) {
+	result := newCurrentRates()
 	// The peers each local address was read with in its latest sample.
 	peersOf := map[string][]*pairReading{}
 	for _, pair := range pairs {
@@ -235,24 +318,6 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 			peersOf[key] = append(peersOf[key], pair)
 		}
 	}
-
-	prefixes, err := loadPrefixes(ctx, s.reader)
-	if err != nil {
-		return result, err
-	}
-	insideCache := map[string]bool{}
-	inside := func(address string) (bool, error) {
-		if known, present := insideCache[address]; present {
-			return known, nil
-		}
-		interfaceID, err := membership(ctx, s.reader, address, prefixes)
-		if err != nil {
-			return false, err
-		}
-		insideCache[address] = interfaceID != nil
-		return interfaceID != nil, nil
-	}
-
 	keys := make([]string, 0, len(endpoints))
 	for key := range endpoints {
 		keys = append(keys, key)
@@ -264,9 +329,9 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 		if endpoint.in != nil {
 			in = *endpoint.in
 		}
-		addRate(result.ByDevice, endpoint.device, in, endpoint.out, endpoint.sampledAt)
+		addRate(result.ByDevice, endpoint.device, in, endpoint.out, endpoint.sampledAt, endpoint.cadence)
 
-		localInside, err := inside(endpoint.local)
+		localInside, err := r.isInside(ctx, endpoint.local)
 		if err != nil {
 			return result, err
 		}
@@ -278,7 +343,7 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 		sort.Slice(peers, func(i, j int) bool { return peers[i].peer < peers[j].peer })
 		outside, between := 0, 0
 		for _, pair := range peers {
-			peerInside, err := inside(pair.peer)
+			peerInside, err := r.isInside(ctx, pair.peer)
 			if err != nil {
 				return result, err
 			}
@@ -291,7 +356,7 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 			}
 			if pair.in != nil {
 				rate := result.ByDirection[direction]
-				rate.addIn(*pair.in, pair.sampledAt)
+				rate.addIn(*pair.in, pair.sampledAt, pair.cadence)
 				result.ByDirection[direction] = rate
 			}
 		}
@@ -304,20 +369,23 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 			outDirection = "inter_interface"
 		}
 		if outDirection == "" {
-			result.OutboundUnsplit.addOut(endpoint.out, endpoint.sampledAt)
+			result.OutboundUnsplit.addOut(endpoint.out, endpoint.sampledAt, endpoint.cadence)
 		} else {
 			rate := result.ByDirection[outDirection]
-			rate.addOut(endpoint.out, endpoint.sampledAt)
+			rate.addOut(endpoint.out, endpoint.sampledAt, endpoint.cadence)
 			result.ByDirection[outDirection] = rate
 		}
 
-		clientID, found, err := queryOptionalInt(ctx, s.reader, "client_identity_at_address",
+		if !withClients {
+			continue
+		}
+		clientID, found, err := queryOptionalInt(ctx, r.store.reader, "client_identity_at_address",
 			map[string]any{"address": endpoint.local})
 		if err != nil {
 			return result, err
 		}
 		if !found {
-			clientID, found, err = s.addressLevelClient(ctx, endpoint.local)
+			clientID, found, err = r.store.addressLevelClient(ctx, endpoint.local)
 			if err != nil {
 				return result, err
 			}
@@ -325,15 +393,85 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 		if !found {
 			continue
 		}
-		addRate(result.ByClient, clientID, in, endpoint.out, endpoint.sampledAt)
-		ownerKey, _, err := queryOptionalInt(ctx, s.reader, "read_client_owner",
+		addRate(result.ByClient, clientID, in, endpoint.out, endpoint.sampledAt, endpoint.cadence)
+		ownerKey, _, err := queryOptionalInt(ctx, r.store.reader, "read_client_owner",
 			map[string]any{"client_id": clientID})
 		if err != nil {
 			return result, err
 		}
-		addRate(result.ByOwner, ownerKey, in, endpoint.out, endpoint.sampledAt)
+		addRate(result.ByOwner, ownerKey, in, endpoint.out, endpoint.sampledAt, endpoint.cadence)
 	}
 	return result, nil
+}
+
+// ReadCurrentRates reads the rates sampled within CurrentSampleBound of now and
+// keeps each subject's latest reading, fine or baseline: a fine sample is newer than
+// the baseline one whenever a live pass ran since, and is then the current rate.
+func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, error) {
+	interval, err := s.MeasurementIntervalSeconds(ctx)
+	if err != nil {
+		return newCurrentRates(), err
+	}
+	rows, err := s.readRateRows(ctx, now-2*interval, now, interval)
+	if err != nil {
+		return newCurrentRates(), err
+	}
+	splitter, err := s.newRateSplitter(ctx)
+	if err != nil {
+		return newCurrentRates(), err
+	}
+	endpoints, pairs := latestReadings(rows)
+	return splitter.split(ctx, endpoints, pairs, true)
+}
+
+// RateInstant is the rates of one sampling instant: what every reading taken at that
+// instant says, per direction and per device.
+type RateInstant struct {
+	// At is the instant.
+	At int64
+	// Rates are the rates of the readings taken then; ByClient and ByOwner are empty.
+	Rates CurrentRates
+}
+
+// ReadRateSeries reads every sampling instant in [from, to), fine and baseline, oldest
+// first, each split per direction and per device exactly as ReadCurrentRates splits the
+// latest one. It is what the rolling strip draws its throughput from: an instant is a
+// sample, and a bucket of the strip holding none is a gap, never a rate of 0.
+func (s *Store) ReadRateSeries(ctx context.Context, from, to int64) ([]RateInstant, error) {
+	if to <= from {
+		return nil, nil
+	}
+	interval, err := s.MeasurementIntervalSeconds(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.readRateRows(ctx, from, to-1, interval)
+	if err != nil {
+		return nil, err
+	}
+	byInstant := map[int64][]rateRow{}
+	for _, row := range rows {
+		byInstant[row.sampledAt] = append(byInstant[row.sampledAt], row)
+	}
+	instants := make([]int64, 0, len(byInstant))
+	for at := range byInstant {
+		instants = append(instants, at)
+	}
+	sort.Slice(instants, func(i, j int) bool { return instants[i] < instants[j] })
+	splitter, err := s.newRateSplitter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	series := make([]RateInstant, 0, len(instants))
+	for _, at := range instants {
+		endpoints, pairs := latestReadings(byInstant[at])
+		rates, err := splitter.split(ctx, endpoints, pairs, false)
+		if err != nil {
+			return nil, err
+		}
+		series = append(series, RateInstant{At: at, Rates: rates})
+	}
+	return series, nil
 }
 
 // addressLevelClient returns the most recent address-level client at an address.
@@ -341,9 +479,9 @@ func (s *Store) addressLevelClient(ctx context.Context, address string) (int64, 
 	return queryOptionalInt(ctx, s.reader, "read_address_level_client", map[string]any{"address": address})
 }
 
-func addRate[K comparable](rates map[K]CurrentRate, key K, in float64, out *float64, sampledAt int64) {
+func addRate[K comparable](rates map[K]CurrentRate, key K, in float64, out *float64, sampledAt, cadence int64) {
 	rate := rates[key]
-	rate.add(in, out, sampledAt)
+	rate.add(in, out, sampledAt, cadence)
 	rates[key] = rate
 }
 
@@ -356,6 +494,10 @@ const (
 	RateCurrent ClientRateState = "current"
 	// RateNoCurrentSample is no reading within the bound: not a rate of 0.
 	RateNoCurrentSample ClientRateState = "no_current_sample"
+	// RateStaleSample is a rate whose oldest reading is older than twice the cadence
+	// it was taken at (CurrentRate.Stale): a live pass that stopped answering while
+	// somebody looks. Its figures are served beside the state, never as a rate of 0.
+	RateStaleSample ClientRateState = "stale_sample"
 )
 
 // ReadClientCurrentRate returns one client's current rate, or the no-current-sample

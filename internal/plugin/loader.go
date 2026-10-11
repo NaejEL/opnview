@@ -123,6 +123,8 @@ type Plugin struct {
 	datasets []dataset.Declaration
 	// widgets are the widgets it carries, as the widget service loads them.
 	widgets []widget.Source
+	// lives are its providers' live passes, by provider key (live.go).
+	lives map[string]*liveBinding
 }
 
 // ProviderInfo is one provider a plugin declares.
@@ -136,6 +138,8 @@ type ProviderInfo struct {
 	MinCadenceSeconds int            `json:"min_cadence_seconds,omitempty"`
 	TriggeredBy       []string       `json:"triggered_by,omitempty"`
 	Endpoints         []EndpointInfo `json:"endpoints"`
+	// Live is the provider's live pass, absent when it declares none (live.go).
+	Live *ListedLive `json:"live,omitempty"`
 }
 
 // EndpointInfo is one firewall endpoint a plugin reads.
@@ -623,6 +627,10 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *Refus
 			Endpoints: endpointInfos(plugin.endpoints)}
 		base := adapter{plugin: plugin.Name, contract: contract, endpoints: plugin.endpoints,
 			scriptProbe: scriptEndpoint(plugin.Name, plugin.manifest.Script)}
+		if (declaration.Probe != nil || declaration.Read != nil) && declaration.Live != nil {
+			_, refusal := checkLive(plugin, declaration, exports)
+			return nil, refusal
+		}
 		if declaration.Probe != nil || declaration.Read != nil {
 			info.Form = FormDeclarative
 			form, refusal := checkDeclarative(plugin, declaration, contract, core)
@@ -638,6 +646,17 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *Refus
 			}
 			if refusal := checkExports(plugin.Name, exports, declaration.Kind, contract, core); refusal != nil {
 				return nil, refusal
+			}
+			live, refusal := checkLive(plugin, declaration, exports)
+			if refusal != nil {
+				return nil, refusal
+			}
+			if live != nil {
+				if plugin.lives == nil {
+					plugin.lives = map[string]*liveBinding{}
+				}
+				plugin.lives[key] = live
+				info.Live = listedLive(declaration)
 			}
 			base.invoker = scriptInvoker{script: plugin.script, namespace: declaration.Kind}
 		}

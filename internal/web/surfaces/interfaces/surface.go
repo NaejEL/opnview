@@ -33,14 +33,14 @@ func init() {
 		Pages: []web.Page{{Name: pageInterfaces, TitleKey: msgTitleInterfaces, Refusal: refusalView}},
 		Routes: func(host web.Host) []web.Route {
 			s := newSurface(host)
-			return []web.Route{
+			return append([]web.Route{
 				// The Interfaces surface writes opnview's own interface_network and interface
 				// rows, and nothing on the firewall.
 				{Method: http.MethodGet, Pattern: PathInterfaces, Access: web.AccessAuthenticated,
 					Handler: s.handleInterfacesForm},
 				{Method: http.MethodPost, Pattern: PathInterfaces, Access: web.AccessAuthenticated,
 					Handler: s.handleInterfacesSubmit},
-			}
+			}, s.apiRoutes()...)
 		},
 		Tab:  &web.Tab{Page: pageInterfaces, Path: PathInterfaces, TitleKey: msgTitleInterfaces, Order: 30},
 		Keys: func() []web.MessageKey { return keys() },

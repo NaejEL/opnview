@@ -8,10 +8,12 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 )
 
-// host.rates: the current rates, from the latest traffic/top samples (rates.go): a second measure,
-// sampled, never summed with the logged one. A subject with no current sample reads its named
-// absence, no_current_sample, never a rate of 0. Every rate is a chip rate: {state, measure,
-// in_bits_per_second, out_bits_per_second, out_measured, sampled_at}.
+// host.rates: the current rates, from the latest samples (rates.go): a second measure, sampled,
+// never summed with the logged one. A subject with no current sample reads its named absence,
+// no_current_sample, and one older than twice its cadence stale_sample; never a rate of 0. Every
+// rate is a chip rate: {state, measure, in_bits_per_second, out_bits_per_second, out_measured,
+// sampled_at, span_seconds, cadence_seconds, lower_bound}. Reading any of them renews the
+// live-interest lease: the answer carries a live figure.
 //
 //	host.rates.current(groupBy)  the rates a "now" figure shows: {by_direction, outbound_unsplit,
 //	                             by_member}, by_direction one {key, rate} per traffic direction
@@ -35,26 +37,27 @@ func init() {
 			return call.value(rates)
 		})
 		call.function(area, "byClient", func(goja.FunctionCall) goja.Value {
-			rates, err := r.Db.ReadCurrentRates(r.Ctx, r.Now)
+			rates, err := r.readCurrentRates()
 			if err != nil {
 				return call.fail(err)
 			}
 			byClient := make(map[string]ChipRate, len(rates.ByClient))
 			for id, rate := range rates.ByClient {
-				byClient[strconv.FormatInt(id, 10)] = SampledRate(rate, true)
+				byClient[strconv.FormatInt(id, 10)] = SampledRate(rate, true, r.Now)
 			}
 			return call.value(byClient)
 		})
 		call.function(area, "client", func(arguments goja.FunctionCall) goja.Value {
 			id := call.integerOf(arguments.Argument(0), "the client id")
+			r.renewLive()
 			rate, state, err := r.Db.ReadClientCurrentRate(r.Ctx, id, r.Now)
 			if err != nil {
 				return call.fail(err)
 			}
-			return call.value(SampledRate(rate, state == store.RateCurrent))
+			return call.value(SampledRate(rate, state == store.RateCurrent, r.Now))
 		})
 		call.function(area, "none", func(goja.FunctionCall) goja.Value {
-			return call.value(SampledRate(store.CurrentRate{}, false))
+			return call.value(SampledRate(store.CurrentRate{}, false, r.Now))
 		})
 	})
 }

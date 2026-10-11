@@ -14,6 +14,7 @@ func CoreKeys() []string {
 		KeyLegPairingWindow, KeyLeaseBackendFailurePassLimit, KeyHeartbeatInterval, KeyDowntimeThreshold,
 		KeyFirewallLogPageSize, KeySecurityEventPageSize, KeyDHCPLeasePageSize,
 		KeyOPNsenseBaseURL, KeyOPNsenseAPIKey, KeyOPNsenseCertificateFingerprint, KeyTheme,
+		KeyLiveInterestSeconds, KeyLiveSampleRetentionSeconds,
 	}
 }
 

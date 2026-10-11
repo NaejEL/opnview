@@ -110,6 +110,7 @@ history stored answers that history under the degraded condition. A type that re
 | `site_methods_not_recorded_beyond_flow_horizon` | site totals beyond the horizon come from the domain family, which keeps no method; those flows count under `not_recorded_beyond_flow_horizon` |
 | `series_read_from_hour_slots_beyond_flow_horizon` | whole-hour buckets before the earliest flow came from the interface family's slots |
 | `registrable_domain_grouping_unavailable` | no Public Suffix List has been downloaded yet; nothing is grouped |
+| `unnamed_destinations_beyond_flow_horizon` | part of the window precedes the purge horizon: no aggregate keeps the destinations no name was inferred for by address, so those hours have no address rows (`top_sites`, `sites_by_client`); never estimated |
 
 ## Windows, horizon, buckets and freshness
 
@@ -171,8 +172,8 @@ Decision 6: domain names are withheld field by field, and `top_sites` and
 | Type | Withheld |
 |---|---|
 | `top_sites`, `sites_by_client` | `data` (condition `withheld_by_aggregate_mode`) |
-| `client_traffic_detail` | `records[].site_name` |
-| `connection_tree` | `outside[].children` -- the site level, whose figures are its names' |
+| `client_traffic_detail` | `records[].site_name`, `records[].method`, `records[].correlation_delay_seconds` -- every record is in address form |
+| `connection_tree` | `outside[].children[].site_name` -- every destination below the operator is its address node, named ones included; the core reads no site name (`host.flows.destinations`) |
 | `unified_blocked_feed` | `entries[].target` of a DNS refusal; `groups[].key` of a domain group |
 | `blocked_dns_lookups` | `rows[].domain` |
 | every type taking a reference | the `value` and `label` of a `site` reference the request sent, wherever it stands: `<path>.value` |
@@ -184,6 +185,16 @@ depend on nothing stored, it is unresolved with the reason `withheld_by_aggregat
 A `custom_chart` series it scopes answers the condition `withheld_by_aggregate_mode` with no
 buckets, and the other series are untouched. The answer is therefore the same whether or not
 the name was ever seen, so no response can tell which names were visited.
+
+**The answer does not depend on whether a name was ever inferred.** In `connection_tree`, the
+owner-rooted views and `client_traffic_detail`, every destination is shown by its address with
+its operator and country, named ones included, so those answers are byte for byte the ones the
+same database would give with no attribution stored (C2 of the backend-completion cycle).
+
+A widget that is not built in is held to this by the core: under `no_domains`, its script's read
+of a statement carrying a domain name is not run and its whole answer is withheld
+(`withheld_by_aggregate_mode`, `data` null; `docs/plugins.md`, *Widgets*), as a declarative widget
+reading such a column already is.
 
 Every count and volume that carries no name is unchanged. `destination_countries`,
 `destination_operators` and every other type carrying no domain are served unchanged.
@@ -335,6 +346,66 @@ table. It is authenticated like every route here: without a session it answers `
 condition. **It never carries a field value, a credential, the firewall's address or an
 authorisation header.** A plugin reads the same content with `host.catalogue()`.
 
+## Live figures
+
+A **live figure** is a current rate read from the samples of the `measurement_sample` kind: a second
+measure, `sampled`, never summed with a logged one. The widget API reads it from the database and
+never calls the firewall. Any authenticated answer carrying one -- `traffic_composition`
+(`data.current_rates`), `owner_activity` (`chips[].current_rate`), `client_traffic_detail`
+(`data.current_rate`) and the rolling strip below -- renews the **live-interest lease**
+(`live_interest_seconds`, 30 s by default). While the lease holds, every plugin declaring a live pass
+(`docs/plugins.md`, *Live pass*) samples at its live cadence through the broker; when it lapses, fine
+sampling stops. The baseline pass runs at the measurement interval throughout.
+
+Every live figure is `{state, measure, in_bits_per_second, out_bits_per_second, out_measured,
+sampled_at, span_seconds, cadence_seconds, lower_bound}`:
+
+| Field | Meaning |
+|---|---|
+| `state` | `current`; `stale_sample` when its oldest reading is older than twice `cadence_seconds`, its figures beside it; `no_current_sample` with no reading within twice the measurement interval, every figure null |
+| `measure` | `sampled` |
+| `sampled_at` | the instant of its newest reading |
+| `span_seconds` | how long one reading covers: 2, one `traffic/top` capture |
+| `cadence_seconds` | how often the readings are taken: the live cadence of a fine sample, the measurement interval of a baseline one |
+| `lower_bound` | always true: traffic between two clients behind one interface reaches no source |
+
+**The rolling strip.** `GET /api/live/strip`, authenticated, takes `parameters` as a widget does:
+`{"window_seconds": n}`, 120 by default, from two cadences to 3 600 and at most 1 000 buckets; a value
+outside that is `400` `{"condition": "window_out_of_range", "key", "minimum", "maximum"}`, and a
+`parameters` that is not that object `400` `{"condition": "malformed_parameters"}`. Its buckets are
+`cadence_seconds` wide -- the finest live cadence in force, or the measurement interval where no
+plugin declares a live pass -- aligned on UTC multiples from the epoch, and it answers
+`{cadence_seconds, window, live_interest_until, throughput, decisions, gaps}`:
+
+- `throughput[]`, keyed `outbound`, `inbound`, `inter_interface` and `outbound_unsplit`, each with
+  `measure` `sampled`, `unit` `bit_per_second`, `span_seconds`, `cadence_seconds`, `lower_bound` and
+  `buckets[]` of `{from, to, gap, value, samples, sampled_at}`: the mean of the samples, fine and
+  baseline, taken in the bucket; a bucket with no sample is a gap with no value;
+- `decisions[]`, keyed `allowed`, `firewall_rule`, `firewall_no_rule`,
+  `firewall_reason_not_recorded` (the filter log, `measure` `logged`) and `dns_refusal` (the resolvers'
+  refusals of every list, `measure` `dns_lookups`), counted from the records' own timestamps. Each
+  carries `provider_kind` and `complete_until`, the end of its active providers' last healthy pass:
+  a bucket ending after it, or meeting a gap of its kind, is `gap: true` -- with the records already
+  stored in it as its value, never a zero -- and with no healthy pass recorded every bucket is a gap.
+
+**Settings.** `GET /api/live/settings` answers `{settings, cadences}`: `live_interest_seconds`
+(default 30, 5 to 3 600) and `live_sample_retention_seconds` (default 3 600, 600 to 604 800), each
+`{key, value, default, minimum, maximum, set}`, and per live pass `{plugin, kind, provider_key,
+setting_key, cadence_seconds, floor_seconds}`. `POST /api/live/settings`, a write (*Write endpoints*),
+takes an object of the two keys; an unknown key, a value that is not a whole number, or one out of
+range is `400` `{"condition", "key"}` -- `unknown_setting`, `invalid_setting_value`,
+`setting_out_of_range` -- and writes nothing. A live cadence is its plugin's setting, written through
+`POST /api/plugins/{name}/settings`; the cadence in force is never below its endpoints' freshness
+floor. Fine samples are purged after `live_sample_retention_seconds`; baseline samples follow
+`retention_seconds`.
+
+**Rate by port or protocol is unavailable.** `traffic/top` runs iftop without `-P`, so its samples
+carry no port and no protocol (`scripts/interfaces/traffic_top.py`); the pf state table
+(`query_states`, `query_pf_top`) reads without side effect but is not built: its cost is unmeasured
+and the push sources planned next carry the rate per flow (`docs/opnsense-api-survey.md`, *Live rate
+endpoints, read from source for C3 (backend completion)*). Logged volume by port and protocol is
+served from the filter log.
+
 ## Response budgets
 
 Decision 9, measured by the pre-deployment command (`sql/schema-checks.sh`,
@@ -386,7 +457,10 @@ test compares this table with the code.
 | `traffic_composition` | `interfaces` | data | none |
 | `traffic_composition` | `clients` | data | none |
 | `traffic_composition` | `scope` | data | `"all"` |
+| `traffic_composition` | `split_by` | data | `"none"` |
+| `traffic_composition` | `window_seconds` | data | none |
 | `traffic_composition` | `show_other` | rendering | `true` |
+| `traffic_composition` | `line_interpolation` | rendering | `"linear"` |
 | `connection_tree` | `period` | data | `"24h"` |
 | `connection_tree` | `root` | data | `"interface"` |
 | `connection_tree` | `depth` | data | `2` |
@@ -510,11 +584,36 @@ test compares this table with the code.
 Three choices the catalogue leaves open are recorded here. `show_other` and
 `show_unplaced` are rendering-only: the Other slice and the unplaced counter are always
 returned, because a truncation is never silent (A8). `columns` is rendering-only: every
-column is returned. `depth` is 1 or 2, the two levels each side of the tree holds.
+column is returned. `depth` is 1, 2 or 3: the two levels each side of the tree holds, and on the
+outside side a third, the service port and protocol below each destination.
+
+**Destinations with no name** (C2). `top_sites` and `sites_by_client` rows carry `kind`:
+`site` for an inferred name, `address` for a destination no name was inferred for, which
+carries `address`, `country_code`, `asn`, `operator` and `lookup_state` (`resolved`, `miss`,
+`pending` or `no_row`). Address rows are ranked with the site rows and truncated by the same
+`limit` / `sites_per_client` and `min_flows`, so the rows, `remainder` and `below_min_flows`
+make `attribution.eligible_flows`. Below the operator, `connection_tree` holds `site:<name>` and
+`address:<address>` nodes, the latter labelled the same way; `site:none` is gone. Each
+`traffic_sankey` `other.unnamed` bin lists its addresses in `members`, `[{address, volume}]`,
+summing to the bin.
+
+**Services** (C4). A service is a port and a protocol together: `traffic_composition`'s
+`service_port` slices are `port:<port>/<protocol>` -- 53/udp and 53/tcp are two -- and
+`port:not_recorded` for a record with no port; the `connection_tree` level below a destination
+uses the same keys and carries `port` and `protocol`; `unified_blocked_feed` entries carry
+`port` and `protocol` for an address target. `traffic_composition` grouped by
+`blocking_reason` keys its slices `decision:<decision>` (`allowed`, `firewall_rule`,
+`firewall_no_rule`, `firewall_reason_not_recorded`, `unknown`) and carries `aside`, the DNS
+lists' and the detection engine's refusals counted beside the rings; `split_by: direction` adds
+`rings`, one per traffic direction; `window_seconds` adds `recent`, `{seconds, from, to,
+bucket_seconds, complete_until, series}`, the logged figures per slice key (and `other`) in
+buckets of a sixtieth of the span, every bucket after `complete_until` -- when the filter log
+last ended a pass healthy -- a gap and never a zero.
 
 ## Write endpoints
 
-A write is a `POST` with a JSON body, made by the application with a session. It carries:
+A write is a `POST` with a JSON body, made by the application with a session -- except the
+setup, the sign-in and the reset, made without one (*Settings API*). It carries:
 
 - `Content-Type: application/json`;
 - the session's form token in the header `X-CSRF-Token`, the same token every page's form
@@ -525,6 +624,195 @@ A write without a session is `401` with `{"condition": "no_session"}` or
 `{"condition": "session_expired"}`. A write with no token, a wrong or another session's token,
 another origin, `Sec-Fetch-Site: cross-site` or a body of another type is `403` with
 `{"condition": "csrf_refused"}`. A refused write changes nothing. No `GET` changes anything.
+
+### People and machines
+
+The people the user creates and the machines the user assigns to them (C1 of
+`specs/SPEC-backend-completion-plugins.md`; surface `internal/web/surfaces/people`). **Ownership
+is assigned, never inferred**: every write names its clients by id and changes exactly those, and
+nothing matches a client by its hostname, MAC, vendor or address (`docs/data-model.md`,
+*`owner`*). A client with an unstable identity is assigned like any other and listed as such.
+Nothing here contacts the firewall.
+
+| Route | Body | Answer |
+|---|---|---|
+| `GET /api/owners` | | `{"owners": [{id, display_name, created_at, updated_at, client_count}]}`, by display name |
+| `POST /api/owners` | `{"display_name"}` | `{"owner"}`: the person created |
+| `POST /api/owners/{id}/rename` | `{"display_name"}` | `{"owner"}`: the person renamed |
+| `POST /api/owners/{id}/delete` | `{}` | `{id, display_name, cleared: [{client, owner_assigned_at}]}`: every assignment the deletion cleared |
+| `POST /api/owners/restore` | `{display_name, cleared: [{client, owner_assigned_at}]}` -- a deletion's answer, unchanged | `{owner, restored: [{client, owner_assigned_at}], not_restored: [{client, reason, owner_id}]}` |
+| `POST /api/owners/{id}/assign` | `{"clients": [id, ...]}` | `{"assignments": [{client, owner_id, owner_assigned_at, changed}]}` |
+| `POST /api/clients/unassign` | `{"clients": [id, ...]}` | the same |
+| `GET /api/clients` | | `{"clients": [...]}`: every client, with or without traffic, by id |
+
+- A `display_name` is trimmed; once trimmed it must be non-empty and held by nobody else, compared
+  byte for byte as the schema's `UNIQUE` compares it.
+- **Undo** creates the person again and restores each assignment **with its original
+  `owner_assigned_at`**. A client assigned to somebody else in the meantime is listed in
+  `not_restored` with `reason` `assigned_elsewhere` and the `owner_id` it now has, a client that
+  no longer exists with `client_not_found`; both are left as they are.
+- **Assignment** sets `owner_assigned_at` to now. A client already assigned to that person keeps its
+  original instant and is answered `changed: false`, as is an unassigned client unassigned again.
+- **A client of the listing** carries `id`, `identity_kind`, `identity_key`, `hostname`, `mac`,
+  `last_address`, `interface` (`{id, identifier, description, user_label}` or null),
+  `unstable_identity`, `owner` (`{id, display_name}` or null), `owner_assigned_at`,
+  `first_seen_at` and `last_seen_at`.
+- **An assigned client is never removed by the retention purge**; unassigned, it is purged as
+  before (`docs/data-model.md`, *Purge*).
+- **A change of ownership is derived like any other change.** Assigning, reassigning or unassigning
+  a client, deleting a person and undoing it record every kept hour slot holding the clients'
+  traffic; the next derivation rewrites them, and until then `freshness` reports them in
+  `stale_slots` (`docs/data-model.md`, *Refresh contract*, rule 3).
+
+A refusal is `{"condition", "client"}`, `client` present when one client is the reason: `400`
+with `display_name_empty`, `display_name_taken`, `unknown_client`, `no_clients`,
+`duplicate_client`, `invalid_owner_assigned_at` or `malformed_body`, and `404` with
+`unknown_owner` for a person the path names who does not exist. An assignment naming one unknown
+client changes no client.
+
+### Labels and purposes
+
+The label the user gives an interface and the purpose the user gives a blocklist (C1; surface
+`internal/web/surfaces/labels`). Neither is inferred: a label is never derived from a
+description, a purpose never from a list's name. Discovery never writes a label, and the purge
+never removes a purpose.
+
+| Route | Body | Answer |
+|---|---|---|
+| `POST /api/interfaces/{id}/label` | `{"user_label": text}`, or `null` to clear it | `{"interface": {id, identifier, description, user_label}}` |
+| `GET /api/blocklists` | | `{"blocklists": [{id, name, purpose, purpose_assigned_at, first_seen_at, last_seen_at}], "purposes": [...]}` |
+| `POST /api/blocklists/{id}/purpose` | `{"purpose": text}`, or `null` to clear it | `{"blocklist": {...}}` |
+
+A label is trimmed and must be non-empty. A purpose is one of `purposes`, exactly the vocabulary of
+`blocklist.purpose` (`advertising`, `tracking`, `threat`, `parental`, `other`), and
+`purpose_assigned_at` is set to now; clearing it clears both. Each is seen in the next
+`interface_volume_ranking` and `blocked_dns_lookups` response. A refusal is `{"condition"}`: `400`
+with `user_label_empty`, `purpose_not_in_vocabulary` or `malformed_body`, `404` with
+`unknown_interface` or `unknown_blocklist`.
+
+## Settings API
+
+Every figure and every action of the Go-rendered pages has a JSON equivalent, so the step-7
+application replaces the pages with no backend work (C5 of
+`specs/SPEC-backend-completion-plugins.md`). Each JSON route lives in the page's own surface,
+beside the page, and applies **the page's own validation** -- the functions the page saves with --
+**the page's access level and the page's CSRF rule**: an authenticated route answers `401` with
+no session, and a write is a JSON write as above. A test enumerates the routes of the five
+surfaces and holds them to the table below.
+
+**Without a session.** The setup, the sign-in and the reset are reached with no session, as their
+pages are. Their form token is the one in the browser's own cookie, as a page's form compares it:
+`GET /api/session` sets that cookie when there is none and answers the token, and the write
+carries it in `X-CSRF-Token`. The reset is authorised by the key file, presented as the body's
+`key_file` member, and refused `403` with `key_file_refused` without it. A JSON setup after an
+account exists is `403` with `setup_closed`.
+
+**Answers.** A save answers `200` with every figure of its page as it then stands, and a refusal
+`400` (or the page's status) with `{"condition", "field"}`: the condition is the page's refusal as
+a closed code -- its catalogue key's last segment, `error.firewall_url_invalid` being
+`firewall_url_invalid` -- and `field` the body member it is about. A body that is not one JSON
+object is `malformed_body`. A state the page draws is answered as the same kind of code
+(`ready`, `not_attempted`, `healthy`, `selection_auto`...), an instant as epoch seconds, a duration
+in seconds, and a figure the page replaces by a named state as `null` beside that state. No answer
+carries a secret, a ciphertext or a session token; the form token travels in the answer of
+`GET /api/session`, a setup and a sign-in only.
+
+| Page route | JSON route |
+|---|---|
+| `GET /setup` | `GET /api/session` (`{account_exists, signed_in, csrf_token}`) |
+| `POST /setup` | `POST /api/account/setup` |
+| `GET /sign-in` | `GET /api/session` |
+| `POST /sign-in` | `POST /api/session/sign-in` |
+| `POST /sign-out` | `POST /api/session/sign-out` |
+| `GET /recover` | `GET /api/session` |
+| `POST /recover` | `POST /api/account/recover` |
+| `GET /settings` | `GET /api/settings` |
+| `POST /settings` | `POST /api/settings/firewall`, `POST /api/settings/firewall/certificate`, `POST /api/plugins/{name}/settings` (MaxMind, `name` `maxmind`), `POST /api/settings/public-suffix`, `POST /api/settings/theme` |
+| `GET /collection` | `GET /api/collection` |
+| `POST /collection` | `POST /api/collection/kinds/{kind}` |
+| `POST /collection/settings` | `POST /api/collection/kinds/{kind}` (a polled kind), `POST /api/collection/settings/{card}` |
+| `GET /interfaces` | `GET /api/interface-networks` |
+| `POST /interfaces` | `POST /api/interface-networks` |
+| `GET /sources` | `GET /api/sources` |
+
+**Account.**
+
+- `POST /api/account/setup` takes `{setup_token, login, password, password_again}` and answers
+  `{signed_in, csrf_token}` with the session in its cookie. Refusals: `setup_token_refused` (`403`),
+  `login_required`, `password_required`, `password_too_short`, `password_mismatch` (`400`),
+  `setup_closed` (`403`).
+- `POST /api/session/sign-in` takes `{login, password}` and answers as the setup; both failures are
+  the one `401` `sign_in_refused`.
+- `POST /api/session/sign-out` deletes the session's row and answers `{signed_in: false}`.
+- `POST /api/account/recover` takes `{key_file, login, password, password_again}`, refused as the
+  setup is, and `key_file_refused` (`400`) for a login that does not exist; it answers
+  `{signed_in: false}`.
+
+**Settings.** `GET /api/settings` answers `{firewall, geolocation, public_suffix, theme}`:
+
+- `firewall`: `url`, `api_key`, `certificate_fingerprint` (each `null` when not set),
+  `credential_state` (`absent`, `ready`, `undecryptable`) and `verification`;
+- `geolocation`: the `plugin` and `settings_path` the card's settings are written through,
+  `account_id`, `licence_key_state` (`absent`, `stored`, `undecryptable`), `download_state` (the
+  refresh's outcome) and `build_at` (`null` with no database in use);
+- `public_suffix`: `state`, `in_use`, `version`, `version_stated`, `rules`, `confirmed_at`
+  (`null` before a refresh confirmed a copy) and `refresh_interval_seconds`;
+- `theme`: `value` and `choices`.
+
+| Route | Body | Refusals |
+|---|---|---|
+| `POST /api/settings/firewall` | `{url, api_key, api_secret, certificate_fingerprint}`, the card's whole content: an absent or empty `url`, `api_key` or `certificate_fingerprint` removes that setting, an absent or empty `api_secret` keeps the stored one | `firewall_url_invalid`, `fingerprint_invalid`, `api_key_required`; the answer's `firewall.verification` is the check the save made |
+| `POST /api/settings/firewall/certificate` | `{url}`; stores nothing | `firewall_url_required`, `firewall_url_invalid`, `certificate_not_fetched`; answers `{presented_fingerprint}` |
+| `POST /api/plugins/maxmind/settings` | `{account_id, licence_key}`, the maxmind plugin's declared settings, stored under the keys the page stores (*Plugins*, below); `null` removes the account ID | the plugin settings' codes |
+| `POST /api/settings/public-suffix` | `{refresh_interval_seconds}`; absent changes nothing | `collection_value_invalid`, `collection_interval_too_large` |
+| `POST /api/settings/theme` | `{theme}` | `theme_unknown` |
+
+**Collection.** `GET /api/collection` answers `{kinds, polled_kinds, settings}`:
+
+- each of `kinds`, a sized kind the provider table holds, in the page's order: `kind`,
+  `page_size_adjustable`, `source_state` (`{availability, selection}`), `in_force`
+  (`{page_size, interval_seconds, page_ceiling, page_state}`), `measurement` (`window_start_at`,
+  `window_end_at`, `retention_seconds` -- `null` for unlimited --, `covered_from_at`,
+  `covered_to_at` -- `null` when the window holds no record --, `record_count`, `mean_rate`,
+  `ingested_mean_rate`, `peak_rate` -- each `{per_second, state}` --, `gap_count`,
+  `missed_seconds`, `gaps`), `suggestion` (`{state, page_size, interval_seconds}`) and
+  `implementations` (`{provider_key, selection}`);
+- each of `polled_kinds`: `kind`, `interval_seconds` and `implementations`, each with its
+  `availability`;
+- each of `settings`: `{card, settings: [{key, value}]}`, the cards `storage`
+  (`retention_seconds`, 0 being unlimited, and `aggregate_mode`), `pairing`
+  (`leg_pairing_window_seconds`), `lease_backends` (`lease_backend_failure_pass_limit`) and
+  `attribution` (`attribution_max_delay_seconds`, `attribution_max_cache_answer_delay_seconds`).
+
+| Route | Body | Refusals |
+|---|---|---|
+| `POST /api/collection/kinds/{kind}` | `{interval_seconds, page_size, selections: {provider_key: "auto" \| "on" \| "off"}}`; `page_size` only where `page_size_adjustable`, and a selection the body leaves out is left as it is | `collection_value_invalid`, `collection_interval_too_large`, `collection_kind_unknown` |
+| `POST /api/collection/settings/{card}` | a member per setting of the card, a whole number of seconds or the mode's word, and `confirm` | the setting's own refusal, `collection_kind_unknown` for an unknown card; a save shortening the retention horizon without `confirm` equal to the new horizon stores nothing and answers `409` `{condition: "retention_confirmation_required", in_force_retention_seconds, requested_retention_seconds, changes: [{key, in_force, requested}]}` |
+
+The page's fill and cancel controls store nothing and have no JSON route: the suggestion is in the
+answer.
+
+**Interfaces.** `GET /api/interface-networks` answers `{interfaces}`, each `{id, description,
+identifier, device, upstream, link_local, networks, overlaps}`, a network being `{network, origin,
+removed, counts, not_counting_reason}` and an overlap `{network, other, other_interface_id,
+other_description}`. `POST /api/interface-networks` takes `{interface, action, network,
+link_local}`, `action` one of `add`, `confirm`, `remove`, `restore` and `link_local`, `link_local`
+a boolean, and refuses with `interface_unknown`, `interface_upstream`, `interface_action_unknown`,
+`link_local_invalid`, `network_unknown`, `network_malformed`, `network_link_local`,
+`network_ipv4_mapped` or `network_host_bits`. An edit is applied at the collector's next
+derivation, as the page's.
+
+**Sources.** `GET /api/sources` answers `{providers, outages, outage_count, recent_gaps,
+recent_gap_window_seconds}`. A provider carries `kind`, `provider_key`, `display_name`,
+`availability`, `outcome`, `active`, `selection`, `in_outage`, `checked_at` (`null` when never
+checked), `probe` and `detail` (the collector's diagnostic text, verbatim, never read),
+`opnsense_pages` (`{url, page}`, for a provider installed and not collecting: the OPNsense page
+that turns it on, a change opnview never makes) and **`since`**: when its current state began, as
+opnview's own checks bound it -- `{after_at, by_at, state}`, the state having begun after the
+check at `after_at` and by the one at `by_at`, never stated as one instant; with both `null`,
+`state` names why: `state_change_not_observed` or `state_unknown` (coverage row 39). An outage is
+`{kind, provider_key}`, `provider_key` `null` for a kind's; `outage_count` is the top bar's
+indicator. A gap is `{kind, provider_key, reason, start_at, end_at, missed_seconds, detail}`.
 
 ## Plugins
 

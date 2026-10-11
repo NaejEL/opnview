@@ -21,7 +21,8 @@
       "argument": "interface_names",
       "survey_section": "Verified against a live firewall, 2026-09-27",
       "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/TrafficController.php",
-      "note": "Per interface, a records[] of local addresses with rate_bits_in/out, cumulative_bytes_in/out and a details[] of peers. No port and no protocol."
+      "note": "Per interface, a records[] of local addresses with rate_bits_in/out, cumulative_bytes_in/out and a details[] of peers. No port and no protocol. One call runs iftop -s 2 on every interface named, concurrently (scripts/interfaces/traffic_top.py), so no answer is fresher than its 2-second capture: that span is the floor. The floor measured on a live firewall is pending LV-C.",
+      "floor_seconds": 2
     },
     {
       "name": "traffic_interface",
@@ -89,11 +90,26 @@
       "note": "text/event-stream, one event about every second and no end; read only with a bound."
     }
   ],
+  "settings": [
+    {
+      "key": "live_cadence_seconds",
+      "type": "integer",
+      "default": 10,
+      "min": 2,
+      "max": 300,
+      "label": "plugin.insight.setting.live_cadence_seconds"
+    }
+  ],
   "providers": [
     {
       "kind": "measurement_sample",
       "display_name": "NetFlow / Insight sampling",
-      "read_strategy": "full_reread"
+      "read_strategy": "full_reread",
+      "live": {
+        "function": "live",
+        "cadence_setting": "live_cadence_seconds",
+        "endpoints": ["traffic_top", "traffic_interface"]
+      }
     }
   ]
 }

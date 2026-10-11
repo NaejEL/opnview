@@ -188,7 +188,24 @@
             "allowed_connections": 1,
             "blocked_connections": 0,
             "unknown_connections": 0
-          }
+          },
+          "members": [
+            {
+              "address": "203.0.113.8",
+              "volume": {
+                "measure": "logged",
+                "lower_bound": true,
+                "bytes": 1000,
+                "allowed_bytes": 1000,
+                "blocked_bytes": 0,
+                "unknown_bytes": 0,
+                "connections": 1,
+                "allowed_connections": 1,
+                "blocked_connections": 0,
+                "unknown_connections": 0
+              }
+            }
+          ]
         },
         {
           "reason": "pending",
@@ -204,7 +221,8 @@
             "allowed_connections": 0,
             "blocked_connections": 0,
             "unknown_connections": 0
-          }
+          },
+          "members": []
         },
         {
           "reason": "no_row",
@@ -220,7 +238,8 @@
             "allowed_connections": 0,
             "blocked_connections": 0,
             "unknown_connections": 0
-          }
+          },
+          "members": []
         }
       ]
     },

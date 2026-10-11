@@ -50,6 +50,10 @@ func TestEverySiteNameCarriesItsMethodAndTheRatesAgreeWithTheStore(t *testing.T)
 	sites := decodeData[topSitesData](t, f.respond(t, "top_sites", map[string]any{"period": "30d"}))
 	cacheNamed := int64(0)
 	for _, row := range sites.Rows {
+		if row.Kind == widget.DestinationKindAddress {
+			// An address row is a destination no name was inferred for: it carries no method.
+			continue
+		}
 		if row.Methods.ResolverCacheAnswer+row.Methods.LookupTiming+row.Methods.NotRecorded != row.Flows.Value {
 			t.Errorf("%s: the methods do not sum to the flows", row.Name)
 		}
@@ -171,7 +175,14 @@ func TestNoDomainsWithholdsEveryDomainNameAndKeepsEveryCount(t *testing.T) {
 				}
 				continue
 			}
-			if before, after := numbers(t, full[widgetType+period]), numbers(t, serialised); !equalNumbers(before, after) {
+			before := full[widgetType+period]
+			if widgetType == "client_traffic_detail" {
+				// A record's correlation delay says that, and how, a name was inferred: under
+				// no_domains every destination is in address form, so it is withheld with the name
+				// (C2 of the backend-completion cycle). It is a delay, not a count or a volume.
+				before = withoutKey(t, before, "correlation_delay_seconds")
+			}
+			if before, after := numbers(t, before), numbers(t, serialised); !equalNumbers(before, after) {
 				t.Errorf("%s %s: a count or a volume changed under no_domains", widgetType, period)
 			}
 		}
@@ -200,6 +211,31 @@ func (f *fixture) serialised(t *testing.T, widgetType, period string) string {
 }
 
 // numbers collects every number of a JSON document, sorted.
+// withoutKey is a JSON document with every member named key removed, at any depth.
+func withoutKey(t *testing.T, document, key string) string {
+	t.Helper()
+	var decoded any
+	check(t, json.Unmarshal([]byte(document), &decoded))
+	var walk func(value any)
+	walk = func(value any) {
+		switch typed := value.(type) {
+		case []any:
+			for _, item := range typed {
+				walk(item)
+			}
+		case map[string]any:
+			delete(typed, key)
+			for _, item := range typed {
+				walk(item)
+			}
+		}
+	}
+	walk(decoded)
+	encoded, err := json.Marshal(decoded)
+	check(t, err)
+	return string(encoded)
+}
+
 func numbers(t *testing.T, document string) []float64 {
 	t.Helper()
 	var decoded any

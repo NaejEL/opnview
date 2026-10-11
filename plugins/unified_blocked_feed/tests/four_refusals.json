@@ -113,6 +113,8 @@
         },
         "target": "nolist.example",
         "target_kind": "domain",
+        "port": null,
+        "protocol": null,
         "target_is_this_firewall": false
       },
       {
@@ -139,6 +141,8 @@
         },
         "target": "ads.example",
         "target_kind": "domain",
+        "port": null,
+        "protocol": null,
         "target_is_this_firewall": false
       },
       {
@@ -165,6 +169,8 @@
         },
         "target": "203.0.113.7",
         "target_kind": "address",
+        "port": null,
+        "protocol": "tcp",
         "target_is_this_firewall": false
       },
       {
@@ -198,6 +204,8 @@
         },
         "target": "203.0.113.7",
         "target_kind": "address",
+        "port": null,
+        "protocol": "tcp",
         "target_is_this_firewall": false
       }
     ],

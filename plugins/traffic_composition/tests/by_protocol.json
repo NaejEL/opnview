@@ -4,11 +4,14 @@
     "clients": null,
     "group_by": "protocol",
     "interfaces": null,
+    "line_interpolation": "linear",
     "measure": "bytes",
     "period": "24h",
     "scope": "all",
     "show_other": true,
-    "slices": 1
+    "slices": 1,
+    "split_by": "none",
+    "window_seconds": null
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -118,7 +121,10 @@
             "in_bits_per_second": null,
             "out_bits_per_second": null,
             "out_measured": false,
-            "sampled_at": null
+            "sampled_at": null,
+            "span_seconds": null,
+            "cadence_seconds": null,
+            "lower_bound": true
           }
         },
         {
@@ -129,7 +135,10 @@
             "in_bits_per_second": null,
             "out_bits_per_second": null,
             "out_measured": false,
-            "sampled_at": null
+            "sampled_at": null,
+            "span_seconds": null,
+            "cadence_seconds": null,
+            "lower_bound": true
           }
         },
         {
@@ -140,7 +149,10 @@
             "in_bits_per_second": null,
             "out_bits_per_second": null,
             "out_measured": false,
-            "sampled_at": null
+            "sampled_at": null,
+            "span_seconds": null,
+            "cadence_seconds": null,
+            "lower_bound": true
           }
         }
       ],
@@ -150,7 +162,10 @@
         "in_bits_per_second": null,
         "out_bits_per_second": null,
         "out_measured": false,
-        "sampled_at": null
+        "sampled_at": null,
+        "span_seconds": null,
+        "cadence_seconds": null,
+        "lower_bound": true
       },
       "by_member": []
     }

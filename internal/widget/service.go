@@ -11,6 +11,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/dataset"
+	"github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/store"
 )
 
@@ -86,6 +87,8 @@ type Service struct {
 	operator []string
 	// datasets is the data catalogue: the core's datasets and the loaded plugins' (datasets.go).
 	datasets *dataset.Catalogue
+	// liveInterest is the live-interest lease a request for a live figure renews (live.go).
+	liveInterest *live.Interest
 }
 
 // Options are what a service needs beside the store.
@@ -105,6 +108,9 @@ type Options struct {
 	// directory's. Nil takes the built-in plugins' alone, as the plugin loader registered them. A
 	// refused built-in is an error; a refused third party's widget is reported by Refusals.
 	Plugins []Source
+	// LiveInterest is the live-interest lease an answer carrying a live figure renews; nil
+	// renews none (live.go).
+	LiveInterest *live.Interest
 }
 
 // New returns the service over a store.
@@ -116,7 +122,8 @@ func New(database *store.Store, options Options) (*Service, error) {
 	if now == nil {
 		now = time.Now
 	}
-	service := &Service{store: database, Now: now, lists: options.SuffixLists, presets: map[string]Preset{}}
+	service := &Service{store: database, Now: now, lists: options.SuffixLists, presets: map[string]Preset{},
+		liveInterest: options.LiveInterest}
 	service.datasets = options.Datasets
 	if service.datasets == nil {
 		catalogue, err := dataset.NewCatalogue(nil)
@@ -270,6 +277,7 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 		Failed:         map[int]bool{},
 		WithheldSeries: map[int]bool{},
 		datasets:       s.datasets,
+		liveInterest:   s.liveInterest,
 		Response: &Response{
 			Type: widgetType, Parameters: parsed.Effective, UnknownParameters: parsed.Unknown,
 			InvalidParameters: parsed.invalid, MissingParameters: parsed.missing,
@@ -318,6 +326,14 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 	}
 
 	data, hasRows, err := preset.Serve(request)
+	if errors.Is(err, errWithheldUnderNoDomains) {
+		response.Condition = ConditionWithheldByAggregateMode
+		response.Data = nil
+		response.Withheld = append(response.Withheld, "data")
+		sort.Strings(response.States)
+		sort.Strings(response.Withheld)
+		return *response, nil
+	}
 	if err != nil {
 		return Response{}, err
 	}
@@ -375,6 +391,8 @@ type Request struct {
 
 	// datasets is the data catalogue, which a custom_chart series may read (datasetseries.go).
 	datasets *dataset.Catalogue
+	// liveInterest is the lease a live figure renews (live.go).
+	liveInterest *live.Interest
 
 	installation *installation
 }

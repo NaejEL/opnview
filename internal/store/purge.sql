@@ -189,17 +189,21 @@ WHERE hour_start_at + 3600 < (
     WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
--- A client is removed only once every observation that named it has gone. Its
--- owner, if it had one, is untouched: the person outlives the machine.
--- purging an identity that a surviving flow still points at would leave that
--- flow unable to name a machine. Every statement above runs first, so by the
--- time this one runs the guards below see the purged state.
+-- A client is removed only once every observation that named it has gone, and
+-- NEVER while somebody has assigned it to a person (specs/SPEC-backend-completion-
+-- plugins.md, C1): an assignment is user input, and a machine somebody attributed
+-- outlives the retention as the person does, so it is still there to be listed,
+-- reassigned or unassigned when it next appears. Purging an identity that a
+-- surviving flow still points at would leave that flow unable to name a machine.
+-- Every statement above runs first, so by the time this one runs the guards below
+-- see the purged state.
 DELETE FROM client
 WHERE last_seen_at < (
     SELECT :now - CAST(value AS BIGINT)
     FROM setting
     WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
+AND owner_id IS NULL
 AND NOT EXISTS (SELECT 1 FROM flow f
                 WHERE f.src_client_id = client.id OR f.dst_client_id = client.id)
 AND NOT EXISTS (SELECT 1 FROM security_event e WHERE e.src_client_id = client.id)
@@ -347,6 +351,20 @@ WHERE sampled_at < (
     FROM setting
     WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
+
+-- A FINE SAMPLE -- one a live pass took while somebody looked at a live figure -- is
+-- kept for live_sample_retention_seconds and no longer, to the exact second; a baseline
+-- sample, and a fine one the baseline pass promoted, carries no live cadence and is
+-- untouched here (C3 of the backend-completion cycle, "Persistence"). With no row, the
+-- default the schema writes applies: the coalesce keeps a deleted row from turning the
+-- short retention into none.
+DELETE FROM measurement_sample
+WHERE live_cadence_seconds IS NOT NULL
+  AND sampled_at < :now - coalesce((
+    SELECT CAST(value AS BIGINT)
+    FROM setting
+    WHERE key = 'live_sample_retention_seconds' AND CAST(value AS BIGINT) > 0
+), 3600);
 
 
 -- ---------------------------------------------------------------------------

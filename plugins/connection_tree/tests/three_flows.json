@@ -213,7 +213,7 @@
         "last_seen_at": 1789999803,
         "children": [
           {
-            "key": "site:none",
+            "key": "address:203.0.113.7",
             "value": 3200,
             "bytes": {
               "measure": "logged",
@@ -230,7 +230,12 @@
               "lower_bound": true,
               "value": 1
             },
-            "last_seen_at": 1789999803
+            "last_seen_at": 1789999803,
+            "address": "203.0.113.7",
+            "lookup_state": "miss",
+            "country_code": null,
+            "asn": null,
+            "operator": null
           }
         ]
       },
@@ -255,7 +260,7 @@
         "last_seen_at": 1789999802,
         "children": [
           {
-            "key": "site:none",
+            "key": "address:203.0.113.8",
             "value": 500,
             "bytes": {
               "measure": "logged",
@@ -272,7 +277,12 @@
               "lower_bound": true,
               "value": 0
             },
-            "last_seen_at": 1789999802
+            "last_seen_at": 1789999802,
+            "address": "203.0.113.8",
+            "lookup_state": "no_row",
+            "country_code": null,
+            "asn": null,
+            "operator": null
           }
         ]
       }

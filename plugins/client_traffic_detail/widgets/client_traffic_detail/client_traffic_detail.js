@@ -3,8 +3,9 @@
 // attribution is a first-class row, with its address, country and operator; an attributed one
 // carries its site name, its method and its delay.
 
-// SITE_NAME is the field aggregate_mode = no_domains withholds.
-var SITE_NAME = "records[].site_name";
+// WITHHELD are the fields aggregate_mode = no_domains withholds: the inferred name and what says how,
+// or whether, it was inferred.
+var WITHHELD = ["records[].site_name", "records[].method", "records[].correlation_delay_seconds"];
 
 exports.widget = {
   serve: function (host) {
@@ -77,9 +78,12 @@ exports.widget = {
         interface_device: row.interface_device,
         interface_description: row.interface_description
       };
-      if (noDomains && record.site_name !== null) {
+      if (noDomains) {
+        // Every destination in address form: the record carries no trace of whether a name was
+        // inferred, neither the name, nor the method, nor the delay that inferred it (C2).
         record.site_name = null;
-        host.envelope.withhold(SITE_NAME);
+        record.method = null;
+        record.correlation_delay_seconds = null;
       }
       data.records.push(record);
     });
@@ -94,7 +98,7 @@ exports.widget = {
     data.total = host.figures.remainder(totals.records, null, totals.bytes);
     data.remainder = host.figures.remainder(totals.records - data.records.length, null, totals.bytes - shownBytes);
     if (noDomains) {
-      host.envelope.withhold(SITE_NAME);
+      WITHHELD.forEach(function (path) { host.envelope.withhold(path); });
     }
     return { data: data, has_rows: totals.records > 0 };
   }

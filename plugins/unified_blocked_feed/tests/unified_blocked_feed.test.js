@@ -53,6 +53,9 @@ test("every refusal is listed newest first, each naming what decided it", functi
       ["firewall_rule", "rule_not_found"], ["firewall_rule", "rule"]], "the newest first");
   t.equal(data.entries[3].decided_by.rule.pf_label, "label-five", "the rule a pf label names");
   t.equal([data.entries[1].target, data.entries[1].target_kind], ["ads.example", "domain"], "the domain refused");
+  t.equal([data.entries[3].target, data.entries[3].port, data.entries[3].protocol], ["203.0.113.7", null, "tcp"],
+    "an address target carries its protocol, and its port is null where none was logged");
+  t.equal([data.entries[1].port, data.entries[1].protocol], [null, null], "a refused lookup has neither");
   t.equal(data.entries[3]["interface"].identifier, "opt1", "the interface it was refused on");
   t.equal(data.sources.map(function (source) { return [source.provider_kind, source.count.value]; }),
     [["firewall_log", 2], ["dns_lookup", 2], ["security_event", 0]], "each contributing source");

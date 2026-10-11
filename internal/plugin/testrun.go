@@ -371,7 +371,10 @@ func valuesMap(values url.Values) map[string]any {
 // a subscription of its own, as each pass's was.
 func (w *testWorld) session() provider.Session {
 	reference := w.reference
-	gate := broker.New(w.client, nil, broker.Options{})
+	// The broker reads the world's clock, so an answer's fetched_at is the world's instant: the
+	// reference, advanced by the real time the test has run, which keeps every wait the broker makes
+	// finite.
+	gate := broker.New(w.client, nil, broker.Options{Clock: worldClock{reference: reference, started: time.Now()}})
 	w.mutex.Lock()
 	w.gates = append(w.gates, gate)
 	w.mutex.Unlock()
@@ -753,7 +756,8 @@ func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, argume
 	if !found {
 		throw(vm, "the plugin provides no %s", kind)
 	}
-	if kind == "measurement_sample" && function == "sample" && len(arguments) >= 1 {
+	live := w.plugin.liveOf(kind, function)
+	if kind == "measurement_sample" && (function == "sample" || live != nil) && len(arguments) >= 1 {
 		if _, isView := arguments[0].(map[string]any); !isView {
 			arguments[0] = DiscoveryView(provider.Discovery{})
 		}
@@ -775,6 +779,13 @@ func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, argume
 		if _, core := provider.ContractOf(kind); !core {
 			table = map[string]string{"probe": "probe_answer", "collect": "collect_answer"}[function]
 		}
+	}
+	if live != nil {
+		// A live pass is called as the service calls it: its requests under the live cadence, reading
+		// only its live endpoints.
+		table = liveKinds[kind]
+		base.invoker = liveInvoker{script: w.plugin.script, namespace: kind,
+			maxAge: time.Duration(live.fallback) * time.Second, only: live.only}
 	}
 	if table == "" {
 		throw(vm, "the %s contract has no function %s", kind, function)
@@ -897,6 +908,13 @@ func (m *memorySettings) SetSetting(_ context.Context, key, value string, _ int6
 	return nil
 }
 
+func (m *memorySettings) DeleteSetting(_ context.Context, key string) error {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	delete(m.values, key)
+	return nil
+}
+
 func (m *memorySettings) Credential(_ context.Context, name string) (store.EncryptedCredential, bool, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
@@ -953,3 +971,15 @@ func (w *testWorld) credentialLeaks() []string {
 	}
 	return leaks
 }
+
+// worldClock is a test world's clock as the broker reads it: the world's reference, advanced by the
+// real time elapsed since the call began.
+type worldClock struct {
+	reference, started time.Time
+}
+
+// Now is the reference plus the real time elapsed.
+func (c worldClock) Now() time.Time { return c.reference.Add(time.Since(c.started)) }
+
+// After waits in real time.
+func (worldClock) After(d time.Duration) <-chan time.Time { return time.After(d) }

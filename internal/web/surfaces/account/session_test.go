@@ -3,6 +3,7 @@ package account_test
 import (
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/surfaces/account"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"net/http"
 	"net/url"
@@ -162,10 +163,18 @@ func TestEveryRouteIsPublicByDecisionOrRefusesAnUnauthenticatedRequest(t *testin
 		http.MethodPost + " " + web.PathSignIn:    true,
 		http.MethodGet + " " + web.PathRecover:    true,
 		http.MethodGet + " " + web.PathStylesheet: true,
+		// The JSON equivalents of the setup and sign-in pages (C5 of the backend-completion
+		// cycle), public for the same reason the pages are, and the session state that hands a
+		// reader with no session the form token those two writes carry.
+		http.MethodGet + " " + account.PathAPISession: true,
+		http.MethodPost + " " + account.PathAPISetup:  true,
+		http.MethodPost + " " + account.PathAPISignIn: true,
 	}
-	// The one route authorised by possession of the key file rather than by a session.
+	// The routes authorised by possession of the key file rather than by a session: the reset
+	// page's form and its JSON equivalent.
 	expectedKeyFile := map[string]bool{
-		http.MethodPost + " " + web.PathRecover: true,
+		http.MethodPost + " " + web.PathRecover:        true,
+		http.MethodPost + " " + account.PathAPIRecover: true,
 	}
 
 	routes := harness.Server.Routes()

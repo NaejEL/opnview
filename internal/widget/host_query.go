@@ -89,6 +89,10 @@ func (c *scriptCall) runStatement(arguments goja.FunctionCall) ([]string, [][]an
 		c.throw("the statement %s is not a period template and runs at no period", name)
 	}
 	r := c.request
+	if statement.domain && r.NoDomains() && !c.widget.builtin {
+		c.fail(errWithheldUnderNoDomains)
+		return nil, nil, true
+	}
 	columns, rows, err := r.Db.WidgetQuery(r.Ctx, statement.registered, period, bound)
 	if err != nil {
 		c.fail(err)

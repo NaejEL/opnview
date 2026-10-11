@@ -778,15 +778,23 @@ func (s *Store) MarkEveFileLost(ctx context.Context, fileID string, now int64) e
 // providers, and two of them reading one subject at one instant are two readings —
 // and because the firewall's own gauges carry a null provider, which a bare column
 // in a uniqueness constraint would make distinct from every other null.
+//
+// A FINE SAMPLE IS PROMOTED, NEVER DUPLICATED. A baseline reading arriving at the instant
+// a live pass already stored -- the baseline pass served from the broker's mirror by the
+// live pass's answer -- turns the fine row into a baseline one, so it outlives the
+// fine-sample retention; a fine reading arriving after a baseline one changes nothing.
 func (s *Store) InsertMeasurementSample(ctx context.Context, sample MeasurementSample) error {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
-		                                 unit, value, sampled_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+		                                 unit, value, sampled_at, live_cadence_seconds)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (subject_kind, subject_key, measure, sampled_at, coalesce(provider_id, -1))
-		 DO NOTHING`,
+		 DO UPDATE SET live_cadence_seconds = NULL
+		 WHERE measurement_sample.live_cadence_seconds IS NOT NULL
+		   AND excluded.live_cadence_seconds IS NULL`,
 		sample.ProviderID, string(sample.SubjectKind), sample.SubjectKey,
-		string(sample.Measure), string(sample.Unit), sample.Value, sample.SampledAt)
+		string(sample.Measure), string(sample.Unit), sample.Value, sample.SampledAt,
+		sample.LiveCadenceSeconds)
 	if err != nil {
 		return fmt.Errorf("store: writing a %s measurement: %w", sample.Measure, err)
 	}

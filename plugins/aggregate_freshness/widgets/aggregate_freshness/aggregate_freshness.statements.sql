@@ -19,7 +19,9 @@ WHERE period_start_at >= :from
 
 
 -- The slots of the same span whose computation is behind their flows: a flow of the slot was
--- ingested at or after the slot's last computation (the refresh contract's recognition rule).
+-- ingested at or after the slot's last computation (the refresh contract's recognition rule), or
+-- an hour of the slot a change of ownership invalidated and no refresh has rewritten yet
+-- (owner_reassigned_hour).
 -- statement: widget_period_stale_slots
 SELECT count(*) AS stale_slots
 FROM (SELECT period_start_at, period_end_at, max(computed_at) AS computed
@@ -30,4 +32,7 @@ FROM (SELECT period_start_at, period_end_at, max(computed_at) AS computed
 WHERE EXISTS (SELECT 1 FROM flow AS f
               WHERE f.observed_at >= computed_slot.period_start_at
                 AND f.observed_at < computed_slot.period_end_at
-                AND f.ingested_at >= computed_slot.computed);
+                AND f.ingested_at >= computed_slot.computed)
+   OR EXISTS (SELECT 1 FROM owner_reassigned_hour AS r
+              WHERE r.hour_start_at >= computed_slot.period_start_at
+                AND r.hour_start_at < computed_slot.period_end_at);

@@ -66,6 +66,8 @@ test("interfaces on the left, operators on the right, and an unplaced peer in th
   t.equal(data.nodes[2].operator, "Example Operator", "the operator named");
   t.equal([data.other.ribbons, data.other.bytes.value, data.other.unnamed[0].addresses], [0, 1000, 1],
     "the miss is in the Other band");
+  t.equal(data.other.unnamed[0].members.map(function (member) { return [member.address, member.volume.bytes]; }),
+    [["203.0.113.8", 1000]], "the miss bin lists its address, its figures summing to the bin");
   t.equal(data.total.bytes, 4700, "ribbons and the band make the total");
   t.golden("interfaces_to_operators.json", answer.raw);
 });

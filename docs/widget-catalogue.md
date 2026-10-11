@@ -706,15 +706,29 @@ the second of the three outbound calls the project allows.
 
 **Question** — What is the traffic made of right now, and in what proportion?
 
-**Binding** — Volume as parts of the period's total, grouped by one of four
+**Binding** — Volume as parts of the period's total, grouped by one of five
 dimensions, with the total in the hole and a rolling inline series beneath.
-Providers: `firewall_log`; and `measurement_sample` for the `service_port`
-grouping beyond the `flow` horizon, which is where the sampled per-pair volume
-lands (`docs/data-model.md`, `measurement_sample`).
+A service is a port **and** a protocol together, as IANA identifies a service by
+both, so 53/udp and 53/tcp are two slices, and a record with no port logged is
+the slice `port:not_recorded`. Grouped by blocking reason, every logged record
+lands under its decision -- allowed, refused by a firewall rule, dropped with no
+rule matched, refused for a reason not recorded -- and the refusals no packet
+carries (a DNS list's, the detection engine's) are counted beside the rings,
+never as a share of them. Split by direction, one ring per traffic direction
+stands beside the whole. The rolling series holds the logged decisions of the
+last `window_seconds`, per slice, a bucket the filter log has not completed yet
+being a gap and never a zero; the sampled throughput strip beside it spans the
+same `window_seconds`.
+*Amended by C4 of the backend-completion cycle: protocol and port together, and
+the mockup's `blocking_reason`, `split_by`, `window_seconds` and
+`line_interpolation` adopted.* Providers: `firewall_log`; and
+`measurement_sample` for the `service_port` grouping beyond the `flow` horizon,
+which is where the sampled per-pair volume lands (`docs/data-model.md`,
+`measurement_sample`).
 
 **Data** — `flow.packet_bytes`, `flow.observed_at`, `flow.protocol`,
 `flow.dst_port`, `flow.src_client_id`, `flow.src_interface_id`, `flow.action`,
-`flow.traffic_scope`; `client.hostname`, `client.last_address`;
+`flow.log_reason`, `flow.traffic_scope`; `client.hostname`, `client.last_address`;
 `interface.user_label`, `interface.description`. For 7 d and 30 d the client and
 interface groupings read `volume_aggregate_7d.bytes`, `.allowed_connections`,
 `.blocked_connections`, `.src_interface_id`, `.peer_address`, `.period_start_at`
@@ -725,15 +739,21 @@ and the `_30d` twins. The `service_port` grouping may additionally read
 Insight*.
 
 **Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `group_by`
-(`client` | `interface` | `protocol` | `service_port`); `measure`
-(`bytes` | `connections`); `slices` (how many named slices before the collapsed
-one); `interfaces` (optional list of interface references); `clients`
-(optional); `scope` (`all` | `east_west` | `north_south`); `show_other`
-(boolean, default true and not recommended to disable).
+(`client` | `interface` | `protocol` | `service_port` | `blocking_reason`);
+`measure` (`bytes` | `connections`); `slices` (how many named slices before the
+collapsed one); `interfaces` (optional list of interface references); `clients`
+(optional); `scope` (`all` | `east_west` | `north_south`); `split_by`
+(`none` | `direction` -- one ring for the whole, or one per direction beside
+it); `window_seconds` (how much of the recent past the rolling series holds,
+2 to 3600; absent, no rolling series); `show_other` (boolean, default true and
+not recommended to disable); `line_interpolation` (`points` | `linear` |
+`smooth`, how the rolling series' points are joined -- rendering only).
+
+**Not adopted** — `destinations_per_owner`, which the mockup also carried: a
+connection tree rooted at the person answers it.
 
 **Gaps** — **G12**: nothing in the model classifies a flow as an application, so
-this preset offers four groupings rather than five and **application is not one
-of them**. Neither route to one is implemented, deliberately; see *Gaps found*.
+this preset offers five groupings and **application is not one of them**. Neither route to one is implemented, deliberately; see *Gaps found*.
 
 ### Connection tree
 
@@ -745,8 +765,12 @@ of them**. Neither route to one is implemented, deliberately; see *Gaps found*.
 — go preferentially?
 
 **Binding** — Levels: the chosen root, then client, then destination (named by
-its site name where one was inferred and by its operator and country otherwise),
-then service port and protocol. Blocked connections are drawn with their own mark
+its site name where one was inferred and by its address, with its operator and
+country, otherwise -- never one node for every unnamed destination together),
+then service port and protocol (`depth` 3), a service being a port and a protocol
+together. Under `aggregate_mode = no_domains` every destination is in address
+form, named ones included, so the tree does not depend on whether a name was
+ever inferred. *Amended by C2 and C4 of the backend-completion cycle.* Blocked connections are drawn with their own mark
 rather than filtered out, so a branch that exists only because something was
 refused is visible as such. A destination the geolocation cache could not place
 keeps its branch and is labelled with its `lookup_state`. Rooting at a person
@@ -830,8 +854,16 @@ hidden; totals below exclude them"*.
 **Binding** — Inferred site names ranked by attributed flows, with the number of
 distinct clients that reached them, the byte volume, and the country and operator
 behind the address. Each row expands to the clients behind it, and each record
-carries the method that inferred its name, rendered in step 7. Providers:
-`dns_lookup`, `resolver_cache`, `firewall_log`, `geo_asn`.
+carries the method that inferred its name, rendered in step 7. A destination no
+name was inferred for is a row of its own, of kind `address`: its address, its
+operator (AS number and organisation) and its country, or the state of its
+lookup when the geolocation could not place it -- never one "unnamed" row. Address
+rows are ranked with the site rows and truncated by the same `limit` and
+`min_flows`; an address partly named gives its named flows to the site rows and
+the rest to its own row, so the rows, the remainder and the names below
+`min_flows` make the window's eligible flows. *Amended by C2 of the
+backend-completion cycle.* Providers: `dns_lookup`, `resolver_cache`,
+`firewall_log`, `geo_asn`.
 
 **Data** — `domain_attribution.site_name`, `domain_attribution.flow_id`,
 `domain_attribution.dns_resolution_id`,
@@ -859,9 +891,12 @@ family carries a 30 d top-sites list beyond the `retention_seconds` horizon.
 **Question** — Which site was used, and by whom?
 
 **Binding** — Clients down the side, their top inferred site names across, each
-cell carrying the flow count and the byte volume. A client with no attributed
-flows keeps its row with an explicit *"no site name could be inferred"* and its
-attribution rate beside it. Each record carries the method that inferred its
+cell carrying the flow count and the byte volume. A destination no name was
+inferred for is a cell of its own, by its address with its operator and country,
+ranked with the names and truncated by the same `sites_per_client` and
+`min_flows` (*amended by C2 of the backend-completion cycle*). A client with no
+attributed flows keeps its row with an explicit *"no site name could be
+inferred"* and its attribution rate beside it. Each record carries the method that inferred its
 name, rendered in step 7. Providers: `dns_lookup`, `resolver_cache`,
 `firewall_log`, `dhcp_lease`.
 
@@ -1575,7 +1610,12 @@ always one click from the reason it is empty.
 `source_availability.probe`, `source_availability.detail`,
 `source_availability.checked_at`. Query: `-- diagnostic: Source availability`,
 unchanged. Sources: the probe endpoints per kind, all cited in
-`docs/opnsense-api-survey.md` under each data source's *Degradation*.
+`docs/opnsense-api-survey.md` under each data source's *Degradation*. Each row also
+carries **`since`**, when its current state began as `opnview`'s own checks bound it,
+from `source_availability.state_since_after_at` and `state_since_by_at`: the state
+began after the first and by the second, **never stated as one instant**; a state
+never seen changing names its absence, `state_change_not_observed` (C6 of the
+backend-completion cycle, `docs/widget-api.md`, *Settings API*).
 
 **Parameters** — `kinds` (optional subset of the provider kinds);
 `show_inactive` (boolean, default true); `compact` (boolean).

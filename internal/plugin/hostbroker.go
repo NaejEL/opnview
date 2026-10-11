@@ -221,24 +221,26 @@ func (h *hostCalls) serviceState(vm *goja.Runtime, endpoint opnsense.Endpoint) (
 }
 
 // readObject reads an endpoint's object whole.
-func (h *hostCalls) readObject(vm *goja.Runtime, endpoint opnsense.Endpoint) (decode.Object, bool, error) {
+// It also returns the instant the answer was fetched: the firewall's answer may be one the mirror held.
+func (h *hostCalls) readObject(vm *goja.Runtime, endpoint opnsense.Endpoint) (decode.Object, int64, bool, error) {
 	if h.gate == nil {
-		return h.session.ReadObject(h.ctx, endpoint)
+		object, ok, err := h.session.ReadObject(h.ctx, endpoint)
+		return object, h.session.Now(), ok, err
 	}
 	served, err := h.request(endpoint, opnsense.RequestOptions{}, h.maxAge, nil)
 	if served == nil || (err != nil && served.Response.Outcome == "") {
-		return nil, false, err
+		return nil, 0, false, err
 	}
 	if !served.Response.OK() || served.Value == nil || served.Value.Kind != answer.Object {
-		return nil, false, nil
+		return nil, served.FetchedAt, false, nil
 	}
 	value, wholeErr := answer.Observe(served.Value, h.record(served, h.maxAge), served.Holding).Whole()
 	if wholeErr != nil {
 		h.notHeld(vm, endpoint.Path, wholeErr)
-		return nil, false, nil
+		return nil, served.FetchedAt, false, nil
 	}
 	object, _ := value.Plain().(map[string]any)
-	return object, true, nil
+	return object, served.FetchedAt, true, nil
 }
 
 // readCollection reads an endpoint's rows whole.

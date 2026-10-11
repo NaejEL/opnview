@@ -25,7 +25,9 @@ import (
 //	                                     or null when the source holds no record
 //	host.envelope.availability()         every provider of the kinds the widget binds, with its
 //	                                     condition, as the response carries them
-//	host.envelope.kindCondition(kind)    the condition of a provider kind: its active providers' best
+//	host.envelope.availabilitySince()    when each registered provider's current state began, by
+//	                                     "<kind>/<provider key>": {after_at, by_at, state}
+//	host.envelope.kindCondition(kind)   the condition of a provider kind: its active providers' best
 //	host.envelope.gaps()                 the gaps of the window, as the response carries them
 //	host.envelope.readGaps(kinds, window) the gaps of other kinds or another window
 //	host.envelope.hourFreshness(from, to) records the freshness of the 1 h slots of [from, to)
@@ -91,6 +93,13 @@ func init() {
 		})
 		call.function(area, "availability", func(goja.FunctionCall) goja.Value {
 			return call.value(r.Response.Availability)
+		})
+		call.function(area, "availabilitySince", func(goja.FunctionCall) goja.Value {
+			since, err := ReadAvailabilitySince(r.Ctx, r.Db)
+			if err != nil {
+				return call.fail(err)
+			}
+			return call.value(since)
 		})
 		call.function(area, "kindCondition", func(arguments goja.FunctionCall) goja.Value {
 			return call.vm.ToValue(KindCondition(r.Response.Availability, text(arguments, "the provider kind")))

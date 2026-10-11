@@ -115,7 +115,8 @@ func loadPluginWidget(ctx context.Context, database *store.Store, source Source,
 		return Preset{}, refusal
 	}
 	preset := presetFromManifest(manifest, origin)
-	script := &scriptWidget{plugin: source.Plugin, file: manifest.Script, program: program, statements: statements}
+	script := &scriptWidget{plugin: source.Plugin, file: manifest.Script, program: program, statements: statements,
+		builtin: source.Builtin}
 	preset.Serve = script.serve
 	return preset, nil
 }

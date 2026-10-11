@@ -2984,6 +2984,35 @@ CREATE TABLE IF NOT EXISTS retention_purge (
 );
 
 -- ---------------------------------------------------------------------------
+-- Owner reassigned hour — an hour slot a change of ownership invalidated, waiting
+-- for the next refresh of the aggregates.
+--
+-- Ownership is an attribute of the person, not of the flow, so assigning,
+-- reassigning or unassigning a client, deleting a person or undoing that deletion
+-- changes no flow's ingested_at, and the refresh contract's recognition rule
+-- (docs/data-model.md, "Refresh contract", rules 3 and 4) cannot see it. The write
+-- that changes ownership therefore records here, in its own transaction, every
+-- kept 1 h slot holding the clients' traffic (read from the client family, so a
+-- slot beyond the flow horizon is found as well as one inside it). The next refresh
+-- reads these rows as forced instants -- rewriting the hour and the day, week and
+-- month holding it -- and deletes exactly the rows it read once it has committed;
+-- until then the widget API's freshness reports each such hour stale. A row is
+-- written per hour per change, so a change made while a refresh runs is kept for
+-- the next one.
+--
+-- Bounded: the rows live from a change of ownership to the next refresh, seconds
+-- at most. Never purged: the refresh empties it.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS owner_reassigned_hour (
+    id            BIGINT PRIMARY KEY,
+    hour_start_at BIGINT NOT NULL CHECK (hour_start_at >= 0 AND hour_start_at < 4102444800
+                                         AND hour_start_at % 3600 = 0),
+    recorded_at   BIGINT NOT NULL CHECK (recorded_at >= 0 AND recorded_at < 4102444800)
+);
+
+CREATE INDEX IF NOT EXISTS idx_owner_reassigned_hour ON owner_reassigned_hour (hour_start_at);
+
+-- ---------------------------------------------------------------------------
 -- Address classification — the evidence each address was last placed from.
 --
 -- Classification places an address from on-link evidence (docs/data-model.md,
@@ -3227,7 +3256,19 @@ CREATE TABLE IF NOT EXISTS measurement_sample (
                                       AND unit = lower(unit)
                                       AND strpos(unit, ' ') = 0),
     value        DOUBLE PRECISION NOT NULL,
-    sampled_at   BIGINT NOT NULL CHECK (sampled_at >= 0 AND sampled_at < 4102444800)
+    sampled_at   BIGINT NOT NULL CHECK (sampled_at >= 0 AND sampled_at < 4102444800),
+    -- A FINE SAMPLE carries the live cadence it was taken at; a BASELINE sample carries
+    -- NULL (C3 of the backend-completion cycle, "Persistence"). A live pass runs while
+    -- somebody looks at a live figure, and its samples are purged after
+    -- live_sample_retention_seconds; the baseline pass runs at the measurement interval
+    -- whether anyone looks or not, and its samples follow retention_seconds. When the
+    -- baseline pass falls due during live mode it is served from the broker's mirror by
+    -- the live pass's answer -- one round of calls for both -- and writes the same reading
+    -- at the same instant: the conflict PROMOTES the fine row to a baseline one (this
+    -- column set to NULL) rather than storing it twice, so the baseline series has no hole
+    -- and no reading is ever counted twice (the maintainer's answer (a) to open question 1:
+    -- promotion only, no summary rows).
+    live_cadence_seconds INTEGER CHECK (live_cadence_seconds IS NULL OR live_cadence_seconds > 0)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_measurement_sample_reading
@@ -3240,6 +3281,10 @@ CREATE INDEX IF NOT EXISTS idx_measurement_sample_subject
     ON measurement_sample (subject_kind, subject_key, measure, sampled_at, value);
 CREATE INDEX IF NOT EXISTS idx_measurement_sample_sampled_at
     ON measurement_sample (sampled_at);
+-- The fine-sample purge reads only the fine rows, which are few beside the baseline ones.
+CREATE INDEX IF NOT EXISTS idx_measurement_sample_fine
+    ON measurement_sample (sampled_at)
+    WHERE live_cadence_seconds IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- Reconciled state — the complete set of things of one type a provider reports,
@@ -3434,6 +3479,13 @@ WHERE NOT EXISTS (
 -- DefaultHeartbeatIntervalSeconds; both are positive whole numbers of seconds,
 -- the threshold longer than the interval, and internal/config refuses anything
 -- else.
+--
+-- live_interest_seconds and live_sample_retention_seconds: how long a request for a
+-- live figure keeps the live passes running, and how long their fine samples are
+-- kept (C3 of the backend-completion cycle; docs/widget-api.md, "Live figures").
+-- 30 and 3600 are the defaults, justified in internal/config/liverate.go; each is a
+-- whole number of seconds within the bounds written there, and internal/config
+-- refuses anything else, naming the key.
 -- The row-id triggers, one per table numbered by id (see install_assign_id).
 SELECT install_assign_id(t::regclass) FROM unnest(ARRAY[
     'account',
@@ -3481,7 +3533,8 @@ SELECT install_assign_id(t::regclass) FROM unnest(ARRAY[
     'opnview_downtime',
     'measurement_sample',
     'state_snapshot',
-    'state_item'
+    'state_item',
+    'owner_reassigned_hour'
 ]) AS t;
 
 INSERT INTO setting (key, value, updated_at) VALUES
@@ -3492,7 +3545,9 @@ INSERT INTO setting (key, value, updated_at) VALUES
     ('leg_pairing_window_seconds', '1', CAST(extract(epoch FROM now()) AS BIGINT)),
     ('lease_backend_failure_pass_limit', '3', CAST(extract(epoch FROM now()) AS BIGINT)),
     ('heartbeat_interval_seconds', '60', CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('downtime_threshold_seconds', '300', CAST(extract(epoch FROM now()) AS BIGINT))
+    ('downtime_threshold_seconds', '300', CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('live_interest_seconds', '30', CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('live_sample_retention_seconds', '3600', CAST(extract(epoch FROM now()) AS BIGINT))
 ON CONFLICT (key) DO NOTHING;
 
 -- The provider registry, seeded with the implementations that exist and have

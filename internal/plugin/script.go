@@ -179,6 +179,20 @@ func (s *script) callAny(ctx context.Context, session provider.Session, namespac
 	return s.run(ctx, session, namespace, function, true, arguments...)
 }
 
+// callLive runs a provider's live pass (live.go): its requests carry the live cadence as their
+// max age, and it may read only the endpoints its declaration names.
+func (s *script) callLive(ctx context.Context, session provider.Session, namespace, function string,
+	maxAge time.Duration, only map[string]bool, arguments ...any) (any, []error, *failure) {
+	return s.runWith(ctx, session, namespace, function, runOptions{maxAge: maxAge, only: only}, arguments...)
+}
+
+// runOptions are what a live pass changes of a call: its max age and the endpoints it may read.
+type runOptions struct {
+	plain  bool
+	maxAge time.Duration
+	only   map[string]bool
+}
+
 // maxRuns bounds how many times one call runs: once, and once more per endpoint whose answer the
 // mirror did not hold a field of.
 const maxRuns = 8
@@ -189,7 +203,17 @@ const maxRuns = 8
 // field because of the mirror").
 func (s *script) run(ctx context.Context, session provider.Session, namespace, function string, plain bool,
 	arguments ...any) (any, []error, *failure) {
+	return s.runWith(ctx, session, namespace, function, runOptions{plain: plain}, arguments...)
+}
+
+// runWith is run with the options of a live pass.
+func (s *script) runWith(ctx context.Context, session provider.Session, namespace, function string,
+	options runOptions, arguments ...any) (any, []error, *failure) {
+	plain := options.plain
 	requester, maxAge, gate := s.requesterOf(session, namespace, function)
+	if options.maxAge > 0 {
+		maxAge = options.maxAge
+	}
 	if scoped, scopable := session.(interface {
 		For(string, time.Duration) *provider.Host
 	}); scopable {
@@ -203,7 +227,7 @@ func (s *script) run(ctx context.Context, session provider.Session, namespace, f
 	fresh := map[string]bool{}
 	for attempt := 0; ; attempt++ {
 		calls := &hostCalls{session: session, requester: requester, maxAge: maxAge, gate: gate, fresh: fresh,
-			program: program}
+			program: program, only: options.only}
 		answer, hostErrors, failed := s.runOnce(ctx, calls, namespace, function, plain, arguments...)
 		var rerun *rerunSignal
 		if failed != nil && errors.As(failed.cause, &rerun) {
@@ -409,6 +433,9 @@ type hostCalls struct {
 	exports  *goja.Object
 	renames  map[string]map[string]string
 	adapters map[string]string
+	// only, when not nil, is every endpoint the call may read: a live pass reads only the live
+	// endpoints its declaration names (live.go).
+	only map[string]bool
 }
 
 // readAnswer is one answer and what the script read of it.
@@ -462,6 +489,9 @@ func (h *hostCalls) hostObject(vm *goja.Runtime, s *script) *goja.Object {
 		declared, found := s.endpoints[name]
 		if !found {
 			throw(vm, "the endpoint %q is not declared in the plugin's manifest", name)
+		}
+		if h.only != nil && !h.only[name] {
+			throw(vm, "the live pass reads only the endpoints its declaration names, and %q is not one", name)
 		}
 		return h.routeOf(s, name, declared).endpoint
 	}
@@ -546,7 +576,7 @@ func (h *hostCalls) hostObject(vm *goja.Runtime, s *script) *goja.Object {
 	})
 	_ = host.Set("readObject", func(call goja.FunctionCall) goja.Value {
 		declared := endpoint(call)
-		object, ok, err := h.readObject(vm, declared)
+		object, fetchedAt, ok, err := h.readObject(vm, declared)
 		result := vm.NewObject()
 		if ok {
 			_ = result.Set("object", vm.ToValue(map[string]any(object)))
@@ -554,6 +584,7 @@ func (h *hostCalls) hostObject(vm *goja.Runtime, s *script) *goja.Object {
 			_ = result.Set("object", goja.Null())
 		}
 		_ = result.Set("ok", ok)
+		_ = result.Set("fetched_at", fetchedAt)
 		_ = result.Set("error", h.hostError(vm, err))
 		return result
 	})

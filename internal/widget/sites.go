@@ -201,3 +201,105 @@ func SortedKeys[V any](values map[string]V) []string {
 	sort.Strings(keys)
 	return keys
 }
+
+// The named state of address rows over a window reaching past the flow horizon: no aggregate keeps
+// the flows no name was inferred for per destination address, so the hours the retention purge
+// removed have no address rows, and their figure is never estimated.
+const StateUnnamedBeyondHorizon = "unnamed_destinations_beyond_flow_horizon"
+
+// The kinds of a destination row: an inferred site name, or an address no name was inferred for.
+const (
+	DestinationKindSite    = "site"
+	DestinationKindAddress = "address"
+)
+
+// addressRow is one row of address figures: the eligible flows of one source client and interface
+// to one destination address that no site name was inferred for.
+type addressRow struct {
+	Address     string
+	ClientID    *int64
+	interfaceID *int64
+	lookupState string
+	country     *string
+	asn         *int64
+	operator    *string
+	flows       int64
+	bytes       int64
+}
+
+// AddressRows reads the window's address figures, filtered by interface and client as SiteRows is.
+// A partly named address contributes its named flows to the site rows and only the rest here. The
+// flows are read over the whole window; the hours before the retention horizon have none, which the
+// named state StateUnnamedBeyondHorizon says.
+func (r *Request) AddressRows() ([]addressRow, error) {
+	interfaces, clients := r.IdSet("interfaces"), r.IdSet("clients")
+	var rows []addressRow
+	err := r.Db.WidgetRows(r.Ctx, "widget_address_flows", store.Period{}, r.WindowParameters(),
+		func(row store.RowScanner) error {
+			var (
+				item              addressRow
+				client, iface     store.NullInt64
+				asn               store.NullInt64
+				country, operator store.NullString
+			)
+			if err := row.Scan(&item.Address, &client, &iface, &item.lookupState, &country, &asn, &operator,
+				&item.flows, &item.bytes); err != nil {
+				return err
+			}
+			item.ClientID, item.interfaceID = NullableNumber(client), NullableNumber(iface)
+			item.country, item.asn, item.operator = NullableText(country), NullableNumber(asn), NullableText(operator)
+			if clients != nil && (item.ClientID == nil || !clients[*item.ClientID]) {
+				return nil
+			}
+			if interfaces != nil && (item.interfaceID == nil || !interfaces[*item.interfaceID]) {
+				return nil
+			}
+			rows = append(rows, item)
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	if err := r.CoverFlowsState(StateUnnamedBeyondHorizon); err != nil {
+		return nil, err
+	}
+	return rows, nil
+}
+
+// addressTableRow is one destination address no name was inferred for, as a table ranks it beside
+// the site rows: the address, its operator and its country, or the state of its lookup.
+type addressTableRow struct {
+	Kind        string  `json:"kind"`
+	Address     string  `json:"address"`
+	Flows       Count   `json:"flows"`
+	Bytes       Count   `json:"bytes"`
+	Clients     int64   `json:"clients"`
+	ClientIDs   []int64 `json:"client_ids"`
+	LookupState string  `json:"lookup_state"`
+	CountryCode *string `json:"country_code"`
+	ASN         *int64  `json:"asn"`
+	Operator    *string `json:"operator"`
+}
+
+// accumulateAddress sums the rows of one address into its table row.
+func accumulateAddress(address string, rows []addressRow) addressTableRow {
+	row := addressTableRow{Kind: DestinationKindAddress, Address: address, Flows: LoggedCount(0),
+		Bytes: LoggedCount(0), ClientIDs: []int64{}, LookupState: GeoNoRow}
+	clients := map[int64]bool{}
+	for _, item := range rows {
+		row.Flows.Value += item.flows
+		row.Bytes.Value += item.bytes
+		if item.ClientID != nil {
+			clients[*item.ClientID] = true
+		}
+		// One address has one geolocation, so every row of it carries the same.
+		row.LookupState, row.CountryCode, row.ASN, row.Operator = item.lookupState, item.country, item.asn,
+			item.operator
+	}
+	for id := range clients {
+		row.ClientIDs = append(row.ClientIDs, id)
+	}
+	sort.Slice(row.ClientIDs, func(i, j int) bool { return row.ClientIDs[i] < row.ClientIDs[j] })
+	row.Clients = int64(len(row.ClientIDs))
+	return row
+}

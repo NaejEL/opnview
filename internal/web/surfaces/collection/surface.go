@@ -47,7 +47,7 @@ func init() {
 		Pages: []web.Page{{Name: pageCollection, TitleKey: msgTitleCollection}},
 		Routes: func(host web.Host) []web.Route {
 			s := newSurface(host)
-			return []web.Route{
+			return append([]web.Route{
 				// The collection surface reads the local database and writes setting rows only.
 				{Method: http.MethodGet, Pattern: PathCollection, Access: web.AccessAuthenticated,
 					Handler: s.handleCollectionForm},
@@ -55,7 +55,7 @@ func init() {
 					Handler: s.handleCollectionSubmit},
 				{Method: http.MethodPost, Pattern: PathCollectionSettings, Access: web.AccessAuthenticated,
 					Handler: s.handleCollectionSettingsSubmit},
-			}
+			}, s.apiRoutes()...)
 		},
 		Tab:  &web.Tab{Page: pageCollection, Path: PathCollection, TitleKey: msgTitleCollection, Order: 20},
 		Keys: func() []web.MessageKey { return keys() },

@@ -72,16 +72,25 @@ WHERE period_start_at >= :from
   AND period_start_at < :to;
 
 
+-- An hour a change of ownership invalidated is stale as well until the next refresh rewrites it
+-- (owner_reassigned_hour; docs/data-model.md, "Refresh contract", rule 3): the change moved no
+-- flow's ingested_at, so the rule above cannot see it.
 -- statement: widget_stale_hours
 SELECT count(*)
-FROM (SELECT f.observed_at - f.observed_at % 3600 AS hour_start_at, max(f.ingested_at) AS newest
-      FROM flow AS f
-      WHERE f.observed_at >= :from
-        AND f.observed_at < :to
-      GROUP BY f.observed_at - f.observed_at % 3600) AS h
-WHERE NOT EXISTS (SELECT 1 FROM volume_aggregate_1h AS v
-                  WHERE v.period_start_at = h.hour_start_at
-                    AND v.computed_at > h.newest);
+FROM (SELECT h.hour_start_at
+      FROM (SELECT f.observed_at - f.observed_at % 3600 AS hour_start_at, max(f.ingested_at) AS newest
+            FROM flow AS f
+            WHERE f.observed_at >= :from
+              AND f.observed_at < :to
+            GROUP BY f.observed_at - f.observed_at % 3600) AS h
+      WHERE NOT EXISTS (SELECT 1 FROM volume_aggregate_1h AS v
+                        WHERE v.period_start_at = h.hour_start_at
+                          AND v.computed_at > h.newest)
+      UNION
+      SELECT r.hour_start_at
+      FROM owner_reassigned_hour AS r
+      WHERE r.hour_start_at >= :from
+        AND r.hour_start_at < :to) AS stale;
 
 
 -- How far back the retention purge has purged: before it, the flows are gone.

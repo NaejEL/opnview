@@ -47,6 +47,10 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 		// The broker's own loop: its scheduler and its subscriptions, which returns only when the
 		// run stops (A12 of the broker amendment).
 		"firewall broker": time.Minute,
+		// The live passes, at the finest live cadence a loaded plugin declares: the insight plugin's
+		// live_cadence_seconds, 10 s by default (C3 of the backend-completion cycle). A tick with no
+		// live-interest lease does nothing.
+		"live sampling": 10 * time.Second,
 	}
 	if len(tasks) != len(wanted) {
 		t.Fatalf("the scheduler has %d loops, want %d", len(tasks), len(wanted))

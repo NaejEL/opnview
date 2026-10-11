@@ -35,6 +35,16 @@ type UnplacedBin struct {
 	Reason    string `json:"reason"`
 	Addresses int64  `json:"addresses"`
 	Volume    Volume `json:"volume"`
+	// Members lists the bin's addresses with their figures, which sum to the bin, for bins that
+	// list them (NewListedUnplacedBins): an unnamed destination is shown by its address, never only
+	// folded into a count.
+	Members *[]UnplacedMember `json:"members,omitempty"`
+}
+
+// UnplacedMember is one address of a listed bin.
+type UnplacedMember struct {
+	Address string `json:"address"`
+	Volume  Volume `json:"volume"`
 }
 
 // unplacedBins accumulates the bins in a fixed order, every bin present even at zero.
@@ -42,6 +52,36 @@ type unplacedBins struct {
 	order   []string
 	figures map[string]*store.VolumeFigures
 	members map[string]int64
+	// listed says the bins list their addresses; addresses holds each bin's, by address.
+	listed    bool
+	addresses map[string]map[string]*store.VolumeFigures
+}
+
+// NewListedUnplacedBins is NewUnplacedBins whose bins also list their addresses, each added with
+// AddAddress, so each bin's addresses and their figures sum to it.
+func NewListedUnplacedBins(reasons ...string) *unplacedBins {
+	bins := NewUnplacedBins(reasons...)
+	bins.listed = true
+	bins.addresses = map[string]map[string]*store.VolumeFigures{}
+	return bins
+}
+
+// AddAddress adds one address's figures to a bin; an address added twice counts once.
+func (b *unplacedBins) AddAddress(reason, address string, figures store.VolumeFigures) {
+	if b.addresses == nil {
+		b.addresses = map[string]map[string]*store.VolumeFigures{}
+	}
+	if b.addresses[reason] == nil {
+		b.addresses[reason] = map[string]*store.VolumeFigures{}
+	}
+	known := b.addresses[reason][address]
+	if known == nil {
+		known = &store.VolumeFigures{}
+		b.addresses[reason][address] = known
+		b.Add(reason, store.VolumeFigures{}, 1)
+	}
+	AddFigures(known, figures)
+	AddFigures(b.figures[reason], figures)
 }
 
 func NewUnplacedBins(reasons ...string) *unplacedBins {
@@ -65,8 +105,22 @@ func (b *unplacedBins) Add(reason string, figures store.VolumeFigures, addresses
 func (b *unplacedBins) List() []UnplacedBin {
 	result := []UnplacedBin{}
 	for _, reason := range b.order {
-		result = append(result, UnplacedBin{Reason: reason, Addresses: b.members[reason],
-			Volume: Logged(*b.figures[reason])})
+		bin := UnplacedBin{Reason: reason, Addresses: b.members[reason], Volume: Logged(*b.figures[reason])}
+		if b.listed {
+			members := []UnplacedMember{}
+			for address, figures := range b.addresses[reason] {
+				members = append(members, UnplacedMember{Address: address, Volume: Logged(*figures)})
+			}
+			// The most bytes first, then the address in byte order, as every peer list.
+			sort.Slice(members, func(i, j int) bool {
+				if members[i].Volume.Bytes != members[j].Volume.Bytes {
+					return members[i].Volume.Bytes > members[j].Volume.Bytes
+				}
+				return members[i].Address < members[j].Address
+			})
+			bin.Members = &members
+		}
+		result = append(result, bin)
 	}
 	return result
 }

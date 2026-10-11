@@ -151,8 +151,8 @@ func TestEveryBuiltinWidgetAnswersByteForByteAsBefore(t *testing.T) {
 				got, err := json.Marshal(response)
 				check(t, err)
 				var compactWant, compactGot bytes.Buffer
-				check(t, json.Compact(&compactWant, goldenChanged(golden[key])))
-				check(t, json.Compact(&compactGot, got))
+				check(t, json.Compact(&compactWant, withoutPhaseCFields(widgetType, goldenChanged(golden[key]))))
+				check(t, json.Compact(&compactGot, withoutPhaseCFields(widgetType, got)))
 				if !bytes.Equal(compactWant.Bytes(), compactGot.Bytes()) && !sameUpToClientIdentityOrder(compactWant.Bytes(), compactGot.Bytes()) {
 					t.Errorf("%s: the response changed\nbefore: %s\nafter:  %s", key, compactWant.String(),
 						compactGot.String())

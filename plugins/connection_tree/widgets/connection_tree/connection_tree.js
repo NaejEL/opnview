@@ -1,10 +1,14 @@
 // connection_tree: where a chosen subject goes (docs/widget-catalogue.md, "Connection tree"). The
 // inside side starts at the chosen root -- an interface, a client or a person -- with the client
 // below it; the outside side starts at the operator, or the condition the destination is in, with
-// the site name below it. Every flow lands in exactly one node per level on each side, so a node's
-// children sum to the node and both roots sum to the same total; a level truncated by
-// limit_per_level carries an explicit remainder child. The rule is the store's
-// (ReadConnectionTree) and the mockup's (docs/mockups/check-tree-reconciliation.js).
+// the destination below it -- its inferred site name, or its address, labelled with its operator,
+// country or lookup state, where no name was inferred, never one unnamed node -- and the service,
+// port and protocol together, below that (depth 3). Every flow lands in exactly one node per level
+// on each side, so a node's children sum to the node and both roots sum to the same total; a level
+// truncated by limit_per_level carries an explicit remainder child. The rule is the store's
+// (ReadConnectionTree) and the mockup's (docs/mockups/check-tree-reconciliation.js). The rows are
+// the core's (host.flows.destinations), which reads no site name under aggregate_mode = no_domains,
+// so every destination is then in address form whether or not a name was ever inferred.
 
 // THIS_FIREWALL is the node key of the firewall itself, on either side: the store's
 // TreeNodeThisFirewall.
@@ -45,32 +49,27 @@ function accumulate(node, bytes, connections, blocked, newest) {
   node.newest = Math.max(node.newest, newest);
 }
 
-// newLevels is a two-level side.
+// newLevels is one level of a side, each node holding the level below it.
 function newLevels() {
   return { nodes: {}, order: [], children: {} };
 }
 
-// addToLevels lands one row in a node of each level of a side.
-function addToLevels(side, first, second, bytes, connections, blocked, newest) {
-  var node = side.nodes[first];
-  if (node === undefined) {
-    node = newNode(first);
-    side.nodes[first] = node;
-    side.order.push(first);
-    side.children[first] = { nodes: {}, order: [] };
+// addToLevels lands one row in a node of each level of a side, from the first key down; an empty
+// key ends the path there.
+function addToLevels(side, keys, bytes, connections, blocked, newest) {
+  var level = side;
+  for (var index = 0; index < keys.length && keys[index] !== ""; index++) {
+    var key = keys[index];
+    var node = level.nodes[key];
+    if (node === undefined) {
+      node = newNode(key);
+      level.nodes[key] = node;
+      level.order.push(key);
+      level.children[key] = newLevels();
+    }
+    accumulate(node, bytes, connections, blocked, newest);
+    level = level.children[key];
   }
-  accumulate(node, bytes, connections, blocked, newest);
-  if (second === "") {
-    return;
-  }
-  var children = side.children[first];
-  var child = children.nodes[second];
-  if (child === undefined) {
-    child = newNode(second);
-    children.nodes[second] = child;
-    children.order.push(second);
-  }
-  accumulate(child, bytes, connections, blocked, newest);
 }
 
 // nodeValue is the figure a node is drawn by.
@@ -164,33 +163,35 @@ function labelNode(host, node) {
     if (row !== null) {
       node.operator = row.operator;
     }
-  } else if (prefix === "site" && value !== "none") {
+  } else if (prefix === "site") {
     node.site_name = value;
+  } else if (prefix === "address") {
+    var geo = host.services.geolocation(value);
+    node.address = value;
+    node.lookup_state = geo.lookup_state;
+    node.country_code = geo.country_code;
+    node.asn = geo.asn;
+    node.operator = geo.operator;
+  } else if (prefix === "port" && value !== "not_recorded") {
+    var slash = value.indexOf("/");
+    node.port = Number(value.slice(0, slash));
+    node.protocol = value.slice(slash + 1);
   }
 }
 
-// finishLevel sorts, truncates and names one side. A withheld second level keeps its figures in
-// the first and drops the names.
-function finishLevel(host, side, limit, depth, withholdChildren) {
+// finishLevel sorts, truncates and names one level of a side, and the levels below it down to depth.
+function finishLevel(host, level, limit, depth) {
   var measure = host.params.text("measure");
-  var top = side.order.map(function (key) { return side.nodes[key]; });
-  var nodes = truncate(host, top, limit).map(function (node) {
+  var members = level.order.map(function (key) { return level.nodes[key]; });
+  return truncate(host, members, limit).map(function (node) {
     var out = written(measure, node);
     labelNode(host, out);
-    if (depth >= 2 && !withholdChildren && side.children[node.key] !== undefined) {
-      var level = side.children[node.key];
-      var children = level.order.map(function (key) { return level.nodes[key]; });
-      if (children.length > 0) {
-        out.children = truncate(host, children, limit).map(function (child) {
-          var label = written(measure, child);
-          labelNode(host, label);
-          return label;
-        });
-      }
+    var below = level.children[node.key];
+    if (depth >= 2 && below !== undefined && below.order.length > 0) {
+      out.children = finishLevel(host, below, limit, depth - 1);
     }
     return out;
   });
-  return nodes;
 }
 
 exports.widget = {
@@ -206,8 +207,7 @@ exports.widget = {
     var outside = newLevels();
     var total = newNode("total");
     var hasRows = false;
-    var window = host.request.window;
-    host.query.rows("widget_connection_tree", { from: window.from, to: window.to }).forEach(function (row) {
+    host.flows.destinations().forEach(function (row) {
       if ((interfaces !== null && (row.interface_id === null || !interfaces[row.interface_id])) ||
         (clients !== null && (row.client_id === null || !clients[row.client_id])) ||
         (owners !== null && (row.owner_id === null || !owners[row.owner_id]))) {
@@ -251,7 +251,7 @@ exports.widget = {
         }
         second = clientNode;
       }
-      addToLevels(inside, first, second, bytes, connections, blocked, row.newest);
+      addToLevels(inside, [first, second], bytes, connections, blocked, row.newest);
       var destination;
       if (firewallOutside) {
         destination = THIS_FIREWALL;
@@ -264,8 +264,16 @@ exports.widget = {
       } else {
         destination = "unplaced:no_row";
       }
-      var siteNode = row.site_name === null ? "site:none" : "site:" + row.site_name;
-      addToLevels(outside, destination, siteNode, bytes, connections, blocked, row.newest);
+      // Below an outside destination: its site name where one was inferred and its address
+      // otherwise; then its service, port and protocol together. A destination with no outside
+      // address -- this firewall, another interface -- has no level below it.
+      var named = "";
+      var service = "";
+      if (row.peer_address !== null && !firewallOutside && direction !== directions.inter_interface) {
+        named = row.site_name !== null ? "site:" + row.site_name : "address:" + row.peer_address;
+        service = host.flows.serviceKey(row.protocol, row.port);
+      }
+      addToLevels(outside, [destination, named, service], bytes, connections, blocked, row.newest);
       total.bytes += bytes;
       total.connections += connections;
       total.blocked += blocked;
@@ -278,11 +286,12 @@ exports.widget = {
       root: root,
       measure: measure,
       depth: depth,
-      inside: finishLevel(host, inside, limit, depth, false),
-      outside: finishLevel(host, outside, limit, depth, noDomains)
+      inside: finishLevel(host, inside, limit, Math.min(depth, 2)),
+      outside: finishLevel(host, outside, limit, depth)
     };
     if (noDomains) {
-      host.envelope.withhold("outside[].children");
+      // The core read no site name: every destination below the operator is its address.
+      host.envelope.withhold("outside[].children[].site_name");
     }
     data.total = written(measure, total);
     return { data: data, has_rows: hasRows };

@@ -55,8 +55,10 @@ test("each client's row carries its top site names and its attribution rate", fu
   t.equal(rows.map(function (row) { return row.client.id; }), [10, 11], "the most named flows first");
   var first = rows[0];
   t.equal(first.state, "named", "client 10 is named");
-  t.equal(first.sites.map(function (site) { return [site.name, site.flows.value, site.bytes.value]; }),
-    [["example.org", 2, 4000]], "client 10's site");
+  t.equal(first.sites.map(function (site) { return [site.kind, site.name || site.address, site.flows.value, site.bytes.value]; }),
+    [["site", "example.org", 2, 4000], ["address", "203.0.113.7", 1, 500]],
+    "client 10's site, then its unnamed flow by its address");
+  t.equal(first.sites[1].lookup_state, "no_row", "an address never looked up says so");
   t.equal([first.sites[0].mean_delay_seconds, first.sites[0].max_delay_seconds], [3, 4], "its delays");
   t.equal([first.attribution.rate, first.attribution.rate_state], [2 / 3, "defined"], "client 10's rate");
   t.golden("two_clients.json", answer.raw);
@@ -67,7 +69,9 @@ test("a client with eligible flows and none named keeps its row, and the rate ca
   t.sql("DELETE FROM domain_attribution WHERE flow_id = 4", {});
   var rows = t.widget("sites_by_client", { show_attribution_rate: false }).body.data.rows;
   var second = rows[1];
-  t.equal([second.client.id, second.state, second.sites], [11, "no_site_name_inferred", []], "client 11");
+  t.equal([second.client.id, second.state], [11, "no_site_name_inferred"], "client 11");
+  t.equal(second.sites.map(function (site) { return [site.kind, site.address, site.flows.value]; }),
+    [["address", "203.0.113.7", 1]], "its flow, shown by its address");
   t.assert(rows.every(function (row) { return !("attribution" in row); }), "no row carries a rate");
 });
 
@@ -76,4 +80,6 @@ test("min_flows sets the rarely reached names aside", function (t) {
   var rows = t.widget("sites_by_client", { min_flows: 2 }).body.data.rows;
   t.equal([rows[1].sites, rows[1].below_min_flows.members, rows[1].below_min_flows.count.value], [[], 1, 1],
     "example.net below the minimum");
+  t.equal([rows[0].below_min_flows.members, rows[0].below_min_flows.count.value], [1, 1],
+    "client 10's address row below it as well");
 });

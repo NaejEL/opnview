@@ -23,10 +23,13 @@ func decodeData[T any](t *testing.T, response widget.Response) T {
 	return decoded
 }
 
-// siteRow is one row of a site table (top_sites, sites_by_client): one site name, or one
-// registrable domain grouping several.
+// siteRow is one row of a site table (top_sites, sites_by_client): one site name, one registrable
+// domain grouping several, or -- kind "address" -- one destination address no name was inferred for.
 type siteRow struct {
+	Kind             string              `json:"kind"`
 	Name             string              `json:"name"`
+	Address          string              `json:"address"`
+	LookupState      string              `json:"lookup_state"`
 	SiteNames        []string            `json:"site_names,omitempty"`
 	Flows            widget.Count        `json:"flows"`
 	Bytes            widget.Count        `json:"bytes"`
@@ -357,6 +360,7 @@ type compositionData struct {
 		Client    *widget.ClientInfo    `json:"client,omitempty"`
 		Protocol  *string               `json:"protocol,omitempty"`
 		Port      *int64                `json:"port,omitempty"`
+		Decision  *string               `json:"decision,omitempty"`
 		Value     float64               `json:"value"`
 		Volume    widget.Volume         `json:"volume"`
 	} `json:"slices"`

@@ -366,6 +366,10 @@ type Config struct {
 	// recorded as opnview not running.
 	HeartbeatIntervalSeconds int64
 	DowntimeThresholdSeconds int64
+	// LiveInterestSeconds is the lease a live-figure request renews, and
+	// LiveSampleRetentionSeconds how long a fine sample is kept (liverate.go).
+	LiveInterestSeconds        int64
+	LiveSampleRetentionSeconds int64
 }
 
 // Defaults returns the configuration of a database that carries no setting row
@@ -393,6 +397,8 @@ func Defaults() Config {
 		LeaseBackendFailurePassLimit: DefaultLeaseBackendFailurePassLimit,
 		HeartbeatIntervalSeconds:     DefaultHeartbeatIntervalSeconds,
 		DowntimeThresholdSeconds:     DefaultDowntimeThresholdSeconds,
+		LiveInterestSeconds:          DefaultLiveInterestSeconds,
+		LiveSampleRetentionSeconds:   DefaultLiveSampleRetentionSeconds,
 		// The page sizes are defaults a row overrides, like the intervals.
 		FirewallLogPageSize:   DefaultFirewallLogPageSize,
 		SecurityEventPageSize: DefaultSecurityEventPageSize,
@@ -600,6 +606,9 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		return loaded, fmt.Errorf("config: %s (%d s) must be longer than %s (%d s), or the service's "+
 			"own heartbeat cadence would read as downtime", KeyDowntimeThreshold,
 			loaded.DowntimeThresholdSeconds, KeyHeartbeatInterval, loaded.HeartbeatIntervalSeconds)
+	}
+	if err := loadLive(ctx, reader, &loaded); err != nil {
+		return loaded, err
 	}
 
 	return loaded, nil

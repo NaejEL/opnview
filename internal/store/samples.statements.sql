@@ -14,8 +14,9 @@
 
 -- statement: read_pair_rates
 -- The rates of both sampled subjects: the totals of each local address
--- (interface_endpoint) and the per-peer figures (interface_endpoint_pair).
-SELECT subject_kind, subject_key, measure, value, sampled_at
+-- (interface_endpoint) and the per-peer figures (interface_endpoint_pair), fine
+-- and baseline, each with the live cadence of a fine sample (null for a baseline one).
+SELECT subject_kind, subject_key, measure, value, sampled_at, live_cadence_seconds
 FROM measurement_sample
 WHERE sampled_at >= :since
   AND sampled_at <= :now

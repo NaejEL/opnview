@@ -11,7 +11,8 @@
 -- ---------------------------------------------------------------------------
 
 -- The unified blocked feed: the refusals of the window, newest first, over the
--- blocked_decision view, which places each refusal of the four engines once.
+-- blocked_decision view, which places each refusal of the four engines once; an address target
+-- carries its port and protocol, read from the record it came from (a refused lookup has none).
 -- statement: widget_blocked_feed
 SELECT d.source_table AS source_table,
        d.source_id AS source_id,
@@ -22,8 +23,12 @@ SELECT d.source_table AS source_table,
        d.interface_id AS interface_id,
        d.target AS target,
        d.target_kind AS target_kind,
-       d.target_is_this_firewall AS target_is_this_firewall
+       d.target_is_this_firewall AS target_is_this_firewall,
+       coalesce(f.dst_port, e.dst_port) AS port,
+       coalesce(f.protocol, e.protocol) AS protocol
 FROM blocked_decision AS d
+LEFT JOIN flow AS f ON d.source_table = 'flow' AND f.id = d.source_id
+LEFT JOIN security_event AS e ON d.source_table = 'security_event' AND e.id = d.source_id
 WHERE d.occurred_at >= :from
   AND d.occurred_at < :to
   AND (:engine_kinds IS NULL OR d.engine_kind IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:engine_kinds AS jsonb)) AS j(value)))

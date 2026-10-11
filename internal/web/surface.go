@@ -222,6 +222,9 @@ type Host interface {
 		key MessageKey)
 	// FailInternal answers 500 with a catalogue string, and the console gets the detail.
 	FailInternal(writer http.ResponseWriter, request *http.Request, err error)
+	// FormToken is the form token the request's reader writes with -- the session's own, or the
+	// one in the browser's own cookie, set when there is none -- for a JSON answer to carry.
+	FormToken(writer http.ResponseWriter, request *http.Request) (string, error)
 	// RedirectWithError and RedirectWithNotice send the reader elsewhere, carrying a key.
 	RedirectWithError(writer http.ResponseWriter, request *http.Request, path string, key MessageKey)
 	RedirectWithNotice(writer http.ResponseWriter, request *http.Request, path string, key MessageKey)

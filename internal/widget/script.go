@@ -65,6 +65,15 @@ func (e *ScriptError) Error() string {
 	return fmt.Sprintf("the widget %s failed: %s", e.Type, e.Detail)
 }
 
+// errWithheldUnderNoDomains ends the call of a widget that is not built in when it runs a statement
+// reading a column that carries a domain name under aggregate_mode = no_domains. The maintainer's
+// decision of 12 October 2026: the core withholds what carries a domain from every widget answer,
+// built-in and third-party alike, and a third-party author has nothing to do. The statement is not
+// run, the script is stopped -- an interruption a script cannot catch -- and the answer is withheld
+// whole (condition withheld_by_aggregate_mode, data null), the rule a declarative widget reading
+// such a column already follows. Nothing the statement would have read reaches the script.
+var errWithheldUnderNoDomains = errors.New("a statement carrying a domain name under aggregate_mode = no_domains")
+
 // errScriptTimeout is what a call is interrupted with at its deadline.
 var errScriptTimeout = errors.New("the widget script ran past its time bound")
 
@@ -74,6 +83,10 @@ type scriptWidget struct {
 	file       string
 	program    *goja.Program
 	statements map[string]widgetStatement
+	// builtin says the widget ships in the binary. A built-in withholds its own domain fields under
+	// aggregate_mode = no_domains, field by field, and its tests prove it; any other widget is held to
+	// the core's rule instead (errWithheldUnderNoDomains).
+	builtin bool
 }
 
 // compileWidgetScript compiles a widget's script and runs it once, in a runtime of its own, to see

@@ -109,6 +109,7 @@
     "grouping": "site_name",
     "rows": [
       {
+        "kind": "site",
         "name": "example.org",
         "flows": {
           "measure": "logged",
@@ -136,6 +137,7 @@
         "operator": null
       },
       {
+        "kind": "site",
         "name": "example.net",
         "flows": {
           "measure": "logged",
@@ -161,6 +163,28 @@
         "country_code": null,
         "asn": null,
         "operator": null
+      },
+      {
+        "kind": "address",
+        "address": "203.0.113.7",
+        "flows": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 1
+        },
+        "bytes": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 500
+        },
+        "clients": 1,
+        "client_ids": [
+          10
+        ],
+        "lookup_state": "no_row",
+        "country_code": null,
+        "asn": null,
+        "operator": null
       }
     ],
     "remainder": {
@@ -180,11 +204,11 @@
       }
     },
     "total": {
-      "members": 2,
+      "members": 3,
       "count": {
         "measure": "logged",
         "lower_bound": true,
-        "value": 3
+        "value": 4
       }
     },
     "attribution": {

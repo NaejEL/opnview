@@ -30,7 +30,8 @@
         "client",
         "interface",
         "protocol",
-        "service_port"
+        "service_port",
+        "blocking_reason"
       ],
       "default": "interface",
       "class": "data"
@@ -78,9 +79,38 @@
       "class": "data"
     },
     {
+      "key": "split_by",
+      "kind": "enum",
+      "values": [
+        "none",
+        "direction"
+      ],
+      "default": "none",
+      "class": "data"
+    },
+    {
+      "key": "window_seconds",
+      "kind": "integer",
+      "default": null,
+      "min": 2,
+      "max": 3600,
+      "class": "data"
+    },
+    {
       "key": "show_other",
       "kind": "boolean",
       "default": true,
+      "class": "rendering"
+    },
+    {
+      "key": "line_interpolation",
+      "kind": "enum",
+      "values": [
+        "points",
+        "linear",
+        "smooth"
+      ],
+      "default": "linear",
       "class": "rendering"
     }
   ],

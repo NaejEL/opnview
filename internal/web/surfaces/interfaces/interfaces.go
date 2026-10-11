@@ -167,98 +167,110 @@ func interfaceAnchor(id string) string { return "interface_" + id }
 // was made in, or redraws the surface with the edit refused against the field that
 // caused it.
 func (s *surface) handleInterfacesSubmit(writer http.ResponseWriter, request *http.Request) {
-	ctx := request.Context()
-	now := s.now().UTC().Unix()
+	interfaceID, outcome, err := s.applyEdit(request.Context(), request.PostFormValue(fieldInterfaceID),
+		request.PostFormValue(fieldNetworkAction), request.PostFormValue(fieldNetwork),
+		request.PostFormValue(fieldLinkLocal))
+	switch {
+	case err != nil:
+		s.FailInternal(writer, request, err)
+	case outcome.refusal != "" && outcome.inCard:
+		s.renderInterfaces(writer, request, http.StatusBadRequest, &interfaceFeedback{
+			interfaceID: interfaceID, refusal: outcome.refusal, typed: outcome.typed,
+		}, "")
+	case outcome.refusal != "":
+		s.renderInterfaces(writer, request, http.StatusBadRequest, nil, outcome.refusal)
+	default:
+		http.Redirect(writer, request, savedLocation(interfaceID), http.StatusSeeOther)
+	}
+}
 
-	interfaceID, err := strconv.ParseInt(request.PostFormValue(fieldInterfaceID), 10, 64)
+// editOutcome is a refused edit: why, and whether the refusal is about what was typed in a card's
+// add field (inCard, typed) rather than about the request itself.
+type editOutcome struct {
+	refusal messageKey
+	inCard  bool
+	typed   string
+}
+
+// applyEdit applies one edit of an interface, as the page's forms and the JSON route both carry
+// it: the interface's id, the action, the network the action is about and the link-local rule.
+// It returns the interface's id, or a refusal; an error is a failure of the database.
+func (s *surface) applyEdit(ctx context.Context, idText, action, typed, linkLocal string) (int64, editOutcome, error) {
+	now := s.now().UTC().Unix()
+	interfaceID, err := strconv.ParseInt(idText, 10, 64)
 	if err != nil {
 		// The id is the form's own hidden field: a value that is not one came from
 		// somewhere other than a card, and there is no card to say it in.
-		s.renderInterfaces(writer, request, http.StatusBadRequest, nil, msgInterfaceUnknown)
-		return
+		return 0, editOutcome{refusal: msgInterfaceUnknown}, nil
 	}
 	row, found, err := s.interfaceRow(ctx, interfaceID)
 	if err != nil {
-		s.FailInternal(writer, request, err)
-		return
+		return 0, editOutcome{}, err
 	}
 	if !found {
-		s.renderInterfaces(writer, request, http.StatusBadRequest, nil, msgInterfaceUnknown)
-		return
+		return 0, editOutcome{refusal: msgInterfaceUnknown}, nil
 	}
 	// AN UPSTREAM INTERFACE HAS NO CONTROL ON THIS PAGE, so an edit of one came from
 	// somewhere other than its card. It is refused at the page, whichever edit it
 	// is: on-link evidence on an upstream interface is not evidence.
 	if row.IsUpstream {
-		s.renderInterfaces(writer, request, http.StatusBadRequest, nil, msgInterfaceUpstream)
-		return
+		return 0, editOutcome{refusal: msgInterfaceUpstream}, nil
 	}
 
-	typed := request.PostFormValue(fieldNetwork)
-	switch request.PostFormValue(fieldNetworkAction) {
+	switch action {
 	case actionAddNetwork:
 		if _, err := s.store.AddInterfaceNetwork(ctx, interfaceID, typed, now); err != nil {
 			if refusal := networkRefusal(typed, err); refusal != "" {
-				s.renderInterfaces(writer, request, http.StatusBadRequest, &interfaceFeedback{
-					interfaceID: interfaceID, refusal: refusal, typed: typed,
-				}, "")
-				return
+				return interfaceID, editOutcome{refusal: refusal, inCard: true, typed: typed}, nil
 			}
-			s.refuseOrFail(writer, request, err)
-			return
+			return storeRefusal(interfaceID, err)
 		}
 	case actionConfirmNetwork, actionRestoreNetwork:
 		// Restoring a removed network is confirming it: the store's confirmation
 		// makes it the operator's and clears the removal, so it counts again.
 		if _, err := s.store.ConfirmInterfaceNetwork(ctx, interfaceID, typed, now); err != nil {
-			s.refuseOrFail(writer, request, err)
-			return
+			return storeRefusal(interfaceID, err)
 		}
 	case actionRemoveNetwork:
 		if _, err := s.store.RemoveInterfaceNetwork(ctx, interfaceID, typed, now); err != nil {
-			s.refuseOrFail(writer, request, err)
-			return
+			return storeRefusal(interfaceID, err)
 		}
 	case actionLinkLocal:
 		var evidence bool
-		switch request.PostFormValue(fieldLinkLocal) {
+		switch linkLocal {
 		case linkLocalYes:
 			evidence = true
 		case linkLocalNo:
 		default:
-			s.renderInterfaces(writer, request, http.StatusBadRequest, nil, msgLinkLocalInvalid)
-			return
+			return interfaceID, editOutcome{refusal: msgLinkLocalInvalid}, nil
 		}
 		if err := s.store.SetLinkLocalEvidence(ctx, interfaceID, evidence); err != nil {
-			s.refuseOrFail(writer, request, err)
-			return
+			return storeRefusal(interfaceID, err)
 		}
 	default:
-		s.renderInterfaces(writer, request, http.StatusBadRequest, nil, msgInterfaceActionUnknown)
-		return
+		return interfaceID, editOutcome{refusal: msgInterfaceActionUnknown}, nil
 	}
-	http.Redirect(writer, request, savedLocation(interfaceID), http.StatusSeeOther)
+	return interfaceID, editOutcome{}, nil
 }
 
-// refuseOrFail answers a store refusal at the page, with status 400, or fails.
+// storeRefusal names a store refusal, or passes a failure on.
 //
 // These refusals come from the controls of a row -- confirm, remove, restore, the
 // link-local rule -- whose values the page wrote itself, so a refusal means the
 // request did not come from the page as drawn, or the row changed in between. There
 // is no field to draw it against; the page says it at the top.
-func (s *surface) refuseOrFail(writer http.ResponseWriter, request *http.Request, err error) {
+func storeRefusal(interfaceID int64, err error) (int64, editOutcome, error) {
 	switch {
 	case errors.Is(err, store.ErrUnknownInterface):
-		s.renderInterfaces(writer, request, http.StatusBadRequest, nil, msgInterfaceUnknown)
+		return interfaceID, editOutcome{refusal: msgInterfaceUnknown}, nil
 	case errors.Is(err, store.ErrUpstreamInterface):
-		s.renderInterfaces(writer, request, http.StatusBadRequest, nil, msgInterfaceUpstream)
+		return interfaceID, editOutcome{refusal: msgInterfaceUpstream}, nil
 	case errors.Is(err, store.ErrUnknownNetwork):
-		s.renderInterfaces(writer, request, http.StatusBadRequest, nil, msgNetworkUnknown)
+		return interfaceID, editOutcome{refusal: msgNetworkUnknown}, nil
 	case errors.Is(err, store.ErrMalformedNetwork), errors.Is(err, store.ErrLinkLocalNetwork):
-		s.renderInterfaces(writer, request, http.StatusBadRequest, nil, msgNetworkMalformed)
-	default:
-		s.FailInternal(writer, request, err)
+		return interfaceID, editOutcome{refusal: msgNetworkMalformed}, nil
 	}
+	return interfaceID, editOutcome{}, err
 }
 
 // networkRefusal names why a typed network was refused, each reason its own

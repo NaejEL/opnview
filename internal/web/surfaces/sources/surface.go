@@ -42,10 +42,10 @@ func init() {
 		// The Sources surface reads the local database only.
 		Routes: func(host web.Host) []web.Route {
 			s := newSurface(host)
-			return []web.Route{
+			return append([]web.Route{
 				{Method: http.MethodGet, Pattern: PathSources, Access: web.AccessAuthenticated,
 					Handler: s.handleSourcesForm},
-			}
+			}, s.apiRoutes()...)
 		},
 		Tab: &web.Tab{Page: pageSources, Path: PathSources, TitleKey: msgTitleSources, Order: 40},
 		Indicator: func(ctx context.Context, host web.Host) (web.Indicator, error) {

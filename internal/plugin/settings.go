@@ -189,6 +189,7 @@ type SettingValue struct {
 type SettingStore interface {
 	Setting(ctx context.Context, key string) (string, bool, error)
 	SetSetting(ctx context.Context, key, value string, now int64) error
+	DeleteSetting(ctx context.Context, key string) error
 	Credential(ctx context.Context, name string) (store.EncryptedCredential, bool, error)
 	SetCredential(ctx context.Context, credential store.EncryptedCredential) error
 }
@@ -294,12 +295,21 @@ func (p *Plugin) WriteSettings(ctx context.Context, database SettingStore, seale
 	type write struct {
 		setting SettingDeclaration
 		text    string
+		// clear removes the setting's row: a null value of a setting that is not a secret.
+		clear bool
 	}
 	var writes []write
 	for _, key := range sortedKeys(submitted) {
 		setting, known := declared[key]
 		if !known {
 			return &SettingRefusal{Code: SettingRefusalUnknownKey, Key: key}
+		}
+		// NULL CLEARS A SETTING, as an emptied field on the settings page removes its row; the
+		// declaration's default, or nothing, is then in force. A secret is never cleared this way:
+		// an empty secret is refused, as the settings page keeps one it is not given.
+		if submitted[key] == nil && setting.Type != SettingSecret {
+			writes = append(writes, write{setting: setting, clear: true})
+			continue
 		}
 		text, err := settingText(submitted[key])
 		if err != nil {
@@ -319,6 +329,12 @@ func (p *Plugin) WriteSettings(ctx context.Context, database SettingStore, seale
 	}
 	for _, pending := range writes {
 		stored := StorageKey(p.Name, pending.setting.Key)
+		if pending.clear {
+			if err := database.DeleteSetting(ctx, stored); err != nil {
+				return err
+			}
+			continue
+		}
 		if pending.setting.Type == SettingSecret {
 			sealed, err := sealer.Seal([]byte(pending.text))
 			if err != nil {

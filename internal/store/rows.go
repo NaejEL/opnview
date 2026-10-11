@@ -746,6 +746,9 @@ type MeasurementSample struct {
 	Value float64
 	// SampledAt is the instant of the reading.
 	SampledAt int64
+	// LiveCadenceSeconds is the live cadence a fine sample was taken at, by a live pass; nil
+	// for a baseline sample (schema.sql, measurement_sample.live_cadence_seconds).
+	LiveCadenceSeconds *int64
 }
 
 // CollectionGap is one interval opnview knows it did not cover.

@@ -212,7 +212,12 @@
         "probe": "not_yet_probed",
         "checked_at": 0,
         "detail": null,
-        "condition": "not_yet_probed"
+        "condition": "not_yet_probed",
+        "since": {
+          "after_at": null,
+          "by_at": null,
+          "state": "state_change_not_observed"
+        }
       }
     ]
   }

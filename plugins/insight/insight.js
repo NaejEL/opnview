@@ -229,6 +229,11 @@ function samplePairVolume(host, discovery, now) {
   if (!response.ok) {
     return { readings: [], detail: response.detail, outcome: response.availability_outcome, failed: true };
   }
+  // The readings are stamped with the instant the answer was fetched, not the pass's: the broker
+  // may serve the answer a live pass fetched a moment ago, and the same capture must carry the same
+  // instant whichever pass stores it, so the baseline promotes the fine row rather than storing the
+  // capture twice.
+  var at = answeredAt(response, now);
   var body;
   try {
     if (!response.decodable) {
@@ -274,7 +279,7 @@ function samplePairVolume(host, discovery, now) {
           continue;
         }
         readings.push({ subject_kind: "interface_endpoint", subject_key: endpointKey, measure: totals[t][1],
-          unit: totals[t][2], value: total, sampled_at: now });
+          unit: totals[t][2], value: total, sampled_at: at });
       }
       var details = d.objects(record.details);
       for (var p = 0; p < details.length; p++) {
@@ -304,7 +309,7 @@ function samplePairVolume(host, discovery, now) {
             continue;
           }
           readings.push({ subject_kind: "interface_endpoint_pair", subject_key: subjectKey,
-            measure: values[v][2], unit: values[v][3], value: value, sampled_at: now });
+            measure: values[v][2], unit: values[v][3], value: value, sampled_at: at });
           wrote = true;
         }
         if (wrote) {
@@ -497,6 +502,63 @@ function sampleSwap(host, now) {
   return { readings: readings, absent: "" };
 }
 
+// answeredAt is the instant an answer was fetched, which the broker reports; the pass's instant when
+// it reports none.
+function answeredAt(response, now) {
+  var at = response.fetched_at;
+  return typeof at === "number" && at > 0 ? at : now;
+}
+
+// sampleInterfaceCounters reads the per-interface counters: { readings, absent } or { error }.
+// Their subject is the network DEVICE name, the token interface_map keys by, so a reading joins to
+// an interface without a foreign key a discovery refresh could break. They are stamped with the
+// instant the answer was fetched, for the reason samplePairVolume gives: a counter stored twice at
+// two instants would read as a rate of zero between them.
+function sampleInterfaceCounters(host, discovery, now) {
+  var counters = host.readObject("traffic_interface");
+  if (counters.error) {
+    return { error: counters.error };
+  }
+  if (!counters.ok) {
+    return { readings: [], absent: "interface counters (the endpoint did not answer)" };
+  }
+  var at = answeredAt(counters, now);
+  var readings = [];
+  var byInterface = perInterface(counters.object);
+  var keys = byInterface === null ? [] : Object.keys(byInterface);
+  var specs = [
+    [bytesInKeys, "bytes_in", "byte"],
+    [bytesOutKeys, "bytes_out", "byte"],
+    [packetsInKeys, "packets_in", "packet"],
+    [packetsOutKeys, "packets_out", "packet"],
+    [[inputErrorsKey], "errors_in", "packet"],
+    [[outputErrorsKey], "errors_out", "packet"]
+  ];
+  for (var k = 0; k < keys.length; k++) {
+    var entry = byInterface[keys[k]];
+    if (!isObject(entry)) {
+      continue;
+    }
+    var device = discovery.deviceOf(keys[k]);
+    if (device === "") {
+      // The reading names an interface discovery does not know: a key nothing could join to.
+      continue;
+    }
+    for (var c = 0; c < specs.length; c++) {
+      var counter = d.firstFloat(entry, specs[c][0]);
+      if (counter === null) {
+        continue;
+      }
+      readings.push({ subject_kind: "interface", subject_key: device, measure: specs[c][1], unit: specs[c][2],
+        value: counter.value, sampled_at: at, attributed: false });
+    }
+  }
+  if (readings.length === 0) {
+    return { readings: [], absent: "interface counters (the endpoint answered with no figure this code could read)" };
+  }
+  return { readings: readings, absent: "" };
+}
+
 // sampleFirewallTelemetry reads the firewall's gauges: { readings, missing } or { error }. Nothing
 // here writes a zero for a reading it could not take.
 function sampleFirewallTelemetry(host, discovery, now) {
@@ -619,50 +681,13 @@ function sampleFirewallTelemetry(host, discovery, now) {
     }
   }
 
-  // The per-interface counters. Their subject is the network DEVICE name, the token interface_map
-  // keys by, so a reading joins to an interface without a foreign key a discovery refresh could
-  // break.
-  var counters = host.readObject("traffic_interface");
+  var counters = sampleInterfaceCounters(host, discovery, now);
   if (counters.error) {
     return { error: counters.error };
   }
-  if (!counters.ok) {
-    missing.push("interface counters (the endpoint did not answer)");
-  } else {
-    var byInterface = perInterface(counters.object);
-    var keys = byInterface === null ? [] : Object.keys(byInterface);
-    var count = 0;
-    var specs = [
-      [bytesInKeys, "bytes_in", "byte"],
-      [bytesOutKeys, "bytes_out", "byte"],
-      [packetsInKeys, "packets_in", "packet"],
-      [packetsOutKeys, "packets_out", "packet"],
-      [[inputErrorsKey], "errors_in", "packet"],
-      [[outputErrorsKey], "errors_out", "packet"]
-    ];
-    for (var k = 0; k < keys.length; k++) {
-      var entry = byInterface[keys[k]];
-      if (!isObject(entry)) {
-        continue;
-      }
-      var device = discovery.deviceOf(keys[k]);
-      if (device === "") {
-        // The reading names an interface discovery does not know: a key nothing could join to.
-        continue;
-      }
-      for (var c = 0; c < specs.length; c++) {
-        var counter = d.firstFloat(entry, specs[c][0]);
-        if (counter === null) {
-          continue;
-        }
-        readings.push({ subject_kind: "interface", subject_key: device, measure: specs[c][1], unit: specs[c][2],
-          value: counter.value, sampled_at: now, attributed: false });
-        count++;
-      }
-    }
-    if (count === 0) {
-      missing.push("interface counters (the endpoint answered with no figure this code could read)");
-    }
+  readings = readings.concat(counters.readings);
+  if (counters.absent !== "") {
+    missing.push(counters.absent);
   }
 
   var gateways = sampleGateways(host, now);
@@ -754,6 +779,37 @@ exports.measurement_sample = {
       return { result: result, error: gauges.error };
     }
     return { result: result, readings: readings.concat(gauges.readings), missing: gauges.missing };
+  },
+
+  // live is the live pass (docs/plugins.md, "Live pass"): run at live_cadence_seconds while somebody
+  // looks at a live figure, it reads only the two live endpoints the manifest names -- the per-pair
+  // snapshot and the interface counters -- and none of the gauges, whose cadence stays the
+  // measurement interval. Its readings are stored as fine samples. A per-pair snapshot that could
+  // not be read makes the live pass unavailable, as it makes the baseline pass; the counters are
+  // read all the same.
+  //
+  // THE CADENCE'S DEFAULT IS PENDING LV-C. live_cadence_seconds defaults to 10 s in plugin.json, a
+  // conservative figure and not a measurement: the spec sets it to the finest cadence adding at most
+  // 2 processor percentage points over the idle baseline on a live firewall, which `opnview
+  // measure-cost` measures (docs/opnsense-api-survey.md, "LV-C: measuring the firewall-side cost")
+  // and which has not been run yet. Its lower bound, 2 s, is a fact of the source rather than a
+  // measurement: one traffic/top call is an iftop capture of 2 seconds (traffic_top.py, `-s 2`).
+  live: function (host, discovery, now) {
+    var result = { probe: "traffic_top", state: "reachable" };
+    var pair = samplePairVolume(host, discovery, now);
+    result.detail = pair.detail;
+    result.outcome = pair.outcome;
+    var readings = pair.readings;
+    if (pair.failed) {
+      result.state = "unavailable";
+      readings = [];
+    }
+    var counters = sampleInterfaceCounters(host, discovery, now);
+    if (counters.error) {
+      return { result: result, error: counters.error };
+    }
+    var missing = counters.absent === "" ? [] : [counters.absent];
+    return { result: result, readings: readings.concat(counters.readings), missing: missing };
   }
 };
 

@@ -87,6 +87,7 @@ func FixedInterval(interval time.Duration) func() time.Duration {
 // passes whoever builds the loops (purge.go).
 func (c *Collector) Tasks(settings *config.Live) []Task {
 	tasks := append(c.coreTasks(settings), c.declaredTasks()...)
+	tasks = append(tasks, c.liveTask(settings))
 	return append(tasks, c.listenTask()...)
 }
 
