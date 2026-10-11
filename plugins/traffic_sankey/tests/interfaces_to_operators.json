@@ -1,0 +1,240 @@
+{
+  "type": "traffic_sankey",
+  "parameters": {
+    "interfaces": null,
+    "left": "interface",
+    "max_nodes": 12,
+    "measure": "bytes",
+    "min_share": 0,
+    "period": "24h",
+    "right": "operator",
+    "scope": "all",
+    "show_blocked": true
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789914000,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "reachable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "reachable"
+    },
+    {
+      "kind": "ip_geolocation",
+      "provider_key": "maxmind_geolite2",
+      "display_name": "MaxMind GeoLite2",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    }
+  ],
+  "condition": "reachable",
+  "freshness": [
+    {
+      "period": "1h",
+      "slots_read": 0,
+      "last_computed_at": null,
+      "stale_slots": 0,
+      "stale": false
+    }
+  ],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "left": "interface",
+    "right": "operator",
+    "measure": "bytes",
+    "nodes": [
+      {
+        "key": "interface:1",
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "First inside",
+          "user_label": null,
+          "label": "First inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        }
+      },
+      {
+        "key": "interface:2",
+        "interface": {
+          "id": 2,
+          "identifier": "opt2",
+          "device": "vlan0.20",
+          "description": "Second inside",
+          "user_label": null,
+          "label": "Second inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        }
+      },
+      {
+        "key": "operator:64500",
+        "asn": 64500,
+        "operator": "Example Operator"
+      },
+      {
+        "key": "inter_interface"
+      }
+    ],
+    "ribbons": [
+      {
+        "left": "interface:1",
+        "right": "operator:64500",
+        "value": 3000,
+        "bytes": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 3000
+        },
+        "connections": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 1
+        },
+        "blocked_share": 0
+      },
+      {
+        "left": "interface:1",
+        "right": "inter_interface",
+        "value": 500,
+        "bytes": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 500
+        },
+        "connections": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 1
+        },
+        "blocked_share": 0
+      },
+      {
+        "left": "interface:2",
+        "right": "operator:64500",
+        "value": 200,
+        "bytes": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 200
+        },
+        "connections": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 1
+        },
+        "blocked_share": 1
+      }
+    ],
+    "other": {
+      "ribbons": 0,
+      "bytes": {
+        "measure": "logged",
+        "lower_bound": true,
+        "value": 1000
+      },
+      "connections": {
+        "measure": "logged",
+        "lower_bound": true,
+        "value": 1
+      },
+      "unnamed": [
+        {
+          "reason": "miss",
+          "addresses": 1,
+          "volume": {
+            "measure": "logged",
+            "lower_bound": true,
+            "bytes": 1000,
+            "allowed_bytes": 1000,
+            "blocked_bytes": 0,
+            "unknown_bytes": 0,
+            "connections": 1,
+            "allowed_connections": 1,
+            "blocked_connections": 0,
+            "unknown_connections": 0
+          }
+        },
+        {
+          "reason": "pending",
+          "addresses": 0,
+          "volume": {
+            "measure": "logged",
+            "lower_bound": true,
+            "bytes": 0,
+            "allowed_bytes": 0,
+            "blocked_bytes": 0,
+            "unknown_bytes": 0,
+            "connections": 0,
+            "allowed_connections": 0,
+            "blocked_connections": 0,
+            "unknown_connections": 0
+          }
+        },
+        {
+          "reason": "no_row",
+          "addresses": 0,
+          "volume": {
+            "measure": "logged",
+            "lower_bound": true,
+            "bytes": 0,
+            "allowed_bytes": 0,
+            "blocked_bytes": 0,
+            "unknown_bytes": 0,
+            "connections": 0,
+            "allowed_connections": 0,
+            "blocked_connections": 0,
+            "unknown_connections": 0
+          }
+        }
+      ]
+    },
+    "total": {
+      "measure": "logged",
+      "lower_bound": true,
+      "bytes": 4700,
+      "allowed_bytes": 4500,
+      "blocked_bytes": 200,
+      "unknown_bytes": 0,
+      "connections": 4,
+      "allowed_connections": 3,
+      "blocked_connections": 1,
+      "unknown_connections": 0
+    }
+  }
+}

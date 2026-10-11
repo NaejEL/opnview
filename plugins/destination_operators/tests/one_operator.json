@@ -1,0 +1,191 @@
+{
+  "type": "destination_operators",
+  "parameters": {
+    "group": "asn",
+    "interfaces": null,
+    "limit": 20,
+    "period": "24h",
+    "series": [
+      "allowed",
+      "blocked"
+    ]
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789914000,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "reachable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "reachable"
+    },
+    {
+      "kind": "ip_geolocation",
+      "provider_key": "maxmind_geolite2",
+      "display_name": "MaxMind GeoLite2",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    }
+  ],
+  "condition": "reachable",
+  "freshness": [
+    {
+      "period": "1h",
+      "slots_read": 0,
+      "last_computed_at": null,
+      "stale_slots": 0,
+      "stale": false
+    }
+  ],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "group": "asn",
+    "rows": [
+      {
+        "key": "asn:64500",
+        "asn": 64500,
+        "operator": "Example Operator",
+        "bytes": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 3200
+        },
+        "allowed": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 3000,
+          "allowed_bytes": 3000,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 1,
+          "allowed_connections": 1,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "blocked": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 200,
+          "allowed_bytes": 0,
+          "blocked_bytes": 200,
+          "unknown_bytes": 0,
+          "connections": 1,
+          "allowed_connections": 0,
+          "blocked_connections": 1,
+          "unknown_connections": 0
+        },
+        "peers": 1,
+        "interfaces": [
+          1,
+          2
+        ],
+        "dataset_build_at": 1789914000
+      }
+    ],
+    "remainder": {
+      "members": 0,
+      "volume": {
+        "measure": "logged",
+        "lower_bound": true,
+        "bytes": 0,
+        "allowed_bytes": 0,
+        "blocked_bytes": 0,
+        "unknown_bytes": 0,
+        "connections": 0,
+        "allowed_connections": 0,
+        "blocked_connections": 0,
+        "unknown_connections": 0
+      }
+    },
+    "unresolved": [
+      {
+        "reason": "miss",
+        "addresses": 1,
+        "volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 1000,
+          "allowed_bytes": 1000,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 1,
+          "allowed_connections": 1,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        }
+      },
+      {
+        "reason": "pending",
+        "addresses": 0,
+        "volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        }
+      },
+      {
+        "reason": "no_row",
+        "addresses": 0,
+        "volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        }
+      }
+    ],
+    "total": {
+      "measure": "logged",
+      "lower_bound": true,
+      "bytes": 4200,
+      "allowed_bytes": 4000,
+      "blocked_bytes": 200,
+      "unknown_bytes": 0,
+      "connections": 3,
+      "allowed_connections": 2,
+      "blocked_connections": 1,
+      "unknown_connections": 0
+    }
+  }
+}
