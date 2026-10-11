@@ -77,11 +77,11 @@ ORDER BY max(l.observed_at) DESC, l.address;
 -- ---------------------------------------------------------------------------
 -- The two reads above in the `netflow` measure, run in their place when the answer is given in it
 -- (host.query; docs/widget-api.md, "Volumes and the observation-point limit"). A record's bytes are
--- its connection's measured volume, both directions, from connection_measured_volume; each record
--- also carries its direction as an action column (allowed_connections, blocked_connections,
--- unknown_connections, 1 for its own action), the coverage class of its connection
--- (measured_connections, partial_connections, unmeasured_connections, not_joinable_connections, 1
--- for its class) and, per direction -- forward and reverse, as its first leg logged them -- the
+-- its connection's measured volume, both directions, read through connection_netflow
+-- (internal/store/schema.sql) as every netflow twin reads it; each record also carries its action
+-- as an action column (allowed_connections, blocked_connections, unknown_connections, 1 for its own
+-- action), the columns of netflow_parts -- its connection's packets, coverage class and direction
+-- states, in the part of its action -- and, per direction -- forward and reverse, as its first leg logged them -- the
 -- bytes, the packets, the state and the leg the figure was measured at. A connection that started
 -- under no single Observation Point has no direction row: its directions are null.
 -- ---------------------------------------------------------------------------
@@ -94,7 +94,7 @@ SELECT f.id AS flow_id,
        f.protocol AS protocol,
        f.action AS action,
        f.traffic_scope AS traffic_scope,
-       coalesce(fw.bytes, 0) + coalesce(rv.bytes, 0) AS bytes,
+       n.bytes AS bytes,
        f.interface_device AS interface_device,
        m.description AS interface_description,
        g.lookup_state AS lookup_state,
@@ -106,17 +106,10 @@ SELECT f.id AS flow_id,
        a.method AS method,
        a.correlation_delay_seconds AS correlation_delay_seconds,
        'netflow' AS measure,
-       coalesce(fw.packets, 0) + coalesce(rv.packets, 0) AS packets,
        CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END AS allowed_connections,
        CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END AS blocked_connections,
        CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END AS unknown_connections,
-       CASE WHEN fw.state = 'measured' AND rv.state = 'measured' THEN 1 ELSE 0 END AS measured_connections,
-       CASE WHEN (fw.state IS NOT NULL OR rv.state IS NOT NULL)
-                 AND NOT (fw.state = 'measured' AND rv.state = 'measured')
-                 AND coalesce(fw.records, 0) + coalesce(rv.records, 0) > 0 THEN 1 ELSE 0 END AS partial_connections,
-       CASE WHEN (fw.state IS NOT NULL OR rv.state IS NOT NULL)
-                 AND coalesce(fw.records, 0) + coalesce(rv.records, 0) = 0 THEN 1 ELSE 0 END AS unmeasured_connections,
-       CASE WHEN fw.state IS NULL AND rv.state IS NULL THEN 1 ELSE 0 END AS not_joinable_connections,
+       (n.parts).*,
        fw.bytes AS forward_bytes,
        fw.packets AS forward_packets,
        fw.state AS forward_state,
@@ -129,6 +122,7 @@ FROM flow AS f
 LEFT JOIN interface_map AS m ON m.device = f.interface_device
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
+LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
 LEFT JOIN connection_measured_volume AS fw ON fw.connection_flow_id = f.id AND fw.direction = 'forward'
 LEFT JOIN connection_measured_volume AS rv ON rv.connection_flow_id = f.id AND rv.direction = 'reverse'
 WHERE f.src_client_id = :client_id
@@ -147,25 +141,12 @@ LIMIT :limit;
 SELECT count(*) AS records,
        coalesce(sum(n.bytes), 0) AS bytes,
        'netflow' AS measure,
-       coalesce(sum(n.packets), 0) AS packets,
        coalesce(sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END), 0) AS allowed_connections,
        coalesce(sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END), 0) AS blocked_connections,
        coalesce(sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END), 0) AS unknown_connections,
-       coalesce(sum(CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END), 0) AS measured_connections,
-       coalesce(sum(CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END), 0) AS partial_connections,
-       coalesce(sum(CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END), 0) AS unmeasured_connections,
-       coalesce(sum(CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END), 0) AS not_joinable_connections
+       (netflow_sum(n.parts)).*
 FROM flow AS f
-LEFT JOIN LATERAL (
-    SELECT coalesce(sum(v.bytes), 0) AS bytes,
-           coalesce(sum(v.packets), 0) AS packets,
-           CASE WHEN count(*) = 0 THEN 'not_joinable'
-                WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                ELSE 'partial' END AS coverage
-    FROM connection_measured_volume AS v
-    WHERE v.connection_flow_id = f.id
-) AS n ON true
+LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.src_client_id = :client_id
   AND f.observed_at >= :from
   AND f.observed_at < :to

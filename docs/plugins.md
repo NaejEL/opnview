@@ -690,6 +690,9 @@ ORDER BY target, latency_ms;
   the script names when it runs it: `1h`, `24h`, `7d` or `30d`.
 - **Every column has a name of its own.** The script reads a row as an object of its columns, so a
   result naming one column twice is refused at run time; give each one with `AS`.
+- **`<name>_netflow` is `<name>`'s twin in the netflow measure** (*Volume figures and their
+  measure*): it binds exactly `<name>`'s parameters and is a period template exactly when `<name>` is,
+  or the widget is refused when it loads (`netflow_twin_mismatch`).
 
 Every statement is checked when the widget loads, at every period of a template: it is one `SELECT`
 that PostgreSQL plans, and it reads none of `account`, `session`, `encrypted_credential`, `setting`
@@ -816,14 +819,14 @@ says so beside its measure.
 
 | Function | What it answers |
 |---|---|
-| `volume(figures)` | The Volume of summable figures, in their own measure: `{measure, lower_bound, bytes, allowed_bytes, blocked_bytes, unknown_bytes, connections, allowed_connections, blocked_connections, unknown_connections}`, and for a netflow Volume its `packets` and its `coverage` `{measured, partial, unmeasured, not_joinable}`. |
+| `volume(figures)` | The Volume of summable figures, in their own measure: `{measure, lower_bound, bytes, allowed_bytes, blocked_bytes, unknown_bytes, connections, allowed_connections, blocked_connections, unknown_connections}`, and for a netflow Volume its packets and its coverage, whole and per part: `packets`, `allowed_packets`, `blocked_packets`, `unknown_packets`, `coverage`, `allowed_coverage`, `blocked_coverage`, `unknown_coverage`, each coverage `{measured, partial, unmeasured, not_joinable, direction_states}` (`docs/widget-api.md`, *Volumes and the observation-point limit*). |
 | `logged(figures)` | The same as `volume`: the name it had while every figure was logged. |
 | `count(value)` | A count of the connections or records the answer's figures count, `{measure, lower_bound: true, value}`, in the measure the request is answered under. |
 | `byteCount(figures)` | The Count of the figures' bytes, in their measure. |
 | `connectionBytes(figures)` | The same for one connection's figures. A netflow figure of one connection measured in both directions is exact, and is the only figure whose `lower_bound` is `false`. |
 | `cover(figures)` | Says the answer counts figures whose numbers the script uses directly, rather than through a Volume or a Count, so the core judges them as it judges a Volume. |
 | `loggedCount(value)` | `{measure: "logged", lower_bound: true, value}`: a count of logged records, which an answer in the netflow measure cannot carry. |
-| `withMeasure(figures, from)` | Figures carrying the measure of `from` -- a row or figures read in it: its measure, packets and coverage. |
+| `withMeasure(figures, from)` | Figures carrying the measure of `from` -- a row or figures read in it: its measure and its netflow parts. |
 | `zero()`, `add(a, b)` | Summable figures holding nothing, in the measure the request is answered under, and the sum of two. |
 | `value(measure, figures)` | The figure a `measure` names: `bytes`, `connections`, `allowed`, `blocked`, or `packets` of netflow figures. |
 | `remainder(members, volume, count)` | What a truncating parameter dropped: `{members, volume, count}`, a `null` volume or count left out. `count` is a Count built by this area, or a number, read as `loggedCount` reads one. |
@@ -835,10 +838,12 @@ says so beside its measure.
 
 Summable figures are `{bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
 blocked_connections, unknown_connections}`; a member left out is `0`. Figures of the netflow measure
-also carry `measure: "netflow"`, `packets`, `measured_connections`, `partial_connections`,
-`unmeasured_connections` and `not_joinable_connections` -- or, for the allowed or the blocked part of
-figures whose connections were not all measured, `coverage_unknown: true` and no `packets` -- and a
-Volume handed back is read as its figures.
+also carry `measure: "netflow"` and the thirty-six columns of `netflow_parts` (`docs/data-model.md`,
+*NetFlow volumes*): for each part `allowed`, `blocked` and `unknown`, `<part>_packets`,
+`<part>_measured_connections`, `<part>_partial_connections`, `<part>_unmeasured_connections`,
+`<part>_not_joinable_connections` and `<part>_direction_<state>_connections` for each direction
+state. A script never needs to name them: `host.figures.add` and `host.figures.zero` keep them, and a
+Volume handed back is read as its figures, its parts included.
 
 #### `host.volume`
 
@@ -1090,8 +1095,9 @@ figures declares `"volumes": true` in its manifest, and that is all:
   tries);
 - the core decides, from what is stored, whether NetFlow can answer the window, runs the script in the
   measure chosen, and judges what it built: `best_available` answers `netflow` only when every
-  connection the answer counts was measured in both directions, and falls back to `logged` -- byte for
-  byte what `volume_measure = logged` answers -- with the named state that says why;
+  connection the answer counts has every direction covered at the Observation Point, and falls back
+  to `logged` -- byte for byte what `volume_measure = logged` answers -- with the named state that says
+  why, and that state's detail in `state_details` when it carries one;
 - every figure the core hands the script is already of that measure: `host.volume`, `host.clients`,
   `host.peers`, `host.sites`, `host.flows`, `host.series` and `host.attribution` read it, and
   `host.figures` builds every Volume and Count in the figures' own measure.
@@ -1099,8 +1105,8 @@ figures declares `"volumes": true` in its manifest, and that is all:
 **What a script does to be answered in the netflow measure.** It builds its figures through
 `host.figures` and keeps what the core read whole:
 
-- sum with `host.figures.add`, or keep every member a figure carries, `measure` and the netflow
-  members included, as the built-in `interface_volume_ranking` does;
+- sum with `host.figures.add`, which keeps every member a figure carries, `measure` and the netflow
+  parts included, as the built-in `interface_volume_ranking` does;
 - a count of connections is `host.figures.count(n)`, a byte count `host.figures.byteCount(figures)`;
   `host.figures.loggedCount(n)` stays a count of logged records;
 - a number taken out of figures and drawn on its own -- a node of a tree -- is written with
@@ -1108,10 +1114,35 @@ figures declares `"volumes": true` in its manifest, and that is all:
   `host.figures.cover`;
 - a statement of the widget's own that reads volume columns declares its twin, `<name>_netflow`, with
   the same parameters and the same columns read in the netflow measure, plus `measure`
-  (`'netflow' AS measure`), `packets`, `measured_connections`, `partial_connections`,
-  `unmeasured_connections` and `not_joinable_connections`. The built-in widgets' statement files show
-  each case, reading `connection_measured_volume` and the `netflow_*` columns of the aggregate
-  families (`docs/data-model.md`, *NetFlow volumes*).
+  (`'netflow' AS measure`) and the columns of `netflow_parts`, which one expression writes. A twin
+  reading the flows joins each flow to its netflow figures through `connection_netflow`, the one
+  place they are read from, and sums them with `netflow_sum`:
+
+  ```sql
+  -- statement: widget_example_by_client_netflow
+  SELECT f.local_client_id AS client_id,
+         sum(n.bytes) AS bytes,
+         sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END) AS allowed_bytes,
+         sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
+         sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END) AS unknown_bytes,
+         sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
+         sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
+         sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
+         'netflow' AS measure,
+         (netflow_sum(n.parts)).*
+  FROM classified_flow AS f
+  LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
+  WHERE f.observed_at >= :from AND f.observed_at < :to AND f.exit_leg_device IS NULL
+  GROUP BY f.local_client_id;
+  ```
+
+  A twin reading an aggregate family writes `(netflow_sum(netflow_parts)).*` over its
+  `netflow_parts` column. The built-in widgets' statement files show each case (`docs/data-model.md`,
+  *NetFlow volumes*).
+- **a twin binds exactly its statement's parameters**, and is a period template exactly when its
+  statement is: the core runs it in the statement's place with the statement's parameters. A widget
+  whose twin does not is refused when it loads, with `netflow_twin_mismatch`
+  (`docs/widget-authoring.md`, *Refusals*).
 
 **What happens to a widget that does not.** Nothing wrong is ever served. A run in the netflow
 measure that builds a figure the core did not read in it -- a non-zero logged figure, a logged count,

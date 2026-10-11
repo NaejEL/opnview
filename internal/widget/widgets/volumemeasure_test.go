@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -136,10 +137,24 @@ func encoded(t *testing.T, response widget.Response) []byte {
 	return raw
 }
 
-// withoutMeasureDifferences is an answer with the two differences decision (b) admits removed: the
-// echoed volume_measure key, and one named state.
+// withoutMeasureDifferences is an answer with the differences decision (b) and the maintainer's
+// decision of 11 October 2026 admit removed: the echoed volume_measure key, one named state, and that
+// state's detail in state_details -- admitted only when the state itself is present, so a detail
+// without its state, or a detail of another state, still differs.
 func withoutMeasureDifferences(t *testing.T, response widget.Response, state string) []byte {
 	t.Helper()
+	if widget.Contains(response.States, state) && response.StateDetails != nil {
+		details := map[string]widget.StateDetail{}
+		for name, detail := range response.StateDetails {
+			if name != state {
+				details[name] = detail
+			}
+		}
+		if len(details) == 0 {
+			details = nil
+		}
+		response.StateDetails = details
+	}
 	parameters := map[string]any{}
 	for key, value := range response.Parameters {
 		if key != widget.VolumeMeasureKey {
@@ -275,9 +290,9 @@ func TestBestAvailableAnswersNetflowWhenEveryConnectionIsMeasured(t *testing.T) 
 }
 
 // TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured is PS-AC37's partial coverage: a
-// direction the export has not covered makes best_available answer logged, byte for byte, with
-// netflow_not_covering_window; an explicit netflow answers the netflow figures, each with its coverage,
-// and the same state.
+// direction the Observation Point does not capture makes best_available answer logged, byte for byte,
+// with netflow_not_covering_window and its detail; an explicit netflow answers the netflow figures,
+// each with its coverage, and the same state.
 func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T) {
 	t.Parallel()
 	f := newMeasureWorld(t)
@@ -285,7 +300,7 @@ func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T
 	f.measured(t, measureFlowA, "forward", "measured", 4000, 10)
 	f.measured(t, measureFlowA, "reverse", "measured", 9000, 12)
 	f.measured(t, measureFlowB, "forward", "measured", 1500, 3)
-	f.measured(t, measureFlowB, "reverse", "missing", 0, 0)
+	f.measured(t, measureFlowB, "reverse", "not_captured", 0, 0)
 	parameters := map[string]any{"period": "1h"}
 	best := f.respond(t, "interface_volume_ranking", parameters)
 	parameters["volume_measure"] = "logged"
@@ -295,6 +310,11 @@ func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T
 			string(withoutMeasureDifferences(t, logged, widget.StateNetflowNotCoveringWindow)) {
 		t.Errorf("best_available under partial coverage is not logged's answer with the state\nlogged: %s\ngot:    %s",
 			encoded(t, logged), encoded(t, best))
+	}
+	if detail := best.StateDetails[widget.StateNetflowNotCoveringWindow]; len(detail.IntervalStates) != 1 ||
+		detail.IntervalStates[0] != store.CaptureObservationPoint || detail.CapturedInterfaces != nil {
+		t.Errorf("the detail of netflow_not_covering_window is %+v, not the one interval state observation_point",
+			best.StateDetails)
 	}
 	parameters["volume_measure"] = "netflow"
 	explicit := f.respond(t, "interface_volume_ranking", parameters)
@@ -308,8 +328,9 @@ func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T
 
 // TestUnderTwoCapturedInterfacesBestAvailableIsLoggedAndNetflowCarriesNoFigure is PS-AC37's addition:
 // a configuration capturing on two interfaces exports no Observation Point, so best_available answers
-// byte for byte what logged answers apart from the echoed key, with observation_point_not_exported,
-// and an explicit netflow carries no figure and the same state.
+// byte for byte what logged answers apart from the echoed key, with observation_point_not_exported
+// and its detail captured_interfaces: 2, and an explicit netflow carries no figure and the same state
+// and detail.
 func TestUnderTwoCapturedInterfacesBestAvailableIsLoggedAndNetflowCarriesNoFigure(t *testing.T) {
 	t.Parallel()
 	f := newMeasureWorld(t)
@@ -328,7 +349,24 @@ func TestUnderTwoCapturedInterfacesBestAvailableIsLoggedAndNetflowCarriesNoFigur
 		if explicit.Data != nil || !widget.Contains(explicit.States, widget.StateObservationPointNotExported) {
 			t.Errorf("%s: an explicit netflow under two interfaces carries %s", widgetType, encoded(t, explicit))
 		}
+		for name, answer := range map[string]widget.Response{"best_available": best, "netflow": explicit} {
+			if !capturedInterfacesAre(answer, 2) {
+				t.Errorf("%s %s: the state details are %+v, not captured_interfaces 2", widgetType, name,
+					answer.StateDetails)
+			}
+		}
+		if logged.StateDetails != nil {
+			t.Errorf("%s: a logged answer carries the state details %+v", widgetType, logged.StateDetails)
+		}
 	}
+}
+
+// capturedInterfacesAre reports whether an answer's only state detail is observation_point_not_exported
+// with that many captured interfaces.
+func capturedInterfacesAre(answer widget.Response, captured int64) bool {
+	detail, present := answer.StateDetails[widget.StateObservationPointNotExported]
+	return present && len(answer.StateDetails) == 1 && detail.CapturedInterfaces != nil &&
+		*detail.CapturedInterfaces == captured && detail.IntervalStates == nil
 }
 
 // TestEveryFigureOfAnAnswerCarriesOneMeasure is PS-AC37's "every figure in one answer carries the same
@@ -493,6 +531,33 @@ func TestAThirdPartyWidgetGetsTheMeasureFromItsManifestAlone(t *testing.T) {
 		loggedTotal["bytes"] != float64(measureLoggedBytes) {
 		t.Errorf("logged answered %s", encoded(t, logged))
 	}
+	// The netflow Volume carries its coverage, whole and per part, and its direction states.
+	if coverage, _ := total["coverage"].(map[string]any); coverage == nil || total["allowed_coverage"] == nil ||
+		coverage["direction_states"].(map[string]any)["measured"] != float64(2) {
+		t.Errorf("the third party's netflow total is %v", total)
+	}
+
+	// The states that carry a detail carry it for the third party's widget too: two captured
+	// interfaces, and a connection whose reverse direction the Observation Point does not capture.
+	hidden := newMeasureWorld(t)
+	hidden.configureNetflow(t, "example_if_a", "example_if_b")
+	hidden.measureEverything(t)
+	hidden.service = pluginService(t, hidden, dataDir)
+	answer := hidden.respond(t, "example_volume_total", map[string]any{"period": "1h"})
+	if !widget.Contains(answer.States, widget.StateObservationPointNotExported) || !capturedInterfacesAre(answer, 2) {
+		t.Errorf("under two interfaces the third party's widget answered %s", encoded(t, answer))
+	}
+	uncovered := newMeasureWorld(t)
+	uncovered.configureNetflow(t, "example_if_a")
+	uncovered.measured(t, measureFlowA, "forward", "measured", 4000, 10)
+	uncovered.measured(t, measureFlowA, "reverse", "not_captured", 0, 0)
+	uncovered.service = pluginService(t, uncovered, dataDir)
+	answer = uncovered.respond(t, "example_volume_total", map[string]any{"period": "1h"})
+	detail := answer.StateDetails[widget.StateNetflowNotCoveringWindow]
+	if !widget.Contains(answer.States, widget.StateNetflowNotCoveringWindow) ||
+		strings.Join(detail.IntervalStates, ",") != store.CaptureObservationPoint {
+		t.Errorf("under partial coverage the third party's widget answered %s", encoded(t, answer))
+	}
 }
 
 // exampleMixingPlugin is a third party's widget that adds the logged bytes its own statement reads to
@@ -584,6 +649,17 @@ func TestTheWindowStateNamesWhyNetflowCannotAnswer(t *testing.T) {
 		if !widget.Contains(answer.States, test.state) {
 			t.Errorf("%s: the states are %v, not %s", name, answer.States, test.state)
 		}
+		// Only netflow_not_covering_window, of these, carries a detail: the interval states the window
+		// meets -- here no configuration read before first_read_at, then one Observation Point.
+		if test.state == widget.StateNetflowNotCoveringWindow {
+			detail := answer.StateDetails[test.state]
+			if len(answer.StateDetails) != 1 || strings.Join(detail.IntervalStates, ",") !=
+				store.CaptureUnknown+","+store.CaptureObservationPoint {
+				t.Errorf("%s: the state details are %+v", name, answer.StateDetails)
+			}
+		} else if answer.StateDetails != nil {
+			t.Errorf("%s: the state %s carries the details %+v", name, test.state, answer.StateDetails)
+		}
 		if total, _ := data(t, answer)["total"].(map[string]any); total["measure"] != widget.MeasureLogged {
 			t.Errorf("%s: the total is %v", name, total)
 		}
@@ -666,7 +742,8 @@ func TestACustomChartSeriesOfTheNetflowMeasures(t *testing.T) {
 	hidden.measureEverything(t)
 	answer := hidden.respond(t, "custom_chart", parameters)
 	lines, _ = data(t, answer)["series"].([]any)
-	if len(lines) != 3 || !widget.Contains(answer.States, widget.StateObservationPointNotExported) {
+	if len(lines) != 3 || !widget.Contains(answer.States, widget.StateObservationPointNotExported) ||
+		!capturedInterfacesAre(answer, 2) {
 		t.Fatalf("under two interfaces the chart answered %s", encoded(t, answer))
 	}
 	for index := 0; index < 2; index++ {

@@ -44,12 +44,30 @@ type Response struct {
 	// States are named states the response carries beside its data: a figure that has no
 	// answer for a stated reason (docs/widget-api.md, "Named states").
 	States []string `json:"states"`
+	// StateDetails is the detail of a state of States that carries one, keyed by the state's name:
+	// captured_interfaces for observation_point_not_exported, interval_states for
+	// netflow_not_covering_window (docs/widget-api.md, "Named states"). Absent when no state of the
+	// answer carries a detail, so an answer holding no such state is unchanged by it.
+	StateDetails map[string]StateDetail `json:"state_details,omitempty"`
 	// ResolverWindowBounded is set on a response fed by the resolver's lookups: true when
 	// the resolver's own ring buffer bounded the window (catalogue Part 3, fact 1), which
 	// opnview records as a resolver_window_not_honoured collection gap.
 	ResolverWindowBounded *bool `json:"resolver_window_bounded,omitempty"`
 	// Data is the preset's data, or null when there is nothing honest to show.
 	Data any `json:"data"`
+}
+
+// StateDetail is what a named state says beyond its name. Each member belongs to one state, and a
+// detail carries only its own state's.
+type StateDetail struct {
+	// CapturedInterfaces is, for observation_point_not_exported, how many interfaces the capture
+	// configuration in force captures on.
+	CapturedInterfaces *int64 `json:"captured_interfaces,omitempty"`
+	// IntervalStates is, for netflow_not_covering_window, the capture states of the intervals the
+	// window meets, in name order: observation_point for an interval with one Observation Point, and
+	// the interval states of PS18 (netflow_not_configured, observation_point_not_exported,
+	// capture_configuration_unknown, interface_index_unmapped) for the others.
+	IntervalStates []string `json:"interval_states,omitempty"`
 }
 
 // Interval is a half-open span of UTC epoch seconds.
@@ -169,8 +187,11 @@ const (
 // a sum of the two (measure.go). lower_bound is true on every Volume: opnview sees only what
 // crosses the firewall, and traffic between two clients behind one interface is in no figure; a
 // netflow Volume is an aggregate, and the only exact netflow figure is one connection's byte Count
-// (Request.ByteCountOf). A logged Volume gains no field; a netflow Volume also carries its packets
-// and its coverage: how many of the connections it counts fall in each coverage class (PS21).
+// (Request.ByteCountOf). A logged Volume gains no field. A netflow Volume also carries its packets
+// and its coverage, whole and for each of its allowed, blocked and unknown parts, as its bytes and
+// connections are split: each part carries its own packets and coverage, so the part a map keeps
+// is served with its own (PS21, and the maintainer's decision of 11 October 2026, "coverage per
+// action").
 type Volume struct {
 	Measure            string          `json:"measure"`
 	LowerBound         bool            `json:"lower_bound"`
@@ -183,18 +204,56 @@ type Volume struct {
 	BlockedConnections int64           `json:"blocked_connections"`
 	UnknownConnections int64           `json:"unknown_connections"`
 	Packets            *int64          `json:"packets,omitempty"`
+	AllowedPackets     *int64          `json:"allowed_packets,omitempty"`
+	BlockedPackets     *int64          `json:"blocked_packets,omitempty"`
+	UnknownPackets     *int64          `json:"unknown_packets,omitempty"`
 	Coverage           *VolumeCoverage `json:"coverage,omitempty"`
+	AllowedCoverage    *VolumeCoverage `json:"allowed_coverage,omitempty"`
+	BlockedCoverage    *VolumeCoverage `json:"blocked_coverage,omitempty"`
+	UnknownCoverage    *VolumeCoverage `json:"unknown_coverage,omitempty"`
 }
 
-// VolumeCoverage is a netflow Volume's connections per coverage class: both directions measured,
-// partial (some measured bytes, not both directions measured), unmeasured (one Observation Point,
-// no measured byte) and not joinable (no single Observation Point at the connection's start). The
-// four sum to the Volume's connections.
+// VolumeCoverage is how NetFlow covered a netflow Volume's connections. The four coverage classes sum
+// to the connections: both directions measured, partial (some measured bytes, not both directions
+// measured), unmeasured (one Observation Point, no measured byte) and not joinable (no single
+// Observation Point at the connection's start). DirectionStates counts, per direction state, the
+// connections with at least one direction in it: they say which states were met, and do not sum to
+// the connections.
 type VolumeCoverage struct {
-	Measured    int64 `json:"measured"`
-	Partial     int64 `json:"partial"`
-	Unmeasured  int64 `json:"unmeasured"`
-	NotJoinable int64 `json:"not_joinable"`
+	Measured        int64                 `json:"measured"`
+	Partial         int64                 `json:"partial"`
+	Unmeasured      int64                 `json:"unmeasured"`
+	NotJoinable     int64                 `json:"not_joinable"`
+	DirectionStates VolumeDirectionStates `json:"direction_states"`
+}
+
+// VolumeDirectionStates counts connections per direction state met (PS20).
+type VolumeDirectionStates struct {
+	Measured               int64 `json:"measured"`
+	InProgress             int64 `json:"in_progress"`
+	AwaitingExport         int64 `json:"awaiting_export"`
+	Missing                int64 `json:"missing"`
+	NotCaptured            int64 `json:"not_captured"`
+	ExportGap              int64 `json:"export_gap"`
+	NotExportedWhenRefused int64 `json:"not_exported_when_refused"`
+}
+
+// coverageOf is a store coverage as a Volume carries it.
+func coverageOf(coverage store.NetflowCoverage) *VolumeCoverage {
+	d := coverage.Directions
+	return &VolumeCoverage{Measured: coverage.Measured, Partial: coverage.Partial, Unmeasured: coverage.Unmeasured,
+		NotJoinable: coverage.NotJoinable, DirectionStates: VolumeDirectionStates{Measured: d.Measured,
+			InProgress: d.InProgress, AwaitingExport: d.AwaitingExport, Missing: d.Missing, NotCaptured: d.NotCaptured,
+			ExportGap: d.ExportGap, NotExportedWhenRefused: d.NotExportedWhenRefused}}
+}
+
+// storeCoverage is a Volume's coverage as the store holds it.
+func (c VolumeCoverage) storeCoverage() store.NetflowCoverage {
+	d := c.DirectionStates
+	return store.NetflowCoverage{Measured: c.Measured, Partial: c.Partial, Unmeasured: c.Unmeasured,
+		NotJoinable: c.NotJoinable, Directions: store.DirectionStates{Measured: d.Measured, InProgress: d.InProgress,
+			AwaitingExport: d.AwaitingExport, Missing: d.Missing, NotCaptured: d.NotCaptured, ExportGap: d.ExportGap,
+			NotExportedWhenRefused: d.NotExportedWhenRefused}}
 }
 
 // Logged turns store figures into logged volume figures.

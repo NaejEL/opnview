@@ -101,8 +101,7 @@ INSERT INTO volume_aggregate_1h (period_start_at, period_end_at, src_interface_i
     dst_interface_id, peer_address, traffic_scope, traffic_direction, exit_leg_device, bytes,
     allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections,
     unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_packets, netflow_measured_connections, netflow_partial_connections,
-    netflow_unmeasured_connections, netflow_not_joinable_connections, computed_at)
+    netflow_unknown_bytes, netflow_parts, computed_at)
 SELECT
     :slot_start,
     :slot_end,
@@ -125,43 +124,21 @@ SELECT
     sum(CASE WHEN u.action = 'pass' THEN u.netflow_bytes ELSE 0 END),
     sum(CASE WHEN u.action IN ('block', 'reject') THEN u.netflow_bytes ELSE 0 END),
     sum(CASE WHEN u.action = 'unknown' THEN u.netflow_bytes ELSE 0 END),
-    sum(u.netflow_packets),
-    sum(u.netflow_measured),
-    sum(u.netflow_partial),
-    sum(u.netflow_unmeasured),
-    sum(u.netflow_not_joinable),
+    netflow_sum(u.netflow_parts),
     :now
 FROM (
     SELECT f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_direction,
            f.exit_leg_device, f.action, f.packet_bytes AS bytes, 1 AS connections,
-           n.bytes AS netflow_bytes, n.packets AS netflow_packets,
-           CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END AS netflow_measured,
-           CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END AS netflow_partial,
-           CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END AS netflow_unmeasured,
-           CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END AS netflow_not_joinable
+           n.bytes AS netflow_bytes, n.parts AS netflow_parts
     FROM classified_flow AS f
-    LEFT JOIN LATERAL (
-        SELECT coalesce(sum(v.bytes) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                              OR v.measured_flow_id = f.id), 0) AS bytes,
-               coalesce(sum(v.packets) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                                OR v.measured_flow_id = f.id), 0) AS packets,
-               CASE WHEN count(*) = 0 THEN 'not_joinable'
-                    WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                    WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                    ELSE 'partial' END AS coverage
-        FROM connection_measured_volume AS v
-        WHERE v.connection_flow_id = CASE WHEN f.pair_outcome = 'second_leg' THEN f.paired_flow_id
-                                          ELSE f.id END
-    ) AS n ON true
+    LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
     WHERE f.observed_at >= :slot_start
       AND f.observed_at < :slot_end
     UNION ALL
     SELECT p.src_interface_id, p.dst_interface_id,
            CASE WHEN p.traffic_direction = 'inter_interface' THEN NULL ELSE p.peer_address END,
            p.traffic_direction, p.exit_leg_device, p.action, p.bytes, p.connections,
-           p.netflow_bytes, p.netflow_packets, p.netflow_measured_connections,
-           p.netflow_partial_connections, p.netflow_unmeasured_connections,
-           p.netflow_not_joinable_connections
+           p.netflow_bytes, p.netflow_parts
     FROM purged_flow_hour AS p
     WHERE p.hour_start_at = :slot_start
 ) AS u
@@ -173,8 +150,7 @@ GROUP BY u.src_interface_id, u.dst_interface_id, u.peer_address, u.traffic_direc
 INSERT INTO rule_volume_aggregate_1h (period_start_at, period_end_at, rule_id,
     src_interface_id, dst_interface_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
     allowed_connections, blocked_connections, unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_packets, netflow_measured_connections, netflow_partial_connections,
-    netflow_unmeasured_connections, netflow_not_joinable_connections, computed_at)
+    netflow_unknown_bytes, netflow_parts, computed_at)
 SELECT
     :slot_start,
     :slot_end,
@@ -192,41 +168,19 @@ SELECT
     sum(CASE WHEN u.action = 'pass' THEN u.netflow_bytes ELSE 0 END),
     sum(CASE WHEN u.action IN ('block', 'reject') THEN u.netflow_bytes ELSE 0 END),
     sum(CASE WHEN u.action = 'unknown' THEN u.netflow_bytes ELSE 0 END),
-    sum(u.netflow_packets),
-    sum(u.netflow_measured),
-    sum(u.netflow_partial),
-    sum(u.netflow_unmeasured),
-    sum(u.netflow_not_joinable),
+    netflow_sum(u.netflow_parts),
     :now
 FROM (
     SELECT f.rule_id, f.src_interface_id, f.dst_interface_id, f.action,
            f.packet_bytes AS bytes, 1 AS connections,
-           n.bytes AS netflow_bytes, n.packets AS netflow_packets,
-           CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END AS netflow_measured,
-           CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END AS netflow_partial,
-           CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END AS netflow_unmeasured,
-           CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END AS netflow_not_joinable
+           n.bytes AS netflow_bytes, n.parts AS netflow_parts
     FROM flow AS f
-    LEFT JOIN LATERAL (
-        SELECT coalesce(sum(v.bytes) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                              OR v.measured_flow_id = f.id), 0) AS bytes,
-               coalesce(sum(v.packets) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                                OR v.measured_flow_id = f.id), 0) AS packets,
-               CASE WHEN count(*) = 0 THEN 'not_joinable'
-                    WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                    WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                    ELSE 'partial' END AS coverage
-        FROM connection_measured_volume AS v
-        WHERE v.connection_flow_id = CASE WHEN f.pair_outcome = 'second_leg' THEN f.paired_flow_id
-                                          ELSE f.id END
-    ) AS n ON true
+    LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
     WHERE f.observed_at >= :slot_start
       AND f.observed_at < :slot_end
     UNION ALL
     SELECT p.rule_id, p.src_interface_id, p.dst_interface_id, p.action, p.bytes, p.connections,
-           p.netflow_bytes, p.netflow_packets, p.netflow_measured_connections,
-           p.netflow_partial_connections, p.netflow_unmeasured_connections,
-           p.netflow_not_joinable_connections
+           p.netflow_bytes, p.netflow_parts
     FROM purged_flow_hour AS p
     WHERE p.hour_start_at = :slot_start
 ) AS u
@@ -237,8 +191,7 @@ GROUP BY u.rule_id, u.src_interface_id, u.dst_interface_id;
 INSERT INTO domain_volume_aggregate_1h (period_start_at, period_end_at, site_name,
     client_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
     blocked_connections, unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_packets, netflow_measured_connections, netflow_partial_connections,
-    netflow_unmeasured_connections, netflow_not_joinable_connections, computed_at)
+    netflow_unknown_bytes, netflow_parts, computed_at)
 SELECT
     :slot_start,
     :slot_end,
@@ -255,43 +208,21 @@ SELECT
     sum(CASE WHEN u.action = 'pass' THEN u.netflow_bytes ELSE 0 END),
     sum(CASE WHEN u.action IN ('block', 'reject') THEN u.netflow_bytes ELSE 0 END),
     sum(CASE WHEN u.action = 'unknown' THEN u.netflow_bytes ELSE 0 END),
-    sum(u.netflow_packets),
-    sum(u.netflow_measured),
-    sum(u.netflow_partial),
-    sum(u.netflow_unmeasured),
-    sum(u.netflow_not_joinable),
+    netflow_sum(u.netflow_parts),
     :now
 FROM (
     SELECT a.site_name, f.src_client_id AS client_id, f.action,
            f.packet_bytes AS bytes, 1 AS connections,
-           n.bytes AS netflow_bytes, n.packets AS netflow_packets,
-           CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END AS netflow_measured,
-           CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END AS netflow_partial,
-           CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END AS netflow_unmeasured,
-           CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END AS netflow_not_joinable
+           n.bytes AS netflow_bytes, n.parts AS netflow_parts
     FROM flow AS f
     JOIN domain_attribution AS a ON a.flow_id = f.id
-    LEFT JOIN LATERAL (
-        SELECT coalesce(sum(v.bytes) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                              OR v.measured_flow_id = f.id), 0) AS bytes,
-               coalesce(sum(v.packets) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                                OR v.measured_flow_id = f.id), 0) AS packets,
-               CASE WHEN count(*) = 0 THEN 'not_joinable'
-                    WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                    WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                    ELSE 'partial' END AS coverage
-        FROM connection_measured_volume AS v
-        WHERE v.connection_flow_id = CASE WHEN f.pair_outcome = 'second_leg' THEN f.paired_flow_id
-                                          ELSE f.id END
-    ) AS n ON true
+    LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
     WHERE f.observed_at >= :slot_start
       AND f.observed_at < :slot_end
       AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')
     UNION ALL
     SELECT p.site_name, p.src_client_id, p.action, p.bytes, p.connections,
-           p.netflow_bytes, p.netflow_packets, p.netflow_measured_connections,
-           p.netflow_partial_connections, p.netflow_unmeasured_connections,
-           p.netflow_not_joinable_connections
+           p.netflow_bytes, p.netflow_parts
     FROM purged_flow_hour AS p
     WHERE p.hour_start_at = :slot_start
       AND p.site_name IS NOT NULL
@@ -309,8 +240,7 @@ GROUP BY u.site_name, u.client_id;
 INSERT INTO peer_volume_aggregate_1h (period_start_at, period_end_at, client_id,
     traffic_direction, peer_address, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
     allowed_connections, blocked_connections, unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_packets, netflow_measured_connections, netflow_partial_connections,
-    netflow_unmeasured_connections, netflow_not_joinable_connections, computed_at)
+    netflow_unknown_bytes, netflow_parts, computed_at)
 SELECT
     :slot_start,
     :slot_end,
@@ -328,36 +258,16 @@ SELECT
     sum(CASE WHEN u.action = 'pass' THEN u.netflow_bytes ELSE 0 END),
     sum(CASE WHEN u.action IN ('block', 'reject') THEN u.netflow_bytes ELSE 0 END),
     sum(CASE WHEN u.action = 'unknown' THEN u.netflow_bytes ELSE 0 END),
-    sum(u.netflow_packets),
-    sum(u.netflow_measured),
-    sum(u.netflow_partial),
-    sum(u.netflow_unmeasured),
-    sum(u.netflow_not_joinable),
+    netflow_sum(u.netflow_parts),
     :now
 FROM (
     SELECT f.local_client_id AS client_id, f.traffic_direction,
            CASE WHEN f.src_interface_id IS NOT NULL THEN f.dst_address
                 ELSE f.src_address END AS peer_address,
            f.action, f.packet_bytes AS bytes, 1 AS connections,
-           n.bytes AS netflow_bytes, n.packets AS netflow_packets,
-           CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END AS netflow_measured,
-           CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END AS netflow_partial,
-           CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END AS netflow_unmeasured,
-           CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END AS netflow_not_joinable
+           n.bytes AS netflow_bytes, n.parts AS netflow_parts
     FROM classified_flow AS f
-    LEFT JOIN LATERAL (
-        SELECT coalesce(sum(v.bytes) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                              OR v.measured_flow_id = f.id), 0) AS bytes,
-               coalesce(sum(v.packets) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                                OR v.measured_flow_id = f.id), 0) AS packets,
-               CASE WHEN count(*) = 0 THEN 'not_joinable'
-                    WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                    WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                    ELSE 'partial' END AS coverage
-        FROM connection_measured_volume AS v
-        WHERE v.connection_flow_id = CASE WHEN f.pair_outcome = 'second_leg' THEN f.paired_flow_id
-                                          ELSE f.id END
-    ) AS n ON true
+    LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
     WHERE f.observed_at >= :slot_start
       AND f.observed_at < :slot_end
       AND f.local_client_id IS NOT NULL
@@ -365,9 +275,7 @@ FROM (
       AND f.exit_leg_device IS NULL
     UNION ALL
     SELECT p.local_client_id, p.traffic_direction, p.peer_address, p.action, p.bytes, p.connections,
-           p.netflow_bytes, p.netflow_packets, p.netflow_measured_connections,
-           p.netflow_partial_connections, p.netflow_unmeasured_connections,
-           p.netflow_not_joinable_connections
+           p.netflow_bytes, p.netflow_parts
     FROM purged_flow_hour AS p
     WHERE p.hour_start_at = :slot_start
       AND p.local_client_id IS NOT NULL
@@ -391,12 +299,11 @@ INSERT INTO volume_aggregate_@period@ (period_start_at, period_end_at, src_inter
     dst_interface_id, peer_address, traffic_scope, traffic_direction, exit_leg_device, bytes,
     allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections,
     unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_packets, netflow_measured_connections, netflow_partial_connections,
-    netflow_unmeasured_connections, netflow_not_joinable_connections, computed_at)
+    netflow_unknown_bytes, netflow_parts, computed_at)
 SELECT :slot_start, :slot_end, v.src_interface_id, v.dst_interface_id, v.peer_address,
        v.traffic_scope, v.traffic_direction, v.exit_leg_device, sum(v.bytes), sum(v.allowed_bytes),
        sum(v.blocked_bytes), sum(v.unknown_bytes), sum(v.allowed_connections),
-       sum(v.blocked_connections), sum(v.unknown_connections), sum(v.netflow_bytes), sum(v.netflow_allowed_bytes), sum(v.netflow_blocked_bytes), sum(v.netflow_unknown_bytes), sum(v.netflow_packets), sum(v.netflow_measured_connections), sum(v.netflow_partial_connections), sum(v.netflow_unmeasured_connections), sum(v.netflow_not_joinable_connections), :now
+       sum(v.blocked_connections), sum(v.unknown_connections), sum(v.netflow_bytes), sum(v.netflow_allowed_bytes), sum(v.netflow_blocked_bytes), sum(v.netflow_unknown_bytes), netflow_sum(v.netflow_parts), :now
 FROM volume_aggregate_@child@ AS v
 WHERE v.period_start_at >= :slot_start
   AND v.period_start_at < :slot_end
@@ -408,11 +315,10 @@ GROUP BY v.src_interface_id, v.dst_interface_id, v.peer_address, v.traffic_scope
 INSERT INTO rule_volume_aggregate_@period@ (period_start_at, period_end_at, rule_id,
     src_interface_id, dst_interface_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
     allowed_connections, blocked_connections, unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_packets, netflow_measured_connections, netflow_partial_connections,
-    netflow_unmeasured_connections, netflow_not_joinable_connections, computed_at)
+    netflow_unknown_bytes, netflow_parts, computed_at)
 SELECT :slot_start, :slot_end, r.rule_id, r.src_interface_id, r.dst_interface_id,
        sum(r.bytes), sum(r.allowed_bytes), sum(r.blocked_bytes), sum(r.unknown_bytes),
-       sum(r.allowed_connections), sum(r.blocked_connections), sum(r.unknown_connections), sum(r.netflow_bytes), sum(r.netflow_allowed_bytes), sum(r.netflow_blocked_bytes), sum(r.netflow_unknown_bytes), sum(r.netflow_packets), sum(r.netflow_measured_connections), sum(r.netflow_partial_connections), sum(r.netflow_unmeasured_connections), sum(r.netflow_not_joinable_connections),
+       sum(r.allowed_connections), sum(r.blocked_connections), sum(r.unknown_connections), sum(r.netflow_bytes), sum(r.netflow_allowed_bytes), sum(r.netflow_blocked_bytes), sum(r.netflow_unknown_bytes), netflow_sum(r.netflow_parts),
        :now
 FROM rule_volume_aggregate_@child@ AS r
 WHERE r.period_start_at >= :slot_start
@@ -424,11 +330,10 @@ GROUP BY r.rule_id, r.src_interface_id, r.dst_interface_id;
 INSERT INTO domain_volume_aggregate_@period@ (period_start_at, period_end_at, site_name,
     client_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
     blocked_connections, unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_packets, netflow_measured_connections, netflow_partial_connections,
-    netflow_unmeasured_connections, netflow_not_joinable_connections, computed_at)
+    netflow_unknown_bytes, netflow_parts, computed_at)
 SELECT :slot_start, :slot_end, d.site_name, d.client_id, sum(d.bytes),
        sum(d.allowed_bytes), sum(d.blocked_bytes), sum(d.unknown_bytes),
-       sum(d.allowed_connections), sum(d.blocked_connections), sum(d.unknown_connections), sum(d.netflow_bytes), sum(d.netflow_allowed_bytes), sum(d.netflow_blocked_bytes), sum(d.netflow_unknown_bytes), sum(d.netflow_packets), sum(d.netflow_measured_connections), sum(d.netflow_partial_connections), sum(d.netflow_unmeasured_connections), sum(d.netflow_not_joinable_connections),
+       sum(d.allowed_connections), sum(d.blocked_connections), sum(d.unknown_connections), sum(d.netflow_bytes), sum(d.netflow_allowed_bytes), sum(d.netflow_blocked_bytes), sum(d.netflow_unknown_bytes), netflow_sum(d.netflow_parts),
        :now
 FROM domain_volume_aggregate_@child@ AS d
 WHERE d.period_start_at >= :slot_start
@@ -440,11 +345,10 @@ GROUP BY d.site_name, d.client_id;
 INSERT INTO peer_volume_aggregate_@period@ (period_start_at, period_end_at, client_id,
     traffic_direction, peer_address, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
     allowed_connections, blocked_connections, unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_packets, netflow_measured_connections, netflow_partial_connections,
-    netflow_unmeasured_connections, netflow_not_joinable_connections, computed_at)
+    netflow_unknown_bytes, netflow_parts, computed_at)
 SELECT :slot_start, :slot_end, p.client_id, p.traffic_direction, p.peer_address,
        sum(p.bytes), sum(p.allowed_bytes), sum(p.blocked_bytes), sum(p.unknown_bytes),
-       sum(p.allowed_connections), sum(p.blocked_connections), sum(p.unknown_connections), sum(p.netflow_bytes), sum(p.netflow_allowed_bytes), sum(p.netflow_blocked_bytes), sum(p.netflow_unknown_bytes), sum(p.netflow_packets), sum(p.netflow_measured_connections), sum(p.netflow_partial_connections), sum(p.netflow_unmeasured_connections), sum(p.netflow_not_joinable_connections),
+       sum(p.allowed_connections), sum(p.blocked_connections), sum(p.unknown_connections), sum(p.netflow_bytes), sum(p.netflow_allowed_bytes), sum(p.netflow_blocked_bytes), sum(p.netflow_unknown_bytes), netflow_sum(p.netflow_parts),
        :now
 FROM peer_volume_aggregate_@child@ AS p
 WHERE p.period_start_at >= :slot_start
@@ -466,12 +370,11 @@ GROUP BY p.client_id, p.traffic_direction, p.peer_address;
 INSERT INTO client_volume_aggregate_@period@ (period_start_at, period_end_at, client_id,
     traffic_direction, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
     blocked_connections, unknown_connections, distinct_peers, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_packets, netflow_measured_connections, netflow_partial_connections,
-    netflow_unmeasured_connections, netflow_not_joinable_connections, computed_at)
+    netflow_unknown_bytes, netflow_parts, computed_at)
 SELECT :slot_start, :slot_end, p.client_id, p.traffic_direction, sum(p.bytes),
        sum(p.allowed_bytes), sum(p.blocked_bytes), sum(p.unknown_bytes),
        sum(p.allowed_connections), sum(p.blocked_connections), sum(p.unknown_connections),
-       count(DISTINCT p.peer_address), sum(p.netflow_bytes), sum(p.netflow_allowed_bytes), sum(p.netflow_blocked_bytes), sum(p.netflow_unknown_bytes), sum(p.netflow_packets), sum(p.netflow_measured_connections), sum(p.netflow_partial_connections), sum(p.netflow_unmeasured_connections), sum(p.netflow_not_joinable_connections), :now
+       count(DISTINCT p.peer_address), sum(p.netflow_bytes), sum(p.netflow_allowed_bytes), sum(p.netflow_blocked_bytes), sum(p.netflow_unknown_bytes), netflow_sum(p.netflow_parts), :now
 FROM peer_volume_aggregate_@period@ AS p
 WHERE p.period_start_at = :slot_start
 GROUP BY p.client_id, p.traffic_direction;
@@ -481,14 +384,13 @@ GROUP BY p.client_id, p.traffic_direction;
 INSERT INTO owner_volume_aggregate_@period@ (period_start_at, period_end_at, owner_id,
     traffic_scope, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
     blocked_connections, unknown_connections, client_count, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_packets, netflow_measured_connections, netflow_partial_connections,
-    netflow_unmeasured_connections, netflow_not_joinable_connections, computed_at)
+    netflow_unknown_bytes, netflow_parts, computed_at)
 SELECT :slot_start, :slot_end, k.owner_id,
        CASE WHEN c.traffic_direction = 'inter_interface' THEN 'east_west'
             ELSE 'north_south' END,
        sum(c.bytes), sum(c.allowed_bytes), sum(c.blocked_bytes), sum(c.unknown_bytes),
        sum(c.allowed_connections), sum(c.blocked_connections), sum(c.unknown_connections),
-       count(DISTINCT c.client_id), sum(c.netflow_bytes), sum(c.netflow_allowed_bytes), sum(c.netflow_blocked_bytes), sum(c.netflow_unknown_bytes), sum(c.netflow_packets), sum(c.netflow_measured_connections), sum(c.netflow_partial_connections), sum(c.netflow_unmeasured_connections), sum(c.netflow_not_joinable_connections), :now
+       count(DISTINCT c.client_id), sum(c.netflow_bytes), sum(c.netflow_allowed_bytes), sum(c.netflow_blocked_bytes), sum(c.netflow_unknown_bytes), netflow_sum(c.netflow_parts), :now
 FROM client_volume_aggregate_@period@ AS c
 JOIN client AS k ON k.id = c.client_id
 WHERE c.period_start_at = :slot_start

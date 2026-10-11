@@ -147,10 +147,18 @@ func TestTheNATConnectionIsMeasuredAtTheSingleObservationPoint(t *testing.T) {
 					"want 21000 and %d", first, exit, wantExit)
 			}
 			for _, family := range []string{"client_volume", "owner_volume", "peer_volume"} {
-				if counted := scalarCount(t, h.store, "SELECT coalesce(sum(netflow_measured_connections), 0) FROM "+
-					family+"_aggregate_1h"); counted != 1 {
+				if counted := scalarCount(t, h.store, "SELECT coalesce(sum((netflow_parts).allowed_measured_connections), 0) "+
+					"FROM "+family+"_aggregate_1h"); counted != 1 {
 					t.Errorf("the %s family counts the measured connection %d times", family, counted)
 				}
+			}
+			// The finer coverage classes: the aggregates count the connection under each direction state
+			// it met -- measured, and nothing else -- in the part of its action (allowed).
+			if states := scalarCount(t, h.store, "SELECT coalesce(sum((netflow_parts).allowed_direction_measured_connections "+
+				"- (netflow_parts).allowed_direction_not_captured_connections "+
+				"- (netflow_parts).blocked_direction_measured_connections), 0) "+
+				"FROM volume_aggregate_1h WHERE exit_leg_device IS NULL"); states != 1 {
+				t.Errorf("the volume family counts %d allowed connections with a measured direction, want 1", states)
 			}
 		})
 	}

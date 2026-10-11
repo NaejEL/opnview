@@ -70,7 +70,7 @@ func ClientKey(id int64) string { return "client:" + strconv.FormatInt(id, 10) }
 func FiguresValue(measure string, figures store.VolumeFigures) float64 {
 	switch measure {
 	case "packets":
-		return float64(figures.Packets)
+		return float64(figures.Packets())
 	case "connections":
 		return float64(figures.Connections())
 	case "allowed":

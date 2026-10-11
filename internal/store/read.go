@@ -55,10 +55,10 @@ type VolumeKey struct {
 //
 // THE MEASURE. Figures are logged unless Netflow is set. Netflow figures are the same connections
 // -- the connection counts are the logged connections counted -- with the bytes the NetFlow export
-// reported for them in place of the logged bytes, split by the counting leg's action, the packets,
-// and how many of the connections fall in each coverage class (connection_measured_volume, the
-// netflow_* columns of the aggregate families; docs/data-model.md, "NetFlow volumes"). The two
-// measures are never summed: a read answers one or the other, never both.
+// reported for them in place of the logged bytes, split by the counting leg's action, and, per
+// action, the parts: the packets, the coverage classes and the direction states met
+// (connection_netflow and netflow_parts in schema.sql; docs/data-model.md, "NetFlow volumes"). The
+// two measures are never summed: a read answers one or the other, never both.
 type VolumeFigures struct {
 	Bytes              int64
 	AllowedBytes       int64
@@ -69,67 +69,154 @@ type VolumeFigures struct {
 	UnknownConnections int64
 	// Netflow says the figures are of the netflow measure.
 	Netflow bool
-	// Packets are the netflow packets; 0 for logged figures.
-	Packets int64
-	// PacketsUnknown says the figures keep only the allowed or the blocked connections of netflow
-	// figures: the packets are not split by action, so they are not known.
-	PacketsUnknown bool
-	// Coverage counts the connections per coverage class; zero for logged figures.
+	// Parts are the netflow figures counted per action; zero for logged figures.
+	Parts NetflowParts
+}
+
+// NetflowParts are the netflow figures of the allowed, the blocked and the unknown connections: the
+// composite type netflow_parts of schema.sql, whose thirty-six fields are, in order, the twelve
+// figures of NetflowPartMembers for each of NetflowPartNames.
+type NetflowParts struct {
+	Allowed NetflowPart
+	Blocked NetflowPart
+	Unknown NetflowPart
+}
+
+// NetflowPart is the netflow figures of one action's connections: their packets and their coverage.
+type NetflowPart struct {
+	Packets  int64
 	Coverage NetflowCoverage
 }
 
-// NetflowCoverage counts connections per coverage class of their measured volume (PS21 of the
-// NetFlow join amendment): Measured, both directions measured; Partial, some measured bytes but not
-// both directions measured; Unmeasured, under one Observation Point with no measured byte; and
-// NotJoinable, no single Observation Point at the connection's start. The four sum to the
-// connections the figures count.
-//
-// Unknown says the classes of these connections are not known: they are the allowed or the blocked
-// connections of figures whose connections were not all measured, and the aggregates count the
-// classes per row, not per action.
+// NetflowCoverage counts connections by how NetFlow covered them. The four coverage classes of PS21
+// sum to the connections counted: Measured, both directions measured; Partial, some measured bytes
+// but not both directions measured; Unmeasured, under one Observation Point with no measured byte;
+// NotJoinable, no single Observation Point at the connection's start. Directions counts, per
+// direction state of PS20, the connections with at least one direction in it: a connection whose two
+// directions are in two states counts under both.
 type NetflowCoverage struct {
 	Measured    int64
 	Partial     int64
 	Unmeasured  int64
 	NotJoinable int64
-	Unknown     bool
+	Directions  DirectionStates
 }
 
-// Complete reports whether every connection counted has both directions measured.
-func (c NetflowCoverage) Complete() bool {
-	return !c.Unknown && c.Partial == 0 && c.Unmeasured == 0 && c.NotJoinable == 0
+// DirectionStates counts connections per direction state met (connection_measured_volume.state).
+type DirectionStates struct {
+	Measured               int64
+	InProgress             int64
+	AwaitingExport         int64
+	Missing                int64
+	NotCaptured            int64
+	ExportGap              int64
+	NotExportedWhenRefused int64
 }
 
-func (c *NetflowCoverage) add(other NetflowCoverage) {
-	c.Measured += other.Measured
-	c.Partial += other.Partial
-	c.Unmeasured += other.Unmeasured
-	c.NotJoinable += other.NotJoinable
-	c.Unknown = c.Unknown || other.Unknown
-}
+// NetflowPartNames are the parts of netflow figures, in the order netflow_parts holds them.
+var NetflowPartNames = []string{"allowed", "blocked", "unknown"}
 
-// SplitNetflow keeps the part of netflow figures that counts connections connections: the
-// connections are all measured when every connection of the whole was, and their classes are not
-// known otherwise; their packets are not known.
-func SplitNetflow(whole VolumeFigures, part VolumeFigures, connections int64) VolumeFigures {
-	if !whole.Netflow {
-		return part
+// NetflowPartMembers are the twelve figures of a part, in the order netflow_parts holds them: a
+// column of the type is a part's name, an underscore and one of these.
+var NetflowPartMembers = []string{"packets", "measured_connections", "partial_connections",
+	"unmeasured_connections", "not_joinable_connections", "direction_measured_connections",
+	"direction_in_progress_connections", "direction_awaiting_export_connections",
+	"direction_missing_connections", "direction_not_captured_connections",
+	"direction_export_gap_connections", "direction_not_exported_when_refused_connections"}
+
+// NetflowPartsColumns are the thirty-six column names of netflow_parts, in order: what
+// (netflow_sum(...)).* reads back, and the members a script's netflow figures carry.
+func NetflowPartsColumns() []string {
+	columns := make([]string, 0, len(NetflowPartNames)*len(NetflowPartMembers))
+	for _, part := range NetflowPartNames {
+		for _, member := range NetflowPartMembers {
+			columns = append(columns, part+"_"+member)
+		}
 	}
-	part.Netflow, part.PacketsUnknown = true, true
-	if whole.Coverage.Complete() {
-		part.Coverage = NetflowCoverage{Measured: connections}
-	} else {
-		part.Coverage = NetflowCoverage{Unknown: true}
-	}
-	return part
+	return columns
 }
 
-// NetflowTargets are the scan destinations of the five columns a netflow read appends to the seven
-// summable ones: packets, then the connections measured, partial, unmeasured and not joinable.
+// Fields are the twelve figures of the part, in the order of NetflowPartMembers.
+func (p *NetflowPart) Fields() []*int64 {
+	c := &p.Coverage
+	d := &c.Directions
+	return []*int64{&p.Packets, &c.Measured, &c.Partial, &c.Unmeasured, &c.NotJoinable, &d.Measured,
+		&d.InProgress, &d.AwaitingExport, &d.Missing, &d.NotCaptured, &d.ExportGap, &d.NotExportedWhenRefused}
+}
+
+// List is the three parts, in the order of NetflowPartNames.
+func (p *NetflowParts) List() []*NetflowPart {
+	return []*NetflowPart{&p.Allowed, &p.Blocked, &p.Unknown}
+}
+
+// Fields are the thirty-six figures, in the order of NetflowPartsColumns.
+func (p *NetflowParts) Fields() []*int64 {
+	fields := make([]*int64, 0, len(NetflowPartNames)*len(NetflowPartMembers))
+	for _, part := range p.List() {
+		fields = append(fields, part.Fields()...)
+	}
+	return fields
+}
+
+// Add sums other into p, field by field.
+func (p *NetflowParts) Add(other NetflowParts) {
+	into, from := p.Fields(), other.Fields()
+	for index := range into {
+		*into[index] += *from[index]
+	}
+}
+
+// Whole is the three parts summed: the packets and the coverage of every connection.
+func (p NetflowParts) Whole() NetflowPart {
+	var whole NetflowPart
+	into := whole.Fields()
+	for _, part := range p.List() {
+		for index, value := range part.Fields() {
+			*into[index] += *value
+		}
+	}
+	return whole
+}
+
+// Covered reports whether every connection counted is covered at the Observation Point, as PS22
+// states it: joinable, and with no direction not_captured, export_gap or not_exported_when_refused.
+// A direction measured, in_progress, awaiting_export or missing is covered: the export is reporting
+// it, or should have and has reported nothing of it.
+func (c NetflowCoverage) Covered() bool {
+	return c.NotJoinable == 0 && c.Directions.NotCaptured == 0 && c.Directions.ExportGap == 0 &&
+		c.Directions.NotExportedWhenRefused == 0
+}
+
+// Packets are the netflow packets of every connection counted; 0 for logged figures.
+func (f VolumeFigures) Packets() int64 { return f.Parts.Whole().Packets }
+
+// Coverage is the coverage of every connection counted; zero for logged figures.
+func (f VolumeFigures) Coverage() NetflowCoverage { return f.Parts.Whole().Coverage }
+
+// AllowedPart keeps the allowed connections of figures, in their measure, with their own packets and
+// coverage.
+func (f VolumeFigures) AllowedPart() VolumeFigures {
+	return VolumeFigures{Bytes: f.AllowedBytes, AllowedBytes: f.AllowedBytes,
+		AllowedConnections: f.AllowedConnections, Netflow: f.Netflow, Parts: NetflowParts{Allowed: f.Parts.Allowed}}
+}
+
+// BlockedPart keeps the blocked connections of figures, in their measure, with their own packets and
+// coverage.
+func (f VolumeFigures) BlockedPart() VolumeFigures {
+	return VolumeFigures{Bytes: f.BlockedBytes, BlockedBytes: f.BlockedBytes,
+		BlockedConnections: f.BlockedConnections, Netflow: f.Netflow, Parts: NetflowParts{Blocked: f.Parts.Blocked}}
+}
+
+// NetflowTargets are the scan destinations of the thirty-six columns a netflow read appends to the
+// seven summable ones: netflow_parts read back as (netflow_sum(...)).*.
 func (f *VolumeFigures) NetflowTargets() []any {
 	f.Netflow = true
-	return []any{&f.Packets, &f.Coverage.Measured, &f.Coverage.Partial, &f.Coverage.Unmeasured,
-		&f.Coverage.NotJoinable}
+	fields := f.Parts.Fields()
+	targets := make([]any, len(fields))
+	for index, field := range fields {
+		targets[index] = field
+	}
+	return targets
 }
 
 // Add sums other into f. Netflow figures stay netflow: the reads of one answer are all of one
@@ -145,9 +232,7 @@ func (f *VolumeFigures) add(other VolumeFigures) {
 	f.BlockedConnections += other.BlockedConnections
 	f.UnknownConnections += other.UnknownConnections
 	f.Netflow = f.Netflow || other.Netflow
-	f.Packets += other.Packets
-	f.PacketsUnknown = f.PacketsUnknown || other.PacketsUnknown
-	f.Coverage.add(other.Coverage)
+	f.Parts.Add(other.Parts)
 }
 
 // Connections is every connection: allowed, blocked and unknown.

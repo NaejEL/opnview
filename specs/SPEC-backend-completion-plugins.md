@@ -3980,3 +3980,10 @@ Every test runs on the PostgreSQL test instance with a fake clock and small reco
   - **Twin validation at load.** A widget whose `<name>_netflow` twin binds different parameters than `<name>` is refused at load with a named code.
   - **Finer coverage classes.** Aggregates store connection counts per direction state, so `best_available` judges "covered" exactly as PS22 states (`in_progress`, `awaiting_export`, `missing` covered; `not_captured` not).
   - **Coverage per action.** The allowed / blocked / unknown netflow parts carry their own packets and coverage counts, so the map widgets serve a coverage object.
+
+**Decided (maintainer, 11 October 2026), after the C6 audit:** the following gaps are closed before step 7.
+- **Rows 18, E7.** `owner_activity` serves, per person card, the current rate and the interface list, inside its own plugin folder (from `host.rates.byClient()`), including the machines folded past `clients_per_card`.
+- **Row E8.** `traffic_composition` serves the members folded into `other`, inside its own plugin folder.
+- **Row 24.** The per-peer current rate, from the stored `traffic/top` per-pair readings, is exposed by the core once (host function or core dataset directory), so any widget plugin can serve it; the destination widgets serve it.
+- **Row 4.** A provider plugin reading the pf state table (`query_states`, read-only, per the survey) serves the current rate by protocol and port. It is built now and **active on installation** (maintainer, 11 October 2026). LV-C0 measures its cost afterwards; if it exceeds 2 points (C4), the maintainer decides whether to turn it off.
+- The *Coverage of the mockup* push-class table moves to `docs/plugins.md` *Push sources* in Phase F.

@@ -316,6 +316,7 @@ log; the reason is specific to the rule, and the other widgets still load.
 | `statement_registration_failed` | the query's statement name was already taken |
 | `query_reads_credential` | a query reads `account`, `session`, `encrypted_credential`, `setting` or `plugin_state`, which hold credentials, sessions and settings |
 | `statement_name_invalid` | a script widget's statement is not named `widget_<snake_case>`, or is named twice |
+| `netflow_twin_mismatch` | a statement's netflow twin, `<name>_netflow`, binds other parameters than `<name>`, or is a period template where `<name>` is not, or the reverse: the core runs the twin in its statement's place with the statement's parameters (`docs/plugins.md`, *Volume figures and their measure*) |
 | `script_missing` | the script the manifest names is not in the widget's directory |
 | `script_does_not_compile` | the script does not compile, throws when it is run to read its exports, or exports no `widget.serve` |
 

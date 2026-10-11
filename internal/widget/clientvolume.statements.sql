@@ -39,15 +39,14 @@ GROUP BY f.local_client_id, f.traffic_direction;
 
 
 -- The same two reads of the `netflow` measure (measure.go): the same rows and connections, with
--- the bytes the NetFlow export reported for them, then the packets and the connections measured,
--- partial, unmeasured and not joinable. A flow's figure is its connection's measured volume, counted
+-- the bytes the NetFlow export reported for them, then the columns of netflow_parts (internal/store,
+-- schema.sql). A flow's figure is its connection's, read through connection_netflow and counted
 -- on its first leg's row as the aggregate refresh counts it (internal/store, insert_volume).
 -- statement: widget_client_volume_slots_netflow
 SELECT client_id, traffic_direction,
        sum(netflow_bytes), sum(netflow_allowed_bytes), sum(netflow_blocked_bytes), sum(netflow_unknown_bytes),
        sum(allowed_connections), sum(blocked_connections), sum(unknown_connections),
-       sum(netflow_packets), sum(netflow_measured_connections), sum(netflow_partial_connections),
-       sum(netflow_unmeasured_connections), sum(netflow_not_joinable_connections)
+       (netflow_sum(netflow_parts)).*
 FROM client_volume_aggregate_1h
 WHERE period_start_at >= :from
   AND period_start_at < :to
@@ -63,25 +62,9 @@ SELECT f.local_client_id, f.traffic_direction,
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
-       sum(n.packets),
-       sum(CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END),
-       sum(CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END),
-       sum(CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END),
-       sum(CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END)
+       (netflow_sum(n.parts)).*
 FROM classified_flow AS f
-LEFT JOIN LATERAL (
-    SELECT coalesce(sum(v.bytes) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                          OR v.measured_flow_id = f.id), 0) AS bytes,
-           coalesce(sum(v.packets) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                            OR v.measured_flow_id = f.id), 0) AS packets,
-           CASE WHEN count(*) = 0 THEN 'not_joinable'
-                WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                ELSE 'partial' END AS coverage
-    FROM connection_measured_volume AS v
-    WHERE v.connection_flow_id = CASE WHEN f.pair_outcome = 'second_leg' THEN f.paired_flow_id
-                                      ELSE f.id END
-) AS n ON true
+LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.local_client_id IS NOT NULL

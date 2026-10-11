@@ -216,6 +216,11 @@ func pluginWidgetStatements(ctx context.Context, database *store.Store, source S
 			texts[statement] = text
 		}
 	}
+	for _, statement := range sortedNames(texts) {
+		if mismatch := netflowTwinMismatch(texts, statement); mismatch != "" {
+			return nil, refuse(name, RefusalNetflowTwinMismatch, "%s", mismatch)
+		}
+	}
 	statements := map[string]widgetStatement{}
 	for _, statement := range sortedNames(texts) {
 		text := texts[statement]

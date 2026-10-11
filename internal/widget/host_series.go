@@ -115,7 +115,7 @@ func init() {
 			if state == "" {
 				return goja.Null()
 			}
-			r.State(state)
+			r.netflowState(state, false)
 			return call.vm.ToValue(state)
 		})
 		call.function(area, "providers", func(goja.FunctionCall) goja.Value {

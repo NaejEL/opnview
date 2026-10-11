@@ -3036,13 +3036,33 @@ no row: its state is the interval's. `final` is 1 once nothing can change the ro
 the read-through instant at which its state may change by time alone, and the derivation computes an
 open row again when it falls due, or when a record, a leg or the pairing it reads changes.
 
+**`connection_netflow`** -- the one place a logged flow's `netflow` figures are read from
+`connection_measured_volume`: a SQL function of `schema.sql` taking the flow's id, pair outcome,
+paired flow and action, and answering its `bytes` (its connection's, both directions, on a first or
+single leg; on a second leg only the directions measured at that leg) and its `parts`. The aggregate
+refresh, the purge and every `_netflow` twin join it (`LEFT JOIN LATERAL connection_netflow(...) AS n ON
+true`), and none reads the table itself; PostgreSQL inlines it, so the plan is the one the statement
+would have spelled out. `TestNoStatementCopiesThePerLegCounting` fails on a copy.
+
+**`netflow_parts`** -- a composite type of thirty-six `BIGINT` fields: for each of the `allowed`,
+`blocked` and `unknown` parts, `<part>_packets`; the four coverage classes, which sum to the part's
+connections -- `<part>_measured_connections` (both directions `measured`),
+`<part>_partial_connections` (some measured bytes, not both directions measured),
+`<part>_unmeasured_connections` (one Observation Point, no measured byte) and
+`<part>_not_joinable_connections` (no single Observation Point at the connection's start); and, per
+direction state above, `<part>_direction_<state>_connections`, the connections with at least one
+direction in that state (a connection whose two directions are in two states counts under both).
+`netflow_sum` adds values field by field; `(netflow_sum(x)).*` reads one back as its thirty-six named
+columns. A connection is **covered** when it is joinable and none of its directions is
+`not_captured`, `export_gap` or `not_exported_when_refused` (PS22); the widget measure judges it from
+these counts.
+
 **In the aggregate families.** Every family and period, and `purged_flow_hour`, carries `netflow_bytes`
-split allowed / blocked / unknown by the counting leg's action, `netflow_packets`, and the count of
-connections per coverage class -- both directions `measured`, `partial`, `unmeasured`, `not_joinable`
--- **beside** the logged columns, which are unchanged; no statement sums the two measures. A
-connection's figure counts in its first leg's slot and rows; measured at the second leg it also counts
-under that leg's `exit_leg_device` and in the rule family, as the second leg's logged bytes do. A
-changed figure forces its slot. The purge keeps a purged flow's share in the purged part.
+split allowed / blocked / unknown by the counting leg's action, and `netflow_parts` -- **beside** the
+logged columns, which are unchanged; no statement sums the two measures. A connection's figure counts
+in its first leg's slot and rows, in the part of that row's action; measured at the second leg it also
+counts under that leg's `exit_leg_device` and in the rule family, as the second leg's logged bytes do.
+A changed figure forces its slot. The purge keeps a purged flow's share in the purged part.
 
 **`unmatched_record_aggregate_*`** -- the unmatched records, per slot of their start, Observation
 Point, direction, protocol, version and reason: bytes, packets, records. Accumulated by the join in the

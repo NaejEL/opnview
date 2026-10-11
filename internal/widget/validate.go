@@ -52,6 +52,10 @@ const (
 	// RefusalStatementNameInvalid is a statement of a widget's query files whose name is not a
 	// snake_case word beginning with widget_.
 	RefusalStatementNameInvalid = "statement_name_invalid"
+	// RefusalNetflowTwinMismatch is a statement's netflow twin, <name>_netflow, that binds other
+	// parameters than <name>, or is a period template where <name> is not or the reverse: the core
+	// runs the twin in its statement's place with the statement's parameters (measure.go).
+	RefusalNetflowTwinMismatch = "netflow_twin_mismatch"
 )
 
 // Refusal is one widget the loader would not serve.

@@ -151,9 +151,9 @@ GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
 
 -- ---------------------------------------------------------------------------
 -- The same four reads of the `netflow` measure (measure.go): the same rows and connections, with the
--- bytes the NetFlow export reported for them in place of the logged bytes, then the packets and the
--- connections measured, partial, unmeasured and not joinable. A flow's figure is its connection's
--- measured volume, counted on its first leg's row (no second leg is read here), as the aggregate
+-- bytes the NetFlow export reported for them in place of the logged bytes, then the columns of
+-- netflow_parts (internal/store, schema.sql). A flow's figure is its connection's, read through
+-- connection_netflow and counted on its first leg's row (no second leg is read here), as the aggregate
 -- refresh counts it (internal/store, insert_volume).
 -- ---------------------------------------------------------------------------
 
@@ -177,22 +177,9 @@ SELECT f.traffic_direction AS traffic_direction,
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
-       sum(n.packets) AS packets,
-       sum(CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END) AS measured_connections,
-       sum(CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END) AS partial_connections,
-       sum(CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END) AS unmeasured_connections,
-       sum(CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END) AS not_joinable_connections
+       (netflow_sum(n.parts)).*
 FROM classified_flow AS f
-LEFT JOIN LATERAL (
-    SELECT coalesce(sum(v.bytes), 0) AS bytes,
-           coalesce(sum(v.packets), 0) AS packets,
-           CASE WHEN count(*) = 0 THEN 'not_joinable'
-                WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                ELSE 'partial' END AS coverage
-    FROM connection_measured_volume AS v
-    WHERE v.connection_flow_id = f.id
-) AS n ON true
+LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
@@ -227,22 +214,9 @@ SELECT f.observed_at - f.observed_at % :width AS bucket_start,
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
-       sum(n.packets) AS packets,
-       sum(CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END) AS measured_connections,
-       sum(CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END) AS partial_connections,
-       sum(CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END) AS unmeasured_connections,
-       sum(CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END) AS not_joinable_connections
+       (netflow_sum(n.parts)).*
 FROM classified_flow AS f
-LEFT JOIN LATERAL (
-    SELECT coalesce(sum(v.bytes), 0) AS bytes,
-           coalesce(sum(v.packets), 0) AS packets,
-           CASE WHEN count(*) = 0 THEN 'not_joinable'
-                WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                ELSE 'partial' END AS coverage
-    FROM connection_measured_volume AS v
-    WHERE v.connection_flow_id = f.id
-) AS n ON true
+LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
@@ -272,25 +246,12 @@ SELECT f.local_interface_id AS interface_id,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
        max(f.observed_at) AS newest,
-       sum(n.packets) AS packets,
-       sum(CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END) AS measured_connections,
-       sum(CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END) AS partial_connections,
-       sum(CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END) AS unmeasured_connections,
-       sum(CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END) AS not_joinable_connections
+       (netflow_sum(n.parts)).*
 FROM classified_flow AS f
 LEFT JOIN client AS c ON c.id = f.local_client_id
 LEFT JOIN geo_asn AS g ON g.address = f.peer_address
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
-LEFT JOIN LATERAL (
-    SELECT coalesce(sum(v.bytes), 0) AS bytes,
-           coalesce(sum(v.packets), 0) AS packets,
-           CASE WHEN count(*) = 0 THEN 'not_joinable'
-                WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                ELSE 'partial' END AS coverage
-    FROM connection_measured_volume AS v
-    WHERE v.connection_flow_id = f.id
-) AS n ON true
+LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
@@ -315,24 +276,11 @@ SELECT f.local_interface_id AS interface_id,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
        max(f.observed_at) AS newest,
-       sum(n.packets) AS packets,
-       sum(CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END) AS measured_connections,
-       sum(CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END) AS partial_connections,
-       sum(CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END) AS unmeasured_connections,
-       sum(CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END) AS not_joinable_connections
+       (netflow_sum(n.parts)).*
 FROM classified_flow AS f
 LEFT JOIN client AS c ON c.id = f.local_client_id
 LEFT JOIN geo_asn AS g ON g.address = f.peer_address
-LEFT JOIN LATERAL (
-    SELECT coalesce(sum(v.bytes), 0) AS bytes,
-           coalesce(sum(v.packets), 0) AS packets,
-           CASE WHEN count(*) = 0 THEN 'not_joinable'
-                WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                ELSE 'partial' END AS coverage
-    FROM connection_measured_volume AS v
-    WHERE v.connection_flow_id = f.id
-) AS n ON true
+LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL

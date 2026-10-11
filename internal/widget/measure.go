@@ -3,6 +3,8 @@ package widget
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/NaejEL/opnview/internal/store"
 )
@@ -26,9 +28,12 @@ import (
 // fails is not served as netflow: the answer falls back to logged with a named state, or, for an
 // explicit netflow, carries no figure. Two measures are never summed.
 //
-// best_available answers netflow only when every connection the answer counts was measured in both
-// directions, under a single Observation Point throughout the window; otherwise it answers logged,
-// byte for byte what volume_measure = logged answers, with the named state that says why.
+// best_available answers netflow only when every connection the answer counts has every direction
+// covered at the Observation Point -- measured, in_progress, awaiting_export or missing, never
+// not_captured, export_gap or not_exported_when_refused -- under a single Observation Point throughout
+// the window (store.NetflowCoverage.Covered); otherwise it answers logged, byte for byte what
+// volume_measure = logged answers, with the named state that says why and, for a state that carries
+// one, its detail in state_details.
 
 // The volume_measure parameter, and its value beyond the measures.
 const (
@@ -51,7 +56,7 @@ const (
 	// not be mapped.
 	StateInterfaceIndexUnmapped = store.CaptureIndexUnmapped
 	// StateNetflowNotCoveringWindow: the window mixes intervals in different states, or the answer
-	// counts a connection not measured in both directions.
+	// counts a connection with a direction the Observation Point does not cover.
 	StateNetflowNotCoveringWindow = "netflow_not_covering_window"
 	// StateNetflowNotServedByType: the widget built a figure the core did not read under netflow,
 	// so its answer cannot be given in that measure. opnview's own term: no product names it.
@@ -73,7 +78,7 @@ type measureRun struct {
 	netflow bool
 	// loggedFigure says the run built a figure the core did not read under netflow.
 	loggedFigure bool
-	// uncovered says a netflow figure of the run counts a connection not measured in both directions.
+	// uncovered says a netflow figure of the run counts a connection with a direction not covered.
 	uncovered bool
 }
 
@@ -90,8 +95,8 @@ func (r *Request) MeasureInForce() string {
 }
 
 // VolumeOf is the Volume of some figures, in their own measure. Under a netflow run it records a
-// figure that is not netflow -- a logged figure holding anything -- and one whose connections were not
-// all measured in both directions.
+// figure that is not netflow -- a logged figure holding anything -- and one counting a connection with
+// a direction not covered.
 func (r *Request) VolumeOf(figures store.VolumeFigures) Volume {
 	if figures.Netflow || (r.measure.netflow && figures == (store.VolumeFigures{})) {
 		r.judge(figures)
@@ -109,7 +114,7 @@ func (r *Request) VolumeOf(figures store.VolumeFigures) Volume {
 func (r *Request) ByteCountOf(figures store.VolumeFigures, single bool) Count {
 	if figures.Netflow || (r.measure.netflow && figures == (store.VolumeFigures{})) {
 		r.judge(figures)
-		exact := single && figures.Netflow && figures.Connections() == 1 && figures.Coverage.Measured == 1
+		exact := single && figures.Netflow && figures.Connections() == 1 && figures.Coverage().Measured == 1
 		return Count{Measure: MeasureNetflow, LowerBound: !exact, Value: figures.Bytes}
 	}
 	if r.measure.netflow {
@@ -137,8 +142,8 @@ func (r *Request) LoggedCountOf(value int64) Count {
 }
 
 // CoverFigures records figures an answer counts whose numbers a widget uses directly rather than through a
-// Volume or a Count: under a netflow run, a logged figure or a connection not measured in both
-// directions is recorded as VolumeOf records it.
+// Volume or a Count: under a netflow run, a logged figure or a connection with a direction not covered
+// is recorded as VolumeOf records it.
 func (r *Request) CoverFigures(figures store.VolumeFigures) {
 	if !r.measure.netflow {
 		return
@@ -150,25 +155,26 @@ func (r *Request) CoverFigures(figures store.VolumeFigures) {
 	r.judge(figures)
 }
 
-// judge records netflow figures whose connections were not all measured in both directions.
+// judge records netflow figures counting a connection with a direction not covered (PS22).
 func (r *Request) judge(figures store.VolumeFigures) {
-	if r.measure.netflow && !figures.Coverage.Complete() {
+	if r.measure.netflow && !figures.Coverage().Covered() {
 		r.measure.uncovered = true
 	}
 }
 
-// netflowVolume is the Volume of netflow figures, with its packets and coverage.
+// netflowVolume is the Volume of netflow figures, with its packets and coverage, whole and per part.
 func netflowVolume(figures store.VolumeFigures) Volume {
 	volume := Logged(figures)
 	volume.Measure = MeasureNetflow
-	if !figures.PacketsUnknown {
-		packets := figures.Packets
-		volume.Packets = &packets
-	}
-	if !figures.Coverage.Unknown {
-		volume.Coverage = &VolumeCoverage{Measured: figures.Coverage.Measured, Partial: figures.Coverage.Partial,
-			Unmeasured: figures.Coverage.Unmeasured, NotJoinable: figures.Coverage.NotJoinable}
-	}
+	whole := figures.Parts.Whole()
+	packets := func(value int64) *int64 { return &value }
+	volume.Packets, volume.Coverage = packets(whole.Packets), coverageOf(whole.Coverage)
+	volume.AllowedPackets, volume.AllowedCoverage = packets(figures.Parts.Allowed.Packets),
+		coverageOf(figures.Parts.Allowed.Coverage)
+	volume.BlockedPackets, volume.BlockedCoverage = packets(figures.Parts.Blocked.Packets),
+		coverageOf(figures.Parts.Blocked.Coverage)
+	volume.UnknownPackets, volume.UnknownCoverage = packets(figures.Parts.Unknown.Packets),
+		coverageOf(figures.Parts.Unknown.Coverage)
 	return volume
 }
 
@@ -182,6 +188,9 @@ func (r *Request) serveMeasured(serve ServeFunc) (any, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	// coverageFallback says the state is the run's own judgment, not the window's: the window has one
+	// Observation Point throughout, and a connection the answer counts is not covered.
+	coverageFallback := false
 	if state == "" {
 		before := r.snapshot()
 		r.measure = measureRun{netflow: true}
@@ -203,14 +212,14 @@ func (r *Request) serveMeasured(serve ServeFunc) (any, bool, error) {
 		case !run.loggedFigure && !run.uncovered:
 			return data, hasRows, nil
 		case !run.loggedFigure && requested == MeasureNetflow:
-			// Asked for netflow, and NetFlow measured some of it: the netflow figures, each with its
-			// coverage, and the state that says not every connection was measured.
-			r.State(StateNetflowNotCoveringWindow)
+			// Asked for netflow, and NetFlow covered only some of it: the netflow figures, each with
+			// its coverage, and the state that says not every connection was covered.
+			r.netflowState(StateNetflowNotCoveringWindow, true)
 			return data, hasRows, nil
 		case run.loggedFigure:
 			state = StateNetflowNotServedByType
 		default:
-			state = StateNetflowNotCoveringWindow
+			state, coverageFallback = StateNetflowNotCoveringWindow, true
 		}
 		r.restore(before)
 	}
@@ -219,7 +228,7 @@ func (r *Request) serveMeasured(serve ServeFunc) (any, bool, error) {
 	if err != nil {
 		return data, hasRows, err
 	}
-	r.State(state)
+	r.netflowState(state, coverageFallback)
 	if requested == MeasureNetflow {
 		// An explicit netflow that cannot be answered carries no figure, never logged figures
 		// labelled netflow (PS23).
@@ -228,23 +237,78 @@ func (r *Request) serveMeasured(serve ServeFunc) (any, bool, error) {
 	return data, hasRows, nil
 }
 
-// NetflowWindowState says whether NetFlow can answer the request's window, read once per request.
+// netflowWindow is what the request's window says of NetFlow.
+type netflowWindow struct {
+	// state is "" when one Observation Point is established throughout the window, and the named
+	// state otherwise.
+	state string
+	// intervalStates are the capture states of the intervals the window meets, in name order.
+	intervalStates []string
+	// capturedInterfaces is the most interfaces a configuration in force over the window captures on,
+	// counted where the window's intervals are observation_point_not_exported.
+	capturedInterfaces int64
+}
+
+// NetflowWindowState says whether NetFlow can answer the request's window, read once per request:
+// "" when it can, and the named state otherwise.
 func (r *Request) NetflowWindowState() (string, error) {
-	if r.netflowState != nil {
-		return *r.netflowState, nil
-	}
-	state, err := r.netflowWindowState()
+	window, err := r.netflowWindowRead()
 	if err != nil {
 		return "", err
 	}
-	r.netflowState = &state
-	return state, nil
+	return window.state, nil
 }
 
-// netflowWindowState says whether NetFlow can answer the request's window: "" when one Observation
+// netflowWindowRead is the window's reading, read once per request.
+func (r *Request) netflowWindowRead() (netflowWindow, error) {
+	if r.netflowWindow != nil {
+		return *r.netflowWindow, nil
+	}
+	window, err := r.readNetflowWindow()
+	if err != nil {
+		return netflowWindow{}, err
+	}
+	r.netflowWindow = &window
+	return window, nil
+}
+
+// netflowState records a named state of a volume answer and, for a state that carries one, its
+// detail (state_details): the interfaces captured for observation_point_not_exported, the interval
+// states met for netflow_not_covering_window. coverage says the state is the run's judgment that a
+// connection is not covered rather than the window's: the window then has one Observation Point
+// throughout, and its interval state is observation_point.
+func (r *Request) netflowState(state string, coverage bool) {
+	r.State(state)
+	window := netflowWindow{}
+	if r.netflowWindow != nil {
+		window = *r.netflowWindow
+	}
+	switch state {
+	case StateObservationPointNotExported:
+		captured := window.capturedInterfaces
+		r.StateDetail(state, StateDetail{CapturedInterfaces: &captured})
+	case StateNetflowNotCoveringWindow:
+		states := window.intervalStates
+		if coverage && len(states) == 0 {
+			states = []string{store.CaptureObservationPoint}
+		}
+		r.StateDetail(state, StateDetail{IntervalStates: append([]string{}, states...)})
+	}
+}
+
+// StateDetail records the detail of a named state the response carries.
+func (r *Request) StateDetail(state string, detail StateDetail) {
+	if r.Response.StateDetails == nil {
+		r.Response.StateDetails = map[string]StateDetail{}
+	}
+	r.Response.StateDetails[state] = detail
+}
+
+// readNetflowWindow reads whether NetFlow can answer the request's window: "" when one Observation
 // Point is established throughout it, and the named state otherwise -- the interval state when the
-// window holds one, netflow_not_covering_window when it mixes several.
-func (r *Request) netflowWindowState() (string, error) {
+// window holds one, netflow_not_covering_window when it mixes several -- with the interval states met
+// and the interfaces captured.
+func (r *Request) readNetflowWindow() (netflowWindow, error) {
 	var providers []int64
 	err := r.Db.WidgetRows(r.Ctx, "widget_flow_record_providers", store.Period{}, nil,
 		func(row store.RowScanner) error {
@@ -256,24 +320,28 @@ func (r *Request) netflowWindowState() (string, error) {
 			return nil
 		})
 	if err != nil {
-		return "", err
+		return netflowWindow{}, err
 	}
 	if len(providers) == 0 {
-		return StateNetflowNotConfigured, nil
+		return netflowWindow{state: StateNetflowNotConfigured, intervalStates: []string{StateNetflowNotConfigured}}, nil
 	}
 	window := r.Window
 	if window.To <= window.From {
 		window = Interval{From: r.Now, To: r.Now + 1}
 	}
 	states := map[string]bool{}
+	var captured int64
 	for _, provider := range providers {
 		configurations, conditions, err := r.captureHistory(provider, window)
 		if err != nil {
-			return "", err
+			return netflowWindow{}, err
 		}
 		for _, at := range store.CaptureChangePoints(configurations, conditions, window.From, window.To) {
-			state, _, _ := store.CaptureStateAt(configurations, conditions, at)
+			state, interfaces, _ := store.CaptureStateAt(configurations, conditions, at)
 			states[state] = true
+			if state == store.CaptureObservationPointHidden && interfaces > captured {
+				captured = interfaces
+			}
 		}
 		if states[store.CaptureObservationPoint] {
 			// The index mapping is the collector's, held in memory; what it decided is on the records
@@ -282,7 +350,7 @@ func (r *Request) netflowWindowState() (string, error) {
 			var unmapped, mapped int64
 			if _, err := r.Db.WidgetRow(r.Ctx, "widget_flow_record_unmapped", map[string]any{
 				"provider_id": provider, "from": window.From, "to": window.To}, &unmapped, &mapped); err != nil {
-				return "", err
+				return netflowWindow{}, err
 			}
 			if unmapped > 0 {
 				states[store.CaptureIndexUnmapped] = true
@@ -292,20 +360,20 @@ func (r *Request) netflowWindowState() (string, error) {
 			}
 		}
 	}
-	if len(providers) > 1 {
+	read := netflowWindow{intervalStates: sortedNames(states), capturedInterfaces: captured}
+	switch {
+	case len(providers) > 1:
 		// One active provider of an exclusive kind is the rule (store, kinds.go); two would make two
 		// Observation Points, which the join never has.
-		return StateNetflowNotCoveringWindow, nil
+		read.state = StateNetflowNotCoveringWindow
+	case len(states) == 1 && states[store.CaptureObservationPoint]:
+		read.state = ""
+	case len(states) == 1:
+		read.state = read.intervalStates[0]
+	default:
+		read.state = StateNetflowNotCoveringWindow
 	}
-	if len(states) == 1 {
-		for state := range states {
-			if state == store.CaptureObservationPoint {
-				return "", nil
-			}
-			return state, nil
-		}
-	}
-	return StateNetflowNotCoveringWindow, nil
+	return read, nil
 }
 
 // captureHistory reads a provider's capture configurations and the stream conditions meeting a
@@ -395,6 +463,12 @@ func (r *Request) snapshot() responseSnapshot {
 	copied.Freshness = cloneList(r.Response.Freshness)
 	copied.Withheld = cloneList(r.Response.Withheld)
 	copied.States = cloneList(r.Response.States)
+	if r.Response.StateDetails != nil {
+		copied.StateDetails = make(map[string]StateDetail, len(r.Response.StateDetails))
+		for state, detail := range r.Response.StateDetails {
+			copied.StateDetails[state] = detail
+		}
+	}
 	copied.UnresolvedReferences = cloneList(r.Response.UnresolvedReferences)
 	if r.Response.ResolverWindowBounded != nil {
 		bounded := *r.Response.ResolverWindowBounded
@@ -425,6 +499,50 @@ func (r *Request) restore(snapshot responseSnapshot) {
 // statement that has a twin is run as its twin under netflow (host_query.go); one that has none is run
 // as it is.
 const netflowStatementSuffix = "_netflow"
+
+// netflowTwinMismatch says what is wrong with a statement's netflow twin, or "" when nothing is:
+// texts are statements by name, and twin one of them. A twin, <name>_netflow beside <name>, is run in
+// its statement's place under the netflow measure and bound with the statement's parameters, so it
+// binds exactly the same parameters and is a period template exactly when its statement is. A name
+// ending in _netflow with no statement beside it is a statement like any other.
+func netflowTwinMismatch(texts map[string]string, twin string) string {
+	base, isTwin := strings.CutSuffix(twin, netflowStatementSuffix)
+	if !isTwin {
+		return ""
+	}
+	statement, present := texts[base]
+	if !present {
+		return ""
+	}
+	twinParameters, baseParameters := parameterSet(texts[twin]), parameterSet(statement)
+	if strings.Join(twinParameters, ",") != strings.Join(baseParameters, ",") {
+		return fmt.Sprintf("the statement %s binds %s and its netflow twin %s binds %s: a twin binds exactly "+
+			"its statement's parameters", base, describeParameters(baseParameters), twin,
+			describeParameters(twinParameters))
+	}
+	if strings.Contains(texts[twin], periodToken) != strings.Contains(statement, periodToken) {
+		return fmt.Sprintf("one of the statement %s and its netflow twin %s is a period template (%s) and the "+
+			"other is not: a twin runs at its statement's period", base, twin, periodToken)
+	}
+	return ""
+}
+
+// parameterSet is the parameters a statement binds, each once, in name order.
+func parameterSet(text string) []string {
+	seen := map[string]bool{}
+	for _, parameter := range store.QueryParameters(text) {
+		seen[parameter] = true
+	}
+	return sortedNames(seen)
+}
+
+// describeParameters names parameters for a refusal's detail.
+func describeParameters(parameters []string) string {
+	if len(parameters) == 0 {
+		return "no parameter"
+	}
+	return ":" + strings.Join(parameters, ", :")
+}
 
 // measured is the name of a core statement in the measure the request is answered under: the
 // statement itself, or its netflow twin.

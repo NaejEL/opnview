@@ -38,9 +38,10 @@ GROUP BY f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope
 -- ---------------------------------------------------------------------------
 -- The same two reads of the `netflow` measure (PS22 of the NetFlow join amendment): the same rows
 -- and the same connections, with the bytes the NetFlow export reported for them in place of the
--- logged bytes, then five more columns -- the packets, and the connections measured, partial,
--- unmeasured and not joinable. The slots carry them in their netflow_* columns; at the edges a
--- flow's figure is its connection's measured volume, counted as the aggregate refresh counts it
+-- logged bytes, then the thirty-six columns of netflow_parts (schema.sql): per action, the packets,
+-- the coverage classes and the direction states met. The slots carry them in their netflow_*
+-- columns; at the edges a flow's figure is its connection's, read through connection_netflow and
+-- counted as the aggregate refresh counts it
 -- (aggregate.statements.sql, insert_volume): on the first leg's row, and on the second leg's row
 -- too where the figure was measured at that leg. The two measures are never summed.
 -- ---------------------------------------------------------------------------
@@ -50,8 +51,7 @@ SELECT src_interface_id, dst_interface_id, peer_address, traffic_scope, traffic_
        exit_leg_device,
        sum(netflow_bytes), sum(netflow_allowed_bytes), sum(netflow_blocked_bytes), sum(netflow_unknown_bytes),
        sum(allowed_connections), sum(blocked_connections), sum(unknown_connections),
-       sum(netflow_packets), sum(netflow_measured_connections), sum(netflow_partial_connections),
-       sum(netflow_unmeasured_connections), sum(netflow_not_joinable_connections)
+       (netflow_sum(netflow_parts)).*
 FROM volume_aggregate_1h
 WHERE period_start_at >= :from
   AND period_start_at < :to
@@ -69,25 +69,9 @@ SELECT f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope,
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
-       sum(n.packets),
-       sum(CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END),
-       sum(CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END),
-       sum(CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END),
-       sum(CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END)
+       (netflow_sum(n.parts)).*
 FROM classified_flow AS f
-LEFT JOIN LATERAL (
-    SELECT coalesce(sum(v.bytes) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                          OR v.measured_flow_id = f.id), 0) AS bytes,
-           coalesce(sum(v.packets) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
-                                            OR v.measured_flow_id = f.id), 0) AS packets,
-           CASE WHEN count(*) = 0 THEN 'not_joinable'
-                WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                ELSE 'partial' END AS coverage
-    FROM connection_measured_volume AS v
-    WHERE v.connection_flow_id = CASE WHEN f.pair_outcome = 'second_leg' THEN f.paired_flow_id
-                                      ELSE f.id END
-) AS n ON true
+LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
 GROUP BY f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope,

@@ -22,7 +22,8 @@ import (
 //	                                         lower_bound, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
 //	                                         connections, allowed_connections, blocked_connections,
 //	                                         unknown_connections}, and for a netflow Volume its packets and
-//	                                         its coverage {measured, partial, unmeasured, not_joinable}
+//	                                         its coverage, whole and per part (packets, allowed_packets ...
+//	                                         coverage, allowed_coverage ...; docs/widget-api.md)
 //	host.figures.logged(figures)             the same: the name it had while every figure was logged
 //	host.figures.count(value)                a count of the connections or records the answer's figures
 //	                                         count: {measure, lower_bound: true, value}, in the measure the
@@ -36,7 +37,7 @@ import (
 //	host.figures.loggedCount(value)          {measure: "logged", lower_bound: true, value}: a count of logged
 //	                                         records, which an answer under netflow cannot carry
 //	host.figures.withMeasure(figures, from)  figures carrying the measure of `from` (a row or figures read
-//	                                         in it): its measure, packets and coverage
+//	                                         in it): its measure and its netflow parts
 //	host.figures.zero()                      summable figures holding nothing, in the measure the request
 //	                                         is answered under
 //	host.figures.add(into, other)            the sum of two summable figures, as a new object
@@ -58,10 +59,10 @@ import (
 //
 // Summable figures are {bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
 // blocked_connections, unknown_connections}; a member left out is 0. Netflow figures also carry
-// measure: "netflow", packets, measured_connections, partial_connections, unmeasured_connections and
-// not_joinable_connections (coverage_unknown: true, and no packets, for the allowed or the blocked
-// part of figures whose connections were not all measured). A row of a statement read under netflow
-// carries them as columns of those names, and a Volume handed back is read as its figures.
+// measure: "netflow" and the thirty-six columns of netflow_parts (store.NetflowPartsColumns): for each
+// of the allowed, blocked and unknown parts, its packets, its four coverage classes and the direction
+// states it met. A row of a statement read under netflow carries them as columns of those names --
+// (netflow_sum(n.parts)).* writes them all -- and a Volume handed back is read as its figures.
 
 func init() {
 	registerHostArea("figures", func(call *scriptCall, area *goja.Object) {
@@ -90,8 +91,7 @@ func init() {
 		call.function(area, "withMeasure", func(arguments goja.FunctionCall) goja.Value {
 			figures := call.figuresOf(arguments.Argument(0), "the figures")
 			from := call.figuresOf(arguments.Argument(1), "the figures whose measure is taken")
-			figures.Netflow, figures.Packets, figures.PacketsUnknown, figures.Coverage = from.Netflow, from.Packets,
-				from.PacketsUnknown, from.Coverage
+			figures.Netflow, figures.Parts = from.Netflow, from.Parts
 			return call.value(summable(figures))
 		})
 		call.function(area, "zero", func(goja.FunctionCall) goja.Value {
@@ -166,18 +166,95 @@ type summableFigures struct {
 	netflowMembers
 }
 
-// netflowMembers are what a netflow figure carries beyond the seven summable members.
+// netflowMembers are what a netflow figure carries beyond the seven summable members: its measure and
+// the thirty-six columns of netflow_parts (store.NetflowPartsColumns), the names a statement read in
+// the netflow measure gives them with (netflow_sum(...)).*.
 type netflowMembers struct {
-	Measure                string `json:"measure,omitempty"`
-	Packets                *int64 `json:"packets,omitempty"`
-	MeasuredConnections    *int64 `json:"measured_connections,omitempty"`
-	PartialConnections     *int64 `json:"partial_connections,omitempty"`
-	UnmeasuredConnections  *int64 `json:"unmeasured_connections,omitempty"`
-	NotJoinableConnections *int64 `json:"not_joinable_connections,omitempty"`
-	CoverageUnknown        bool   `json:"coverage_unknown,omitempty"`
-	// Coverage is read from a netflow Volume handed back as its figures, which carries its coverage as
-	// an object; summable figures are never written with it.
-	Coverage *VolumeCoverage `json:"coverage,omitempty"`
+	Measure                                           string `json:"measure,omitempty"`
+	AllowedPackets                                    *int64 `json:"allowed_packets,omitempty"`
+	AllowedMeasuredConnections                        *int64 `json:"allowed_measured_connections,omitempty"`
+	AllowedPartialConnections                         *int64 `json:"allowed_partial_connections,omitempty"`
+	AllowedUnmeasuredConnections                      *int64 `json:"allowed_unmeasured_connections,omitempty"`
+	AllowedNotJoinableConnections                     *int64 `json:"allowed_not_joinable_connections,omitempty"`
+	AllowedDirectionMeasuredConnections               *int64 `json:"allowed_direction_measured_connections,omitempty"`
+	AllowedDirectionInProgressConnections             *int64 `json:"allowed_direction_in_progress_connections,omitempty"`
+	AllowedDirectionAwaitingExportConnections         *int64 `json:"allowed_direction_awaiting_export_connections,omitempty"`
+	AllowedDirectionMissingConnections                *int64 `json:"allowed_direction_missing_connections,omitempty"`
+	AllowedDirectionNotCapturedConnections            *int64 `json:"allowed_direction_not_captured_connections,omitempty"`
+	AllowedDirectionExportGapConnections              *int64 `json:"allowed_direction_export_gap_connections,omitempty"`
+	AllowedDirectionNotExportedWhenRefusedConnections *int64 `json:"allowed_direction_not_exported_when_refused_connections,omitempty"`
+	BlockedPackets                                    *int64 `json:"blocked_packets,omitempty"`
+	BlockedMeasuredConnections                        *int64 `json:"blocked_measured_connections,omitempty"`
+	BlockedPartialConnections                         *int64 `json:"blocked_partial_connections,omitempty"`
+	BlockedUnmeasuredConnections                      *int64 `json:"blocked_unmeasured_connections,omitempty"`
+	BlockedNotJoinableConnections                     *int64 `json:"blocked_not_joinable_connections,omitempty"`
+	BlockedDirectionMeasuredConnections               *int64 `json:"blocked_direction_measured_connections,omitempty"`
+	BlockedDirectionInProgressConnections             *int64 `json:"blocked_direction_in_progress_connections,omitempty"`
+	BlockedDirectionAwaitingExportConnections         *int64 `json:"blocked_direction_awaiting_export_connections,omitempty"`
+	BlockedDirectionMissingConnections                *int64 `json:"blocked_direction_missing_connections,omitempty"`
+	BlockedDirectionNotCapturedConnections            *int64 `json:"blocked_direction_not_captured_connections,omitempty"`
+	BlockedDirectionExportGapConnections              *int64 `json:"blocked_direction_export_gap_connections,omitempty"`
+	BlockedDirectionNotExportedWhenRefusedConnections *int64 `json:"blocked_direction_not_exported_when_refused_connections,omitempty"`
+	UnknownPackets                                    *int64 `json:"unknown_packets,omitempty"`
+	UnknownMeasuredConnections                        *int64 `json:"unknown_measured_connections,omitempty"`
+	UnknownPartialConnections                         *int64 `json:"unknown_partial_connections,omitempty"`
+	UnknownUnmeasuredConnections                      *int64 `json:"unknown_unmeasured_connections,omitempty"`
+	UnknownNotJoinableConnections                     *int64 `json:"unknown_not_joinable_connections,omitempty"`
+	UnknownDirectionMeasuredConnections               *int64 `json:"unknown_direction_measured_connections,omitempty"`
+	UnknownDirectionInProgressConnections             *int64 `json:"unknown_direction_in_progress_connections,omitempty"`
+	UnknownDirectionAwaitingExportConnections         *int64 `json:"unknown_direction_awaiting_export_connections,omitempty"`
+	UnknownDirectionMissingConnections                *int64 `json:"unknown_direction_missing_connections,omitempty"`
+	UnknownDirectionNotCapturedConnections            *int64 `json:"unknown_direction_not_captured_connections,omitempty"`
+	UnknownDirectionExportGapConnections              *int64 `json:"unknown_direction_export_gap_connections,omitempty"`
+	UnknownDirectionNotExportedWhenRefusedConnections *int64 `json:"unknown_direction_not_exported_when_refused_connections,omitempty"`
+	// AllowedCoverage, BlockedCoverage and UnknownCoverage are read from a netflow Volume handed back as
+	// its figures, which carries each part's coverage as an object beside the part's packets; summable
+	// figures are never written with them.
+	AllowedCoverage *VolumeCoverage `json:"allowed_coverage,omitempty"`
+	BlockedCoverage *VolumeCoverage `json:"blocked_coverage,omitempty"`
+	UnknownCoverage *VolumeCoverage `json:"unknown_coverage,omitempty"`
+}
+
+// slots are the thirty-six members, in the order of store.NetflowPartsColumns.
+func (m *netflowMembers) slots() []**int64 {
+	return []**int64{
+		&m.AllowedPackets,
+		&m.AllowedMeasuredConnections,
+		&m.AllowedPartialConnections,
+		&m.AllowedUnmeasuredConnections,
+		&m.AllowedNotJoinableConnections,
+		&m.AllowedDirectionMeasuredConnections,
+		&m.AllowedDirectionInProgressConnections,
+		&m.AllowedDirectionAwaitingExportConnections,
+		&m.AllowedDirectionMissingConnections,
+		&m.AllowedDirectionNotCapturedConnections,
+		&m.AllowedDirectionExportGapConnections,
+		&m.AllowedDirectionNotExportedWhenRefusedConnections,
+		&m.BlockedPackets,
+		&m.BlockedMeasuredConnections,
+		&m.BlockedPartialConnections,
+		&m.BlockedUnmeasuredConnections,
+		&m.BlockedNotJoinableConnections,
+		&m.BlockedDirectionMeasuredConnections,
+		&m.BlockedDirectionInProgressConnections,
+		&m.BlockedDirectionAwaitingExportConnections,
+		&m.BlockedDirectionMissingConnections,
+		&m.BlockedDirectionNotCapturedConnections,
+		&m.BlockedDirectionExportGapConnections,
+		&m.BlockedDirectionNotExportedWhenRefusedConnections,
+		&m.UnknownPackets,
+		&m.UnknownMeasuredConnections,
+		&m.UnknownPartialConnections,
+		&m.UnknownUnmeasuredConnections,
+		&m.UnknownNotJoinableConnections,
+		&m.UnknownDirectionMeasuredConnections,
+		&m.UnknownDirectionInProgressConnections,
+		&m.UnknownDirectionAwaitingExportConnections,
+		&m.UnknownDirectionMissingConnections,
+		&m.UnknownDirectionNotCapturedConnections,
+		&m.UnknownDirectionExportGapConnections,
+		&m.UnknownDirectionNotExportedWhenRefusedConnections,
+	}
 }
 
 // summable is store figures as a script reads them.
@@ -189,17 +266,11 @@ func summable(figures store.VolumeFigures) summableFigures {
 		return read
 	}
 	read.Measure = MeasureNetflow
-	if !figures.PacketsUnknown {
-		packets := figures.Packets
-		read.Packets = &packets
+	values := figures.Parts.Fields()
+	for index, slot := range read.slots() {
+		value := *values[index]
+		*slot = &value
 	}
-	if figures.Coverage.Unknown {
-		read.CoverageUnknown = true
-		return read
-	}
-	coverage := figures.Coverage
-	read.MeasuredConnections, read.PartialConnections = &coverage.Measured, &coverage.Partial
-	read.UnmeasuredConnections, read.NotJoinableConnections = &coverage.Unmeasured, &coverage.NotJoinable
 	return read
 }
 
@@ -212,24 +283,18 @@ func (f summableFigures) toStore() store.VolumeFigures {
 		return figures
 	}
 	figures.Netflow = true
-	if f.Packets != nil {
-		figures.Packets = *f.Packets
-	} else {
-		figures.PacketsUnknown = true
-	}
-	value := func(member *int64) int64 {
-		if member == nil {
-			return 0
+	values := figures.Parts.Fields()
+	for index, slot := range f.slots() {
+		if *slot != nil {
+			*values[index] = **slot
 		}
-		return *member
 	}
-	if coverage := f.Coverage; coverage != nil && f.MeasuredConnections == nil {
-		f.MeasuredConnections, f.PartialConnections = &coverage.Measured, &coverage.Partial
-		f.UnmeasuredConnections, f.NotJoinableConnections = &coverage.Unmeasured, &coverage.NotJoinable
+	// A Volume handed back carries each part's coverage as an object.
+	for index, coverage := range []*VolumeCoverage{f.AllowedCoverage, f.BlockedCoverage, f.UnknownCoverage} {
+		if coverage != nil {
+			figures.Parts.List()[index].Coverage = coverage.storeCoverage()
+		}
 	}
-	figures.Coverage = store.NetflowCoverage{Measured: value(f.MeasuredConnections),
-		Partial: value(f.PartialConnections), Unmeasured: value(f.UnmeasuredConnections),
-		NotJoinable: value(f.NotJoinableConnections), Unknown: f.CoverageUnknown}
 	return figures
 }
 

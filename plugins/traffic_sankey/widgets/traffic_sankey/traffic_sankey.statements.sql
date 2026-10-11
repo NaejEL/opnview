@@ -28,7 +28,7 @@ GROUP BY f.local_client_id, f.traffic_direction, f.src_interface_id, f.dst_inter
 
 -- The same in the `netflow` measure, run in its place when the answer is given in it (host.query;
 -- docs/widget-api.md, "Volumes and the observation-point limit"): the bytes the NetFlow export
--- reported for the connections, then their packets and coverage classes, under the names summable
+-- reported for the connections, then the columns of netflow_parts, under the names summable
 -- figures carry them (host.figures).
 -- statement: widget_sankey_client_flows_netflow
 SELECT f.local_client_id AS client_id,
@@ -41,22 +41,9 @@ SELECT f.local_client_id AS client_id,
        count(*) AS connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        'netflow' AS measure,
-       sum(n.packets) AS packets,
-       sum(CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END) AS measured_connections,
-       sum(CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END) AS partial_connections,
-       sum(CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END) AS unmeasured_connections,
-       sum(CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END) AS not_joinable_connections
+       (netflow_sum(n.parts)).*
 FROM classified_flow AS f
-LEFT JOIN LATERAL (
-    SELECT coalesce(sum(v.bytes), 0) AS bytes,
-           coalesce(sum(v.packets), 0) AS packets,
-           CASE WHEN count(*) = 0 THEN 'not_joinable'
-                WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
-                WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
-                ELSE 'partial' END AS coverage
-    FROM connection_measured_volume AS v
-    WHERE v.connection_flow_id = f.id
-) AS n ON true
+LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL

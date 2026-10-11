@@ -4,25 +4,17 @@
 // inside end; an interface's own figures add the second legs logged on it, as the rolling window
 // gives them.
 
-// SUMMABLE are the members of summable figures (host.figures): the seven every figure carries, and the
-// ones a figure of the netflow measure carries beside them.
-var SUMMABLE = ["bytes", "allowed_bytes", "blocked_bytes", "unknown_bytes", "allowed_connections",
-  "blocked_connections", "unknown_connections", "packets", "measured_connections", "partial_connections",
-  "unmeasured_connections", "not_joinable_connections"];
-
-// zero is summable figures holding nothing.
+// zero is summable figures holding nothing: every member left out is 0 (host.figures).
 function zero() {
-  var figures = {};
-  SUMMABLE.forEach(function (member) { figures[member] = 0; });
-  return figures;
+  return {};
 }
 
-// add adds summable figures into others, which take their measure.
-function add(into, other) {
-  SUMMABLE.forEach(function (member) { into[member] += other[member] || 0; });
-  if (other.measure !== undefined) {
-    into.measure = other.measure;
-  }
+// add adds summable figures into others, in place. host.figures.add sums every member a figure
+// carries -- its measure and, in the netflow measure, its packets and coverage per part included -- so
+// the sum is kept whole whatever the measure.
+function add(host, into, other) {
+  var sum = host.figures.add(into, other);
+  Object.keys(sum).forEach(function (member) { into[member] = sum[member]; });
 }
 
 // newParts are an interface's figures, whole and in parts.
@@ -59,27 +51,27 @@ exports.widget = {
       if (row.exit_leg_device !== null) {
         var info = byDevice[row.exit_leg_device];
         if (info === undefined) {
-          add(unattributed, row);
+          add(host, unattributed, row);
           return;
         }
         var leg = member(info.id);
-        add(leg.exitLegs, row);
-        add(leg.own, row);
+        add(host, leg.exitLegs, row);
+        add(host, leg.own, row);
         return;
       }
       var local = host.volume.localInterface(row);
       if (local === null) {
-        add(unattributed, row);
+        add(host, unattributed, row);
         return;
       }
       var bar = member(local);
-      add(bar.own, row);
+      add(host, bar.own, row);
       if (row.traffic_scope === scopes.east_west) {
-        add(bar.eastWest, row);
+        add(host, bar.eastWest, row);
       } else if (row.traffic_scope === scopes.north_south) {
-        add(bar.northSouth, row);
+        add(host, bar.northSouth, row);
       } else {
-        add(bar.thisFirewall, row);
+        add(host, bar.thisFirewall, row);
       }
     });
     var request = host.request.window;
@@ -107,10 +99,10 @@ exports.widget = {
         }
         sums = newParts();
       }
-      add(total, sums.own);
+      add(host, total, sums.own);
       if (!includeUnlabelled && !info.labelled) {
         excludedMembers++;
-        add(excludedSum, sums.own);
+        add(host, excludedSum, sums.own);
         return;
       }
       var counts = clientCounts[info.id];
@@ -135,10 +127,10 @@ exports.widget = {
     // Figures of an interface id the interface table no longer holds stay in the total.
     Object.keys(figures).forEach(function (id) {
       if (byId[id] === undefined) {
-        add(unattributed, figures[id].own);
+        add(host, unattributed, figures[id].own);
       }
     });
-    add(total, unattributed);
+    add(host, total, unattributed);
     ranked.sort(function (a, b) {
       if (a.value !== b.value) {
         return a.value > b.value ? -1 : 1;
@@ -156,7 +148,7 @@ exports.widget = {
         return;
       }
       remainderMembers++;
-      add(remainderSum, held.own);
+      add(host, remainderSum, held.own);
     });
     var data = {
       measure: measure,

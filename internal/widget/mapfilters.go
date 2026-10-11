@@ -4,8 +4,8 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 )
 
-// BlockedOnly keeps the blocked half of figures, in their measure (store.SplitNetflow).
+// BlockedOnly keeps the blocked part of figures, in their measure, with its own packets and coverage
+// (store.VolumeFigures.BlockedPart).
 func BlockedOnly(figures store.VolumeFigures) store.VolumeFigures {
-	return store.SplitNetflow(figures, store.VolumeFigures{Bytes: figures.BlockedBytes,
-		BlockedBytes: figures.BlockedBytes, BlockedConnections: figures.BlockedConnections}, figures.BlockedConnections)
+	return figures.BlockedPart()
 }
