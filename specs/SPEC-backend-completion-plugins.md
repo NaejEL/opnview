@@ -2969,7 +2969,7 @@ No other question. The listener design, routing, the type vocabulary, the parse 
 
 ---
 
-**Status of this amendment: PROPOSED, pending the maintainer's approval.**
+**Status of this amendment: APPROVED by the maintainer on 12 October 2026.**
 
 **Decided (maintainer, 12 October 2026), push-sources open questions:**
 - Q9: (a). A pushed source replaces polling of a core kind **over TCP only**. Over UDP it is received and stored for plugins, while polling continues for the core kinds.
@@ -3583,6 +3583,15 @@ In Variant B, append to the second paragraph: "Nor can they be received over sys
 
 ---
 
-**Status of this addendum: PROPOSED, pending the maintainer's approval.**
+**Status of this addendum: APPROVED by the maintainer on 12 October 2026.**
 
 ---
+
+**Decided (maintainer, 12 October 2026), addendum open questions:**
+- Q13: (b), `best_available`.
+- Q14: (a), the start slot.
+- Q15: (a), unmatched records keyed by interface, direction, protocol, IP version and reason only.
+- Q16: (a), the kind is named `flow_record`.
+- Q17: (a), the syslog feeding `server_name_observation` is accepted over TCP only.
+
+The CLAUDE.md variant matching the PS24 finding is applied by the orchestrator once that finding is made, with the maintainer's prior agreement.
