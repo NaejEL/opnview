@@ -1,0 +1,39 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md and the opnsense/core 26.7.3 source it cites, never by recording a response from an OPNsense firewall. If the survey is wrong about a field, an envelope or a status code, the tests that read this file pass and the collection is still wrong. Do not treat this file as evidence.",
+    "survey_section": "Live rate endpoints, read from source for C3 (backend completion)",
+    "field_list_from": "rows[] each with id, iface, interface, proto, ipproto, direction, src_addr, src_port, dst_addr, dst_port, nat_addr, nat_port, gateway, state, age, expires, label, descr, flags, pkts and bytes as [0, 1] pairs; rowCount, total and current, as Diagnostics/Api/FirewallController.php queryStatesAction and scripts/filter/lib/states.py query_states produce them",
+    "why_these_values": "The first read of three states: a TCP state on an inside interface, its twin out on the upstream interface after NAT, and a UDP state. The tests answer a second read with the same states' counters grown, new states, and one gone.",
+    "example_values_are_not_a_network": "Every identifier, device name and address below is synthesised for this fixture. None of them describes anyone's network, and no code under test presupposes any of them: each is read back out of this file."
+  },
+  "body": {
+    "rows": [
+      {
+        "id": "00000000000000a1/00000001", "iface": "exdev0", "interface": "Example inside", "proto": "tcp",
+        "ipproto": "ipv4", "direction": "in", "src_addr": "192.0.2.10", "src_port": "50000",
+        "dst_addr": "203.0.113.7", "dst_port": "443", "nat_addr": null, "nat_port": null, "gateway": null,
+        "state": "ESTABLISHED:ESTABLISHED", "age": "00:05:00", "expires": "24:00:00", "label": "", "descr": "",
+        "flags": [], "pkts": [100, 120], "bytes": [10000, 50000]
+      },
+      {
+        "id": "00000000000000a2/00000001", "iface": "exdevup", "interface": "Example upstream", "proto": "tcp",
+        "ipproto": "ipv4", "direction": "out", "src_addr": "192.0.2.10", "src_port": "50000",
+        "dst_addr": "203.0.113.7", "dst_port": "443", "nat_addr": "198.51.100.2", "nat_port": "61000",
+        "gateway": null, "state": "ESTABLISHED:ESTABLISHED", "age": "00:05:00", "expires": "24:00:00",
+        "label": "", "descr": "", "flags": [], "pkts": [100, 120], "bytes": [10000, 50000]
+      },
+      {
+        "id": "00000000000000a3/00000001", "iface": "exdev0", "interface": "Example inside", "proto": "udp",
+        "ipproto": "ipv4", "direction": "in", "src_addr": "192.0.2.11", "src_port": "40000",
+        "dst_addr": "198.51.100.53", "dst_port": "53", "nat_addr": null, "nat_port": null, "gateway": null,
+        "state": "MULTIPLE:SINGLE", "age": "00:00:20", "expires": "00:00:40", "label": "", "descr": "",
+        "flags": [], "pkts": [2, 2], "bytes": [140, 300]
+      }
+    ],
+    "rowCount": 3,
+    "total": 3,
+    "current": 1
+  }
+}

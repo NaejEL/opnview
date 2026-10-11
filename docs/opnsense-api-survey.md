@@ -1236,7 +1236,7 @@ Read from the 26.7.3 source on 11 October 2026 for the live rate (C3 and C4 of
   measured against the counters read at the script's start. The controller holds the connection for
   `interval + 1` seconds of inactivity. **Nothing is built on it this cycle** (the maintainer's
   decision): the live pass polls `traffic/interface`.
-- **The pf state table: two read actions, neither built.**
+- **The pf state table: two read actions; `query_states` is built (the `pf_states` plugin).**
   - `POST /api/diagnostics/firewall/query_states`, `FirewallController::queryStatesAction`
     (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/FirewallController.php),
     is the configd action `filter list states`, `list_states.py` over `lib/states.py`'s
@@ -1252,14 +1252,31 @@ Read from the 26.7.3 source on 11 October 2026 for the live rate (C3 and C4 of
     addresses and ports, `state`, `age`, `expire`, `pkts`, `bytes` (rounded to K, M or G) and `avg`
     (bytes per second over the state's whole life), with a configd `cache_ttl` of 30 seconds
     (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_filter.conf).
-  - **Verdict.** Both read without side effect, and a rate by port and protocol could be derived from
-    the difference of a state's cumulative bytes between two `query_states` reads. They are **not
-    built**: each call walks the whole state table on the firewall (`pfctl -vvs state`), its cost at
-    a live cadence is unmeasured (LV-C has not run), `query_pf_top`'s figures are 30 seconds stale at
-    best and its `avg` is a lifetime mean, not a rate, and the push sources planned next (NetFlow v9
-    and IPFIX received by opnview itself, `ROADMAP.md`) carry the rate by port and protocol per flow,
-    which would supersede a state-table poller. `docs/widget-api.md`, *Live figures*, states the rate
-    by port or protocol as unavailable.
+  - **`query_states`, read again from source for row 4 of the mockup's coverage (11 October 2026).**
+    The action answers only a `POST` (anything else answers `{rows: [], rowCount: 0, total: 0,
+    current: 0}`). It reads `rowCount` (default 9999), `current`, and optionally `searchPhrase`,
+    `ruleid` and `sort`, and passes them to `list_states.py` as `--filter`, `--limit`, `--offset`,
+    `--label` and `--sort_by`; **every call runs `pfctl -vvs state` over the whole table whatever page
+    is asked**, the page being cut afterwards. It answers `{rows, rowCount, total, current}`, `total`
+    the size of the whole table, so a read cut by `rowCount` says so. Each row's `id` is
+    `<state id>/<creator id>`, stable for the state's life; `age` is pfctl's `hours:minutes:seconds`.
+    **`bytes[0]` counts the packets travelling in the state's own direction -- from the initiator,
+    `list_states.py`'s `src_addr` -- and `bytes[1]` the reverse**: pf adds each packet's length to
+    `s->bytes[s_dir_rev]`, `s_dir_rev` being whether the packet's direction differs from the state's
+    (https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.c), and pfctl prints
+    `bytes[0]:bytes[1]` (https://github.com/opnsense/src/blob/stable/26.7/sbin/pfctl/pf_print_state.c).
+    A forwarded connection holds two states, one `in` on the interface it enters by and one `out`
+    on the interface it leaves by. The configd action carries no `cache_ttl`
+    (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_filter.conf,
+    `[list.states]`), so every call reaches pfctl.
+  - **Verdict.** Both read without side effect. `query_states` **is built** (maintainer, 11 October
+    2026), as the `pf_states` plugin, active on installation: a pass every 60 s by default reads at
+    most `max_states` states (50 000) and stores, per interface, direction, protocol and destination
+    port, the difference of each state's cumulative bytes since the previous pass over the seconds
+    between them (`docs/widget-api.md`, *Live figures*). Its cost -- one `pfctl -vvs state` per pass,
+    and an answer of a few hundred bytes per state -- is **unmeasured**: LV-C measures it, and if it
+    exceeds 2 processor points the maintainer decides whether to turn it off. `query_pf_top` is not
+    built: its figures are 30 seconds stale at best and its `avg` is a lifetime mean, not a rate.
 
 ### LV-C: measuring the firewall-side cost
 

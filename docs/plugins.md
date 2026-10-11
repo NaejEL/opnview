@@ -7,8 +7,9 @@ plugin is installed beside `opnview` and reads the firewall through its API.
 
 Everything `opnview` reads is a plugin, built-ins included: the filter log (`pf`), Suricata's
 alerts (`suricata`), the DHCP servers (`kea`, `isc`, `dnsmasq`), the resolvers (`unbound`,
-`dnsmasq`), the Insight sampler (`insight`), the MaxMind GeoLite2 databases (`maxmind`) and the
-Public Suffix List (`publicsuffix`). They are written exactly as a third party writes one, and they
+`dnsmasq`), the Insight sampler (`insight`), the pf state table's rate by protocol and port
+(`pf_states`), the MaxMind GeoLite2 databases (`maxmind`) and the Public Suffix List
+(`publicsuffix`). They are written exactly as a third party writes one, and they
 are the best examples there are: `plugins/<name>/` in the repository.
 
 Writing a plugin needs a text editor and the `opnview` binary. It needs no Go toolchain, no
@@ -239,6 +240,22 @@ by the plugin's provider of its own kind. A chart can then read it -- a `custom_
 `source` is its name -- with no file of `opnview` changed. A table the catalogue could not serve --
 a measure of type text, a unit on a dimension, an aggregation its role cannot admit -- is refused
 (`table_invalid`).
+
+### A kind of the plugin's own, polled
+
+A provider of a kind of the plugin's own that is not fed by push entries states its cadence
+(`cadence_seconds`, `min_cadence_seconds`) and is served by the script, which exports two functions
+under the kind's name:
+
+| Function | Answers |
+|---|---|
+| `probe(host)` | `{result, error}`: whether the source can be read (`result` as every kind's, below). |
+| `collect(host, state)` | `{result, rows, state, error, unsupported}`: `rows` an object from each table the plugin declares to the rows to store, each row checked against its columns; `state` the provider's **durable state**, an object of strings handed to the next pass's `collect` as its `state`. The rows and the state are stored in one transaction. |
+
+The durable state is what a pass keeps for the next one -- a cursor, or a previous reading to
+subtract from: the built-in `pf_states` keeps the counters of the pf state table it read, and stores
+the rate as the difference at the next pass. In a plugin's own tests, `t.call(kind, "collect", state)`
+answers the checked `rows` and `state`.
 
 ## The script
 
@@ -974,6 +991,8 @@ live-interest lease.
 | `current(groupBy)` | The rates a "now" figure shows: `{by_direction, outbound_unsplit, by_member}`. `by_direction` is one `{key, rate}` per direction (`outbound`, `inbound`, `inter_interface`); `outbound_unsplit` the outbound rate of the local addresses whose peers lie both outside and behind an interface, which no sample splits; `by_member` one `{key, rate}` per client (`client`) or interface (`interface`) holding a current sample, sorted by key, empty for any other grouping. |
 | `byClient()` | Every client holding a current sample: an object from its id, as text, to its rate. |
 | `client(id)` | One client's current rate, or its named absence. |
+| `byPeer()` | Every peer address an inside local address was read with in a current sample: an object from the address to its rate, `in_bits_per_second` what the peer sent, `out_bits_per_second` what was sent to it -- measured only for a local address read with that one peer, since `traffic/top` reports a local address's sending only as its total over every peer, and otherwise `null` with `out_measured` false. A reading whose local end is outside -- the firewall's upstream address, the same conversation read again after NAT -- is not summed. A peer with no current reading is absent, never a rate of 0. |
+| `clientPeers(id)` | The same for one client: an object from each peer address it was read with to its rate; empty when it has none. |
 | `none()` | The named absence of a rate, what a subject with no current sample reads. |
 
 #### `host.peers`

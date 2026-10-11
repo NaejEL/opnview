@@ -187,6 +187,7 @@
       "cadence_seconds": null,
       "lower_bound": true
     },
+    "current_rate_by_peer": [],
     "leases": [],
     "records": [
       {

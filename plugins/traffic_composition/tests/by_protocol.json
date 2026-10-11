@@ -99,7 +99,26 @@
         "allowed_connections": 1,
         "blocked_connections": 0,
         "unknown_connections": 0
-      }
+      },
+      "slices": [
+        {
+          "key": "protocol:udp",
+          "protocol": "udp",
+          "value": 500,
+          "volume": {
+            "measure": "logged",
+            "lower_bound": true,
+            "bytes": 500,
+            "allowed_bytes": 500,
+            "blocked_bytes": 0,
+            "unknown_bytes": 0,
+            "connections": 1,
+            "allowed_connections": 1,
+            "blocked_connections": 0,
+            "unknown_connections": 0
+          }
+        }
+      ]
     },
     "whole": "all_traffic",
     "total": {

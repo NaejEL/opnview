@@ -3987,3 +3987,5 @@ Every test runs on the PostgreSQL test instance with a fake clock and small reco
 - **Row 24.** The per-peer current rate, from the stored `traffic/top` per-pair readings, is exposed by the core once (host function or core dataset directory), so any widget plugin can serve it; the destination widgets serve it.
 - **Row 4.** A provider plugin reading the pf state table (`query_states`, read-only, per the survey) serves the current rate by protocol and port. It is built now and **active on installation** (maintainer, 11 October 2026). LV-C0 measures its cost afterwards; if it exceeds 2 points (C4), the maintainer decides whether to turn it off.
 - The *Coverage of the mockup* push-class table moves to `docs/plugins.md` *Push sources* in Phase F.
+
+**Decided (maintainer, 11 October 2026), after the coverage refinements:** `export_gap` and `not_exported_when_refused` are not covered. No migration, backfill or old-schema compatibility work is done: the project is pre-POC and the database is rebuilt before deployment.

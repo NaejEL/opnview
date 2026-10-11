@@ -80,6 +80,21 @@
           "unknown_connections": 0
         },
         "machines": 1,
+        "current_rate": {
+          "state": "no_current_sample",
+          "measure": "sampled",
+          "in_bits_per_second": null,
+          "out_bits_per_second": null,
+          "out_measured": false,
+          "sampled_at": null,
+          "span_seconds": null,
+          "cadence_seconds": null,
+          "lower_bound": true
+        },
+        "current_rate_clients": 0,
+        "interfaces": [
+          1
+        ],
         "chips": [
           {
             "client": {
@@ -162,7 +177,19 @@
             "allowed_connections": 0,
             "blocked_connections": 0,
             "unknown_connections": 0
-          }
+          },
+          "current_rate": {
+            "state": "no_current_sample",
+            "measure": "sampled",
+            "in_bits_per_second": null,
+            "out_bits_per_second": null,
+            "out_measured": false,
+            "sampled_at": null,
+            "span_seconds": null,
+            "cadence_seconds": null,
+            "lower_bound": true
+          },
+          "chips": []
         }
       }
     ],
@@ -183,6 +210,21 @@
         "unknown_connections": 0
       },
       "machines": 1,
+      "current_rate": {
+        "state": "no_current_sample",
+        "measure": "sampled",
+        "in_bits_per_second": null,
+        "out_bits_per_second": null,
+        "out_measured": false,
+        "sampled_at": null,
+        "span_seconds": null,
+        "cadence_seconds": null,
+        "lower_bound": true
+      },
+      "current_rate_clients": 0,
+      "interfaces": [
+        1
+      ],
       "chips": [
         {
           "client": {
@@ -237,7 +279,19 @@
           "allowed_connections": 0,
           "blocked_connections": 0,
           "unknown_connections": 0
-        }
+        },
+        "current_rate": {
+          "state": "no_current_sample",
+          "measure": "sampled",
+          "in_bits_per_second": null,
+          "out_bits_per_second": null,
+          "out_measured": false,
+          "sampled_at": null,
+          "span_seconds": null,
+          "cadence_seconds": null,
+          "lower_bound": true
+        },
+        "chips": []
       }
     },
     "totals_exclude_unassigned": false,

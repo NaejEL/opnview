@@ -702,9 +702,15 @@ Providers: `firewall_log`, `dns_lookup`, `resolver_cache`, `geo_asn`,
 `domain_attribution.site_name`, `domain_attribution.correlation_delay_seconds`,
 `domain_attribution.method`;
 `geo_asn.lookup_state`, `geo_asn.country_code`, `geo_asn.operator`,
-`geo_asn.dataset_build_at`; `interface_map.description`. Sources: *Data source 1
-— Filter logs*; *Data source 5 — Resolver DNS lookups*; geo and ASN enrichment,
-the second of the three outbound calls the project allows.
+`geo_asn.dataset_build_at`; `interface_map.description`. The client's current
+rate, and its current rate per peer (`current_rate_by_peer`, keyed by the address
+a record's destination carries; row 24 of `docs/widget-api.md`, *Coverage of the
+mockup*), read `measurement_sample` -- `subject_kind` `interface_endpoint` for the
+client's totals and `interface_endpoint_pair` for each peer, `rate_bits_in` and
+`rate_bits_out` -- through `host.rates`, a second measure, `sampled`. Sources:
+*Data source 1 — Filter logs*; *Data source 5 — Resolver DNS lookups*; the rates,
+*Data source 3 — NetFlow / Insight*; geo and ASN enrichment, the second of the
+three outbound calls the project allows.
 
 **Parameters** — `client` (a client reference — required); `period`; `action`
 (`all` | `allowed` | `blocked`); `scope` (`all` | `east_west` |
@@ -749,14 +755,18 @@ interface groupings read `volume_aggregate_7d.bytes`, `.allowed_connections`,
 `.blocked_connections`, `.src_interface_id`, `.peer_address`, `.period_start_at`
 and the `_30d` twins. The `service_port` grouping may additionally read
 `pair_volume_observation.service_port`, `.protocol`, `.octets` and
-`.day_start_at`, **labelled approximate** for the reason in Part 4. Sources:
-*Data source 1 — Filter logs*; per-pair volume, *Data source 3 — NetFlow /
-Insight*.
+`.day_start_at`, **labelled approximate** for the reason in Part 4. The Other
+slice names the members it folds (`other.slices`, and each ring's), each the
+slice it would have been, from the same figures (row E8 of `docs/widget-api.md`,
+*Coverage of the mockup*). The current rate by protocol or port is not this
+type's: `traffic/top` carries neither, and the `pf_states` plugin's dataset
+`pf_states.rate` serves it (row 4). Sources: *Data source 1 — Filter logs*;
+per-pair volume, *Data source 3 — NetFlow / Insight*.
 
 **Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `group_by`
 (`client` | `interface` | `protocol` | `service_port` | `blocking_reason`);
 `measure` (`bytes` | `connections`); `slices` (how many named slices before the
-collapsed one); `interfaces` (optional list of interface references); `clients`
+collapsed one, which lists the members it folds); `interfaces` (optional list of interface references); `clients`
 (optional); `scope` (`all` | `east_west` | `north_south`); `split_by`
 (`none` | `direction` -- one ring for the whole, or one per direction beside
 it); `window_seconds` (how much of the recent past the rolling series holds,
@@ -842,7 +852,13 @@ shape is read from `owner_volume_aggregate_7d.owner_id`, `.bytes`,
 `.allowed_connections`, `.blocked_connections`, `.client_count`,
 `.traffic_scope`, `.period_start_at`, `.computed_at` and the `_1h`, `_24h` and
 `_30d` twins; a NULL `owner_id` carries the unassigned bucket. `client_count`
-carries the rule in Part 4. Source: *Data source 1 — Filter logs*.
+carries the rule in Part 4. A card's rate now (`current_rate`) is the sum of the
+current rates of every machine of the card, those folded past `clients_per_card`
+included, and its `interfaces` are those of every machine (`client.interface_id`);
+the folded machines are listed in the remainder, each as its chip (rows 18 and E7
+of `docs/widget-api.md`, *Coverage of the mockup*). The rates read
+`measurement_sample` through `host.rates`, a second measure, `sampled`. Sources:
+*Data source 1 — Filter logs*; the rates, *Data source 3 — NetFlow / Insight*.
 
 **Parameters** — `period`; `owners` (an optional list of **owner** references —
 the reference kind `docs/dashboard-format.md` adds for exactly this widget;
@@ -850,7 +866,8 @@ empty means every person); `include_unassigned` (boolean, default true);
 `measure` (`bytes` | `allowed` | `blocked`); `scope`
 (`all` | `east_west` | `north_south`); `sort`
 (`volume` | `blocked` | `name` | `machines`); `clients_per_card` (how many chips
-before a collapsed remainder chip); `show_timeline` (boolean).
+before a collapsed remainder chip, which lists the machines it folds);
+`show_timeline` (boolean).
 `volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
 measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
 *Volumes and the observation-point limit*).

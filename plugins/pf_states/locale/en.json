@@ -1,0 +1,9 @@
+{
+  "language": "en",
+  "strings": {
+    "provider.pf_state_rate.pf_states": "pf state table",
+    "collection.kind.pf_state_rate": "Rate by protocol and port (pf state table)",
+    "plugin.pf_states.dataset.rate": "Current rate by protocol and destination port, from the pf state table",
+    "plugin.pf_states.setting.max_states": "Most states read per pass"
+  }
+}

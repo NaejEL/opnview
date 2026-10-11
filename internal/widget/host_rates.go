@@ -23,6 +23,12 @@ import (
 //	host.rates.byClient()        every client holding a current sample: a map from its id, as text,
 //	                             to its rate
 //	host.rates.client(id)        one client's current rate, or its named absence
+//	host.rates.byPeer()          every peer address an inside local address was read with in a
+//	                             current sample: a map from the address to its rate, the inbound
+//	                             figure what the peer sent, the outbound one what was sent to it
+//	                             (store.CurrentRates.ByPeer)
+//	host.rates.clientPeers(id)   the same for one client: a map from each peer address it was
+//	                             read with to its rate, empty when it has none
 //	host.rates.none()            the named absence of a rate: what a subject with no current sample
 //	                             reads
 
@@ -56,8 +62,33 @@ func init() {
 			}
 			return call.value(SampledRate(rate, state == store.RateCurrent, r.Now))
 		})
+		call.function(area, "byPeer", func(goja.FunctionCall) goja.Value {
+			rates, err := r.readCurrentRates()
+			if err != nil {
+				return call.fail(err)
+			}
+			return call.value(peerRates(rates.ByPeer, r.Now))
+		})
+		call.function(area, "clientPeers", func(arguments goja.FunctionCall) goja.Value {
+			id := call.integerOf(arguments.Argument(0), "the client id")
+			rates, err := r.readCurrentRates()
+			if err != nil {
+				return call.fail(err)
+			}
+			return call.value(peerRates(rates.ByClientPeer[id], r.Now))
+		})
 		call.function(area, "none", func(goja.FunctionCall) goja.Value {
 			return call.value(SampledRate(store.CurrentRate{}, false, r.Now))
 		})
 	})
+}
+
+// peerRates renders rates keyed by peer address, each a chip rate: a peer is in the map only
+// when it holds a reading, so none of them is a named absence.
+func peerRates(rates map[string]store.CurrentRate, now int64) map[string]ChipRate {
+	result := make(map[string]ChipRate, len(rates))
+	for peer, rate := range rates {
+		result[peer] = SampledRate(rate, true, now)
+	}
+	return result
 }

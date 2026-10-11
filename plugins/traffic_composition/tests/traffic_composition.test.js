@@ -149,3 +149,19 @@ test("by interface, the volume window's rows are grouped by their inside interfa
   t.equal(data.slices.map(function (slice) { return [slice.key, slice["interface"].identifier, slice.value]; }),
     [["interface:1", "opt1", 4200]], "one interface");
 });
+
+test("Other names the members it folds, each the slice it would have been, and they make its volume",
+  function (t) {
+    seed(t);
+    var data = t.widget("traffic_composition", { group_by: "client", slices: 1, split_by: "direction" }).body.data;
+    t.equal(data.slices.map(function (slice) { return slice.key; }), ["client:10"], "one slice shown");
+    t.equal(data.other.slices.map(function (slice) { return [slice.key, slice.client.id, slice.value]; }),
+      [["client:11", 11, 700]], "the folded client, as a slice");
+    t.equal([data.other.members, data.other.volume.bytes], [1, data.other.slices[0].volume.bytes],
+      "the folded slices make Other");
+    data.rings.forEach(function (ring) {
+      t.equal(ring.other.slices.length, ring.other.members, "the " + ring.direction + " ring's Other names its members");
+    });
+    var all = t.widget("traffic_composition", { group_by: "client" }).body.data;
+    t.equal([all.other.members, all.other.slices], [0, []], "nothing folded, nothing named");
+  });

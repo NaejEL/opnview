@@ -54,6 +54,10 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 		// The unbound plugin's push-fed provider of its query log, whose pass reads the push hub and
 		// never the firewall, refreshing its availability every minute (docs/plugins.md, "Push sources").
 		"unbound_query_log unbound": time.Minute,
+		// The pf_states plugin's provider of the rate by protocol and port, at its declared 60 s: each
+		// pass reads the pf state table once and stores the difference from the previous read (row 4 of
+		// docs/widget-api.md, "Coverage of the mockup").
+		"pf_state_rate pf_states": time.Minute,
 		// The active flow_record provider's capture configuration, every minute by default: the longest a
 		// changed configuration goes unseen (PS18 of the NetFlow join amendment).
 		"NetFlow capture configuration": settings.FlowRecordInterval,

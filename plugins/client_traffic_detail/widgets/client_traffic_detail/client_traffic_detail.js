@@ -14,6 +14,13 @@ function direction(bytes, packets, state, leg) {
   return { bytes: bytes, packets: packets, state: state, measured_at_leg: leg };
 }
 
+// peerRates lists a map of rates by peer address as [{peer, rate}], by address in byte order.
+function peerRates(host, byPeer) {
+  return Object.keys(byPeer).sort(host.figures.compare).map(function (peer) {
+    return { peer: peer, rate: byPeer[peer] };
+  });
+}
+
 exports.widget = {
   serve: function (host) {
     var ids = host.refs.ids("client");
@@ -40,6 +47,10 @@ exports.widget = {
       client: info,
       // The client's latest sampled rate, or its named absence.
       current_rate: host.rates.client(clientId),
+      // The client's latest sampled rate with each peer it was read with (row 24 of the mockup's
+      // coverage): what the share per destination is drawn against now, keyed by the address a
+      // record's destination carries. A peer with no current reading is absent, never a rate of 0.
+      current_rate_by_peer: peerRates(host, host.rates.clientPeers(clientId)),
       leases: host.query.rows("widget_client_traffic_detail_leases", { client_id: clientId }).map(function (row) {
         return {
           provider_kind: row.provider_kind,

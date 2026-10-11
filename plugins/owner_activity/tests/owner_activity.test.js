@@ -90,3 +90,56 @@ test("an installation where nobody created a person answers no_owner_exists", fu
   var answer = t.widget("owner_activity");
   t.equal(answer.condition, "no_owner_exists", "the condition");
 });
+
+// sample stores one baseline reading of the measurement_sample kind, as the insight plugin does.
+function sample(t, id, kind, key, measure, value, at) {
+  t.sql("INSERT INTO measurement_sample (id, subject_kind, subject_key, measure, unit, value, sampled_at) " +
+    "VALUES (:id, :kind, :key, :measure, 'bit_per_second', :value, :at)",
+    { id: id, kind: kind, key: key, measure: measure, value: value, at: at });
+}
+
+// sampled adds, to the seed, the inside network of the interface and a current reading of the
+// person's two machines: client 10 receives 4000 bit/s and sends 1000, client 13 receives 2000 and
+// sends 500.
+function sampled(t) {
+  seed(t);
+  t.sql("INSERT INTO interface_network (id, interface_id, network_address, prefix_length, address_family, " +
+    "origin, updated_at) VALUES (1, 1, '192.0.2.0', 24, 4, 'operator', :at)", { at: AT - 600 });
+  var at = AT - 30;
+  sample(t, 1, "interface_endpoint", "vlan0.10 192.0.2.10", "rate_bits_in", 4000, at);
+  sample(t, 2, "interface_endpoint", "vlan0.10 192.0.2.10", "rate_bits_out", 1000, at);
+  sample(t, 3, "interface_endpoint", "vlan0.10 192.0.2.13", "rate_bits_in", 2000, at);
+  sample(t, 4, "interface_endpoint", "vlan0.10 192.0.2.13", "rate_bits_out", 500, at);
+}
+
+test("a person's card carries their rate now and their interfaces, over every machine", function (t) {
+  sampled(t);
+  var card = t.widget("owner_activity", { show_timeline: false }).body.data.cards[0];
+  t.equal([card.current_rate.state, card.current_rate.measure, card.current_rate.in_bits_per_second,
+    card.current_rate.out_bits_per_second, card.current_rate.out_measured, card.current_rate.lower_bound],
+  ["current", "sampled", 6000, 1500, true, true], "the sum of the two machines' rates");
+  t.equal([card.current_rate.sampled_at, card.current_rate_clients], [AT - 30, 2], "when, and over how many");
+  t.equal(card.interfaces, [1], "the interface the machines are on");
+});
+
+test("the machines folded past clients_per_card are listed, and still count in the person's rate",
+  function (t) {
+    sampled(t);
+    var card = t.widget("owner_activity", { show_timeline: false, clients_per_card: 1 }).body.data.cards[0];
+    t.equal(card.chips.map(function (chip) { return chip.client.id; }), [10], "one chip shown");
+    var rest = card.chip_remainder;
+    t.equal(rest.chips.map(function (chip) { return [chip.client.id, chip.state, chip.current_rate.in_bits_per_second]; }),
+      [[13, "no_data_in_period", 2000]], "the folded machine, as a chip, with its rate");
+    t.equal([rest.members, rest.current_rate.in_bits_per_second], [1, 2000], "the folded machines' rate together");
+    t.equal(card.current_rate.in_bits_per_second, 6000, "the person's rate counts the folded machine");
+    t.equal(card.interfaces, [1], "and so does the interface list");
+  });
+
+test("a person none of whose machines holds a current sample reads the named absence, never 0", function (t) {
+  seed(t);
+  var card = t.widget("owner_activity", { show_timeline: false }).body.data.cards[0];
+  t.equal([card.current_rate.state, card.current_rate.in_bits_per_second, card.current_rate_clients],
+    ["no_current_sample", null, 0], "no rate");
+  t.equal([card.chip_remainder.chips, card.chip_remainder.current_rate.state], [[], "no_current_sample"],
+    "nothing folded");
+});

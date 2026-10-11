@@ -150,6 +150,17 @@ type CurrentRates struct {
 	ByOwner map[int64]CurrentRate
 	// ByDirection is per traffic direction: outbound, inbound or inter_interface.
 	ByDirection map[string]CurrentRate
+	// ByPeer is per peer address: the per-pair readings (interface_endpoint_pair) of every
+	// inside local address that peer was read with. Its inbound figure is what the peer sent to
+	// those local addresses; its outbound figure what they sent to it, measured only for a local
+	// address read with that one peer (traffic/top reports a local address's sending only as its
+	// total over every peer), so OutMeasured is false whenever one of the pairs summed carried no
+	// outbound figure. A pair whose local end is outside -- the firewall's own upstream address,
+	// the same conversation read again after NAT -- is not summed.
+	ByPeer map[string]CurrentRate
+	// ByClientPeer is the same per client id, then per peer address: one client's current rate
+	// with each peer it was read with.
+	ByClientPeer map[int64]map[string]CurrentRate
 	// OutboundUnsplit is the outbound rate of the inside local addresses whose peers
 	// lie both outside and behind an interface. traffic/top reports a local
 	// address's sending only as its total over every peer, so that total cannot be
@@ -163,6 +174,7 @@ func newCurrentRates() CurrentRates {
 	return CurrentRates{
 		ByClient: map[int64]CurrentRate{}, ByDevice: map[string]CurrentRate{},
 		ByOwner: map[int64]CurrentRate{}, ByDirection: map[string]CurrentRate{},
+		ByPeer: map[string]CurrentRate{}, ByClientPeer: map[int64]map[string]CurrentRate{},
 	}
 }
 
@@ -177,9 +189,11 @@ type endpointReading struct {
 // pairReading is the latest reading of one interface endpoint pair.
 type pairReading struct {
 	device, local, peer string
-	in                  *float64
-	sampledAt           int64
-	cadence             int64
+	// in is what the peer sent to the local address; out what the local address sent to the
+	// peer, read only when the local address had that one peer.
+	in, out   *float64
+	sampledAt int64
+	cadence   int64
 }
 
 // rateRow is one row of read_pair_rates.
@@ -257,8 +271,11 @@ func latestReadings(rows []rateRow) (map[string]*endpointReading, map[string]*pa
 			} else if row.sampledAt < reading.sampledAt {
 				continue
 			}
-			if Measure(row.measure) == MeasureRateBitsIn {
+			switch Measure(row.measure) {
+			case MeasureRateBitsIn:
 				reading.in = &figure
+			case MeasureRateBitsOut:
+				reading.out = &figure
 			}
 		}
 	}
@@ -379,6 +396,9 @@ func (r *rateSplitter) split(ctx context.Context, endpoints map[string]*endpoint
 		if !withClients {
 			continue
 		}
+		for _, pair := range peers {
+			addPairRate(result.ByPeer, pair.peer, pair)
+		}
 		clientID, found, err := queryOptionalInt(ctx, r.store.reader, "client_identity_at_address",
 			map[string]any{"address": endpoint.local})
 		if err != nil {
@@ -394,6 +414,12 @@ func (r *rateSplitter) split(ctx context.Context, endpoints map[string]*endpoint
 			continue
 		}
 		addRate(result.ByClient, clientID, in, endpoint.out, endpoint.sampledAt, endpoint.cadence)
+		if len(peers) > 0 && result.ByClientPeer[clientID] == nil {
+			result.ByClientPeer[clientID] = map[string]CurrentRate{}
+		}
+		for _, pair := range peers {
+			addPairRate(result.ByClientPeer[clientID], pair.peer, pair)
+		}
 		ownerKey, _, err := queryOptionalInt(ctx, r.store.reader, "read_client_owner",
 			map[string]any{"client_id": clientID})
 		if err != nil {
@@ -483,6 +509,19 @@ func addRate[K comparable](rates map[K]CurrentRate, key K, in float64, out *floa
 	rate := rates[key]
 	rate.add(in, out, sampledAt, cadence)
 	rates[key] = rate
+}
+
+// addPairRate adds one per-pair reading under a peer: its inbound figure, and its outbound one
+// or the record that it carried none. A pair with neither figure adds nothing.
+func addPairRate(rates map[string]CurrentRate, peer string, pair *pairReading) {
+	if pair.in == nil && pair.out == nil {
+		return
+	}
+	in := 0.0
+	if pair.in != nil {
+		in = *pair.in
+	}
+	addRate(rates, peer, in, pair.out, pair.sampledAt, pair.cadence)
 }
 
 // ClientRateState says whether a client has a current rate.

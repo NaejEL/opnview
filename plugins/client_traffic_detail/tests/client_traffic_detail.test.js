@@ -75,3 +75,36 @@ test("action and limit filter the records, and the remainder carries what limit 
   t.equal(limited.records.length, 1, "one record");
   t.equal([limited.remainder.members, limited.remainder.count.value], [2, 1400], "the two older records");
 });
+
+// sample stores one baseline reading of the measurement_sample kind, as the insight plugin does.
+function sample(t, id, kind, key, measure, value, at) {
+  t.sql("INSERT INTO measurement_sample (id, subject_kind, subject_key, measure, unit, value, sampled_at) " +
+    "VALUES (:id, :kind, :key, :measure, 'bit_per_second', :value, :at)",
+    { id: id, kind: kind, key: key, measure: measure, value: value, at: at });
+}
+
+test("the client's current rate per peer, keyed by the address its records name", function (t) {
+  seed(t);
+  t.sql("INSERT INTO interface_network (id, interface_id, network_address, prefix_length, address_family, " +
+    "origin, updated_at) VALUES (1, 1, '192.0.2.0', 24, 4, 'operator', :at)", { at: AT - 600 });
+  var at = AT - 30;
+  // The client was read with two peers: their per-pair inbound figures, and no outbound one --
+  // traffic/top reports a local address's sending only as its total over every peer.
+  sample(t, 1, "interface_endpoint", "vlan0.10 192.0.2.10", "rate_bits_in", 5000, at);
+  sample(t, 2, "interface_endpoint", "vlan0.10 192.0.2.10", "rate_bits_out", 800, at);
+  sample(t, 3, "interface_endpoint_pair", "vlan0.10 192.0.2.10 203.0.113.7", "rate_bits_in", 4000, at);
+  sample(t, 4, "interface_endpoint_pair", "vlan0.10 192.0.2.10 198.51.100.20", "rate_bits_in", 1000, at);
+  var data = t.widget("client_traffic_detail", { client: CLIENT }).body.data;
+  t.equal(data.current_rate_by_peer.map(function (entry) {
+    return [entry.peer, entry.rate.state, entry.rate.in_bits_per_second, entry.rate.out_bits_per_second,
+      entry.rate.out_measured];
+  }), [["198.51.100.20", "current", 1000, null, false], ["203.0.113.7", "current", 4000, null, false]],
+  "each peer's rate, its sending not split per peer");
+  t.equal(data.records[0].destination, "203.0.113.7", "a record names the peer its rate is keyed by");
+  t.equal(data.current_rate.in_bits_per_second, 5000, "the client's own rate is unchanged");
+});
+
+test("a client with no current per-pair reading has no peer rate, not a rate of 0", function (t) {
+  seed(t);
+  t.equal(t.widget("client_traffic_detail", { client: CLIENT }).body.data.current_rate_by_peer, [], "no peer");
+});

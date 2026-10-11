@@ -42,6 +42,74 @@ function connections(figures) {
   return figures.allowed_connections + figures.blocked_connections + figures.unknown_connections;
 }
 
+// STALE is the state of a rate older than twice its cadence (host.rates): its figures are served
+// beside it.
+var STALE = "stale_sample";
+
+// sumRates is the current rate of several machines together: the sum of the rates of those holding
+// a current sample, in the shape every rate has. Each figure is a lower bound, so their sum is one.
+// The outbound figure is summed only when every rate summed measured it, as the core sums a
+// client's local addresses; the newest reading's instant and the coarsest cadence are kept, and the
+// sum is stale when any rate summed is. With no rate to sum it is the named absence, never 0.
+function sumRates(host, rates) {
+  var none = host.rates.none();
+  var present = rates.filter(function (rate) { return rate.state !== none.state; });
+  if (present.length === 0) {
+    return none;
+  }
+  var sum = {
+    state: "current",
+    measure: present[0].measure,
+    in_bits_per_second: 0,
+    out_bits_per_second: 0,
+    out_measured: true,
+    sampled_at: null,
+    span_seconds: null,
+    cadence_seconds: null,
+    lower_bound: true
+  };
+  present.forEach(function (rate) {
+    if (rate.state === STALE) {
+      sum.state = STALE;
+    }
+    sum.in_bits_per_second += rate.in_bits_per_second;
+    if (rate.out_measured) {
+      sum.out_bits_per_second += rate.out_bits_per_second;
+    } else {
+      sum.out_measured = false;
+    }
+    ["sampled_at", "span_seconds", "cadence_seconds"].forEach(function (key) {
+      if (rate[key] !== null && (sum[key] === null || rate[key] > sum[key])) {
+        sum[key] = rate[key];
+      }
+    });
+  });
+  if (!sum.out_measured) {
+    sum.out_bits_per_second = null;
+  }
+  return sum;
+}
+
+// interfaceIds is the interfaces a list of chips' machines are on, ascending, each once.
+function interfaceIds(chips) {
+  var seen = {};
+  var ids = [];
+  chips.forEach(function (chip) {
+    var id = chip.client.interface_id;
+    if (id !== null && !seen[id]) {
+      seen[id] = true;
+      ids.push(id);
+    }
+  });
+  return ids.sort(function (a, b) { return a - b; });
+}
+
+// sampledCount is how many chips hold a current rate: the machines a summed rate covers.
+function sampledCount(host, chips) {
+  var none = host.rates.none();
+  return chips.filter(function (chip) { return chip.current_rate.state !== none.state; }).length;
+}
+
 exports.widget = {
   serve: function (host) {
     var owners = host.installation.owners();
@@ -97,6 +165,12 @@ exports.widget = {
         value: 0,
         volume: null,
         machines: 0,
+        // The person's rate now and the interfaces their machines are on, over every machine of
+        // the card, those folded past clients_per_card included (rows 18 and E7 of the mockup's
+        // coverage); current_rate_clients counts the machines whose rate is summed.
+        current_rate: null,
+        current_rate_clients: 0,
+        interfaces: [],
         chips: [],
         chip_remainder: null,
         timeline: undefined
@@ -126,17 +200,26 @@ exports.widget = {
       });
       var restMembers = 0;
       var rest = host.figures.zero();
+      var folded = [];
       chips.forEach(function (chip, index) {
         if (index < limit) {
           card.chips.push(chip);
           return;
         }
         restMembers++;
+        folded.push(chip);
         if (chip.volume !== null) {
           rest = host.figures.add(rest, chip.volume);
         }
       });
+      card.current_rate = sumRates(host, chips.map(function (chip) { return chip.current_rate; }));
+      card.current_rate_clients = sampledCount(host, chips);
+      card.interfaces = interfaceIds(chips);
       card.chip_remainder = host.figures.remainder(restMembers, rest, null);
+      // The machines folded past clients_per_card, each the chip it would have been, in the same
+      // order, with their rate together: what a person's detail lists for every machine.
+      card.chip_remainder.current_rate = sumRates(host, folded.map(function (chip) { return chip.current_rate; }));
+      card.chip_remainder.chips = folded;
       card.volume = host.figures.volume(figures);
       card.value = host.figures.value(measure, figures);
       return card;

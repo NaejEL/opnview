@@ -1,0 +1,59 @@
+{
+  "api_version": 1,
+  "name": "pf_states",
+  "version": "1.0.0",
+  "display_name": "pf state table rates",
+  "description": "Reads the pf state table (Firewall > Diagnostics > States) at a cadence and stores the current rate by protocol and destination port: the bytes each state carried between two reads, over the seconds between them. A second measure, sampled, never summed with the logged volume.",
+  "script": "pf_states.js",
+  "endpoints": [
+    {
+      "name": "query_states",
+      "path": "/api/diagnostics/firewall/query_states",
+      "method": "POST",
+      "body": "form",
+      "corrections": {"nature": "snapshot", "key": ["id"], "parameters": {"current": "page", "rowCount": "page_size"}},
+      "survey_section": "Live rate endpoints, read from source for C3 (backend completion)",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/FirewallController.php",
+      "note": "Read action (queryStatesAction): configd 'filter list states', list_states.py over lib/states.py's query_states, which runs /sbin/pfctl -vvs state. Every call walks the whole state table whatever page is asked. Answers {rows, rowCount, total, current}; each row carries id (state id/creator id), iface, proto, direction (in|out), src_addr, src_port, dst_addr, dst_port, nat_addr, nat_port, state, age (hh:mm:ss), expires, label, and pkts and bytes as cumulative [0, 1] pairs since the state was created: [0] counts the packets in the state's own direction, from the initiator, [1] the reverse (pf.c, s->bytes[s_dir_rev])."
+    }
+  ],
+  "settings": [
+    {
+      "key": "max_states",
+      "type": "integer",
+      "default": 50000,
+      "min": 1000,
+      "max": 1000000,
+      "label": "plugin.pf_states.setting.max_states"
+    }
+  ],
+  "providers": [
+    {
+      "kind": "pf_state_rate",
+      "display_name": "pf state table",
+      "read_strategy": "full_reread",
+      "cadence_seconds": 60,
+      "min_cadence_seconds": 10
+    }
+  ],
+  "tables": [
+    {
+      "name": "rate",
+      "nature": "sample",
+      "columns": [
+        {"name": "sampled_at", "type": "integer", "role": "time"},
+        {"name": "span_seconds", "type": "integer"},
+        {"name": "interface_device", "type": "text"},
+        {"name": "direction", "type": "text"},
+        {"name": "protocol", "type": "text"},
+        {"name": "port", "type": "integer", "nullable": true},
+        {"name": "forward_bits_per_second", "type": "real", "role": "measure", "unit": "bit_per_second"},
+        {"name": "reverse_bits_per_second", "type": "real", "role": "measure", "unit": "bit_per_second"},
+        {"name": "bits_per_second", "type": "real", "role": "measure", "unit": "bit_per_second"},
+        {"name": "states", "type": "integer", "role": "measure", "unit": "state"}
+      ],
+      "indexes": [{"columns": ["protocol", "port", "sampled_at"]}],
+      "retention": {"column": "sampled_at", "seconds": 604800}
+    }
+  ]
+}

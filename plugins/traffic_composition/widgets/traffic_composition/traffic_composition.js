@@ -125,26 +125,32 @@ function ring(host, members, measure, limit) {
     return host.figures.compare(a.key, b.key);
   });
   var slices = [];
+  var folded = [];
   var otherMembers = 0;
   var otherSum = host.figures.zero();
   ranked.forEach(function (member, index) {
+    // A copy, so a slice shared by the whole and by a ring keeps each one's own figures.
+    var slice = JSON.parse(JSON.stringify(parts[member.key]));
+    slice.key = member.key;
+    slice.value = member.value;
+    slice.volume = host.figures.volume(sums[member.key]);
     if (index < limit) {
-      // A copy, so a slice shared by the whole and by a ring keeps each one's own figures.
-      var slice = JSON.parse(JSON.stringify(parts[member.key]));
-      slice.key = member.key;
-      slice.value = member.value;
-      slice.volume = host.figures.volume(sums[member.key]);
       slices.push(slice);
       return;
     }
+    folded.push(slice);
     otherMembers++;
     otherSum = host.figures.add(otherSum, sums[member.key]);
   });
+  // Other is always returned, so the slices and it make the whole; whether it is drawn is
+  // show_other's, which is rendering-only (a truncation is never silent, A8). It names the members
+  // it folds, each the slice it would have been, in the same order (row E8 of the mockup's
+  // coverage): what a slice's detail lists as Other's make-up.
+  var other = host.figures.remainder(otherMembers, otherSum, null);
+  other.slices = folded;
   return {
     slices: slices,
-    // Other is always returned, so the slices and it make the whole; whether it is drawn is
-    // show_other's, which is rendering-only (a truncation is never silent, A8).
-    other: host.figures.remainder(otherMembers, otherSum, null),
+    other: other,
     total: host.figures.volume(total)
   };
 }
