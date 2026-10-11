@@ -162,119 +162,30 @@ type target struct {
 	partner *int64
 }
 
+// PairingChunkSeconds bounds how much history one pairing transaction reads (B8b of
+// specs/SPEC-step-5b-widget-api.md).
+//
+// WHY A BOUND. A reclassification of everything places every stored address again,
+// and the records it moves can span the whole retained history; one Pair over that
+// span read every `out` record of it into memory inside ONE transaction, holding the
+// database's single connection -- and with it every collector's write -- for as long
+// as the history is long. In chunks, each transaction reads and writes one bounded
+// stretch, and the collectors' writes interleave between them.
+//
+// WHY AN HOUR. It is the finest aggregate slot (store.PeriodHour), the unit the
+// refresh already works in, so a chunk never holds more records than the busiest
+// hour the firewall logged; and a pass over a few minutes of new records -- the
+// collectors' everyday case -- stays one chunk, decided and written in one transaction
+// exactly as before. It is a constant rather than a setting because it changes how the
+// work is cut and never what is decided: the result is identical whatever its value,
+// which a test asserts.
+const PairingChunkSeconds = int64(3600)
+
 // Pair decides the pairing of every `out` record observed in [from - window,
 // to + window] and of the `in` records they can pair with, and records what changed.
+// A span longer than PairingChunkSeconds is decided and written in chunks of it.
 func (s *Store) Pair(ctx context.Context, from, to, window int64) (Pairing, error) {
-	var result Pairing
-	if window < 0 {
-		return result, fmt.Errorf("store: the pairing window must be 0 or more seconds, got %d", window)
-	}
-	if to < from {
-		return result, nil
-	}
-	transaction, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return result, fmt.Errorf("store: starting a pairing: %w", err)
-	}
-	defer func() { _ = transaction.Rollback() }()
-	// The same statements run once per record, so each is prepared once (exec.go).
-	prepared := newPreparedTx(transaction)
-
-	upstream, err := upstreamDevices(ctx, prepared)
-	if err != nil {
-		return result, err
-	}
-	outs, err := pairRecords(ctx, prepared, "pairing_out_records",
-		map[string]any{"from": from - window, "to": to + window})
-	if err != nil {
-		return result, err
-	}
-
-	// What each `out` record should be paired with: its only candidate, when that
-	// candidate's only candidate is it.
-	desired := map[int64]int64{}
-	inverse := map[int64]int64{}
-	for _, out := range outs {
-		ins, err := queryInts(ctx, prepared, "pairing_in_candidates", out.parameters(window))
-		if err != nil {
-			return result, err
-		}
-		if len(ins) != 1 {
-			continue
-		}
-		in, err := pairRecordByID(ctx, prepared, ins[0])
-		if err != nil {
-			return result, err
-		}
-		back, err := queryInts(ctx, prepared, "pairing_out_candidates", in.parameters(window))
-		if err != nil {
-			return result, err
-		}
-		if len(back) == 1 && back[0] == out.id {
-			desired[out.id] = in.id
-			inverse[in.id] = out.id
-		}
-	}
-
-	targets := map[int64]target{}
-	order := []int64{}
-	set := func(id int64, outcome *string, partner *int64) {
-		if _, present := targets[id]; !present {
-			order = append(order, id)
-		}
-		targets[id] = target{outcome: outcome, partner: partner}
-	}
-	first, second := PairFirstLeg, PairSecondLeg
-	for _, out := range outs {
-		// A partner this record no longer has is cleared, unless another record of
-		// the window now pairs with it.
-		if out.outcome.Valid && out.outcome.String == PairSecondLeg && out.partner.Valid {
-			previous := out.partner.Int64
-			if desired[out.id] != previous {
-				if _, taken := inverse[previous]; !taken {
-					set(previous, nil, nil)
-				}
-			}
-		}
-		if in, paired := desired[out.id]; paired {
-			partner := in
-			set(out.id, &second, &partner)
-			continue
-		}
-		if out.srcFirewall == 1 && upstream[out.device] {
-			outcome := PairNotPaired
-			set(out.id, &outcome, nil)
-			continue
-		}
-		set(out.id, nil, nil)
-	}
-	for in, out := range inverse {
-		partner := out
-		set(in, &first, &partner)
-	}
-	result.Pairs = len(desired)
-
-	// Clearing first, then writing, so a record handed from one partner to another
-	// in one pass never transiently names two.
-	for _, phase := range []bool{true, false} {
-		for _, id := range order {
-			wanted := targets[id]
-			if (wanted.outcome == nil) != phase {
-				continue
-			}
-			instants, err := queryInts(ctx, prepared, "pairing_record", map[string]any{
-				"flow_id": id, "outcome": optionalText(wanted.outcome), "partner": optional(wanted.partner),
-			})
-			if err != nil {
-				return result, err
-			}
-			result.FlowInstants = append(result.FlowInstants, instants...)
-		}
-	}
-	if err := transaction.Commit(); err != nil {
-		return result, fmt.Errorf("store: committing a pairing: %w", err)
-	}
-	return result, nil
+	return s.pairInChunks(ctx, from, to, window, PairingChunkSeconds)
 }
 
 // optionalText renders a nullable text as a bindable value.

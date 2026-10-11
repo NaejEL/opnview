@@ -13,7 +13,9 @@
 #      package under the race detector, and every moved test;
 #   3. ci/budget-self-test.sh, the test budget's own check;
 #   4. sql/schema-checks.sh: the schema, the seeds at 100 000 and 1 000 000 flow
-#      rows, the screen queries and their query plans.
+#      rows, the screen queries and their query plans;
+#   5. the wall time of ReclassifyEverything at the 1 000 000-row seed, under the
+#      `reclassifycost` build tag, printed and recorded in docs/data-model.md.
 #
 # The everyday suite is `docker compose run --rm checks`. A test moved out of it
 # carries the `predeployment` build tag and says why in a comment beside it; the
@@ -52,6 +54,16 @@ report 'ci/budget-self-test.sh' "$?"
 printf -- '== sql/schema-checks.sh\n'
 bash "$REPO_ROOT/sql/schema-checks.sh"
 report 'sql/schema-checks.sh' "$?"
+
+# The cost of ReclassifyEverything at the million-row seed (B8h of
+# specs/SPEC-step-5b-widget-api.md): measured and printed, with no budget (decision
+# 17). Its own build tag rather than `predeployment`, so it runs without -race: a
+# race-instrumented run would measure the race detector.
+printf -- '== go test -tags reclassifycost (ReclassifyEverything at 1 000 000 rows)\n'
+go test -count=1 -timeout 60m -tags reclassifycost -v \
+    -run '^TestReclassifyEverythingWallTimeAtTheMillionRowSeed$' ./internal/collect/ |
+    grep -E '^(reclassify-cost:|--- |ok|FAIL)'
+report 'go test -tags reclassifycost' "${PIPESTATUS[0]}"
 
 elapsed=$(( $(date +%s) - started ))
 printf -- '-- pre-deployment wall time: %d s on %s CPUs\n' "$elapsed" "$(nproc)"

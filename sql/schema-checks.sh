@@ -548,6 +548,9 @@ resolve_scans() {
         if [ -z "$table" ]; then
             table="$token"
         fi
+        # classified_flow is a view over flow alone, which the screen queries read
+        # since B8c of specs/SPEC-step-5b-widget-api.md: a scan of it IS a scan of flow.
+        [ "$table" = 'classified_flow' ] && table='flow'
         printf -- '%s\n' "$table"
     done
 }
@@ -609,18 +612,53 @@ demo_index_drop "$WORK/screens/07_Map.sql" 'Map' 'uq_volume_aggregate_24h_slot' 
 check_ge 'C5A-AC9 the seed holds rejects and unknown decisions to tell the rule apart' 2 \
     "$(q "$MAIN_DB" "SELECT (SELECT count(*) > 0 FROM flow WHERE action = 'reject')
         + (SELECT count(*) > 0 FROM flow WHERE action = 'unknown');")"
+# Restated by B8c of specs/SPEC-step-5b-widget-api.md: the direct counts leave out the
+# second legs, as the screen queries now do, and the Matrix keeps the row of what came
+# from outside or from this firewall.
 check 'C5A-AC9 the Overview counts every reject as blocked and every pass, and only those, as allowed' \
     "$(q "$MAIN_DB" "SELECT sum(CASE WHEN action IN ('block', 'reject') THEN 1 ELSE 0 END) || '|' ||
-        sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) FROM flow
-        WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END;")" \
+        sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) FROM classified_flow
+        WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND exit_leg_device IS NULL;")" \
     "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
         "SELECT sum(blocked_count) || '|' || sum(allowed_count) FROM (" ');')")"
 check 'C5A-AC9 the Matrix counts every reject as blocked and no unknown as allowed' \
     "$(q "$MAIN_DB" "SELECT sum(CASE WHEN action IN ('block', 'reject') THEN 1 ELSE 0 END) || '|' ||
-        sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) FROM flow
-        WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND src_interface_id IS NOT NULL;")" \
+        sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) FROM classified_flow
+        WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND exit_leg_device IS NULL;")" \
     "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/02_Matrix.sql" \
         "SELECT sum(blocked_connections) || '|' || sum(allowed_connections) FROM (" ');')")"
+
+# S5B-AC30 (B8c of specs/SPEC-step-5b-widget-api.md): a paired connection counts once
+# in the screen queries. The Overview and Matrix byte totals and connection counts equal
+# what store.ReadVolumeWindow's Total sums over the same window -- every classified_flow
+# row whose exit_leg_device is NULL -- on a seed that holds paired connections in the
+# window, so a query that still counted a second leg would differ by its bytes.
+check_ge 'S5B-AC30 the screen window holds second legs, so the totals below have teeth' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE pair_outcome = 'second_leg'
+        AND observed_at >= $WINDOW_START AND observed_at < $WINDOW_END;")"
+SCREEN_TOTAL="$(q "$MAIN_DB" "SELECT sum(packet_bytes) || '|' || count(*) FROM classified_flow
+    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND exit_leg_device IS NULL;")"
+check 'S5B-AC30 the Overview total equals the volume-window total, second legs counted once' \
+    "$SCREEN_TOTAL" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
+        "SELECT sum(observed_bytes) || '|' || sum(flow_count) FROM (" ');')")"
+check 'S5B-AC30 the Matrix total equals the volume-window total, second legs counted once' \
+    "$SCREEN_TOTAL" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/02_Matrix.sql" \
+        "SELECT sum(observed_bytes) || '|' ||
+                (sum(allowed_connections) + sum(blocked_connections)
+                 + (SELECT count(*) FROM classified_flow WHERE action = 'unknown'
+                    AND observed_at >= $WINDOW_START AND observed_at < $WINDOW_END
+                    AND exit_leg_device IS NULL)) FROM (" ');')")"
+check 'S5B-AC30 the Map reads no second leg of the 24 h aggregate' \
+    "$(q "$MAIN_DB" "SELECT sum(v.bytes) FROM volume_aggregate_24h AS v
+        JOIN geo_asn AS g ON g.address = v.peer_address
+        WHERE v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END
+          AND v.exit_leg_device IS NULL;")" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/07_Map.sql" \
+        'SELECT sum(observed_bytes) FROM (' ');')")"
+# And live_paired_counted_twice stays 0: asserted on both seeds below, under LC-AC11,
+# where the diagnostic queries are split.
 check 'C5A-AC9 blocked_event holds every block and every reject, and nothing else' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE action IN ('block', 'reject');")|0" \
     "$(q "$MAIN_DB" "SELECT count(*) FROM blocked_event;")|$(q "$MAIN_DB" \
@@ -1213,22 +1251,25 @@ family_both 'Client' "$WORK/screens/04_Client.sql" 'dst_address'
 family_both 'Blocked' "$WORK/screens/05_Blocked.sql" 'src_address'
 family_both 'Alerts' "$WORK/screens/06_Alerts.sql" 'src_address'
 
-WINDOW_FLOWS="$(q "$MAIN_DB" "SELECT count(*) FROM flow
-    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END;")"
-WINDOW_FLOWS_V6="$(q "$MAIN_DB" "SELECT count(*) FROM flow
-    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND ip_version = 6;")"
+# Restated by B8c of specs/SPEC-step-5b-widget-api.md: every connection once -- the
+# second legs left out -- and, for the Matrix, every source, the outside one included.
+WINDOW_FLOWS="$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
+    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND exit_leg_device IS NULL;")"
+WINDOW_FLOWS_V6="$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
+    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND exit_leg_device IS NULL
+      AND ip_version = 6;")"
 check_ge 'V6-AC3 the Overview window holds flows of both families to count' 1 "$WINDOW_FLOWS_V6"
-check 'V6-AC3 the Overview query counts every flow in the window, both families included' \
+check 'V6-AC3 the Overview query counts every connection in the window once, both families included' \
     "$WINDOW_FLOWS" \
     "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
         'SELECT sum(flow_count) FROM (' ');')")"
 
-WINDOW_BYTES="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM flow
+WINDOW_BYTES="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM classified_flow
     WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END
-      AND src_interface_id IS NOT NULL;")"
-WINDOW_BYTES_V6="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM flow
+      AND exit_leg_device IS NULL;")"
+WINDOW_BYTES_V6="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM classified_flow
     WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END
-      AND src_interface_id IS NOT NULL AND ip_version = 6;")"
+      AND exit_leg_device IS NULL AND ip_version = 6;")"
 check_ge 'V6-AC3 the Matrix window holds IPv6 bytes to sum' 1 "$WINDOW_BYTES_V6"
 check 'V6-AC3 the Matrix query sums every byte in the window, both families included' \
     "$WINDOW_BYTES" \
@@ -1237,11 +1278,12 @@ check 'V6-AC3 the Matrix query sums every byte in the window, both families incl
 
 MAP_BYTES="$(q "$MAIN_DB" "SELECT sum(v.bytes) FROM volume_aggregate_24h AS v
     JOIN geo_asn AS g ON g.address = v.peer_address
-    WHERE v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END;")"
+    WHERE v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END
+      AND v.exit_leg_device IS NULL;")"
 MAP_BYTES_V6="$(q "$MAIN_DB" "SELECT sum(v.bytes) FROM volume_aggregate_24h AS v
     JOIN geo_asn AS g ON g.address = v.peer_address
     WHERE v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END
-      AND v.peer_address LIKE '%:%';")"
+      AND v.exit_leg_device IS NULL AND v.peer_address LIKE '%:%';")"
 check_ge 'V6-AC3 the Map window reaches IPv6 destinations' 1 "$MAP_BYTES_V6"
 check 'V6-AC3 the Map query sums every enriched destination, both families included' \
     "$MAP_BYTES" \
@@ -3234,6 +3276,30 @@ check_ge 'S5A-AC35 every statement and every period of every template was planne
 check 'S5A-AC35 every statement plans against the schema' '' "$UNPLANNABLE"
 check 'S5A-AC35 no derivation or read statement scans a growing table, at either seed size' \
     '' "$SCANNING"
+# B2 of specs/SPEC-step-5b-widget-api.md (AC22): the exact attribution's search for
+# the lookups of one name by one client is bounded by name AND client on both
+# branches of its client predicate -- by client_id, and by the address -- at both
+# seed sizes, and not by the name alone.
+for db in "$MAIN_DB" "$SCALE_DB"; do
+    tag="$(basename "$db" .db)"
+    plan_statement "$db" "$WORK/statements/attribution_name_lookups.sql" > "$WORK/stmt_plan.txt" 2>&1
+    check "S5B-AC22 $tag: the client_id branch searches by name and client_id" 1 \
+        "$(grep -cE 'SEARCH r USING INDEX idx_dns_resolution_name_client_id \(<expr>=\? AND client_id=\? AND looked_up_at>\? AND looked_up_at<\?\)' \
+            "$WORK/stmt_plan.txt")"
+    check "S5B-AC22 $tag: the address branch searches by name and client_address" 1 \
+        "$(grep -cE 'SEARCH a USING INDEX idx_dns_resolution_name_client_address \(<expr>=\? AND client_address=\? AND looked_up_at>\? AND looked_up_at<\?\)' \
+            "$WORK/stmt_plan.txt")"
+done
+# B8a (AC28): the seed fills rule.destination_net at every size, and leaves it NULL --
+# not reported -- on some rules, as the endpoint may.
+for db in "$MAIN_DB" "$ALT_DB" "$SCALE_DB"; do
+    tag="$(basename "$db" .db)"
+    check_ge "S5B-AC28 $tag: the seed stores destination_net on rules" 1 \
+        "$(q "$db" "SELECT count(*) FROM rule WHERE destination_net IS NOT NULL;")"
+    check_ge "S5B-AC28 $tag: the seed leaves destination_net unreported on some rules" 1 \
+        "$(q "$db" "SELECT count(*) FROM rule WHERE destination_net IS NULL;")"
+done
+
 # And the check has teeth: a statement that does scan flow is caught, through an
 # alias and through the view.
 printf -- 'SELECT count(*) FROM classified_flow AS z WHERE z.packet_bytes > 0;\n' \

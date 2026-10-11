@@ -308,7 +308,7 @@ WITH RECURSIVE counter (n) AS (
     SELECT n + 1 FROM counter WHERE n < :rules
 )
 INSERT INTO rule (id, pf_label, description, action, direction, interface, legacy,
-                  logs_matches, is_automatic, discovered_at)
+                  logs_matches, is_automatic, discovered_at, destination_net)
 SELECT
     n,
     printf('rule-label-%d', n),
@@ -331,7 +331,15 @@ SELECT
     -- source that did not report the flag at all.
     CASE WHEN n % 7 = 0 THEN 0 WHEN n % 11 = 0 THEN NULL ELSE 1 END,
     CASE WHEN n % 9 = 0 THEN 1 ELSE 0 END,
-    :now - 8640000
+    :now - 8640000,
+    -- The endpoint's `destination_net`, verbatim and never evaluated (B8a of
+    -- specs/SPEC-step-5b-widget-api.md): `any`, an IPv4 and an IPv6 network from the
+    -- synthesised pool, or not reported at all.
+    CASE n % 4
+        WHEN 0 THEN 'any'
+        WHEN 1 THEN (SELECT a.address_v4 || '/32' FROM synth_address AS a WHERE a.slot = 1000000 + 500 + n)
+        WHEN 2 THEN (SELECT a.address_v6 || '/128' FROM synth_address AS a WHERE a.slot = 1000000 + 500 + n)
+    END
 FROM counter;
 
 -- ---------------------------------------------------------------------------

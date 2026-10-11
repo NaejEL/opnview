@@ -764,6 +764,14 @@ ingest: a description is not an identity, and `store.ReadRuleLogging` counts a
 rule whose `interface` names nothing it can resolve as **unresolved** rather
 than placing it under a guess.
 
+**What a rule was written against is stored verbatim, since step 5B, and never
+evaluated.** `destination_net` holds the endpoint's field unchanged — an address, a
+network, an alias name or `any` — or `NULL` when the row does not report it (B8a of
+`specs/SPEC-step-5b-widget-api.md`, decision 12: the reason is the rule table, which
+shows it beside the rule). `opnview` matches no flow against it, resolves no alias in
+it and derives nothing from it: which rule a record matched is the `rid` the filter log
+names, never a criterion `opnview` re-evaluates.
+
 **Retention:** never purged. **Indexes:** the primary key and the uniqueness
 constraint on `pf_label`.
 
@@ -1426,6 +1434,21 @@ recorded* rows too. `idx_dns_resolution_domain_name`, on
 `(lower(rtrim(domain, '.')), looked_up_at)`, is the resolver-cache attribution's
 search from the names an address was held under to the lookups of those names; it
 indexes the comparison itself, so no second copy of the domain is stored.
+`idx_dns_resolution_name_client_id`, on `(lower(rtrim(domain, '.')), client_id,
+looked_up_at)`, and `idx_dns_resolution_name_client_address`, on
+`(lower(rtrim(domain, '.')), client_address, looked_up_at)`, bound that search by the
+lookup's client as well (B2 of `specs/SPEC-step-5b-widget-api.md`): the statement
+`attribution_name_lookups` is two disjoint branches joined by `UNION ALL`, one per
+side of its client predicate — by `client_id`, and by the address when either side
+has no `client_id` — and each is an index search on name and client, so a popular
+name looked up by many clients is no longer read whole before the client filter.
+The address branch has an index of its own rather than a rewrite onto
+`idx_dns_resolution_client`, because that index is bounded by client and not by name
+and would read every lookup the client made in the window. `sql/schema-checks.sh`
+asserts both branches' plans at both seed sizes. **Write cost:** `dns_resolution` is
+a growing table, and each of the two indexes adds one entry per stored lookup —
+about the size of the domain name plus two integers — and one B-tree insertion per
+ingest, on top of the six indexes the table already carried.
 
 ### `domain_attribution` — the site name a flow was given
 
@@ -2223,6 +2246,33 @@ one.
 **Counting** is decision 2, under `flow` and *The aggregate families*: a paired
 connection counts once, on its first leg.
 
+**A long span is paired in chunks, with the same result** (B8b of
+`specs/SPEC-step-5b-widget-api.md`). A reclassification of everything can move records
+across the whole retained history, and the pairing they call for used to read every
+`out` record of that span into memory inside one transaction, holding the single
+connection — and every collector's write — for as long as the history is long.
+`store.Pair` now cuts a span longer than `store.PairingChunkSeconds` (one hour, the
+finest aggregate slot) into chunks that tile it without overlap, decides every chunk's
+records first into one decision for the whole span, then writes each chunk against
+that decision in a transaction of its own. The decision for one record reads logged
+fields only, never the pairing columns, and the one step that needs more than a record
+— clearing a partner a record no longer has, unless another record now pairs with it —
+reads the whole span's decision, so the outcome is exactly that of one transaction over
+the span; a test asserts it on a fixture spanning several chunks with stale partners
+handed across them. A span within one chunk, the collectors' everyday case, is decided
+and written in one transaction as before.
+
+**The cost of a reclassification of everything — measured, with no budget** (B8h,
+decision 17). `ci/pre-deployment.sh` builds the million-row seed of `sql/seed.sql` in
+Go and times `ReclassifyEverything` on it, twice: the second run moves nothing and
+measures the floor. Measured on 10 October 2026 in the development container on 16
+CPUs, over 1 000 202 flows: **1 min 43 s** for the first run, which re-places every
+address and re-pairs and refreshes what moved, and **7.4 s** for the second, which moves
+nothing (building the seed itself took 4 min 39 s, and the machine was running another
+million-row seed at the same time, so these are upper figures). Of the first run, the
+part a pass holds the single connection for is now one chunk of pairing or one slot of
+refresh at a time, not the whole.
+
 ### What step 5B reads — the store's contracts
 
 Step 5B serves widgets over HTTP and computes nothing the store already answers.
@@ -2984,7 +3034,8 @@ Survey *Runtime discovery* (i) to (v).
 | `enabled` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.enabled`, since the step-5A live corrections, which reversed the earlier *not stored*: as coverage of the field, so a screen listing rules can say one is switched off. Nothing in the derivation reads it, and `rule` still names the `rid` of historical records whatever the rule's state now |
 | `interface` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.interface`, verbatim, since step 5A: configuration keys on a model rule, a description on a legacy row, empty on a floating rule. Which rules bear on a pair of interfaces is still derived from the flows actually observed; this column answers which rules do not log, per interface |
 | `protocol`, `ipprotocol`, `%protocol`, `%ipprotocol` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — a rule's protocol criterion. `flow.protocol` carries the protocol actually observed, and `opnview` never evaluates a criterion |
-| `source_net`, `source_port`, `destination_net`, `destination_port` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — the rule's match criteria, for the same reason: `opnview` joins an observed record to a rule identity and evaluates nothing |
+| `destination_net` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.destination_net`, verbatim, since step 5B, which reversed the earlier *not stored* (B8a of `specs/SPEC-step-5b-widget-api.md`, decision 12). The reason is the rule table: a reader looking at which rules fire is entitled to see what each rule was written against, and the field is the one criterion that says where a rule's traffic was going. It is **stored and never evaluated**: `opnview` matches no flow against it and derives nothing from it, for the reason below. A rule that does not report it stores `NULL`, not reported |
+| `source_net`, `source_port`, `destination_port` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — the rule's match criteria, for the same reason: `opnview` joins an observed record to a rule identity and evaluates nothing |
 | `categories` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — no entry in `docs/widget-catalogue.md` groups rules by category, and a category is a name, which nothing in this schema is allowed to classify by |
 | `sort_order` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — the ordinal position of the rule in the ruleset, which changes on any edit and means nothing to a record written before the edit |
 | `legacy` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.legacy`, since step 5A, because it says whether `rule.interface` holds keys or descriptions |
@@ -3152,9 +3203,22 @@ Interface idx_flow_src_interface_observed_at
 
 | Query | Index | Measures added for coverage |
 |---|---|---|
-| Overview | `idx_flow_observed_at` | `traffic_scope`, `action`, `packet_bytes`, `src_interface_id`, `dst_interface_id`, `src_client_id` |
+| Overview | `idx_flow_observed_at` | `traffic_scope`, `action`, `packet_bytes`, `src_interface_id`, `dst_interface_id`, `src_client_id`, `pair_outcome`, `interface_device` |
 | Matrix | `idx_flow_observed_at` | the same, plus `rule_id` and `rule_lookup_state` |
-| Interface | `idx_flow_src_interface_observed_at` | `src_client_id`, `packet_bytes`, `action`, `traffic_scope`, `dst_address` |
+| Interface | `idx_flow_src_interface_observed_at` | `src_client_id`, `packet_bytes`, `action`, `traffic_scope`, `dst_address`, `pair_outcome`, `interface_device` |
+
+**A paired connection counts once in the screen queries, since step 5B** (B8c of
+`specs/SPEC-step-5b-widget-api.md`). Overview, Matrix and Interface read
+`classified_flow` and keep the rows whose `exit_leg_device` is `NULL`, and the Map
+keeps the 24 h aggregate's rows whose `exit_leg_device` is `NULL`, so the second record
+of a connection logged on two interfaces is left out, as `store.ReadVolumeWindow`'s
+`Total` leaves it out. `exit_leg_device` is computed from `pair_outcome` and
+`interface_device`, which is why both were added to the two covering indexes: without
+them each covered plan would fetch every row to tell a second leg from a first. The
+Matrix no longer drops the flows with no source interface, so what came from outside
+or from this firewall has its row and the Matrix sums to the window's total;
+`sql/schema-checks.sh` asserts that the Overview and Matrix totals equal the
+volume-window total on a seed holding paired connections.
 
 The other four are **not** covered, and are not claimed to be:
 

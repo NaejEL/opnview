@@ -631,7 +631,15 @@ CREATE TABLE IF NOT EXISTS rule (
     -- nothing in the derivation reads it.
     enabled       INTEGER CHECK (enabled IS NULL OR enabled IN (0, 1)),
     is_automatic  INTEGER NOT NULL DEFAULT 0 CHECK (is_automatic IN (0, 1)),
-    discovered_at INTEGER NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800)
+    discovered_at INTEGER NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800),
+    -- destination_net is the endpoint's `destination_net` field, VERBATIM: an address,
+    -- a network, an alias name, `any`, whatever the rule says (B8a of
+    -- specs/SPEC-step-5b-widget-api.md, decision 12). It is stored so a table of rules
+    -- can show what a rule was written against, and IT IS NEVER EVALUATED: opnview
+    -- matches no flow against it and derives nothing from it. NULL is not reported.
+    -- The schema is edited in place (decision 12 of the step-5A live corrections), so
+    -- a database created before this column is rebuilt rather than migrated.
+    destination_net TEXT
 );
 
 -- ---------------------------------------------------------------------------
@@ -945,12 +953,19 @@ CREATE TABLE IF NOT EXISTS flow (
 -- There is exactly one index leading on observed_at alone, deliberately: it is
 -- the load-bearing index of the Overview and Matrix queries, and a second one
 -- with the same leading column would hide its loss.
+--
+-- pair_outcome and interface_device close both, since B8c of
+-- specs/SPEC-step-5b-widget-api.md: the screen queries read classified_flow and keep
+-- the rows whose exit_leg_device is NULL, and exit_leg_device is computed from those
+-- two columns, so without them every covered plan would fetch each row to tell a
+-- second leg from a first.
 CREATE INDEX IF NOT EXISTS idx_flow_observed_at ON flow
     (observed_at, traffic_scope, action, packet_bytes,
-     src_interface_id, dst_interface_id, src_client_id, rule_id, rule_lookup_state);
+     src_interface_id, dst_interface_id, src_client_id, rule_id, rule_lookup_state,
+     pair_outcome, interface_device);
 CREATE INDEX IF NOT EXISTS idx_flow_src_interface_observed_at ON flow
     (src_interface_id, observed_at, src_client_id, packet_bytes, action,
-     traffic_scope, dst_address);
+     traffic_scope, dst_address, pair_outcome, interface_device);
 CREATE INDEX IF NOT EXISTS idx_flow_src_client_observed_at ON flow (src_client_id, observed_at);
 -- The partial index of the blocked_event view, over the refusals: a 'block' and a
 -- 'reject' -- a reject is a refusal that answers. Its predicate is written exactly
@@ -1039,6 +1054,11 @@ SELECT
     dst_is_this_firewall,
     pair_outcome,
     paired_flow_id,
+    -- rule_lookup_state and ip_version since B8c of specs/SPEC-step-5b-widget-api.md:
+    -- the Matrix screen query, which reads this view, counts the connections whose rid
+    -- matched no rule, and the checks count each address family.
+    rule_lookup_state,
+    ip_version,
     CASE
         WHEN src_is_this_firewall = 1 THEN 'from_this_firewall'
         WHEN dst_is_this_firewall = 1 THEN 'to_this_firewall'
@@ -1330,6 +1350,16 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_id ON dns_resolution (clien
 -- comparison, and a stored copy of the domain could disagree with the domain.
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_domain_name
     ON dns_resolution (lower(rtrim(domain, '.')), looked_up_at);
+-- The same comparison bounded by the lookup's client as well, one index per branch of
+-- the attribution's client predicate (statement attribution_name_lookups): by
+-- client_id, and by the address for a lookup or a flow with no client_id. Without
+-- them the search was bounded by name only and read every lookup of a popular name
+-- in the window before filtering by client. Each costs one more index entry per
+-- stored lookup on a growing table; docs/data-model.md, dns_resolution, records it.
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_name_client_id
+    ON dns_resolution (lower(rtrim(domain, '.')), client_id, looked_up_at);
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_name_client_address
+    ON dns_resolution (lower(rtrim(domain, '.')), client_address, looked_up_at);
 
 -- "Which list refused what, over this period" is an index search rather than a
 -- scan of a growing table. The NULL-bearing leading column keeps the

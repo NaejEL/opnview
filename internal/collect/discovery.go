@@ -372,6 +372,9 @@ func (c *Collector) discoverRules(ctx context.Context, snapshot *Discovery) erro
 			Interface:   ruleInterface(row),
 			Legacy:      decode.Flag(row, "legacy"),
 			IsAutomatic: decode.FlagOrFalse(decode.Flag(row, "is_automatic")),
+			// Verbatim and never evaluated (B8a of specs/SPEC-step-5b-widget-api.md):
+			// opnview matches no flow against a rule's criteria.
+			DestinationNet: ruleDestinationNet(row),
 		}
 		id, err := c.store.UpsertRule(ctx, rule, now)
 		if err != nil {
@@ -396,6 +399,22 @@ func ruleInterface(row decode.Object) *string {
 	}
 	trimmed := strings.TrimSpace(text)
 	return &trimmed
+}
+
+// ruleDestinationNet reads the rule's `destination_net` field exactly as the endpoint
+// returned it -- an address, a network, an alias name or `any` -- with no trimming and
+// no interpretation. A field the row does not carry, or one that is not text, is nil:
+// not reported.
+func ruleDestinationNet(row decode.Object) *string {
+	raw, present := row["destination_net"]
+	if !present || raw == nil {
+		return nil
+	}
+	text, isText := raw.(string)
+	if !isText {
+		return nil
+	}
+	return &text
 }
 
 // rawTwin reads the %-prefixed raw value in preference to the human-facing one.

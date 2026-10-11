@@ -370,6 +370,9 @@ type Rule struct {
 	Enabled *bool
 	// IsAutomatic is API field `is_automatic`.
 	IsAutomatic bool
+	// DestinationNet is API field `destination_net`, verbatim; nil means not reported.
+	// It is stored and never evaluated: no flow is matched against it.
+	DestinationNet *string
 }
 
 // ClientIdentity is one level of the client identity cascade.

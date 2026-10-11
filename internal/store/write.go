@@ -295,21 +295,22 @@ func (s *Store) UpsertInterfaceMapEntry(ctx context.Context, device, description
 func (s *Store) UpsertRule(ctx context.Context, rule Rule, now int64) (int64, error) {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO rule (pf_label, description, action, direction, interface, legacy,
-		                   logs_matches, enabled, is_automatic, discovered_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                   logs_matches, enabled, is_automatic, discovered_at, destination_net)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (pf_label) DO UPDATE SET
-		     description   = excluded.description,
-		     action        = excluded.action,
-		     direction     = excluded.direction,
-		     interface     = excluded.interface,
-		     legacy        = excluded.legacy,
-		     logs_matches  = excluded.logs_matches,
-		     enabled       = excluded.enabled,
-		     is_automatic  = excluded.is_automatic,
-		     discovered_at = excluded.discovered_at`,
+		     description     = excluded.description,
+		     action          = excluded.action,
+		     direction       = excluded.direction,
+		     interface       = excluded.interface,
+		     legacy          = excluded.legacy,
+		     logs_matches    = excluded.logs_matches,
+		     enabled         = excluded.enabled,
+		     is_automatic    = excluded.is_automatic,
+		     discovered_at   = excluded.discovered_at,
+		     destination_net = excluded.destination_net`,
 		rule.PfLabel, rule.Description, rule.Action, rule.Direction, rule.Interface,
 		boolToNullableInt(rule.Legacy), boolToNullableInt(rule.LogsMatches), boolToNullableInt(rule.Enabled),
-		boolToInt(rule.IsAutomatic), now)
+		boolToInt(rule.IsAutomatic), now, rule.DestinationNet)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing rule %s: %w", rule.PfLabel, err)
 	}

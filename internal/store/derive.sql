@@ -634,19 +634,43 @@ WHERE o.owner_name = :name
   AND o.covered_from_at <= :at;
 
 -- The eligible lookups of one name by one client inside a window: what an answer's
--- name is matched against. The name is compared through the expression
--- idx_dns_resolution_domain_name indexes.
+-- name is matched against. The name is compared through the expression the indexes
+-- below index.
+--
+-- TWO BRANCHES, EACH AN INDEX SEARCH BOUNDED BY NAME AND CLIENT (B2 of
+-- specs/SPEC-step-5b-widget-api.md). The client is the lookup's client_id when the flow
+-- has one, and its address when either side has no client_id. Written as one OR, the
+-- planner could bound only the name and filtered every lookup of a popular name by
+-- client afterwards; split into two branches, the first searches
+-- idx_dns_resolution_name_client_id on (name, client_id, looked_up_at) and the second
+-- idx_dns_resolution_name_client_address on (name, client_address, looked_up_at). The
+-- address branch got an index of its own rather than a rewrite on the existing
+-- (client_address, looked_up_at) index, because that one is bounded by client and not
+-- by name: a client's every lookup in the window would be read to find one name. The
+-- branches are disjoint -- the first needs r.client_id = :client_id, so a non-NULL
+-- client_id on both sides, and the second needs one of them NULL -- so UNION ALL
+-- returns each lookup once.
 -- statement: attribution_name_lookups
 SELECT r.id, r.domain, r.looked_up_at, r.lookup_key, r.answer_source
 FROM dns_resolution AS r
 WHERE lower(rtrim(r.domain, '.')) = :name
+  AND r.client_id = :client_id
   AND r.looked_up_at >= :start
   AND r.looked_up_at <= :end
   AND r.action = 'pass'
   AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
   AND r.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname')
-  AND ((:client_id IS NOT NULL AND r.client_id = :client_id)
-       OR (r.client_address = :address AND (r.client_id IS NULL OR :client_id IS NULL)));
+UNION ALL
+SELECT a.id, a.domain, a.looked_up_at, a.lookup_key, a.answer_source
+FROM dns_resolution AS a
+WHERE lower(rtrim(a.domain, '.')) = :name
+  AND a.client_address = :address
+  AND a.looked_up_at >= :start
+  AND a.looked_up_at <= :end
+  AND (a.client_id IS NULL OR :client_id IS NULL)
+  AND a.action = 'pass'
+  AND a.answer_source IN ('Recursion', 'Cache', 'Local-data')
+  AND a.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname');
 
 -- The local data naming a host at an instant: the addresses of the A and AAAA records
 -- whose owner, and of the PTR records whose target, has the host name's first label.
