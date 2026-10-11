@@ -102,13 +102,18 @@ variation:
 
 It reads five sources through the OPNsense REST API: filter logs, the Suricata
 `eve.json` event log (optional — IDS alerts only), NetFlow/Insight, DHCP
-leases, and resolver DNS lookups (the sole source of site names).
+leases, and resolver DNS lookups (the sole source of site names). It can also
+receive the firewall's syslog and NetFlow exports, configured by the user on
+OPNsense; `opnview` still writes nothing to the firewall. NetFlow volumes, when
+exported, are joined to the logged connections as a second measure (`netflow`),
+stated on every figure and never summed with the logged one.
 
 Suricata was planned as the primary source of site names. The step-1 API
 survey established that it cannot be: OPNsense exposes no `dns` event type,
 and `tls` / `http` events, though they can be written to `eve.json`, cannot be
 read back through the API. See `docs/opnsense-api-survey.md`. Site names are
-inferred from resolver lookups, unconditionally.
+inferred from resolver lookups, unconditionally. Nor can they be received over
+syslog (survey, S13).
 
 ## Development and test environment
 
