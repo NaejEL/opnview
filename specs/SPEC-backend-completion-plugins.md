@@ -3595,3 +3595,373 @@ In Variant B, append to the second paragraph: "Nor can they be received over sys
 - Q17: (a), the syslog feeding `server_name_observation` is accepted over TCP only.
 
 The CLAUDE.md variant matching the PS24 finding is applied by the orchestrator once that finding is made, with the maintainer's prior agreement.
+
+---
+
+# Amendment: NetFlow join limited to a single Observation Point (replaces PS17–PS23)
+
+Cycle kind: standard
+
+**Status of this amendment: APPROVED, 11 October 2026.**
+
+**Placement.** This amendment follows "Decided (maintainer, 12 October 2026), addendum open questions". It replaces addendum §D's PS17–PS23 completely. It also amends the addendum's §B, §E, §F and §G and push amendment §8 where named below. Anything it does not name stays as approved.
+
+## Context
+
+The push builder stopped before PS17–PS23. The survey's verified findings (`docs/opnsense-api-survey.md`, *Push sources*) contradict two assumptions those sections relied on:
+
+- **S11.** Every `ng_netflow` node exports through one `samplicate` socket under one `source_id`. The observing interface is not exported. No direction element exists.
+  - With two or more captured interfaces, a forwarded, untranslated packet arrives as two records that are identical in every field.
+  - The per-node sequence numbers interleave. The decoder already flags this as `netflow_sequence_interleaved` and then asserts no gap (`internal/push/protocols/netflow/decoder.go`; `docs/plugins.md`, *A NetFlow exporter whose counters interleave*).
+- **S10.** The template carries `INPUT_SNMP` / `OUTPUT_SNMP`, which are IANA `ingressInterface` (IE 10) and `egressInterface` (IE 14). It carries no `flowDirection` (IE 61), no sampling element, and no ICMP type or code. Its time resolution is one second.
+- **S5.** There is one node per captured interface. A node is either `conf=11` (ingress and egress, "once per node") or `conf=10` (egress only).
+- **S6.** The input index is the receiving interface's kernel index (`rcvif`), because OPNsense never sends `setifindex`. The output index is the route lookup's interface, not necessarily the interface the packet left by.
+- **S11.** Ingress is captured before pf, so packets pf then blocks are exported. Egress is captured after pf, so packets blocked on the way out are not exported, and their addresses are as translated.
+
+PS19's "legs on the record's observing device" and PS20's "one Observation Point per direction, first leg's device else second leg's" therefore cannot be evaluated once two interfaces are captured.
+
+What exists today:
+
+- `internal/push` and its NetFlow v9 decoder;
+- `internal/collect/pushindexes.go`, the PS11 index mapping through `interfaces_info/1`;
+- `internal/plugin/push.go` and `pushkind.go`, the push declaration and the core-kind adapters (`firewall_log` only).
+
+There is no `plugins/netflow/` directory and no `flow_record` kind.
+
+**S13 is negative**, so PS24–PS30 are not built. PS-AC39 (the gate test) applies, and so does CLAUDE.md Variant B, which is already applied.
+
+## A. Decisions recorded (append to decision 15, after 15a)
+
+> - **15b. The NetFlow join requires exactly one captured interface** (maintainer, 11 October 2026).
+>   - **One captured interface.** When the NetFlow capture configuration read through the broker names exactly one interface, that interface is the Observation Point (RFC 7011) of every record, and the join runs.
+>   - **Any other configuration.** With zero interfaces, two or more, or a configuration that cannot be read, `flow_record` rows are still received and stored, nothing is joined, and every volume answer under `netflow` or `best_available` names the reason.
+>   - **Coverage source.** Coverage is read from the configuration, never inferred from the records (PS18).
+> - **15c. Suricata alerts over syslog (S7) are deferred to step 6** (maintainer, 11 October 2026). No `suricata` push variant is built in this cycle. S7's finding stays recorded in the survey.
+
+## B. Replacement text for PS17–PS23
+
+### Phase C, part 2 (continued): NetFlow volumes joined to logged connections
+
+**PS17. The core kind `flow_record`.**
+
+- **What it is.** A push-only core kind: one record of a flow as an exporter reported it.
+  - The term is the *Flow Record* of RFC 3954 and RFC 7011.
+  - `docs/data-model.md` *Vocabulary* says explicitly that `flow` (one filter-log record) and `flow_record` are different things (Q16).
+- **The contract.** It is in `contract.go` and in `docs/plugins.md`, and the two are identical (A13). It has two record types.
+  - **The flow record**, which carries:
+    - the exporter address and the observation domain (v9 `source_id`);
+    - the raw `ingressInterface` and `egressInterface` indexes;
+    - IP version and IANA protocol number;
+    - source and destination address and port (absent for a protocol without ports);
+    - cumulative TCP flags;
+    - octets and packets;
+    - start and end instants, at the precision exported;
+    - the reception instant.
+
+    Removed from the approved contract: the ICMP type and code, the sampling interval and the exported direction. S10 shows the only exporter sends none of them, and a field no exporter fills is not built (the maintainer's no-placeholder rule). An exporter that sends them is a later amendment.
+  - **The capture configuration record**, which carries:
+    - per interface, its OPNsense interface identifier and whether ingress and egress are captured;
+    - the active and inactive timeouts;
+    - the export version;
+    - the read instant.
+
+    Or it carries a single *unreadable* marker with the broker's outcome. It is delivered by a polled read (PS18).
+- **Core-written columns.** At reception, the core also stores on each flow record:
+  - the Observation Point in force: the mapped interface (identifier and device) when PS18 establishes one, and null otherwise;
+  - the record's direction at it (PS19).
+
+  Neither is a contract field the provider fills.
+- **Identity.** Each exported record has exactly one identity, and the identity must:
+  - store a datagram delivered twice only once;
+  - keep two records of one datagram as two rows, even when they are identical in every field;
+  - never let a record received after the exporter's sequence restarted (the node recreated) collide with an earlier one;
+  - distinguish datagrams of different nodes. With two or more captured interfaces their sequence numbers interleave under one `source_id` and can coincide (S11).
+
+  The Builder states the composition and documents the one case it cannot separate: two datagrams identical octet for octet are one delivery. With two or more captured interfaces, the duplicate records S11 describes are two rows, as exported, and are never deduplicated by content.
+- **Storage.** A core hypertable on the start instant, under P4's rule. Retention is a setting whose default equals the filter-log flow retention. The purge works by chunk, then by row (P4).
+- **The provider.** The built-in `netflow` plugin is a directory under `plugins/`, holding no `.go` file. It declares:
+  - a push entry with `protocol: netflow` and `kind: flow_record`, plus a declarative mapping from IANA Information Element names to contract fields (a new PS3 option: a field names one IE, or an ordered list whose first present IE wins). No script runs per record;
+  - a polled endpoint, read through the broker at a max age, which delivers the capture configuration record (PS18).
+- **Provider rules.**
+  - PS9's double-count rule concerns one record type delivered by both paths. It must not refuse a provider that pushes flow records and polls its capture configuration. The Builder states how the load check tells the two apart.
+  - A second exporter implementation is a second plugin directory with its own mapping and its own configuration read. The core join, coverage and states are unchanged by it (PS-AC48).
+- **Protocol comparison.** Protocol is compared by IANA number. If `flow` stores only the filter log's `protoname`, the Builder adds the number, or maps the name through the IANA *Assigned Internet Protocol Numbers* keywords held as data with their source cited.
+
+**PS18. The Observation Point is read from the capture configuration, never inferred from data.**
+
+- **What is read.** The `netflow` plugin reads `GET /api/diagnostics/netflow/getconfig` (S9) through the broker.
+  - It maps the `OPNsense.Netflow` model's `capture.interfaces` and `capture.egress_only` (S5) onto the contract's per-interface ingress and egress flags.
+  - S5's node creation sets the semantics: `conf=11` is ingress and egress, `conf=10` is egress only.
+  - The Builder records in the survey's S5 entry, with the `rc.d/netflow` line it rests on, whether an interface listed in `egress_only` must also be listed in `interfaces` or creates a node on its own.
+  - The response shape is verified against the 26.7.3 `NetflowController` and the model, and cited in the plugin's header comment.
+- **The captured-interface count** is the number of interfaces with at least one captured direction.
+- **Configuration in force.**
+  - The core keeps the history of capture configurations as intervals bounded by read instants.
+  - Between the last read showing one configuration and the first read showing a different one, the configuration is `capture_configuration_unknown`.
+  - A record takes the configuration in force at its start instant. A record is never re-joined retroactively when a later configuration differs.
+- **When the join runs.** It runs for a record only when the configuration in force names exactly one captured interface X, and PS11 maps X to a kernel index. That interface X is the record's Observation Point. Otherwise the record is stored with a null Observation Point and its interval carries one named state (PS22):
+
+  | Configuration in force | State |
+  |---|---|
+  | capture names no interface, or the NetFlow export is disabled (`is_enabled`, S9) | `netflow_not_configured` (PS22's existing state, extended to this case) |
+  | two or more interfaces captured | `observation_point_not_exported`, with `captured_interfaces: N` |
+  | the read failed, or lies between two differing reads | `capture_configuration_unknown` |
+  | one interface, but PS11 cannot map it to an index | `interface_index_unmapped` (PS11's existing name) |
+
+- **The configuration contradicting the stream.** If the decoder raises `netflow_sequence_interleaved` for the exporter and domain while the configuration names one interface, the two disagree.
+  - The join is suspended from that point until a later configuration read, and the interval's state is `capture_configuration_unknown`.
+  - This is a refusal to trust a configuration the stream contradicts. It never deduces coverage from records.
+- **Loss detectability follows the configuration.**
+  - With one captured interface, the node's sequence is the domain's sequence. `netflow_sequence_gap` applies, and `flow_record` is `loss_detectable: true` over those intervals.
+  - With two or more, no sequence gap is asserted over the interval, whether or not the decoder has already seen a backward jump, and `loss_detectable` is false for it.
+  - The data catalogue reports `loss_detectable` per interval for `flow_record`.
+- **When a direction counts as covered.** An interface-direction of X is covered at instant *t* when all three hold:
+  - it is captured in the configuration in force;
+  - the push source was alive at *t* (PS10);
+  - no NetFlow gap (PS7) meets *t*.
+
+**PS19. The join: a record to the leg logged on its Observation Point.**
+
+1. **Direction at X.** It comes from the configuration and the record's `ingressInterface`, never from `egressInterface`. `egressInterface` is the route lookup's interface (S6), which policy routing makes differ from the interface the packet actually left by.
+   - If X captures egress only, the record is `egress`.
+   - Otherwise, if `ingressInterface` equals X's kernel index, the record is `ingress`. By S6 the index is the receiving interface. By S5 a node accounts a packet once, so a packet both received and sent on X is accounted at its ingress.
+   - Otherwise the record is `egress`.
+   - **Verification before building.** The Builder confirms, at the S6 source, the value `ingressInterface` takes for a packet with no receiving interface (one the firewall originated). The Builder also confirms that `conf=11`'s "once per node" means the packet is accounted at its first pass. Both go into S6 and S5 as sub-facts. If either stays `UNVERIFIED:`, PS-AC28 lists it, and the join is not built until it is verified.
+2. **Candidates.**
+   - **Same point, same family.** Candidates are the `flow` rows logged on X's device, with the same IP version and protocol.
+   - **Same tuple, either orientation.** The record's (source, source port, destination, destination port) equals the leg's logged tuple (**forward**) or its swap (**reverse**), RFC 5103's terms.
+   - **Consistent direction.** The record's direction at X, its orientation and the leg's pf `dir` agree:
+
+     | Record at X | Orientation | Leg on X must be logged |
+     |---|---|---|
+     | `ingress` | forward | `in` |
+     | `ingress` | reverse | `out` |
+     | `egress` | forward | `out` |
+     | `egress` | reverse | `in` |
+
+     A leg logged `in` on X is a packet received on X: its forward packets arrive on X and its replies leave by X. A leg logged `out` is the opposite.
+   - **Addresses** are compared as canonical address values, never as text.
+   - **Protocols without ports.** ICMP, ICMPv6, and any record with ports 0 (S10: ICMP and non-first fragments) join on the two addresses alone. This weaker key is documented.
+3. **Time.** The record joins the candidate with the latest `observed_at` ≤ record start + `netflow_join_tolerance_seconds`.
+   - The setting is a positive whole number, set through the settings JSON API (C5).
+   - Its default is the Builder's, justified by the filter log's whole seconds, NetFlow's whole seconds (S10) and the normaliser's offset. LV-NJ confirms it.
+4. **Continuity.** A record belongs to a leg's connection only while that connection's pf state could still exist.
+   - The gap from the leg, or from its previous joined record in the same direction, to the record's start never exceeds pf's default state timeout for that protocol and state, as S12 records it. S12 shows the values in force are not readable.
+   - A TCP record whose cumulative flags include SYN joins only a leg logged within the tolerance of its start.
+5. **Ambiguity is never resolved by guessing.** Two candidates with the same `observed_at` mean the record joins neither.
+6. **Every action joins.** `pass`, `block`, `reject` and `unknown` legs all join. By S11:
+   - for a refused `in` leg, the forward packets were captured at ingress before pf. They are its measured figure;
+   - for a refused `out` leg, the forward packets were blocked before the egress capture, so its forward direction is `not_exported_when_refused`.
+7. **Unmatched records.** These apply only to records with an Observation Point. The names are proposals; the Builder fixes them.
+
+   | Reason | The record |
+   |---|---|
+   | `no_logged_leg` | has no consistent candidate on X |
+   | `ambiguous` | had two candidates at once (rule 5) |
+   | `beyond_flow_horizon` | started before `retention_purge.purged_before`, or its leg was purged |
+
+   PS11's `interface_unmapped` is no longer an unmatched reason: an unmapped X stops the join for the interval (PS18). Records with no Observation Point are not unmatched records. They are served only through the `flow_record` dataset (PS22).
+8. **Decided from stored rows.** Unchanged from the approved text:
+   - the result does not depend on arrival order, and a second derivation writes nothing;
+   - before the filter-log ingestion watermark passes the record's start plus the tolerance, the record is pending, never unmatched.
+9. **NAT needs no rule of its own.** Each leg is matched in its logged form on X.
+   - The join never infers a translation.
+   - Egress records carry the translated form (S11), and ingress records carry the form before pf.
+   - Whether pflog writes a translated packet in its translated form is S11's `UNVERIFIED:` sub-fact (open question 1). If it does not, the affected records are `no_logged_leg`, never attached to another leg, and LV-NJ measures the share.
+
+**PS20. A connection's measured volume: each direction once, at the single Observation Point.**
+
+- **What a connection is.** A first leg with its second leg, or a single leg (`not_paired`, or no pair outcome).
+- **The figure.** For each direction (forward and reverse, as the first leg logged it), the measured figure is the sum of that direction's records joined to a leg of the connection that was logged on X.
+  - Only one Observation Point exists, and a node accounts each packet once (S5), so no direction can be counted at two points or twice at one.
+  - The first-leg-device-else-second-leg-device choice of the approved PS20 is removed: it existed only to choose between Observation Points.
+- **Which leg.** When X carries the first leg, the figures come from it. When X carries the second leg (X is the upstream interface of a NAT connection, for example), they come from the second leg. When X carries neither, the direction is `not_captured`.
+- **Stored per connection,** per direction:
+  - bytes, packets and record count;
+  - the Observation Point's interface, because the captured interface can change over the retention period;
+  - the leg the figure was measured at (`first_leg` or `second_leg`).
+
+  The measure identity is `netflow`, stored beside the logged figures. `packet_bytes` and every logged figure are unchanged everywhere.
+- **Per-direction state.** A closed vocabulary; the names are proposals.
+
+  | State | The direction |
+  |---|---|
+  | `measured` | ended under PS19's continuity rule, with its bytes recorded |
+  | `in_progress` | still within continuity; its figure grows |
+  | `awaiting_export` | covered, with no record yet, within the active timeout in force (PS18's configuration record) plus the tolerance |
+  | `missing` | covered, past that bound, with no record |
+  | `not_captured` | no leg on X, or X does not capture that direction (egress only) |
+  | `export_gap` | a NetFlow gap meets its span |
+  | `not_exported_when_refused` | rule 6 |
+  | `observation_point_not_exported`, `capture_configuration_unknown`, `netflow_not_configured`, `interface_index_unmapped` | PS18's interval state at the connection's start |
+
+  `sampled` is removed, because S10 shows no sampling is exported.
+- **Exit-leg figures.** When the figure was measured at the second leg, the same figure also counts under that leg's `exit_leg_device` row, exactly as a second leg's logged volume does, and in no total.
+
+**PS21. Aggregates carry both measures and never sum them.** The approved text stands, with these changes:
+
+- The coverage classes counted per row are:
+  - both directions measured;
+  - partial;
+  - none;
+  - not joinable: no single Observation Point at the connection's start.
+- The unmatched family's key is: Observation Point interface, direction at it, protocol, IP version, reason (Q15 (a)). It holds only records that had an Observation Point.
+
+Everything else in PS21 stands: count-once, the start slot (Q14 (a)), the forced slot on a changed figure, the purge rule, `pair_volume_observation` staying logged-only, and P5's gate.
+
+**PS22. Widget API: one measure per answer, a stated default, and `lower_bound` restated.** The approved text stands, with these changes:
+
+- **The `netflow` measure's definition** becomes: "bytes and packets the firewall's NetFlow export reported for the logged connections, each direction counted once, at the single Observation Point the capture configuration establishes."
+- **`best_available`** answers `netflow` only when every connection the answer counts has every direction covered at X over the whole window, under a single-Observation-Point configuration throughout. Otherwise it answers `logged`, byte-identical to `logged` apart from the echoed key, with one state:
+  - `netflow_not_configured` (extended by PS18);
+  - `observation_point_not_exported`, with `captured_interfaces`;
+  - `capture_configuration_unknown`;
+  - `interface_index_unmapped`;
+  - `netflow_not_covering_window`, when the window mixes intervals or holds connections without a leg on X. Its detail lists the interval states met.
+
+  With one Observation Point, an answer whose scope includes connections without a leg on X (traffic between two interfaces that are not captured) falls back to `logged`. This is the intended consequence, stated in `docs/widget-api.md`.
+- **An explicit `volume_measure=netflow`** that cannot be answered carries no figure and carries the same named state. It never carries logged figures labelled `netflow` (PS23).
+- **`lower_bound`.**
+  - Always `true` for `logged` and for every aggregate `netflow` figure.
+  - `false` only on a single `client_traffic_detail` record whose two directions are `measured` with no gap meeting its span.
+- **The `flow_record` dataset.**
+  - The data catalogue serves it in every configuration, with its per-interval `loss_detectable` and Observation Point.
+  - Its label states that, with two or more captured interfaces, a forwarded packet is exported once per interface as identical records whose interface is not known, so a sum counts such traffic once per captured interface.
+  - No built-in widget serves such a sum.
+- **Measure rules.** Unchanged: one measure per answer, the `custom_chart` measures `netflow_bytes` and `netflow_packets`, and no path summing two measures.
+
+**PS23. How this relates to the polled volume path.** The approved text stands.
+
+- The four measures are never summed or substituted.
+- `flow_record` has no polled provider of records, no PS9 source segment and no `replaces`.
+- The README states two things:
+  - local collection (Insight) and an export to `opnview` run together (S5);
+  - **the capture configuration is shared between them**, so restricting capture to one interface for the join also narrows what Insight collects on the firewall. This is the user's trade-off, described rather than advised.
+
+## C. Amendments elsewhere
+
+- **Addendum §B and X2.** Replace "PS-AC1 to PS-AC47" with "PS-AC1 to PS-AC52", both in the C6 start condition and in X2.
+- **Addendum §C, gates.** Replace the first gate with: "PS19 rule 9 and open question 1 govern the translated form. No translation is inferred."
+- **PS7, the `loss_detectable` bullet.** Append: "For `flow_record`, it is carried per interval and follows the capture configuration (PS18)."
+- **PS12, `netflow` row.** Replace the double-count bullet with: "With two or more captured interfaces, a forwarded packet is exported once per captured interface as records identical in every field, and the interface is not exported (S11). A sum across records then counts it once per interface, and no row can say which interface saw it. With one captured interface, the row records it as its Observation Point. The core's measured volume is computed only then (PS18, PS20)."
+- **PS12, `suricata` row.** Replace its push-variant cell and its coexistence cell with: "Deferred to step 6 (decision 15c). S7 shows alerts can be sent over syslog as eve JSON, program `suricata`. Nothing is built in this cycle."
+- **PS13.** The data catalogue lists `flow_record` with its per-interval `loss_detectable` and the unmatched family. `server_name_observation` is not listed (S13).
+- **Addendum §E, C6.** Replace "Rows naming volume or site names record the `netflow` and `observed` availability and their named states" with: "Rows naming volume record the `netflow` availability and its named states, including `observation_point_not_exported` and the single-Observation-Point condition. Rows naming site names record S13's negative finding."
+- **Addendum §E, B5 / X3.** The admitted differences are reduced to the echoed `volume_measure` key, because PS24's gate failed.
+
+## D. Acceptance criteria
+
+Every test runs on the PostgreSQL test instance with a fake clock and small recorded fixtures through the real decoder and router.
+
+**Replaced or amended:**
+
+- [ ] **PS-AC28.** It stands. It also lists the S5 and S6 sub-facts of PS18 and PS19 rule 1, each with its 26.7.3 or `stable/26.7` URL, or as `UNVERIFIED:` with the part not built. It lists S11's pflog-form sub-fact under open question 1's answer.
+- [ ] **PS-AC29. The `flow_record` kind.**
+  - The contract in code equals `docs/plugins.md` (A13), and carries no ICMP type or code, sampling or exported-direction field.
+  - `plugins/netflow/` feeds it through the IE mapping with zero script calls per record (counter).
+  - The plugin's polled capture-configuration endpoint loads without `push_kind_without_replacement`. A provider that delivers the same record type over both paths without `replaces` is still refused (one test each).
+  - The table is a hypertable on its start instant (catalogue inspection).
+- [ ] **PS-AC30. NAT, two single-interface fixtures.** One IPv4 connection: logged `in` on an inside device untranslated, and `out` on the upstream device with translated source and port.
+  - **(a) Capture on the inside device only.** The ingress forward record and the egress reverse record join the first leg. Both directions are `measured` at `first_leg`.
+  - **(b) Capture on the upstream device only.** The egress forward record (translated source) and the ingress reverse record (translated destination) join the second leg. Both directions are `measured` at `second_leg`, and the same figure appears under `exit_leg_device`.
+  - **In both,** the six families count the connection once, and every logged column is unchanged.
+- [ ] **PS-AC31.** It stands, with "the S12 timeout" read as "S12's pf default".
+- [ ] **PS-AC32. Unmatched records.**
+  - `no_logged_leg`, `ambiguous` and `beyond_flow_horizon` each have a fixture.
+  - Such a record is in the unmatched family and in no other family or total.
+  - A record under a two-interface configuration is in no family at all.
+- [ ] **PS-AC33.** It stands, with one change: the IPv6 connection crosses two interfaces, one of which is captured.
+- [ ] **PS-AC35.** It stands, with "one Observation Point per direction" read as "at the single Observation Point".
+- [ ] **PS-AC36. Coverage and states.**
+  - With X egress-only, the forward direction of an `in` leg is `not_captured` and its reverse is `measured`.
+  - An unreadable configuration gives `capture_configuration_unknown`.
+  - A sequence gap gives `export_gap`.
+  - A refused `out` leg's forward direction gives `not_exported_when_refused`, and a refused `in` leg's forward direction is `measured`.
+  - A configuration change between two reads gives `capture_configuration_unknown` over the interval between them, and records before it keep their earlier Observation Point.
+- [ ] **PS-AC37. The widget measure.** It stands, plus:
+  - under a two-interface configuration, `best_available` answers byte-identically to `logged`, apart from the echoed key, with `observation_point_not_exported` and `captured_interfaces: 2`;
+  - explicit `netflow` under the same configuration carries no figure and the same state.
+- [ ] **PS-AC47.** It stands, and its grep extends to the core join, coverage and state code. That code names no OPNsense endpoint, model field or option (`getconfig`, `capture.interfaces`, `egress_only`, `conf`) and no IE name. It reads contract fields only.
+- [ ] **PS-AC19.** Replace "The `flow_record` table records the observing interface on every row" with: "The `flow_record` table records the raw indexes on every row, and the Observation Point exactly on rows received under a single-interface configuration. The hand-back lists the `suricata` push variant as deferred to step 6 (decision 15c), not as ruled out."
+
+**New:**
+
+- [ ] **PS-AC48. Modularity: a second exporter implementation is a directory.**
+  - A test-only second provider of `flow_record` lives under test data as a plugin directory: a manifest, its IE mapping, and a capture-configuration read against the fake firewall.
+  - It loads, feeds `flow_record`, and its records join and produce the same connection figures as the built-in's on the same fixture.
+  - No Go file, no file under `plugins/` and no core registry is edited for it. The test asserts the loader found it from the directory alone.
+  - This is CLAUDE.md's "Modular at every layer" check.
+- [ ] **PS-AC49. More or fewer than one captured interface: stored, never joined.**
+  - Under configurations naming zero, two and three interfaces, every delivered record is stored with a null Observation Point.
+  - S11's identical-record pair is stored as two rows.
+  - No join, connection figure, unmatched row or aggregate `netflow` column changes (counters and table comparison).
+  - The interval carries `netflow_not_configured` or `observation_point_not_exported` with the right count.
+  - No `netflow_sequence_gap` is recorded over a two-interface interval, even for a forward sequence jump, and `loss_detectable` is false for it.
+- [ ] **PS-AC50. Direction at X.**
+  - A table-driven test derives `ingress` and `egress` from the configuration and `ingressInterface` for every PS19 rule-1 case, including egress-only, and a record whose `egressInterface` differs from the interface of a policy-routed leg.
+  - It shows that `egressInterface` never changes the result.
+  - A record whose derived direction contradicts the only candidate's `dir` and orientation joins nothing.
+- [ ] **PS-AC51. Identity.**
+  - A datagram delivered twice stores its records once.
+  - Two identical records within one datagram store two rows.
+  - Two datagrams from two nodes with the same sequence number and export time store all their records.
+  - A sequence restart stores new rows.
+  - The configuration-contradiction rule (PS18) suspends the join on an interleaving fixture under a one-interface configuration.
+- [ ] **PS-AC52. The OPNsense source is verified, and an unavailable source is reported.**
+  - The `netflow` plugin's header cites the 26.7.3 controller and model for `getconfig` and `is_enabled`, with the response fields it reads.
+  - A 404, a 403 or an unparseable response gives `capture_configuration_unknown`, with the broker outcome in the availability. Nothing is guessed from records.
+  - No mutating `netflow` action is called (BR-AC15).
+- [ ] **PS-AC45, budget (amended).**
+  - The join throughput at the 1 000 000-row seed runs in `pre-deployment` only.
+  - Everyday tests use fixtures of at most a few hundred records.
+  - `docker compose run --rm checks` stays within its 60 s `go test` budget, and the hand-back prints the wall time the new tests add.
+
+## E. Live validation (amends push amendment §8 and addendum §G)
+
+- **LV-NF.** Replace its first bullet with this text. The per-interface comparison of NetFlow octets against `traffic/interface` deltas runs with one captured interface. With two or more, only the exporter's total is reported, beside the sum of the captured interfaces' deltas, and S11's duplicate records are named as the expected difference.
+- **LV-NJ.**
+  - It runs over two windows of 15 minutes, each with one captured interface the maintainer configures: first an inside interface, then the upstream interface.
+  - A short third window with two captured interfaces confirms `observation_point_not_exported` and the absence of joins and false sequence gaps.
+  - Its bullets stand, with "per interface" read as "for the captured interface".
+  - The NAT trace is taken from the upstream window. It reports the share of `no_logged_leg` among translated records, which answers S11's pflog-form sub-fact live.
+  - The README's Insight trade-off (PS23) is shown to the maintainer before the reconfiguration.
+- **LV-SY.** Delete "`suricata`" from *The other built-ins* (decision 15c).
+- **LV-SN.** Not run (S13).
+
+## F. Out of scope (append)
+
+- A join under two or more captured interfaces, and any inference of a record's interface or direction from its content, timing or sequence.
+- Re-joining stored records when the capture configuration changes.
+- The `suricata` push variant (step 6, decision 15c).
+- Contract fields no exporter sends: ICMP type and code, sampling, and exported direction.
+
+## G. Risks (replace 44 and 49; append 57–60)
+
+44. **Double counting in the raw dataset.** With two or more captured interfaces, identical records are stored as exported. Only the dataset's label and `docs/plugins.md` stand between a third-party author and a doubled sum. The core never sums them.
+49. **Unverified capture semantics.** These are S11's pflog form for translated packets, and the S5 and S6 sub-facts of PS19 rule 1. Their failure lowers the joined share; it never causes a wrong attachment (PS19 rule 9). LV-NJ measures it.
+57. **Coverage is narrow by design.** One captured interface means only connections with a leg on it get a `netflow` figure, and `best_available` falls back to `logged` for wider answers. Most installations capture several interfaces, and on them the join is never available.
+58. **Shared configuration.** Restricting capture to one interface also narrows OPNsense's own Insight collection (S5). This is the user's trade-off, stated in the README.
+59. **pf timeouts not readable (S12).** Continuity uses pf's defaults. A rule override or `set optimization conservative` (UDP up to 900 s) can cut a long, idle UDP connection's later records to `no_logged_leg`. LV-NJ measures it.
+60. **Configuration read lag.** Between two reads, a change leaves an interval of `capture_configuration_unknown`, so its length is the max age of the read.
+
+## H. Sentences that become obsolete (append to addendum §I)
+
+1. Addendum PS17–PS23 as approved, replaced whole by §B. In particular:
+   - PS19 rule 1's "legs logged on the record's observing device";
+   - PS20's "One Observation Point per direction … first leg's device … otherwise the second leg's device";
+   - the states `sampled` and the unmatched reason `interface_unmapped`;
+   - the contract's ICMP type and code, sampling interval and exported direction.
+2. PS-AC30, PS-AC32 and PS-AC36 as approved (§D).
+3. `docs/plugins.md`, *A NetFlow subscriber*: "A connection crossing two captured interfaces is exported once per interface". It should say "as identical records whose interface is not exported (S11)".
+4. Addendum §E's C6 sentence naming `observed` (§C).
+
+## Open questions
+
+1. **Building on S11's unverified sub-fact (which form pflog writes for a translated packet).** The spec's rule is that nothing is built on an `UNVERIFIED:` item, and PS-AC28's test enforces it.
+   - **(a)** Build the join anyway. The sub-fact affects only how many translated records join, never which leg they join (PS19 rule 9), and LV-NJ's upstream window measures it. PS-AC28's test exempts this one sub-fact by name.
+   - **(b)** Build the join, but refuse it while X has outbound NAT or port forwards. This needs a NAT-configuration read that no survey row covers yet.
+   - **(c)** Do not build the join until the sub-fact is read from source, which may not be possible (the survey found no statement).
+
+   **Recommendation: (a).**
+
+**Decided (maintainer, 11 October 2026):** open question 1: (a), the join is built; PS-AC28's test exempts S11's pflog-form sub-fact by name, and LV-NJ's upstream window measures it.
