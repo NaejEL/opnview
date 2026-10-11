@@ -63,6 +63,12 @@ type Manifest struct {
 	// Measure names what a declarative widget's figures are (the `measure` of each figure it
 	// emits). Optional; "query" when absent.
 	Measure string `json:"measure,omitempty"`
+	// Volumes says the widget serves Volume or byte Count figures. The core then gives it the
+	// parameter volume_measure -- logged, netflow or best_available, best_available by default --
+	// which it does not declare, and answers it under the measure that parameter chooses (measure.go):
+	// the widget reads its figures through the core and builds them through host.figures, and never
+	// names a measure. Only a widget with a script, over a window, declares it.
+	Volumes bool `json:"volumes,omitempty"`
 	// Parameters are the keys the widget accepts.
 	Parameters []ManifestParameter `json:"parameters"`
 	// References are the reference kinds the widget accepts, validated against the reference

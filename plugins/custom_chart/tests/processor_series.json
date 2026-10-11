@@ -14,7 +14,8 @@
         "source": "firewall_metric"
       }
     ],
-    "tooltip": "single"
+    "tooltip": "single",
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -51,7 +52,9 @@
   "freshness": [],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "data": {
     "bucket_seconds": 60,
     "series": [

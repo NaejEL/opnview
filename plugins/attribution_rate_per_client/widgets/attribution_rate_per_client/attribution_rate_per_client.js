@@ -61,7 +61,7 @@ exports.widget = {
         resolver_covered: window.resolver_covered,
         cache_covered: window.cache_covered,
         rows: shown,
-        remainder: host.figures.remainder(members, null, rest)
+        remainder: host.figures.remainder(members, null, host.figures.count(rest))
       },
       has_rows: rows.length > 0
     };

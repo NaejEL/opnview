@@ -159,22 +159,42 @@ const (
 	// MeasureInterfaceCounter is the interface's own counters, which include traffic no
 	// logging rule matched.
 	MeasureInterfaceCounter = "interface_counter"
+	// MeasureNetflow is the bytes and packets the firewall's NetFlow export reported for the
+	// logged connections, each direction counted once, at the single Observation Point the
+	// capture configuration establishes (PS22; measure.go chooses it).
+	MeasureNetflow = "netflow"
 )
 
-// Volume is one set of volume figures of one measure. lower_bound is always true:
-// opnview sees only what crosses the firewall, and traffic between two clients behind
-// one interface is in no figure.
+// Volume is one set of volume figures of one measure: logged or netflow, never both, and never
+// a sum of the two (measure.go). lower_bound is true on every Volume: opnview sees only what
+// crosses the firewall, and traffic between two clients behind one interface is in no figure; a
+// netflow Volume is an aggregate, and the only exact netflow figure is one connection's byte Count
+// (Request.ByteCountOf). A logged Volume gains no field; a netflow Volume also carries its packets
+// and its coverage: how many of the connections it counts fall in each coverage class (PS21).
 type Volume struct {
-	Measure            string `json:"measure"`
-	LowerBound         bool   `json:"lower_bound"`
-	Bytes              int64  `json:"bytes"`
-	AllowedBytes       int64  `json:"allowed_bytes"`
-	BlockedBytes       int64  `json:"blocked_bytes"`
-	UnknownBytes       int64  `json:"unknown_bytes"`
-	Connections        int64  `json:"connections"`
-	AllowedConnections int64  `json:"allowed_connections"`
-	BlockedConnections int64  `json:"blocked_connections"`
-	UnknownConnections int64  `json:"unknown_connections"`
+	Measure            string          `json:"measure"`
+	LowerBound         bool            `json:"lower_bound"`
+	Bytes              int64           `json:"bytes"`
+	AllowedBytes       int64           `json:"allowed_bytes"`
+	BlockedBytes       int64           `json:"blocked_bytes"`
+	UnknownBytes       int64           `json:"unknown_bytes"`
+	Connections        int64           `json:"connections"`
+	AllowedConnections int64           `json:"allowed_connections"`
+	BlockedConnections int64           `json:"blocked_connections"`
+	UnknownConnections int64           `json:"unknown_connections"`
+	Packets            *int64          `json:"packets,omitempty"`
+	Coverage           *VolumeCoverage `json:"coverage,omitempty"`
+}
+
+// VolumeCoverage is a netflow Volume's connections per coverage class: both directions measured,
+// partial (some measured bytes, not both directions measured), unmeasured (one Observation Point,
+// no measured byte) and not joinable (no single Observation Point at the connection's start). The
+// four sum to the Volume's connections.
+type VolumeCoverage struct {
+	Measured    int64 `json:"measured"`
+	Partial     int64 `json:"partial"`
+	Unmeasured  int64 `json:"unmeasured"`
+	NotJoinable int64 `json:"not_joinable"`
 }
 
 // Logged turns store figures into logged volume figures.
@@ -188,15 +208,9 @@ func Logged(figures store.VolumeFigures) Volume {
 	}
 }
 
-// add sums two logged figures.
+// AddFigures sums two figures of one measure.
 func AddFigures(into *store.VolumeFigures, other store.VolumeFigures) {
-	into.Bytes += other.Bytes
-	into.AllowedBytes += other.AllowedBytes
-	into.BlockedBytes += other.BlockedBytes
-	into.UnknownBytes += other.UnknownBytes
-	into.AllowedConnections += other.AllowedConnections
-	into.BlockedConnections += other.BlockedConnections
-	into.UnknownConnections += other.UnknownConnections
+	into.Add(other)
 }
 
 // Count is a connection or record count of one measure, carrying the same bound.

@@ -9,7 +9,8 @@
     "period": "24h",
     "right": "operator",
     "scope": "all",
-    "show_blocked": true
+    "show_blocked": true,
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -66,7 +67,9 @@
   ],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "data": {
     "left": "interface",
     "right": "operator",

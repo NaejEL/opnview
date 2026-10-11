@@ -111,6 +111,12 @@ history stored answers that history under the degraded condition. A type that re
 | `series_read_from_hour_slots_beyond_flow_horizon` | whole-hour buckets before the earliest flow came from the interface family's slots |
 | `registrable_domain_grouping_unavailable` | no Public Suffix List has been downloaded yet; nothing is grouped |
 | `unnamed_destinations_beyond_flow_horizon` | part of the window precedes the purge horizon: no aggregate keeps the destinations no name was inferred for by address, so those hours have no address rows (`top_sites`, `sites_by_client`); never estimated |
+| `netflow_not_configured` | a volume answer is not of the `netflow` measure, or carries no figure: no provider of `flow_record` is active, or the capture configuration in force names no interface or has the export disabled |
+| `observation_point_not_exported` | the same: the capture configuration captures on two or more interfaces, whose records do not say where they were observed (survey, *Push sources*, S11) |
+| `capture_configuration_unknown` | the same: the capture configuration could not be read, lies between two reads that differ, or the exporter's stream contradicted it |
+| `interface_index_unmapped` | the same: the one captured interface could not be mapped to a kernel index, so its records were not joined |
+| `netflow_not_covering_window` | the same: the window mixes intervals in different states, or the answer counts a connection not measured in both directions |
+| `netflow_not_served_by_type` | the same: the type built a figure the core did not read in the `netflow` measure, so its answer cannot be given in it (`docs/plugins.md`, *Volume figures and their measure*) |
 
 ## Windows, horizon, buckets and freshness
 
@@ -137,20 +143,69 @@ history stored answers that history under the degraded condition. A type that re
 ## Volumes and the observation-point limit
 
 `opnview` sees only what crosses the firewall: traffic between two clients behind one
-interface reaches no source, so every byte, packet and connection figure is a lower bound.
-Each figure says so in the payload, beside the measure it is (decision 7); this document
+interface reaches no source, so every aggregate byte, packet and connection figure is a lower
+bound. Each figure says so in the payload, beside the measure it is (decision 7); this document
 states the limit, and no screen prints it (`CLAUDE.md`).
 
 | `measure` | What it is |
 |---|---|
 | `logged` | the filter log: bytes are the sum of the logged packet lengths -- the packet that creates a state, not the connection -- and connections are the logged records |
+| `netflow` | bytes and packets the firewall's NetFlow export reported for the logged connections, each direction counted once, at the single Observation Point the capture configuration establishes (`docs/data-model.md`, *NetFlow volumes*); its connections are the logged connections it reports them for |
 | `sampled` | the bytes and rates seen in the `traffic/top` samples, a few seconds each (`store.SampleSeconds`) |
 | `interface_counter` | the interface's own counters, which include traffic no logging rule matched |
 | `refusals`, `dns_lookups`, `security_events`, `clients`, `addresses` | counts of those things |
 
 A `Volume` object carries `measure`, `lower_bound`, the bytes and connections, each split
-allowed / blocked / unknown (an action nobody read is neither). A `Count` carries
-`measure`, `lower_bound` and `value`. Logged and sampled figures are never summed.
+allowed / blocked / unknown (an action nobody read is neither). A `logged` Volume gains no
+field. A `netflow` Volume also carries `packets` and `coverage`: how many of its connections fall
+in each coverage class -- `measured` (both directions measured), `partial` (some measured bytes,
+not both directions measured), `unmeasured` (one Observation Point, no measured byte) and
+`not_joinable` (no single Observation Point at the connection's start) -- the four summing to its
+connections. The allowed or the blocked part of a netflow Volume whose connections were not all
+measured carries neither: the aggregates count the classes and the packets per row, not per
+action. A `Count` carries `measure`, `lower_bound` and `value`. No two measures are ever summed:
+not `logged`, `netflow`, `sampled` and `interface_counter` with one another.
+
+**`volume_measure`.** Every type serving a `Volume` or a byte `Count` takes `volume_measure`:
+`logged`, `netflow` or `best_available`, default `best_available`. The core gives the parameter to
+every type whose manifest declares `volumes` (`docs/widget-authoring.md`), and decides which measure
+the answer is given in; the types are those whose row in *Parameters* carries the key. One answer
+is of one measure, and every figure in it says which.
+
+- **`logged`** answers the filter log's figures, as every volume type always has.
+- **`best_available`** answers `netflow` only when every connection the answer counts has every
+  direction measured, under a single Observation Point throughout the window. Otherwise it answers
+  `logged` -- byte for byte what `volume_measure = logged` answers, apart from the echoed key -- with
+  one named state saying why (*Named states*): `netflow_not_configured`,
+  `observation_point_not_exported`, `capture_configuration_unknown`, `interface_index_unmapped`,
+  `netflow_not_covering_window` or `netflow_not_served_by_type`. With one Observation Point, an
+  answer whose scope includes connections without a leg on the captured interface -- traffic
+  between two interfaces that are not captured -- falls back to `logged`: that is the intended
+  consequence of a single Observation Point, not a fault.
+- **`netflow`** answers the netflow figures. When the window has no single Observation Point at all,
+  or the type built a figure the core did not read in that measure, it carries **no figure** --
+  `data` is `null` -- and the same named state; it never carries logged figures labelled `netflow`.
+  When NetFlow measured only part of what the answer counts, it answers the netflow figures, each
+  with its `coverage`, and the state `netflow_not_covering_window`.
+
+Whether a connection was measured is read from what is stored -- the capture configuration in
+force, never inferred from the records (PS18), and each connection's measured volume -- and judged
+over the figures the answer itself builds. A connection's coverage class is its two directions'
+states: a direction still `in_progress`, `awaiting_export` or `missing` is not yet `measured`, so
+`best_available` waits for it rather than answering a figure NetFlow has not finished reporting.
+
+**`lower_bound`** is `true` on every `logged` figure and on every aggregate `netflow` figure: an
+unlogged connection is in no keyed aggregate, and traffic inside one interface is invisible. It is
+`false` only on a single `client_traffic_detail` record of the `netflow` measure whose two
+directions are `measured` -- a `measured` direction is one no NetFlow gap met. Such a record also
+carries, per direction (`forward` and `reverse`, as its first leg logged them), the bytes, the
+packets, the state and the leg the figure was measured at (`first_leg` or `second_leg`), or `null`
+directions when its connection started under no single Observation Point.
+
+`custom_chart`'s `traffic` source offers two measures of its own, `netflow_bytes` and
+`netflow_packets`: a series of either is the `netflow` measure whatever `volume_measure` says, drawn
+beside the chart's other series and never summed with them, and carries no figure, with the named
+state, when the window has no single Observation Point.
 
 ## References
 
@@ -208,7 +263,7 @@ of its kind: `interface`, `client`, `rule`, `provider`, `country`, `operator`, `
 
 | `source` | `metric` / `measure` | Default aggregation | Provider |
 |---|---|---|---|
-| `traffic` | `measure`: `bytes`, `connections`, `allowed`, `blocked` | `sum` | `firewall_log` (plus `ip_geolocation` with a country or operator, `dns_lookup` with a site) |
+| `traffic` | `measure`: `bytes`, `connections`, `allowed`, `blocked`, `netflow_bytes`, `netflow_packets` | `sum` | `firewall_log` (plus `ip_geolocation` with a country or operator, `dns_lookup` with a site) |
 | `firewall_metric` | `metric`: `uptime`, `cpu`, `memory`, `swap`, `disk`, `temperature`, `gateway_latency`, `gateway_loss` | `mean` | `measurement_sample` |
 | `interface_throughput` | `measure`: `bits_per_second`, `bytes`, `packets`, `errors` | `mean` | `measurement_sample` |
 | `dns` | `measure`: `lookups`, `blocked` | `sum` | `dns_lookup` |
@@ -457,28 +512,33 @@ test compares this table with the code.
 | `interface_traffic_matrix` | `measure` | data | `"bytes"` |
 | `interface_traffic_matrix` | `interfaces` | data | none |
 | `interface_traffic_matrix` | `show_rules` | data | `true` |
+| `interface_traffic_matrix` | `volume_measure` | data | `"best_available"` |
 | `traffic_over_time_by_scope` | `period` | data | `"24h"` |
 | `traffic_over_time_by_scope` | `scopes` | data | `["outbound","inbound","inter_interface"]` |
 | `traffic_over_time_by_scope` | `measure` | data | `"bytes"` |
 | `traffic_over_time_by_scope` | `interfaces` | data | none |
 | `traffic_over_time_by_scope` | `stacked` | rendering | `false` |
+| `traffic_over_time_by_scope` | `volume_measure` | data | `"best_available"` |
 | `interface_volume_ranking` | `period` | data | `"24h"` |
 | `interface_volume_ranking` | `measure` | data | `"bytes"` |
 | `interface_volume_ranking` | `scope` | data | `"all"` |
 | `interface_volume_ranking` | `limit` | data | `10` |
 | `interface_volume_ranking` | `include_unlabelled` | data | `true` |
+| `interface_volume_ranking` | `volume_measure` | data | `"best_available"` |
 | `client_volume_ranking` | `period` | data | `"24h"` |
 | `client_volume_ranking` | `interfaces` | data | none |
 | `client_volume_ranking` | `identity` | data | `"any"` |
 | `client_volume_ranking` | `limit` | data | `10` |
 | `client_volume_ranking` | `include_unstable` | data | `true` |
 | `client_volume_ranking` | `measure` | data | `"bytes"` |
+| `client_volume_ranking` | `volume_measure` | data | `"best_available"` |
 | `client_traffic_detail` | `client` | data | required |
 | `client_traffic_detail` | `period` | data | `"24h"` |
 | `client_traffic_detail` | `action` | data | `"all"` |
 | `client_traffic_detail` | `scope` | data | `"all"` |
 | `client_traffic_detail` | `columns` | rendering | `["observed_at","destination","port","protocol","action","scope","bytes","country","operator","site_name","method","correlation_delay","interface"]` |
 | `client_traffic_detail` | `limit` | data | `100` |
+| `client_traffic_detail` | `volume_measure` | data | `"best_available"` |
 | `traffic_composition` | `period` | data | `"24h"` |
 | `traffic_composition` | `group_by` | data | `"interface"` |
 | `traffic_composition` | `measure` | data | `"bytes"` |
@@ -490,6 +550,7 @@ test compares this table with the code.
 | `traffic_composition` | `window_seconds` | data | none |
 | `traffic_composition` | `show_other` | rendering | `true` |
 | `traffic_composition` | `line_interpolation` | rendering | `"linear"` |
+| `traffic_composition` | `volume_measure` | data | `"best_available"` |
 | `connection_tree` | `period` | data | `"24h"` |
 | `connection_tree` | `root` | data | `"interface"` |
 | `connection_tree` | `depth` | data | `2` |
@@ -500,6 +561,7 @@ test compares this table with the code.
 | `connection_tree` | `limit_per_level` | data | `10` |
 | `connection_tree` | `sort` | data | `"volume"` |
 | `connection_tree` | `include_blocked` | data | `true` |
+| `connection_tree` | `volume_measure` | data | `"best_available"` |
 | `owner_activity` | `period` | data | `"24h"` |
 | `owner_activity` | `owners` | data | none |
 | `owner_activity` | `include_unassigned` | data | `true` |
@@ -508,23 +570,27 @@ test compares this table with the code.
 | `owner_activity` | `sort` | data | `"volume"` |
 | `owner_activity` | `clients_per_card` | data | `6` |
 | `owner_activity` | `show_timeline` | data | `true` |
+| `owner_activity` | `volume_measure` | data | `"best_available"` |
 | `top_sites` | `period` | data | `"24h"` |
 | `top_sites` | `interfaces` | data | none |
 | `top_sites` | `clients` | data | none |
 | `top_sites` | `limit` | data | `20` |
 | `top_sites` | `min_flows` | data | `1` |
 | `top_sites` | `group_by_registrable_domain` | data | `false` |
+| `top_sites` | `volume_measure` | data | `"best_available"` |
 | `sites_by_client` | `period` | data | `"24h"` |
 | `sites_by_client` | `interfaces` | data | none |
 | `sites_by_client` | `clients` | data | none |
 | `sites_by_client` | `sites_per_client` | data | `5` |
 | `sites_by_client` | `min_flows` | data | `1` |
 | `sites_by_client` | `show_attribution_rate` | data | `true` |
+| `sites_by_client` | `volume_measure` | data | `"best_available"` |
 | `attribution_rate_per_client` | `period` | data | `"24h"` |
 | `attribution_rate_per_client` | `interfaces` | data | none |
 | `attribution_rate_per_client` | `clients` | data | none |
 | `attribution_rate_per_client` | `limit` | data | `20` |
 | `attribution_rate_per_client` | `sort` | data | `"worst_first"` |
+| `attribution_rate_per_client` | `volume_measure` | data | `"best_available"` |
 | `passed_traffic_world_map` | `period` | data | `"24h"` |
 | `passed_traffic_world_map` | `interfaces` | data | none |
 | `passed_traffic_world_map` | `scope` | data | `"north_south"` |
@@ -532,6 +598,7 @@ test compares this table with the code.
 | `passed_traffic_world_map` | `min_bytes` | data | `0` |
 | `passed_traffic_world_map` | `show_unplaced` | rendering | `true` |
 | `passed_traffic_world_map` | `cluster` | rendering | `true` |
+| `passed_traffic_world_map` | `volume_measure` | data | `"best_available"` |
 | `blocked_traffic_world_map` | `period` | data | `"24h"` |
 | `blocked_traffic_world_map` | `engines` | data | `["firewall_rule","security_engine"]` |
 | `blocked_traffic_world_map` | `interfaces` | data | none |
@@ -540,16 +607,19 @@ test compares this table with the code.
 | `blocked_traffic_world_map` | `min_count` | data | `0` |
 | `blocked_traffic_world_map` | `show_unplaced` | rendering | `true` |
 | `blocked_traffic_world_map` | `cluster` | rendering | `true` |
+| `blocked_traffic_world_map` | `volume_measure` | data | `"best_available"` |
 | `destination_countries` | `period` | data | `"24h"` |
 | `destination_countries` | `interfaces` | data | none |
 | `destination_countries` | `limit` | data | `20` |
 | `destination_countries` | `series` | data | `["allowed","blocked"]` |
 | `destination_countries` | `sort` | data | `"bytes"` |
+| `destination_countries` | `volume_measure` | data | `"best_available"` |
 | `destination_operators` | `period` | data | `"24h"` |
 | `destination_operators` | `interfaces` | data | none |
 | `destination_operators` | `limit` | data | `20` |
 | `destination_operators` | `series` | data | `["allowed","blocked"]` |
 | `destination_operators` | `group` | data | `"asn"` |
+| `destination_operators` | `volume_measure` | data | `"best_available"` |
 | `traffic_sankey` | `period` | data | `"24h"` |
 | `traffic_sankey` | `left` | data | `"interface"` |
 | `traffic_sankey` | `right` | data | `"operator"` |
@@ -559,6 +629,7 @@ test compares this table with the code.
 | `traffic_sankey` | `max_nodes` | data | `12` |
 | `traffic_sankey` | `min_share` | data | `0` |
 | `traffic_sankey` | `show_blocked` | data | `true` |
+| `traffic_sankey` | `volume_measure` | data | `"best_available"` |
 | `unified_blocked_feed` | `period` | data | `"24h"` |
 | `unified_blocked_feed` | `engines` | data | `["firewall_rule","dns_advertising_list","dns_threat_list","security_engine"]` |
 | `unified_blocked_feed` | `interfaces` | data | none |
@@ -599,6 +670,7 @@ test compares this table with the code.
 | `custom_chart` | `legend` | rendering | `"table"` |
 | `custom_chart` | `tooltip` | rendering | `"single"` |
 | `custom_chart` | `annotations` | data | `[]` |
+| `custom_chart` | `volume_measure` | data | `"best_available"` |
 | `source_availability` | `kinds` | data | `["firewall_log","security_event","flow_volume","dhcp_lease","dns_lookup","ip_geolocation","measurement_sample","reconciled_state","registrable_domain","resolver_cache","resolver_local_data"]` |
 | `source_availability` | `show_inactive` | data | `true` |
 | `source_availability` | `compact` | rendering | `false` |

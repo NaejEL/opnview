@@ -66,6 +66,9 @@ type Preset struct {
 	Columns   []string
 	// Manifest is the manifest the preset was built from.
 	Manifest Manifest
+	// Volumes says the preset serves Volume or byte Count figures, answered under the measure
+	// volume_measure chooses (measure.go).
+	Volumes bool
 }
 
 // The origins of a preset.
@@ -325,7 +328,11 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 		return *response, nil
 	}
 
-	data, hasRows, err := preset.Serve(request)
+	serve := preset.Serve
+	if preset.Volumes {
+		serve = func(r *Request) (any, bool, error) { return r.serveMeasured(preset.Serve) }
+	}
+	data, hasRows, err := serve(request)
 	if errors.Is(err, errWithheldUnderNoDomains) {
 		response.Condition = ConditionWithheldByAggregateMode
 		response.Data = nil
@@ -395,6 +402,11 @@ type Request struct {
 	liveInterest *live.Interest
 
 	installation *installation
+
+	// measure is the measure the request is being answered under, and what the run built (measure.go).
+	measure measureRun
+	// netflowState is whether NetFlow can answer the window, once read (measure.go).
+	netflowState *string
 }
 
 // prepare reads what every response carries: the aggregate mode, the window, the

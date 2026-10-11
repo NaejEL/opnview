@@ -351,6 +351,11 @@ func (m *Mirror) Store(ctx context.Context, datum *Datum, shape infer.Shape, val
 		changes, datum.ID); err != nil {
 		return result, fmt.Errorf("mirror: updating the datum: %w", err)
 	}
+	// The state is written under the datum's lock; a reader of the same datum reads a Snapshot.
+	// Store's own reads above need no lock: only Store writes those fields, and the endpoint's
+	// write lock serialises it.
+	state := m.stateLock(datum.ID)
+	state.Lock()
 	datum.Nature, datum.RowSet, datum.Key, datum.Cursor = shape.Nature, shape.RowSet, shape.Key, shape.Cursor
 	datum.CursorType, datum.CursorDescending, datum.DedupeOnContent = shape.CursorType, shape.CursorDescending,
 		shape.DedupeOnContent
@@ -362,6 +367,7 @@ func (m *Mirror) Store(ctx context.Context, datum *Datum, shape infer.Shape, val
 	if readWhole {
 		datum.Body = string(fetch.Body)
 	}
+	state.Unlock()
 	if result.Gap != nil {
 		if err := m.RecordGap(ctx, datum.ID, *result.Gap); err != nil {
 			return result, err

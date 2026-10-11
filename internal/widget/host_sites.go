@@ -46,6 +46,8 @@ type scriptSiteRow struct {
 	Bytes       int64   `json:"bytes"`
 	DelaySum    *int64  `json:"delay_sum"`
 	DelayMax    *int64  `json:"delay_max"`
+	// The members a row read under netflow carries beyond its bytes (host.figures).
+	netflowMembers
 }
 
 // scriptAddressRow is one row of address figures as a script reads it, and hands it back.
@@ -59,6 +61,7 @@ type scriptAddressRow struct {
 	Operator    *string `json:"operator"`
 	Flows       int64   `json:"flows"`
 	Bytes       int64   `json:"bytes"`
+	netflowMembers
 }
 
 func init() {
@@ -74,7 +77,7 @@ func init() {
 				answer = append(answer, scriptSiteRow{Site: row.Site, ClientID: row.ClientID,
 					InterfaceID: row.interfaceID, Method: row.method, CountryCode: row.country, ASN: row.asn,
 					Operator: row.operator, Flows: row.flows, Bytes: row.bytes, DelaySum: row.delaySum,
-					DelayMax: row.delayMax})
+					DelayMax: row.delayMax, netflowMembers: summable(row.measured).netflowMembers})
 			}
 			return call.value(answer)
 		})
@@ -92,9 +95,10 @@ func init() {
 				}
 				accumulator.Add(siteRow{Site: row.Site, ClientID: row.ClientID, interfaceID: row.InterfaceID,
 					method: row.Method, country: row.CountryCode, asn: row.ASN, operator: row.Operator,
-					flows: row.Flows, bytes: row.Bytes, delaySum: row.DelaySum, delayMax: row.DelayMax})
+					flows: row.Flows, bytes: row.Bytes, delaySum: row.DelaySum, delayMax: row.DelayMax,
+					measured: call.measuredOf(row.netflowMembers, row.Bytes)})
 			}
-			return call.value(accumulator.Finish())
+			return call.value(accumulator.Finish(r))
 		})
 		call.function(area, "addresses", func(goja.FunctionCall) goja.Value {
 			rows, err := r.AddressRows()
@@ -105,7 +109,8 @@ func init() {
 			for _, row := range rows {
 				answer = append(answer, scriptAddressRow{Address: row.Address, ClientID: row.ClientID,
 					InterfaceID: row.interfaceID, LookupState: row.lookupState, CountryCode: row.country,
-					ASN: row.asn, Operator: row.operator, Flows: row.flows, Bytes: row.bytes})
+					ASN: row.asn, Operator: row.operator, Flows: row.flows, Bytes: row.bytes,
+					netflowMembers: summable(row.measured).netflowMembers})
 			}
 			return call.value(answer)
 		})
@@ -123,9 +128,10 @@ func init() {
 				}
 				rows = append(rows, addressRow{Address: row.Address, ClientID: row.ClientID,
 					interfaceID: row.InterfaceID, lookupState: row.LookupState, country: row.CountryCode,
-					asn: row.ASN, operator: row.Operator, flows: row.Flows, bytes: row.Bytes})
+					asn: row.ASN, operator: row.Operator, flows: row.Flows, bytes: row.Bytes,
+					measured: call.measuredOf(row.netflowMembers, row.Bytes)})
 			}
-			return call.value(accumulateAddress(address, rows))
+			return call.value(accumulateAddress(r, address, rows))
 		})
 	})
 }

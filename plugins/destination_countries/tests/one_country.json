@@ -8,7 +8,8 @@
       "allowed",
       "blocked"
     ],
-    "sort": "bytes"
+    "sort": "bytes",
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -65,7 +66,9 @@
   ],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "data": {
     "group": "country",
     "rows": [

@@ -38,6 +38,9 @@ type siteRow struct {
 	operator    *string
 	flows       int64
 	bytes       int64
+	// measured holds what a row read under netflow carries beyond its bytes: the measure, the packets
+	// and the coverage classes of its flows (measure.go).
+	measured store.VolumeFigures
 	// delaySum and delayMax are the correlation delays of the attributed flows, absent
 	// for a row read from the slots.
 	delaySum *int64
@@ -84,13 +87,17 @@ func (r *Request) SiteRows() ([]siteRow, error) {
 		boundary = min(boundary, store.PeriodHour.SlotStart(r.Window.To))
 		if firstHour < boundary {
 			read := false
-			err := r.Db.WidgetRows(r.Ctx, "widget_site_slots", store.Period{},
+			err := r.Db.WidgetRows(r.Ctx, r.measured("widget_site_slots"), store.Period{},
 				map[string]any{"from": firstHour, "to": boundary}, func(row store.RowScanner) error {
 					var (
 						item   siteRow
 						client store.NullInt64
 					)
-					if err := row.Scan(&item.Site, &client, &item.bytes, &item.flows); err != nil {
+					targets := []any{&item.Site, &client, &item.bytes, &item.flows}
+					if r.Netflow() {
+						targets = append(targets, item.measured.NetflowTargets()...)
+					}
+					if err := row.Scan(targets...); err != nil {
 						return err
 					}
 					item.ClientID = NullableNumber(client)
@@ -120,15 +127,19 @@ func (r *Request) SiteRows() ([]siteRow, error) {
 			}
 		}
 	}
-	err = r.Db.WidgetRows(r.Ctx, "widget_site_flows", store.Period{},
+	err = r.Db.WidgetRows(r.Ctx, r.measured("widget_site_flows"), store.Period{},
 		map[string]any{"from": flowsFrom, "to": r.Window.To}, func(row store.RowScanner) error {
 			var (
 				item                                   siteRow
 				client, iface, asn, delaySum, delayMax store.NullInt64
 				country, operator                      store.NullString
 			)
-			if err := row.Scan(&item.Site, &client, &iface, &item.method, &country, &asn, &operator,
-				&item.flows, &item.bytes, &delaySum, &delayMax); err != nil {
+			targets := []any{&item.Site, &client, &iface, &item.method, &country, &asn, &operator,
+				&item.flows, &item.bytes, &delaySum, &delayMax}
+			if r.Netflow() {
+				targets = append(targets, item.measured.NetflowTargets()...)
+			}
+			if err := row.Scan(targets...); err != nil {
 				return err
 			}
 			item.delaySum, item.delayMax = NullableNumber(delaySum), NullableNumber(delayMax)
@@ -225,6 +236,8 @@ type addressRow struct {
 	operator    *string
 	flows       int64
 	bytes       int64
+	// measured is as siteRow's.
+	measured store.VolumeFigures
 }
 
 // AddressRows reads the window's address figures, filtered by interface and client as SiteRows is.
@@ -234,7 +247,7 @@ type addressRow struct {
 func (r *Request) AddressRows() ([]addressRow, error) {
 	interfaces, clients := r.IdSet("interfaces"), r.IdSet("clients")
 	var rows []addressRow
-	err := r.Db.WidgetRows(r.Ctx, "widget_address_flows", store.Period{}, r.WindowParameters(),
+	err := r.Db.WidgetRows(r.Ctx, r.measured("widget_address_flows"), store.Period{}, r.WindowParameters(),
 		func(row store.RowScanner) error {
 			var (
 				item              addressRow
@@ -242,8 +255,12 @@ func (r *Request) AddressRows() ([]addressRow, error) {
 				asn               store.NullInt64
 				country, operator store.NullString
 			)
-			if err := row.Scan(&item.Address, &client, &iface, &item.lookupState, &country, &asn, &operator,
-				&item.flows, &item.bytes); err != nil {
+			targets := []any{&item.Address, &client, &iface, &item.lookupState, &country, &asn, &operator,
+				&item.flows, &item.bytes}
+			if r.Netflow() {
+				targets = append(targets, item.measured.NetflowTargets()...)
+			}
+			if err := row.Scan(targets...); err != nil {
 				return err
 			}
 			item.ClientID, item.interfaceID = NullableNumber(client), NullableNumber(iface)
@@ -281,14 +298,19 @@ type addressTableRow struct {
 	Operator    *string `json:"operator"`
 }
 
-// accumulateAddress sums the rows of one address into its table row.
-func accumulateAddress(address string, rows []addressRow) addressTableRow {
-	row := addressTableRow{Kind: DestinationKindAddress, Address: address, Flows: LoggedCount(0),
-		Bytes: LoggedCount(0), ClientIDs: []int64{}, LookupState: GeoNoRow}
+// accumulateAddress sums the rows of one address into its table row, its counts in the measure of the
+// rows (measure.go).
+func accumulateAddress(r *Request, address string, rows []addressRow) addressTableRow {
+	row := addressTableRow{Kind: DestinationKindAddress, Address: address, ClientIDs: []int64{},
+		LookupState: GeoNoRow}
 	clients := map[int64]bool{}
+	var (
+		flows   int64
+		figures store.VolumeFigures
+	)
 	for _, item := range rows {
-		row.Flows.Value += item.flows
-		row.Bytes.Value += item.bytes
+		flows += item.flows
+		figures.Add(measuredFigures(item.bytes, item.measured))
 		if item.ClientID != nil {
 			clients[*item.ClientID] = true
 		}
@@ -296,10 +318,22 @@ func accumulateAddress(address string, rows []addressRow) addressTableRow {
 		row.LookupState, row.CountryCode, row.ASN, row.Operator = item.lookupState, item.country, item.asn,
 			item.operator
 	}
+	row.Flows, row.Bytes = r.CountOf(flows), r.ByteCountOf(figures, false)
 	for id := range clients {
 		row.ClientIDs = append(row.ClientIDs, id)
 	}
 	sort.Slice(row.ClientIDs, func(i, j int) bool { return row.ClientIDs[i] < row.ClientIDs[j] })
 	row.Clients = int64(len(row.ClientIDs))
 	return row
+}
+
+// figures are a site row's bytes in their measure.
+func (item siteRow) figures() store.VolumeFigures { return measuredFigures(item.bytes, item.measured) }
+
+// measuredFigures are bytes in the measure a row was read in: measured carries the netflow members of
+// a row read under netflow, and nothing for a logged one.
+func measuredFigures(bytes int64, measured store.VolumeFigures) store.VolumeFigures {
+	figures := measured
+	figures.Bytes = bytes
+	return figures
 }

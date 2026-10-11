@@ -3,6 +3,8 @@ package widget
 import (
 	"sort"
 	"strconv"
+
+	"github.com/NaejEL/opnview/internal/store"
 )
 
 // siteTableRow is one site name, or one registrable domain grouping several.
@@ -32,6 +34,8 @@ type siteTableRow struct {
 // SiteAccumulator sums site rows into one table row.
 type SiteAccumulator struct {
 	row      siteTableRow
+	flows    int64
+	figures  store.VolumeFigures
 	clients  map[int64]bool
 	delaySum int64
 	timed    int64
@@ -40,13 +44,13 @@ type SiteAccumulator struct {
 }
 
 func NewSiteAccumulator(name string) *SiteAccumulator {
-	return &SiteAccumulator{row: siteTableRow{Kind: DestinationKindSite, Name: name, Flows: LoggedCount(0), Bytes: LoggedCount(0)},
+	return &SiteAccumulator{row: siteTableRow{Kind: DestinationKindSite, Name: name},
 		clients: map[int64]bool{}, geoBytes: map[string]int64{}, geo: map[string][3]any{}}
 }
 
 func (a *SiteAccumulator) Add(item siteRow) {
-	a.row.Flows.Value += item.flows
-	a.row.Bytes.Value += item.bytes
+	a.flows += item.flows
+	a.figures.Add(item.figures())
 	a.row.Methods.add(item.method, item.flows)
 	if item.ClientID != nil {
 		a.clients[*item.ClientID] = true
@@ -73,8 +77,11 @@ func (a *SiteAccumulator) Add(item siteRow) {
 	}
 }
 
-func (a *SiteAccumulator) Finish() siteTableRow {
+// Finish is the table row, its counts in the measure of the rows it summed (measure.go).
+func (a *SiteAccumulator) Finish(r *Request) siteTableRow {
 	row := a.row
+	row.Flows = r.CountOf(a.flows)
+	row.Bytes = r.ByteCountOf(a.figures, false)
 	row.ClientIDs = []int64{}
 	for id := range a.clients {
 		row.ClientIDs = append(row.ClientIDs, id)

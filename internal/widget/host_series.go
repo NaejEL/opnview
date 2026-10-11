@@ -9,14 +9,22 @@ import (
 // and the envelope of a series of its own -- its providers, its condition, its unresolved references
 // -- for a chart whose series each degrade on their own.
 //
-//	host.series.traffic(filter, width)       the logged traffic of the window per bucket start and traffic
-//	                                         direction: {buckets, covered}. buckets maps a bucket start to
+//	host.series.traffic(filter, width)       the traffic of the window per bucket start and traffic
+//	                                         direction, in the measure the request is answered under:
+//	                                         {buckets, covered}. buckets maps a bucket start to
 //	                                         {direction: summable figures}; covered is the interval read,
 //	                                         null for none. filter is {interfaces, client_id, rule_id, asn,
-//	                                         country, site}, each null or left out for no restriction.
+//	                                         country, site}, each null or left out for no restriction, and
+//	                                         netflow: true to read the netflow measure whatever the request
+//	                                         is answered under (a series whose measure is netflow_bytes or
+//	                                         netflow_packets).
 //	                                         Whole-hour buckets the flows no longer hold are read from the
 //	                                         1 h slots where only interfaces restrict the series, and say so
 //	                                         by a named state
+//	host.series.netflowState()               null when NetFlow can answer the window (one Observation
+//	                                         Point established throughout it, measure.go); otherwise the
+//	                                         named state, which the answer then carries: a series of the
+//	                                         netflow measure carries no figure
 //	host.series.providers()                  every registered provider with its availability and condition
 //	host.series.kindCondition(availability, kind)
 //	                                         the condition of a provider kind among an availability list:
@@ -50,6 +58,7 @@ type trafficFilter struct {
 	Asn        *int64  `json:"asn"`
 	Country    *string `json:"country"`
 	Site       *string `json:"site"`
+	Netflow    bool    `json:"netflow"`
 }
 
 // seriesDatasetRef names the dataset a series reads.
@@ -85,7 +94,7 @@ func init() {
 			}
 			buckets, covered, err := r.TrafficBuckets(TrafficFilter{Interfaces: filter.Interfaces,
 				ClientID: filter.ClientID, RuleID: filter.RuleID, Asn: filter.Asn, Country: filter.Country,
-				Site: filter.Site}, width)
+				Site: filter.Site, Netflow: filter.Netflow}, width)
 			if err != nil {
 				return call.fail(err)
 			}
@@ -97,6 +106,17 @@ func init() {
 				}
 			}
 			return call.value(read)
+		})
+		call.function(area, "netflowState", func(goja.FunctionCall) goja.Value {
+			state, err := r.NetflowWindowState()
+			if err != nil {
+				return call.fail(err)
+			}
+			if state == "" {
+				return goja.Null()
+			}
+			r.State(state)
+			return call.vm.ToValue(state)
 		})
 		call.function(area, "providers", func(goja.FunctionCall) goja.Value {
 			providers, err := ReadProviders(r.Ctx, r.Db)

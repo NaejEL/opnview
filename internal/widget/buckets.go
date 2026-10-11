@@ -76,6 +76,9 @@ type TrafficFilter struct {
 	Country    *string
 	Asn        *int64
 	Site       *string
+	// Netflow reads the series in the netflow measure whatever the request is answered under: a
+	// custom_chart series whose measure is netflow_bytes or netflow_packets.
+	Netflow bool
 }
 
 // unscoped reports whether only interfaces restrict the series, which the interface
@@ -87,9 +90,16 @@ func (f TrafficFilter) unscoped() bool {
 // TrafficBuckets reads a traffic series' figures per bucket start and traffic direction,
 // from the flows, and from the interface family's 1 h slots for the whole hours before the
 // earliest flow kept when the bucket width is whole hours and the filter allows it. It
-// returns the covered interval of what it read.
+// returns the covered interval of what it read. The figures are of the measure the request is
+// answered under (measure.go), or netflow when the filter says so.
 func (r *Request) TrafficBuckets(filter TrafficFilter, width int64) (map[int64]map[string]store.VolumeFigures,
 	*Interval, error) {
+	netflow := r.Netflow() || filter.Netflow
+	bucketsStatement, slotsStatement := "widget_traffic_buckets", "widget_traffic_hour_slots"
+	if netflow {
+		bucketsStatement += netflowStatementSuffix
+		slotsStatement += netflowStatementSuffix
+	}
 	result := map[int64]map[string]store.VolumeFigures{}
 	add := func(start int64, direction string, figures store.VolumeFigures) {
 		if result[start] == nil {
@@ -107,16 +117,20 @@ func (r *Request) TrafficBuckets(filter TrafficFilter, width int64) (map[int64]m
 	parameters["asn"] = OptionalID(filter.Asn)
 	parameters["country"] = optionalText(filter.Country)
 	parameters["site"] = optionalText(filter.Site)
-	err := r.Db.WidgetRows(r.Ctx, "widget_traffic_buckets", store.Period{}, parameters,
+	err := r.Db.WidgetRows(r.Ctx, bucketsStatement, store.Period{}, parameters,
 		func(row store.RowScanner) error {
 			var (
 				start     int64
 				direction string
 				figures   store.VolumeFigures
 			)
-			if err := row.Scan(&start, &direction, &figures.Bytes, &figures.AllowedBytes,
+			targets := []any{&start, &direction, &figures.Bytes, &figures.AllowedBytes,
 				&figures.BlockedBytes, &figures.UnknownBytes, &figures.AllowedConnections,
-				&figures.BlockedConnections, &figures.UnknownConnections); err != nil {
+				&figures.BlockedConnections, &figures.UnknownConnections}
+			if netflow {
+				targets = append(targets, figures.NetflowTargets()...)
+			}
+			if err := row.Scan(targets...); err != nil {
 				return err
 			}
 			add(start, direction, figures)
@@ -150,7 +164,7 @@ func (r *Request) TrafficBuckets(filter TrafficFilter, width int64) (map[int64]m
 				selected[id] = true
 			}
 			slotsFrom := int64(-1)
-			err := r.Db.WidgetRows(r.Ctx, "widget_traffic_hour_slots", store.Period{},
+			err := r.Db.WidgetRows(r.Ctx, slotsStatement, store.Period{},
 				map[string]any{"from": firstHour, "to": boundary}, func(row store.RowScanner) error {
 					var (
 						hour      int64
@@ -158,9 +172,13 @@ func (r *Request) TrafficBuckets(filter TrafficFilter, width int64) (map[int64]m
 						direction string
 						figures   store.VolumeFigures
 					)
-					if err := row.Scan(&hour, &src, &dst, &direction, &figures.Bytes, &figures.AllowedBytes,
+					targets := []any{&hour, &src, &dst, &direction, &figures.Bytes, &figures.AllowedBytes,
 						&figures.BlockedBytes, &figures.UnknownBytes, &figures.AllowedConnections,
-						&figures.BlockedConnections, &figures.UnknownConnections); err != nil {
+						&figures.BlockedConnections, &figures.UnknownConnections}
+					if netflow {
+						targets = append(targets, figures.NetflowTargets()...)
+					}
+					if err := row.Scan(targets...); err != nil {
 						return err
 					}
 					local := LocalInterface(store.VolumeKey{SrcInterfaceID: NullableNumber(src),

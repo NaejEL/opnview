@@ -87,13 +87,13 @@ function leftFlows(host, left, scope, selected) {
       src: row.src_interface_id,
       dst: row.dst_interface_id,
       peer: row.peer_address,
-      figures: {
+      figures: host.figures.withMeasure({
         bytes: row.bytes,
         allowed_bytes: row.bytes - row.blocked_bytes,
         blocked_bytes: row.blocked_bytes,
         allowed_connections: row.connections - row.blocked_connections,
         blocked_connections: row.blocked_connections
-      },
+      }, row),
       leftClient: row.client_id,
       leftIface: null
     });
@@ -179,13 +179,13 @@ exports.widget = {
 
     var showBlocked = host.params.flag("show_blocked");
     var ribbons = pairList.map(function (entry) {
-      var volume = host.figures.logged(entry.figures);
+      var volume = host.figures.volume(entry.figures);
       var ribbon = {
         left: entry.left,
         right: entry.right,
         value: host.figures.value(measure, entry.figures),
-        bytes: host.figures.loggedCount(volume.bytes),
-        connections: host.figures.loggedCount(volume.connections)
+        bytes: host.figures.byteCount(entry.figures),
+        connections: host.figures.count(volume.connections)
       };
       if (showBlocked && volume.connections > 0) {
         ribbon.blocked_share = volume.blocked_connections / volume.connections;
@@ -226,7 +226,7 @@ exports.widget = {
         drawnNodes.push({ key: key });
       }
     });
-    var otherVolume = host.figures.logged(other);
+    var otherVolume = host.figures.volume(other);
     return {
       data: {
         left: left,
@@ -236,11 +236,11 @@ exports.widget = {
         ribbons: drawnRibbons,
         other: {
           ribbons: otherRibbons,
-          bytes: host.figures.loggedCount(otherVolume.bytes),
-          connections: host.figures.loggedCount(otherVolume.connections),
+          bytes: host.figures.byteCount(other),
+          connections: host.figures.count(otherVolume.connections),
           unnamed: unnamed.list()
         },
-        total: host.figures.logged(total)
+        total: host.figures.volume(total)
       },
       has_rows: flows.length > 0
     };

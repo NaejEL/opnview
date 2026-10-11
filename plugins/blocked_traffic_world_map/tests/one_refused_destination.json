@@ -11,7 +11,8 @@
     "min_count": 0,
     "period": "24h",
     "show_unplaced": true,
-    "size_by": "connections"
+    "size_by": "connections",
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -80,7 +81,9 @@
   ],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "data": {
     "size_by": "connections",
     "points": [

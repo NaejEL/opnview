@@ -35,3 +35,43 @@ WHERE f.observed_at >= :from
   AND f.traffic_scope <> 'this_firewall'
   AND f.exit_leg_device IS NULL
 GROUP BY 1, 2, 3;
+
+
+-- The same timeline in the `netflow` measure, run in its place when the answer is given in it
+-- (host.query; docs/widget-api.md, "Volumes and the observation-point limit"): the bytes the NetFlow
+-- export reported for the connections, then their packets and coverage classes, under the names
+-- summable figures carry them (host.figures).
+-- statement: widget_owner_activity_buckets_netflow
+SELECT f.observed_at - f.observed_at % :width AS bucket_start,
+       c.owner_id AS owner_id,
+       f.traffic_direction AS traffic_direction,
+       sum(n.bytes) AS bytes,
+       sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END) AS allowed_bytes,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
+       sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END) AS unknown_bytes,
+       sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
+       sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
+       'netflow' AS measure,
+       sum(n.packets) AS packets,
+       sum(CASE WHEN n.coverage = 'measured' THEN 1 ELSE 0 END) AS measured_connections,
+       sum(CASE WHEN n.coverage = 'partial' THEN 1 ELSE 0 END) AS partial_connections,
+       sum(CASE WHEN n.coverage = 'unmeasured' THEN 1 ELSE 0 END) AS unmeasured_connections,
+       sum(CASE WHEN n.coverage = 'not_joinable' THEN 1 ELSE 0 END) AS not_joinable_connections
+FROM classified_flow AS f
+JOIN client AS c ON c.id = f.local_client_id
+LEFT JOIN LATERAL (
+    SELECT coalesce(sum(v.bytes), 0) AS bytes,
+           coalesce(sum(v.packets), 0) AS packets,
+           CASE WHEN count(*) = 0 THEN 'not_joinable'
+                WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
+                WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
+                ELSE 'partial' END AS coverage
+    FROM connection_measured_volume AS v
+    WHERE v.connection_flow_id = f.id
+) AS n ON true
+WHERE f.observed_at >= :from
+  AND f.observed_at < :to
+  AND f.traffic_scope <> 'this_firewall'
+  AND f.exit_leg_device IS NULL
+GROUP BY 1, 2, 3;

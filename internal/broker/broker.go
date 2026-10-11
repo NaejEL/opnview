@@ -658,7 +658,10 @@ func (b *Broker) pageSizeOf(request Request) (int64, int64) {
 }
 
 // fromMirror serves a request from the mirror, or returns nil when the mirror cannot.
-func (b *Broker) fromMirror(ctx context.Context, datum *mirror.Datum, request Request, maxAge time.Duration) *Answer {
+func (b *Broker) fromMirror(ctx context.Context, shared *mirror.Datum, request Request, maxAge time.Duration) *Answer {
+	// The datum is shared with the call that may be refreshing it: its state is read from one
+	// snapshot, never field by field while Store writes it.
+	datum := b.mirror.Snapshot(shared)
 	now := b.now()
 	if datum.AttemptedAt > datum.FetchedAt && float64(now-datum.AttemptedAt) <= maxAge.Seconds() {
 		// An unsuccessful outcome counts for freshness without replacing data.
@@ -738,10 +741,11 @@ func (b *Broker) shared(ctx context.Context, datum *mirror.Datum, key string, re
 	})
 	if errors.Is(err, schedule.ErrBackingOff) {
 		// The datum backs off: its last outcome is served, with when it was had.
+		last := b.mirror.Snapshot(datum)
 		current.answer = &Answer{Response: opnsense.Response{Endpoint: request.Endpoint,
-			Outcome: opnsense.Outcome(datum.Outcome), StatusCode: datum.StatusCode, Detail: datum.Detail},
-			ServedFrom: ServedFromMirror, FetchedAt: datum.AttemptedAt, Datum: datum.ID, Holding: answer.Everything}
-		if datum.Outcome == "" {
+			Outcome: opnsense.Outcome(last.Outcome), StatusCode: last.StatusCode, Detail: last.Detail},
+			ServedFrom: ServedFromMirror, FetchedAt: last.AttemptedAt, Datum: last.ID, Holding: answer.Everything}
+		if last.Outcome == "" {
 			current.answer.Response.Outcome = opnsense.OutcomeTransportFailure
 			current.answer.Response.Detail = "the firewall is backed off after failing"
 		}
@@ -755,10 +759,11 @@ func (b *Broker) shared(ctx context.Context, datum *mirror.Datum, key string, re
 
 // serveFresh shapes a fresh answer for one requester: the page it asked for, or the rows past
 // its cursor.
-func (b *Broker) serveFresh(ctx context.Context, datum *mirror.Datum, request Request, fresh *Answer) (*Answer, error) {
+func (b *Broker) serveFresh(ctx context.Context, shared *mirror.Datum, request Request, fresh *Answer) (*Answer, error) {
 	if fresh == nil || fresh.Value == nil {
 		return fresh, nil
 	}
+	datum := b.mirror.Snapshot(shared)
 	served := *fresh
 	if request.After != nil {
 		value, err := b.mirror.Load(ctx, datum, mirror.Selection{After: request.After})
@@ -784,6 +789,9 @@ func (b *Broker) serveFresh(ctx context.Context, datum *mirror.Datum, request Re
 // fetch makes the call -- walking the pages of a paged datum, asking a record stream only for the
 // window after its newest stored row -- and stores what was read in the mirror.
 func (b *Broker) fetch(ctx context.Context, datum *mirror.Datum, request Request) (*Answer, error) {
+	// What the call reads of the datum's state comes from one snapshot: a reader's first read of a
+	// field can store the datum again meanwhile (Done). Store and Attempt are given the datum itself.
+	view := b.mirror.Snapshot(datum)
 	options := cloneOptions(request.Options)
 	normaliser, _ := b.options.Normaliser(ctx)
 	held := b.declarationOf(request.Endpoint.Path)
@@ -791,7 +799,7 @@ func (b *Broker) fetch(ctx context.Context, datum *mirror.Datum, request Request
 	if held != nil {
 		corrections = held.corrections
 	}
-	window, windowName := b.narrowWindow(ctx, datum, request, options)
+	window, windowName := b.narrowWindow(ctx, view, request, options)
 
 	started := b.clock.Now()
 	response, err := b.client.Call(ctx, request.Endpoint, options)
@@ -809,7 +817,7 @@ func (b *Broker) fetch(ctx context.Context, datum *mirror.Datum, request Request
 				b.options.Log(attemptErr.Error())
 			}
 			if response.Outcome == opnsense.OutcomeServerError || response.Outcome == opnsense.OutcomeTransportFailure {
-				_ = b.mirror.RecordGap(ctx, datum.ID, mirror.Gap{From: datum.FetchedAt, To: started.Unix(),
+				_ = b.mirror.RecordGap(ctx, datum.ID, mirror.Gap{From: view.FetchedAt, To: started.Unix(),
 					Reason: mirror.GapCallFailed})
 			}
 		}
@@ -824,7 +832,7 @@ func (b *Broker) fetch(ctx context.Context, datum *mirror.Datum, request Request
 			Holding: answer.Everything}, nil
 	}
 	shape := infer.Learn(value, corrections, b.options.Vocabulary, normaliser)
-	keepLearnedCursor(datum, &shape)
+	keepLearnedCursor(view, &shape)
 	value, pages, response = b.walkPages(ctx, datum, request, options, shape, value, response)
 	_ = pages
 	if window != nil {

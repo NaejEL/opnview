@@ -5,7 +5,8 @@
     "limit": 10,
     "measure": "bytes",
     "period": "1h",
-    "scope": "all"
+    "scope": "all",
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -50,7 +51,9 @@
   ],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "data": {
     "measure": "bytes",
     "bars": [

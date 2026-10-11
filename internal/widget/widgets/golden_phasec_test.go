@@ -29,7 +29,30 @@ import (
 var (
 	phaseCMutex   sync.Mutex
 	phaseCChanged = map[string][]string{}
+	// phaseCValues are the named values a change adds to a list, by type: removed from that list
+	// alone, so every other member of the list is still held to the record.
+	phaseCValues = map[string][]phaseCValue{}
 )
+
+// phaseCValue is one value a change adds to the list at a path.
+type phaseCValue struct {
+	path  string
+	value string
+}
+
+// registerPhaseCValue records that a change adds one string to the list at a path of a type's answer.
+func registerPhaseCValue(widgetType, path, value string) {
+	phaseCMutex.Lock()
+	defer phaseCMutex.Unlock()
+	phaseCValues[widgetType] = append(phaseCValues[widgetType], phaseCValue{path: path, value: value})
+}
+
+// phaseCValuesOf returns the values registered for a type.
+func phaseCValuesOf(widgetType string) []phaseCValue {
+	phaseCMutex.Lock()
+	defer phaseCMutex.Unlock()
+	return append([]phaseCValue(nil), phaseCValues[widgetType]...)
+}
 
 // registerPhaseCChange records that a Phase C change alters the given paths of a type's answer.
 func registerPhaseCChange(widgetType string, paths ...string) {
@@ -52,7 +75,8 @@ func phaseCPaths(widgetType string) []string {
 // JSON value is returned unchanged too, so the comparison reports it.
 func withoutPhaseCFields(widgetType string, answer []byte) []byte {
 	paths := phaseCPaths(widgetType)
-	if len(paths) == 0 {
+	values := phaseCValuesOf(widgetType)
+	if len(paths) == 0 && len(values) == 0 {
 		return answer
 	}
 	decoder := json.NewDecoder(bytes.NewReader(answer))
@@ -66,6 +90,9 @@ func withoutPhaseCFields(widgetType string, answer []byte) []byte {
 	}
 	for _, path := range paths {
 		removePath(tree, strings.Split(path, "."))
+	}
+	for _, value := range values {
+		removeValue(tree, strings.Split(value.path, "."), value.value)
 	}
 	var encoded bytes.Buffer
 	if err := encodeOrdered(&encoded, tree); err != nil {
@@ -221,4 +248,32 @@ func removePath(node any, parts []string) {
 	for _, element := range elements {
 		removePath(element, parts[1:])
 	}
+}
+
+// removeValue deletes every element equal to a string from the list at a path of a decoded answer.
+func removeValue(node any, parts []string, value string) {
+	object, ok := node.(*orderedObject)
+	if !ok || len(parts) == 0 {
+		return
+	}
+	child, found := object.values[parts[0]]
+	if !found {
+		return
+	}
+	if len(parts) > 1 {
+		removeValue(child, parts[1:], value)
+		return
+	}
+	elements, ok := child.([]any)
+	if !ok {
+		return
+	}
+	kept := []any{}
+	for _, element := range elements {
+		if text, isText := element.(string); isText && text == value {
+			continue
+		}
+		kept = append(kept, element)
+	}
+	object.values[parts[0]] = kept
 }

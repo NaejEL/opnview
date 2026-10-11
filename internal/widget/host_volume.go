@@ -6,9 +6,10 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 )
 
-// host.volume: the rolling window of logged volume every volume widget reads (volume.go), assembled
-// from the 1 h slots for the whole hours and from the flows at either edge; reading it records the
-// window's coverage and the freshness of the slots read, as for every volume widget.
+// host.volume: the rolling window of volume every volume widget reads (volume.go), in the measure the
+// request is answered under (measure.go), assembled from the 1 h slots for the whole hours and from
+// the flows at either edge; reading it records the window's coverage and the freshness of the slots
+// read, as for every volume widget.
 //
 //	host.volume.window()                  {requested, covered, rows}: covered is null when the store
 //	                                      holds none of the window; each row is {src_interface_id,
@@ -68,7 +69,8 @@ func init() {
 			call.decodeArgument(arguments.Argument(0), "the rows", &rows)
 			window := store.VolumeWindow{}
 			for _, row := range rows {
-				window.Rows = append(window.Rows, store.VolumeRow{VolumeKey: row.key(), VolumeFigures: row.figures()})
+				window.Rows = append(window.Rows, store.VolumeRow{VolumeKey: row.key(),
+					VolumeFigures: call.fromScript(row.summableFigures)})
 			}
 			return call.value(summable(window.Total()))
 		})
@@ -103,11 +105,4 @@ func (row volumeRow) key() store.VolumeKey {
 	return store.VolumeKey{SrcInterfaceID: row.SrcInterfaceID, DstInterfaceID: row.DstInterfaceID,
 		PeerAddress: row.PeerAddress, TrafficScope: row.TrafficScope, TrafficDirection: row.TrafficDirection,
 		ExitLegDevice: row.ExitLegDevice}
-}
-
-// figures is a row's summable figures as the core reads them.
-func (row volumeRow) figures() store.VolumeFigures {
-	return store.VolumeFigures{Bytes: row.Bytes, AllowedBytes: row.AllowedBytes, BlockedBytes: row.BlockedBytes,
-		UnknownBytes: row.UnknownBytes, AllowedConnections: row.AllowedConnections,
-		BlockedConnections: row.BlockedConnections, UnknownConnections: row.UnknownConnections}
 }

@@ -16,8 +16,8 @@ type clientVolume struct {
 	Peers       map[string]bool
 }
 
-// ClientVolumes reads every client's figures over the request's window, and records the
-// window's coverage.
+// ClientVolumes reads every client's figures over the request's window, in the measure it is answered
+// under (measure.go), and records the window's coverage.
 func (r *Request) ClientVolumes() (map[int64]*clientVolume, error) {
 	from, to := r.Window.From, r.Window.To
 	firstHour := store.PeriodHour.SlotStart(from)
@@ -36,6 +36,9 @@ func (r *Request) ClientVolumes() (map[int64]*clientVolume, error) {
 		if to <= from {
 			return nil
 		}
+		if r.Netflow() {
+			name += netflowStatementSuffix
+		}
 		return r.Db.WidgetRows(r.Ctx, name, store.Period{}, map[string]any{"from": from, "to": to},
 			func(row store.RowScanner) error {
 				var (
@@ -43,9 +46,13 @@ func (r *Request) ClientVolumes() (map[int64]*clientVolume, error) {
 					direction string
 					figures   store.VolumeFigures
 				)
-				if err := row.Scan(&id, &direction, &figures.Bytes, &figures.AllowedBytes, &figures.BlockedBytes,
+				targets := []any{&id, &direction, &figures.Bytes, &figures.AllowedBytes, &figures.BlockedBytes,
 					&figures.UnknownBytes, &figures.AllowedConnections, &figures.BlockedConnections,
-					&figures.UnknownConnections); err != nil {
+					&figures.UnknownConnections}
+				if r.Netflow() {
+					targets = append(targets, figures.NetflowTargets()...)
+				}
+				if err := row.Scan(targets...); err != nil {
 					return err
 				}
 				volume := member(id)

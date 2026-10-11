@@ -52,7 +52,7 @@ exports.widget = {
         engine: "firewall_rule",
         geo: geo,
         size: sizeBy === "connections" ? allowed.allowed_connections : allowed.bytes,
-        volume: host.figures.logged(allowed),
+        volume: host.figures.volume(allowed),
         interfaces: peer.interfaces
       });
     });
@@ -68,7 +68,7 @@ exports.widget = {
         points: points,
         below_minimum: host.figures.remainder(belowMembers, below, null),
         unplaced: bins.list(),
-        total: host.figures.logged(total)
+        total: host.figures.volume(total)
       },
       has_rows: hasRows
     };

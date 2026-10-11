@@ -84,7 +84,7 @@ exports.widget = {
       var figures = perClient[info.id];
       if (figures !== undefined && (figures.bytes > 0 || connections(figures) > 0)) {
         chip.state = "measured";
-        chip.volume = host.figures.logged(figures);
+        chip.volume = host.figures.volume(figures);
       }
       return chip;
     }
@@ -137,7 +137,7 @@ exports.widget = {
         }
       });
       card.chip_remainder = host.figures.remainder(restMembers, rest, null);
-      card.volume = host.figures.logged(figures);
+      card.volume = host.figures.volume(figures);
       card.value = host.figures.value(measure, figures);
       return card;
     }
@@ -186,7 +186,7 @@ exports.widget = {
     if (host.params.flag("show_timeline")) {
       ownerTimelines(host, data, read.covered, scope, measure);
     }
-    data.total = host.figures.logged(total);
+    data.total = host.figures.volume(total);
     return { data: data, has_rows: hasRows };
   }
 };
@@ -245,7 +245,7 @@ function ownerTimelines(host, data, covered, scope, measure) {
       if (sum !== undefined || !entry.gap) {
         var figures = sum === undefined ? host.figures.zero() : sum;
         entry.value = host.figures.value(measure, figures);
-        entry.volume = host.figures.logged(figures);
+        entry.volume = host.figures.volume(figures);
       }
       return entry;
     });

@@ -665,6 +665,7 @@ widget plugin adds one key:
 |---|---|
 | `script` | The JavaScript file, in the widget's own directory, that answers the widget. |
 | `queries` | The statement files the script runs, in the widget's own directory. |
+| `volumes` | `true` for a widget serving Volume or byte Count figures: the core gives it `volume_measure` and answers it in the measure that parameter chooses (*Volume figures and their measure*, below). |
 
 A widget with no `script` is declarative: one query file, a single `SELECT`, whose columns the shape
 engine turns into the data (`docs/widget-authoring.md`, *Shape contracts*). A key the manifest does
@@ -782,7 +783,7 @@ The references the core resolved. One that matched nothing has already made the 
 
 | Function | What it answers |
 |---|---|
-| `rows(name, parameters, period)` | Every row of a statement the widget declares, each an object of its columns. `period` names the period of a template and is left out otherwise. |
+| `rows(name, parameters, period)` | Every row of a statement the widget declares, each an object of its columns. `period` names the period of a template and is left out otherwise. Under the netflow measure, a statement whose twin `<name>_netflow` the widget declares is run as its twin (*Volume figures and their measure*). |
 | `row(name, parameters, period)` | Its first row, or `null`. |
 | `carriesDomain(name)` | Whether the statement reads a column carrying a domain name. |
 
@@ -815,24 +816,35 @@ says so beside its measure.
 
 | Function | What it answers |
 |---|---|
-| `loggedCount(value)` | `{measure: "logged", lower_bound: true, value}`. |
-| `logged(figures)` | The logged volume of summable figures: `{measure, lower_bound, bytes, allowed_bytes, blocked_bytes, unknown_bytes, connections, allowed_connections, blocked_connections, unknown_connections}`. |
-| `zero()`, `add(a, b)` | Summable figures holding nothing, and the sum of two. |
-| `value(measure, figures)` | The figure a `measure` names: `bytes`, `connections`, `allowed` or `blocked`. |
-| `remainder(members, volume, count)` | What a truncating parameter dropped: `{members, volume, count}`, a `null` volume or count left out. |
+| `volume(figures)` | The Volume of summable figures, in their own measure: `{measure, lower_bound, bytes, allowed_bytes, blocked_bytes, unknown_bytes, connections, allowed_connections, blocked_connections, unknown_connections}`, and for a netflow Volume its `packets` and its `coverage` `{measured, partial, unmeasured, not_joinable}`. |
+| `logged(figures)` | The same as `volume`: the name it had while every figure was logged. |
+| `count(value)` | A count of the connections or records the answer's figures count, `{measure, lower_bound: true, value}`, in the measure the request is answered under. |
+| `byteCount(figures)` | The Count of the figures' bytes, in their measure. |
+| `connectionBytes(figures)` | The same for one connection's figures. A netflow figure of one connection measured in both directions is exact, and is the only figure whose `lower_bound` is `false`. |
+| `cover(figures)` | Says the answer counts figures whose numbers the script uses directly, rather than through a Volume or a Count, so the core judges them as it judges a Volume. |
+| `loggedCount(value)` | `{measure: "logged", lower_bound: true, value}`: a count of logged records, which an answer in the netflow measure cannot carry. |
+| `withMeasure(figures, from)` | Figures carrying the measure of `from` -- a row or figures read in it: its measure, packets and coverage. |
+| `zero()`, `add(a, b)` | Summable figures holding nothing, in the measure the request is answered under, and the sum of two. |
+| `value(measure, figures)` | The figure a `measure` names: `bytes`, `connections`, `allowed`, `blocked`, or `packets` of netflow figures. |
+| `remainder(members, volume, count)` | What a truncating parameter dropped: `{members, volume, count}`, a `null` volume or count left out. `count` is a Count built by this area, or a number, read as `loggedCount` reads one. |
 | `compare(a, b)` | `-1`, `0` or `1`: two strings in byte order, the order every key of the core is ranked in. JavaScript's `<` compares UTF-16 code units and differs outside ASCII. |
 | `nameFreeCompare(a, b)` | The tie-break between rows whose name is withheld: by a hash of the name, which says nothing about it. |
 | `interfaceKey(id)`, `clientKey(id)` | A member key, `interface:<id>` or `client:<id>`. |
-| `measures` | The measures, by name: `logged`, `sampled`, `interface_counter`. |
+| `measures` | The measures, by name: `logged`, `netflow`, `sampled`, `interface_counter`. |
+| `measure` | The measure the request is answered under: `logged` or `netflow`. |
 
 Summable figures are `{bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
-blocked_connections, unknown_connections}`; a member left out is `0`.
+blocked_connections, unknown_connections}`; a member left out is `0`. Figures of the netflow measure
+also carry `measure: "netflow"`, `packets`, `measured_connections`, `partial_connections`,
+`unmeasured_connections` and `not_joinable_connections` -- or, for the allowed or the blocked part of
+figures whose connections were not all measured, `coverage_unknown: true` and no `packets` -- and a
+Volume handed back is read as its figures.
 
 #### `host.volume`
 
 | Function | What it answers |
 |---|---|
-| `window()` | The rolling window of logged volume, `{requested, covered, rows}`, assembled from the 1 h slots and, at either edge, the flows. Each row is `{src_interface_id, dst_interface_id, peer_address, traffic_scope, traffic_direction, exit_leg_device}` and its summable figures. Reading it records the window's coverage and the freshness of the slots read. |
+| `window()` | The rolling window of volume, in the measure the request is answered under, `{requested, covered, rows}`, assembled from the 1 h slots and, at either edge, the flows. Each row is `{src_interface_id, dst_interface_id, peer_address, traffic_scope, traffic_direction, exit_leg_device}` and its summable figures. Reading it records the window's coverage and the freshness of the slots read. |
 | `total(rows)` | The summable figures of every row that counts a connection: every row but a second leg, so a connection logged on two interfaces counts once. |
 | `localInterface(row)` | The inside interface a row belongs to, or `null`. |
 | `scopeMatches(scope, row)` | Whether a row is in a traffic scope; `all` holds every row. |
@@ -1011,7 +1023,8 @@ chart whose series each degrade on their own.
 
 | Function | What it answers |
 |---|---|
-| `traffic(filter, width)` | The logged traffic of the window per bucket start and traffic direction: `{buckets, covered}`, `buckets` mapping a bucket start to `{direction: summable figures}` and `covered` the interval read, `null` for none. `filter` is `{interfaces, client_id, rule_id, asn, country, site}`, each `null` or left out for no restriction. Whole-hour buckets the flows no longer hold are read from the 1 h slots when only interfaces restrict the series, and the answer then carries the state `series_read_from_hour_slots_beyond_flow_horizon`. |
+| `traffic(filter, width)` | The traffic of the window per bucket start and traffic direction, in the measure the request is answered under: `{buckets, covered}`, `buckets` mapping a bucket start to `{direction: summable figures}` and `covered` the interval read, `null` for none. `filter` is `{interfaces, client_id, rule_id, asn, country, site, netflow}`, each `null` or left out for no restriction; `netflow: true` reads the netflow measure whatever the request is answered under, for a series whose measure is `netflow_bytes` or `netflow_packets`. Whole-hour buckets the flows no longer hold are read from the 1 h slots when only interfaces restrict the series, and the answer then carries the state `series_read_from_hour_slots_beyond_flow_horizon`. |
+| `netflowState()` | `null` when NetFlow can answer the window -- one Observation Point established throughout it -- and otherwise the named state, which the answer then carries: a series of the netflow measure then carries no figure. |
 | `providers()` | Every registered provider with its availability and condition, as `host.envelope.availability()` writes one. |
 | `kindCondition(availability, kind)` | The condition of a provider kind among an availability list: its active providers' best. |
 | `bind(kinds)` | Adds every registered provider of those kinds to the response's availability: for a widget whose kinds depend on its parameters, and which declares none. |
@@ -1061,6 +1074,50 @@ name is not run, the script is stopped (an interruption no `catch` intercepts), 
 withheld whole -- condition `withheld_by_aggregate_mode`, `data` null, `"data"` in `withheld`
 (maintainer's decision, 12 October 2026). A third party's widget that checks
 `host.query.carriesDomain` first and reads another statement instead keeps its answer.
+
+### Volume figures and their measure
+
+A volume figure is of one **measure**: `logged`, what the filter log recorded, or `netflow`, the bytes
+and packets the firewall's NetFlow export reported for the same logged connections at the single
+Observation Point its capture configuration establishes (`docs/widget-api.md`, *Volumes and the
+observation-point limit*). The two are never summed, and an answer carries one of them.
+
+**The choice is the core's, and a widget names no measure.** A widget serving Volume or byte Count
+figures declares `"volumes": true` in its manifest, and that is all:
+
+- the core gives it the parameter `volume_measure` -- `logged`, `netflow` or `best_available`,
+  `best_available` by default -- which its manifest does not declare (`reserved_parameter_key` if it
+  tries);
+- the core decides, from what is stored, whether NetFlow can answer the window, runs the script in the
+  measure chosen, and judges what it built: `best_available` answers `netflow` only when every
+  connection the answer counts was measured in both directions, and falls back to `logged` -- byte for
+  byte what `volume_measure = logged` answers -- with the named state that says why;
+- every figure the core hands the script is already of that measure: `host.volume`, `host.clients`,
+  `host.peers`, `host.sites`, `host.flows`, `host.series` and `host.attribution` read it, and
+  `host.figures` builds every Volume and Count in the figures' own measure.
+
+**What a script does to be answered in the netflow measure.** It builds its figures through
+`host.figures` and keeps what the core read whole:
+
+- sum with `host.figures.add`, or keep every member a figure carries, `measure` and the netflow
+  members included, as the built-in `interface_volume_ranking` does;
+- a count of connections is `host.figures.count(n)`, a byte count `host.figures.byteCount(figures)`;
+  `host.figures.loggedCount(n)` stays a count of logged records;
+- a number taken out of figures and drawn on its own -- a node of a tree -- is written with
+  `host.figures.measure` as its measure, and the figures it came from are handed to
+  `host.figures.cover`;
+- a statement of the widget's own that reads volume columns declares its twin, `<name>_netflow`, with
+  the same parameters and the same columns read in the netflow measure, plus `measure`
+  (`'netflow' AS measure`), `packets`, `measured_connections`, `partial_connections`,
+  `unmeasured_connections` and `not_joinable_connections`. The built-in widgets' statement files show
+  each case, reading `connection_measured_volume` and the `netflow_*` columns of the aggregate
+  families (`docs/data-model.md`, *NetFlow volumes*).
+
+**What happens to a widget that does not.** Nothing wrong is ever served. A run in the netflow
+measure that builds a figure the core did not read in it -- a non-zero logged figure, a logged count,
+a figure the script wrote with `measure: "logged"` -- or that fails, is not served in that measure:
+`best_available` answers the widget's logged answer with the state `netflow_not_served_by_type`, and an
+explicit `volume_measure = netflow` answers no figure and the same state.
 
 ### Testing a widget
 

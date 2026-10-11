@@ -1,12 +1,14 @@
-// interface_volume_ranking: interfaces by logged volume, each bar carrying the bytes, the client
+// interface_volume_ranking: interfaces by volume, each bar carrying the bytes, the client
 // count behind it, the blocked connections and the east-west and north-south parts
 // (docs/widget-catalogue.md, "Interface volume ranking"). A flow counts on the interface of its
 // inside end; an interface's own figures add the second legs logged on it, as the rolling window
 // gives them.
 
-// SUMMABLE are the members of summable figures (host.figures).
+// SUMMABLE are the members of summable figures (host.figures): the seven every figure carries, and the
+// ones a figure of the netflow measure carries beside them.
 var SUMMABLE = ["bytes", "allowed_bytes", "blocked_bytes", "unknown_bytes", "allowed_connections",
-  "blocked_connections", "unknown_connections"];
+  "blocked_connections", "unknown_connections", "packets", "measured_connections", "partial_connections",
+  "unmeasured_connections", "not_joinable_connections"];
 
 // zero is summable figures holding nothing.
 function zero() {
@@ -15,9 +17,12 @@ function zero() {
   return figures;
 }
 
-// add adds summable figures into others.
+// add adds summable figures into others, which take their measure.
 function add(into, other) {
   SUMMABLE.forEach(function (member) { into[member] += other[member] || 0; });
+  if (other.measure !== undefined) {
+    into.measure = other.measure;
+  }
 }
 
 // newParts are an interface's figures, whole and in parts.
@@ -114,11 +119,11 @@ exports.widget = {
       var bar = {
         interface: info,
         value: measure === "clients" ? seen : host.figures.value(measure, sums.own),
-        volume: host.figures.logged(sums.own),
-        east_west: host.figures.logged(sums.eastWest),
-        north_south: host.figures.logged(sums.northSouth),
-        this_firewall: host.figures.logged(sums.thisFirewall),
-        exit_legs: host.figures.logged(sums.exitLegs),
+        volume: host.figures.volume(sums.own),
+        east_west: host.figures.volume(sums.eastWest),
+        north_south: host.figures.volume(sums.northSouth),
+        this_firewall: host.figures.volume(sums.thisFirewall),
+        exit_legs: host.figures.volume(sums.exitLegs),
         clients_seen: seen,
         clients_known: counts === undefined ? 0 : counts.known,
         rules_not_logging: notLogging === undefined ? 0 : notLogging
@@ -156,13 +161,13 @@ exports.widget = {
     var data = {
       measure: measure,
       bars: bars,
-      remainder: { members: remainderMembers, volume: host.figures.logged(remainderSum) }
+      remainder: { members: remainderMembers, volume: host.figures.volume(remainderSum) }
     };
     if (!includeUnlabelled) {
-      data.excluded_unlabelled = { members: excludedMembers, volume: host.figures.logged(excludedSum) };
+      data.excluded_unlabelled = { members: excludedMembers, volume: host.figures.volume(excludedSum) };
     }
-    data.unattributed = host.figures.logged(unattributed);
-    data.total = host.figures.logged(total);
+    data.unattributed = host.figures.volume(unattributed);
+    data.total = host.figures.volume(total);
     data.floating_rules_not_logging = logging.floating_not_logging;
     data.unresolved_rules_not_logging = logging.unresolved_not_logging;
     data.rules_logging_not_reported = logging.not_reported;

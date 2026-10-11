@@ -7,7 +7,8 @@
     "period": "24h",
     "scope": "north_south",
     "show_unplaced": true,
-    "size_by": "bytes"
+    "size_by": "bytes",
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -64,7 +65,9 @@
   ],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "data": {
     "size_by": "bytes",
     "points": [

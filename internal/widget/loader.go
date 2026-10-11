@@ -42,12 +42,16 @@ func presetFromManifest(manifest Manifest, origin string) Preset {
 	for _, parameter := range manifest.Parameters {
 		params = append(params, parameter.param())
 	}
+	if manifest.Volumes {
+		// The core's parameter, which the widget does not declare (measure.go).
+		params = append(params, volumeMeasureParam())
+	}
 	return Preset{
 		Type: manifest.Type, Shape: manifest.Shape, Providers: append([]string{}, manifest.Providers...),
 		Primary: manifest.Primary, Windowed: manifest.Windowed,
 		WithheldWholeUnderNoDomains: manifest.NoDomains == NoDomainsWhole,
 		Params:                      params, LowerBound: manifest.LowerBound, Measure: manifest.Measure,
-		Origin: origin, Manifest: manifest,
+		Origin: origin, Manifest: manifest, Volumes: manifest.Volumes,
 	}
 }
 

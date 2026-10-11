@@ -203,41 +203,16 @@ func (c *Collector) forgetHistory(providerID int64) {
 	delete(c.netflow.histories, providerID)
 }
 
-// configurationAt returns the configuration in force at an instant, or nil when it is unknown.
+// configurationAt returns the configuration in force at an instant, or nil when it is unknown
+// (store.CaptureConfigurationAt, which the widget API's measure reads too).
 func (h *captureHistory) configurationAt(at int64) *store.CaptureConfiguration {
-	rows := h.configurations
-	if len(rows) == 0 || at < rows[0].FirstReadAt {
-		return nil
-	}
-	for index := range rows {
-		row := &rows[index]
-		if at >= row.FirstReadAt && at <= row.LastReadAt {
-			return readableOrNil(row)
-		}
-		if index+1 < len(rows) && at > row.LastReadAt && at < rows[index+1].FirstReadAt {
-			// Between the last read showing one configuration and the first showing another.
-			return nil
-		}
-	}
-	return readableOrNil(&rows[len(rows)-1])
-}
-
-func readableOrNil(row *store.CaptureConfiguration) *store.CaptureConfiguration {
-	if !row.Readable {
-		return nil
-	}
-	return row
+	return store.CaptureConfigurationAt(h.configurations, at)
 }
 
 // suspended reports whether a stream condition's suspension holds an instant: from the condition
-// until the next configuration read.
+// until the next configuration read (store.CaptureSuspendedAt).
 func (h *captureHistory) suspended(at int64) bool {
-	for _, condition := range h.conditions {
-		if at >= condition.ObservedAt && (condition.ResolvedAt == nil || at < *condition.ResolvedAt) {
-			return true
-		}
-	}
-	return false
+	return store.CaptureSuspendedAt(h.conditions, at)
 }
 
 // mappedInterface is one interface as the index map holds it.
@@ -283,24 +258,15 @@ type pointState struct {
 }
 
 // stateAt evaluates the configuration in force at an instant (PS18's table).
+// What is stored decides all of it but the index mapping (store.CaptureStateAt, which the widget
+// API's measure reads too); the mapping is the collector's.
 func stateAt(history *captureHistory, at int64, indexes map[string]mappedInterface) pointState {
-	configuration := history.configurationAt(at)
-	if configuration == nil {
-		return pointState{state: store.CaptureUnknown, captured: -1}
+	state, count, configuration := store.CaptureStateAt(history.configurations, history.conditions, at)
+	result := pointState{state: state, captured: count, configuration: configuration}
+	if state != store.CaptureObservationPoint {
+		return result
 	}
 	captured := configuration.Captured()
-	result := pointState{captured: int64(len(captured)), configuration: configuration}
-	switch {
-	case !configuration.Enabled || len(captured) == 0:
-		result.state = store.CaptureNotConfigured
-		return result
-	case len(captured) >= 2:
-		result.state = store.CaptureObservationPointHidden
-		return result
-	case history.suspended(at):
-		result.state = store.CaptureUnknown
-		return result
-	}
 	result.point, result.lossDetectable = captured[0], true
 	mapped, found := indexes[captured[0].Identifier]
 	if !found {

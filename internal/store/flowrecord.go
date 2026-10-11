@@ -128,6 +128,96 @@ func (c CaptureConfiguration) Captured() []CaptureInterface {
 	return captured
 }
 
+// CaptureConfigurationAt returns the configuration in force at an instant among a provider's
+// configurations, oldest first (PS18): the row whose reads hold the instant; after the newest read,
+// the newest row; nil before the first read, between the last read showing one configuration and
+// the first showing another, and on a row whose read failed -- every instant whose configuration is
+// unknown.
+func CaptureConfigurationAt(configurations []CaptureConfiguration, at int64) *CaptureConfiguration {
+	if len(configurations) == 0 || at < configurations[0].FirstReadAt {
+		return nil
+	}
+	readable := func(row *CaptureConfiguration) *CaptureConfiguration {
+		if !row.Readable {
+			return nil
+		}
+		return row
+	}
+	for index := range configurations {
+		row := &configurations[index]
+		if at >= row.FirstReadAt && at <= row.LastReadAt {
+			return readable(row)
+		}
+		if index+1 < len(configurations) && at > row.LastReadAt && at < configurations[index+1].FirstReadAt {
+			// Between the last read showing one configuration and the first showing another.
+			return nil
+		}
+	}
+	return readable(&configurations[len(configurations)-1])
+}
+
+// CaptureSuspendedAt reports whether a stream condition suspends the join at an instant: from the
+// condition until the next configuration read (PS18, the configuration contradicting the stream).
+func CaptureSuspendedAt(conditions []FlowRecordCondition, at int64) bool {
+	for _, condition := range conditions {
+		if at >= condition.ObservedAt && (condition.ResolvedAt == nil || at < *condition.ResolvedAt) {
+			return true
+		}
+	}
+	return false
+}
+
+// CaptureStateAt is PS18's table at an instant, from what is stored: the configuration in force and
+// the stream conditions. It answers CaptureObservationPoint for a configuration naming exactly one
+// captured interface, which the index mapping (PS11, held by the collector) may still find unmapped;
+// captured is how many interfaces the configuration captures on, -1 when it is unknown.
+func CaptureStateAt(configurations []CaptureConfiguration, conditions []FlowRecordCondition, at int64) (
+	state string, captured int64, configuration *CaptureConfiguration) {
+	configuration = CaptureConfigurationAt(configurations, at)
+	if configuration == nil {
+		return CaptureUnknown, -1, nil
+	}
+	interfaces := configuration.Captured()
+	captured = int64(len(interfaces))
+	switch {
+	case !configuration.Enabled || len(interfaces) == 0:
+		return CaptureNotConfigured, captured, configuration
+	case len(interfaces) >= 2:
+		return CaptureObservationPointHidden, captured, configuration
+	case CaptureSuspendedAt(conditions, at):
+		return CaptureUnknown, captured, configuration
+	}
+	return CaptureObservationPoint, captured, configuration
+}
+
+// CaptureChangePoints are the instants inside [from, to) at which CaptureStateAt may change, from with
+// them: the state is constant from one to the next.
+func CaptureChangePoints(configurations []CaptureConfiguration, conditions []FlowRecordCondition,
+	from, to int64) []int64 {
+	points := map[int64]bool{from: true}
+	add := func(at int64) {
+		if at > from && at < to {
+			points[at] = true
+		}
+	}
+	for _, row := range configurations {
+		add(row.FirstReadAt)
+		add(row.LastReadAt + 1)
+	}
+	for _, condition := range conditions {
+		add(condition.ObservedAt)
+		if condition.ResolvedAt != nil {
+			add(*condition.ResolvedAt)
+		}
+	}
+	sorted := make([]int64, 0, len(points))
+	for at := range points {
+		sorted = append(sorted, at)
+	}
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	return sorted
+}
+
 // CaptureRead is what RecordCaptureRead did.
 type CaptureRead struct {
 	// Opened says the read found a configuration other than the newest row's, and opened a row.

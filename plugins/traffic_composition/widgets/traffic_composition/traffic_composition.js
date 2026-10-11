@@ -133,7 +133,7 @@ function ring(host, members, measure, limit) {
       var slice = JSON.parse(JSON.stringify(parts[member.key]));
       slice.key = member.key;
       slice.value = member.value;
-      slice.volume = host.figures.logged(sums[member.key]);
+      slice.volume = host.figures.volume(sums[member.key]);
       slices.push(slice);
       return;
     }
@@ -145,7 +145,7 @@ function ring(host, members, measure, limit) {
     // Other is always returned, so the slices and it make the whole; whether it is drawn is
     // show_other's, which is rendering-only (a truncation is never silent, A8).
     other: host.figures.remainder(otherMembers, otherSum, null),
-    total: host.figures.logged(total)
+    total: host.figures.volume(total)
   };
 }
 

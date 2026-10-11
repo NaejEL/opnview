@@ -6,7 +6,8 @@
     "interfaces": null,
     "limit": 20,
     "min_flows": 1,
-    "period": "24h"
+    "period": "24h",
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -103,7 +104,9 @@
   "freshness": [],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "resolver_window_bounded": false,
   "data": {
     "grouping": "site_name",

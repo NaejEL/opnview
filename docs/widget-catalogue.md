@@ -572,6 +572,9 @@ discovery, *Runtime discovery* (i); rule discovery, *Runtime discovery* (ii).
 `allowed` | `blocked`); `interfaces` (an optional list of interface references
 limiting the rows and columns; empty means every discovered interface);
 `show_rules` (boolean).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 ### Traffic over time by scope
 
@@ -594,6 +597,9 @@ with the totals brought forward above the chart. Outbound and inbound derive fro
 **Parameters** — `period`; `scopes` (any subset of `outbound`, `inbound`,
 `inter_interface`); `measure` (`bytes` | `connections`); `interfaces` (optional
 list of interface references); `stacked` (boolean).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 **Gaps** — none. **G3 was closed by step 5A**: every volume aggregate carries
 `traffic_direction` (`outbound`, `inbound`, `inter_interface`) in its slot key,
@@ -626,6 +632,9 @@ logs*; *Runtime discovery* (i).
 `scope` (`all` | `east_west` | `north_south`); `limit` (how many interfaces to
 show); `include_unlabelled` (boolean — whether interfaces the user has not
 labelled are listed).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 ### Client volume ranking
 
@@ -657,6 +666,9 @@ leases*.
 `identity` (`any` | `dhcp_client_id` | `mac` | `address_in_interface` — which
 identity levels to include); `limit`; `include_unstable` (boolean); `measure`
 (`bytes` | `connections` | `destinations`).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 **Gaps** — none. **G4 was closed by step 5A**: the `client_volume_aggregate_*`
 family carries a 7 d or 30 d per-client total beyond the `retention_seconds`
@@ -697,6 +709,9 @@ the second of the three outbound calls the project allows.
 **Parameters** — `client` (a client reference — required); `period`; `action`
 (`all` | `allowed` | `blocked`); `scope` (`all` | `east_west` |
 `north_south`); `columns` (which of the available columns to show); `limit`.
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 ### Traffic composition, now
 
@@ -748,6 +763,9 @@ it); `window_seconds` (how much of the recent past the rolling series holds,
 2 to 3600; absent, no rolling series); `show_other` (boolean, default true and
 not recommended to disable); `line_interpolation` (`points` | `linear` |
 `smooth`, how the rolling series' points are joined -- rendering only).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 **Not adopted** — `destinations_per_owner`, which the mockup also carried: a
 connection tree rooted at the person answers it.
@@ -794,6 +812,9 @@ level the tree starts at); `depth` (how many levels are expanded on load);
 (`bytes` | `connections`); `limit_per_level`; `sort`
 (`volume` | `connections` | `name` | `recency`); `include_blocked` (boolean,
 default true).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 ## People
 
@@ -830,6 +851,9 @@ empty means every person); `include_unassigned` (boolean, default true);
 (`all` | `east_west` | `north_south`); `sort`
 (`volume` | `blocked` | `name` | `machines`); `clients_per_card` (how many chips
 before a collapsed remainder chip); `show_timeline` (boolean).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 **Required statement** — **Ownership is never inferred.** A machine appears under
 a person because somebody said it does, and for no other reason: not a hostname,
@@ -878,6 +902,9 @@ Sources: *Data source 5 — Resolver DNS lookups*; *Data source 1 — Filter log
 `limit`; `min_flows` (suppress names seen fewer than N times);
 `group_by_registrable_domain` (boolean — whether `a.example` and `b.example`
 collapse).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 **Gaps** — none. **G5 was closed by step 5A**: the `domain_volume_aggregate_*`
 family carries a 30 d top-sites list beyond the `retention_seconds` horizon.
@@ -911,6 +938,9 @@ name, rendered in step 7. Providers: `dns_lookup`, `resolver_cache`,
 **Parameters** — `period`; `interfaces` (optional); `clients` (optional);
 `sites_per_client` (how many names per row); `min_flows`;
 `show_attribution_rate` (boolean, default true).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 **Gaps** — none. **G5 and G6 were closed by step 5A**: the long periods come from
 `domain_volume_aggregate_*`, and a lookup carries its own `interface_id`.
@@ -947,6 +977,9 @@ for the resolver-cache cycle*.
 
 **Parameters** — `period`; `interfaces` (optional); `clients` (optional);
 `limit`; `sort` (`worst_first` | `best_first` | `by_volume`).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 **Required statement** — **An undefined rate is not a zero rate, and the two are
 never rendered the same.** With no resolver source, the rate reads *undefined*:
@@ -993,6 +1026,9 @@ counts east-west volume into the unplaced counter so the totals reconcile);
 `size_by` (`bytes` | `connections`); `min_bytes`; `show_unplaced` (boolean,
 default true and not recommended to disable); `cluster` (boolean — whether
 nearby marks merge at low zoom, with the merged count shown inside the mark).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 ### Blocked-traffic world map
 
@@ -1031,6 +1067,9 @@ blocked traffic was heading — or `source` — where blocked inbound traffic ca
 from; a genuine choice, because the interesting end differs between egress
 policy and inbound attack); `size_by` (`connections` | `bytes` | `events`);
 `min_count`; `show_unplaced` (boolean, default true); `cluster` (boolean).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 **Required statement** — **The DNS engines contribute nothing to this map, and
 the widget says so**, because a lookup the resolver refused resolved to no
@@ -1069,6 +1108,9 @@ so it is usable with the `aggregate_mode` row of `setting` set to `no_domains`.
 
 **Parameters** — `period`; `interfaces` (optional); `limit`; `series` (any subset
 of `allowed`, `blocked`); `sort` (`bytes` | `blocked` | `peers`).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 ### Destination operators
 
@@ -1094,6 +1136,9 @@ Providers: `firewall_log`, `geo_asn`. Also `no_domains`-safe.
 
 **Parameters** — `period`; `interfaces` (optional); `limit`; `series` (any subset
 of `allowed`, `blocked`); `group` (`asn` | `operator`).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 ### Traffic Sankey
 
@@ -1133,6 +1178,9 @@ limiting the left-hand side); `measure` (`bytes` | `connections`); `max_nodes`
 below which a ribbon joins the "Other" band); `show_blocked` (boolean — whether
 ribbon colour additionally encodes the blocked share of each pair, which is
 available because the aggregates carry both counts).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 **Gaps** — none. **G4 was closed by step 5A**, so `left` = `client` reads
 `client_volume_aggregate_*` beyond the `flow` retention horizon. One limit that is
@@ -1562,7 +1610,12 @@ query per series, joined on the time bucket at the presentation layer rather tha
 in SQL, because the series may come from tables with no join key in common. A series
 may also be drawn from any dataset of the data catalogue that has a time column -- a plugin's
 table included -- through the catalogue's compiled query on the same UTC-aligned buckets
-(`docs/widget-api.md`, *Data catalogue*); the sources above keep their own reads.
+(`docs/widget-api.md`, *Data catalogue*); the sources above keep their own reads. A traffic
+series also offers the measures `netflow_bytes` and `netflow_packets`: the bytes and packets the
+firewall's NetFlow export reported for the logged connections (`connection_measured_volume`, the
+`netflow_*` columns of the aggregate families), a series of the `netflow` measure whatever
+`volume_measure` says, and with no figure when NetFlow cannot answer the window; the two measures
+are never summed.
 
 **Parameters** — `period`; `series` — an ordered **list**, each entry naming
 `source` (which catalogue data a series is drawn from: one of the five sources, or the name of
@@ -1577,6 +1630,9 @@ fixed range); `legend` (`table` | `inline` | `hidden`); `tooltip`
 the hovered instant, which the preferences section names as worth taking);
 `annotations` (optional — overlay security events or blocked spikes as markers,
 the idea taken from Datadog's event-overlay band).
+`volume_measure` (`logged` | `netflow` | `best_available`, default `best_available`): the
+measure of its volume figures, which the core gives every type serving them (`docs/widget-api.md`,
+*Volumes and the observation-point limit*).
 
 **This entry is the dashboard format's hardest test and is deliberately kept as
 one.** `parameters.series` is a *list of objects*, and

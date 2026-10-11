@@ -52,6 +52,13 @@ type VolumeKey struct {
 // blocked is 'block' or 'reject', and unknown is a record whose action opnview could
 // not name: it is counted as neither, because a decision nobody read is not an
 // allowance. Bytes is the three together.
+//
+// THE MEASURE. Figures are logged unless Netflow is set. Netflow figures are the same connections
+// -- the connection counts are the logged connections counted -- with the bytes the NetFlow export
+// reported for them in place of the logged bytes, split by the counting leg's action, the packets,
+// and how many of the connections fall in each coverage class (connection_measured_volume, the
+// netflow_* columns of the aggregate families; docs/data-model.md, "NetFlow volumes"). The two
+// measures are never summed: a read answers one or the other, never both.
 type VolumeFigures struct {
 	Bytes              int64
 	AllowedBytes       int64
@@ -60,7 +67,74 @@ type VolumeFigures struct {
 	AllowedConnections int64
 	BlockedConnections int64
 	UnknownConnections int64
+	// Netflow says the figures are of the netflow measure.
+	Netflow bool
+	// Packets are the netflow packets; 0 for logged figures.
+	Packets int64
+	// PacketsUnknown says the figures keep only the allowed or the blocked connections of netflow
+	// figures: the packets are not split by action, so they are not known.
+	PacketsUnknown bool
+	// Coverage counts the connections per coverage class; zero for logged figures.
+	Coverage NetflowCoverage
 }
+
+// NetflowCoverage counts connections per coverage class of their measured volume (PS21 of the
+// NetFlow join amendment): Measured, both directions measured; Partial, some measured bytes but not
+// both directions measured; Unmeasured, under one Observation Point with no measured byte; and
+// NotJoinable, no single Observation Point at the connection's start. The four sum to the
+// connections the figures count.
+//
+// Unknown says the classes of these connections are not known: they are the allowed or the blocked
+// connections of figures whose connections were not all measured, and the aggregates count the
+// classes per row, not per action.
+type NetflowCoverage struct {
+	Measured    int64
+	Partial     int64
+	Unmeasured  int64
+	NotJoinable int64
+	Unknown     bool
+}
+
+// Complete reports whether every connection counted has both directions measured.
+func (c NetflowCoverage) Complete() bool {
+	return !c.Unknown && c.Partial == 0 && c.Unmeasured == 0 && c.NotJoinable == 0
+}
+
+func (c *NetflowCoverage) add(other NetflowCoverage) {
+	c.Measured += other.Measured
+	c.Partial += other.Partial
+	c.Unmeasured += other.Unmeasured
+	c.NotJoinable += other.NotJoinable
+	c.Unknown = c.Unknown || other.Unknown
+}
+
+// SplitNetflow keeps the part of netflow figures that counts connections connections: the
+// connections are all measured when every connection of the whole was, and their classes are not
+// known otherwise; their packets are not known.
+func SplitNetflow(whole VolumeFigures, part VolumeFigures, connections int64) VolumeFigures {
+	if !whole.Netflow {
+		return part
+	}
+	part.Netflow, part.PacketsUnknown = true, true
+	if whole.Coverage.Complete() {
+		part.Coverage = NetflowCoverage{Measured: connections}
+	} else {
+		part.Coverage = NetflowCoverage{Unknown: true}
+	}
+	return part
+}
+
+// NetflowTargets are the scan destinations of the five columns a netflow read appends to the seven
+// summable ones: packets, then the connections measured, partial, unmeasured and not joinable.
+func (f *VolumeFigures) NetflowTargets() []any {
+	f.Netflow = true
+	return []any{&f.Packets, &f.Coverage.Measured, &f.Coverage.Partial, &f.Coverage.Unmeasured,
+		&f.Coverage.NotJoinable}
+}
+
+// Add sums other into f. Netflow figures stay netflow: the reads of one answer are all of one
+// measure, so a logged figure added to a netflow one is the zero a sum starts from.
+func (f *VolumeFigures) Add(other VolumeFigures) { f.add(other) }
 
 func (f *VolumeFigures) add(other VolumeFigures) {
 	f.Bytes += other.Bytes
@@ -70,6 +144,10 @@ func (f *VolumeFigures) add(other VolumeFigures) {
 	f.AllowedConnections += other.AllowedConnections
 	f.BlockedConnections += other.BlockedConnections
 	f.UnknownConnections += other.UnknownConnections
+	f.Netflow = f.Netflow || other.Netflow
+	f.Packets += other.Packets
+	f.PacketsUnknown = f.PacketsUnknown || other.PacketsUnknown
+	f.Coverage.add(other.Coverage)
 }
 
 // Connections is every connection: allowed, blocked and unknown.
@@ -143,7 +221,19 @@ func (w VolumeWindow) ExitLegs() map[string]VolumeFigures {
 // `flow`. Inside the flow horizon this equals a computation over `flow` alone;
 // beyond it the slots answer, and Covered says which interval they cover.
 func (s *Store) ReadVolumeWindow(ctx context.Context, from, to, now int64) (VolumeWindow, error) {
+	return s.ReadVolumeWindowOf(ctx, from, to, now, false)
+}
+
+// ReadVolumeWindowOf is ReadVolumeWindow of one measure: the logged figures, or with netflow the
+// netflow figures of the same rows -- the same keys, the same connections, the bytes the NetFlow
+// export reported for them -- read from the netflow_* columns of the 1 h slots and, at either edge,
+// from connection_measured_volume. The window's coverage is the same for both.
+func (s *Store) ReadVolumeWindowOf(ctx context.Context, from, to, now int64, netflow bool) (VolumeWindow, error) {
 	result := VolumeWindow{Requested: Interval{From: from, To: to}}
+	flows, slots := "read_volume_flows", "read_volume_slots"
+	if netflow {
+		flows, slots = "read_volume_flows_netflow", "read_volume_slots_netflow"
+	}
 	if to <= from {
 		return result, nil
 	}
@@ -155,16 +245,16 @@ func (s *Store) ReadVolumeWindow(ctx context.Context, from, to, now int64) (Volu
 
 	sums := map[string]*VolumeRow{}
 	if firstHour < lastHour {
-		if err := s.readVolume(ctx, "read_volume_flows", from, firstHour, sums); err != nil {
+		if err := s.readVolume(ctx, flows, from, firstHour, sums, netflow); err != nil {
 			return result, err
 		}
-		if err := s.readVolume(ctx, "read_volume_slots", firstHour, lastHour, sums); err != nil {
+		if err := s.readVolume(ctx, slots, firstHour, lastHour, sums, netflow); err != nil {
 			return result, err
 		}
-		if err := s.readVolume(ctx, "read_volume_flows", lastHour, to, sums); err != nil {
+		if err := s.readVolume(ctx, flows, lastHour, to, sums, netflow); err != nil {
 			return result, err
 		}
-	} else if err := s.readVolume(ctx, "read_volume_flows", from, to, sums); err != nil {
+	} else if err := s.readVolume(ctx, flows, from, to, sums, netflow); err != nil {
 		return result, err
 	}
 	result.Rows = sortedVolumeRows(sums)
@@ -199,7 +289,7 @@ func (s *Store) ReadVolumeWindow(ctx context.Context, from, to, now int64) (Volu
 
 // readVolume adds one statement's rows over [from, to) into sums.
 func (s *Store) readVolume(ctx context.Context, name string, from, to int64,
-	sums map[string]*VolumeRow) error {
+	sums map[string]*VolumeRow, netflow bool) error {
 	if to <= from {
 		return nil
 	}
@@ -218,9 +308,13 @@ func (s *Store) readVolume(ctx context.Context, name string, from, to int64,
 			src, dst   sql.NullInt64
 			peer, exit sql.NullString
 		)
-		if err := rows.Scan(&src, &dst, &peer, &row.TrafficScope, &row.TrafficDirection, &exit,
+		targets := []any{&src, &dst, &peer, &row.TrafficScope, &row.TrafficDirection, &exit,
 			&row.Bytes, &row.AllowedBytes, &row.BlockedBytes, &row.UnknownBytes,
-			&row.AllowedConnections, &row.BlockedConnections, &row.UnknownConnections); err != nil {
+			&row.AllowedConnections, &row.BlockedConnections, &row.UnknownConnections}
+		if netflow {
+			targets = append(targets, row.NetflowTargets()...)
+		}
+		if err := rows.Scan(targets...); err != nil {
 			return fmt.Errorf("store: %s: %w", name, err)
 		}
 		row.SrcInterfaceID = nullableInt(src)

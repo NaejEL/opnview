@@ -30,6 +30,8 @@ type clientAttribution struct {
 	Eligible, Named, Cache, Timing, Bytes int64
 	Mean                                  *float64
 	Maximum                               *int64
+	// Measured holds what a row read under netflow carries beyond its bytes (measure.go).
+	Measured store.VolumeFigures
 }
 
 // AttributionByClient reads the per-client counts of the window.
@@ -39,7 +41,7 @@ func (r *Request) AttributionByClient() (map[int64]clientAttribution, store.Attr
 		return nil, whole, err
 	}
 	result := map[int64]clientAttribution{}
-	err = r.Db.WidgetRows(r.Ctx, "widget_attribution_rate_by_client", store.Period{}, r.WindowParameters(),
+	err = r.Db.WidgetRows(r.Ctx, r.measured("widget_attribution_rate_by_client"), store.Period{}, r.WindowParameters(),
 		func(row store.RowScanner) error {
 			var (
 				id      int64
@@ -47,8 +49,12 @@ func (r *Request) AttributionByClient() (map[int64]clientAttribution, store.Attr
 				mean    store.NullFloat64
 				maximum store.NullInt64
 			)
-			if err := row.Scan(&id, &counts.Eligible, &counts.Named, &mean, &maximum, &counts.Cache,
-				&counts.Timing, &counts.Bytes); err != nil {
+			targets := []any{&id, &counts.Eligible, &counts.Named, &mean, &maximum, &counts.Cache,
+				&counts.Timing, &counts.Bytes}
+			if r.Netflow() {
+				targets = append(targets, counts.Measured.NetflowTargets()...)
+			}
+			if err := row.Scan(targets...); err != nil {
 				return err
 			}
 			counts.Mean, counts.Maximum = nullableFloat(mean), NullableNumber(maximum)

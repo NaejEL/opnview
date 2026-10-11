@@ -24,7 +24,8 @@
     ],
     "limit": 100,
     "period": "24h",
-    "scope": "all"
+    "scope": "all",
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -157,7 +158,9 @@
   "freshness": [],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "resolver_window_bounded": false,
   "data": {
     "client": {

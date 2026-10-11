@@ -92,12 +92,39 @@ type Mirror struct {
 	firewallVersion string
 	// current are the data tables known to carry every bookkeeping column (tables.go).
 	current map[string]bool
+	// states guard each datum's state fields, by datum: the broker shares one *Datum between the
+	// readers served from the mirror and the call refreshing it, so Store and Attempt write that
+	// state under the datum's lock and a reader reads a Snapshot taken under it.
+	states map[int64]*sync.RWMutex
 }
 
 // New returns the mirror over a store. now is opnview's clock.
 func New(database *store.Store, now func() int64) *Mirror {
 	return &Mirror{store: database, db: database.DB(), now: now, endpoints: map[Endpoint]int64{},
-		writing: map[int64]*sync.Mutex{}, current: map[string]bool{}}
+		writing: map[int64]*sync.Mutex{}, current: map[string]bool{}, states: map[int64]*sync.RWMutex{}}
+}
+
+// stateLock is the lock guarding one datum's state fields.
+func (m *Mirror) stateLock(id int64) *sync.RWMutex {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	lock, present := m.states[id]
+	if !present {
+		lock = &sync.RWMutex{}
+		m.states[id] = lock
+	}
+	return lock
+}
+
+// Snapshot is a copy of a datum's state as of one instant: what a reader reads while another call
+// may be storing the datum's next generation. The copy shares the datum's maps and slices, which
+// the mirror replaces whole and never alters in place.
+func (m *Mirror) Snapshot(datum *Datum) *Datum {
+	lock := m.stateLock(datum.ID)
+	lock.RLock()
+	defer lock.RUnlock()
+	copied := *datum
+	return &copied
 }
 
 // SetLoadedReaders states which plugins are loaded, by name and version. The fields only an
@@ -353,7 +380,10 @@ func (m *Mirror) Attempt(ctx context.Context, datum *Datum, at int64, outcome st
 	if err != nil {
 		return fmt.Errorf("mirror: recording an attempt: %w", err)
 	}
+	lock := m.stateLock(datum.ID)
+	lock.Lock()
 	datum.AttemptedAt, datum.Outcome, datum.StatusCode, datum.Detail = at, outcome, status, detail
+	lock.Unlock()
 	return nil
 }
 

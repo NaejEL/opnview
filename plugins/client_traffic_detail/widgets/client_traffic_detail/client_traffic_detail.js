@@ -7,6 +7,13 @@
 // or whether, it was inferred.
 var WITHHELD = ["records[].site_name", "records[].method", "records[].correlation_delay_seconds"];
 
+// direction is one direction of a connection as NetFlow measured it: its bytes, packets and state
+// (connection_measured_volume, PS20), and the leg the figure was measured at, null when no leg of the
+// connection was logged at the Observation Point.
+function direction(bytes, packets, state, leg) {
+  return { bytes: bytes, packets: packets, state: state, measured_at_leg: leg };
+}
+
 exports.widget = {
   serve: function (host) {
     var ids = host.refs.ids("client");
@@ -58,7 +65,7 @@ exports.widget = {
         protocol: row.protocol,
         action: row.action,
         scope: row.traffic_scope,
-        bytes: host.figures.loggedCount(row.bytes),
+        bytes: host.figures.connectionBytes(row),
         // Only what geo_asn is read for here: the country code, the AS and its operator.
         geo: {
           lookup_state: row.lookup_state === null ? "no_row" : row.lookup_state,
@@ -85,6 +92,14 @@ exports.widget = {
         record.method = null;
         record.correlation_delay_seconds = null;
       }
+      if (row.measure === host.figures.measures.netflow) {
+        // Under the netflow measure, each direction of the record's connection as NetFlow measured it
+        // at the single Observation Point; null when it started under no single Observation Point.
+        record.directions = row.forward_state === null && row.reverse_state === null ? null : {
+          forward: direction(row.forward_bytes, row.forward_packets, row.forward_state, row.forward_measured_at_leg),
+          reverse: direction(row.reverse_bytes, row.reverse_packets, row.reverse_state, row.reverse_measured_at_leg)
+        };
+      }
       data.records.push(record);
     });
     // The totals read the same filter as the records, with no limit.
@@ -95,8 +110,10 @@ exports.widget = {
       action: parameters.action,
       scope: parameters.scope
     });
-    data.total = host.figures.remainder(totals.records, null, totals.bytes);
-    data.remainder = host.figures.remainder(totals.records - data.records.length, null, totals.bytes - shownBytes);
+    data.total = host.figures.remainder(totals.records, null, host.figures.byteCount(totals));
+    // What the limit left out, in the measure of the whole it is part of.
+    var left = host.figures.withMeasure({ bytes: totals.bytes - shownBytes }, totals);
+    data.remainder = host.figures.remainder(totals.records - data.records.length, null, host.figures.byteCount(left));
     if (noDomains) {
       WITHHELD.forEach(function (path) { host.envelope.withhold(path); });
     }

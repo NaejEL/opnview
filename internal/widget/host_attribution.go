@@ -76,8 +76,8 @@ func init() {
 				whole.ResolverCovered)
 			return call.value(scriptWindowAttribution{ResolverCovered: whole.ResolverCovered,
 				CacheCovered: whole.CacheCovered,
-				Attribution: attributionRow{EligibleFlows: LoggedCount(whole.EligibleFlows),
-					NamedFlows: LoggedCount(whole.NamedFlows),
+				Attribution: attributionRow{EligibleFlows: r.CountOf(whole.EligibleFlows),
+					NamedFlows: r.CountOf(whole.NamedFlows),
 					Methods:    MethodCounts{ResolverCacheAnswer: whole.NamedByCacheAnswer, LookupTiming: whole.NamedByLookupTiming},
 					Rate:       rate, RateState: state, MeanDelaySeconds: whole.MeanDelaySeconds,
 					MaxDelaySeconds: whole.MaxDelaySeconds}})
@@ -107,8 +107,9 @@ func init() {
 			}
 			count := counts[id]
 			rate, state := RateOf(count, whole.ResolverCovered)
-			return call.value(attributionRow{Client: *info, EligibleFlows: LoggedCount(count.Eligible),
-				EligibleBytes: CountPointer(count.Bytes), NamedFlows: LoggedCount(count.Named),
+			eligibleBytes := r.ByteCountOf(measuredFigures(count.Bytes, count.Measured), false)
+			return call.value(attributionRow{Client: *info, EligibleFlows: r.CountOf(count.Eligible),
+				EligibleBytes: &eligibleBytes, NamedFlows: r.CountOf(count.Named),
 				Methods: MethodCounts{ResolverCacheAnswer: count.Cache, LookupTiming: count.Timing},
 				Rate:    rate, RateState: state, MeanDelaySeconds: count.Mean, MaxDelaySeconds: count.Maximum})
 		})

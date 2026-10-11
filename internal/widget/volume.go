@@ -28,10 +28,10 @@ const (
 	ScopeThisFirewall = "this_firewall"
 )
 
-// VolumeWindow reads the rolling window, records its coverage and the freshness of the
-// slots it read.
+// VolumeWindow reads the rolling window, in the measure the request is answered under (measure.go),
+// and records its coverage and the freshness of the slots it read.
 func (r *Request) VolumeWindow() (store.VolumeWindow, error) {
-	window, err := r.Db.ReadVolumeWindow(r.Ctx, r.Window.From, r.Window.To, r.Now)
+	window, err := r.Db.ReadVolumeWindowOf(r.Ctx, r.Window.From, r.Window.To, r.Now, r.Netflow())
 	if err != nil {
 		return window, err
 	}
@@ -65,9 +65,12 @@ func InterfaceKey(id int64) string { return "interface:" + strconv.FormatInt(id,
 // ClientKey renders a client id as a member key.
 func ClientKey(id int64) string { return "client:" + strconv.FormatInt(id, 10) }
 
-// FiguresValue picks the figure a `measure` names from logged figures.
+// FiguresValue picks the figure a `measure` names from figures of either measure: packets are a
+// netflow figure's.
 func FiguresValue(measure string, figures store.VolumeFigures) float64 {
 	switch measure {
+	case "packets":
+		return float64(figures.Packets)
 	case "connections":
 		return float64(figures.Connections())
 	case "allowed":

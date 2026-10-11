@@ -118,8 +118,8 @@ exports.widget = {
         client: info,
         state: named === 0 ? "no_site_name_inferred" : "named",
         sites: shown,
-        remainder: host.figures.remainder(restMembers, null, rest),
-        below_min_flows: host.figures.remainder(belowMembers, null, below)
+        remainder: host.figures.remainder(restMembers, null, host.figures.count(rest)),
+        below_min_flows: host.figures.remainder(belowMembers, null, host.figures.count(below))
       };
       if (showRate) {
         entry.attribution = host.attribution.client(id);

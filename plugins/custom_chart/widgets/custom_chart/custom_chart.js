@@ -51,9 +51,24 @@ function bucketStart(host, interval, width) {
   return interval.from - host.buckets.floorMod(interval.from, width);
 }
 
-// fillTraffic reads a traffic series: the logged figures of the window per bucket, every traffic
-// direction summed.
+// NETFLOW_FIGURES are the traffic measures that are the netflow measure whatever the answer is given
+// in, and the figure each draws.
+var NETFLOW_FIGURES = { netflow_bytes: "bytes", netflow_packets: "packets" };
+
+// fillTraffic reads a traffic series: the figures of the window per bucket, every traffic direction
+// summed, in the measure the answer is given in -- or the netflow measure for netflow_bytes and
+// netflow_packets, which carry no figure when NetFlow cannot answer the window.
 function fillTraffic(host, line, entry, index, width) {
+  var netflow = NETFLOW_FIGURES.hasOwnProperty(entry.measure);
+  if (netflow && host.series.netflowState() !== null) {
+    line.measure = host.figures.measures.netflow;
+    line.unit = entry.measure;
+    line.lower_bound = true;
+    host.buckets.intervals(host.request.window, width).forEach(function (interval) {
+      line.buckets.push({ from: interval.from, to: interval.to, gap: true, value: null });
+    });
+    return false;
+  }
   var reference = function (key) {
     return host.refs.entry(index, key);
   };
@@ -72,13 +87,15 @@ function fillTraffic(host, line, entry, index, width) {
     rule_id: idOf("rule"),
     asn: idOf("operator"),
     country: textOf("country"),
-    site: textOf("site")
+    site: textOf("site"),
+    netflow: netflow
   }, width);
   setCovered(host, line.window, traffic.covered);
-  line.measure = host.figures.measures.logged;
+  line.measure = netflow ? host.figures.measures.netflow : host.figures.measure;
   line.unit = entry.measure;
   line.lower_bound = true;
-  var figure = { bytes: "bytes", connections: "connections", allowed: "allowed", blocked: "blocked" }[entry.measure];
+  var figure = netflow ? NETFLOW_FIGURES[entry.measure] :
+    { bytes: "bytes", connections: "connections", allowed: "allowed", blocked: "blocked" }[entry.measure];
   if (figure === undefined) {
     figure = "";
   }
@@ -98,7 +115,7 @@ function fillTraffic(host, line, entry, index, width) {
       value: null };
     if (present || !bucket.gap) {
       bucket.value = host.figures.value(figure, sum);
-      bucket.volume = host.figures.logged(sum);
+      bucket.volume = host.figures.volume(sum);
       total = host.figures.add(total, sum);
       rows = rows || present;
     }

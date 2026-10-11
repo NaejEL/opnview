@@ -102,14 +102,15 @@ func (b *unplacedBins) Add(reason string, figures store.VolumeFigures, addresses
 	b.members[reason] += addresses
 }
 
-func (b *unplacedBins) List() []UnplacedBin {
+// List is every bin in order, each Volume built by volume -- the request's, in the figures' measure.
+func (b *unplacedBins) List(volume func(store.VolumeFigures) Volume) []UnplacedBin {
 	result := []UnplacedBin{}
 	for _, reason := range b.order {
-		bin := UnplacedBin{Reason: reason, Addresses: b.members[reason], Volume: Logged(*b.figures[reason])}
+		bin := UnplacedBin{Reason: reason, Addresses: b.members[reason], Volume: volume(*b.figures[reason])}
 		if b.listed {
 			members := []UnplacedMember{}
 			for address, figures := range b.addresses[reason] {
-				members = append(members, UnplacedMember{Address: address, Volume: Logged(*figures)})
+				members = append(members, UnplacedMember{Address: address, Volume: volume(*figures)})
 			}
 			// The most bytes first, then the address in byte order, as every peer list.
 			sort.Slice(members, func(i, j int) bool {

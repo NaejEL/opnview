@@ -28,8 +28,8 @@ type MapData struct {
 	Total    Volume        `json:"total"`
 }
 
-// AllowedOnly keeps the allowed half of figures.
+// AllowedOnly keeps the allowed half of figures, in their measure (store.SplitNetflow).
 func AllowedOnly(figures store.VolumeFigures) store.VolumeFigures {
-	return store.VolumeFigures{Bytes: figures.AllowedBytes, AllowedBytes: figures.AllowedBytes,
-		AllowedConnections: figures.AllowedConnections}
+	return store.SplitNetflow(figures, store.VolumeFigures{Bytes: figures.AllowedBytes,
+		AllowedBytes: figures.AllowedBytes, AllowedConnections: figures.AllowedConnections}, figures.AllowedConnections)
 }

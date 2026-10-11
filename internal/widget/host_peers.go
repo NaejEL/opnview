@@ -59,7 +59,8 @@ func init() {
 			selected := call.peerInterfaceFilterOf(arguments.Argument(2))
 			window := store.VolumeWindow{}
 			for _, row := range rows {
-				window.Rows = append(window.Rows, store.VolumeRow{VolumeKey: row.key(), VolumeFigures: row.figures()})
+				window.Rows = append(window.Rows, store.VolumeRow{VolumeKey: row.key(),
+					VolumeFigures: call.fromScript(row.summableFigures)})
 			}
 			answer := scriptPeers{Peers: []scriptPeer{}, Others: []volumeRow{}}
 			grouped := OutsidePeers(window, scope, selected, func(row store.VolumeRow) {
@@ -86,7 +87,7 @@ func init() {
 				for _, id := range peer.Interfaces {
 					interfaces[id] = true
 				}
-				peers[peer.Address] = &PeerFigures{Address: peer.Address, Figures: peer.figures(),
+				peers[peer.Address] = &PeerFigures{Address: peer.Address, Figures: call.fromScript(peer.Figures),
 					Interfaces: interfaces}
 			}
 			answer := []scriptPeer{}
@@ -128,7 +129,7 @@ func init() {
 				return goja.Undefined()
 			})
 			call.function(object, "list", func(goja.FunctionCall) goja.Value {
-				return call.value(bins.List())
+				return call.value(bins.List(call.request.VolumeOf))
 			})
 			call.function(object, "total", func(goja.FunctionCall) goja.Value {
 				return call.value(summable(bins.Total()))
@@ -141,14 +142,6 @@ func init() {
 			"this_firewall": UnplacedThisFirewall, "other_endpoint": UnplacedOtherEndpoint,
 		}))
 	})
-}
-
-// figures is a peer's summable figures as the core reads them.
-func (peer scriptPeer) figures() store.VolumeFigures {
-	return store.VolumeFigures{Bytes: peer.Figures.Bytes, AllowedBytes: peer.Figures.AllowedBytes,
-		BlockedBytes: peer.Figures.BlockedBytes, UnknownBytes: peer.Figures.UnknownBytes,
-		AllowedConnections: peer.Figures.AllowedConnections, BlockedConnections: peer.Figures.BlockedConnections,
-		UnknownConnections: peer.Figures.UnknownConnections}
 }
 
 // peerInterfaceFilterOf reads an interface filter: an id list, or null for no restriction.

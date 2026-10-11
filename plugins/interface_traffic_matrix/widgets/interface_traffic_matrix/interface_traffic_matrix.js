@@ -83,7 +83,7 @@ exports.widget = {
           description: row.description,
           rid: row.rid,
           state: row.rule_id === null ? "rule_not_found" : "resolved",
-          connections: host.figures.loggedCount(row.connections)
+          connections: host.figures.count(row.connections)
         });
       });
     }
@@ -106,7 +106,7 @@ exports.widget = {
         row: entry.row,
         column: entry.column,
         value: host.figures.value(measure, entry.figures),
-        volume: host.figures.logged(entry.figures)
+        volume: host.figures.volume(entry.figures)
       };
       if (showRules) {
         // The most connections first. The order of equal counts was never pinned (the Go hook's sort
@@ -132,7 +132,7 @@ exports.widget = {
         rows: rows,
         columns: columns,
         cells: data,
-        total: host.figures.logged(total)
+        total: host.figures.volume(total)
       },
       has_rows: data.length > 0
     };

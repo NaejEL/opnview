@@ -30,7 +30,7 @@ var (
 	SeriesSources = []string{SourceTraffic, SourceFirewallMetric, SourceInterfaceThroughput,
 		SourceDNS, SourceSecurityEvent}
 	SeriesMeasures = map[string][]string{
-		SourceTraffic:             {"bytes", "connections", "allowed", "blocked"},
+		SourceTraffic:             {"bytes", "connections", "allowed", "blocked", "netflow_bytes", "netflow_packets"},
 		SourceInterfaceThroughput: {"bits_per_second", "bytes", "packets", "errors"},
 		SourceDNS:                 {"lookups", "blocked"},
 		SourceSecurityEvent:       {"events", "blocked"},

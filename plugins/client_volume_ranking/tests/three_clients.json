@@ -6,7 +6,8 @@
     "interfaces": null,
     "limit": 10,
     "measure": "bytes",
-    "period": "24h"
+    "period": "24h",
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -87,7 +88,9 @@
   ],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "data": {
     "measure": "bytes",
     "bars": [

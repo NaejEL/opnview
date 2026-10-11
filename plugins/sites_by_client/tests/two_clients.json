@@ -6,7 +6,8 @@
     "min_flows": 1,
     "period": "24h",
     "show_attribution_rate": true,
-    "sites_per_client": 5
+    "sites_per_client": 5,
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -127,7 +128,9 @@
   "freshness": [],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "resolver_window_bounded": false,
   "data": {
     "rows": [

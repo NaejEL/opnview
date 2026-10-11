@@ -10,7 +10,8 @@
     "owners": null,
     "period": "1h",
     "root": "interface",
-    "sort": "volume"
+    "sort": "volume",
+    "volume_measure": "best_available"
   },
   "unknown_parameters": {},
   "invalid_parameters": [],
@@ -83,7 +84,9 @@
   "freshness": [],
   "aggregate_mode": "full",
   "withheld": [],
-  "states": [],
+  "states": [
+    "netflow_not_configured"
+  ],
   "resolver_window_bounded": false,
   "data": {
     "root": "interface",

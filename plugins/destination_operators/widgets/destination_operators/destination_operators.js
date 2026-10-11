@@ -73,12 +73,12 @@ exports.widget = {
       if (entry.named.operator !== null) {
         row.operator = entry.named.operator;
       }
-      row.bytes = host.figures.loggedCount(entry.figures.bytes);
+      row.bytes = host.figures.byteCount(entry.figures);
       if (allowed) {
-        row.allowed = host.figures.logged(host.mapfilters.allowedOnly(entry.figures));
+        row.allowed = host.figures.volume(host.mapfilters.allowedOnly(entry.figures));
       }
       if (blocked) {
-        row.blocked = host.figures.logged(host.mapfilters.blockedOnly(entry.figures));
+        row.blocked = host.figures.volume(host.mapfilters.blockedOnly(entry.figures));
       }
       row.peers = entry.peers;
       row.interfaces = entry.interfaces.sort(numeric);
@@ -108,7 +108,7 @@ exports.widget = {
         rows: shown,
         remainder: host.figures.remainder(dropped, rest, null),
         unresolved: bins.list(),
-        total: host.figures.logged(total)
+        total: host.figures.volume(total)
       },
       has_rows: peers.length > 0
     };

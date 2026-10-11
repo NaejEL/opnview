@@ -51,7 +51,7 @@ exports.widget = {
         client: info,
         "interface": iface,
         value: 0,
-        volume: host.figures.logged(volume.figures),
+        volume: host.figures.volume(volume.figures),
         destinations: volume.destinations
       };
       bar.value = measure === "destinations" ? bar.destinations : host.figures.value(measure, volume.figures);
@@ -78,7 +78,7 @@ exports.widget = {
         bars: shown,
         remainder: host.figures.remainder(remainderMembers, remainderSum, null),
         excluded: host.figures.remainder(excludedMembers, excludedSum, null),
-        total: host.figures.logged(total)
+        total: host.figures.volume(total)
       },
       has_rows: volumes.length > 0
     };

@@ -77,9 +77,12 @@ function nodeValue(measure, node) {
   return measure === "connections" ? node.connections : node.bytes;
 }
 
-// logged is a count of logged records or bytes.
-function logged(value) {
-  return { measure: "logged", lower_bound: true, value: value };
+// MEASURE is the measure the answer is given in (host.figures.measure), set when it is served.
+var MEASURE = "";
+
+// figure is a count of records or bytes, in the measure the answer is given in.
+function figure(value) {
+  return { measure: MEASURE, lower_bound: true, value: value };
 }
 
 // written is a node as the response carries it, its members in the order they have always been
@@ -88,9 +91,9 @@ function written(measure, node) {
   var out = {
     key: node.key,
     value: nodeValue(measure, node),
-    bytes: logged(node.bytes),
-    connections: logged(node.connections),
-    blocked_connections: logged(node.blocked)
+    bytes: figure(node.bytes),
+    connections: figure(node.connections),
+    blocked_connections: figure(node.blocked)
   };
   if (node.newest > 0) {
     out.last_seen_at = node.newest;
@@ -197,6 +200,7 @@ function finishLevel(host, level, limit, depth) {
 exports.widget = {
   serve: function (host) {
     coverFlows(host, "tree_beyond_flow_horizon");
+    MEASURE = host.figures.measure;
     var directions = host.volume.directions;
     var root = host.params.text("root");
     var interfaces = idSet(host.refs.ids("interfaces"));
@@ -226,6 +230,8 @@ exports.widget = {
         }
       }
       hasRows = true;
+      // The core judges every row the tree counts, as it judges a Volume.
+      host.figures.cover(row);
       var direction = row.traffic_direction;
       var firewall = direction === directions.to_this_firewall || direction === directions.from_this_firewall;
       var looked = row.lookup_state !== null;

@@ -91,20 +91,20 @@ exports.widget = {
           engine: "firewall_rule",
           geo: geo,
           size: sizeBy === "bytes" ? peer.figures.blocked_bytes : peer.figures.blocked_connections,
-          volume: host.figures.logged(peer.figures),
+          volume: host.figures.volume(peer.figures),
           interfaces: peer.interfaces
         });
       });
     }
     // What the firewall's half placed, left below the minimum and could not place: the security
     // engine's half below adds members below the minimum, and no volume.
-    var belowVolume = host.figures.logged(below);
+    var belowVolume = host.figures.volume(below);
     var unplaced = bins.list();
-    total = host.figures.logged(host.figures.add(total, bins.total()));
+    total = host.figures.volume(host.figures.add(total, bins.total()));
 
     var securityBins = host.peers.bins([reasons.miss, reasons.pending, reasons.no_row,
       reasons.no_coordinates]);
-    var securityEvents = host.figures.loggedCount(0);
+    var securityEvents = host.figures.count(0);
     if (host.params.has("engines", "security_engine")) {
       var events = {};
       var interfaces = {};
@@ -135,7 +135,7 @@ exports.widget = {
         var geo = host.services.geolocation(address);
         var reason = host.peers.placement(geo);
         if (reason !== "") {
-          securityBins.add(reason, { blocked_connections: count }, 1);
+          securityBins.add(reason, host.figures.withMeasure({ blocked_connections: count }, host.figures.zero()), 1);
           return;
         }
         if (count < minimum) {

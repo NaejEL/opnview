@@ -15,6 +15,9 @@ import (
 // no text the script writes.
 //
 //	host.query.rows(name, parameters, period)  every row, each an object of its columns in order
+//	                                           -- under the netflow measure, the rows of the
+//	                                           statement's twin name_netflow when the widget declares
+//	                                           one (measure.go)
 //	host.query.row(name, parameters, period)   the first row, or null when there is none
 //	host.query.carriesDomain(name)             whether the statement reads a column carrying a
 //	                                           domain name, which aggregate_mode = no_domains withholds
@@ -74,6 +77,12 @@ func (c *scriptCall) statementOf(value goja.Value) widgetStatement {
 func (c *scriptCall) runStatement(arguments goja.FunctionCall) ([]string, [][]any, bool) {
 	name := c.textOf(arguments.Argument(0), "the statement name")
 	statement := c.statementOf(arguments.Argument(0))
+	if c.request.Netflow() {
+		// Under the netflow measure a statement that declares its twin is run as its twin (measure.go).
+		if twin, declared := c.widget.statements[name+netflowStatementSuffix]; declared {
+			name, statement = name+netflowStatementSuffix, twin
+		}
+	}
 	bound := c.bindParameters(name, statement, arguments.Argument(1))
 	period := store.Period{}
 	switch {

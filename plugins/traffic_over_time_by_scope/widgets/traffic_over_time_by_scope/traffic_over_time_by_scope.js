@@ -29,7 +29,7 @@ exports.widget = {
         window: report,
         gaps: gaps,
         unresolved_references: [],
-        measure: host.figures.measures.logged,
+        measure: host.figures.measure,
         lower_bound: true,
         unit: measure === "" ? undefined : measure,
         total: null,
@@ -46,7 +46,7 @@ exports.widget = {
         var entry = { from: bucket.from, to: bucket.to, gap: gap, value: null };
         if (present || !gap) {
           entry.value = host.figures.value(measure, sums);
-          entry.volume = host.figures.logged(sums);
+          entry.volume = host.figures.volume(sums);
           total = host.figures.add(total, sums);
           if (present) {
             hasRows = true;
@@ -58,7 +58,7 @@ exports.widget = {
         line.buckets.push(entry);
       });
       line.total = host.figures.value(measure, total);
-      line.total_volume = host.figures.logged(total);
+      line.total_volume = host.figures.volume(total);
       var connections = total.allowed_connections + total.blocked_connections + total.unknown_connections;
       if (line.condition === conditions.reachable && total.bytes === 0 && connections === 0) {
         line.condition = conditions.reachable_no_rows;

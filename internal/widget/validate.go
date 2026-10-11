@@ -150,6 +150,11 @@ func ValidateManifest(manifest Manifest) *Refusal {
 	if refusal := validateReferences(manifest); refusal != nil {
 		return refusal
 	}
+	if manifest.Volumes && (manifest.Script == "" || !manifest.Windowed) {
+		return refuse(name, RefusalManifestInvalid,
+			"volumes is declared by a widget with a script, over a window: the core answers it under the measure "+
+				"volume_measure chooses, which is decided over the window")
+	}
 	if manifest.Shape == "time_series" && !manifest.Windowed {
 		return refuse(name, RefusalManifestInvalid, "a time_series is drawn over a window, so it must be windowed")
 	}
@@ -197,6 +202,10 @@ func validateParameters(manifest Manifest) *Refusal {
 			return refuse(name, RefusalManifestInvalid, "parameter %q is declared twice", parameter.Key)
 		}
 		seen[parameter.Key] = true
+		if parameter.Key == VolumeMeasureKey {
+			return refuse(name, RefusalReservedParameterKey,
+				"parameter %q is the core's: a widget declaring `\"volumes\": true` is given it", parameter.Key)
+		}
 		if manifest.Script == "" && Contains(reservedQueryParameters, parameter.Key) {
 			return refuse(name, RefusalReservedParameterKey,
 				"parameter %q is bound by the engine itself (%v); choose another key", parameter.Key,

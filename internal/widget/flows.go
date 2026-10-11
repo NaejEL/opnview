@@ -80,20 +80,26 @@ func scanFigures(figures *summableFigures) []any {
 // FlowParts reads the window's flows per direction, protocol, destination port and decision.
 func (r *Request) FlowParts(filter FlowFilter) ([]flowPart, error) {
 	parts := []flowPart{}
-	err := r.Db.WidgetRows(r.Ctx, "widget_flow_parts", store.Period{}, filter.parameters(r.Window.From, r.Window.To),
+	err := r.Db.WidgetRows(r.Ctx, r.measured("widget_flow_parts"), store.Period{},
+		filter.parameters(r.Window.From, r.Window.To),
 		func(row store.RowScanner) error {
 			var (
 				part     flowPart
 				protocol store.NullString
 				port     store.NullInt64
 				bytes    store.NullInt64
+				measured store.VolumeFigures
 			)
 			targets := []any{&part.TrafficDirection, &protocol, &port, &part.Decision, &bytes}
 			targets = append(targets, scanFigures(&part.summableFigures)[1:]...)
+			if r.Netflow() {
+				targets = append(targets, measured.NetflowTargets()...)
+			}
 			if err := row.Scan(targets...); err != nil {
 				return err
 			}
 			part.Protocol, part.Port, part.Bytes = NullableText(protocol), NullableNumber(port), bytes.Int64
+			part.netflowMembers = summable(measured).netflowMembers
 			parts = append(parts, part)
 			return nil
 		})
@@ -172,21 +178,26 @@ func (r *Request) RecentFlows(seconds int64, filter FlowFilter) (recentFlows, er
 	window := Interval{From: answer.From, To: answer.To}
 	parameters := filter.parameters(window.From, window.To)
 	parameters["width"] = width
-	err := r.Db.WidgetRows(r.Ctx, "widget_flow_recent_parts", store.Period{}, parameters,
+	err := r.Db.WidgetRows(r.Ctx, r.measured("widget_flow_recent_parts"), store.Period{}, parameters,
 		func(row store.RowScanner) error {
 			var (
 				part                     recentPart
 				protocol                 store.NullString
 				port, iface, client, sum store.NullInt64
+				measured                 store.VolumeFigures
 			)
 			targets := []any{&part.BucketStart, &part.TrafficDirection, &protocol, &port, &part.Decision, &iface,
 				&client, &sum}
 			targets = append(targets, scanFigures(&part.summableFigures)[1:]...)
+			if r.Netflow() {
+				targets = append(targets, measured.NetflowTargets()...)
+			}
 			if err := row.Scan(targets...); err != nil {
 				return err
 			}
 			part.Protocol, part.Port, part.Bytes = NullableText(protocol), NullableNumber(port), sum.Int64
 			part.InterfaceID, part.ClientID = NullableNumber(iface), NullableNumber(client)
+			part.netflowMembers = summable(measured).netflowMembers
 			answer.Parts = append(answer.Parts, part)
 			return nil
 		})
@@ -233,6 +244,9 @@ type destinationRow struct {
 	Blocked          int64   `json:"blocked"`
 	BlockedBytes     int64   `json:"blocked_bytes"`
 	Newest           int64   `json:"newest"`
+	// The members a row read under netflow carries beyond its bytes (host.figures): a widget hands
+	// the row to host.figures.cover for the core to judge the connections it counts.
+	netflowMembers
 }
 
 // DestinationRows reads the window's connections by destination. Under aggregate_mode = no_domains
@@ -243,21 +257,28 @@ func (r *Request) DestinationRows() ([]destinationRow, error) {
 	if r.NoDomains() {
 		name = "widget_flow_destinations_no_domains"
 	}
+	name = r.measured(name)
 	rows := []destinationRow{}
 	err := r.Db.WidgetRows(r.Ctx, name, store.Period{}, r.WindowParameters(), func(row store.RowScanner) error {
 		var (
 			item                                        destinationRow
 			iface, client, owner, asn, port, bytes, blk store.NullInt64
 			peer, state, site, protocol                 store.NullString
+			measured                                    store.VolumeFigures
 		)
-		if err := row.Scan(&iface, &client, &owner, &item.TrafficDirection, &peer, &state, &asn, &site, &port,
-			&protocol, &item.Connections, &bytes, &item.Blocked, &blk, &item.Newest); err != nil {
+		targets := []any{&iface, &client, &owner, &item.TrafficDirection, &peer, &state, &asn, &site, &port,
+			&protocol, &item.Connections, &bytes, &item.Blocked, &blk, &item.Newest}
+		if r.Netflow() {
+			targets = append(targets, measured.NetflowTargets()...)
+		}
+		if err := row.Scan(targets...); err != nil {
 			return err
 		}
 		item.InterfaceID, item.ClientID, item.OwnerID = NullableNumber(iface), NullableNumber(client), NullableNumber(owner)
 		item.PeerAddress, item.LookupState, item.ASN = NullableText(peer), NullableText(state), NullableNumber(asn)
 		item.SiteName, item.Port, item.Protocol = NullableText(site), NullableNumber(port), NullableText(protocol)
 		item.Bytes, item.BlockedBytes = bytes.Int64, blk.Int64
+		item.netflowMembers = summable(measured).netflowMembers
 		rows = append(rows, item)
 		return nil
 	})

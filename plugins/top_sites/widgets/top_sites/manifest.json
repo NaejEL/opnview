@@ -12,6 +12,7 @@
   "windowed": true,
   "no_domains": "whole",
   "lower_bound": true,
+  "volumes": true,
   "parameters": [
     {
       "key": "period",

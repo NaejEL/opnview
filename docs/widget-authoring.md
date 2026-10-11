@@ -71,6 +71,7 @@ not a silently ignored one.
 | `no_domains` | `"none"` or `"whole"` | The aggregate mode `no_domains` withholds domain names. `whole`: the widget is built on domain names and is withheld entirely (condition `withheld_by_aggregate_mode`, no data, the query never runs). `none`: the widget carries no domain name. A widget that shows a domain name **must** say `whole`. | `"none"` |
 | `lower_bound` | boolean | The widget's byte and connection figures are lower bounds: opnview sees only what crosses the firewall, and traffic between two clients behind one interface is invisible. Every figure the engine emits then carries `lower_bound: true` beside its `measure`. | `false` |
 | `measure` | string | What the widget's figures measure, `snake_case`, carried beside every figure the engine emits. Built-ins use `logged`, `sampled` and `interface_counter`. | `"query"` |
+| `volumes` | boolean | The widget serves Volume or byte Count figures. The core then gives it the parameter `volume_measure` -- `logged`, `netflow` or `best_available`, `best_available` by default -- which the manifest does not declare and may not, and answers it under the measure that parameter chooses (`docs/widget-api.md`, *Volumes and the observation-point limit*; `docs/plugins.md`, *Volume figures and their measure*). Only a windowed widget with a `script` declares it. | `false` |
 | `parameters` | array | The keys the widget accepts (below). | `[]` |
 | `references` | array of strings | The reference kinds the widget accepts: `interface`, `client`, `rule`, `owner`, `provider`, `country`, `operator`, `site`. Validated against the reference parameters: each must be accepted by some parameter, and every reference parameter's kind must be listed. (A `series` parameter accepts every kind.) | `[]` |
 | `queries` | array of strings | The widget's query files, plain file names ending in `.sql`, in its own directory. A declarative widget lists exactly one. | `[]` |
@@ -299,7 +300,7 @@ log; the reason is specific to the rule, and the other widgets still load.
 | `unknown_parameter_kind` | a parameter `kind` is not one of the ten |
 | `parameter_vocabulary` | an enum with no values, values on a non-enum, a bad `class`, an unknown reference kind, `min` above `max`, a `period` outside the periods |
 | `bad_default` | a default that its own parameter would reject |
-| `reserved_parameter_key` | a key the engine binds itself (`from`, `to`, `now`) |
+| `reserved_parameter_key` | a key the engine binds itself (`from`, `to`, `now`), or `volume_measure`, which the core gives a widget declaring `volumes` |
 | `references_mismatch` | `references` and the reference parameters disagree |
 | `renderer_invalid` | `renderer` is not the reserved slot |
 | `type_mismatch_with_directory` | the manifest's type is not its directory's name |

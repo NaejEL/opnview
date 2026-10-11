@@ -110,9 +110,9 @@ exports.widget = {
       data: {
         grouping: grouping,
         rows: shown,
-        remainder: host.figures.remainder(restMembers, null, rest),
-        below_min_flows: host.figures.remainder(belowMembers, null, below),
-        total: host.figures.remainder(list.length, null, totalFlows),
+        remainder: host.figures.remainder(restMembers, null, host.figures.count(rest)),
+        below_min_flows: host.figures.remainder(belowMembers, null, host.figures.count(below)),
+        total: host.figures.remainder(list.length, null, host.figures.count(totalFlows)),
         attribution: window.attribution
       },
       has_rows: byName.size > 0 || byAddress.size > 0
