@@ -3989,3 +3989,10 @@ Every test runs on the PostgreSQL test instance with a fake clock and small reco
 - The *Coverage of the mockup* push-class table moves to `docs/plugins.md` *Push sources* in Phase F.
 
 **Decided (maintainer, 11 October 2026), after the coverage refinements:** `export_gap` and `not_exported_when_refused` are not covered. No migration, backfill or old-schema compatibility work is done: the project is pre-POC and the database is rebuilt before deployment.
+
+**Decided (maintainer, 11 October 2026), after the gap build:**
+- The push "source segment" is renamed **`source_period`** (table `provider_source_period`, and every identifier, comment, doc and state name derived from it). It is `opnview`'s own term — no product names the span during which one delivery path (pull or push) delivers a provider's records — recorded with that reason in `docs/data-model.md` *Vocabulary*. "Period" reads "from one instant to another".
+- The literal test address in `internal/plugin/testpush.go` moves to a fixture, so `internal/opnsense`'s source policy passes.
+- `internal/collect/scheduler_test.go` derives the plugin loops from the loaded built-ins; the hand list keeps the core loops only.
+- A new host function `host.datasets.latest(name, filter)` lets a widget read another plugin's dataset by its catalogue name, without SQL. `traffic_composition` uses it to fill `current_rates.by_member` for the protocol and service-port groupings from `pf_states.rate` when that dataset is present, and keeps the named absence otherwise.
+- The `pf_states` mirror reduction is decided after LV-C.
