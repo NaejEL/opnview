@@ -55,6 +55,9 @@ type PushEnvironment struct {
 	// Kinds receives the records of the entries that deliver a core kind (pushkind.go); nil refuses
 	// them.
 	Kinds KindReceiver
+	// Report is told what goes wrong outside any batch: a condition of a stream that could not be
+	// recorded. Nil reports nothing.
+	Report func(error)
 }
 
 // PushSubscriptions returns the subscription of every push entry of every loaded plugin, each with

@@ -1,0 +1,32 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, section Push sources (S5 and S9, which cite opnsense/core 26.7.3's NetflowController.php and the OPNsense.Netflow model), never by recording what a firewall answered. If the survey is wrong about the shape, the tests that read this file pass and the reading is still wrong. Do not treat this file as evidence; replace it with a recorded answer rewritten under X1 once LV-NJ has run.",
+    "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources",
+    "field_list_from": "S5: capture.interfaces, capture.egress_only, capture.version, capture.targets, collect.enable, activeTimeout, inactiveTimeout, as getNodes() renders them: option lists of {value, selected} keyed by option",
+    "why_these_values": "One interface captured on both directions out of three the firewall offers, version v9 selected, the model's default timeouts as text, one destination: the single Observation Point configuration.",
+    "example_values_are_not_a_network": "Every identifier, description and address is a synthesised example value, documentation addresses (RFC 5737)."
+  },
+  "body": {
+    "netflow": {
+      "capture": {
+        "interfaces": {
+          "lan": {"value": "Example inside", "selected": 1},
+          "opt1": {"value": "Example second inside", "selected": 0},
+          "wan": {"value": "Example upstream", "selected": 0}
+        },
+        "egress_only": {
+          "lan": {"value": "Example inside", "selected": 0},
+          "opt1": {"value": "Example second inside", "selected": 0},
+          "wan": {"value": "Example upstream", "selected": 0}
+        },
+        "version": {"v5": {"value": "v5", "selected": 0}, "v9": {"value": "v9", "selected": 1}},
+        "targets": {"192.0.2.10:2055": {"value": "192.0.2.10:2055", "selected": 1}}
+      },
+      "collect": {"enable": "0"},
+      "activeTimeout": "1800",
+      "inactiveTimeout": "15"
+    }
+  }
+}

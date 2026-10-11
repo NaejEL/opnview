@@ -415,6 +415,115 @@ var coreContracts = []Contract{
 			}},
 		},
 	},
+	flowRecordContract,
+}
+
+// The flow_record kind: the Flow Record of RFC 3954 and RFC 7011, which an exporter SENDS rather than
+// opnview asking for it. Its records arrive through a push entry, mapped from IANA Information
+// Elements with no script (docs/plugins.md, "Push sources"); what the provider reads by polling is
+// the exporter's capture configuration, a different record, from which the core establishes the
+// Observation Point (RFC 7011) of every record (PS17 and PS18 of the NetFlow join amendment to
+// specs/SPEC-backend-completion-plugins.md). The term is RFC 3954's and RFC 7011's, and a
+// flow_record is not a `flow`, which is one filter-log record (docs/data-model.md, *Vocabulary*).
+var flowRecordContract = Contract{
+	Kind: "flow_record",
+	Description: "Flow records an exporter sends, received by a push entry with no script, and the exporter's " +
+		"capture configuration, read by polling. One provider is active at a time. The core establishes each " +
+		"record's Observation Point from the configuration in force at its start, never from the record.",
+	Functions: []Function{probeFunction, {Name: "capture", Arguments: "host", Returns: "capture_answer",
+		Description: "Called at every capture-configuration pass: the exporter's capture configuration now."}},
+	Records: []Record{
+		probeAnswer,
+		{Name: "capture_answer", Description: "What `capture` returns: the configuration, or the reason it could " +
+			"not be read.", Fields: []Field{
+			{Name: "result", Type: FieldRecord, Of: "result", Required: true, Description: "The `result` record; " +
+				"when the configuration could not be read, its outcome is what the firewall answered."},
+			{Name: "capture", Type: FieldRecord, Of: "capture_configuration", Description: "The configuration " +
+				"read, absent when the read failed."},
+			{Name: "error", Type: FieldText, Description: "Why the read failed, when it did: the configuration is " +
+				"then unreadable, and the core records it so."},
+			{Name: "unsupported", Type: FieldText, Description: "Why this exporter's configuration can never be " +
+				"read, when that is so."},
+		}},
+		{Name: "capture_configuration", Description: "What the exporter captures and sends.", Fields: []Field{
+			{Name: "enabled", Type: FieldBoolean, Required: true, Description: "Whether the export runs at all."},
+			{Name: "export_version", Type: FieldText, Description: "The export protocol's version, as the " +
+				"exporter names it."},
+			{Name: "active_timeout_seconds", Type: FieldInteger, Unit: "seconds", Description: "How long a flow " +
+				"that stays active is accounted before a record of it is exported."},
+			{Name: "inactive_timeout_seconds", Type: FieldInteger, Unit: "seconds", Description: "How long a flow " +
+				"stays idle before a record of it is exported."},
+			{Name: "interfaces", Type: FieldRecords, Of: "capture_interface", Required: true, Description: "The " +
+				"`capture_interface` records: every interface the exporter captures on, and nothing else."},
+		}},
+		{Name: "capture_interface", Description: "One interface the exporter captures on.", Fields: []Field{
+			{Name: "identifier", Type: FieldText, Required: true, Description: "The interface's configuration " +
+				"identifier, as discovery names it."},
+			{Name: "ingress", Type: FieldBoolean, Required: true, Description: "Whether packets received on the " +
+				"interface are accounted."},
+			{Name: "egress", Type: FieldBoolean, Required: true, Description: "Whether packets sent on the interface " +
+				"are accounted."},
+		}},
+		{Name: "flow_record_record", Description: "One flow record as the exporter sent it, filled from the push " +
+			"entry's Information Element mapping. Its identity and its Observation Point are the core's.",
+			Fields: []Field{
+				{Name: "exporter_address", Type: FieldText, Required: true, Description: "The exporter's address."},
+				{Name: "observation_domain", Type: FieldInteger, Required: true, Description: "The observation " +
+					"domain (NetFlow v9's source ID)."},
+				{Name: "ingress_interface", Type: FieldInteger, Description: "The exporter's index of the interface " +
+					"the packets were received on, raw."},
+				{Name: "egress_interface", Type: FieldInteger, Description: "The exporter's index of the interface " +
+					"the packets were routed to, raw."},
+				{Name: "ip_version", Type: FieldInteger, Description: "4 or 6; absent when the exporter sends no " +
+					"version element, the core then reading it from the two addresses, which must agree with it."},
+				{Name: "protocol", Type: FieldInteger, Required: true, Description: "The IANA protocol number."},
+				{Name: "src_address", Type: FieldText, Required: true, Description: "The source address."},
+				{Name: "dst_address", Type: FieldText, Required: true, Description: "The destination address."},
+				{Name: "src_port", Type: FieldInteger, Description: "The source port, 0 to 65535; absent for a " +
+					"protocol without ports."},
+				{Name: "dst_port", Type: FieldInteger, Description: "The destination port, 0 to 65535; absent for " +
+					"a protocol without ports."},
+				{Name: "tcp_flags", Type: FieldInteger, Description: "The TCP flags of every packet, ORed together."},
+				{Name: "octets", Type: FieldInteger, Required: true, Unit: "bytes", Description: "The octets the " +
+					"record accounts, 0 or more."},
+				{Name: "packets", Type: FieldInteger, Required: true, Description: "The packets the record " +
+					"accounts, 0 or more."},
+				{Name: "start_at", Type: FieldNumber, Required: true, Unit: "UTC epoch seconds", Description: "The " +
+					"first packet's instant, with the fraction the exporter's precision carries."},
+				{Name: "end_at", Type: FieldNumber, Required: true, Unit: "UTC epoch seconds", Description: "The last " +
+					"packet's instant, with the fraction the exporter's precision carries."},
+				{Name: "received_at", Type: FieldNumber, Required: true, Unit: "UTC epoch seconds", Description: "When " +
+					"opnview received the record."},
+			}},
+	},
+}
+
+// PolledRecordTables are the record tables a contract's functions can return, directly or nested:
+// what an implementation delivers by polling. A push entry delivering a record table outside this set
+// delivers what no polled path delivers, so it replaces nothing (PS9 of the push amendment, as the
+// NetFlow join amendment's PS17 amends it).
+func PolledRecordTables(contract Contract) map[string]bool {
+	reached := map[string]bool{}
+	var visit func(name string)
+	visit = func(name string) {
+		if reached[name] {
+			return
+		}
+		reached[name] = true
+		record, found := LookupRecord(contract, name)
+		if !found {
+			return
+		}
+		for _, field := range record.Fields {
+			if field.Of != "" {
+				visit(field.Of)
+			}
+		}
+	}
+	for _, function := range contract.Functions {
+		visit(function.Returns)
+	}
+	return reached
 }
 
 // The resolver-record tables, shared by the two resolver kinds.

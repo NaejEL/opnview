@@ -95,6 +95,7 @@ func (c *Collector) ProbeAll(ctx context.Context) error {
 		c.probeDNSLookup,
 		c.probeResolverCache,
 		c.probeResolverLocalData,
+		c.probeFlowRecord,
 		c.probeReconciledState,
 		c.probeDeclaredKinds,
 	} {

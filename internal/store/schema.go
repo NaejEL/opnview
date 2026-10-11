@@ -118,6 +118,10 @@ func (s *Store) Purge(ctx context.Context, now int64) error {
 	if err := s.purgePluginTables(ctx, transaction, now); err != nil {
 		return err
 	}
+	// The NetFlow tables, the flow records by their own retention (flowrecord.go).
+	if err := purgeNetflow(ctx, transaction, now); err != nil {
+		return err
+	}
 	if err := transaction.Commit(); err != nil {
 		return fmt.Errorf("store: committing the purge: %w", err)
 	}

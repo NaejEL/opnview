@@ -51,6 +51,9 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 		return c.derive(ctx, derivation{})
 	}
 
+	// Every record the firewall logged before the page was asked for is in it, or in the gap the pass
+	// records: the filter log's read-through instant, which the NetFlow join waits for (flowrecord.go).
+	readStarted := c.now()
 	records, result, readErr := source.Records(ctx, c, c.pages().FirewallLog)
 	if writeErr := c.writeAvailability(ctx, providerID, result.State,
 		result.Outcome, result.Probe, result.Detail); writeErr != nil {
@@ -62,6 +65,7 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 	if len(records) == 0 {
 		// The refresh runs after every pass, an empty one included: the current slot
 		// of each period is rewritten on every pass, because it is still filling.
+		c.setFilterLogReadThrough(readStarted)
 		return c.derive(ctx, derivation{})
 	}
 
@@ -98,6 +102,9 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 		c.hooks.afterStore()
 	}
 
+	if passErr == nil {
+		c.setFilterLogReadThrough(readStarted)
+	}
 	// Every record of the page that was stored -- all of them, or those stored before
 	// the pass failed -- can be placed from everything held, its flows attributed, and
 	// the slots refreshed; a failure is still returned.

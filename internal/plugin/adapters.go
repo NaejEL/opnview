@@ -9,6 +9,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"github.com/NaejEL/opnview/internal/collect/firewalllog"
+	"github.com/NaejEL/opnview/internal/collect/flowrecord"
 	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
 	"github.com/NaejEL/opnview/internal/collect/measurement"
 	"github.com/NaejEL/opnview/internal/collect/pluginkind"
@@ -563,6 +564,8 @@ func addToSet(set *sources.Set, manifest provider.Manifest, base adapter, plugin
 		return set.AddIPGeolocation(manifest, ipGeolocationAdapter{base})
 	case registrabledomain.Kind:
 		return set.AddRegistrableDomain(manifest, registrableDomainAdapter{base})
+	case flowrecord.Kind:
+		return set.AddFlowRecord(manifest, flowRecordAdapter{base})
 	case reconciledstate.Kind:
 		return set.AddReconciledState(manifest, reconciledstate.Registration{Plugin: plugin.Name, Cadence: cadence,
 			MinCadence: time.Duration(declaration.MinCadenceSeconds) * time.Second, Triggers: declaration.TriggeredBy,
@@ -613,4 +616,48 @@ func scriptEndpoint(plugin, file string) opnsense.Endpoint {
 		file = ManifestFile
 	}
 	return opnsense.Endpoint{Method: "plugin", Path: plugin + "/" + file}
+}
+
+// flowRecordAdapter is a plugin as a flow_record source: what it reads by polling, the exporter's
+// capture configuration. Its records arrive through its push entry (pushkind.go), never here.
+type flowRecordAdapter struct{ adapter }
+
+func (a flowRecordAdapter) Probe(ctx context.Context, session provider.Session) (provider.Result, error) {
+	return a.probe(ctx, session)
+}
+
+func (a flowRecordAdapter) Capture(ctx context.Context, session provider.Session) (
+	flowrecord.Configuration, provider.Result, error) {
+	checked, result, err := a.run(ctx, session, "capture", "capture_answer")
+	if err != nil {
+		return flowrecord.Configuration{}, result, err
+	}
+	captured, present := checked["capture"].(map[string]any)
+	if !present {
+		failed := &failure{code: failureRecords, detail: "capture returned neither a capture nor an error"}
+		return flowrecord.Configuration{}, a.failed(failed), failed
+	}
+	configuration := flowrecord.Configuration{Enabled: flag(captured, "enabled", false),
+		ExportVersion:          text(captured, "export_version"),
+		ActiveTimeoutSeconds:   integerPointer(captured, "active_timeout_seconds"),
+		InactiveTimeoutSeconds: integerPointer(captured, "inactive_timeout_seconds")}
+	seen := map[string]bool{}
+	for index, row := range records(captured, "interfaces") {
+		identifier := text(row, "identifier")
+		if identifier == "" || seen[identifier] {
+			failed := &failure{code: failureRecords, detail: fmt.Sprintf("capture.interfaces[%d] names an empty or "+
+				"repeated identifier", index)}
+			return flowrecord.Configuration{}, a.failed(failed), failed
+		}
+		seen[identifier] = true
+		configuration.Interfaces = append(configuration.Interfaces, flowrecord.Interface{Identifier: identifier,
+			Ingress: flag(row, "ingress", false), Egress: flag(row, "egress", false)})
+	}
+	for _, timeout := range []*int64{configuration.ActiveTimeoutSeconds, configuration.InactiveTimeoutSeconds} {
+		if timeout != nil && *timeout <= 0 {
+			failed := &failure{code: failureRecords, detail: "capture states a timeout that is not positive"}
+			return flowrecord.Configuration{}, a.failed(failed), failed
+		}
+	}
+	return configuration, result, nil
 }

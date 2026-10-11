@@ -370,6 +370,13 @@ type Config struct {
 	// LiveSampleRetentionSeconds how long a fine sample is kept (liverate.go).
 	LiveInterestSeconds        int64
 	LiveSampleRetentionSeconds int64
+	// FlowRecordInterval is how often a flow_record provider's capture configuration is read,
+	// NetflowJoinToleranceSeconds how far after a leg a flow record may start and still join it, and
+	// FlowRecordRetentionSeconds how long a flow record is kept, 0 following RetentionSeconds
+	// (netflow.go).
+	FlowRecordInterval          time.Duration
+	NetflowJoinToleranceSeconds int64
+	FlowRecordRetentionSeconds  int64
 }
 
 // Defaults returns the configuration of a database that carries no setting row
@@ -399,6 +406,8 @@ func Defaults() Config {
 		DowntimeThresholdSeconds:     DefaultDowntimeThresholdSeconds,
 		LiveInterestSeconds:          DefaultLiveInterestSeconds,
 		LiveSampleRetentionSeconds:   DefaultLiveSampleRetentionSeconds,
+		FlowRecordInterval:           DefaultFlowRecordInterval,
+		NetflowJoinToleranceSeconds:  DefaultNetflowJoinToleranceSeconds,
 		// The page sizes are defaults a row overrides, like the intervals.
 		FirewallLogPageSize:   DefaultFirewallLogPageSize,
 		SecurityEventPageSize: DefaultSecurityEventPageSize,
@@ -608,6 +617,9 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 			loaded.DowntimeThresholdSeconds, KeyHeartbeatInterval, loaded.HeartbeatIntervalSeconds)
 	}
 	if err := loadLive(ctx, reader, &loaded); err != nil {
+		return loaded, err
+	}
+	if err := loadNetflow(ctx, reader, &loaded); err != nil {
 		return loaded, err
 	}
 

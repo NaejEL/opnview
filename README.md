@@ -149,10 +149,17 @@ each export adds:
   reply line, with its client, name, type, return code, time and size. It
   cannot replace the resolver's query report, which also says whether a
   blocklist answered, and it does not.
-- **NetFlow v9**, received and decoded for any plugin that subscribes to it. No
-  built-in plugin does yet: OPNsense's export does not say which interface
-  observed a record, so a connection crossing two captured interfaces arrives
-  twice, indistinguishably (survey, *Push sources*, S11).
+- **NetFlow v9**, received by the built-in `netflow` plugin and stored as flow
+  records. OPNsense's export does not say which interface observed a record,
+  so a connection crossing two captured interfaces arrives twice,
+  indistinguishably (survey, *Push sources*, S11). **When the export captures
+  exactly one interface**, that interface is where every record was observed,
+  and the records are joined to the logged connections that crossed it: each
+  connection then has a second figure, its **measured volume** (the `netflow`
+  measure), beside the logged one and never added to it. With any other
+  capture -- none, or two interfaces or more -- the records are still stored
+  and nothing is joined. A connection that never crossed the captured
+  interface has no measured volume.
 
 **On OPNsense** (the survey's *Push sources* section is the source of every step):
 
@@ -165,7 +172,11 @@ each export adds:
    and/or *Log Replies* (OPNsense's own help warns that they slow the resolver).
 3. For NetFlow: *Reporting > NetFlow*: the interfaces to capture, *Version* v9,
    and `<address>:<port>` of `opnview` among the destinations. Local collection
-   (Insight) may stay on: it is one more destination.
+   (Insight) may stay on: it is one more destination, and the two run together.
+   **The capture is one setting for both.** Capturing a single interface, which
+   the measured volume needs, also narrows what Insight collects on the
+   firewall to that interface. Which you prefer is yours to choose: `opnview`
+   reads the capture as it is and never changes it.
 
 **On `opnview`**, each listener is a start parameter with no default,
 `--push-listen <protocol>/<transport>=<host:port>`, and, from the development

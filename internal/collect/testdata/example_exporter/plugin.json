@@ -1,0 +1,44 @@
+{
+  "api_version": 1,
+  "name": "example_exporter",
+  "version": "1.0.0",
+  "display_name": "Example exporter",
+  "description": "A second exporter of flow records, for the test that adds one by its directory alone: its own capture-configuration read, its own Information Element mapping.",
+  "script": "example_exporter.js",
+  "endpoints": [
+    {
+      "name": "export_state",
+      "path": "/api/example/exporter/state",
+      "method": "GET",
+      "note": "An example exporter's own description of what it captures: {running, points: [{name, receive, send}], active_timeout}."
+    }
+  ],
+  "push": [
+    {
+      "name": "records",
+      "protocol": "netflow",
+      "filter": {"require": ["octetDeltaCount", "flowStartMilliseconds", "flowEndMilliseconds", "collectionTimeMilliseconds"]},
+      "fields": {
+        "exporter_address": ["exporterIPv6Address", "exporterIPv4Address"],
+        "observation_domain": "observationDomainId",
+        "ingress_interface": "ingressInterface",
+        "egress_interface": "egressInterface",
+        "protocol": "protocolIdentifier",
+        "src_address": ["sourceIPv6Address", "sourceIPv4Address"],
+        "dst_address": ["destinationIPv6Address", "destinationIPv4Address"],
+        "src_port": ["sourceTransportPort", "udpSourcePort", "tcpSourcePort"],
+        "dst_port": ["destinationTransportPort", "udpDestinationPort", "tcpDestinationPort"],
+        "tcp_flags": "tcpControlBits",
+        "octets": ["octetTotalCount", "octetDeltaCount"],
+        "packets": ["packetTotalCount", "packetDeltaCount"],
+        "start_at": ["flowStartSeconds", "flowStartMilliseconds"],
+        "end_at": ["flowEndSeconds", "flowEndMilliseconds"],
+        "received_at": "collectionTimeMilliseconds"
+      },
+      "kind": "flow_record"
+    }
+  ],
+  "providers": [
+    {"kind": "flow_record", "key": "example_exporter", "display_name": "Example exporter"}
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "nature": "event",
+  "freshness": {"kind": "flow_record"},
+  "retention": {"column": "period_start_at"},
+  "columns": [
+    {"name": "period_start_at", "type": "integer", "role": "time"},
+    {"name": "observation_point", "type": "text"},
+    {"name": "direction", "type": "text"},
+    {"name": "protocol", "type": "integer"},
+    {"name": "ip_version", "type": "integer"},
+    {"name": "reason", "type": "text"},
+    {"name": "bytes", "type": "integer", "role": "measure", "unit": "byte", "aggregations": ["sum"]},
+    {"name": "packets", "type": "integer", "role": "measure", "unit": "packet", "aggregations": ["sum"]},
+    {"name": "records", "type": "integer", "role": "measure", "unit": "record", "aggregations": ["sum"]}
+  ]
+}

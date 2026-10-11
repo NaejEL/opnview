@@ -132,6 +132,19 @@ func TestNoUserVisibleStringIsALiteral(t *testing.T) {
 				}
 			}
 		}
+		// So is a built-in plugin's provider of a core kind the registry does not seed -- flow_record's,
+		// whose row the probe round writes -- and that kind's label while it has no seeded provider.
+		for _, loaded := range plugin.BuiltinsLoaded().Plugins() {
+			for _, provided := range loaded.Providers {
+				for _, key := range []string{"collection.kind." + provided.Kind,
+					"provider." + provided.Kind + "." + provided.Key} {
+					if value, present := catalogue.Strings[key]; present && !shown[strings.TrimSpace(value)] {
+						unrenderable[key] = "the label of a built-in plugin's provider the registry does not seed, " +
+							"drawn once the probe round registers it"
+					}
+				}
+			}
+		}
 		for key := range unrenderable {
 			if _, present := catalogue.Strings[key]; !present {
 				t.Errorf("%q is declared unrenderable and is in no catalogue", key)

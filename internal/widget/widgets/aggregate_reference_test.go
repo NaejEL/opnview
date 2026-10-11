@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -54,6 +55,12 @@ func dumpTable(t *testing.T, f *fixture, table string) []string {
 			if column == "id" {
 				// The surrogate key: which number a slot's row was given depends on the order the
 				// engine produced the groups in, and means nothing; the slot is its other columns.
+				continue
+			}
+			if strings.HasPrefix(column, "netflow_") {
+				// The netflow measure postdates the record (PS21 of the NetFlow join amendment): the
+				// record covers the logged columns, which it leaves unchanged, and the netflow columns
+				// are held to their own computation by internal/collect's NetFlow tests.
 				continue
 			}
 			switch value := values[index].(type) {

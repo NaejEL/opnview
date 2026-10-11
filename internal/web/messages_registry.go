@@ -39,6 +39,8 @@ const (
 	msgGapPushNotAlive           messageKey = "gap_reason.push_not_alive"
 	msgGapNetflowSequenceGap     messageKey = "gap_reason.netflow_sequence_gap"
 	msgGapNetflowTemplateMissing messageKey = "gap_reason.netflow_template_missing"
+	// The flow_record kind (PS17 of the NetFlow join amendment).
+	msgKindFlowRecord messageKey = "collection.kind.flow_record"
 )
 
 // vocabularyKeys is every key above.
@@ -76,5 +78,6 @@ func vocabularyKeys() []MessageKey {
 		msgGapPushNotAlive,
 		msgGapNetflowSequenceGap,
 		msgGapNetflowTemplateMissing,
+		msgKindFlowRecord,
 	}
 }

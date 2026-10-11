@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "provider.flow_record.netflow": "NetFlow export"
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "dataset.flow_record": "NetFlow flow records, as exported: with two or more captured interfaces a forwarded packet is exported once per interface, so a sum counts it once per captured interface"
+  }
+}

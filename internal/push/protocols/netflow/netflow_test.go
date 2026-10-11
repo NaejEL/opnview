@@ -435,3 +435,69 @@ func FuzzDecoder(f *testing.F) {
 		}
 	})
 }
+
+// TestARecordCarriesItsDeliveryAndPosition is what the flow_record identity is composed from (PS17 of
+// the NetFlow join amendment): every record of a datagram carries the datagram's SHA-256, the same
+// datagram decoded twice the same one, and its own place in it, two identical records two places.
+func TestARecordCarriesItsDeliveryAndPosition(t *testing.T) {
+	t.Parallel()
+	record := ngRecord("198.51.100.10", "203.0.113.20", 3, 1, 1, 60, 1000, 1000, 1, 2, 0, 17)
+	packet := v9(2000, 1_790_467_200, 1, 0, set(0, templateSet(257, ngTemplate)), set(257, append(record, record...)))
+	first := newDecoder(limits()).Decode(packet, meta())
+	again := newDecoder(limits()).Decode(packet, meta())
+	if len(first.Records) != 2 || len(again.Records) != 2 {
+		t.Fatalf("decoded %d and %d records", len(first.Records), len(again.Records))
+	}
+	if first.Records[0].Delivery == "" || first.Records[0].Delivery != first.Records[1].Delivery ||
+		first.Records[0].Delivery != again.Records[0].Delivery {
+		t.Errorf("the deliveries are %q, %q and %q", first.Records[0].Delivery, first.Records[1].Delivery,
+			again.Records[0].Delivery)
+	}
+	if first.Records[0].Position == first.Records[1].Position {
+		t.Errorf("two records of one datagram share the position %d", first.Records[0].Position)
+	}
+	other := v9(2000, 1_790_467_200, 2, 0, set(0, templateSet(257, ngTemplate)), set(257, record))
+	if newDecoder(limits()).Decode(other, meta()).Records[0].Delivery == first.Records[0].Delivery {
+		t.Error("two datagrams differing in their sequence number share a delivery")
+	}
+}
+
+// TestAnInterleavingStreamIsAConditionAndIsFollowedAfreshAfterAReset: a sequence going backwards is told
+// to the subscribers as a condition of its scope, once, at the export time of the packet that showed it;
+// a gap the numbers show is marked as derived from them; and after ResetSequences the stream is followed
+// afresh, the interleaving no longer flagged.
+func TestAnInterleavingStreamIsAConditionAndIsFollowedAfreshAfterAReset(t *testing.T) {
+	t.Parallel()
+	d := newDecoder(limits())
+	decoded := decodeAll(t, d,
+		v9(1000, 1_790_467_200, 100, 0),
+		v9(1000, 1_790_467_201, 5, 0),
+		v9(1000, 1_790_467_202, 101, 0))
+	var conditions []push.Problem
+	for _, problem := range decoded.Problems {
+		if problem.Condition {
+			conditions = append(conditions, problem)
+		}
+	}
+	if len(conditions) != 1 || conditions[0].Reason != FlagSequenceInterleaved || !conditions[0].Sequence ||
+		conditions[0].Scope != exporter.String()+"/0" || !conditions[0].From.Equal(time.Unix(1_790_467_201, 0)) {
+		t.Errorf("conditions %+v", conditions)
+	}
+	d.ResetSequences()
+	if flags := d.State().Flags; len(flags) != 0 {
+		t.Errorf("after the reset the flags are %v", flags)
+	}
+	after := decodeAll(t, d,
+		v9(1000, 1_790_467_210, 200, 0),
+		v9(1000, 1_790_467_211, 205, 0),
+		v9(1000, 1_790_467_212, 206, 0))
+	var gaps []push.Problem
+	for _, problem := range after.Problems {
+		if problem.Reason == ReasonSequenceGap {
+			gaps = append(gaps, problem)
+		}
+	}
+	if len(gaps) != 1 || !gaps[0].Sequence || gaps[0].Scope != exporter.String()+"/0" {
+		t.Errorf("after the reset the gaps are %+v", gaps)
+	}
+}

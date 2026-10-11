@@ -790,6 +790,8 @@ The specification settles them in Phase C, part 2 of the backend-completion cycl
 - **One catalogue.** Pushed sources appear in the API catalogue and the data catalogue like pulled ones. A plugin may declare that a pushed source replaces a polled endpoint, as for event streams: polling stops while the push is alive and resumes when it stops.
 - **One decoding, several subscribers.** Several plugins subscribed to the same program or flow share one decoding pass. Each writes only its own declared columns.
 
+NetFlow records are joined to the logged connections as a second measure (Phase C, part 2), when the export captures exactly one interface: that interface is every record's Observation Point (decision 15b of the backend-completion spec). With any other capture the records are stored and nothing is joined.
+
 ## Superseded decisions
 
 Recorded so they do not resurface.

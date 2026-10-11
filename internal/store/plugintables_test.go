@@ -55,7 +55,8 @@ func TestEveryPluginHasItsOwnSchemaAndATimedTableIsAHypertable(t *testing.T) {
 	}
 	var hypertables []string
 	rows, err = database.DB().QueryContext(ctx,
-		"SELECT hypertable_schema || '.' || hypertable_name FROM timescaledb_information.hypertables ORDER BY 1")
+		"SELECT hypertable_schema || '.' || hypertable_name FROM timescaledb_information.hypertables "+
+			"WHERE hypertable_schema <> 'opnview' ORDER BY 1")
 	if err != nil {
 		t.Fatal(err)
 	}

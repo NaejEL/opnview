@@ -54,6 +54,9 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 		// The unbound plugin's push-fed provider of its query log, whose pass reads the push hub and
 		// never the firewall, refreshing its availability every minute (docs/plugins.md, "Push sources").
 		"unbound_query_log unbound": time.Minute,
+		// The active flow_record provider's capture configuration, every minute by default: the longest a
+		// changed configuration goes unseen (PS18 of the NetFlow join amendment).
+		"NetFlow capture configuration": settings.FlowRecordInterval,
 	}
 	if len(tasks) != len(wanted) {
 		t.Fatalf("the scheduler has %d loops, want %d", len(tasks), len(wanted))

@@ -54,6 +54,9 @@ const (
 	// CounterInterfaceUnmapped counts a record carrying an interface index no interface of the
 	// firewall holds: its index is kept, its interface fields are absent (PS11).
 	CounterInterfaceUnmapped = "interface_index_unmapped"
+	// CounterSequenceNotAsserted counts a loss the sender's sequence numbers showed that a sink's
+	// SequenceJudge refused to assert: no gap is recorded for it.
+	CounterSequenceNotAsserted = "sequence_gap_not_asserted"
 )
 
 // The bounds, each written once (docs/plugins.md, "Push sources", lists them).
@@ -103,6 +106,19 @@ const (
 type Sink interface {
 	Prepare(ctx context.Context, records []Record) Prepared
 	Store(ctx context.Context, prepared Prepared) error
+}
+
+// SequenceJudge is a sink that decides whether a loss its sender's sequence numbers show is asserted
+// at all: a core kind whose provider knows, from the configuration it read, whether one sequence
+// stream is one counter (PS18 of the NetFlow join amendment). A gap of a Sequence problem the judge
+// refuses is counted (CounterSequenceNotAsserted) and not recorded.
+type SequenceJudge interface {
+	SequenceAsserted(ctx context.Context, problem Problem) bool
+}
+
+// ConditionObserver is a sink told every Condition a decoder detected on a stream it may feed.
+type ConditionObserver interface {
+	ObserveCondition(ctx context.Context, problem Problem)
 }
 
 // Prepared is what a sink extracted from one batch.
@@ -459,10 +475,23 @@ func (h *Hub) Listening(protocolName string) []string {
 func (h *Hub) route(ctx context.Context, l *listener, decoded Decoded) {
 	for _, problem := range decoded.Problems {
 		l.count(problem.Reason, int64(problem.Count))
+		if problem.Condition {
+			for _, s := range h.subscribersOf(l) {
+				if observer, observes := s.Sink.(ConditionObserver); observes {
+					observer.ObserveCondition(ctx, problem)
+				}
+			}
+			continue
+		}
 		if !problem.Gap {
 			continue
 		}
 		for _, s := range h.subscribersOf(l) {
+			if judge, judges := s.Sink.(SequenceJudge); judges && problem.Sequence &&
+				!judge.SequenceAsserted(ctx, problem) {
+				s.count(CounterSequenceNotAsserted, int64(problem.Count))
+				continue
+			}
 			s.noteGap(ctx, problem.Reason, problem.From, problem.To, int64(problem.Count))
 		}
 	}
@@ -485,6 +514,24 @@ func (h *Hub) route(ctx context.Context, l *listener, decoded Decoded) {
 		}
 		if !delivered {
 			l.count(CounterNoSubscriber, 1)
+		}
+	}
+}
+
+// ResetSequences tells every decoder of a protocol that follows sequence numbers to follow them
+// afresh: what it concluded of a stream -- that several counters interleave in it -- no longer holds
+// once whoever reads the sender's configuration has seen it change. A protocol whose decoders follow
+// no sequence is left alone.
+func (h *Hub) ResetSequences(protocolName string) {
+	h.mutex.RLock()
+	listeners := append([]*listener(nil), h.listeners...)
+	h.mutex.RUnlock()
+	for _, l := range listeners {
+		if l.protocol.Name() != protocolName {
+			continue
+		}
+		if resetter, follows := l.decoder.(SequenceResetter); follows {
+			resetter.ResetSequences()
 		}
 	}
 }

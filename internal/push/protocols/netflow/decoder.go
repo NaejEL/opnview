@@ -1,7 +1,9 @@
 package netflow
 
 import (
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -82,9 +84,11 @@ type scope struct {
 // heldSet is a data set waiting for its template.
 type heldSet struct {
 	templateID uint16
-	payload    []byte
-	header     packetHeader
-	meta       push.Meta
+	// set is the set's ordinal in its datagram, which the records released from it keep.
+	set     int
+	payload []byte
+	header  packetHeader
+	meta    push.Meta
 }
 
 // sequenceState follows one scope's sequence numbers.
@@ -106,6 +110,8 @@ type pendingGap struct {
 
 // scopeState is everything held for one scope.
 type scopeState struct {
+	// name is the scope as a Problem names it: "<exporter>/<domain>".
+	name      string
 	templates map[uint16]*template
 	held      []heldSet
 	sequence  sequenceState
@@ -118,6 +124,8 @@ type packetHeader struct {
 	sysUptime  uint32
 	sequence   uint32
 	domain     uint32
+	// delivery is the SHA-256 of the whole datagram, in hexadecimal: every record of it carries it.
+	delivery string
 }
 
 type decoder struct {
@@ -137,7 +145,7 @@ func newDecoder(limits push.Limits) *decoder {
 func (d *decoder) scopeOf(key scope) *scopeState {
 	state, found := d.scopes[key]
 	if !found {
-		state = &scopeState{templates: map[uint16]*template{}}
+		state = &scopeState{name: fmt.Sprintf("%s/%d", key.exporter, key.domain), templates: map[uint16]*template{}}
 		d.scopes[key] = state
 	}
 	return state
@@ -176,6 +184,7 @@ func (d *decoder) decodeV9(payload []byte, meta push.Meta) push.Decoded {
 		exportTime: time.Unix(int64(binary.BigEndian.Uint32(payload[8:12])), 0).UTC(),
 		sequence:   binary.BigEndian.Uint32(payload[12:16]),
 		domain:     binary.BigEndian.Uint32(payload[16:20]),
+		delivery:   digestOf(payload),
 	}
 	key := scope{exporter: meta.Sender, domain: header.domain}
 	state := d.scopeOf(key)
@@ -205,6 +214,7 @@ func (d *decoder) decodeIPFIX(payload []byte, meta push.Meta) push.Decoded {
 		exportTime: time.Unix(int64(binary.BigEndian.Uint32(payload[4:8])), 0).UTC(),
 		sequence:   binary.BigEndian.Uint32(payload[8:12]),
 		domain:     binary.BigEndian.Uint32(payload[12:16]),
+		delivery:   digestOf(payload),
 	}
 	state := d.scopeOf(scope{exporter: meta.Sender, domain: header.domain})
 	var decoded push.Decoded
@@ -225,8 +235,9 @@ func (d *decoder) decodeIPFIX(payload []byte, meta push.Meta) push.Decoded {
 // any. Records of earlier packets released by a template are not this packet's.
 func (d *decoder) walkSets(sets []byte, header packetHeader, meta push.Meta, state *scopeState,
 	decoded *push.Decoded) (int, int, string) {
-	dataRecords, held := 0, 0
+	dataRecords, held, ordinal := 0, 0, -1
 	for len(sets) > 0 {
+		ordinal++
 		if len(sets) < setHeaderLength {
 			// Trailing padding shorter than a set header.
 			return dataRecords, held, ""
@@ -254,12 +265,12 @@ func (d *decoder) walkSets(sets []byte, header packetHeader, meta push.Meta, sta
 		case id >= firstDataSetID:
 			tmpl, known := state.templates[id]
 			if !known {
-				d.hold(state, heldSet{templateID: id, payload: append([]byte(nil), body...),
+				d.hold(state, heldSet{templateID: id, set: ordinal, payload: append([]byte(nil), body...),
 					header: header, meta: meta}, decoded)
 				held++
 				continue
 			}
-			dataRecords += d.readData(body, tmpl, header, meta, decoded)
+			dataRecords += d.readData(body, tmpl, header, ordinal, meta, decoded)
 		default:
 			// Set ids 4 to 255 are reserved (RFC 7011, section 3.3.2): skipped.
 		}
@@ -395,7 +406,7 @@ func describe(id uint16, enterprise uint32, length uint16) field {
 
 // readData reads the records of a data set; what remains shorter than the template's shortest
 // record is padding (RFC 3954, section 5.3; RFC 7011, section 3.3.1).
-func (d *decoder) readData(body []byte, tmpl *template, header packetHeader, meta push.Meta,
+func (d *decoder) readData(body []byte, tmpl *template, header packetHeader, set int, meta push.Meta,
 	decoded *push.Decoded) int {
 	count := 0
 	for len(body) >= tmpl.minLength && tmpl.minLength > 0 {
@@ -437,8 +448,8 @@ func (d *decoder) readData(body []byte, tmpl *template, header packetHeader, met
 			break
 		}
 		body = body[position:]
+		d.finish(fields, tmpl, header, set<<16|count, meta, decoded)
 		count++
-		d.finish(fields, tmpl, header, meta, decoded)
 	}
 	return count
 }
@@ -446,7 +457,7 @@ func (d *decoder) readData(body []byte, tmpl *template, header packetHeader, met
 // finish adds what the packet header says to a record -- the exporter, the domain, the version and
 // the reception instant, under their registry names -- and the absolute start and end instants
 // computed from the relative time elements (PS5), then appends it.
-func (d *decoder) finish(fields map[string]any, tmpl *template, header packetHeader, meta push.Meta,
+func (d *decoder) finish(fields map[string]any, tmpl *template, header packetHeader, position int, meta push.Meta,
 	decoded *push.Decoded) {
 	if meta.Sender.Is4() {
 		fields["exporterIPv4Address"] = meta.Sender
@@ -464,7 +475,7 @@ func (d *decoder) finish(fields map[string]any, tmpl *template, header packetHea
 	d.seen[fmt.Sprintf("v%d %s %d (%d fields)", header.version, kind, tmpl.id, len(tmpl.fields))]++
 	routeKey := fmt.Sprintf("%s|%d|%d|%d", meta.Sender, header.domain, tmpl.id, tmpl.generation)
 	record := push.Record{RouteKey: routeKey, Fields: fields, Sender: meta.Sender, Transport: meta.Transport,
-		ReceivedAt: meta.ReceivedAt, InstantField: "flowStartMilliseconds"}
+		ReceivedAt: meta.ReceivedAt, InstantField: "flowStartMilliseconds", Delivery: header.delivery, Position: position}
 	if start, ok := fields["flowStartMilliseconds"].(time.Time); ok {
 		record.Instant = start
 	}
@@ -558,7 +569,7 @@ func (d *decoder) releaseHeld(state *scopeState, decoded *push.Decoded) {
 			kept = append(kept, set)
 			continue
 		}
-		d.readData(set.payload, tmpl, set.header, set.meta, decoded)
+		d.readData(set.payload, tmpl, set.header, set.set, set.meta, decoded)
 	}
 	state.held = kept
 }
@@ -583,11 +594,10 @@ func (d *decoder) followSequence(state *scopeState, header packetHeader, advance
 		if header.sequence == sequence.pending.nextExpect {
 			gap := sequence.pending
 			sequence.pending = nil
-			decoded.Problems = append(decoded.Problems, sequenceGap(gap))
+			decoded.Problems = append(decoded.Problems, sequenceGap(state.name, gap))
 		} else {
 			sequence.pending = nil
-			sequence.interleaved = true
-			d.flags[FlagSequenceInterleaved] = true
+			d.interleave(state, header, decoded)
 			return
 		}
 	}
@@ -598,13 +608,37 @@ func (d *decoder) followSequence(state *scopeState, header packetHeader, advance
 		sequence.pending = &pendingGap{from: sequence.lastExport, to: header.exportTime, missing: difference,
 			nextExpect: header.sequence + advance, detectedAt: meta.ReceivedAt}
 	default:
-		sequence.interleaved = true
-		d.flags[FlagSequenceInterleaved] = true
+		d.interleave(state, header, decoded)
 	}
 }
 
-func sequenceGap(gap *pendingGap) push.Problem {
+// interleave marks a scope's stream interleaved and tells the subscribers so, once: a condition at the
+// export time of the packet that showed it, which a sink reading the exporter's configuration may
+// find contradicts what that configuration says (PS18 of the NetFlow join amendment).
+func (d *decoder) interleave(state *scopeState, header packetHeader, decoded *push.Decoded) {
+	state.sequence.interleaved = true
+	d.flags[FlagSequenceInterleaved] = true
+	decoded.Problems = append(decoded.Problems, push.Problem{Reason: FlagSequenceInterleaved, Count: 1,
+		Condition: true, Sequence: true, From: header.exportTime, To: header.exportTime, Scope: state.name,
+		Detail: "the exporter's sequence numbers went backwards: several counters share this observation domain, " +
+			"so no loss is asserted from them until the stream is followed afresh"})
+}
+
+// ResetSequences forgets what was concluded of every scope's sequence numbers: a stream found
+// interleaved, and a forward jump not yet confirmed, are followed afresh from the next datagram.
+// Whoever reads the exporter's configuration calls it when that configuration changes.
+func (d *decoder) ResetSequences() {
+	d.mutex.Lock()
+	defer d.mutex.Unlock()
+	for _, state := range d.scopes {
+		state.sequence = sequenceState{}
+	}
+	delete(d.flags, FlagSequenceInterleaved)
+}
+
+func sequenceGap(scope string, gap *pendingGap) push.Problem {
 	return push.Problem{Reason: ReasonSequenceGap, Count: int(gap.missing), Gap: true, From: gap.from, To: gap.to,
+		Sequence: true, Scope: scope,
 		Detail: fmt.Sprintf("the exporter's sequence number jumped by %d", gap.missing)}
 }
 
@@ -638,7 +672,7 @@ func (d *decoder) Expire(now time.Time) push.Decoded {
 		state.held = kept
 		if pending := state.sequence.pending; pending != nil && now.Sub(pending.detectedAt) > bound {
 			state.sequence.pending = nil
-			decoded.Problems = append(decoded.Problems, sequenceGap(pending))
+			decoded.Problems = append(decoded.Problems, sequenceGap(state.name, pending))
 		}
 	}
 	return decoded
@@ -657,4 +691,10 @@ func (d *decoder) State() push.DecoderState {
 	}
 	sort.Strings(flags)
 	return push.DecoderState{Seen: seen, Flags: flags}
+}
+
+// digestOf is a datagram's identity: the SHA-256 of its octets, in hexadecimal.
+func digestOf(payload []byte) string {
+	sum := sha256.Sum256(payload)
+	return hex.EncodeToString(sum[:])
 }

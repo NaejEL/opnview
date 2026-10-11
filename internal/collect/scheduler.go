@@ -156,6 +156,14 @@ func (c *Collector) coreTasks(settings *config.Live) []Task {
 			RunAtStart: true,
 		},
 		{
+			// The capture configuration of the active flow_record provider, every minute by default
+			// (internal/config, netflow.go): the longest a changed configuration goes unseen.
+			Name:       "NetFlow capture configuration",
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.FlowRecordInterval }),
+			Run:        c.afterPass(KindFlowRecord, c.CollectFlowRecordCapture),
+			RunAtStart: true,
+		},
+		{
 			// The broker: its scheduler and its stream subscriptions. Its pass returns only when
 			// the run stops.
 			Name:       "firewall broker",

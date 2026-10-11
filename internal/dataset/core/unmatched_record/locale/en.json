@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "dataset.unmatched_record": "Unmatched NetFlow records, by captured interface and reason"
+  }
+}

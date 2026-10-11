@@ -1,0 +1,30 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, section Push sources (S5 and S9, which cite opnsense/core 26.7.3's NetflowController.php, the OPNsense.Netflow model and /etc/rc.d/netflow), never by recording what a firewall answered. Do not treat this file as evidence; replace it with a recorded answer rewritten under X1 once LV-NJ has run.",
+    "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources",
+    "field_list_from": "S5: capture.interfaces, capture.egress_only, capture.version, activeTimeout, inactiveTimeout",
+    "why_these_values": "Two interfaces captured, one of them egress only, and a third listed in egress_only without being captured: rc.d/netflow creates a node only for an interface of capture.interfaces, so the third is not captured at all. Version v5 selected and no timeouts, to show what an absent field reads as.",
+    "example_values_are_not_a_network": "Every identifier and description is a synthesised example value."
+  },
+  "body": {
+    "netflow": {
+      "capture": {
+        "interfaces": {
+          "lan": {"value": "Example inside", "selected": 1},
+          "opt1": {"value": "Example second inside", "selected": 0},
+          "wan": {"value": "Example upstream", "selected": 1}
+        },
+        "egress_only": {
+          "lan": {"value": "Example inside", "selected": 0},
+          "opt1": {"value": "Example second inside", "selected": 1},
+          "wan": {"value": "Example upstream", "selected": 1}
+        },
+        "version": {"v5": {"value": "v5", "selected": 1}, "v9": {"value": "v9", "selected": 0}},
+        "targets": {"192.0.2.10:2055": {"value": "192.0.2.10:2055", "selected": 1}}
+      },
+      "collect": {"enable": "1"}
+    }
+  }
+}

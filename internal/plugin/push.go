@@ -32,8 +32,8 @@ type PushDeclaration struct {
 	// syslog, {require, where} for NetFlow.
 	Filter json.RawMessage `json:"filter"`
 	// Transports are the transports the entry accepts; empty is every one its protocol is received
-	// over. An entry feeding a core kind is accepted over TCP only, whatever it says: only a
-	// transport whose loss is detectable may replace a polled source (Q9 of the push amendment).
+	// over. An entry feeding a core kind is accepted only over the transports whose loss is detectable,
+	// whatever it says -- TCP for syslog, UDP for NetFlow (Q9 of the push amendment).
 	Transports []string `json:"transports,omitempty"`
 	// Pattern is a regular expression in RE2 syntax whose named groups name output columns: the
 	// fast path for a syslog message a regular expression can express.
@@ -41,8 +41,9 @@ type PushDeclaration struct {
 	// Parse names a function the script exports under `push`, called with a batch of decoded
 	// messages, for a syslog message a regular expression cannot express.
 	Parse string `json:"parse,omitempty"`
-	// Fields maps output columns to fields every record carries: a syslog header field, or a NetFlow
-	// Information Element by registry name -- one name, or a list whose first present one wins.
+	// Fields maps output columns -- or, for an entry naming a kind, the fields of the kind's record -- to
+	// fields every record carries: a syslog header field, or a NetFlow Information Element by registry
+	// name -- one name, or a list whose first present one wins.
 	Fields map[string]PushField `json:"fields,omitempty"`
 	// OutputTable names one of the plugin's tables; Kind a core kind the plugin provides. One of the
 	// two, never both.
@@ -337,28 +338,77 @@ func checkPushKind(plugin *Plugin, binding *pushBinding, providedKinds map[strin
 		return refuse(name, RefusalPushDestinationInvalid, "%s delivers records of %q, which is not a core kind the "+
 			"plugin provides", entry, declaration.Kind)
 	}
-	if declaration.Parse == "" {
+	table := declaration.Kind + "_record"
+	contract, _ := provider.ContractOf(declaration.Kind)
+	record, hasTable := provider.LookupRecord(contract, table)
+	switch {
+	case !hasTable:
+		return refuse(name, RefusalPushDestinationInvalid, "%s delivers records of %s, whose contract has no %s "+
+			"table a push entry could fill", entry, declaration.Kind, table)
+	case declaration.Parse == "" && len(declaration.Fields) == 0:
 		return refuse(name, RefusalPushDeclarationInvalid, "%s delivers records of %s, which a parse function "+
-			"builds: the records are the kind's contract", entry, declaration.Kind)
+			"builds or a field mapping fills: the records are the kind's contract", entry, declaration.Kind)
+	case declaration.Parse != "" && len(declaration.Fields) > 0:
+		return refuse(name, RefusalPushDeclarationInvalid, "%s delivers records of %s with both a parse function "+
+			"and a field mapping: one of the two builds them", entry, declaration.Kind)
+	case declaration.Pattern != "":
+		return refuse(name, RefusalPushDeclarationInvalid, "%s delivers records of %s with a pattern: a record of a "+
+			"kind is built by a parse function or a field mapping", entry, declaration.Kind)
 	}
-	if _, adapted := pushKindAdapters[declaration.Kind]; !adapted {
+	if len(declaration.Fields) > 0 {
+		// A mapping fills contract fields, and every required one.
+		for column := range declaration.Fields {
+			if _, known := record.Field(column); !known {
+				return refuse(name, RefusalPushDeclarationInvalid, "%s maps %q, which is not a field of %s", entry,
+					column, table)
+			}
+		}
+		for _, field := range record.Fields {
+			if _, mapped := declaration.Fields[field.Name]; field.Required && !mapped {
+				return refuse(name, RefusalPushColumnUnfilled, "%s leaves the required field %s of %s unmapped",
+					entry, field.Name, table)
+			}
+		}
+	}
+	if _, adapted := pushKinds[declaration.Kind]; !adapted {
 		return refuse(name, RefusalPushDestinationInvalid, "%s delivers records of %s, which no push path of the "+
 			"core receives yet", entry, declaration.Kind)
 	}
-	// The provider also reads the kind through a polled endpoint unless it is push-only, so the entry
-	// must declare what it replaces (PS9).
-	if provided.Source != providerSourcePush && declaration.Replaces == "" {
+	// PS9, as the NetFlow join amendment's PS17 amends it. The load check tells the two cases apart by
+	// the CONTRACT, never by the plugin: an entry delivers the record table <kind>_record, and the
+	// kind's polled functions can return the tables PolledRecordTables lists. When that list holds the
+	// entry's table, the provider delivers the same records by both paths, and the entry must name the
+	// endpoint it replaces, or the two paths would count them twice (push_kind_without_replacement).
+	// When it does not -- flow_record's polled function returns the capture configuration, a different
+	// record -- the entry is push-only, and a `replaces` would replace nothing.
+	polled := provider.PolledRecordTables(contract)[table]
+	switch {
+	case polled && declaration.Replaces == "":
 		return refuse(name, RefusalPushKindWithoutReplacement, "%s delivers %s records beside a provider that polls "+
 			"them, and declares no replaces: without an exclusive source per instant the two paths would count "+
 			"records twice", entry, declaration.Kind)
+	case !polled && declaration.Replaces != "":
+		return refuse(name, RefusalPushDeclarationInvalid, "%s replaces %q, but no polled function of %s delivers %s "+
+			"records: there is nothing to replace", entry, declaration.Replaces, declaration.Kind, table)
 	}
 	key := provided.Key
 	if key == "" {
 		key = plugin.Name
 	}
 	binding.providerKind, binding.providerKey = declaration.Kind, key
-	// A core kind is fed over TCP alone: UDP syslog's loss is undetectable (Q9).
-	binding.transports = []string{push.TransportTCP}
+	// A core kind is fed only over a transport whose loss is detectable (Q9): TCP for syslog, whose UDP
+	// loss is invisible; UDP for NetFlow, whose sequence numbers detect loss.
+	var detectable []string
+	for _, transport := range binding.protocol.Transports() {
+		if binding.protocol.LossDetectable(transport) {
+			detectable = append(detectable, transport)
+		}
+	}
+	if len(detectable) == 0 {
+		return refuse(name, RefusalPushDeclarationInvalid, "%s delivers records of %s over no transport whose loss "+
+			"is detectable", entry, declaration.Kind)
+	}
+	binding.transports = detectable
 	return nil
 }
 

@@ -270,6 +270,9 @@ type Collector struct {
 	// live is the live sampling: the lease it runs under and when each live pass last ran
 	// (live.go).
 	live liveSampling
+	// netflow is the flow_record kind's state: the filter log's read-through instant, the join
+	// tolerance, the capture histories and what is to be derived again (flowrecord.go).
+	netflow netflowState
 }
 
 // New returns a collector. The client is the only thing in opnview that builds an
@@ -376,6 +379,11 @@ func (c *Collector) Configure(settings config.Config) {
 	}
 	if settings.LeaseBackendFailurePassLimit > 0 {
 		c.leaseFailureLimit = settings.LeaseBackendFailurePassLimit
+	}
+	if settings.NetflowJoinToleranceSeconds > 0 {
+		c.netflow.mutex.Lock()
+		c.netflow.toleranceSeconds = settings.NetflowJoinToleranceSeconds
+		c.netflow.mutex.Unlock()
 	}
 }
 

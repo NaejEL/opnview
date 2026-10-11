@@ -182,6 +182,18 @@ func (c *Collector) deriveLocked(ctx context.Context, request derivation) error 
 		forced = append(forced, result.FlowInstants...)
 	}
 
+	// The NetFlow join and the measured volume (flowrecord.go, measuredvolume.go), only where a flow_record
+	// provider is active: after the pairing, which says which legs make a connection, and before the
+	// refresh, which rewrites the slots of every connection whose measured volume changed (PS21).
+	if _, err := c.joinFlowRecords(ctx); err != nil {
+		return fmt.Errorf("collect: joining the flow records: %w", err)
+	}
+	measured, err := c.deriveMeasuredVolumes(ctx, request)
+	if err != nil {
+		return fmt.Errorf("collect: deriving the measured volume: %w", err)
+	}
+	forced = append(forced, measured...)
+
 	// The slots are stamped with the watermark rather than now: a row of a pass still in
 	// flight, stamped with its start, may commit after this refresh reads its slot, and
 	// a slot stamped no later than that row stays stale until a refresh has read it.

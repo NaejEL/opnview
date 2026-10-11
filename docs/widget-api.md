@@ -251,9 +251,9 @@ on the read connections in a read-only transaction.
 The listing never carries a set-aside table, `account`, `session`, `encrypted_credential`, a
 credential or secret setting, or `plugin_state`.
 
-**The core's datasets** are the five sources of `custom_chart`, each declared as data in its own
-directory under `internal/dataset/core/` (its declaration, the `SELECT` it reads and its label), so
-adding one is adding a directory:
+**The core's datasets** are the five sources of `custom_chart` and the two NetFlow datasets, each
+declared as data in its own directory under `internal/dataset/core/` (its declaration, the `SELECT` it
+reads and its label), so adding one is adding a directory:
 
 | Dataset | Nature | Time column | Measures | Provider |
 |---|---|---|---|---|
@@ -262,6 +262,18 @@ adding one is adding a directory:
 | `interface_throughput` | sample | `sampled_at` | `increase`, `per_second` (the `counter` dimension names the unit) | `measurement_sample` |
 | `dns` | event | `looked_up_at` | `lookups`, `blocked` (lookup) | `dns_lookup` |
 | `security_event` | event | `occurred_at` | `events`, `blocked` (event) | `security_event` |
+| `flow_record` | event | `start_at` | `octets` (byte), `packets` (packet), `records` (record) | `flow_record` |
+| `unmatched_record` | event | `period_start_at` | `bytes` (byte), `packets` (packet), `records` (record) | `flow_record` |
+
+`flow_record` serves every flow record stored, whatever the capture configuration was, with the
+configuration's `capture_state`, the `captured_interfaces`, the `observation_point` and `direction` where
+there was one, and **`loss_detectable` per row**: 1 over the intervals whose configuration named one
+captured interface, so that a loss would have been recorded as a gap, and 0 elsewhere. Its label states
+that with two or more captured interfaces a forwarded packet is exported once per interface, as
+identical records whose interface is not known: a sum over it counts such traffic once per captured
+interface, and no built-in widget serves such a sum. `unmatched_record` is the unmatched family's hour
+slots: the records with an Observation Point that joined no logged leg, by Observation Point,
+direction, protocol, IP version and reason.
 
 **Every table a loaded plugin declares is a dataset**, its columns as its manifest declares them
 (`docs/plugins.md`, *Tables*).
@@ -408,6 +420,13 @@ range is `400` `{"condition", "key"}` -- `unknown_setting`, `invalid_setting_val
 `POST /api/plugins/{name}/settings`; the cadence in force is never below its endpoints' freshness
 floor. Fine samples are purged after `live_sample_retention_seconds`; baseline samples follow
 `retention_seconds`.
+
+**NetFlow settings.** `GET /api/netflow/settings` answers `{settings}`, each `{key, value, default,
+minimum, maximum, set}`: `netflow_join_tolerance_seconds` (default 3, 1 to 60), how far after a leg was
+logged a flow record may start and still join it, and `retention_flow_record_seconds` (default 0,
+which follows `retention_seconds`), how long a flow record is kept. `POST /api/netflow/settings`, a
+write, takes an object of the two keys and refuses as the live settings do, writing nothing (PS17 and
+PS19 of the NetFlow join amendment to `specs/SPEC-backend-completion-plugins.md`).
 
 **Rate by port or protocol is unavailable.** `traffic/top` runs iftop without `-P`, so its samples
 carry no port and no protocol (`scripts/interfaces/traffic_top.py`); the pf state table

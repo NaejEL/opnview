@@ -258,6 +258,14 @@ func (c *Collector) storePushed(ctx context.Context, providerID int64, records [
 	var stored derivation
 	passErr := c.storeRecords(ctx, records, snapshot, now, &stored)
 	c.endIngest(ingest)
+	if passErr == nil {
+		// A TCP push path delivers in order: every line logged before the newest one delivered is in.
+		newest := int64(0)
+		for _, record := range records {
+			newest = max(newest, record.ObservedAt)
+		}
+		c.setFilterLogReadThrough(newest)
+	}
 	return c.deriveAfter(ctx, stored, passErr)
 }
 

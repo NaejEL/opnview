@@ -110,15 +110,26 @@ func startPush(ctx context.Context, listens pushListens, database *store.Store, 
 		Report: report,
 	})
 	subscriptions, err := plugins.PushSubscriptions(plugin.PushEnvironment{Store: database, Session: collector,
-		Kinds: collector})
+		Kinds: collector, Report: report})
 	if err != nil {
 		return nil, err
 	}
+	protocolsOf := map[[2]string][]string{}
 	for _, subscription := range subscriptions {
 		if err := service.hub.Subscribe(subscription); err != nil {
 			return nil, err
 		}
+		owner := service.providers[subscription.ID]
+		protocolsOf[owner] = append(protocolsOf[owner], subscription.Protocol)
 	}
+	// When a provider's capture configuration changes, or a read follows a condition its stream showed,
+	// the decoders of its push entries follow the exporter's sequence numbers afresh (PS18 of the NetFlow
+	// join amendment): what they concluded of the stream held under the previous configuration.
+	collector.SetCaptureChangeObserver(func(key string) {
+		for _, protocol := range protocolsOf[[2]string{collect.KindFlowRecord, key}] {
+			service.hub.ResetSequences(protocol)
+		}
+	})
 	plugins.AttachPushHub(service.hub)
 	collector.Broker().SetPushCatalogue(service.hub.Catalogue)
 	service.refreshSenders(ctx, credentials)

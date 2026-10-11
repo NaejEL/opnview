@@ -21,6 +21,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"github.com/NaejEL/opnview/internal/collect/firewalllog"
+	"github.com/NaejEL/opnview/internal/collect/flowrecord"
 	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
 	"github.com/NaejEL/opnview/internal/collect/measurement"
 	"github.com/NaejEL/opnview/internal/collect/pluginkind"
@@ -88,6 +89,7 @@ type Set struct {
 	ReconciledState   *Registry[reconciledstate.Registration]
 	IPGeolocation     *Registry[ipgeolocation.Source]
 	RegistrableDomain *Registry[registrabledomain.Source]
+	FlowRecord        *Registry[flowrecord.Source]
 
 	mutex         sync.RWMutex
 	declared      map[[2]string]provider.Manifest
@@ -128,6 +130,7 @@ func New() *Set {
 		ReconciledState:   newRegistry[reconciledstate.Registration](reconciledstate.Kind),
 		IPGeolocation:     newRegistry[ipgeolocation.Source](ipgeolocation.Kind),
 		RegistrableDomain: newRegistry[registrabledomain.Source](registrabledomain.Kind),
+		FlowRecord:        newRegistry[flowrecord.Source](flowrecord.Kind),
 		builtin:           map[[2]string]bool{},
 		declared:          map[[2]string]provider.Manifest{},
 		declaredKinds:     map[string]string{},
@@ -211,6 +214,11 @@ func (s *Set) AddResolverLocalData(manifest provider.Manifest, source resolverlo
 // AddMeasurement adds a measurement_sample implementation.
 func (s *Set) AddMeasurement(manifest provider.Manifest, source measurement.Source) error {
 	return register(s, s.Measurement, manifest, source)
+}
+
+// AddFlowRecord adds a flow_record implementation.
+func (s *Set) AddFlowRecord(manifest provider.Manifest, source flowrecord.Source) error {
+	return register(s, s.FlowRecord, manifest, source)
 }
 
 // AddReconciledState adds a reconciled_state implementation and the cadence it declared.

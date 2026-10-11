@@ -172,10 +172,10 @@ func TestACoreKindEntryMustDeclareItsReplacement(t *testing.T) {
 	}
 }
 
-// TestBuiltinPushDeclarationsRestOnVerifiedFacts is PS-AC1's second clause and PS-AC16's: every
-// built-in push declaration names the survey's push section, that section exists and none of the
-// facts it rests on is still unverified, every declaration that replaces polling has a parity test,
-// and no built-in subscribes to NetFlow, whose observation point the survey found not exported (S11).
+// TestBuiltinPushDeclarationsRestOnVerifiedFacts is PS-AC1's second clause, PS-AC16's and PS-AC28's:
+// every built-in push declaration names the survey's push section, that section exists and none of the
+// facts it rests on is still unverified, every declaration that replaces polling has a parity test, and
+// a NetFlow entry rests on the verified rows and sub-facts netflowFactsVerified names.
 func TestBuiltinPushDeclarationsRestOnVerifiedFacts(t *testing.T) {
 	t.Parallel()
 	survey, err := os.ReadFile(filepath.Join("..", "..", "docs", "opnsense-api-survey.md"))
@@ -192,7 +192,7 @@ func TestBuiltinPushDeclarationsRestOnVerifiedFacts(t *testing.T) {
 					entry.SurveySection)
 			}
 			if entry.Protocol == "netflow" {
-				t.Errorf("%s.%s subscribes to NetFlow", plugin.Name, entry.Name)
+				netflowFactsVerified(t, string(survey), plugin.Name+"."+entry.Name)
 			}
 			if entry.Replaces != "" {
 				test := filepath.Join("..", "..", "plugins", plugin.Name, "tests", plugin.Name+"_push.test.js")
@@ -282,5 +282,114 @@ func TestAParseFunctionIsTakenFromTheScriptOfTheFirewallsVersion(t *testing.T) {
 		if len(rows) != 1 || rows[0]["word"] != want {
 			t.Errorf("version %s parsed with %v, want the %s script", version, rows, want)
 		}
+	}
+}
+
+// netflowFactsVerified is PS-AC28 of the NetFlow join amendment: a built-in NetFlow entry, and the core
+// join it feeds, rest on no UNVERIFIED: fact. The rows S5, S6, S9 and S10 read verified; the sub-facts
+// PS18 and PS19 rule 1 asked for -- S5a, S5b, S6a and S9a -- exist, each citing its 26.7.3 or
+// stable/26.7 source and none UNVERIFIED; and S11's one UNVERIFIED: sub-fact, the form pflog writes
+// for a translated packet, is exempted by name, the maintainer's answer (a) to the amendment's open
+// question 1 being recorded beside it.
+func netflowFactsVerified(t *testing.T, survey, entry string) {
+	t.Helper()
+	section := survey[strings.Index(survey, "## Push sources"):]
+	if next := strings.Index(section[3:], "\n## "); next >= 0 {
+		section = section[:next+3]
+	}
+	for _, row := range []string{"| S5 |", "| S6 |", "| S9 |", "| S10 |"} {
+		index := strings.Index(section, row)
+		if index < 0 {
+			t.Errorf("%s: the survey has no row %s", entry, row)
+			continue
+		}
+		line := section[index:]
+		line = line[:strings.Index(line, "\n")]
+		if strings.Contains(line, "UNVERIFIED") || !strings.Contains(line, "verified") {
+			t.Errorf("%s rests on an unverified fact: %s", entry, line)
+		}
+	}
+	for _, subFact := range []string{"**S5a.", "**S5b.", "**S6a.", "**S9a."} {
+		index := strings.Index(section, subFact)
+		if index < 0 {
+			t.Errorf("%s: the survey records no sub-fact %s", entry, subFact)
+			continue
+		}
+		text := section[index:]
+		if end := strings.Index(text, "\n- **"); end > 0 {
+			text = text[:end]
+		}
+		if end := strings.Index(text, "\n\n"); end > 0 {
+			text = text[:end]
+		}
+		if strings.Contains(text, "UNVERIFIED") {
+			t.Errorf("%s: the sub-fact %s is unverified, and the part it gates is built", entry, subFact)
+		}
+		if !strings.Contains(text, "/26.7.3/") && !strings.Contains(text, "/stable/26.7/") {
+			t.Errorf("%s: the sub-fact %s cites no 26.7.3 or stable/26.7 source", entry, subFact)
+		}
+	}
+	s11 := section[strings.Index(section, "### S11."):]
+	s11 = s11[:strings.Index(s11[4:], "\n### ")+4]
+	for _, line := range strings.Split(s11, "\n") {
+		if strings.Contains(line, "UNVERIFIED:") && !strings.Contains(line, "UNVERIFIED:` which form") {
+			t.Errorf("%s: S11 holds an UNVERIFIED: fact other than the exempted pflog form: %s", entry, line)
+		}
+	}
+	if !strings.Contains(s11, "open\n  question 1 of the NetFlow join amendment, answer (a)") {
+		t.Errorf("%s: S11 does not record the maintainer's answer that exempts the pflog form", entry)
+	}
+}
+
+// netflowManifest is the built-in netflow plugin's manifest, renamed, with its script.
+func netflowManifest(t *testing.T) (map[string]any, string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "plugins", "netflow", "plugin.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest map[string]any
+	if err := json.Unmarshal(raw, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifest["name"] = "example_push"
+	manifest["script"] = "example.js"
+	script, err := os.ReadFile(filepath.Join("..", "..", "plugins", "netflow", "netflow.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return manifest, string(script)
+}
+
+// TestAPushOnlyKindLoadsWithoutReplacesAndRefusesOne is PS-AC29's load check: an entry delivering
+// flow_record records, whose provider polls only the capture configuration, loads with no `replaces`;
+// one that names a `replaces` replaces nothing and is refused; one whose mapping leaves a required field
+// of the record unmapped is refused; and the entry is fed over UDP, NetFlow's transport, its loss being
+// detectable by its sequence numbers.
+func TestAPushOnlyKindLoadsWithoutReplacesAndRefusesOne(t *testing.T) {
+	t.Parallel()
+	manifest, script := netflowManifest(t)
+	loaded := loadManifest(t, manifest, script)
+	if refusals := loaded.Refusals(); len(refusals) != 0 {
+		t.Fatalf("the push-only entry was refused: %+v", refusals)
+	}
+	plugin, _ := loaded.Plugin("example_push")
+	entries := plugin.PushEntries()
+	if len(entries) != 1 || len(entries[0].Transports) != 1 || entries[0].Transports[0] != push.TransportUDP {
+		t.Errorf("the entry is %+v, want one fed over UDP", entries)
+	}
+
+	replacing, script := netflowManifest(t)
+	replacing["push"].([]any)[0].(map[string]any)["replaces"] = "getconfig"
+	if refusals := loadManifest(t, replacing, script).Refusals(); len(refusals) != 1 ||
+		refusals[0].Code != RefusalPushDeclarationInvalid {
+		t.Errorf("an entry replacing what no polled function delivers: %+v", refusals)
+	}
+
+	unmapped, script := netflowManifest(t)
+	delete(unmapped["push"].([]any)[0].(map[string]any)["fields"].(map[string]any), "octets")
+	if refusals := loadManifest(t, unmapped, script).Refusals(); len(refusals) != 1 ||
+		refusals[0].Code != RefusalPushColumnUnfilled {
+		t.Errorf("an entry leaving a required field unmapped: %+v", refusals)
 	}
 }

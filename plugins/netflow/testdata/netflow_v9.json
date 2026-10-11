@@ -1,0 +1,12 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, section Push sources (S10, which cites opnsense/src stable/26.7's netflow_v9.c), and RFC 3954, never by recording what a firewall sent. Do not treat this file as evidence; replace it with recorded datagrams rewritten under X1 once LV-NF has run.",
+    "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources",
+    "field_list_from": "S10: the IPv4 data template ng_netflow emits, IPV4_SRC_ADDR, IPV4_DST_ADDR, IPV4_NEXT_HOP, INPUT_SNMP, OUTPUT_SNMP, IN_PKTS, IN_BYTES, OUT_PKTS, OUT_BYTES, FIRST_SWITCHED, LAST_SWITCHED, L4_SRC_PORT, L4_DST_PORT, TCP_FLAGS, PROTOCOL, TOS, SRC_AS, DST_AS, SRC_MASK, DST_MASK",
+    "why_these_values": "One v9 datagram holding the template and one TCP record: exported at uptime 100 s, the flow from uptime 40 s to 95 s, input index 3, output index 1, 10 packets of 14 200 octets. No version element, as S10 says: the version is read from the addresses.",
+    "example_values_are_not_a_network": "Every address is a synthesised example value, documentation addresses (RFC 5737)."
+  },
+  "body": ["00090002000186a06ab85c800000000100000000000000580101001400080004000c0004000f0004000a0002000e000200020004000100040018000400170004001600040015000400070002000b0002000600010004000100050001001000040011000400090001000d000101010040c633640acb00711400000000000300010000000a00003778000000000000000000009c4000017318ad2101bb1b060000000000000000001818000000"]
+}

@@ -65,9 +65,18 @@ BEGIN;
 -- the volume family's key, which is NULL when its other end is not outside; it
 -- contributes to no peer, client or owner figure. A second leg keeps the device it
 -- was logged on, exit_leg_device, which is the only volume figure it counts in.
+--
+-- The netflow measure of the flows purged goes with them (PS21 of the NetFlow join
+-- amendment): each flow's share of its connection's measured volume -- the whole
+-- figure on its first leg, on its second leg only when it was measured there -- and
+-- its connection's coverage class, read from connection_measured_volume before the
+-- flows and their measured volume are deleted.
 INSERT INTO purged_flow_hour (hour_start_at, src_interface_id, dst_interface_id, src_client_id,
                               local_client_id, traffic_direction, peer_address, exit_leg_device,
-                              rule_id, site_name, action, bytes, connections, purged_at)
+                              rule_id, site_name, action, bytes, connections, netflow_bytes,
+                              netflow_packets, netflow_measured_connections,
+                              netflow_partial_connections, netflow_unmeasured_connections,
+                              netflow_not_joinable_connections, purged_at)
 SELECT (f.observed_at / 3600) * 3600,
        f.src_interface_id,
        f.dst_interface_id,
@@ -84,9 +93,28 @@ SELECT (f.observed_at / 3600) * 3600,
        f.action,
        sum(f.packet_bytes),
        count(*),
+       sum(n.bytes),
+       sum(n.packets),
+       count(*) FILTER (WHERE n.coverage = 'measured'),
+       count(*) FILTER (WHERE n.coverage = 'partial'),
+       count(*) FILTER (WHERE n.coverage = 'unmeasured'),
+       count(*) FILTER (WHERE n.coverage = 'not_joinable'),
        :now
 FROM classified_flow AS f
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
+LEFT JOIN LATERAL (
+    SELECT coalesce(sum(v.bytes) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
+                                          OR v.measured_flow_id = f.id), 0) AS bytes,
+           coalesce(sum(v.packets) FILTER (WHERE f.pair_outcome IS DISTINCT FROM 'second_leg'
+                                            OR v.measured_flow_id = f.id), 0) AS packets,
+           CASE WHEN count(*) = 0 THEN 'not_joinable'
+                WHEN count(*) FILTER (WHERE v.state = 'measured') = 2 THEN 'measured'
+                WHEN count(*) FILTER (WHERE v.records > 0) = 0 THEN 'unmeasured'
+                ELSE 'partial' END AS coverage
+    FROM connection_measured_volume AS v
+    WHERE v.connection_flow_id = CASE WHEN f.pair_outcome = 'second_leg' THEN f.paired_flow_id
+                                      ELSE f.id END
+) AS n ON true
 WHERE f.observed_at < (
     SELECT :now - CAST(value AS BIGINT)
     FROM setting

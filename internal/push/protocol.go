@@ -125,6 +125,19 @@ type Problem struct {
 	// To; one that is not a gap is only counted.
 	Gap      bool
 	From, To time.Time
+	// Sequence marks a problem the decoder concluded from the sender's sequence numbers: a gap they
+	// show, or a condition under which they no longer show one. A sink that knows whether the
+	// sender's numbering can be trusted at an instant judges such a gap before it is recorded
+	// (SequenceJudge).
+	Sequence bool
+	// Condition marks a fact the decoder detected that is neither a loss nor a malformation -- a
+	// sequence stream it can no longer follow -- told to every sink that observes conditions
+	// (ConditionObserver), at From, and counted.
+	Condition bool
+	// Scope names the stream the problem concerns, as the protocol scopes its state: for NetFlow, the
+	// exporter's address and the observation domain, "<address>/<domain>". Empty when the problem
+	// concerns no one stream.
+	Scope string
 	// Detail says what happened, with no field value.
 	Detail string
 }
@@ -151,6 +164,22 @@ type Record struct {
 	// Transport is udp or tcp.
 	Transport  string
 	ReceivedAt time.Time
+	// Delivery identifies the datagram or frame the record was decoded from: the SHA-256 of its
+	// octets, in hexadecimal. The same datagram delivered twice has the same Delivery; two datagrams
+	// differing in any octet do not. Empty when the decoder records none.
+	Delivery string
+	// Position is the record's place within its delivery -- for NetFlow, its set's ordinal in the
+	// datagram times 65 536 plus its own ordinal in the set -- so two records identical in every
+	// field of one datagram keep two positions.
+	Position int
+}
+
+// The decoder's own interfaces, which a decoder implements when it has the state they act on.
+
+// SequenceResetter is a decoder that follows its senders' sequence numbers and can forget what it
+// concluded of them: a stream it found interleaved is followed afresh from the next datagram.
+type SequenceResetter interface {
+	ResetSequences()
 }
 
 // Framer splits a stream into messages.

@@ -180,6 +180,12 @@ vocabulary read off an endpoint:
 | a **source segment**, `provider_source_segment` | nothing upstream knows that one provider's records reached `opnview` by two paths | an interval of a provider's history and the one path -- `pull` or `push` -- whose records it keeps; segments never overlap, which is what keeps a record delivered by both paths from counting twice |
 | a push entry's **liveness** (`liveness_seconds`) | OPNsense sends and knows nothing of whether anybody receives | a push entry is **alive** while messages it accepts arrived within its span; the word is the ordinary one for that test |
 | `push_listener` | nothing upstream records that `opnview` was listening | the last instant each push listener was heard alive, so the interval it was not is a gap |
+| a **flow record**, `flow_record` | NetFlow v9's and IPFIX's **Flow Record** (RFC 3954, RFC 7011) | `flow_record`, kept although a reader may take it for a `flow` (Q16 (a)): **a `flow` is one filter-log record, a `flow_record` one record an exporter sent**, and the two are different things joined by the NetFlow join |
+| the **Observation Point** of a flow record | RFC 7011's **Observation Point**; OPNsense exports none (survey, *Push sources*, S11) | `flow_record.observation_point_identifier` and `_device`: the one interface the capture configuration in force names, when it names exactly one; never inferred from a record |
+| the **capture configuration**, `capture_configuration` | OPNsense's *Reporting > NetFlow* settings, the `OPNsense.Netflow` model's `capture` | what an exporter captures on and in which directions, as one read found it; `opnview`'s word for the read, since the settings page has no name of its own beyond *NetFlow* |
+| **forward** and **reverse** | RFC 5103's terms for the two directions of a biflow | a record's orientation to the leg it joined: forward is the leg's logged tuple, reverse its swap; and a connection's two directions, as its first leg logged them |
+| the **measured volume** of a connection, `connection_measured_volume`, and the **`netflow` measure** | none: no product names the volume of a logged connection as an exporter counted it | **measured**, against **logged**: the bytes and packets the NetFlow export reported for a logged connection, each direction once, at the single Observation Point; served as the measure `netflow`, never summed with `logged` |
+| an **unmatched record**, `unmatched_record_aggregate_*` | none: nothing upstream joins flow records to logged connections | a flow record with an Observation Point that joined no leg, with its reason (`no_logged_leg`, `ambiguous`, `beyond_flow_horizon`) |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
@@ -241,6 +247,8 @@ address_classification
 blocked_decision
 blocked_event
 blocklist
+capture_configuration
+capture_interface
 classified_flow
 client
 client_volume_aggregate_1h
@@ -248,6 +256,7 @@ client_volume_aggregate_24h
 client_volume_aggregate_30d
 client_volume_aggregate_7d
 collection_gap
+connection_measured_volume
 dhcp_lease
 dns_resolution
 domain_attribution
@@ -258,6 +267,8 @@ domain_volume_aggregate_7d
 encrypted_credential
 eve_ingest_cursor
 flow
+flow_record
+flow_record_condition
 geo_asn
 interface
 interface_address
@@ -282,7 +293,9 @@ plugin_state
 plugin_table
 provider
 provider_rule_info
+provider_source_segment
 purged_flow_hour
+push_listener
 resource_record_observation
 resource_record_read
 retention_purge
@@ -299,6 +312,10 @@ state_item
 state_item_departure
 state_snapshot
 this_firewall_address
+unmatched_record_aggregate_1h
+unmatched_record_aggregate_24h
+unmatched_record_aggregate_30d
+unmatched_record_aggregate_7d
 volume_aggregate_1h
 volume_aggregate_24h
 volume_aggregate_30d
@@ -339,6 +356,7 @@ client_volume_aggregate_24h
 client_volume_aggregate_30d
 client_volume_aggregate_7d
 collection_gap
+connection_measured_volume
 dhcp_lease
 dns_resolution
 domain_attribution
@@ -347,6 +365,8 @@ domain_volume_aggregate_24h
 domain_volume_aggregate_30d
 domain_volume_aggregate_7d
 flow
+flow_record
+flow_record_condition
 geo_asn
 interface_address
 measurement_sample
@@ -369,6 +389,10 @@ rule_volume_aggregate_7d
 security_event
 state_item
 state_snapshot
+unmatched_record_aggregate_1h
+unmatched_record_aggregate_24h
+unmatched_record_aggregate_30d
+unmatched_record_aggregate_7d
 volume_aggregate_1h
 volume_aggregate_24h
 volume_aggregate_30d
@@ -380,6 +404,8 @@ volume_aggregate_7d
 ```
 account
 blocklist
+capture_configuration
+capture_interface
 encrypted_credential
 eve_ingest_cursor
 interface
@@ -393,6 +419,8 @@ plugin_state
 plugin_table
 provider
 provider_rule_info
+provider_source_segment
+push_listener
 resource_record_read
 retention_purge
 rule
@@ -427,6 +455,9 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `plugin_state` | a plugin's durable values -- a watermark, a cursor, the last thing it read; a handful of rows per plugin |
 | `plugin_table` | one row per table a plugin declares |
 | `plugin_aside_table` | one row per plugin table set aside by a schema change; one with a time column is purged by its recorded retention and dropped, with its row, when empty |
+| `capture_configuration`, `capture_interface` | one row per run of reads that found the same NetFlow capture configuration, and its captured interfaces: a new row only when the configuration changes, a handful a year; purged by its last read, the newest kept |
+| `provider_source_segment` | one row per handover of a provider between polling and a push path, which happens when a push source starts or stops |
+| `push_listener` | one row per push protocol and transport, a handful in all |
 
 `client` is classified as growing, not bounded: an address reissued to another
 machine creates a new identity rather than updating an existing one, so the
@@ -440,8 +471,8 @@ The store is PostgreSQL with TimescaleDB (P4 and P5 of
 `specs/SPEC-backend-completion-plugins.md`). A table becomes a hypertable only where TimescaleDB's
 constraint rule allows it -- **every unique key of a hypertable includes its time column**, and no
 foreign key may reference a hypertable -- and an aggregate becomes a continuous aggregate only where
-it reproduces exactly what the refresh contract asserts. **No core table is a hypertable and no
-family is a continuous aggregate, in this cycle**, for the reasons below; every retention is the
+it reproduces exactly what the refresh contract asserts. **No core table is a hypertable but `flow_record`, and
+no family is a continuous aggregate, in this cycle**, for the reasons below; every retention is the
 purge's own `DELETE`, inside the purge's transaction and ordered with derivation, on opnview's
 clock -- no TimescaleDB background job runs on a path the refresh contract orders. The plugins'
 tables are hypertables (`docs/plugins.md`, *Tables*); a push output table is one chunked by day on its
@@ -466,6 +497,10 @@ foreign key, which a hypertable cannot be.
 | `geo_asn`, `address_classification`, `interface_address` | no | keyed on the address, mutable | row `DELETE` | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
 | `collection_gap`, `opnview_downtime` | no | `id` is unique without the interval | row `DELETE` | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
 | `state_snapshot`, `state_item` | no | `state_item` references its snapshot | row `DELETE` of whole snapshots | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
+| `flow_record` | **yes**, chunked by day on `start_at` | -- its one unique key, `(identity, start_at)`, holds the time column, and nothing references it | `drop_chunks` of the whole chunks past its own horizon (`retention_flow_record_seconds`, 0 following `retention_seconds`), then row `DELETE` to the exact second | `TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention` |
+| `connection_measured_volume` | no | keyed on the connection's first leg and the direction, not on time; rewritten in place as a figure grows | row `DELETE` with its connection, at the flows' horizon | `TestTheMeasuresAreCountedOnceAndNeverSummed` |
+| `flow_record_condition` | no | `id` is unique without `observed_at` | row `DELETE` at the flow records' horizon | `TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention` |
+| `unmatched_record_aggregate_*` | no | keyed on the slot and the record's Observation Point, direction, protocol, version and reason; accumulated by the join, not recomputed | row `DELETE` of slots ended before the flows' horizon | `TestAnUnmatchedRecordIsCountedInNoFigure` |
 | a plugin's table with a time column | **yes**, chunked by day | its declaration may not hold a unique key without the time column (`unique_key_without_time`) | `drop_chunks` of the whole chunks past the horizon, then row `DELETE` to the exact second | `TestAPluginHypertableIsPurgedByChunkToTheExactSecond` |
 
 **The aggregate families.** Every family -- `volume`, `owner`, `client`, `peer`, `domain`,
@@ -2929,6 +2964,96 @@ by the push segment before it.
 
 **Retention:** never purged; one row per handover. **Indexes:** the primary key, and a unique partial
 index holding at most one open segment per provider.
+
+### NetFlow volumes — `flow_record`, the capture configuration, the join and the measured volume
+
+The NetFlow join amendment to `specs/SPEC-backend-completion-plugins.md` (PS17–PS23, decision 15b): the
+flow records an exporter sends are stored as they came, and **when the capture configuration in force
+names exactly one captured interface**, each record is joined to the filter-log leg logged on that
+interface, and every logged connection gets its **measured volume** beside its logged one. With any
+other configuration -- none, two interfaces or more, unreadable -- the records are stored and nothing
+is joined. **A flow record is not a `flow`**: a `flow` is one filter-log record, a `flow_record` one
+record an exporter sent (*Vocabulary*).
+
+**`capture_configuration`, `capture_interface`** -- the configurations a `flow_record` provider read,
+as runs of reads: a read equal to the newest run's extends it (`last_read_at`), any other opens a run.
+A configuration is in force over its run; **between two runs that differ, before the first, and over
+an unreadable run (`fingerprint` NULL, `outcome` the broker's) it is `capture_configuration_unknown`**;
+after the newest read the newest configuration is taken as in force until a read says otherwise. The
+captured interfaces are those with a captured direction, each `ingress` and `egress`.
+
+**`flow_record_condition`** -- a condition the decoder detected on the exporter's stream:
+`netflow_sequence_interleaved`, sequence numbers going backwards, which shows several counters behind
+one observation domain. Under a one-interface configuration the stream contradicts the configuration:
+the undecided records starting from `observed_at` lose their Observation Point, and the join is
+suspended until the next read (`resolved_at`), which also has the receiver follow the sequence afresh.
+It never says which interface a record came from.
+
+**`flow_record`** -- one record as its exporter sent it, a hypertable on `start_at` (*Storage fit*):
+the exporter and observation domain, the raw `ingress_interface` and `egress_interface`, version, IANA
+protocol, addresses and ports, cumulative `tcp_flags`, `octets`, `packets`, start and end at the
+precision exported, reception. Its `identity` is the core's, from the delivery: a datagram delivered
+twice is stored once, two identical records of one datagram are two rows. At reception the core writes
+the state of the configuration in force at the start (`capture_state`), the captured-interface count,
+the **Observation Point** -- the one captured interface, mapped to its kernel index through
+`interfaces_info` -- and the **direction** at it (egress for an egress-only interface; ingress when
+`ingress_interface` is the point's index; egress otherwise, a firewall-originated packet's index being
+0, survey S6a); `loss_detectable` is 1 where the configuration made the exporter's sequence one
+counter's. A record is never given a point later, and never loses one, but by the contradiction above.
+
+**The join** (`internal/collect`, `flowrecord.go`), decided from stored rows only, a group -- one
+Observation Point and one unordered tuple -- at a time, oldest record first, so the order of arrival
+changes nothing and a second derivation writes nothing:
+
+1. A record is decided only once the filter log has been read past its start plus
+   `netflow_join_tolerance_seconds` (3 by default: the filter log's, NetFlow's and the normaliser's
+   one-second resolutions); until then it is `pending`.
+2. Its candidates are the legs logged on the point's device, of its version and protocol (by IANA
+   number; the filter log's name is read through IANA's keywords, survey S4a), whose addresses -- as
+   values -- and ports are the record's (**forward**) or swapped (**reverse**); ICMP, ICMPv6 and a
+   record with ports 0 compare the addresses alone. The record's direction, its orientation and the
+   leg's pf `dir` must agree: ingress forward or egress reverse with an `in` leg, egress forward or
+   ingress reverse with an `out` leg.
+3. The leg logged latest at or before the start plus the tolerance wins; two at that instant are
+   `ambiguous`. A TCP record carrying SYN joins only a leg logged within the tolerance of its start.
+4. The idle time from the leg, or from its last joined record of that orientation, to the start never
+   exceeds pf's default state timeout (S12): TCP established 86 400 s, 900 s after a FIN, 90 s after a
+   RST, 120 s before any acknowledgement; UDP 60 s; ICMP 20 s; any other 60 s.
+5. Every action joins: a refused `in` leg's forward packets were captured before pf.
+6. A record joining nothing is **unmatched**: `no_logged_leg`, `ambiguous`, or `beyond_flow_horizon`
+   when it started before `retention_purge.purged_before`, or its leg can have been purged.
+
+**`connection_measured_volume`** -- per connection (named by its first or single leg) and direction
+(`forward`, `reverse`, as the first leg logged them): the bytes, packets and records joined to **the leg
+logged on the Observation Point** -- the first leg when the point carries it, else the second
+(`measured_at_leg`) -- with the point it was measured at. A row exists only for a connection that
+started under one Observation Point. The state is `measured` (its continuity ended), `in_progress`,
+`awaiting_export` (no record yet, within the active timeout plus the tolerance), `missing` (past it),
+`not_captured` (no leg on the point, or the point does not capture that direction), `export_gap` (a
+gap of the provider meets its span) or `not_exported_when_refused` (a refused `out` leg's forward
+direction: pf refused it before the egress capture). A connection under any other configuration is in
+no row: its state is the interval's. `final` is 1 once nothing can change the row; until then `due_at` is
+the read-through instant at which its state may change by time alone, and the derivation computes an
+open row again when it falls due, or when a record, a leg or the pairing it reads changes.
+
+**In the aggregate families.** Every family and period, and `purged_flow_hour`, carries `netflow_bytes`
+split allowed / blocked / unknown by the counting leg's action, `netflow_packets`, and the count of
+connections per coverage class -- both directions `measured`, `partial`, `unmeasured`, `not_joinable`
+-- **beside** the logged columns, which are unchanged; no statement sums the two measures. A
+connection's figure counts in its first leg's slot and rows; measured at the second leg it also counts
+under that leg's `exit_leg_device` and in the rule family, as the second leg's logged bytes do. A
+changed figure forces its slot. The purge keeps a purged flow's share in the purged part.
+
+**`unmatched_record_aggregate_*`** -- the unmatched records, per slot of their start, Observation
+Point, direction, protocol, version and reason: bytes, packets, records. Accumulated by the join in the
+transaction of its decision, so a slot keeps them after the records are purged; in no other family and
+no total.
+
+**Retention:** `flow_record` at `retention_flow_record_seconds` (0 follows `retention_seconds`), by
+chunk then row; the conditions and every configuration run but the newest with it; the measured
+volume with its connection; the unmatched family's slots at the flows' horizon. **Indexes:** the
+pending records by provider, the records of a group, the records joined to a leg; on `flow`,
+`idx_flow_join` (device, the two canonical addresses, `observed_at`) for the candidates.
 
 ### `measurement_sample` — one numeric reading of one subject at one instant
 

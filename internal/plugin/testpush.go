@@ -13,6 +13,7 @@ import (
 	"github.com/dop251/goja"
 
 	"github.com/NaejEL/opnview/internal/collect/firewalllog"
+	"github.com/NaejEL/opnview/internal/collect/flowrecord"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/push"
 )
@@ -56,6 +57,21 @@ func (s capturingSink) Prepare(ctx context.Context, records []push.Record) push.
 	return s.inner.Prepare(ctx, records)
 }
 
+// SequenceAsserted and ObserveCondition reach the real sink, so a test world judges and observes as the
+// service does.
+func (s capturingSink) SequenceAsserted(ctx context.Context, problem push.Problem) bool {
+	if judge, judges := s.inner.(push.SequenceJudge); judges {
+		return judge.SequenceAsserted(ctx, problem)
+	}
+	return true
+}
+
+func (s capturingSink) ObserveCondition(ctx context.Context, problem push.Problem) {
+	if observer, observes := s.inner.(push.ConditionObserver); observes {
+		observer.ObserveCondition(ctx, problem)
+	}
+}
+
 func (s capturingSink) Store(ctx context.Context, prepared push.Prepared) error {
 	if table, isTable := s.inner.(*tableSink); isTable && table.environment.Store != nil {
 		if err := s.inner.Store(ctx, prepared); err != nil {
@@ -69,10 +85,11 @@ func (s capturingSink) Store(ctx context.Context, prepared push.Prepared) error 
 			rows = append(rows, jsonRow(row))
 		}
 	case kindBatch:
-		if records, ok := payload.records.([]firewalllog.Record); ok {
-			for _, record := range records {
-				rows = append(rows, firewallLogContractRecord(record))
+		if kind, isKind := s.inner.(*kindSink); isKind {
+			if err := s.inner.Store(ctx, prepared); err != nil {
+				return err
 			}
+			rows = append(rows, pushKinds[kind.binding.declaration.Kind].view(payload.records)...)
 		}
 	}
 	s.world.mutex.Lock()
@@ -148,6 +165,18 @@ type discardKinds struct{}
 
 func (discardKinds) ReceivePushedFirewallLog(context.Context, string, []firewalllog.Record) error {
 	return nil
+}
+
+func (discardKinds) ReceivePushedFlowRecords(context.Context, string, []flowrecord.Record) error {
+	return nil
+}
+
+func (discardKinds) ObserveFlowRecordCondition(context.Context, string, flowrecord.Condition) error {
+	return nil
+}
+
+func (discardKinds) FlowRecordSequenceAsserted(context.Context, string, int64, int64) bool {
+	return true
 }
 
 // pushAPI adds the push functions to a test's API.

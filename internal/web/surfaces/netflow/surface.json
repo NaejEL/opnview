@@ -1,0 +1,4 @@
+{
+  "name": "netflow",
+  "description": "The NetFlow join's settings in JSON: how far after a leg a flow record may start and still join it, and how long flow records are kept."
+}
