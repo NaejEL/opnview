@@ -3965,3 +3965,9 @@ Every test runs on the PostgreSQL test instance with a fake clock and small reco
    **Recommendation: (a).**
 
 **Decided (maintainer, 11 October 2026):** open question 1: (a), the join is built; PS-AC28's test exempts S11's pflog-form sub-fact by name, and LV-NJ's upstream window measures it.
+
+**Decided (maintainer, 11 October 2026), after the NetFlow join build:**
+- PS22 state placement: (b). A `best_available` answer that falls back to `logged` is byte-identical to `logged` apart from the echoed `volume_measure` key **and** the named state in `states`; both are admitted differences (B5 / X3 amended accordingly).
+- The broker data race (`internal/broker/broker.go` `fromMirror` reading `datum.AttemptedAt` against `mirror/write.go` `Store`) is fixed in this cycle.
+- The join-throughput row at the 1 000 000-row seed (PS-AC45, PS15) is not added in this cycle.
+- The builder's choices are kept: the reverse direction of a refused connection ends `missing`; a leg stored after the read-through has passed a record's start plus the tolerance does not reopen that record's decision; TCP continuity before any acknowledgement uses pf's `tcp.first` (120 s).
