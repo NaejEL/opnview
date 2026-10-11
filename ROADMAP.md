@@ -180,6 +180,19 @@ maintainer's test budget of 7 October 2026,
   derivation, running the tests in parallel, rendering the web pages once per
   package and putting `/tmp` on a tmpfs, so nothing had to leave it.
 
+**`OPNVIEW_DATA_DIR` and Git Bash.** `sql/schema-checks.sh`, which the
+pre-deployment command runs, creates every database it uses under
+`OPNVIEW_DATA_DIR`, **`/data` by default** — the `data` volume, mounted outside the
+bind-mounted working tree so that no SQLite file or WAL companion lands in the
+repository. The value is a path **inside the container**: a relative one resolves
+against `/workspace`, the repository itself. From Git Bash, MSYS path conversion
+rewrites a POSIX-looking path into a Windows one before docker sees it — `/data`
+arrives as `C:/Program Files/Git/data` — so a docker command passing a container
+path from Git Bash is prefixed with `MSYS_NO_PATHCONV=1`. Both scripts refuse, before
+any step runs and naming the variable, a value that is not absolute or that carries a
+drive letter, a `:` or a `\` (`ci/data-dir-guard.sh`, decision 16 of
+`specs/SPEC-step-5b-widget-api.md`); leaving the variable unset is always right.
+
 `docker compose run --rm dev
 bash` opens an interactive shell in the same environment, and
 `.devcontainer/devcontainer.json` reuses the same `dev` service so VS Code

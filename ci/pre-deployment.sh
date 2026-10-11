@@ -27,6 +27,17 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
+# The data directory the schema checks write under is refused before any step runs
+# when it is relative or shows Git-Bash path conversion; ci/data-dir-guard.sh says
+# why. A refusal here costs nothing, where the same mistake found after the race run
+# costs the whole command.
+# shellcheck source=ci/data-dir-guard.sh
+. "$REPO_ROOT/ci/data-dir-guard.sh"
+if ! check_data_dir "${OPNVIEW_DATA_DIR:-/data}"; then
+  printf -- 'pre-deployment: FAILED before any step\n' >&2
+  exit 1
+fi
+
 failed=0
 started="$(date +%s)"
 

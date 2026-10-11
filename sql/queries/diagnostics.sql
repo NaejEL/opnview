@@ -812,10 +812,11 @@ WHERE t.observation_id IS NULL
 -- flow's instant -- local-data records counting for a lookup answered from Local-data,
 -- and only those of the looked-up name itself (decision 6): no CNAME is followed into
 -- the local data (specs/SPEC-resolver-cache-follow-ups.md, scope 1, stated at
--- MaxCNAMELinks in internal/store/records.go). A flow counted here had none of the destination's family and at least
--- one of the other: the resolver held the name, in the family the client did not use,
--- so the exact method could not name the flow and timing did. A large count says the
--- clients reach names over the family the cache read sees less of.
+-- MaxCNAMELinks in internal/store/records.go). A flow counted here had none of the
+-- destination's family and at least one of the other: the resolver held the name, in
+-- the family the client did not use, so the exact method could not name the flow and
+-- timing did. A large count says the clients reach names over the family the cache
+-- read sees less of.
 WITH RECURSIVE
 timed AS (
     SELECT a.flow_id, f.observed_at, f.dst_address, lower(rtrim(r.domain, '.')) AS name,

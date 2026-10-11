@@ -493,11 +493,24 @@ func (s *Store) HasFlowDigest(ctx context.Context, digest string) (bool, error) 
 // UpsertBlocklist writes one observed list name and returns its id. The NAME is
 // observed; the PURPOSE is user input and is absent from this statement, exactly
 // as owner_id and user_label are absent from theirs.
-func (s *Store) UpsertBlocklist(ctx context.Context, name string, now int64) (int64, error) {
+//
+// lookedUpAt is the instant of the lookup that named the list, and the two instants
+// are the lookups', not the ingestion's (decision 14 of
+// specs/SPEC-step-5b-widget-api.md): first_seen_at is the earliest looked_up_at of a
+// lookup naming the list and last_seen_at the latest, so "when did this list last
+// refuse something" is answered by the resolver's own clock. NEITHER EVER MOVES
+// BACKWARDS. The resolver's ring buffer offers the same lookups again on every pass
+// and a pass may meet an older lookup after a newer one, so each instant only ever
+// widens: min() for the first, max() for the last. Writing the ingestion instant, as
+// this did until step 5B, made last_seen_at the time opnview read the buffer, which
+// is later than any lookup and says nothing about the list.
+func (s *Store) UpsertBlocklist(ctx context.Context, name string, lookedUpAt int64) (int64, error) {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO blocklist (name, first_seen_at, last_seen_at) VALUES (?, ?, ?)
-		 ON CONFLICT (name) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
-		name, now, now)
+		 ON CONFLICT (name) DO UPDATE SET
+		     first_seen_at = min(first_seen_at, excluded.first_seen_at),
+		     last_seen_at  = max(last_seen_at, excluded.last_seen_at)`,
+		name, lookedUpAt, lookedUpAt)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing blocklist %s: %w", name, err)
 	}
@@ -525,7 +538,7 @@ func (s *Store) InsertDNSResolution(ctx context.Context, lookup DNSResolution) e
 func (s *Store) StoreDNSResolution(ctx context.Context, lookup DNSResolution) (bool, error) {
 	var blocklistID *int64
 	if lookup.BlocklistName != "" {
-		id, err := s.UpsertBlocklist(ctx, lookup.BlocklistName, lookup.IngestedAt)
+		id, err := s.UpsertBlocklist(ctx, lookup.BlocklistName, lookup.LookedUpAt)
 		if err != nil {
 			return false, err
 		}

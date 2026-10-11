@@ -37,6 +37,15 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${OPNVIEW_DATA_DIR:-/data}"
+# Refused before anything is created when it is relative or shows Git-Bash path
+# conversion (decision 16 of specs/SPEC-step-5b-widget-api.md); ci/data-dir-guard.sh
+# says why.
+# shellcheck source=ci/data-dir-guard.sh
+. "$REPO_ROOT/ci/data-dir-guard.sh"
+if ! check_data_dir "$DATA_DIR"; then
+  printf -- 'schema-checks: FAILED before any check\n' >&2
+  exit 1
+fi
 
 # The schema and the purge live beside the code that applies them, in
 # internal/store, and they are embedded into the binary from there. Go's embed

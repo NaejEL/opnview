@@ -275,6 +275,19 @@ const DefaultCacheAnswerDelaySeconds int64 = store.DefaultCacheAnswerDelaySecond
 // exists only so a database with no row still behaves.
 const DefaultLegPairingWindowSeconds int64 = store.DefaultPairingWindowSeconds
 
+// MaxLegPairingWindowSeconds is the largest pairing window accepted: 60 s, the
+// maintainer's decision 13 of specs/SPEC-step-5b-widget-api.md.
+//
+// WHY A BOUND AT ALL. The two records of one connection are the same packet logged
+// on two interfaces, written by pf within the same instant; the default of 1 s
+// already allows for the filter log's whole-second timestamps. A window of minutes
+// would pair records of DIFFERENT connections that merely share their two ends and
+// port, and each such false pair drops a real connection from every total, which is
+// a wrong figure that looks right. A minute is generous beyond anything a log
+// timestamp needs and still short of that failure; a value above it is refused at
+// load, naming the setting, rather than stored and quietly applied.
+const MaxLegPairingWindowSeconds int64 = 60
+
 // DefaultLeaseBackendFailurePassLimit is 3 passes: at the default lease interval of
 // five minutes, a backend that has failed for a quarter of an hour stops holding the
 // unresolved host-name lookups back. One or two failed passes are what a restart of
@@ -507,6 +520,10 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		if seconds < 0 {
 			return loaded, fmt.Errorf("config: %s must be 0 or more whole seconds, got %d",
 				KeyLegPairingWindow, seconds)
+		}
+		if seconds > MaxLegPairingWindowSeconds {
+			return loaded, fmt.Errorf("config: %s must be at most %d seconds, got %d",
+				KeyLegPairingWindow, MaxLegPairingWindowSeconds, seconds)
 		}
 		loaded.LegPairingWindowSeconds = seconds
 	}

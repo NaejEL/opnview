@@ -1224,6 +1224,15 @@ when somebody decided, and a `CHECK` keeps the two columns from disagreeing.
 **Identity:** `name`, unique. Two rows with the same observed name would be the
 same list.
 
+**`first_seen_at` and `last_seen_at` are the lookups' instants, and never move
+backwards** (decision 14 of `specs/SPEC-step-5b-widget-api.md`). `first_seen_at` is
+the earliest and `last_seen_at` the latest `looked_up_at` of a lookup naming the
+list. The resolver's ring buffer offers the same lookups again on every pass, and a
+pass may meet an older lookup after a newer one, so `store.UpsertBlocklist` only
+ever widens the two instants (`min` and `max`). Until step 5B both were the
+ingestion instant and the last was overwritten unconditionally, which made it the
+time `opnview` read the buffer rather than the time the list last refused anything.
+
 **The query that answers the question** is
 `-- diagnostic: Blocked lookups by list` in `sql/queries/diagnostics.sql`. It
 drives from `dns_resolution` with a `LEFT JOIN` to `blocklist`, so an
@@ -1473,6 +1482,25 @@ falls back on timing:
   distinct domain**; two or more — a shared content-network address the client
   reached under two names it looked up — give no row. The window is the evidence's
   own validity, and the setting only caps it (decision 2);
+
+  **No CNAME is followed into the local data** (`specs/SPEC-resolver-cache-follow-ups.md`,
+  scope 1). A local-data A or AAAA record is evidence for one lookup only: a lookup
+  answered from `Local-data`, of the record's **own** owner name. A cached CNAME chain
+  whose last name is a local-data owner gives no local-data evidence for the name the
+  chain starts from. **The reason is how Unbound answers**: local data answers a query
+  that matches it for the query's own name (`unbound.conf(5)`, local-zone types
+  `static`, `transparent` and `typetransparent`), and the one CNAME local data may
+  carry, at the apex of a `redirect` zone, proceeds with upstream resolution "that
+  does not include the lookup in local zones" (`unbound.conf(5)`, local-zone type
+  `redirect`); a CNAME the iterator follows is resolved by recursion, not from local
+  data, so treating its target's local data as the answer would name a flow from
+  evidence Unbound never used. **Three places read the rule**, and all three stop at the
+  looked-up name: `exactCandidates` (`internal/store/attribute.go`), which builds the
+  exact candidates above; `answerAddresses` (`internal/store/records.go`), which counts
+  the local data of the name itself and never of a name a CNAME reached; and the
+  diagnostic `live_timing_fallback_other_family_cached`
+  (`sql/queries/diagnostics.sql`). The code states it once, beside `MaxCNAMELinks` in
+  `internal/store/records.go`;
 - **timing, `lookup_timing`, the fallback.** With no exact candidate, the 5A rule
   unchanged: a flow gets an attribution **exactly when** the eligible lookups by the
   same client in `[observed_at − max delay, observed_at]` name **exactly one
@@ -2308,8 +2336,13 @@ Public Suffix List is checked for a newer copy.
 **`leg_pairing_window_seconds` is the pairing window** (default 1, decision 4 of the
 step-5A live corrections): how far apart, in seconds, the two records of one
 connection may have been logged and still be paired. It is a whole number of
-seconds, 0 or more, validated by `internal/config`; the schema writes its default
-row. **`lease_backend_failure_pass_limit` is how long a failing DHCP backend holds the
+seconds, 0 or more and **at most 60** (decision 13 of
+`specs/SPEC-step-5b-widget-api.md`), validated by `internal/config`, which refuses a
+larger value at load with a message naming the setting; the schema writes its default
+row. The bound exists because the two records of one connection are one packet logged
+on two interfaces within the same instant, and a window of minutes would pair records
+of different connections that merely share their ends and port, dropping a real
+connection from every total. **`lease_backend_failure_pass_limit` is how long a failing DHCP backend holds the
 host-name retry back** (default 3, defect L1 of
 `specs/SPEC-test-budget-and-two-live-defects.md`): how many lease passes in a row one
 backend may fail before a pass that read every other backend counts as complete, so the
