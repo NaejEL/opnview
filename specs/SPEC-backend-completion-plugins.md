@@ -2303,3 +2303,1286 @@ This section belongs with A9 to A18 of the broker amendment. Q8 above extends it
 - `docker-compose.serve.yml` gains the pinned TimescaleDB service (no published port, generated password, `OPNVIEW_DATABASE`) before the live validation.
 - **Mirror datasets' `seen_at` (12 October):** the read role is granted `SELECT (id, fetched_at)` on `opnsense.mirror_datum`. That gives an exact "last fetched" without rewriting any row. It is a narrow, documented exception to A15.
 - **Domain withholding (12 October):** under `aggregate_mode = no_domains`, the core withholds every column marked carries-domain from every widget answer, built-in and third-party alike. Authors have nothing to do.
+
+
+---
+
+**This amendment is part of the spec and overrides any earlier text it replaces. Section 11 lists the earlier sentences that are obsolete.**
+
+# Amendment to `specs/SPEC-backend-completion-plugins.md`: push sources, syslog and NetFlow (maintainer decision, 12 October 2026)
+
+**Placement.** Append this after the last "Decided (maintainer, 12 October 2026)" block, with its own `---` separator and the preamble above. **The cycle kind stays `standard`.** Everything below is Go, SQL, JSON contracts, server-side JavaScript, compose files and documents. The push catalogue entries are served as JSON only.
+
+**What I read and found (fact check of the brief).**
+
+- **The design source.** `ROADMAP.md`, *Planned: push sources — syslog and NetFlow (maintainer, 12 October 2026; not yet scheduled)*, lists seven points "the specification of this step must settle". Each one is a requirement below:
+  - the type vocabulary;
+  - the optional JavaScript parse function;
+  - sender acceptance, RFC 6587 and bounded buffers;
+  - timestamps;
+  - ifIndex mapping;
+  - one catalogue with declared replacement;
+  - one decoding pass for several subscribers.
+- **Nothing in the tree receives pushed data.** No listener, no syslog parser and no NetFlow decoder exist under `cmd/` or `internal/`. Every firewall datum enters through the broker (`internal/broker/broker.go`, `gate.go`), which only *calls* the API. **Push is inbound, so the broker's rule "the only path from opnview to the firewall API" (A9) stays true.** A push listener is not a firewall call and is not a caller of `Client.Call` / `Client.Stream` (BR-AC1 is unchanged).
+- **Declared equivalence exists, but only for event streams.** It is the A14 mechanism: `replaces` in an endpoint declaration (`docs/plugins.md`, *Endpoints*), implemented in `internal/broker/streams.go`, `replacing()`. It suspends one plugin's **demand** for a polled endpoint while a subscribed stream is connected.
+  - It does **not** settle how the records the two sources deliver are kept from being counted twice in a core kind's tables. For streams nothing needed it: no built-in stream feeds a record kind.
+  - For push it is the critical point. `pf` pulled through `/api/diagnostics/firewall/log` and `pf` pushed through syslog `filterlog` would both deliver `firewall_log` records into `flow`, the pairing and every aggregate family.
+- **Record identities differ between the two paths.** `firewall_log_record.digest` is today the backend's `__digest__`, "the MD5 of a previously seen raw log line" (survey, *Data source 1*, *Endpoints*), computed over the line as the firewall's local file holds it. A line received over remote syslog carries a header written for that destination, so whether a pushed line can reproduce the same digest is `UNVERIFIED:` and probably false. **The no-double-count rule below therefore cannot rest on a shared record identity. It rests on an exclusive source per instant (PS9).**
+- **Plugin table types today** are `integer`, `real` and `text`. The retention (time) column is an integer of UTC epoch seconds (`docs/plugins.md`, *Tables*). The broker's inferred types are `ip_address`, `mac_address`, `timestamp`, `number`, `text`, `boolean` and `json` (`internal/broker/infer/infer.go`). The mirror maps them to `numeric`, `boolean`, `jsonb` and `text` (`internal/broker/mirror/tables.go`). **The roadmap's "plugin type vocabulary (`ip`, `mac`, `instant`, `integer`…)" does not exist yet.** PS4 defines it once, for push output tables and every A4 declaration.
+- **Manifest vocabulary.** The maintainer's sketch names the declaration `type: stream, provider: syslog|netflow`. Both words already mean something else in the manifest:
+  - `stream` is the A14 server-sent event stream (`docs/plugins.md`, *Endpoints*, `stream`);
+  - `provider` is the registry's `(kind, provider_key)` (A1, *Providers*).
+
+  Under `CLAUDE.md`'s vocabulary rule, one key cannot carry two meanings. PS3 therefore names the declaration `push` (the roadmap's own word for the step), keeps `program` (syslog-ng's and OPNsense's term for the RFC 3164 TAG / RFC 5424 APP-NAME), and uses the protocol names `syslog` and `netflow`. The maintainer's structure is kept whole, and only two key names change. This is recorded as a deliberate departure.
+- **Compose.** `docker-compose.serve.yml` publishes exactly one port, `${OPNVIEW_LISTEN:?…}`, with **no default**, "because an address written into this repository would be one installation's configuration shipped to every other". The serve container runs as an unprivileged UID (`OPNVIEW_UID`, default 1000), so it cannot bind a port below 1024 without an added capability. Syslog's registered port (514/udp) is below 1024.
+- **OPNsense facts the brief asked me to verify.** I could not read `opnsense/core` 26.7.3 for this amendment: I had no network access. `docs/opnsense-api-survey.md` has **no section** on remote syslog targets, on NetFlow export destinations and versions, on Suricata's syslog output, or on Unbound query logging to syslog. *Data source 3* states only that "a firewall exporting to an external collector reports `netflow: 1, local: 0`", and gives the Insight aggregates' properties.
+  - **Every OPNsense fact below is therefore `UNVERIFIED:`.** Each is listed as a **candidate to read**, with the source file I expect to establish it, and no source is presented as a citation.
+  - PS1 makes reading them the first task of the phase, and PS-AC1 forbids building on any of them until it is done.
+
+---
+
+## 1. Context: insertion after decision 14 (and after the "Decided" blocks), as decision 15
+
+> 15. **Push sources: syslog and NetFlow** (maintainer, 12 October 2026). As well as pulling through the broker, plugins may receive data **pushed** by the firewall:
+>     - syslog, RFC 3164 and RFC 5424, over UDP and TCP;
+>     - NetFlow v9 and IPFIX, over UDP.
+>
+>     The user configures OPNsense to send to `opnview`. `opnview` never writes to the firewall.
+>     - **The Go core stays agnostic.** It holds the listeners, one generic decoder per protocol (the syslog header; NetFlow v9 / IPFIX template decoding into typed fields) and routing by subscription, with bounded buffers and bulk inserts.
+>     - **It holds no knowledge of any program's message format.**
+>     - A syslog line no plugin subscribes to is dropped at the header.
+>     - **A plugin declares, in its manifest:**
+>       - a push source;
+>       - a header filter;
+>       - for syslog, a named-group regular expression, or a JavaScript parse function where a regular expression cannot express the message;
+>       - an output table whose typed columns become a TimescaleDB hypertable on its time column, with no JSONB.
+>     - **The pushed data counts once.** Pushed sources appear in both catalogues. A plugin may declare that a pushed source replaces one of its polled endpoints. **A connection is never counted twice in the core's tables when both paths deliver it.**
+>     - **Order.** This is built after Phase C's C1–C5 and **before the mockup audit (C6)**, because push sources change the audit's verdict.
+
+## 2. Context, *Where the repository stands*: append these bullets
+
+> - **Push (read for decision 15).** Nothing in the tree receives pushed data: no listener, no syslog or NetFlow decoder. Every firewall datum enters through the broker, which only calls the API. Declared equivalence exists for server-sent event streams only (A14, `internal/broker/streams.go`). It suspends a plugin's demand for a polled endpoint, and nothing in it keeps a core kind's records from being counted twice when two paths deliver them.
+> - **Plugin table types** are `integer`, `real` and `text`, with an integer epoch time column (`docs/plugins.md`, *Tables*). No `ip`, `mac` or `instant` type exists.
+> - **The serve compose file** publishes one port, `OPNVIEW_LISTEN`, with no default, and runs as an unprivileged UID.
+
+## 3. Scope: phase order
+
+**In the phase list** (as replaced by the PostgreSQL amendment §4 and amended by the broker amendment §3), replace the **Phase C** line with:
+
+> **Phase C.** The gaps: live rate and pf states as plugins; owners, unnamed destinations, ports and the JSON settings API in the core (C1–C5).
+> **Phase C, part 2.** Push sources: syslog and NetFlow (PS1–PS16).
+> **Phase C, part 3.** The mockup audit (C6), which re-examines every row with push sources available.
+
+**In the "Decided (maintainer, 12 October 2026)" block, *Order of the rest*,** replace "then C, D, E (including …)" with:
+
+> then C1–C5, then push sources (Phase C, part 2), then the mockup audit C6, then D and E (including the licence switch and the open performance findings: …)
+
+Phase C, part 2 starts only when C1–C5 pass their own criteria. C6 starts only when PS-AC1 to PS-AC27 pass.
+
+## 4. Scope: new section, inserted after C5 and before "**C6. The mockup gap audit.**"
+
+### Phase C, part 2: push sources
+
+**PS1. Verify the firewall side first** (before any push code). The orchestrator or the Builder reads `opnsense/core` 26.7.3 and records, in a new section of `docs/opnsense-api-survey.md` titled ***Push sources: remote syslog and NetFlow export, read from source for push sources***, each fact below with its 26.7.3 source URL. A fact the source does not establish stays `UNVERIFIED:`, and nothing is built on it.
+
+The candidates below are **not citations**: they are the files expected to answer.
+
+| # | What must be established | Candidate source (to read, `UNVERIFIED:` until read) |
+|---|---|---|
+| S1 | Remote syslog targets: their menu path, and the fields a target has. Transport (expected: UDP, TCP and TLS over IPv4 or IPv6), application / program filter, level, facility, host, port, and an RFC 5424 option | `src/opnsense/mvc/app/models/OPNsense/Syslog/Syslog.xml` and its form XML |
+| S2 | What syslog-ng actually sends to a target:<br>- header format with and without the RFC 5424 option;<br>- timestamp format and zone;<br>- whether the hostname is present;<br>- **TCP framing** (RFC 6587 octet counting, or non-transparent newline framing) | `src/opnsense/service/templates/OPNsense/Syslog/syslog-ng-destinations.conf` (or the template that renders destinations) |
+| S3 | The program names under which `filterlog`, Unbound, Suricata and the DHCP servers log, and whether a target can select them | the same model's program list; each service's syslog-ng source template |
+| S4 | The `filterlog` message: its CSV, and every variant by IP version and protocol. The survey's *Data source 1*, *Response shape*, gives the field set as parsed by the API | the backend's filter-log parser that produces `/api/diagnostics/firewall/log` |
+| S5 | NetFlow export:<br>- the versions offered (expected: v5 and v9; FreeBSD `ng_netflow(4)` is not known to emit IPFIX);<br>- destinations (form, how many, IPv4 and/or IPv6);<br>- capture interfaces and any egress-only option;<br>- active and inactive timeouts;<br>- whether local collection (`flowd`) is itself a destination | `src/opnsense/mvc/app/models/OPNsense/Diagnostics/Netflow.xml`; the script or `plugins.inc.d` file that starts `ng_netflow` |
+| S6 | What `ifIndex` an exported record carries (the FreeBSD interface index), and **which read endpoint maps an index to a device or interface identifier**, if any | candidates: `/api/diagnostics/networkinsight/get_interfaces` (in the survey's endpoint table with no response shape), `/api/interfaces/overview/interfaces_info` |
+| S7 | Suricata: whether the IDS model offers syslog output of alerts and/or of eve records, under which program, which event types it carries (alert only, or `tls` and `http` too), and in what format | `src/opnsense/mvc/app/models/OPNsense/IDS/IDS.xml`; `src/opnsense/service/templates/OPNsense/IDS/suricata.yaml` (already cited by the survey for eve-log types) |
+| S8 | Unbound: whether query and reply logging to syslog can be enabled from the web UI, and what one logged line contains (client, name, type, verdict, blocklist, rcode) | `src/opnsense/mvc/app/models/OPNsense/Unbound/Unbound.xml`; the Unbound configuration template |
+| S9 | Read-only endpoints from which `opnview` can **detect** that a remote syslog target or a NetFlow destination is configured, so a missing export is reported rather than guessed | the Syslog and Netflow controllers' `get` / `search` actions |
+
+- **What the section must also say.** Each finding is recorded with its consequence for the built-in variants (PS12). The section also records the user's procedure for each export, to the precision S1 and S5 establish. That procedure is the source of the README text in §10.
+- **No write.** `opnview` never calls any `set`, `add`, `del`, `reconfigure` or `setconfig` action of these controllers (`setconfig` is already on the mutating list). Enabling an export is the user's manual step.
+
+**PS2. The core: listeners, decoders and routing, protocol-agnostic in what they route.**
+
+- **Listeners.**
+  - A syslog listener on UDP and one on TCP, and a NetFlow / IPFIX listener on UDP.
+  - Each listener is enabled only by its own **start parameter, which has no default**: the same rule as `--listen`, because a port is one installation's configuration.
+  - A listener with no parameter is off. Every push declaration then reports the availability state `listener_not_configured`, never a silence presented as no data.
+- **One generic decoder per protocol,** behind one internal seam, so that adding a protocol is adding a decoder file and a registry row. Batching, routing, storage, gaps and the catalogues name no protocol.
+  - **Syslog header (RFC 5424, RFC 3164).** It decodes:
+    - PRI into facility and severity;
+    - the timestamp;
+    - the hostname;
+    - the program (RFC 3164 TAG / RFC 5424 APP-NAME);
+    - the process id (PROCID / the TAG's `[pid]`);
+    - for RFC 5424, MSGID and STRUCTURED-DATA;
+    - then the message.
+
+    It accepts RFC 3164 with or without a hostname, and RFC 3164 with an ISO 8601 timestamp (a syslog-ng variant; the survey's *Data source 1* shows the firewall writes either form). A line that does not parse is counted as `header_unparseable` and dropped, never stored.
+  - **NetFlow v9 (RFC 3954) and IPFIX (RFC 7011).** It decodes:
+    - the packet header;
+    - templates and options templates, scoped per exporter address and observation domain (v9 source ID);
+    - template withdrawal and redefinition;
+    - variable-length fields (IPFIX), padding and enterprise-specific fields.
+
+    Each field is typed from the **IANA IPFIX Information Elements registry**. That registry is a standard, held as data in the core with its source cited, like `internal/specialpurpose`. Fields are named by the registry's names (for example `sourceIPv4Address`, `octetDeltaCount`), which v9's field type numbers share. An enterprise field with no registry entry is exposed as an octet string under a name built from its enterprise number and its id.
+  - **Data records before their template** are held within a bound and decoded when the template arrives. Past the bound they are dropped, counted and recorded as a gap (`netflow_template_missing`).
+  - **Other NetFlow versions** (v5, if S5 shows OPNsense offers it) are counted and reported with the named state `netflow_version_unsupported`, never decoded by guess.
+- **TCP syslog framing.** RFC 6587 defines two framings: octet counting and non-transparent (newline). Which one OPNsense sends is S2, `UNVERIFIED:`.
+  - The listener accepts **both**, detected per connection from the first byte of each frame, as RFC 6587 §3.4 permits a receiver.
+  - A frame above a size bound (a constant, written once and documented, at least RFC 5425's minimum of 2048 octets) is counted, and its connection is closed.
+  - Connections are bounded in number and have an idle time-out.
+- **Routing by subscription. One decoding pass is shared by several subscribers.**
+  - The header (or the NetFlow template decoding) runs **once** per message.
+  - Subscribers are selected by an index on the header filter (for syslog, the program), so a message no subscriber wants costs one header decode and one lookup. No regular expression or script runs for it, and it is counted and dropped.
+  - Each subscriber then extracts only its own declared columns and writes only to its own declared table or kind. Two subscribers of the same program or template never share a row.
+- **The core holds no product knowledge.** No Go source outside tests under the push packages names a program (`filterlog`, `unbound`, `suricata`, …), a message regular expression, or a field of any program's message (PS-AC2).
+
+**PS3. The manifest declaration** (`push`, a new optional list of the plugin manifest, under A17's versioning rule). Each entry declares:
+
+- **`protocol`:** `syslog` or `netflow`.
+- **A header filter.**
+  - For syslog: `program`, one or more exact names, optionally narrowed by facility and severity.
+  - For NetFlow: the Information Elements the subscriber requires, by registry name. A record lacking a required element is skipped for that subscriber and counted. An optional filter on decoded fields may be added, using P8's closed operator list.
+- **For syslog, how the message becomes a row:**
+  - a **named-group regular expression**, whose groups name the output columns. It is matched by a linear-time engine (RE2 syntax, which Go's standard library offers), because the input is network data and a backtracking engine can be driven into catastrophic time. The syntax is stated in `docs/plugins.md`;
+  - or a **parse function** in the plugin's script, for messages a regular expression cannot express (`filterlog`'s CSV with its variants).
+- **Where rows go,** one of two, never both:
+  - **`output_table`:** one of the plugin's own declared tables (A4, P6), for a kind of the plugin's own;
+  - **`kind`:** a core kind whose provider the same plugin declares, such as `firewall_log`. The rows are then **records of that kind's contract** (`contract.go`), delivered to the kind's coordinator exactly as pulled records are (PS9).
+- **Optional `replaces`:** the name of one of the same plugin's declared endpoints, which this push source replaces while it is alive (PS10).
+- **Optional `liveness_seconds`** (PS10), bounded by a constant floor and overridable by a namespaced setting.
+- **Versions.** Push entries take part in A19's version ranges like endpoints, including a range that selects another script. The `filterlog` CSV may differ between OPNsense versions.
+
+**PS4. The plugin type vocabulary** (A4 amended; one vocabulary for every plugin table, push or not). Column types are words of a closed list, never SQL type strings:
+
+| Plugin type | PostgreSQL type | Notes |
+|---|---|---|
+| `integer` | `bigint` | A NetFlow unsigned 64-bit value above the signed range is refused for that field (`push_value_invalid`), never wrapped |
+| `real` | `double precision` | |
+| `text` | `text` | |
+| `boolean` | `boolean` | |
+| `ip` | `inet` | IPv4 or IPv6 |
+| `mac` | `macaddr` | |
+| `instant` | `timestamptz` | Keeps sub-second precision where the source has it |
+
+- **There is no JSON type.** No push output table has a JSONB column, and each captured property is its own column, for compression and continuous aggregates.
+- **Registry mapping.** The IANA abstract data types map onto this list (`unsigned*` and `signed*` → `integer`, `float*` → `real`, `ipv4Address` and `ipv6Address` → `ip`, `macAddress` → `mac`, `dateTime*` → `instant`, `string` → `text`, `boolean` → `boolean`, `octetArray` → `text` in lower-case hex). The table is in `docs/plugins.md`.
+- **A value that does not convert** to its column's type is null when the column is nullable, and otherwise refuses the row. It is counted as `push_value_invalid` and never coerced.
+- **A push output table's time column must be of type `instant`.** Calendar-month buckets need a timestamp type (P3), and the hypertable is chunked on it.
+- **Existing declarations stay valid.** Integer-epoch time columns remain valid for other plugin tables, and every built-in declaration loads unchanged.
+- **The JSON API keeps epoch seconds** (P3). Every `instant` leaving any response (data catalogue, widget, listing) is an integer number of UTC epoch seconds.
+- **Data catalogue roles** derive from the vocabulary: `instant` → `time`; `integer` and `real` → `measure`; everything else → `dimension`. They can be corrected in the declaration (A4 role, unit).
+
+**PS5. Timestamps.**
+
+- **RFC 3164**, which has no year and no zone, is normalised by the existing year-less normaliser with the firewall's **measured UTC offset**, the same function `host.normaliser().syslog` exposes, including the year rollover. The measurement stays core.
+- **RFC 5424 and ISO variants** apply the offset they carry. A timestamp carrying no offset gets the measured one.
+- **NetFlow v9.** A record's start and end come from `FIRST_SWITCHED` / `LAST_SWITCHED`, relative to `sysUptime`, converted through the packet header's `unix_secs` and `sysUptime`: the export time.
+- **IPFIX** uses the record's absolute time elements, or its delta elements against the header's export time.
+- **The reception instant** is recorded by the core for liveness, ordering and gaps. It is never substituted for a header instant that parsed.
+
+**PS6. Senders: only the configured firewall.**
+
+- **The accepted set is derived at run time, never written down.** It holds:
+  - the addresses the configured base URL's host resolves to;
+  - every address discovery reports for the firewall's own interfaces (`interface_address`, the `this_firewall_address` view).
+
+  It is recomputed when the base URL changes or discovery refreshes, with no restart.
+- **Anything from outside the set is refused.** A UDP datagram, or a TCP connection, from an address outside the set is refused before decoding: nothing of it is stored.
+  - Each refusal is counted per source address.
+  - Refused addresses are listed in the push entry of the API catalogue (an authenticated JSON, PS13), so a container network that rewrites source addresses is visible at once (Risk 39).
+- **What this does and does not prove.** It is a source-address check. It refuses datagrams from any other sender. It does not authenticate the firewall: a forged source address on the path is not detectable at this layer (Risk 38). `docs/plugins.md` and the README state it in those words.
+
+**PS7. Bounded buffers, drops as gaps, bulk inserts.**
+
+- **Every queue between the socket and the database is bounded:**
+  - the socket receive buffer;
+  - the decode queue;
+  - each subscriber's batch;
+  - the NetFlow pre-template hold;
+  - the count of templates per exporter.
+
+  Each bound is a constant written once, or a setting, and documented.
+- **A drop is counted and recorded as a gap, never silently.** Each gap has a reason from a closed list. The names are proposals; the Builder fixes them and lists them in the closed vocabulary and in `docs/plugins.md`:
+
+  | Reason | What it records |
+  |---|---|
+  | `push_buffer_overflow` | `opnview`'s own queues |
+  | `push_receive_overflow` | the operating system's receive-queue drop counter, where the platform reports one |
+  | `netflow_sequence_gap` | a jump in the v9 or IPFIX sequence number per exporter and observation domain |
+  | `netflow_template_missing` | data records whose template never arrived within the bound |
+  | `push_store_failed` | a batch that could not be committed after a bounded retry |
+  | `push_listener_down` | the interval during which `opnview` was not listening, including its own downtime between runs |
+
+  - **The gap's interval** spans the reception instants of the first and last lost message, merged within a window the Builder states. A sequence gap spans the export times on either side of it.
+  - **For a core kind** the gap enters the kind's gap listing. **For an own kind** it is an A3 provider gap.
+  - **Under P8,** a bucket inside a gap is a gap, never a zero.
+- **Inserts are batched per destination table** and flushed at whichever bound comes first, rows or time, each a constant written once. A batch is one transaction. A trickle is committed within the time bound.
+- **Undetectable loss.** Loss on the network between the firewall and `opnview` is undetectable for syslog over UDP: it carries no sequence number. The data catalogue entry of every push-fed dataset therefore carries **`loss_detectable`**:
+  - true for TCP syslog and for NetFlow / IPFIX;
+  - false for UDP syslog.
+
+  Open question 9 governs what this means for replacing a polled core kind.
+
+**PS8. The parse function** (syslog only).
+
+- **Called on a batch.** It is called with a bounded batch of messages, each with its decoded header, never once per message. Each call runs in a fresh interpreter (*The script*), which a per-message call could not afford.
+- **What it returns, per message:**
+  - for an `output_table` entry, one row of the declared columns, or nothing (skipped and counted);
+  - for a `kind` entry, one record of the kind's contract, or nothing.
+- **Failures.**
+  - A thrown exception or a time-out fails the messages of that call. They are counted (`script_failed` / `script_timeout` on the provider's availability, as in A2) and recorded as a gap. The listener carries on.
+  - Records failing the contract are refused (`records_invalid`), as for pulled records.
+- **The regular expression stays the fast path.** A declaration using it makes no script call.
+
+**PS9. A core kind fed by both paths: an exclusive source per instant, and nothing counted twice.** This is the rule that keeps `flow`, the pairing and every aggregate family exact. It applies to any provider of a core kind that declares a push entry with `kind` and a `replaces` naming one of its polled endpoints.
+
+- **One provider, two paths.** The pushed and the pulled records belong to **the same provider** `(kind, provider_key)`. Registry identity, `Selection` and availability are unchanged (B4). The per-kind rule on how many providers may be active is unchanged.
+- **Source segments.**
+  - The coordinator records, per provider, consecutive **source segments** `(path: pull | push, from_at, to_at)` that never overlap. Every instant of the provider's history belongs to at most one segment.
+  - A record is stored only if its event instant (for `firewall_log`, `observed_at`) falls in a segment of the path that delivered it.
+  - A record delivered by the path not contributing at its instant is not stored, and is counted as `superseded`.
+  - The segments are listed with the provider's availability and gaps in the JSON API.
+- **Handover from pull to push.**
+  - When the push source becomes alive (PS10), polling continues until both paths have delivered an **overlap**.
+  - The boundary is then set at a whole second that the pulled path is known to have read completely and that the push path was alive throughout.
+  - Pulled records after the boundary and pushed records up to it are `superseded`.
+  - Only then is polling suspended (A14's demand suspension).
+- **Handover from push to pull.**
+  - When the push source stops being alive, the boundary is the last whole second the push path is known to have delivered completely.
+  - Polling resumes at once, and pulled records up to the boundary are `superseded`.
+  - A pulled path that cannot reach back to the boundary records a gap from the boundary to the oldest record it returned (the filter log's existing gap rule, clipped).
+- **Gaps are clipped by coverage.** A gap either path detects is clipped by the intervals the other path covered. A gap never spans an interval whose records were stored.
+- **Pushed record identity is namespaced.** It can never equal a pulled one: for `firewall_log`, the pushed `digest` is computed from the pushed message under a prefix the pulled digests cannot carry, and `flow.log_digest UNIQUE` holds.
+- **Everything downstream is unchanged.** Identity, pairing, classification, attribution and aggregation run on stored records exactly as today, whichever path delivered them. A connection whose two legs were delivered by different paths across a boundary is paired once.
+- **Only a declared replacement may share a provider.** A push entry with `kind` and no `replaces` is refused at load (`push_kind_without_replacement`). Without an exclusive segment, two paths of one provider would double-count, so the rule is enforced rather than documented.
+
+**PS10. Liveness and declared replacement** (A14 extended to push).
+
+- **Alive.** A push source is alive while accepted messages matching its filter have arrived within its liveness span. The span is:
+  - the declaration's `liveness_seconds`;
+  - else the Builder's stated default;
+  - bounded below by a constant;
+  - overridable by a namespaced setting.
+- **Effect on polling.**
+  - While alive and past the PS9 overlap, the declaring plugin's demand for the replaced endpoint is suspended. Other readers of that endpoint keep their own demand (BR-AC21).
+  - When it stops being alive, the demand resumes from the next scheduling decision, and the plugin is told which path answered.
+- **Hysteresis.** Liveness has a stated hysteresis, so a source near its span does not flip at every message.
+- **Replacement is declared, never guessed.** A built-in may declare `replaces` only under the parity rule of PS12.
+
+**PS11. NetFlow interface indexes.**
+
+- **Mapping.** A record's input and output `ifIndex` are mapped to OPNsense interfaces (identifier and device, the `docs/data-model.md` *Vocabulary* terms) through a **read through the broker**: a declared datum with a max age, the endpoint S6 establishes.
+- **The mapping is the one in force at reception.** It is stored with the record beside the raw index, so a later renumbering does not rewrite history.
+- **Unmapped indexes.** If S6 establishes no endpoint, or an index is unknown, the interface columns are null, the raw index is kept, and the condition is counted and reported as `interface_index_unmapped`. The core never matches an index to an interface by position, name or count.
+
+**PS12. Built-in plugins: push variants, and how they coexist with the polled ones.**
+
+- **The parity rule for `replaces`.** A built-in push entry may declare `replaces` only when a test passes: the same recorded source lines, delivered once through the pulled fixture and once through the pushed fixture, yield contract records equal **in every field of the kind's contract**, except:
+  - the record identity (PS9);
+  - any field listed in the plugin's test data with the reason it differs.
+
+  A variant that fails parity feeds an own table, or is not built, and declares no replacement.
+
+| Plugin | Push variant | Condition | Coexistence |
+|---|---|---|---|
+| `pf` | syslog, program `filterlog` (S3), parse function over the CSV (S4); `kind: firewall_log`, provider `pf` | S2, S3 and S4 verified | `replaces` the filter-log endpoint under PS9, if parity holds. The backend's `label` is not a contract field. The pulled `__digest__` is replaced by the namespaced pushed identity |
+| `suricata` | syslog alerts (S7); `kind: security_event`, provider `suricata` | S7 shows alerts can be sent to syslog in a parseable form | `replaces` `query_alerts` under PS9, if parity holds. Only today's collector is reproduced (B1); `tls` / `http` events are open question 12 |
+| `unbound` | syslog query lines (S8) | S8 shows the UI enables them | `replaces` `search_queries` **only if parity holds**. If the logged line lacks the verdict or the blocklist, the `dns_lookup` contract's `action` would degrade to `unknown`, which fails parity. The variant then writes its own table and declares no replacement |
+| `netflow` (new built-in) | NetFlow v9 / IPFIX; its own kind and its own hypertable of flow records: the observing interface (PS11), the flow direction where exported, endpoints, ports, protocol, octets, packets, start, end | S5 verified | **Declares no replacement.** No polled endpoint measures the same thing. Insight's aggregates are pro-rated, direction-doubled and port-approximated (survey, *Data source 3*, *Response shape*), and `traffic/top` is a 2 s iftop snapshot. **Its rows never enter `flow`,** which stays the filter log's |
+
+- **DHCP lease servers get no push variant.** A logged DHCP exchange is an event, not the lease state the `dhcp_lease` kind reconciles.
+- **The `netflow` dataset's double-count trap is stated where a reader meets it.** A connection crossing two captured interfaces is exported once per interface, as Insight's details are. The table therefore records the observing interface on every row. `docs/plugins.md` and the dataset's catalogue label say that a sum across interfaces counts such a connection once per interface. No built-in widget serves such a sum.
+- **The observation-point limit applies** to every NetFlow figure: traffic inside one interface's network never reaches the exporter. It is documented in `docs/plugins.md` and the README as the limit already is.
+
+**PS13. Both catalogues.**
+
+- **The API catalogue (A15)** gains one push entry per listener and per declaration. It carries:
+  - protocol and transport;
+  - listener state;
+  - the accepted-sender set's size and the refused senders with their counts;
+  - programs or templates seen, with message counts;
+  - subscribers and the columns each captures;
+  - rates, drop counters and gaps;
+  - liveness;
+  - replacements and the current source segment.
+
+  It never carries a message, a field value, a credential or the base URL. It is served at the existing path and through `host.catalogue()`.
+- **The data catalogue (P8).** Every push output table is a dataset like any plugin table, with:
+  - its roles and units;
+  - nature `event`;
+  - `loss_detectable` (PS7);
+  - coverage equal to the intervals in which the source was alive, minus its recorded gaps.
+
+  A covered bucket with no row is a true zero, and an uncovered one is a gap.
+
+**PS14. Ports and compose.**
+
+- **Start parameters.** The three listeners take start parameters with no default, like `--listen`.
+- **The serve file.** `docker-compose.serve.yml` publishes the syslog UDP and TCP ports and the NetFlow UDP port **from variables with no default**, the protocol on each mapping explicit (`/udp`, `/tcp`), host port equal to container port, as `OPNVIEW_LISTEN` does.
+  - The canonical serve invocation keeps working **unchanged with none of them set**. How optional mappings are expressed (a second override file, or profiles) is the Builder's, stated in the file's header comment. Compose cannot omit a `ports:` entry whose variable is unset.
+- **Nothing for `checks` and `pre-deployment`.** `docker-compose.yml`'s `checks` and `pre-deployment` acquire no new variable. Tests bind ephemeral loopback ports and never a fixed one.
+- **The README states:**
+  - that the serve container runs unprivileged, so a port below 1024 needs a capability the file does not grant, and a port of 1024 or more is advised (OPNsense's target takes any port, S1);
+  - that `docker compose run` needs `--service-ports`.
+
+**PS15. Tests and budgets.**
+
+- **Go tests**, for the core decoders, framing, routing, batching, gaps, senders and PS9.
+  - **Fixtures.** Recorded syslog lines and NetFlow packets, rewritten to documentation addresses (RFC 5737, RFC 3849) and documentation MAC addresses, with every device and interface name replaced as the existing fixtures do, so X1 holds. Each carries `__provenance__`. A binary packet is stored as hex inside that JSON wrapper.
+  - **Fuzzing.** One Go fuzz target each for the syslog header, TCP framing and the NetFlow / IPFIX decoder. The seed corpus runs as ordinary tests in `checks`. `pre-deployment` fuzzes each for a bounded time the Builder states, inside the 180 s budget.
+- **JavaScript tests for plugins** (`opnview plugin test`). The test world gains functions that deliver recorded syslog lines (with transport and sender) and recorded NetFlow packets **through the core's real decoder and router**, and read what reached the plugin's table or kind. A plugin's tests never call its parse function directly to prove ingestion.
+- **Budgets.** These are constants written once, measured by `pre-deployment` and printed beside their limits. The Builder may change one with a measured justification in the hand-back. The proposals:
+
+  | Measure | Limit |
+  |---|---|
+  | Syslog header decode plus routing of a line nobody subscribes to | median ≤ 10 µs per line |
+  | Regular-expression path, listener to committed hypertable rows | ≥ 10 000 messages/s sustained for 10 s with zero drops at default bounds |
+  | Parse-function path (a `filterlog`-shaped fixture) | ≥ 2 000 messages/s for 10 s with zero drops |
+  | NetFlow v9 decode plus routing | ≥ 50 000 flow records/s |
+  | NetFlow, listener to committed rows | ≥ 10 000 records/s for 10 s with zero drops |
+  | Reception to commit under a trickle | 95th percentile ≤ 2 s |
+
+  The push measurements together add at most 45 s to `pre-deployment`, which stays within 180 s. `checks` stays within 60 s: everyday tests use small fixtures and no throughput run.
+
+**PS16. Documentation.**
+
+- **`docs/plugins.md`** gains a section *Push sources* covering:
+  - the declaration;
+  - the type vocabulary and the IANA mapping;
+  - RE2 syntax;
+  - the parse function;
+  - senders, liveness and replacement;
+  - PS9's segments;
+  - gaps and `loss_detectable`;
+  - the new refusal codes;
+  - three worked examples run by A15's test:
+    - a syslog program into an own table with a regular expression;
+    - a parse function;
+    - a NetFlow subscriber.
+- **The other documents:**
+  - `docs/data-model.md` *Vocabulary* gains the terms below.
+  - `docs/architecture.md` gains the B4 row (§5).
+  - The README gains *Push sources* (§10).
+
+  | Term | Its status |
+  |---|---|
+  | push source; source segment; liveness | `opnview`'s own, with the reason |
+  | collector, exporter (RFC 7011), originator (RFC 5424) | the RFCs' own |
+  | `program` | syslog-ng's and OPNsense's |
+
+## 5. Scope: amendments inside existing sections
+
+- **A1, the manifest.** Add "its push sources (PS3)" to what the manifest declares.
+- **A3.** Add a bullet: "**Pushed data.** A push declaration's parse function receives batches of decoded messages (PS8). Pushed records of a core kind enter that kind's coordinator under PS9."
+- **A4.**
+  - Replace "columns (integer, real, text; …)" with "columns of the plugin type vocabulary (PS4)".
+  - Add: "a push output table's time column is an `instant`, and it holds no JSON type".
+- **A5, refusals.** Add:
+  - an unknown push protocol;
+  - a regular expression that does not compile under RE2, or a named group that is not a column;
+  - a column type outside PS4;
+  - a push output table without an `instant` time column;
+  - a declaration naming both or neither of `output_table` and `kind`;
+  - `push_kind_without_replacement`;
+  - `replaces` naming an undeclared endpoint;
+  - an Information Element name outside the registry;
+  - a liveness span below its floor.
+
+  Each has a code the Builder names and `docs/plugins.md` lists.
+- **A5, listing.** Add per plugin: its push declarations, each with listener state, counters, liveness and current source segment.
+- **A14, *Declared equivalence*.** Append: "A push source may also be declared as replacing a polled endpoint (PS10). For a core kind, PS9's source segments keep the two paths from counting a record twice."
+- **A15.** Add "the push entries of PS13" to its content.
+- **B4, the audit table.** Add the row:
+
+  > `| Push listeners and decoders (syslog header, NetFlow v9 / IPFIX templates, IANA IE registry) | the push packages | Core, protocol code against public standards, like internal/specialpurpose. A protocol is a seam inside the core: one decoder file and one registry row. Program formats are plugins |`
+- **C3, *Rolling strip*.** Append: "Where a pushed `firewall_log` source contributes, the decision series' `complete_until` trails reception rather than the poll interval."
+- **C6.** Append:
+  - "Every row is re-examined with push sources available, rows 4 (rate by port and protocol) and 8 (live rate) first. A row servable only when the user configures an export names the dataset or field, the export (survey, *Push sources*), and the named state served when it is absent."
+  - "Rows touching site names record the S7 finding."
+- **P8, *Core datasets*.** Append: "Push output tables are datasets with `loss_detectable` and coverage from liveness minus gaps (PS13)."
+- **Phase D, map.** Add the push packages, named by responsibility under the 15-file rule. One proposal:
+  - `internal/push` (listeners, routing, batching);
+  - `internal/push/syslog`;
+  - `internal/push/netflow`;
+  - `internal/push/ipfixregistry`.
+- **Phase E.** Append: "PS15's throughput and fuzz runs are inside the 180 s, printed beside their limits."
+- **F.2 table.**
+  - `README.md`: add "*Push sources*: configuring the exports on OPNsense, ports, the sender check's limit".
+  - `docs/opnsense-api-survey.md`: add "*Push sources: remote syslog and NetFlow export, read from source for push sources*".
+  - `docs/plugins.md`: add "*Push sources*". The size target stays, and Risk 17 applies.
+  - `docs/data-model.md`: add "the push terms of PS16; *Storage fit*: push hypertables".
+  - `docs/architecture.md`: add "the push data flow beside the broker; *Decisions in force* carries decision 15".
+
+## 6. Acceptance criteria: new section inserted after C-AC15 and before C-AC16
+
+### Phase C, part 2: push sources
+
+Every test runs on the PostgreSQL test instance with a fake clock, loopback listeners on ephemeral ports, a fake firewall and the counting transport.
+
+- [ ] **PS-AC1. The firewall side is verified, and an absent export is reported.**
+  - The survey section of PS1 exists with S1–S9, each carrying a 26.7.3 source URL or marked `UNVERIFIED:`.
+  - A test asserts that every built-in push declaration names a survey section that exists, and that no built-in declaration rests on an item still `UNVERIFIED:`.
+  - With a listener configured and nothing arriving, every declaration reports a named availability state (and, if S9 verifies, says whether the firewall has a target configured), never data.
+  - Nothing in the code calls a mutating action of the Syslog or Netflow controllers (BR-AC15 extended).
+- [ ] **PS-AC2. The core is agnostic.**
+  - A test greps every non-test Go file of the push packages and finds no program name of any built-in plugin, no regular expression over a message, and no message field name.
+  - Adding a test protocol decoder is one file and one registry row, with no edit to routing, batching or catalogue code (shown by a test-only decoder).
+- [ ] **PS-AC3. Syslog header.** Table-driven tests decode, to facility, severity, instant, hostname, program, process id, MSGID, structured data and message:
+  - RFC 3164 with and without a hostname, with and without `[pid]`, and with an ISO timestamp;
+  - RFC 5424 with structured data, NILVALUEs, a BOM, fractional seconds and offsets.
+
+  Malformed lines are counted as `header_unparseable` and store nothing.
+- [ ] **PS-AC4. Timestamps.**
+  - RFC 3164 instants equal the year-less normaliser's answers with the measured offset, including a line dated 31 December received on 1 January (fake clock).
+  - RFC 5424 offsets are applied as given.
+  - NetFlow v9 start and end equal `unix_secs` and `sysUptime` arithmetic on a fixture. IPFIX absolute and delta time elements give the same instants.
+  - Every instant in a JSON response is an integer of epoch seconds.
+- [ ] **PS-AC5. TCP framing.**
+  - Octet-counted and newline-framed connections are both decoded, including frames split across reads and several frames in one read.
+  - A frame above the bound closes its connection and is counted.
+  - The connection bound and the idle time-out are enforced.
+- [ ] **PS-AC6. NetFlow v9 and IPFIX.** Fixtures cover:
+  - templates and options templates per exporter and domain;
+  - data before its template (held, then decoded; past the bound, counted as `netflow_template_missing` with a gap);
+  - IPFIX template withdrawal and redefinition;
+  - variable-length fields, padding and enterprise fields;
+  - sequence-number jumps (a `netflow_sequence_gap` gap with the right interval);
+  - a v5 packet (`netflow_version_unsupported`, nothing decoded).
+
+  Every decoded field carries its IANA name and the PS4 type of its abstract data type.
+- [ ] **PS-AC7. Fuzzing.** The three fuzz targets' seed corpora pass in `checks`. `pre-deployment` runs each for its stated time, with no panic and peak memory under a stated bound.
+- [ ] **PS-AC8. Senders.**
+  - A datagram and a TCP connection from a loopback address outside the accepted set store nothing, and are counted per address in the catalogue.
+  - The same from an address in the set are stored.
+  - Changing the base URL or the discovered interface addresses changes the set with no restart.
+  - No address literal appears in the code (X1).
+- [ ] **PS-AC9. Routing and one decoding pass.**
+  - A line whose program has no subscriber causes zero regex matches, zero script calls and zero rows (counters).
+  - Two plugins subscribed to the same program cause one header decode per line, and each table holds only its own declared columns.
+  - Two NetFlow subscribers cause one template decode per packet.
+- [ ] **PS-AC10. The declaration.**
+  - Each PS3 and §5 A5 refusal has a test, is listed with its code, and leaves the service and the other plugins running.
+  - A valid declaration creates its output table, in the plugin's schema, as a hypertable on its `instant` column. Catalog inspection shows each PS4 type mapped as the table says, and no `json` or `jsonb` column.
+- [ ] **PS-AC11. Values.** A value that does not convert is null in a nullable column, or refuses the row in a non-nullable one, and is counted as `push_value_invalid`. An unsigned 64-bit value above the `bigint` range is refused, not wrapped.
+- [ ] **PS-AC12. The parse function.**
+  - For N messages and a batch bound B, the script is called at most ⌈N/B⌉ times plus the flushes by time (counter).
+  - The regular-expression path makes zero script calls.
+  - An exception and a time-out each fail only that call's messages, counted and recorded as a gap, and the next batch is processed.
+  - A contract-violating record is refused (`records_invalid`).
+- [ ] **PS-AC13. Buffers, drops, batching.**
+  - With a database fake that stalls, the queues fill. The drops are counted, a gap of reason `push_buffer_overflow` spans their reception instants, and memory stays under the stated bound.
+  - A failing commit is retried within its bound and then recorded as `push_store_failed`.
+  - Insert statements per table are at most ⌈rows/batch⌉ plus the flushes by time.
+  - A trickle commits within the time bound.
+  - The interval during which the listener was down, including `opnview`'s own restart, is a `push_listener_down` gap.
+- [ ] **PS-AC14. No double count: the critical criterion.** One fixture of `filterlog` lines is delivered through both the fake pulled endpoint and the syslog listener, across a handover from pull to push and back. Every boundary second holds records delivered by both paths, and some by only one.
+  - Every record delivered by both paths is stored **exactly once**. No record delivered by both is lost.
+  - A record delivered only by the non-contributing path is not stored, and is counted as `superseded`.
+  - The source segments never overlap and cover the fixture's span with no hole other than recorded gaps.
+  - The `flow` table, `pair_outcome` (a connection with one leg pulled and one pushed is paired once), and every aggregate family and period at `1h`, `24h`, `7d` and `30d` equal an independent computation from the fixture's distinct records (P-AC9's method).
+  - A pull gap overlapping a push-covered interval is clipped to the uncovered part.
+  - Pushed digests never equal a pulled digest, and `flow.log_digest UNIQUE` is never violated.
+  - A declaration with `kind` and no `replaces` is refused at load.
+- [ ] **PS-AC15. Liveness and replacement.**
+  - While a push source is alive and past its overlap, the declaring plugin makes **zero** calls to the replaced endpoint (counting transport), and another plugin's demand for it is still served.
+  - After the liveness span plus its hysteresis, with no message (fake clock), polling resumes at the next scheduling decision, and the plugin is told which path answered.
+  - A source near its span does not flip at every message.
+  - BR-AC21 still passes.
+- [ ] **PS-AC16. Parity.**
+  - For each built-in push entry declaring `replaces`, the parity test passes on recorded fixtures, listing every excepted field with its reason.
+  - A test asserts that no built-in declares `replaces` without a passing parity test, and that the `netflow` plugin declares none.
+- [ ] **PS-AC17. Interface indexes.**
+  - The index-to-interface mapping is read through the broker (BR-AC1 still lists only the broker and `verify.go`) at its max age.
+  - Each fixture record stores the raw index and the mapped identifier.
+  - An unknown index stores null, is counted and is reported as `interface_index_unmapped`.
+  - A mapping change applies only to records received after it.
+  - If S6 is still `UNVERIFIED:`, the mapping is absent and every record reports `interface_index_unmapped`, with nothing inferred.
+- [ ] **PS-AC18. Catalogues.**
+  - The API catalogue lists every PS13 push field for the fixtures, answers 401 with a JSON condition without a session, and holds no message text, field value, credential or base URL (string search). `host.catalogue()` returns the same.
+  - `GET /api/datasets` lists every push output table with its roles, units, nature `event` and `loss_detectable` (false for a UDP syslog fixture, true for TCP and NetFlow).
+  - A catalogue query answers a bucket inside a push gap, or outside liveness, as a gap, and a covered empty bucket as zero.
+- [ ] **PS-AC19. Built-in variants.**
+  - Each built-in push variant that PS1's findings allow exists, as PS12 states, with JavaScript tests in its `tests/` delivering recorded fixtures through the real decoder.
+  - Each variant PS1's findings rule out is listed in the hand-back with the survey item that rules it out.
+  - The `netflow` plugin's table records the observing interface on every row, and its catalogue label states the per-interface counting.
+- [ ] **PS-AC20. Fixtures.** Every new fixture passes X1 and carries `__provenance__`. No recorded line or packet holds an installation address, MAC, device or interface name.
+- [ ] **PS-AC21. Listeners and compose.**
+  - The binary started without a push parameter opens no push socket (the process's sockets inspected), and its declarations report `listener_not_configured`.
+  - `docker compose run --rm checks` and `pre-deployment` need no new variable.
+  - The canonical serve invocation runs with no push variable set.
+  - The documented push invocation publishes exactly the configured UDP and TCP ports, each with its protocol.
+  - No compose file holds a push port number as a default.
+- [ ] **PS-AC22. Nothing changes when push is not configured.** With no listener, B5's byte identity, BR-AC1 to BR-AC27 and every existing test pass unchanged.
+- [ ] **PS-AC23. Budgets.**
+  - `pre-deployment` prints every PS15 measure beside its limit and fails above it. The push measures add at most 45 s, and the whole command stays within 180 s.
+  - `checks` stays within 60 s.
+- [ ] **PS-AC24. Documents.**
+  - `docs/plugins.md` *Push sources* exists. Its three worked examples load and produce what it states (A15's test).
+  - Its refusal codes, gap reasons and type table equal the code's (F-AC5).
+  - `docs/data-model.md` *Vocabulary* defines the PS16 terms, with their status.
+  - The README *Push sources* section exists, and its OPNsense steps match the survey's PS1 section.
+- [ ] **PS-AC25. Never a write to the firewall.** No code path issues a request to configure an export. The README instructs the user to do it.
+- [ ] **PS-AC26. Inbound is not outbound.** A10's counting transport over a full run with push fixtures sees the same destinations as before. The listeners make no outbound connection (process inspection or test).
+- [ ] **PS-AC27. Versions.** A push entry under two A19 version ranges selects its declared parse script per firewall version, and an uncovered version yields `firewall_version_unsupported` (BR24's method).
+
+## 7. Acceptance criteria: amendments to existing ones
+
+- **C-AC16 (audit).**
+  - Append: "and every row records its re-examination with push sources (C6 as amended). A row servable only with an export names the export, the dataset or field, and the state served without it."
+  - Its verification happens after PS-AC1 to PS-AC27 pass.
+- **A3.** Add: "including the push refusals of §5".
+- **A13.** Add: "and the type-vocabulary table of `docs/plugins.md` equals PS4's mapping in code".
+- **F-AC5.** Add: "every push refusal code, gap reason, type and catalogue field named in `docs/plugins.md` *Push sources* exists in code, and the reverse".
+- **X2.** Append: "and PS-AC1 to PS-AC27".
+
+## 8. Live validation: additions
+
+These run after LV-P and LV-B, read-only toward the API. **The user configures the exports on OPNsense. `opnview` and the orchestrator never do.** The scratch build in the dev stack publishes the push ports; the live build does not.
+
+- **LV-PS0, the firewall-side cost.** Using LV-C's method (`cpu_usage/stream`, 15 minutes each), the firewall's processor use is measured in three states:
+  - no export;
+  - the remote syslog target enabled for the subscribed programs;
+  - the NetFlow export enabled to `opnview`.
+
+  The figures are reported to the maintainer and recorded as proportions in the survey's PS1 section.
+- **LV-SY, syslog against polling, over 15 minutes.** The scratch build runs with `pf` pushed over **TCP** and, in a second window, over **UDP**, beside a pull-only reference (the old build, or the scratch build with push disabled).
+  - **Counts.** Per minute, the filter-log records stored by each are compared. Every difference is named: pull's `limit` gaps (recorded), window edges, `superseded` counts, or a push gap with its reason. Otherwise it is a defect.
+  - **Peak and drops.** The peak message rate is recorded, and the drop counters are zero.
+  - **Handover.** The orchestrator stops and restarts **the scratch build's listener**, never the firewall's target. Across both handovers, `flow` and the aggregates of the affected hours equal the pull-only reference's for records both saw, and the source segments are shown.
+  - **The other built-ins** (`suricata`, `unbound`) are compared the same way where PS1 allowed them.
+- **LV-NF, NetFlow over 15 minutes.**
+  - Per captured interface, NetFlow octets against `traffic/interface` counter deltas over the same window, as a proportion. The difference is explained by the observation point, the timeouts (S5) or a recorded gap, or it is a defect.
+  - The sequence gaps, template refreshes and records/s.
+  - The share of records whose `ifIndex` was mapped. Every unmapped index must be named.
+- **LV-SND, senders.** The refused-sender list after both windows. If the firewall's datagrams were refused because the container network rewrote the source address, open question 10 governs, and the validation stops there until the maintainer answers.
+- **LV-AUD.** The C6 audit's push re-examinations are shown to the maintainer with LV-SY's and LV-NF's figures.
+
+**The validation passes when**, as before, plus:
+
+- LV-SY's and LV-NF's differences are all named;
+- the drop counters stay zero at the live peak;
+- the maintainer accepts LV-PS0 and LV-AUD.
+
+## 9. Rules, Out of scope, Risks
+
+**Rules, *Hard rules carried from the project*: append**
+
+- "a push listener accepts only the configured firewall's addresses, derived at run time;"
+- "a pushed record and a pulled record of one provider never both count for the same instant (PS9);"
+- "a drop, a sequence gap or a missing template is a gap, never a zero;"
+- "no JSONB column in a push output table;"
+- "listeners are inbound and make no outbound call; the outbound rule is unchanged."
+
+**Out of scope: append**
+
+- Syslog over TLS (RFC 5425), and any authentication of the sender beyond the source-address check.
+- NetFlow v5, sFlow and any other export protocol.
+- Using pushed Suricata `tls` / `http` records for site names (open question 12).
+- Joining NetFlow volumes to logged connections in the core's tables (open question 11).
+- Continuous aggregates and compression on push output tables. These are Phase E's licence work under the 12 October decision, and a plugin still declares no continuous aggregate.
+- Recovering a gap by re-reading the firewall's own log for the gap interval.
+- Configuring, or checking by a write, anything on the firewall.
+
+**Risks: append**
+
+38. **Address spoofing.** The sender check refuses other senders, but on the same network segment a forged source address passes it. Neither UDP syslog nor NetFlow authenticates. What is achievable is stated in the README rather than overstated.
+39. **Source addresses rewritten by the container network.** Some Docker configurations rewrite the source of published UDP (Docker Desktop, IPv6 with the userland proxy). Every datagram would then be refused. PS6's refused-sender listing makes this visible, and LV-SND checks it on the maintainer's host.
+40. **Undetectable UDP syslog loss.** No sequence number exists, so `loss_detectable` is false and replacing a core kind over UDP trades a verifiable gap rule for an unverifiable one (open question 9).
+41. **The handover boundary.** Seconds-resolution timestamps, clock offset and log write latency make "a second read completely" a judgement the Builder must make exact. PS-AC14 tests it, and LV-SY checks it live.
+42. **Script cost on the hot path.** A busy ruleset can log thousands of `filterlog` lines per second, and goja runs each batch in a fresh interpreter. PS15's 2 000/s floor may be below a busy firewall's peak. LV-SY records the live peak; if it exceeds the measured capacity, that is a defect to report, not a reason to drop the batch rule.
+43. **Assumed OPNsense behaviour.** Everything in PS1 is `UNVERIFIED:` today. In particular:
+    - IPFIX may be unobtainable from OPNsense core (`ng_netflow`), leaving the IPFIX decoder proven on fixtures only;
+    - the syslog TCP framing is unknown;
+    - Suricata and Unbound may not log what parity needs.
+
+    PS12's conditions absorb this. A ruled-out variant is reported, not built.
+44. **Double counting inside NetFlow.** One flow is exported per captured interface (PS12). A third-party author summing across interfaces double-counts, and only documentation stands between them and the error.
+45. **Ports below 1024.** The unprivileged container cannot bind syslog's registered port. A user who sets 514 sees a bind failure, which the README anticipates.
+46. **Firewall load from the exports.** Remote logging and `ng_netflow` cost processor time on the firewall. LV-PS0 measures it.
+47. **Delay of the audit.** C6 now waits for push sources, so the step-7 interface is specified later.
+
+## 10. ROADMAP.md, README.md and CLAUDE.md
+
+- **`ROADMAP.md`.** Replace the heading "### Planned: push sources — syslog and NetFlow (maintainer, 12 October 2026; not yet scheduled)" with "### Push sources: syslog and NetFlow (maintainer, 12 October 2026)". Replace its sentence "Points the specification of this step must settle:" with "The specification settles them in Phase C, part 2 of the backend-completion cycle". Phase F condenses the section.
+- **`ROADMAP.md`, *Rules that apply to every step*, outbound bullet.** Append: "Push listeners are inbound: they receive what the user configured the firewall to send, accept only the firewall's own addresses, and make no outbound call."
+- **`README.md`, the sentence of the PostgreSQL amendment §13** "Nothing is installed on the firewall and nothing is changed on it: everything goes through its REST API, read-only." Replace it with:
+
+  > "Nothing is installed on the firewall and `opnview` changes nothing on it: it reads the REST API, read-only, and can receive the firewall's syslog and NetFlow exports if you configure them on the firewall yourself."
+- **`README.md`, new section *Push sources*.** It says:
+  - why to configure the exports, and what each adds;
+  - the OPNsense steps for a remote syslog target and a NetFlow destination, taken from the survey's PS1 section (TCP advised for syslog, with the reason);
+  - the ports and their variables, and the 1024 note;
+  - the sender check and its limit (Risk 38);
+  - that polling resumes on its own when an export stops.
+- **`CLAUDE.md`, proposed wording** (for the orchestrator to apply with the maintainer's agreement; the Builder does not edit it). In *The user interface*, after "It reads five sources through the OPNsense REST API: …", add:
+
+  > "It can also receive the firewall's syslog and NetFlow exports, configured by the user on OPNsense; `opnview` still writes nothing to the firewall."
+
+  The sentence "Site names are inferred from resolver lookups, unconditionally." stays unless open question 12 is answered (b).
+
+## 11. Existing spec and repository sentences that become obsolete
+
+1. The 12 October "Decided" block, *Order of the rest*: "then C, D, E (including …)" (replaced, §3).
+2. The scope phase list's **Phase C** line, as amended by the PostgreSQL and broker amendments (replaced, §3: Phase C, parts 2 and 3).
+3. A4: "columns (integer, real, text; nullable or not; …)" (replaced by PS4, §5).
+4. `docs/plugins.md`, *Tables*: "`type` (`integer`, `real` or `text`)" and "`retention` | The integer column holding each row's instant, in UTC epoch seconds" (for the Builder to correct to PS4).
+5. `docs/plugins.md`, *Endpoints*, `replaces`: "For a stream: the name of another endpoint …". It is no longer stream-only: a push declaration carries it too (PS3).
+6. `ROADMAP.md`, the heading "(…; not yet scheduled)" and "Points the specification of this step must settle:" (replaced, §10).
+7. The README sentence "everything goes through its REST API, read-only" from the PostgreSQL amendment §13 (replaced, §10).
+8. The maintainer's sketch keys `type: stream` and `provider: syslog|netflow`. They are named `push` and `protocol` (PS3), because `stream` (A14) and `provider` (A1) already carry other meanings. This is a deliberate departure, recorded here.
+
+Not obsolete, stated for clarity:
+
+- A9's "the broker is the only path from opnview to the firewall API": push is inbound.
+- BR-AC1.
+- The outbound rule.
+
+## 12. Open questions (additions)
+
+Open questions 1 to 8 stay as answered.
+
+9. **May UDP syslog replace a polled core kind?** UDP syslog carries no sequence number, so loss on the wire is invisible (`loss_detectable: false`), whereas the polled filter log detects its own gaps.
+   - **(a)** A push entry with `kind` and `replaces` takes over only over TCP. Over UDP, a core-kind push source is received, counted and shown in the catalogue, and polling continues.
+   - **(b)** UDP may replace polling too. The source segments it contributes are marked `loss_detectable: false`, and every gap listing over them says so.
+   - **(c)** UDP may replace polling, with no distinction.
+
+   **Recommendation: (a).** It keeps the project's rule that a loss is a gap and never silent. TCP is offered by OPNsense's target (S1, to verify), and UDP still serves own-kind datasets, where `loss_detectable` is carried. Scope follows (a) unless the maintainer chooses otherwise.
+10. **Accepted senders when the container network rewrites source addresses.**
+    - **(a)** Only addresses derived at run time (PS6), with refused senders listed. A rewriting network is a deployment to correct (host networking, or a Docker setting), documented in the README.
+    - **(b)** In addition, an operator setting listing further accepted addresses, entered through the settings JSON API and never in a file.
+
+    **Recommendation: (a), and (b) only if LV-SND shows the maintainer's own host rewriting addresses.** (b) reopens what "only the configured firewall" means, and should be added on evidence. Scope follows (a).
+11. **Should NetFlow volumes become a core figure?**
+    - **(a)** No. The `netflow` dataset is served through the data catalogue and `custom_chart` only, and C6 cites it where it makes a row servable.
+    - **(b)** Yes. Join NetFlow records to logged connections (`flow`), giving each connection its real volume. That is a new correlation design, with its own double-count rules, in a separate spec.
+
+    **Recommendation: (a) this cycle, (b) as its own spec if the audit shows it is wanted.** Scope follows (a).
+12. **Pushed Suricata `tls` / `http` records and site names.** The survey's finding that `tls` events "cannot be read back through the API" was the reason site names are inferred unconditionally. If S7 shows those events can be sent to syslog, observed attribution becomes possible.
+    - **(a)** Record S7's finding and C6's re-examination only. Observed attribution is a separate spec, in line with "everything except the Suricata plugin".
+    - **(b)** Build it in this phase: store SNI, attribute flows with method `observed`, recorded per record and surfaced as the site-name rule requires.
+
+    **Recommendation: (a).** It touches attribution, the data model and a binding `CLAUDE.md` statement, and the maintainer excluded Suricata work from this cycle. Scope follows (a) unless the maintainer chooses (b).
+
+No other question. The listener design, routing, the type vocabulary, the parse function, senders, timestamps, ifIndex mapping, the catalogues and shared decoding were decided by the maintainer or settled by the roadmap's points. The no-double-count rule (PS9) follows from the requirement that nothing counts twice and from the unverifiable shared identity. Ports follow the existing no-default rule.
+
+---
+
+**Status of this amendment: PROPOSED, pending the maintainer's approval.**
+
+**Decided (maintainer, 12 October 2026), push-sources open questions:**
+- Q9: (a). A pushed source replaces polling of a core kind **over TCP only**. Over UDP it is received and stored for plugins, while polling continues for the core kinds.
+- Q10: (a). Only the configured firewall's addresses are accepted. A network that rewrites source addresses is a deployment to correct, as documented in the README. An operator setting for extra addresses is added only if live validation shows it is needed.
+- Q11: **(b), in this cycle.** NetFlow volumes are joined to the core's logged connections, so each connection gets its real volume. It is a new correlation design with its own no-double-count rules, specified by the planner before it is built.
+- Q12: **(b), in this cycle.** If Suricata `tls`/`http` events can be sent to syslog (to be verified against 26.7.3, S7), SNI and HTTP host are stored and flows are attributed with method `observed`. The method is recorded per record and surfaced as the site-name rule requires. This changes the `CLAUDE.md` statement that site names come only from resolver lookups. The orchestrator proposes that edit to the maintainer.
+
+
+**This is the text to append after the "Decided (maintainer, 12 October 2026), push-sources open questions" block.** It covers Q11(b) and Q12(b) in this cycle. The proposed CLAUDE.md diff is in §J, for you to apply once the maintainer agrees.
+
+---
+
+**Addendum to the push-sources amendment: what Q11(b) and Q12(b) add to this cycle (maintainer, 12 October 2026)**
+
+**Placement.** Append this after the push-sources "Decided" block, with its own `---` separator and the same preamble line as the earlier amendments. Each section below names its insertion point inside the push-sources amendment. **Cycle kind stays `standard`.** Everything below is Go, SQL, JSON contracts and server-side JavaScript. Every name-bearing or volume-bearing change reaches a screen only through the widget JSON, which step 7 renders.
+
+**What I read and found (fact check of the brief).**
+
+- **`flow` is one filter-log record, a *leg*.**
+  - `packet_bytes` is the length of the one packet that created a state (`docs/data-model.md`, *`flow`*, "Logged bytes are not conversation bytes").
+  - The six aggregate families × four periods, `purged_flow_hour` and `pair_volume_observation` carry **logged** figures only.
+  - A paired connection counts once, on its first leg. Its second leg counts only under `exit_leg_device` and in the rule family (*The aggregate families*; *Two legs of one connection*).
+- **The widget API's measure vocabulary has three values:** `logged`, `sampled` and `interface_counter` (`internal/widget/envelope.go`; `docs/widget-api.md`, *Volumes and the observation-point limit*). `Volume.lower_bound` is documented as "always true".
+- **`domain_attribution` cannot hold an observed name today.**
+  - `method` has a `CHECK (method IN ('resolver_cache_answer', 'lookup_timing'))`.
+  - `dns_resolution_id` is `NOT NULL`.
+  - `correlation_delay_seconds` is `CHECK (>= 0)`.
+  - `address_observation_id` is required exactly for `resolver_cache_answer` (`internal/store/schema.sql`, lines 1617–1631).
+  - `widget.MethodCounts` is a closed struct of `resolver_cache_answer`, `lookup_timing` and `not_recorded_beyond_flow_horizon` (`internal/widget/sites.go`).
+- **The "Insight-based polled volume path" does not read Insight's aggregates.** The `insight` plugin samples `traffic/top` (measure `sampled`) and `traffic/interface` (measure `interface_counter`). The `networkinsight` / `netflow` aggregate paths answered 404 on 26.7.3_11 (`plugins/insight/insight.js` header; survey, *Wrong paths*). **No polled path delivers per-record NetFlow.**
+- **`flow_volume` is a core-only kind, "derived by opnview from the filter log"** (`internal/collect/provider/contract.go`, `coreOnlyKinds`). It is not reused here.
+- **Two parts of the push amendment conflict with Q11(b) and Q12(b).**
+  - PS12 routes NetFlow into the `netflow` plugin's **own** table. The core cannot join a plugin's own table, because it reads contracts, not plugin schemas (PS2: the core is agnostic).
+  - PS9's last bullet refuses any `kind` entry without `replaces`, which would refuse a push-only core kind.
+  - Both are amended below.
+- **Suricata on the maintainer's firewall** runs on two internal interfaces and not on WAN (survey, *Suricata, on that firewall*). Observed names on that installation would therefore match first legs, before NAT.
+- **No OPNsense, FreeBSD or Suricata fact used below has been read for this addendum.** I had no network access. Every such fact is a candidate row S10–S14 under PS1, marked `UNVERIFIED:`. Nothing is built on any of them until PS1 records them.
+- **The no-Go-under-`plugins/` rule** stated in your brief is not written in the spec text I read. It is restated in §G so it is.
+
+---
+
+## A. Context: append to decision 15 (push amendment §1), as its last sub-bullet
+
+> - **15a. NetFlow volumes and observed site names, in this cycle** (maintainer, 12 October 2026; open questions 11 and 12 answered (b)).
+>   - NetFlow records are joined to the logged connections. Each connection gets its measured volume as a second measure, `netflow`, stored beside the logged one and never summed with it.
+>   - If OPNsense can send Suricata's `tls` and `http` eve events to syslog (S13), their TLS server name and HTTP host are stored. Flows are then attributed with a new method, `observed`, which takes precedence over the two inferred methods. The method is recorded per record and exposed per record.
+>   - If S13 is negative, that part is not built, and the reason is recorded.
+
+## B. Scope: phase order (push amendment §3)
+
+Replace the **Phase C, part 2** line with:
+
+> **Phase C, part 2.** Push sources: syslog and NetFlow (PS1–PS16), then the NetFlow volume join (PS17–PS23), then observed server names (PS24–PS30), each part starting only when the previous one passes its own criteria.
+
+- Replace "C6 starts only when PS-AC1 to PS-AC27 pass" with "C6 starts only when PS-AC1 to PS-AC47 pass".
+- In §7, X2: replace "PS-AC1 to PS-AC27" with "PS-AC1 to PS-AC47".
+
+## C. Scope: PS1 table, append rows S10–S14
+
+**Insertion point:** after row S9 of PS1's table.
+
+| # | What must be established | Candidate source (to read, `UNVERIFIED:` until read) |
+|---|---|---|
+| S10 | The NetFlow v9 template `ng_netflow` emits as OPNsense starts it:<br>- each Information Element: addresses v4/v6, ports, protocol, `tcpControlBits`, octets, packets, first/last switched, input/output interface index, flow direction, any sampling element or options template, and how ICMP type/code is encoded;<br>- whether IPv6 flows are exported;<br>- the active and inactive timeouts and cache size OPNsense sets | FreeBSD 15.1 `ng_netflow(4)`, `sys/netgraph/netflow/netflow_v9.c`; the OPNsense script that starts `ng_netflow` (S5's) |
+| S11 | Where each capture point sits relative to pf on the same interface:<br>- on ingress and on egress, whether the exported addresses and ports are the form pf **logs on that interface** (before or after translation);<br>- whether packets pf blocks are exported;<br>- what the WAN "egress only" option (if S5 finds one) captures | `ng_netflow(4)`, `ng_ether(4)`, the OPNsense hook-up script; pf.conf(5) 15.1 |
+| S12 | pf's state timeouts as OPNsense 26.7.3 configures them: TCP states, UDP, ICMP, other, and adaptive timeouts. Also the read-only endpoint, if any, exposing the values in force | pf.conf(5) 15.1, `set timeout`; `src/etc/inc/filter.inc`; the *Firewall > Settings > Advanced* model |
+| S13 | Suricata eve over syslog (extends S7):<br>- the IDS model field that enables it;<br>- its program (identity) and facility;<br>- whether it carries the same event types as `eve.json`, `tls` and `http` in particular when their toggles are on;<br>- the message format (one eve JSON object per message);<br>- whether `tls.sni` and `http.hostname` are present without extended logging | `src/opnsense/mvc/app/models/OPNsense/IDS/IDS.xml`; `src/opnsense/service/templates/OPNsense/IDS/suricata.yaml` |
+| S14 | How Suricata sees packets on an interface, per mode (IDS pcap, IPS netmap):<br>- the value of `in_iface` (device name, any host-ring suffix);<br>- whether its addresses and ports are the form pf logs on that device;<br>- whether `src_ip` / `src_port` of `tls` and `http` events are the connection's initiator | The eve documentation of the Suricata release 26.7.3 ships; OPNsense's IDS manual and template |
+
+**Gates.**
+- If S11 shows that a capture point exports a **different form** of the packet from the one pf logs on the same device, the PS19 rule is not built for that capture point, and the hand-back reports it. No translation is inferred.
+- If S14 shows the same mismatch, the same applies to PS27.
+- If S13 is negative, PS24 applies.
+
+## D. Scope: new sections
+
+**Insertion point:** after PS16, before "## 5. Scope: amendments inside existing sections".
+
+### Phase C, part 2 (continued): NetFlow volumes joined to logged connections
+
+**PS17. The core kind `flow_record`.**
+- **What it is.** A push-only core kind: one record of a flow, as an exporter reported it. The term is RFC 3954's and RFC 7011's *Flow Record*. `docs/data-model.md` *Vocabulary* says explicitly that `flow` (one filter-log record) and `flow_record` are different things.
+- **Its contract** is in `contract.go` and in `docs/plugins.md`, identical (A13). It carries:
+  - the exporter address and the observation domain;
+  - the **Observation Point** (RFC 7011): the interface mapped under PS11 with the raw indexes kept, and the record's direction at it (`ingress`, `egress`, or `not_exported`);
+  - IP version and IANA protocol number;
+  - source and destination address and port (absent for a protocol without ports);
+  - ICMP type and code where S10 establishes their encoding;
+  - cumulative TCP flags;
+  - octets and packets;
+  - start and end instants, at the precision exported;
+  - the sampling interval (absent when not declared);
+  - the reception instant.
+- **Identity.** Unique per exported record and stable if a packet is delivered twice. The Builder states its composition.
+- **Storage.** A core hypertable on the start instant, under P4's rule. Its retention is a setting whose default equals the filter-log flow retention. The purge works by chunk, then by row (P4).
+- **The kind's provider**, the built-in `netflow` plugin (PS12 amended), declares:
+  - a push entry `protocol: netflow`, `kind: flow_record`;
+  - a **declarative mapping** from IANA Information Element names to contract fields. This is a new PS3 option for NetFlow entries: a contract field names one IE, or an ordered list whose first present IE wins.
+  - No script runs per record.
+- **Protocol comparison.** Protocol is compared by IANA number. If `flow` stores only the filter log's `protoname`, the Builder adds the number, or maps the name through the IANA *Assigned Internet Protocol Numbers* keywords held as data with their source cited. It never compares by guess.
+
+**PS18. Capture coverage is read, never inferred from data.**
+- **Configured capture.** Through the broker, at a max age, the `netflow` plugin reports a coverage record of the `flow_record` contract: per interface, whether ingress and egress are captured. The endpoints are those S5 and S9 establish.
+- **When a direction counts as covered.** An interface-direction is **covered** at instant *t* when all three hold:
+  - it is configured as captured;
+  - the push source was alive at *t* (PS10);
+  - no NetFlow gap (PS7) meets *t*.
+- **Configuration unreadable.** If S9 establishes no read endpoint, coverage is `capture_configuration_unknown`. It is never deduced from which records happened to arrive.
+
+**PS19. The join: a flow record to the leg logged at its Observation Point.**
+
+1. **Candidates.**
+   - **Same point, same family.** Candidate legs are the `flow` rows logged on the record's observing device, with the same IP version and protocol.
+   - **Same tuple, either orientation.** The record's (source, source port, destination, destination port) equals the leg's logged tuple (**forward**), or the leg's tuple swapped (**reverse**). *Forward* and *reverse* are RFC 5103's terms.
+   - **Address comparison.** Addresses are compared as canonical address values, never as text.
+   - **Protocols without ports** (ICMP, ICMPv6, any record carrying no port) join on the two addresses alone. This weaker key is documented.
+2. **Time.** The record joins the candidate with the latest `observed_at` ≤ record start + `netflow_join_tolerance_seconds`.
+   - That setting is a positive whole number, set through the settings JSON API (C5).
+   - Its default is the Builder's, justified by the resolutions involved: the filter log's seconds, NetFlow's milliseconds and the normaliser's offset. LV-NJ confirms it.
+3. **Continuity.** A record belongs to a leg's connection only while that connection's pf state could still exist.
+   - The gap between the leg (or its previous joined record in the same direction) and the record's start never exceeds pf's state timeout for that protocol and state. Those timeouts are the values in force when readable through the broker, else pf's defaults as S12 records them.
+   - A TCP record whose cumulative flags include SYN joins only a leg logged within the tolerance of its start.
+4. **Ambiguity is never resolved by guessing.** Two candidates with the same `observed_at` → the record joins neither.
+5. **Every action joins.** Legs with action `pass`, `block`, `reject` and `unknown` all join. The bytes of refused packets that the capture exported are the refused leg's measured figure. If S11 shows that blocked packets are not exported, refused legs carry the direction state `not_exported_when_refused`.
+6. **Unmatched records.** A record with no candidate is an **unmatched record**, with one reason from a closed list. The names below are proposals; the Builder fixes them.
+
+   | Reason | The record |
+   |---|---|
+   | `no_logged_leg` | has no leg on its observing device |
+   | `ambiguous` | had two candidates at once (rule 4) |
+   | `interface_unmapped` | carries an index PS11 could not map |
+   | `beyond_flow_horizon` | started before `retention_purge.purged_before`, or its leg was purged |
+
+7. **Decided from stored rows.**
+   - The result does not depend on arrival order. It is re-derived when a record or a leg arrives in its window, and when the pairing changes a leg's outcome. A second derivation writes nothing.
+   - A record is decided only once the filter-log ingestion watermark (the in-flight watermark of the refresh contract, rule 4) has passed its start plus the tolerance. Before that it is pending, never unmatched.
+8. **NAT needs no rule of its own.** Each leg is matched in its logged form on its own device.
+   - Under outbound NAT, the second leg (upstream `out`, translated source) joins the upstream device's records in translated form.
+   - The first leg joins the inside device's records untranslated.
+   - IPv6, and traffic between two interfaces, match with equal tuples on both devices.
+   - This holds only under S11's gate.
+
+**PS20. A connection's measured volume: each direction once, at one Observation Point.**
+- **What a connection is.** A first leg with its second leg, or a single leg (`not_paired`, or no pair outcome).
+- **One Observation Point per direction.** For each direction, forward and reverse as the first leg logged it, the connection's measured figure is the sum of that direction's joined records at **exactly one** Observation Point:
+  - the first leg's device, when it was covered for that direction over the connection's span (PS18);
+  - otherwise the second leg's device, when it was covered;
+  - otherwise none.
+
+  **The records of one direction at two devices are never summed.**
+- **Stored per connection:** per direction, the bytes, packets, record count, device, and which leg it came from (`first_leg` or `second_leg`). The measure identity is `netflow`, stored **beside** the logged figures. `packet_bytes` and every logged figure are unchanged everywhere.
+- **Per-direction state.** A closed vocabulary; the names are proposals.
+
+  | State | The direction |
+  |---|---|
+  | `measured` | ended under PS19's continuity rule, with its bytes recorded |
+  | `in_progress` | still within continuity; its figure grows |
+  | `awaiting_export` | covered, but no record yet, within S10's active timeout plus the tolerance |
+  | `missing` | covered, past that bound, with no record |
+  | `not_captured` | no covered device |
+  | `capture_configuration_unknown` | PS18 could not read the capture configuration |
+  | `export_gap` | a NetFlow gap meets its span at the chosen device |
+  | `sampled` | a joined record declares a sampling interval above 1 |
+  | `not_exported_when_refused` | the leg was refused and S11 shows refused packets are not exported |
+
+- **Sampling is never extrapolated.** Bytes are stored as exported, and no figure is scaled.
+- **A second leg's own records** (both directions at its own device) are that interface's own measured figure. They count under `exit_leg_device` exactly as logged volume does, and in no total.
+
+**PS21. Aggregates carry both measures and never sum them.**
+- **New columns.** Every family and period, and the purged part, gain `netflow` columns beside the logged ones:
+  - bytes, split allowed / blocked / unknown by the leg's action, with a `CHECK` that the split sums;
+  - packets;
+  - a count of the connections in each coverage class (both directions measured; partial; none).
+- **Counting is unchanged.** Connections count once in totals. Second legs count only under their `exit_leg_device` row and in the rule family.
+- **Slot.** A connection's measured volume counts in the slot of its first leg's `observed_at` (open question 14).
+  - A join that changes a connection's figure forces that slot, as a changed attribution does (refresh contract, rule 3).
+  - Until the slot is recomputed, `freshness` counts it stale.
+- **Purge.** The purged part keeps the `netflow` figures of the flows it removes. An hour holding the horizon keeps them.
+- **The unmatched family.** A new family over the four periods holds the unmatched records (the name is the Builder's).
+  - Key: observing interface, direction at it, protocol, IP version, reason.
+  - Figures: bytes, packets, records.
+  - It is added to no other family and to no total of any other family.
+- **What does not change.** `pair_volume_observation` stays logged-only and says so.
+- **P5's equivalence gate** applies to every new column.
+
+**PS22. Widget API: one measure per answer, a stated default, and `lower_bound` restated.**
+- **The measure vocabulary gains `netflow`:** "bytes and packets the firewall's NetFlow export reported for the logged connections, each direction counted once at one Observation Point."
+- **A new parameter.** Every type serving a `Volume` or a byte `Count` takes `volume_measure`, with values `logged` | `netflow` | `best_available`. Its default is set by open question 13; scope follows the recommendation, `best_available`.
+  - **One measure per answer.** An answer never mixes measures. Every figure's `measure` states the one used.
+  - **How `best_available` chooses.** It answers `netflow` when the capture coverage (PS18) of every interface carrying a counted connection spans the whole window with no gap. Otherwise it answers `logged`, with one of two named states:
+    - `netflow_not_configured`: no active provider of `flow_record`, or its listener is off;
+    - `netflow_not_covering_window`.
+- **A `netflow` Volume** carries a coverage object: connections per coverage class (PS21). A `logged` Volume gains no field.
+- **`lower_bound`.**
+  - Always `true` for `logged`.
+  - For `netflow`, `true` on every aggregate figure: unlogged connections are in the unmatched figures and in no keyed aggregate, and traffic inside one interface is invisible.
+  - `false` only on a single `client_traffic_detail` record whose two directions are `measured`, with no gap meeting its span and no sampling.
+  - `docs/widget-api.md`, *Volumes and the observation-point limit*, is amended by name, and so is the `Volume` comment in `envelope.go`.
+- **`client_traffic_detail` records,** under `netflow`, carry per direction the bytes, packets, state and the leg it was measured at.
+- **The data catalogue.**
+  - `custom_chart`'s `traffic` source gains the measures `netflow_bytes` and `netflow_packets`.
+  - The catalogue gains the datasets `flow_record` (nature `event`, `loss_detectable` true) and the unmatched family.
+  - Both documents are amended by name: these are data contracts, and no aesthetic rule changes.
+- **No path sums two measures.** No code path sums `logged`, `netflow`, `sampled` or `interface_counter` with one another.
+
+**PS23. How this relates to the polled volume path.**
+- **Separate measures, no replacement.** The polled path is the `insight` plugin's `sampled` and `interface_counter` measures. `flow_record` has no polled provider, so it has no PS9 source segment and no `replaces`. The `netflow` plugin still declares none (PS-AC16).
+- **Never substituted.** The four measures are never summed or substituted for one another. A window without NetFlow coverage is never filled from samples or counters.
+- **README.** It says whether OPNsense's local collection (`local: 1`, Insight) and an export to `opnview` can run together, as S5 establishes.
+
+### Phase C, part 2 (continued): observed server names
+
+**PS24. The gate.**
+- **If S13 shows** that `tls` / `http` eve events cannot be sent to syslog, or that they carry neither the server name nor the host, PS25–PS30 are **not built**: no kind, no method value, no column, no API field, no placeholder. The hand-back cites the survey row.
+- **If S13 is positive but S14 fails its gate,** the same applies to PS27 onward.
+
+**PS25. The core kind `server_name_observation`.**
+- **The term is `opnview`'s own,** recorded in *Vocabulary* with the reason:
+  - TLS's `server_name` extension (RFC 6066, §3) and HTTP's `Host` field (RFC 9110, §7.2) both carry the name the client asked the server for;
+  - Suricata names them `tls.sni` and `http.hostname`;
+  - no product names the pair.
+- **Contract fields:**
+  - the observed instant, at sub-second precision;
+  - the device, from `in_iface` by exact match under S14's finding, with no fuzzy matching;
+  - IP version and protocol;
+  - addresses and ports as reported;
+  - `name_source`: `tls_server_name` or `http_host`;
+  - `server_name`, verbatim;
+  - an identity composed from the message content;
+  - Suricata's `flow_id`, kept as provenance only, never as identity.
+- **Validation.**
+  - A `Host` value loses its port, per RFC 9110's `uri-host [ ":" port ]`.
+  - An empty value, an IP literal, or a value that is not a syntactically valid DNS name is not a server name. It is counted and not stored.
+- **Storage.** A hypertable on the instant. Its retention is a setting whose default equals the flow retention. An observation an attribution names is kept as long as that attribution, as `address_observation_id` is kept today.
+- **Domain withholding.** `server_name` is marked carries-domain.
+
+**PS26. The built-in plugin.**
+- **A separate plugin.** It is a new built-in plugin, proposed name `suricata_server_names`, separate from `suricata`, so step 6's alert work never touches it.
+- **Its push entry:** `protocol: syslog`, the program S13 establishes, `kind: server_name_observation`.
+  - A parse function (JSON) emits one record per `tls` event carrying a server name and one per `http` event carrying a host.
+  - Every other event type is skipped and counted.
+  - **No `replaces`:** `query_alerts` drops these event types, so no polled path exists.
+- **Shared decoding.** If the `suricata` alert variant (PS12) subscribes to the same program, the header is decoded once (PS2).
+- **Availability.** It reads, through the broker, `/api/ids/service/status` and `/api/ids/settings/get` (both already in the survey): whether Suricata runs, the interfaces it covers (`ids.general.interfaces`), and the eve `tls` / `http` and eve-syslog toggles (S7, S13). Its named states (proposals) are:
+  - `listener_not_configured`;
+  - `ids_not_installed`;
+  - `ids_stopped`;
+  - `eve_tls_and_http_disabled`;
+  - `eve_syslog_not_enabled`;
+  - `no_server_name_received`.
+- **Transport.** Open question 17. Scope follows its recommendation: the entry is accepted over TCP only.
+- **It never writes `security_event`.**
+
+**PS27. Joining an observation to a connection.**
+- **Candidates.** Legs on the observation's device, with the same IP version and protocol, and a forward-equal tuple. A reverse tuple is accepted only if S14 shows Suricata reports the responder first for some event type, and the orientation is recorded.
+- **Time.** The leg's `observed_at` must lie in [`observed_at` − tolerance, `observed_at` + `observed_name_max_delay_seconds`].
+  - That setting's default is the Builder's, justified by S14, and confirmed by LV-SN.
+  - The latest leg wins. A tie is `ambiguous` and joins nothing.
+- **Second legs.** An observation joined to a second leg names its **first leg's** connection.
+- **Eligibility.** It is today's rule: an outside destination, not to this firewall, not a second leg. An observation of an ineligible connection is kept, counted, and names nothing.
+- **Several observations of one connection.** Names are compared normalised: lower-cased, with any trailing dot removed (RFC 4343).
+  - If exactly one distinct name remains, the connection is attributed `observed`, with the earliest observation's name verbatim (its identity breaks a tie).
+  - If two or more remain, there is no observed attribution. The case is recorded as `observed_names_conflict`, and the inferred methods apply as today.
+- **Order and repetition.** Arrival order does not change the result, the same is true of late arrival, and a second derivation writes nothing, as for attribution today.
+
+**PS28. The method `observed`: precedence and conflicts.**
+- **The new value.** `domain_attribution.method` gains `observed`.
+- **Precedence.** `observed` beats `resolver_cache_answer`, which beats `lookup_timing`. An observation arriving after an inferred attribution replaces it and forces its slot.
+- **Evidence, pinned per method by `CHECK`s.**
+  - `observed` requires its observation reference and no lookup.
+  - The inferred methods require their lookup as today.
+  - The rule "an attribution cannot exist without the resolver lookup it came from" becomes "…without the evidence its method names".
+  - The meaning of `correlation_delay_seconds` is stated per method. No negative delay is stored without a sign convention written in the schema comment.
+- **The inferred outcome is kept, not discarded.** For every observed attribution, the inferred rule is still evaluated and its outcome stored beside it:
+  - the inferred name and method, or none;
+  - an agreement value from a closed vocabulary (proposals): `agrees`, `disagrees`, `no_inference`.
+- **`site_name`** is the server name verbatim. It is never a CNAME target and never invented.
+- **Under `no_domains`,** storage is unchanged and every name (observed, inferred-beside and conflicting) is withheld at the API like every site name.
+- **The domain family is unchanged.** It still keeps no method, so `site_methods_not_recorded_beyond_flow_horizon` still applies.
+
+**PS29. The API, under the site-name rule.**
+- **Method counts.** `MethodCounts` gains `observed`, and the methods sum to the named flows. Method counts gain `observed` in `top_sites`, `sites_by_client` and `connection_tree`.
+- **`client_traffic_detail.records[]`.** `method` takes `observed`. Each record gains the agreement field, withheld with `method` under `no_domains`.
+- **`attribution_rate_per_client`** gains:
+  - the observed count;
+  - the agreement counts;
+  - an `ObservedCovered` figure beside `CacheCovered`: whether a server-name source was alive and covering the client's interfaces over the window.
+- **Degraded states.** When no server-name provider is active or reachable, answers keep today's inferred figures and carry that provider's availability with its named state. A panel is never empty without a reason.
+- **Documents amended by name** (data contracts only; "rendered in step 7" stays):
+  - `docs/widget-catalogue.md`: Part 1's site-name paragraph, *Client traffic detail*, *Top sites*, *Sites by client* and *Attribution rate per client*;
+  - `docs/widget-api.md`: the `no_domains` table.
+
+**PS30. Diagnostics.** `store.ReadAttributionRate` and `-- diagnostic: Attribution rate per client` keep one definition, and both gain the observed and agreement counts.
+
+### PS15 and PS16 additions
+
+**PS15.** Add these budget rows (proposals; the Builder may change them with a measured justification):
+
+| Measure | Limit |
+|---|---|
+| Flow-record join, at the 1 000 000-row seed | ≥ 10 000 records/s |
+| Observation join | ≥ 2 000 observations/s |
+| Attribution pass with observations | no more than 10 % slower than the same pass without them |
+
+If the push measures no longer fit the 45 s allowance, the Builder reports the figure. The 180 s and 60 s budgets stand.
+
+**PS16, Vocabulary.**
+
+| Term | Its status |
+|---|---|
+| `flow_record`; Observation Point | RFC 3954 / RFC 7011 |
+| forward, reverse | RFC 5103 |
+| measured volume; the `netflow` measure; unmatched record; `server_name_observation`; the `observed` method; inferred agreement | `opnview`'s own, each with its reason |
+
+## E. Scope: amendments inside the push amendment and existing sections
+
+- **PS3.** Add, for a NetFlow entry with `kind`, the optional declarative IE-to-field mapping (PS17).
+- **PS9, last bullet.** Replace it with: "A push entry with `kind` whose provider **also delivers that kind through a polled endpoint** must declare `replaces`, or it is refused at load (`push_kind_without_replacement`). A push-only core kind (`flow_record`, `server_name_observation`) declares none."
+- **PS12, `netflow` row.**
+  - Replace "its own kind and its own hypertable of flow records" with "the core kind `flow_record` (PS17)".
+  - "Its rows never enter `flow`" stays.
+  - Append to the double-count bullet: "The core's measured volume never sums one direction across two Observation Points (PS20)."
+- **PS12, `suricata` row.** Replace "`tls` / `http` events are open question 12" with "`tls` / `http` events are PS24–PS30's, in a separate plugin".
+- **PS13.** The data catalogue lists `flow_record`, the unmatched family and `server_name_observation`. The last two carry `loss_detectable`; `server_name` is carries-domain.
+- **B5 / X3 byte identity, and PS-AC22.** The comparison admits exactly these differences:
+  - the echoed `volume_measure` key in `parameters`;
+  - the key `methods.observed`, with value 0 when there is none;
+  - the agreement and `ObservedCovered` fields.
+
+  All of them exist only when PS24's gate passes, except `volume_measure`.
+- **C6.** Append: "Rows naming volume or site names record the `netflow` and `observed` availability and their named states."
+
+## F. Acceptance criteria
+
+**Insertion point:** after PS-AC27. Every test runs on the PostgreSQL test instance with a fake clock and recorded fixtures through the real decoder and router.
+
+- [ ] **PS-AC28. Firewall facts are verified first.**
+  - Rows S10–S14 exist in the survey section, each with a 26.7.3 (or FreeBSD 15.1 / Suricata) source URL or marked `UNVERIFIED:`.
+  - A test asserts that the `flow_record` entry and the server-name plugin rest on no `UNVERIFIED:` row.
+  - Any gate of §C that fails is listed in the hand-back, with the part not built.
+- [ ] **PS-AC29. The `flow_record` kind.**
+  - Its contract in code equals `docs/plugins.md` (A13).
+  - The `netflow` plugin feeds it through the IE mapping, with zero script calls per record (counter).
+  - `push_kind_without_replacement` still refuses a `kind` entry whose provider also polls that kind, and admits a push-only kind (one test each).
+  - The table is a hypertable on its start instant (catalogue inspection), or the reason it is not is recorded under P4.
+- [ ] **PS-AC30. NAT.** The fixture is one IPv4 connection: logged `in` on an inside device untranslated, and `out` on the upstream device with translated source and port. Records: forward at the inside device's ingress, reverse at the upstream device's ingress (translated destination), and forward at the upstream device's egress.
+  - Each record joins the expected leg.
+  - The connection's forward figure equals the inside record **alone**, and its reverse figure the upstream reverse record.
+  - The second leg's own figure equals its device's two records.
+  - The six families count the connection once.
+  - Every logged column is unchanged.
+- [ ] **PS-AC31. Split records and continuity.**
+  - One TCP connection exported as several forward and several reverse records (an active-timeout split, and an idle gap within pf's timeout): every record joins and the sums are exact.
+  - A later record on the same tuple carrying SYN beyond the tolerance joins no old leg: `no_logged_leg`, or the new leg when one is logged.
+  - A UDP record after a gap longer than the S12 timeout joins nothing.
+- [ ] **PS-AC32. Unmatched records.**
+  - A record with no leg lands in the unmatched family with reason `no_logged_leg`. It is in no other family and in no logged or `netflow` total.
+  - Two legs in the same second give `ambiguous`.
+  - An unmapped index gives `interface_unmapped`.
+  - A record for a purged leg gives `beyond_flow_horizon`.
+- [ ] **PS-AC33. IPv6 and ICMP.**
+  - An IPv6 connection across two interfaces joins, with one source writing a non-canonical address text.
+  - ICMP echo legs join on their addresses.
+  - An ICMP record meeting two same-second ICMP legs is `ambiguous`.
+- [ ] **PS-AC34. Arrival order.**
+  - The same fixture ingested records-first, legs-first, interleaved, and with the pairing decided after, gives identical joins, connection figures and aggregates.
+  - A second derivation writes nothing (counter).
+  - No record is declared unmatched before the ingestion watermark passes its start plus the tolerance.
+- [ ] **PS-AC35. Counted once, never summed.**
+  - At `1h`, `24h`, `7d` and `30d`, every family's logged columns equal the baseline (P-AC9's method).
+  - The `netflow` columns equal an independent per-connection computation, one Observation Point per direction.
+  - After a purge of the hour, its `netflow` figures are unchanged.
+  - A test proves that no `Volume` or `Count` is built from two measures.
+- [ ] **PS-AC36. Coverage and states.**
+  - With capture configured on the upstream device only, both directions come from the second leg and are recorded as such.
+  - With the configuration unreadable, the state is `capture_configuration_unknown`.
+  - A sequence gap gives `export_gap`.
+  - A record sampled at 1:N gives `sampled`, with bytes not scaled.
+- [ ] **PS-AC37. The widget measure.**
+  - Each volume type accepts the three `volume_measure` values.
+  - With no `flow_record` provider, `best_available` answers byte-identically to `logged` and to the baseline, except for the echoed key, with state `netflow_not_configured`.
+  - With full coverage it answers `netflow`. With partial coverage it answers `logged` with `netflow_not_covering_window`.
+  - Every figure in one answer carries the same measure.
+  - `lower_bound` is false only on a fully measured `client_traffic_detail` record, and true on every aggregate `netflow` figure.
+- [ ] **PS-AC38. The other measures are untouched.**
+  - The `netflow` plugin declares no `replaces`.
+  - The `insight` plugin's `sampled` and `interface_counter` golden answers are unchanged.
+  - No code path combines them with `netflow`.
+- [ ] **PS-AC39. The server-name gate.** If S13 or S14 is negative, these tests pass:
+  - a grep finds no `observed` value in the method `CHECK`;
+  - no `server_name_observation` table exists;
+  - no API key named by PS29 exists;
+  - the hand-back cites the survey row.
+- [ ] **PS-AC40. Server-name ingestion,** from recorded eve-JSON syslog fixtures through the real decoder.
+  - The fixtures are: `tls` with a server name, `http` with a host, a host with a port, an IP-literal host, `alert`, `flow`, and malformed JSON.
+  - Exactly one observation is stored per valid `tls` / `http` name, with the port stripped.
+  - The IP literal is refused and counted. Other types are skipped and counted, and malformed JSON is counted under PS8's codes.
+  - The plugin's tests live in its `tests/`.
+- [ ] **PS-AC41. The observation join.** Fixtures:
+  - Suricata on the inside device: the observation joins the first leg.
+  - Suricata on the upstream device: the observation joins the second leg, translated, and names the first leg's connection.
+  - Both devices: one attribution backed by two observations.
+  - Outside the delay: no join. A tie: `ambiguous`.
+  - Two distinct names: no `observed`, `observed_names_conflict` recorded, and the inferred method applied.
+- [ ] **PS-AC42. Precedence and conflicts.**
+  - A `lookup_timing` flow that later receives an observation becomes `observed`, its slot is forced (`freshness` shows it stale until refreshed), and the agreement is recorded.
+  - A `resolver_cache_answer` flow with a disagreeing observation gets the observed name, the agreement `disagrees`, and its inferred name stays queryable.
+  - Inserts violating the per-method evidence `CHECK`s fail with SQLSTATE class 23.
+- [ ] **PS-AC43. The API.**
+  - `methods` include `observed` and sum to the named flows.
+  - `client_traffic_detail` records carry `observed` and the agreement field.
+  - `attribution_rate_per_client` carries the per-method and agreement counts and `ObservedCovered`.
+  - Under `no_domains`, every new name-bearing field is withheld and listed in `withheld`, and a string search finds no fixture server name in any answer.
+  - With Suricata absent, stopped, with eve `tls` / `http` off, or with the listener off, each answer carries its named state and the inferred figures. None returns `data: null` without a condition.
+- [ ] **PS-AC44. Retention.**
+  - `flow_record` and `server_name_observation` are purged at their horizons on the fake clock, by chunk then by row.
+  - An observation an attribution names survives the purge.
+- [ ] **PS-AC45. Budgets.** `pre-deployment` prints the new PS15 rows beside their limits and fails above them. `checks` stays within 60 s.
+- [ ] **PS-AC46. Documents.**
+  - The *Vocabulary* terms of PS16 are present.
+  - `docs/widget-api.md` lists `netflow` in the measure table, with the `lower_bound` rule.
+  - The catalogue paragraphs named in PS29 are amended.
+  - The README states the export steps.
+  - F-AC5 holds for every new code, state and reason.
+- [ ] **PS-AC47. The core stays agnostic.**
+  - PS-AC2's grep is extended: the join and attribution code names no IE name and no Suricata field (`sni`, `hostname`, `eve`), and reads contract fields only.
+  - No `.go` file exists under `plugins/`.
+
+**Amendments to existing criteria.**
+- **PS-AC14**, last bullet: append "whose provider also polls that kind".
+- **PS-AC19**: replace "The `netflow` plugin's table" with "The `flow_record` table".
+- **PS-AC22**: append "except the differences §E admits".
+
+## G. Live validation, Rules, Out of scope, Risks
+
+**Live validation: append to push amendment §8.**
+
+- **LV-NJ, the NetFlow join, over 15 minutes, with a v9 export the user configured.** Reported to the maintainer:
+  - the share of records joined, and unmatched by reason, per interface;
+  - the share of connections per direction state;
+  - the distribution of record start minus leg `observed_at`, which confirms the tolerance;
+  - the ratio of `netflow` to logged bytes per interface;
+  - one NAT connection traced by hand from its legs through its records to its figures;
+  - per device, joined plus unmatched octets against the `traffic/interface` deltas, extending LV-NF.
+
+  Every `ambiguous` and `no_logged_leg` sample must be explained, for example a rule that does not log, or the firewall's own traffic.
+- **LV-SN, observed names, over 15 minutes, with eve `tls` / `http` and syslog enabled by the maintainer.** Reported:
+  - the share of eligible connections on covered interfaces named `observed`;
+  - the **agreement rate of each inferred method against `observed`**, the first measurement of the heuristic's accuracy;
+  - every conflict, explained;
+  - the distribution of observation minus flow delay;
+  - an uncovered interface's flows falling back to inferred names.
+
+  LV-PS0 gains a fourth state: eve `tls` / `http` over syslog on.
+- **Real fixtures.** Recorded packets and lines from both windows, rewritten under X1 with `__provenance__`, are added as fixtures before the commit. Until then the fixtures are synthesised from S10 and S13, and say so.
+- **The validation passes when** every LV-NJ and LV-SN difference is named, and the maintainer has accepted the agreement figures and the default of open question 13.
+
+**Rules, *Hard rules*: append.**
+- "A connection's measured volume takes each direction from exactly one Observation Point."
+- "`logged`, `netflow`, `sampled` and `interface_counter` are never summed or substituted."
+- "An observed name is joined, never guessed: no fuzzy device or name matching."
+- "No `.go` file under `plugins/`."
+
+**Out of scope: delete** "Using pushed Suricata `tls` / `http` records for site names (open question 12)." and "Joining NetFlow volumes to logged connections in the core's tables (open question 11)." **Append:**
+- record-time-resolved `netflow` figures in the aggregates (they are served from the `flow_record` dataset only);
+- classifying the ends of unmatched records (open question 15);
+- `netflow` in `pair_volume_observation`;
+- extrapolating sampled records;
+- RFC 5103 bidirectional records;
+- QUIC server names, JA3 / JA4, certificate fields;
+- correlating Suricata alerts with flows (step 6);
+- every part of the step-6 alert feature.
+
+**Risks: append.**
+
+48. **Size, and the delay of the audit.**
+    - This addendum is a cycle's worth of work in its own right: two core kinds, a join derivation, new columns in 24 aggregate tables and the purged part, a new family, an attribution schema and rule change, and widget contracts.
+    - It sits **before the mockup audit C6**, so step 7 is pushed further back again.
+    - The Builder reports an unfinished part rather than thinning it. The join is built and passes its own criteria before the names part.
+49. **Unverified capture semantics.** S10–S12 are unread. If the capture point does not export the form pf logs on a device, the join for that device cannot be built at all.
+50. **Hot-table cost.** The join needs an index on `flow` covering device, key and instant, on the largest table. LV-NJ and PS15 measure the write and read cost.
+51. **Record volume.** NetFlow can exceed the filter-log rate by orders of magnitude, in storage and in join throughput.
+52. **Start-slot attribution** (open question 14). A long transfer's bytes land in the hour it started.
+53. **Port reuse inside pf's timeout under a rule that does not log** can attach a new connection's bytes to an old leg. Continuity bounds it, and LV-NJ measures it.
+54. **Server names are partial.** Encrypted Client Hello, QUIC / HTTP/3 and DoH carry no observable name, so `observed` coverage shrinks as those spread.
+55. **The agreement figures may show the inferred heuristic is weak.** That is a maintainer decision to come, not this cycle's.
+56. **Byte identity exceptions widen B5** by the exact keys §E lists.
+
+## H. ROADMAP.md and README.md
+
+- **`ROADMAP.md`, *Push sources*.** Append: "NetFlow records are joined to the logged connections as a second measure, and Suricata's TLS server names and HTTP hosts, received over syslog, give an `observed` attribution method (Phase C, part 2)."
+- **`README.md`, lines 120–125** ("Suricata therefore contributes alerts and nothing else … says per name which of the two methods inferred it.") are rewritten by the Builder in F.2:
+  - three methods, with `observed` named and its conditions stated;
+  - the eve `tls` / `http` and syslog steps, taken from S13;
+  - the `netflow` measure and its coverage.
+
+  If PS24's gate fails, only the NetFlow part is written.
+
+## I. Existing sentences that become obsolete
+
+Append to push amendment §11. Items 7–11 apply only if PS24's gate passes.
+
+1. Push amendment §9, *Out of scope*: the two bullets on open questions 11 and 12 (deleted, §G).
+2. Push amendment §12: Q11's "Recommendation: (a) … Scope follows (a)." and Q12's "Recommendation: (a) … Scope follows (a) unless the maintainer chooses (b)." Both are superseded by the Decided block and this addendum.
+3. PS12's `netflow` row ("its own kind and its own hypertable"), its `suricata` row ("open question 12"), and PS9's last bullet (all §E).
+4. PS-AC14's last bullet, PS-AC19's "`netflow` plugin's table", and PS-AC22 (§F).
+5. §3's and X2's "PS-AC1 to PS-AC27" (§B).
+6. Push amendment §10: "The sentence 'Site names are inferred from resolver lookups, unconditionally.' stays unless open question 12 is answered (b)." and its proposed `CLAUDE.md` sentence. Both are replaced by §J.
+7. `docs/data-model.md`, *What this schema is not*:
+   - "Every volume figure is therefore a lower bound" (each figure now states its own bound, PS22);
+   - the whole **Site names are inferred.** paragraph, including "so the resolver is still the only source of site names".
+8. `docs/data-model.md`, *`domain_attribution`*:
+   - "constrained by a `CHECK` to `resolver_cache_answer` or `lookup_timing`";
+   - "an attribution cannot exist without the resolver lookup it came from".
+
+   Also the *Vocabulary* row `domain_attribution.method`, and *The aggregate families*: "The figures are **logged bytes** … and never conversation volume" (true of the logged columns only).
+9. `docs/widget-api.md`, lines 139–153 ("every byte, packet and connection figure is a lower bound"; the three-row measure table), and `envelope.go`'s "lower_bound is always true".
+10. `docs/widget-catalogue.md`:
+    - lines 72–77, "Suricata exposes no `dns` event type and its `tls` / `http` events cannot be read back…";
+    - line 682, "the resolver cache's answer or lookup timing";
+    - line 927, "the two summing to the attributed count".
+11. "The sole source of site names" in four places:
+    - `docs/plugins.md`, line 1098;
+    - `plugins/unbound/plugin.json`, `description`;
+    - `internal/store/schema.sql`, line 1255;
+    - `README.md`, lines 120–125.
+12. `CLAUDE.md`, lines 103–111 (§J; applied by the orchestrator).
+
+**Not obsolete, stated for clarity:**
+- "No figure computed from `flow` may be presented as the volume of a conversation." `netflow` figures are not computed from `flow` alone.
+- Survey *Data source 2* (b), "no REST endpoint can read those records". It stays true, and gains a pointer to the push section.
+
+## J. `CLAUDE.md`: the proposed diff, for the orchestrator to apply with the maintainer's agreement
+
+This replaces the CLAUDE.md wording proposed in push amendment §10.
+
+**Variant A, applied if PS24's gate passes:**
+
+```diff
+-It reads five sources through the OPNsense REST API: filter logs, the Suricata
+-`eve.json` event log (optional — IDS alerts only), NetFlow/Insight, DHCP
+-leases, and resolver DNS lookups (the sole source of site names).
+-
+-Suricata was planned as the primary source of site names. The step-1 API
+-survey established that it cannot be: OPNsense exposes no `dns` event type,
+-and `tls` / `http` events, though they can be written to `eve.json`, cannot be
+-read back through the API. See `docs/opnsense-api-survey.md`. Site names are
+-inferred from resolver lookups, unconditionally.
++It reads five sources through the OPNsense REST API: filter logs, the Suricata
++`eve.json` event log (optional — IDS alerts only), NetFlow/Insight, DHCP
++leases, and resolver DNS lookups. It can also receive the firewall's syslog and
++NetFlow exports, configured by the user on OPNsense; `opnview` still writes
++nothing to the firewall. NetFlow volumes, when exported, are joined to the
++logged connections as a second measure (`netflow`), stated on every figure and
++never summed with the logged one.
++
++Suricata was planned as the primary source of site names. The step-1 API
++survey established that the API cannot serve them: OPNsense exposes no `dns`
++event type, and `tls` / `http` events, though they can be written to
++`eve.json`, cannot be read back through the API. They can be received over
++syslog once the user enables them and a remote syslog target. See
++`docs/opnsense-api-survey.md`. Site names are therefore **observed** from
++Suricata's TLS server name and HTTP host where Suricata runs and exports those
++events, and **inferred** from resolver lookups everywhere else. The method is
++recorded on every attribution and exposed with the name.
+```
+
+**Variant B, applied if PS24's gate fails.** Keep the second paragraph unchanged, and replace only the first:
+
+```diff
+-leases, and resolver DNS lookups (the sole source of site names).
++leases, and resolver DNS lookups (the sole source of site names). It can also
++receive the firewall's syslog and NetFlow exports, configured by the user on
++OPNsense; `opnview` still writes nothing to the firewall. NetFlow volumes, when
++exported, are joined to the logged connections as a second measure (`netflow`),
++stated on every figure and never summed with the logged one.
+```
+
+In Variant B, append to the second paragraph: "Nor can they be received over syslog (survey, S13)."
+
+## K. Open questions (additions)
+
+13. **The default `volume_measure`.**
+    - **(a)** `logged`, with `netflow` opt-in per widget.
+    - **(b)** `best_available`: `netflow` when coverage spans the window, else `logged` with a named state.
+    - **(c)** Always `netflow`, with partial coverage stated.
+
+    **Recommendation: (b).** It gives the measured volume whenever that is honest, never mixes the two, and answers byte-identically when NetFlow is absent. Scope follows (b).
+14. **Which slot a connection's measured bytes count in.**
+    - **(a)** The slot of its first leg, the connection start.
+    - **(b)** Each record's start slot.
+
+    **Recommendation: (a).** It keeps count-once, the purged part and the refresh contract unchanged. A long transfer lands in its start hour, and time-resolved throughput is served from the `flow_record` dataset. Scope follows (a).
+15. **How to key unmatched records.**
+    - **(a)** By interface, direction, protocol, IP version and reason only.
+    - **(b)** Also classified to an inside client and outside peer, which would give "unlogged traffic per client" but adds the records to the classification walk.
+
+    **Recommendation: (a) this cycle.** Scope follows (a).
+16. **The kind name `flow_record`.** It is the RFC term, but a reader may confuse it with `flow`, one filter-log record.
+    - **(a)** Keep `flow_record`, with the *Vocabulary* note.
+    - **(b)** Another name, which the maintainer would choose.
+
+    **Recommendation: (a).** The project's rule is the products' own vocabulary. Scope follows (a).
+17. **Transport for syslog-fed core kinds that replace nothing** (`server_name_observation`).
+    - **(a)** TCP only, extending Q9's principle that a core kind needs a transport whose loss is detectable. NetFlow is exempt because its sequence numbers detect loss.
+    - **(b)** UDP accepted too, with observed coverage marked `loss_detectable: false`.
+
+    **Recommendation: (a).** Under UDP loss, "covered but unnamed" would be a false claim in `ObservedCovered`. Scope follows (a).
+
+**Everything else** (the join rule, continuity, per-direction choice, unmatched reasons, precedence, conflicts, API exposure, `lower_bound`) follows from the maintainer's answers and the existing count-once and site-name rules. The tolerances are the Builder's, justified, and confirmed live.
+
+---
+
+**Status of this addendum: PROPOSED, pending the maintainer's approval.**
+
+---
