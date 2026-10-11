@@ -3440,21 +3440,21 @@ CREATE TABLE IF NOT EXISTS push_listener (
 );
 
 -- ---------------------------------------------------------------------------
--- provider_source_segment -- which path delivered a provider's records at each
+-- provider_source_period -- which path delivered a provider's records at each
 -- instant, when one provider of a core kind is fed both by polling and by a push
 -- source that replaces it (PS9 of the push amendment).
 --
--- Source: opnview itself. THE SEGMENTS NEVER OVERLAP: every instant of the
+-- Source: opnview itself. THE PERIODS NEVER OVERLAP: every instant of the
 -- provider's history belongs to at most one, and a record is stored only if its
--- event instant falls in a segment of the path that delivered it; a record of the
+-- event instant falls in a period of the path that delivered it; a record of the
 -- other path is superseded, counted and not stored. That is what keeps a
 -- connection from counting twice in flow, the pairing and every aggregate family
 -- when both paths deliver it: the two paths' record identities differ (a pushed
 -- line carries a header written for the push target, survey S4), so nothing
--- could deduplicate them afterwards. to_at is NULL for the open segment, and
+-- could deduplicate them afterwards. to_at is NULL for the open period, and
 -- from_at is 0 for the first.
 -- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS provider_source_segment (
+CREATE TABLE IF NOT EXISTS provider_source_period (
     provider_id BIGINT NOT NULL REFERENCES provider (id),
     path        TEXT NOT NULL CHECK (path IN ('pull', 'push')),
     from_at     BIGINT NOT NULL CHECK (from_at >= 0 AND from_at < 4102444800),
@@ -3463,9 +3463,9 @@ CREATE TABLE IF NOT EXISTS provider_source_segment (
     PRIMARY KEY (provider_id, from_at)
 );
 
--- At most one open segment per provider.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_source_segment_open
-    ON provider_source_segment (provider_id) WHERE to_at IS NULL;
+-- At most one open period per provider.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_source_period_open
+    ON provider_source_period (provider_id) WHERE to_at IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- Measurement sample — one numeric reading of one subject at one instant.

@@ -21,9 +21,9 @@ import (
 // line carries a header written for the push target, so it cannot reproduce the pulled digest;
 // survey, Push sources, S4), so no identity could deduplicate them once stored. What keeps a
 // connection from counting twice in flow, the pairing and every aggregate family is that EVERY
-// INSTANT BELONGS TO ONE PATH: the provider's history is cut into source segments that never
-// overlap (provider_source_segment), and a record is stored only when its event instant lies in a
-// segment of the path that delivered it. A record of the other path is superseded: counted, not
+// INSTANT BELONGS TO ONE PATH: the provider's history is cut into source periods that never
+// overlap (provider_source_period), and a record is stored only when its event instant lies in a
+// period of the path that delivered it. A record of the other path is superseded: counted, not
 // stored.
 //
 // FROM PULL TO PUSH. When the push entry becomes alive, polling goes on and the pushed records are
@@ -31,18 +31,18 @@ import (
 // page returned, which the firewall may still have been writing. At the end of each pass the boundary
 // is the second before that newest one: every second up to it was read completely by polling. Once
 // the push path has been alive since before the boundary -- its first held record no later than it --
-// the pull segment is closed at the boundary, a push segment opens after it, the held records after
+// the pull period is closed at the boundary, a push period opens after it, the held records after
 // the boundary are stored and those up to it superseded, and polling stops (the pass is skipped:
 // zero calls to the replaced endpoint).
 //
 // FROM PUSH TO PULL. When the push entry stops being alive, the boundary is the last second it
-// delivered a record of; the push segment closes there and polling resumes at once. Pulled records up
+// delivered a record of; the push period closes there and polling resumes at once. Pulled records up
 // to the boundary are superseded, and a gap the pull path then detects is clipped by the push
-// segment: no gap is recorded over an interval whose records were stored.
+// period: no gap is recorded over an interval whose records were stored.
 //
 // RESIDUAL RISK, NAMED (Risk 41). The firewall writes a second's lines over the whole second, and
 // the push path's last second is taken as delivered whole: a line of that second the push path lost
-// in flight, as the connection died, is in neither path's segment. TCP delivers in order, so only the
+// in flight, as the connection died, is in neither path's period. TCP delivers in order, so only the
 // very end of a connection can lose such a line.
 
 // PushedDigestPrefix begins the identity of every record a push path delivered: no pulled digest
@@ -68,12 +68,12 @@ type pushPaths struct {
 
 // pushPath is one provider's.
 type pushPath struct {
-	mutex    sync.Mutex
-	loaded   bool
-	mode     string
-	segments []store.SourceSegment
-	held     []firewalllog.Record
-	// lastPushed is the newest instant the push path delivered in its current segment.
+	mutex   sync.Mutex
+	loaded  bool
+	mode    string
+	periods []store.SourcePeriod
+	held    []firewalllog.Record
+	// lastPushed is the newest instant the push path delivered in its current period.
 	lastPushed int64
 	superseded int64
 	dropped    int64
@@ -103,57 +103,57 @@ func (p *pushPaths) known(kind, key string) (*pushPath, bool) {
 	return path, found
 }
 
-// load reads a provider's segments once. A provider whose open segment is push when opnview starts is
+// load reads a provider's periods once. A provider whose open period is push when opnview starts is
 // returned to pull at the last instant the push path stored: whether the push source is alive is
 // this run's to discover, and polling meanwhile is what loses nothing.
 func (c *Collector) loadPushPath(ctx context.Context, path *pushPath, providerID int64) error {
 	if path.loaded {
 		return nil
 	}
-	segments, err := c.store.SourceSegments(ctx, providerID)
+	periods, err := c.store.SourcePeriods(ctx, providerID)
 	if err != nil {
 		return err
 	}
-	path.segments, path.mode, path.loaded = segments, modePull, true
-	if len(segments) > 0 && segments[len(segments)-1].ToAt == nil && segments[len(segments)-1].Path == store.PathPush {
-		boundary := segments[len(segments)-1].FromAt
+	path.periods, path.mode, path.loaded = periods, modePull, true
+	if len(periods) > 0 && periods[len(periods)-1].ToAt == nil && periods[len(periods)-1].Path == store.PathPush {
+		boundary := periods[len(periods)-1].FromAt
 		if newest, found, err := c.store.NewestPushedFlowObservedAt(ctx, PushedDigestPrefix); err != nil {
 			return err
 		} else if found && newest > boundary {
 			boundary = newest
 		}
-		if err := c.store.OpenSourceSegment(ctx, providerID, store.PathPull, boundary); err != nil {
+		if err := c.store.OpenSourcePeriod(ctx, providerID, store.PathPull, boundary); err != nil {
 			return err
 		}
-		if path.segments, err = c.store.SourceSegments(ctx, providerID); err != nil {
+		if path.periods, err = c.store.SourcePeriods(ctx, providerID); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// pathAt is the path whose segment holds an instant; pull when no segment exists.
+// pathAt is the path whose period holds an instant; pull when no period exists.
 func (p *pushPath) pathAt(at int64) string {
-	for index := len(p.segments) - 1; index >= 0; index-- {
-		segment := p.segments[index]
-		if at >= segment.FromAt && (segment.ToAt == nil || at <= *segment.ToAt) {
-			return segment.Path
+	for index := len(p.periods) - 1; index >= 0; index-- {
+		period := p.periods[index]
+		if at >= period.FromAt && (period.ToAt == nil || at <= *period.ToAt) {
+			return period.Path
 		}
 	}
 	return store.PathPull
 }
 
-// openSegment records a boundary and reloads the segments.
-func (c *Collector) openSegment(ctx context.Context, path *pushPath, providerID int64, opened string,
+// openPeriod records a boundary and reloads the periods.
+func (c *Collector) openPeriod(ctx context.Context, path *pushPath, providerID int64, opened string,
 	boundary int64) error {
-	if err := c.store.OpenSourceSegment(ctx, providerID, opened, boundary); err != nil {
+	if err := c.store.OpenSourcePeriod(ctx, providerID, opened, boundary); err != nil {
 		return err
 	}
-	segments, err := c.store.SourceSegments(ctx, providerID)
+	periods, err := c.store.SourcePeriods(ctx, providerID)
 	if err != nil {
 		return err
 	}
-	path.segments = segments
+	path.periods = periods
 	return nil
 }
 
@@ -180,10 +180,10 @@ func (c *Collector) PushLiveness(ctx context.Context, kind, key string, alive bo
 		path.mode, path.held = modePull, nil
 	case !alive && path.mode == modePush:
 		boundary := path.lastPushed
-		if boundary == 0 && len(path.segments) > 0 {
-			boundary = path.segments[len(path.segments)-1].FromAt
+		if boundary == 0 && len(path.periods) > 0 {
+			boundary = path.periods[len(path.periods)-1].FromAt
 		}
-		if err := c.openSegment(ctx, path, providerID, store.PathPull, boundary); err != nil {
+		if err := c.openPeriod(ctx, path, providerID, store.PathPull, boundary); err != nil {
 			return err
 		}
 		path.mode, path.lastPushed = modePull, 0
@@ -192,7 +192,7 @@ func (c *Collector) PushLiveness(ctx context.Context, kind, key string, alive bo
 }
 
 // ReceivePushedFirewallLog takes the records a push entry delivered for a firewall_log provider. In
-// an overlap they are held; in a push segment they are stored as a pull pass stores its own and
+// an overlap they are held; in a push period they are stored as a pull pass stores its own and
 // derived at once; otherwise they are superseded.
 func (c *Collector) ReceivePushedFirewallLog(ctx context.Context, key string, records []firewalllog.Record) error {
 	providerID, err := c.store.ProviderID(ctx, KindFirewallLog, key)
@@ -290,19 +290,19 @@ func (c *Collector) storeRecords(ctx context.Context, records []firewalllog.Reco
 	return nil
 }
 
-// pullPlan is what the source segments decide of one pull pass.
+// pullPlan is what the source periods decide of one pull pass.
 type pullPlan struct {
-	// skip is set while a push segment is open: the pass reads nothing.
+	// skip is set while a push period is open: the pass reads nothing.
 	skip bool
 	// keep is the pulled records stored; superseded how many are not.
 	keep       []firewalllog.Record
 	superseded int64
-	// pushFloor is the end of the newest closed push segment, which clips a gap the pull path detects.
+	// pushFloor is the end of the newest closed push period, which clips a gap the pull path detects.
 	pushFloor int64
 	path      *pushPath
 }
 
-// planPull applies the segments to a pull pass of a firewall_log provider. A provider never fed by
+// planPull applies the periods to a pull pass of a firewall_log provider. A provider never fed by
 // two paths keeps every record.
 func (c *Collector) planPull(ctx context.Context, key string, providerID int64, records []firewalllog.Record) (
 	pullPlan, error) {
@@ -316,9 +316,9 @@ func (c *Collector) planPull(ctx context.Context, key string, providerID int64, 
 		return pullPlan{}, err
 	}
 	plan := pullPlan{path: path}
-	for _, segment := range path.segments {
-		if segment.Path == store.PathPush && segment.ToAt != nil && *segment.ToAt > plan.pushFloor {
-			plan.pushFloor = *segment.ToAt
+	for _, period := range path.periods {
+		if period.Path == store.PathPush && period.ToAt != nil && *period.ToAt > plan.pushFloor {
+			plan.pushFloor = *period.ToAt
 		}
 	}
 	if path.mode == modePush {
@@ -371,10 +371,10 @@ func (c *Collector) handOver(ctx context.Context, providerID int64, path *pushPa
 	if boundary < firstPushed {
 		return nil, nil
 	}
-	if open := path.segments; len(open) > 0 && open[len(open)-1].ToAt == nil && boundary < open[len(open)-1].FromAt {
+	if open := path.periods; len(open) > 0 && open[len(open)-1].ToAt == nil && boundary < open[len(open)-1].FromAt {
 		return nil, nil
 	}
-	if err := c.openSegment(ctx, path, providerID, store.PathPush, boundary); err != nil {
+	if err := c.openPeriod(ctx, path, providerID, store.PathPush, boundary); err != nil {
 		return nil, err
 	}
 	var accepted []firewalllog.Record
@@ -392,14 +392,14 @@ func (c *Collector) handOver(ctx context.Context, providerID int64, path *pushPa
 	return accepted, nil
 }
 
-// PushPathState is a provider's paths as the API catalogue lists them: its mode, its segments and
+// PushPathState is a provider's paths as the API catalogue lists them: its mode, its periods and
 // its counters.
 type PushPathState struct {
-	Mode       string                `json:"mode"`
-	Segments   []store.SourceSegment `json:"segments"`
-	Held       int                   `json:"held"`
-	Superseded int64                 `json:"superseded"`
-	Dropped    int64                 `json:"dropped"`
+	Mode       string               `json:"mode"`
+	Periods    []store.SourcePeriod `json:"source_periods"`
+	Held       int                  `json:"held"`
+	Superseded int64                `json:"superseded"`
+	Dropped    int64                `json:"dropped"`
 }
 
 // PushPathOf reports a provider's paths; ok is false for one never fed by two paths.
@@ -410,9 +410,9 @@ func (c *Collector) PushPathOf(kind, key string) (PushPathState, bool) {
 	}
 	path.mutex.Lock()
 	defer path.mutex.Unlock()
-	state := PushPathState{Mode: path.mode, Segments: append([]store.SourceSegment{}, path.segments...),
+	state := PushPathState{Mode: path.mode, Periods: append([]store.SourcePeriod{}, path.periods...),
 		Held: len(path.held), Superseded: path.superseded, Dropped: path.dropped}
-	sort.Slice(state.Segments, func(i, j int) bool { return state.Segments[i].FromAt < state.Segments[j].FromAt })
+	sort.Slice(state.Periods, func(i, j int) bool { return state.Periods[i].FromAt < state.Periods[j].FromAt })
 	return state, true
 }
 

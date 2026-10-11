@@ -144,19 +144,19 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 	if total := countRows(t, h.store, "flow"); total != 102 {
 		t.Errorf("%d flows stored for 102 lines", total)
 	}
-	// The segments never overlap and cover the series with no hole.
+	// The periods never overlap and cover the series with no hole.
 	providerID, err := h.store.ProviderID(ctx, KindFirewallLog, ProviderPf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	segments, err := h.store.SourceSegments(ctx, providerID)
+	periods, err := h.store.SourcePeriods(ctx, providerID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(segments) != 3 || segments[0].Path != store.PathPull || *segments[0].ToAt != lineSecond(24) ||
-		segments[1].Path != store.PathPush || segments[1].FromAt != lineSecond(25) || *segments[1].ToAt != lineSecond(40) ||
-		segments[2].Path != store.PathPull || segments[2].FromAt != lineSecond(41) || segments[2].ToAt != nil {
-		t.Errorf("segments %+v", segments)
+	if len(periods) != 3 || periods[0].Path != store.PathPull || *periods[0].ToAt != lineSecond(24) ||
+		periods[1].Path != store.PathPush || periods[1].FromAt != lineSecond(25) || *periods[1].ToAt != lineSecond(40) ||
+		periods[2].Path != store.PathPull || periods[2].FromAt != lineSecond(41) || periods[2].ToAt != nil {
+		t.Errorf("periods %+v", periods)
 	}
 	state, _ := h.collector.PushPathOf(KindFirewallLog, ProviderPf)
 	// Superseded: pushed 15-24 (20) and the late pushed line (1); pulled 30-40 after the handover
@@ -172,10 +172,10 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 	}
 }
 
-// TestAPullGapIsClippedByThePushSegment is PS-AC14's gap clause: when polling resumes after a push
-// segment and cannot reach back to its end, the gap runs from the boundary, never over the interval
+// TestAPullGapIsClippedByThePushPeriod is PS-AC14's gap clause: when polling resumes after a push
+// period and cannot reach back to its end, the gap runs from the boundary, never over the interval
 // the push path stored.
-func TestAPullGapIsClippedByThePushSegment(t *testing.T) {
+func TestAPullGapIsClippedByThePushPeriod(t *testing.T) {
 	t.Parallel()
 	h := arrangeFilterLogCollection(t)
 	ctx := context.Background()

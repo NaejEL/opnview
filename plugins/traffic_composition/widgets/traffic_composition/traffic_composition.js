@@ -11,7 +11,10 @@
 //
 // The current sampled rates ride beside it -- per direction, and per client or interface for those
 // groupings -- the second measure, never summed with the first. traffic/top carries no protocol and
-// no port, so the other groupings have none by member.
+// no port, so the protocol and service-port groupings read theirs from the pf_states plugin's
+// dataset, pf_states.rate, by its catalogue name (host.datasets.latest), when an installation has
+// it; without it, by_member is empty and by_member_source names why. The blocking-reason grouping
+// has none by member.
 
 // DIRECTIONS are the rings split_by = direction draws, in the order a reader asks about them.
 var DIRECTIONS = ["inbound", "outbound", "inter_interface", "to_this_firewall", "from_this_firewall"];
@@ -23,6 +26,64 @@ var ASIDE_KINDS = [
   { key: "dns_list", provider: "dns_lookup", prefix: "dns_" },
   { key: "security_engine", provider: "security_event", prefix: "security_engine" }
 ];
+
+// PF_STATES_RATE is the catalogue name of the pf_states plugin's rate by interface, direction,
+// protocol and destination port (docs/widget-api.md, "Rate by port and protocol").
+var PF_STATES_RATE = "pf_states.rate";
+
+// FORWARDED_ONCE keeps the states of the interface a connection enters: pf keeps a second state, out,
+// on the interface a forwarded connection leaves by, so reading both would count it twice
+// (docs/plugins.md, the pf_states note). The firewall's own traffic, which has an out state only, is
+// therefore not in these rates.
+var FORWARDED_ONCE = [{ column: "direction", op: "eq", value: "in" }];
+
+// pfStateRates is the current rate of each protocol, or each service, from the latest pass of
+// pf_states.rate: {by_member, source}. by_member is one {key, rate} per member, sorted by key, its
+// key the slice key of the grouping; each rate {state, measure, forward_bits_per_second,
+// reverse_bits_per_second, bits_per_second, states, sampled_at, span_seconds, lower_bound}, the
+// sums over the pass's rows of that member -- forward from the connection's initiator, reverse back
+// to it -- current, or stale_sample when its pass is older than twice the seconds it spans. source
+// is {dataset, state, at, condition} as host.datasets.latest answered: a dataset_absent or no_rows
+// state is the named absence, with by_member empty.
+function pfStateRates(host, groupBy) {
+  var latest = host.datasets.latest(PF_STATES_RATE, FORWARDED_ONCE);
+  var source = { dataset: latest.dataset, state: latest.state, at: latest.at, condition: latest.condition };
+  var sums = {};
+  var keys = [];
+  latest.rows.forEach(function (row) {
+    var key = groupBy === "protocol" ? "protocol:" + (row.protocol === null ? "" : row.protocol) :
+      host.flows.serviceKey(row.protocol === "" ? null : row.protocol, row.port);
+    if (sums[key] === undefined) {
+      sums[key] = { forward: 0, reverse: 0, bits: 0, states: 0, span: row.span_seconds };
+      keys.push(key);
+    }
+    var sum = sums[key];
+    sum.forward += row.forward_bits_per_second;
+    sum.reverse += row.reverse_bits_per_second;
+    sum.bits += row.bits_per_second;
+    sum.states += row.states;
+  });
+  keys.sort(function (a, b) { return host.figures.compare(a, b); });
+  var byMember = keys.map(function (key) {
+    var sum = sums[key];
+    var stale = host.request.now - latest.at > 2 * sum.span;
+    return {
+      key: key,
+      rate: {
+        state: stale ? "stale_sample" : "current",
+        measure: "sampled",
+        forward_bits_per_second: sum.forward,
+        reverse_bits_per_second: sum.reverse,
+        bits_per_second: sum.bits,
+        states: sum.states,
+        sampled_at: latest.at,
+        span_seconds: sum.span,
+        lower_bound: true
+      }
+    };
+  });
+  return { by_member: byMember, source: source };
+}
 
 // directionInScope reports whether a client-family direction is in a traffic scope.
 function directionInScope(host, scope, direction) {
@@ -290,6 +351,11 @@ exports.widget = {
       total: composed.total,
       current_rates: host.rates.current(groupBy)
     };
+    if (groupBy === "protocol" || groupBy === "service_port") {
+      var stateRates = pfStateRates(host, groupBy);
+      data.current_rates.by_member = stateRates.by_member;
+      data.current_rates.by_member_source = stateRates.source;
+    }
     if (host.params.text("split_by") === "direction") {
       data.rings = DIRECTIONS.map(function (direction) {
         var split = ring(host, members.filter(function (member) { return member.direction === direction; }),

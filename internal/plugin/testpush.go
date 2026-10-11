@@ -2,8 +2,10 @@ package plugin
 
 import (
 	"context"
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/netip"
 	"strings"
@@ -24,23 +26,45 @@ import (
 // test reads what reached the entry's table or kind. A test never calls its parse function directly
 // to prove ingestion.
 //
-//	t.deliverSyslog(lines, {transport: "tcp", sender: "192.0.2.1"})  each line one syslog message
-//	t.deliverNetflow(packets, {sender: "192.0.2.1"})                  each packet hexadecimal text
+//	t.deliverSyslog(lines, {transport: "tcp", sender: "<address>"})  each line one syslog message
+//	t.deliverNetflow(packets, {sender: "<address>"})                  each packet hexadecimal text
 //	t.pushed("<entry>")       the rows (or core-kind records) the entry stored, instants as epoch seconds
 //	t.pushCounters("<entry>") the entry's counters: admitted, skipped, push_value_invalid, script_calls...
 //	t.listenerCounters("<protocol>", "<transport>") the listener's: header_unparseable, no_subscriber...
 //	t.fixture("<file>")      the body of a recorded fixture of testdata/, such as a list of lines
 //
-// The sender defaults to the documentation address 192.0.2.1 (RFC 5737), which the test world
-// accepts as the firewall's; a test naming another sender is refused unless it said so with
-// t.acceptSender.
+// The sender defaults to the test world's firewall address, which the test world accepts as the
+// firewall's; a test naming another sender is refused unless it said so with t.acceptSender. That
+// address is a fixture, testdata/test_world.json -- a documentation address (RFC 5737) -- and never
+// a literal of the code, which presupposes no address at all.
 
-// defaultTestSender is the test world's firewall address, a documentation address.
-const defaultTestSender = "192.0.2.1"
+// testWorldFixture is the test world's own labelled fixture {__provenance__, body}.
+//
+//go:embed testdata/test_world.json
+var testWorldFixture []byte
+
+// defaultTestSender reads the test world's firewall address from its fixture.
+func defaultTestSender() (netip.Addr, error) {
+	var fixture struct {
+		Body struct {
+			Sender string `json:"sender"`
+		} `json:"body"`
+	}
+	if err := json.Unmarshal(testWorldFixture, &fixture); err != nil {
+		return netip.Addr{}, fmt.Errorf("plugin: reading the test world's fixture: %w", err)
+	}
+	sender, err := netip.ParseAddr(fixture.Body.Sender)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("plugin: the test world's fixture names no sender address: %w", err)
+	}
+	return sender, nil
+}
 
 // pushWorld is a test world's hub and what its sinks captured.
 type pushWorld struct {
-	hub      *push.Hub
+	hub *push.Hub
+	// sender is the address a delivered message comes from when the test names none.
+	sender   netip.Addr
 	accepted []netip.Addr
 	mutex    sync.Mutex
 	captured map[string][]any
@@ -150,7 +174,11 @@ func (w *testWorld) pushWorldOf() (*pushWorld, error) {
 			}
 		}
 	}
-	sender, _ := netip.ParseAddr(defaultTestSender)
+	sender, err := defaultTestSender()
+	if err != nil {
+		return nil, err
+	}
+	world.sender = sender
 	world.accepted = []netip.Addr{sender}
 	world.hub.Senders().Set(world.accepted)
 	w.mutex.Lock()
@@ -191,18 +219,16 @@ func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.Functio
 			if protocol != "netflow" {
 				transport = push.TransportTCP
 			}
-			sender := defaultTestSender
+			address := world.sender
 			if options, isObject := call.Argument(1).Export().(map[string]any); isObject {
 				if value, ok := options["transport"].(string); ok {
 					transport = value
 				}
 				if value, ok := options["sender"].(string); ok {
-					sender = value
+					if address, err = netip.ParseAddr(value); err != nil {
+						throw(vm, "the sender %q is not an address", value)
+					}
 				}
-			}
-			address, err := netip.ParseAddr(sender)
-			if err != nil {
-				throw(vm, "the sender %q is not an address", sender)
 			}
 			payloads, isList := call.Argument(0).Export().([]any)
 			if !isList {

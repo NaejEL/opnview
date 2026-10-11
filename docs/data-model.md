@@ -177,7 +177,7 @@ vocabulary read off an endpoint:
 | the **live cadence** of a live pass, and the **live pass** itself | OPNsense has one cadence per widget of its own dashboard and no notion of a second pass that runs only while someone looks | **live** is the word the mockup's strip and the spec use; the cadence is the declaring plugin's setting (`docs/plugins.md`, *Live pass*) |
 | a **fine sample**, `measurement_sample.live_cadence_seconds IS NOT NULL` | nothing upstream keeps a reading at all, so it has no word for two resolutions of one | **fine** against **baseline**: a sample taken at the live cadence, kept `live_sample_retention_seconds`, beside the samples of the measurement interval |
 | a **push source**, and a push declaration's `push` entry | OPNsense names a remote syslog **target** (*System > Settings > Logging*, *Remote*) and a NetFlow **destination**, which are the sending side; it has no word for the receiving side's subscription | **push** is the roadmap's own word for data the firewall sends rather than data `opnview` asks for (`docs/plugins.md`, *Push sources*); the manifest key is `push`, because `stream` and `provider` already mean something else there |
-| a **source segment**, `provider_source_segment` | nothing upstream knows that one provider's records reached `opnview` by two paths | an interval of a provider's history and the one path -- `pull` or `push` -- whose records it keeps; segments never overlap, which is what keeps a record delivered by both paths from counting twice |
+| a **source period**, `provider_source_period` | nothing upstream knows that one provider's records reached `opnview` by two paths: no product names the span during which one delivery path (pull or push) delivers a provider's records | `opnview`'s own term, chosen by the maintainer (11 October 2026): an interval of a provider's history and the one path -- `pull` or `push` -- whose records it keeps. **Period** because it reads "from one instant to another"; it was first called a *source segment*, a word the schema no longer carries since `segment` was retired (below). Periods never overlap, which is what keeps a record delivered by both paths from counting twice |
 | a push entry's **liveness** (`liveness_seconds`) | OPNsense sends and knows nothing of whether anybody receives | a push entry is **alive** while messages it accepts arrived within its span; the word is the ordinary one for that test |
 | `push_listener` | nothing upstream records that `opnview` was listening | the last instant each push listener was heard alive, so the interval it was not is a gap |
 | a **flow record**, `flow_record` | NetFlow v9's and IPFIX's **Flow Record** (RFC 3954, RFC 7011) | `flow_record`, kept although a reader may take it for a `flow` (Q16 (a)): **a `flow` is one filter-log record, a `flow_record` one record an exporter sent**, and the two are different things joined by the NetFlow join |
@@ -293,7 +293,7 @@ plugin_state
 plugin_table
 provider
 provider_rule_info
-provider_source_segment
+provider_source_period
 purged_flow_hour
 push_listener
 resource_record_observation
@@ -419,7 +419,7 @@ plugin_state
 plugin_table
 provider
 provider_rule_info
-provider_source_segment
+provider_source_period
 push_listener
 resource_record_read
 retention_purge
@@ -456,7 +456,7 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `plugin_table` | one row per table a plugin declares |
 | `plugin_aside_table` | one row per plugin table set aside by a schema change; one with a time column is purged by its recorded retention and dropped, with its row, when empty |
 | `capture_configuration`, `capture_interface` | one row per run of reads that found the same NetFlow capture configuration, and its captured interfaces: a new row only when the configuration changes, a handful a year; purged by its last read, the newest kept |
-| `provider_source_segment` | one row per handover of a provider between polling and a push path, which happens when a push source starts or stops |
+| `provider_source_period` | one row per handover of a provider between polling and a push path, which happens when a push source starts or stops |
 | `push_listener` | one row per push protocol and transport, a handful in all |
 
 `client` is classified as growing, not bounded: an address reissued to another
@@ -2948,22 +2948,22 @@ which are the installation's start parameters (`docs/plugins.md`, *Push sources*
 
 **Retention:** never purged; a handful of rows. **Indexes:** the primary key.
 
-### `provider_source_segment` — which path delivered a provider's records at each instant
+### `provider_source_period` — which path delivered a provider's records at each instant
 
 A provider of a core kind may deliver its records by polling **and** through a push entry that
 replaces the polled endpoint (PS9 of the push amendment to `specs/SPEC-backend-completion-plugins.md`).
 The two paths' identities cannot meet -- a pushed record's `flow.log_digest` begins `push:` -- so what
 keeps a record both delivered from counting twice is that every instant belongs to one path: a
-segment is `(provider_id, path, from_at, to_at)`, `path` `pull` or `push`, `to_at` NULL for the open one;
-segments never overlap, each boundary closes one at a second and opens the next one second later; a
-record is stored only when its instant lies in a segment of the path that delivered it, and is
+period is `(provider_id, path, from_at, to_at)`, `path` `pull` or `push`, `to_at` NULL for the open one;
+periods never overlap, each boundary closes one at a second and opens the next one second later; a
+record is stored only when its instant lies in a period of the path that delivered it, and is
 otherwise **superseded** -- counted, not stored. `internal/collect` (`pushpaths.go`) decides the
 boundaries: from polling to push once both paths delivered an overlap, at the last second polling read
 whole; from push to polling at the last second the push path delivered. A gap polling detects is clipped
-by the push segment before it.
+by the push period before it.
 
 **Retention:** never purged; one row per handover. **Indexes:** the primary key, and a unique partial
-index holding at most one open segment per provider.
+index holding at most one open period per provider.
 
 ### NetFlow volumes — `flow_record`, the capture configuration, the join and the measured volume
 

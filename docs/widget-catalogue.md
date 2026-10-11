@@ -758,10 +758,18 @@ and the `_30d` twins. The `service_port` grouping may additionally read
 `.day_start_at`, **labelled approximate** for the reason in Part 4. The Other
 slice names the members it folds (`other.slices`, and each ring's), each the
 slice it would have been, from the same figures (row E8 of `docs/widget-api.md`,
-*Coverage of the mockup*). The current rate by protocol or port is not this
-type's: `traffic/top` carries neither, and the `pf_states` plugin's dataset
-`pf_states.rate` serves it (row 4). Sources: *Data source 1 — Filter logs*;
-per-pair volume, *Data source 3 — NetFlow / Insight*.
+*Coverage of the mockup*). The current rate by protocol or by service is read
+from the `pf_states` plugin's dataset `pf_states.rate` (`sampled_at`,
+`span_seconds`, `direction`, `protocol`, `port`, `forward_bits_per_second`,
+`reverse_bits_per_second`, `bits_per_second`, `states`), its latest pass,
+`direction` `in` only so a forwarded connection counts once, by its catalogue
+name (`host.datasets.latest`), since `traffic/top` carries neither: it fills
+`current_rates.by_member` for those two groupings, and
+`current_rates.by_member_source` names the dataset and its state. Without that
+dataset, or with no pass within its horizon, the state is `dataset_absent` or
+`no_rows` and `by_member` is empty, never a rate of 0 (row 4). Sources: *Data
+source 1 — Filter logs*; per-pair volume, *Data source 3 — NetFlow / Insight*;
+the current rate by protocol or service, the pf state table (`pf_states`).
 
 **Parameters** — `period` (`1h` | `24h` | `7d` | `30d`); `group_by`
 (`client` | `interface` | `protocol` | `service_port` | `blocking_reason`);

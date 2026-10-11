@@ -118,7 +118,7 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 // has already removed is not stored again: store.InsertFlow refuses it inside the
 // insert itself, so a purge committing at any moment of this loop is seen.
 //
-// THE SOURCE SEGMENTS DECIDE WHICH RECORDS ARE KEPT (plan, pushpaths.go): a record of an instant a
+// THE SOURCE PERIODS DECIDE WHICH RECORDS ARE KEPT (plan, pushpaths.go): a record of an instant a
 // push path covers is superseded, and a gap is clipped by what the push path stored.
 func (c *Collector) storeFirewallLog(ctx context.Context, records []firewalllog.Record, plan pullPlan,
 	snapshot Discovery, now, providerID, newestStored int64, hasStored bool, stored *derivation) error {
@@ -150,7 +150,7 @@ func (c *Collector) storeFirewallLog(ctx context.Context, records []firewalllog.
 		stored.widenPairing(record.ObservedAt, record.ObservedAt)
 	}
 
-	// The gap test, clipped by the newest push segment: an interval whose records the push path
+	// The gap test, clipped by the newest push period: an interval whose records the push path
 	// stored is never a gap.
 	if plan.pushFloor > newestStored {
 		newestStored, hasStored = plan.pushFloor, true

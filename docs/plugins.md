@@ -995,6 +995,40 @@ live-interest lease.
 | `clientPeers(id)` | The same for one client: an object from each peer address it was read with to its rate; empty when it has none. |
 | `none()` | The named absence of a rate, what a subject with no current sample reads. |
 
+#### `host.datasets`
+
+Another plugin's dataset, read by its data-catalogue name (`<plugin>.<table>`, or a core dataset's
+own name; `docs/widget-api.md`, *Data catalogue*), without SQL. The read goes through the catalogue's
+own filter grammar and compiler -- the same as `GET /api/datasets/<name>/query` -- so it names nothing a
+catalogue query could not name and binds every value. A widget's manifest declares nothing for it:
+the dataset is found when the widget asks, and an installation without it answers a named absence.
+
+| Function | What it answers |
+|---|---|
+| `latest(name, filter)` | The dataset's **latest rows**: `{dataset, state, at, condition, rows, truncated, withheld}`. Among the rows `filter` keeps, within the dataset's retention horizon, the rows whose time column holds the greatest instant -- every row of the most recent instant, and nothing older; a sample dataset written by a pass answers that pass's rows whole. A dataset with no time column has no instant: every row `filter` keeps, `at` `null`. `filter` is a list of `{column, op, value}`, exactly the catalogue's `filters` (the same operators and type rules); `null` or absent keeps every row. `rows` are objects keyed by column name, values as the catalogue reads them (an instant as epoch seconds, a boolean, an address and a MAC address as text), at most 1 000, `truncated` true when more matched. `condition` is the condition of the dataset's provider kind, `null` for an absent dataset. |
+
+`state` is a named state, never an error that breaks the widget:
+
+| `state` | Meaning |
+|---|---|
+| `current` | rows were found; `at` is their instant |
+| `no_rows` | the dataset is there, and nothing `filter` keeps lies within its horizon |
+| `dataset_absent` | the catalogue holds no dataset of that name -- the plugin declaring it is not installed, or was refused; `rows` is empty and `at` `null` |
+| `withheld_by_aggregate_mode` | `aggregate_mode` is `no_domains` and `filter` reads a column that carries a domain name: nothing is read |
+
+Under `no_domains` a column carrying a domain name is left out of every row and named in `withheld`. A
+filter the catalogue refuses -- a column the dataset does not declare, an operator its type does not
+admit, a value of the wrong type -- is the script's mistake: a `TypeError` naming the refusal's code and
+path, which the script may catch.
+
+```js
+// The rate by protocol, from the pf_states plugin when the installation has it.
+var latest = host.datasets.latest("pf_states.rate", [{ column: "direction", op: "eq", value: "in" }]);
+if (latest.state !== "current") {
+  // dataset_absent, no_rows or withheld_by_aggregate_mode: show the absence, never a rate of 0.
+}
+```
+
 #### `host.peers`
 
 The outside peers of the rolling window and where the geolocation placed them. A peer the
@@ -2043,20 +2077,20 @@ or nested -- the entry needs a `replaces`.
 **Nothing is counted twice.** The two paths' records cannot share an identity -- a pushed line carries
 a header written for the push target, and its identity is `opnview`'s own, `push:` and a digest of the
 pushed message -- so instead every instant belongs to one path: the provider's history is cut into
-**source segments** that never overlap, and a record is stored only if its instant lies in a segment
+**source periods** that never overlap, and a record is stored only if its instant lies in a period
 of the path that delivered it. A record of the other path is **superseded**: counted, not stored.
 
 - **From polling to push.** When the entry becomes alive, polling goes on while the pushed records are
   held; a pass in that overlap leaves out the newest second its page returned. The boundary is the
   second before it, once the push path has been alive since before the boundary: polling closes its
-  segment there, the push segment opens after it, the held records after the boundary are stored and
+  period there, the push period opens after it, the held records after the boundary are stored and
   the rest superseded, and polling stops -- the pass makes no call at all, and its availability says
   the push source answers.
-- **From push to polling.** When the entry stops being alive, its segment closes at the last second it
+- **From push to polling.** When the entry stops being alive, its period closes at the last second it
   delivered, and polling resumes at once; pulled records up to the boundary are superseded, and a gap
   polling then detects starts at the boundary, never over what the push path stored.
 
-The segments, the mode and the superseded count are in the entry's catalogue entry. A built-in entry
+The periods, the mode and the superseded count are in the entry's catalogue entry. A built-in entry
 declares `replaces` only when a parity test passes: the same recorded lines, pulled and pushed, give
 records equal in every field of the contract but the identity.
 

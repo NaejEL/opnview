@@ -70,57 +70,57 @@ func (s *Store) RecordListenerAlive(ctx context.Context, protocol, transport str
 	return nil
 }
 
-// SourceSegment is one interval of a provider's history and the path that delivered it (PS9).
-type SourceSegment struct {
+// SourcePeriod is one interval of a provider's history and the path that delivered it (PS9).
+type SourcePeriod struct {
 	Path   string `json:"path"`
 	FromAt int64  `json:"from_at"`
-	// ToAt is nil for the open segment.
+	// ToAt is nil for the open period.
 	ToAt *int64 `json:"to_at"`
 }
 
-// The paths of a source segment.
+// The paths of a source period.
 const (
 	PathPull = "pull"
 	PathPush = "push"
 )
 
-// SourceSegments returns a provider's source segments, oldest first.
-func (s *Store) SourceSegments(ctx context.Context, providerID int64) ([]SourceSegment, error) {
+// SourcePeriods returns a provider's source periods, oldest first.
+func (s *Store) SourcePeriods(ctx context.Context, providerID int64) ([]SourcePeriod, error) {
 	rows, err := s.db.QueryContext(ctx,
-		"SELECT path, from_at, to_at FROM provider_source_segment WHERE provider_id = ? ORDER BY from_at", providerID)
+		"SELECT path, from_at, to_at FROM provider_source_period WHERE provider_id = ? ORDER BY from_at", providerID)
 	if err != nil {
-		return nil, fmt.Errorf("store: reading the source segments: %w", err)
+		return nil, fmt.Errorf("store: reading the source periods: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
-	var segments []SourceSegment
+	var periods []SourcePeriod
 	for rows.Next() {
-		var segment SourceSegment
+		var period SourcePeriod
 		var to sql.NullInt64
-		if err := rows.Scan(&segment.Path, &segment.FromAt, &to); err != nil {
-			return nil, fmt.Errorf("store: reading the source segments: %w", err)
+		if err := rows.Scan(&period.Path, &period.FromAt, &to); err != nil {
+			return nil, fmt.Errorf("store: reading the source periods: %w", err)
 		}
 		if to.Valid {
 			end := to.Int64
-			segment.ToAt = &end
+			period.ToAt = &end
 		}
-		segments = append(segments, segment)
+		periods = append(periods, period)
 	}
-	return segments, rows.Err()
+	return periods, rows.Err()
 }
 
-// OpenSourceSegment closes a provider's open segment at boundary and opens one of path from
-// boundary + 1, in one transaction; a provider with no segment yet gets a first one of the other
+// OpenSourcePeriod closes a provider's open period at boundary and opens one of path from
+// boundary + 1, in one transaction; a provider with no period yet gets a first one of the other
 // path from 0 to boundary. The two never overlap.
-func (s *Store) OpenSourceSegment(ctx context.Context, providerID int64, path string, boundary int64) error {
+func (s *Store) OpenSourcePeriod(ctx context.Context, providerID int64, path string, boundary int64) error {
 	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("store: opening a source segment: %w", err)
+		return fmt.Errorf("store: opening a source period: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
 	var count int64
-	if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM provider_source_segment WHERE provider_id = ?",
+	if err := transaction.QueryRowContext(ctx, "SELECT count(*) FROM provider_source_period WHERE provider_id = ?",
 		providerID).Scan(&count); err != nil {
-		return fmt.Errorf("store: opening a source segment: %w", err)
+		return fmt.Errorf("store: opening a source period: %w", err)
 	}
 	previous := PathPull
 	if path == PathPull {
@@ -128,22 +128,22 @@ func (s *Store) OpenSourceSegment(ctx context.Context, providerID int64, path st
 	}
 	if count == 0 {
 		if _, err := transaction.ExecContext(ctx,
-			"INSERT INTO provider_source_segment (provider_id, path, from_at, to_at) VALUES (?, ?, 0, ?)",
+			"INSERT INTO provider_source_period (provider_id, path, from_at, to_at) VALUES (?, ?, 0, ?)",
 			providerID, previous, boundary); err != nil {
-			return fmt.Errorf("store: opening a source segment: %w", err)
+			return fmt.Errorf("store: opening a source period: %w", err)
 		}
 	} else if _, err := transaction.ExecContext(ctx,
-		"UPDATE provider_source_segment SET to_at = greatest(from_at, ?) WHERE provider_id = ? AND to_at IS NULL",
+		"UPDATE provider_source_period SET to_at = greatest(from_at, ?) WHERE provider_id = ? AND to_at IS NULL",
 		boundary, providerID); err != nil {
-		return fmt.Errorf("store: closing a source segment: %w", err)
+		return fmt.Errorf("store: closing a source period: %w", err)
 	}
 	if _, err := transaction.ExecContext(ctx,
-		"INSERT INTO provider_source_segment (provider_id, path, from_at) VALUES (?, ?, ?)",
+		"INSERT INTO provider_source_period (provider_id, path, from_at) VALUES (?, ?, ?)",
 		providerID, path, boundary+1); err != nil {
-		return fmt.Errorf("store: opening a source segment: %w", err)
+		return fmt.Errorf("store: opening a source period: %w", err)
 	}
 	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("store: opening a source segment: %w", err)
+		return fmt.Errorf("store: opening a source period: %w", err)
 	}
 	return nil
 }

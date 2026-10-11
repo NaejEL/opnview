@@ -151,35 +151,35 @@ func TestAPushGapSeenAgainIsExtended(t *testing.T) {
 	}
 }
 
-// TestSourceSegmentsNeverOverlap is part of PS-AC14: each boundary closes one segment and opens the
+// TestSourcePeriodsNeverOverlap is part of PS-AC14: each boundary closes one period and opens the
 // next one second later.
-func TestSourceSegmentsNeverOverlap(t *testing.T) {
+func TestSourcePeriodsNeverOverlap(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
-	providerID, _, err := database.EnsureProvider(ctx, "example_segment_kind", "example", "Example", 1_790_467_200)
+	providerID, _, err := database.EnsureProvider(ctx, "example_source_period_kind", "example", "Example", 1_790_467_200)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.OpenSourceSegment(ctx, providerID, PathPush, 1_790_467_100); err != nil {
+	if err := database.OpenSourcePeriod(ctx, providerID, PathPush, 1_790_467_100); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.OpenSourceSegment(ctx, providerID, PathPull, 1_790_467_150); err != nil {
+	if err := database.OpenSourcePeriod(ctx, providerID, PathPull, 1_790_467_150); err != nil {
 		t.Fatal(err)
 	}
-	segments, err := database.SourceSegments(ctx, providerID)
+	periods, err := database.SourcePeriods(ctx, providerID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(segments) != 3 || segments[0].Path != PathPull || segments[1].Path != PathPush || segments[2].Path != PathPull {
-		t.Fatalf("segments %+v", segments)
+	if len(periods) != 3 || periods[0].Path != PathPull || periods[1].Path != PathPush || periods[2].Path != PathPull {
+		t.Fatalf("periods %+v", periods)
 	}
-	for index := 1; index < len(segments); index++ {
-		if segments[index-1].ToAt == nil || *segments[index-1].ToAt+1 != segments[index].FromAt {
-			t.Errorf("segment %d does not end one second before the next begins: %+v", index-1, segments)
+	for index := 1; index < len(periods); index++ {
+		if periods[index-1].ToAt == nil || *periods[index-1].ToAt+1 != periods[index].FromAt {
+			t.Errorf("period %d does not end one second before the next begins: %+v", index-1, periods)
 		}
 	}
-	if segments[2].ToAt != nil {
-		t.Error("the last segment is not open")
+	if periods[2].ToAt != nil {
+		t.Error("the last period is not open")
 	}
 }

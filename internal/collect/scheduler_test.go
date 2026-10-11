@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/reconciledstate"
 	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/plugin"
 )
 
 // The scheduler tests.
@@ -23,9 +25,9 @@ import (
 
 // TestEveryLoopRunsAtItsConfiguredCadence pins the wiring: every collector, runtime
 // discovery, the probe round, the retention purge and the resolver's cache and local-data
-// reads, each at the interval its own justification carries. The loops are the keys of
-// the map below and nowhere else, so adding one is adding a key, and this comment and the
-// test's name state no count to fall out of date.
+// reads, each at the interval its own justification carries. The core loops are the keys of
+// the map below and nowhere else, so adding one is adding a key; the plugin loops are derived
+// from the loaded built-ins. This comment and the test's name state no count to fall out of date.
 func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 	t.Parallel()
 	harness := newProbeHarness(t)
@@ -51,16 +53,29 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 		// live_cadence_seconds, 10 s by default (C3 of the backend-completion cycle). A tick with no
 		// live-interest lease does nothing.
 		"live sampling": 10 * time.Second,
-		// The unbound plugin's push-fed provider of its query log, whose pass reads the push hub and
-		// never the firewall, refreshing its availability every minute (docs/plugins.md, "Push sources").
-		"unbound_query_log unbound": time.Minute,
-		// The pf_states plugin's provider of the rate by protocol and port, at its declared 60 s: each
-		// pass reads the pf state table once and stores the difference from the previous read (row 4 of
-		// docs/widget-api.md, "Coverage of the mockup").
-		"pf_state_rate pf_states": time.Minute,
 		// The active flow_record provider's capture configuration, every minute by default: the longest a
 		// changed configuration goes unseen (PS18 of the NetFlow join amendment).
 		"NetFlow capture configuration": settings.FlowRecordInterval,
+	}
+	// The plugin loops are not listed by hand: one per provider of the loaded built-ins that states a
+	// cadence, named "<kind> <provider key>", at the cadence its manifest declares. A built-in plugin
+	// added as a directory gets its loop checked here without an edit to this file.
+	pluginLoops := 0
+	for key, registration := range plugin.Builtins().ReconciledState.Sources() {
+		if registration.Cadence > 0 {
+			wanted[reconciledstate.Kind+" "+key] = registration.Cadence
+			pluginLoops++
+		}
+	}
+	for _, registration := range plugin.Builtins().PluginKindRegistrations() {
+		if registration.Cadence > 0 {
+			wanted[registration.Kind+" "+registration.Key] = registration.Cadence
+			pluginLoops++
+		}
+	}
+	if pluginLoops == 0 {
+		t.Fatal("no built-in provider states a cadence, so the plugin loops this test derives are none " +
+			"and it no longer checks them")
 	}
 	if len(tasks) != len(wanted) {
 		t.Fatalf("the scheduler has %d loops, want %d", len(tasks), len(wanted))

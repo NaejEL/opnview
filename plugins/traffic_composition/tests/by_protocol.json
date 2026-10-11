@@ -189,7 +189,13 @@
         "cadence_seconds": null,
         "lower_bound": true
       },
-      "by_member": []
+      "by_member": [],
+      "by_member_source": {
+        "dataset": "pf_states.rate",
+        "state": "dataset_absent",
+        "at": null,
+        "condition": null
+      }
     }
   }
 }
