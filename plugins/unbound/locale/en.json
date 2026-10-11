@@ -3,6 +3,9 @@
   "strings": {
     "provider.dns_lookup.unbound": "Unbound",
     "provider.resolver_cache.unbound": "Unbound cache",
-    "provider.resolver_local_data.unbound": "Unbound local data"
+    "provider.resolver_local_data.unbound": "Unbound local data",
+    "provider.unbound_query_log.unbound": "Unbound query log over syslog",
+    "collection.kind.unbound_query_log": "Resolver query log (syslog)",
+    "plugin.unbound.dataset.query_log": "Unbound queries and replies, received over syslog"
   }
 }

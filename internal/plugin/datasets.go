@@ -5,6 +5,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/dataset"
+	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/store"
 )
 
@@ -23,11 +24,26 @@ func (l *Loaded) Datasets() []dataset.Declaration {
 }
 
 // pluginDataset is the dataset of one of a plugin's tables.
+//
+// A TABLE A PUSH ENTRY WRITES (PS13 of the push amendment) is an event dataset unless it says
+// otherwise, its columns take the role their type implies when they state none -- an instant is
+// time, a number a measure, anything else a dimension -- and it carries loss_detectable: true only
+// when every entry writing into it accepts nothing but transports whose loss is detected.
 func pluginDataset(plugin string, declaration TableDeclaration, table store.PluginTable,
-	providers []ProviderInfo) (dataset.Declaration, error) {
+	providers []ProviderInfo, pushes []*pushBinding) (dataset.Declaration, error) {
+	var writers []*pushBinding
+	for _, binding := range pushes {
+		if binding.table.Table == table.Table {
+			writers = append(writers, binding)
+		}
+	}
 	columns := make([]dataset.Column, 0, len(declaration.Columns))
 	for _, column := range declaration.Columns {
-		columns = append(columns, dataset.Column{Name: column.Name, Type: column.Type, Role: column.Role,
+		role := column.Role
+		if role == "" && len(writers) > 0 && column.Name != table.TimeColumn {
+			role = push.Role(column.Type)
+		}
+		columns = append(columns, dataset.Column{Name: column.Name, Type: column.Type, Role: role,
 			Unit: column.Unit, Nullable: column.Nullable, CarriesDomain: column.CarriesDomain,
 			Aggregations: column.Aggregations})
 	}
@@ -35,8 +51,21 @@ func pluginDataset(plugin string, declaration TableDeclaration, table store.Plug
 	if table.TimeColumn != "" {
 		retention = &dataset.Retention{Column: table.TimeColumn, Seconds: table.RetentionSeconds}
 	}
-	return dataset.PluginDataset(plugin, table.Table, quoteIdentifier(store.PluginSchema(plugin))+"."+
-		quoteIdentifier(table.Table), declaration.Nature, freshnessOf(plugin, providers), retention, columns)
+	nature := declaration.Nature
+	if nature == "" && len(writers) > 0 {
+		nature = dataset.NatureEvent
+	}
+	built, err := dataset.PluginDataset(plugin, table.Table, quoteIdentifier(store.PluginSchema(plugin))+"."+
+		quoteIdentifier(table.Table), nature, freshnessOf(plugin, providers), retention, columns)
+	if err != nil || len(writers) == 0 {
+		return built, err
+	}
+	detectable := true
+	for _, writer := range writers {
+		detectable = detectable && writer.lossDetectable()
+	}
+	built.LossDetectable = &detectable
+	return built, nil
 }
 
 // freshnessOf is the provider that dates a plugin's datasets: its first provider of a kind of its

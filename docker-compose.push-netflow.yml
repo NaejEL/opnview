@@ -1,0 +1,18 @@
+# opnview -- receiving NetFlow over UDP: an override of docker-compose.serve.yml, added with a
+# further -f (README, "Push sources"). It publishes one port, host port equal to
+# container port, with its protocol, and hands it to the service, which then
+# listens for NetFlow over UDP on it.
+#
+#     OPNVIEW_LISTEN=8080 OPNVIEW_NETFLOW_UDP=<port> docker compose -f docker-compose.serve.yml #         -f docker-compose.push-netflow.yml run --rm --service-ports serve
+#
+# OPNVIEW_NETFLOW_UDP has NO DEFAULT, for the reason OPNVIEW_LISTEN has none: a port is
+# one installation's configuration. The container runs unprivileged, so choose a
+# port of 1024 or above. Only the firewall's own addresses are accepted as
+# senders; a Docker setup that rewrites the source address of published udp
+# traffic makes every message refused, which the API catalogue lists.
+services:
+  serve:
+    ports:
+      - "${OPNVIEW_NETFLOW_UDP:?set OPNVIEW_NETFLOW_UDP to the port to receive NetFlow over UDP on}:${OPNVIEW_NETFLOW_UDP}/udp"
+    environment:
+      OPNVIEW_PUSH_NETFLOW_UDP: "${OPNVIEW_NETFLOW_UDP}"

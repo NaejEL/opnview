@@ -1329,6 +1329,272 @@ the widget nor the collector may treat that as a fault.
 device names, addresses or counts.** The probes that produced these findings
 were run by the maintainer and their output was never committed.
 
+## Push sources: remote syslog and NetFlow export, read from source for push sources
+
+Read from source on 11 October 2026 for PS1 of `specs/SPEC-backend-completion-plugins.md` (Phase C,
+part 2) and the rows S10–S14 of its addendum. `opnsense/core` and `opnsense/plugins` are read at tag
+`26.7.3`; the kernel at `opnsense/src`, branch `stable/26.7`, the FreeBSD tree the 26.7 series is built
+from; syslog-ng's behaviour from its own documentation; Unbound's from release `1.26.1`, the version
+`opnsense/ports` builds. **Nothing here is measured on a live firewall yet**: LV-PS0, LV-SY and LV-NF
+do that. A fact the source does not establish is marked `UNVERIFIED:`, and nothing is built on it.
+
+`opnview` never configures any of this. Every step below is the user's, on the firewall's own web
+interface; `opnview` only reads, through the API, whether it has been done (S9).
+
+| # | Finding | Status |
+|---|---|---|
+| S1 | Remote syslog targets exist, with transport, program, level, facility, host, port and an RFC 5424 option | verified |
+| S2 | Without the RFC 5424 option a target sends RFC 3164; with it, RFC 5424; over TCP, newline framing, never octet counting | verified (syslog-ng documentation) |
+| S3 | `filterlog`, `suricata`, `kea-dhcp4`/`kea-dhcp6` are selectable programs; `unbound` logs as `unbound` but is not in the list | verified |
+| S4 | The `filterlog` CSV and its variants by IP version and protocol | verified |
+| S5 | NetFlow v5 or v9 only, no IPFIX; several destinations; per-interface capture with an egress-only option; active and inactive timeouts | verified |
+| S6 | An exported index is the kernel's interface index; `interfaces_info` with details maps it to a device | verified |
+| S7 | Suricata can send **alerts only** to syslog, as eve JSON, program `suricata` | verified |
+| S8 | Unbound query and reply logging can be enabled in the web interface; a reply line has no verdict and no blocklist | verified |
+| S9 | Read-only endpoints show whether a syslog target or a NetFlow destination is configured | verified |
+| S10 | The v9 template `ng_netflow` emits, and its time resolution | verified |
+| S11 | Ingress is captured before pf, egress after it; **the observing interface and the direction are not exported** | verified, with one `UNVERIFIED:` sub-fact |
+| S12 | pf's default state timeouts; the values in force are not readable | partly `UNVERIFIED:` |
+| S13 | **Suricata `tls` and `http` eve events cannot be sent to syslog** | verified (negative) |
+| S14 | How Suricata reports `in_iface` | `UNVERIFIED:` (not read: S13 makes it moot) |
+
+### S1. Remote syslog targets
+
+*System > Settings > Logging*, tab *Remote* (`Syslog/Menu/Menu.xml`, `views/OPNsense/Syslog/index.volt`).
+A target is an entry of `destinations.destination` in the `OPNsense.Syslog` model
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Syslog/Syslog.xml):
+
+- `transport`: `udp4`, `tcp4`, `udp6`, `tcp6`, `tls4`, `tls6`;
+- `program`: several, from the list `syslog list applications` returns (S3); empty sends every program;
+- `level` and `facility`: several each, empty for all;
+- `hostname` (required), `port` (required, default 514), `certificate` (TLS only);
+- `rfc5424`: a boolean, default off;
+- `enabled`, `description`.
+
+Any port is accepted, so a port of 1024 or more can be chosen for an unprivileged receiver.
+
+### S2. What a target sends
+
+The template renders each enabled target as a syslog-ng `network()` destination, with
+`transport("udp"|"tcp"|"tls")`, `port`, `ip-protocol(4|6)`, and `flags(syslog-protocol)` only when the
+RFC 5424 option is on
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/templates/OPNsense/Syslog/syslog-ng-destinations.conf).
+syslog-ng documents what that driver sends:
+
+- `network()` sends "syslog messages conforming to RFC-3164"
+  (https://github.com/syslog-ng/syslog-ng.github.io/blob/master/doc/_admin-guide/070_Destinations/150_Network/README.md);
+- `flags(syslog-protocol)` formats "according to ... RFC-5424, but without the frame header", while
+  the separate `syslog()` driver, which OPNsense does not use, adds the frame header
+  (https://github.com/syslog-ng/syslog-ng.github.io/blob/master/_includes/doc/admin-guide/options/destination-flags.md).
+  **Over TCP a target therefore uses RFC 6587's non-transparent (newline) framing, never octet
+  counting.** `opnview` accepts both anyway, per connection.
+- The header's hostname is present: the global options set `keep_hostname(yes)` and `use_fqdn(yes)`
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/templates/OPNsense/Syslog/syslog-ng.conf.in).
+- Timestamps: an RFC 3164 header carries local time with no year and no zone, to the second. An
+  RFC 5424 header carries an ISO 8601 instant with the sender's offset (`send-time-zone()` defaults to
+  the local zone); `frac-digits()` defaults to 0, so no fraction is sent
+  (https://github.com/syslog-ng/syslog-ng.github.io/blob/master/_includes/doc/admin-guide/options/frac-digits.md).
+
+**Consequence.** The year-less normaliser and the firewall's measured offset apply to RFC 3164
+(PS5); the RFC 5424 option is advised because its instants are absolute. TCP is advised because UDP
+carries no sequence and its loss is invisible (Q9: only TCP may replace a polled core kind).
+
+### S3. Program names
+
+Every service registers its syslog programs through a `<plugin>_syslog()` function, and the target's
+program list is the union of them (`src/opnsense/scripts/syslog/list_applications.php`,
+`plugins_syslog()` in `src/etc/inc/plugins.inc`):
+
+- `filterlog` (and `firewall`): `pf_syslog()`
+  (https://github.com/opnsense/core/blob/26.7.3/src/etc/inc/plugins.inc.d/pf.inc);
+- `suricata`: `suricata_syslog()`
+  (https://github.com/opnsense/core/blob/26.7.3/src/etc/inc/plugins.inc.d/suricata.inc);
+- `kea-dhcp4`, `kea-dhcp6`, `kea-ctrl-agent`, `kea-dhcp-ddns`: `kea_syslog()`;
+- **Unbound** logs under the program `unbound` (its local filter matches `program("unbound")`,
+  `templates/OPNsense/Syslog/local/resolver.conf`) through its own socket, which is a source of
+  `s_all` (`templates/OPNsense/Syslog/sources/005-unbound.conf`), but **no `unbound_syslog()`
+  registers it**, so it cannot be selected in a target's program list. Unbound's lines reach a target
+  only when the target has no program filter. `opnview` then drops every program nobody subscribed to
+  at the header.
+
+### S4. The `filterlog` message
+
+The message is the CSV `read_log.py` parses
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/filter/read_log.py), whose field
+lists cite `opnsense/ports`, `opnsense/filterlog/files/description.txt`:
+
+- always: `rulenr,subrulenr,anchorname,rid,interface,reason,action,dir,ipversion`;
+- IPv4: then `tos,ecn,ttl,id,offset,ipflags,protonum,protoname,length,src,dst`;
+- IPv6: then `class,flow,hoplimit,protoname,protonum,length,src,dst` (name before number);
+- UDP (17): then `srcport,dstport,datalen`; TCP (6): then
+  `srcport,dstport,datalen,tcpflags,seq,ack,urp,tcpopts`; CARP (112): then
+  `type,ttl|hoplimit,vhid,version,advskew,advbase`;
+- a record whose `rid` is `0` may carry the rule's id as its last field (32 hex digits or more).
+
+The API's `__digest__` is the MD5 of the line as the local file holds it, header included, so a
+line received over remote syslog cannot reproduce it (its header is written for the target).
+
+### S5. NetFlow export
+
+*Reporting > NetFlow* (`Diagnostics/Menu/Menu.xml`). The `OPNsense.Netflow` model
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Diagnostics/Netflow.xml):
+
+- `capture.interfaces` (several) and `capture.egress_only` (several);
+- `capture.version`: **`v5` or `v9`** (default `v9`). **No IPFIX**: OPNsense starts `ng_netflow`,
+  whose export hooks are v5 and v9 only;
+- `capture.targets`: a comma-separated list of `address:port`, IPv4 or bracketed IPv6;
+- `activeTimeout` (default 1800 s) and `inactiveTimeout` (default 15 s), 1 to 86400;
+- `collect.enable`: local collection. Saving with it on **adds `127.0.0.1:2056` to the targets**
+  (`NetflowController::setconfigAction`), so local collection (Insight) is one destination among
+  others and an export to `opnview` can run beside it.
+
+`/etc/rc.d/netflow` (https://github.com/opnsense/core/blob/26.7.3/src/etc/rc.d/netflow) creates one
+`ng_netflow` node per captured interface, hooked between `ng_ether`'s `lower` and `upper`, with
+`setconfig {iface=N conf=11}` (ingress, egress, once per node) or `conf=10` for egress-only; each node
+exports through its own `ng_ksocket` to `127.0.0.1:2055`, and **`samplicate` forwards every datagram
+to the configured targets** from its own socket, as `nobody`.
+
+### S6. Interface indexes
+
+- The record's input index is the receiving interface's kernel index (`m_pkthdr.rcvif->if_index`),
+  because OPNsense never sends `setifindex`; the output index is the route lookup's interface
+  (`nh_ifp->if_index`)
+  (https://github.com/opnsense/src/blob/stable/26.7/sys/netgraph/netflow/ng_netflow.c,
+  https://github.com/opnsense/src/blob/stable/26.7/sys/netgraph/netflow/netflow.c).
+- `GET /api/interfaces/overview/interfaces_info/1` (the `details` argument) adds `statistics` to each
+  row, the output of `ifinfo` per device, whose `index` field is that kernel index
+  (`OverviewController::parseIfInfo`, `legacy_interface_stats()` in
+  https://github.com/opnsense/core/blob/26.7.3/src/etc/inc/interfaces.lib.inc). OPNsense's own
+  NetFlow aggregation maps an exported index to a device with that same `ifinfo` index
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/netflow/lib/parse.py).
+  `/api/diagnostics/networkinsight/get_interfaces` maps devices to descriptions and carries no index.
+
+### S7. Suricata to syslog
+
+*Services > Intrusion Detection > Administration*. Two options of the IDS model
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/IDS/IDS.xml):
+
+- `general.syslog`, "Enable syslog alerts": the fast log format, facility `local5`;
+- `general.syslog_eve`, "Enable eve syslog output": a second `eve-log` output with `type: syslog`,
+  `identity: "suricata"`, `facility: local5`, `level: Info`, `community-id: true`, and **`types:` a
+  single `alert` entry**
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/templates/OPNsense/IDS/suricata.yaml).
+
+Each message is one eve JSON object of event type `alert`, program `suricata`.
+
+### S8. Unbound query and reply logging
+
+*Services > Unbound DNS > Advanced*: `logqueries` ("Log Queries") and `logreplies` ("Log Replies")
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/Unbound.xml,
+rendered into `log-queries` / `log-replies` by
+https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/templates/OPNsense/Unbound/core/advanced.conf).
+Unbound 1.26.1 logs through syslog as `[pid:thread] info: <message>`
+(https://github.com/NLnetLabs/unbound/blob/release-1.26.1/util/log.c); a reply message is
+`<client> <name> <type> <class> <rcode> <seconds>.<microseconds> <cached> <size>`, optionally followed by
+` on <transport> <address> <port>`
+(https://github.com/NLnetLabs/unbound/blob/release-1.26.1/util/data/msgreply.c, `log_reply_info`). **No
+verdict and no blocklist is in the line**, so the `dns_lookup` contract's `action` cannot be filled:
+the push variant fails parity, writes a table of its own and replaces nothing (PS12).
+
+### S9. Detecting a configured export, read-only
+
+- `GET /api/syslog/settings/search_destinations` and `GET /api/syslog/settings/get`
+  (`SettingsController`, `ApiMutableModelControllerBase`'s `searchBase` / `getBase`, no write path)
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Syslog/Api/SettingsController.php).
+- `GET /api/diagnostics/netflow/getconfig`, `GET /api/diagnostics/netflow/is_enabled`
+  (`{netflow, local}`), `GET /api/diagnostics/netflow/status`
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/NetflowController.php).
+- The mutating actions beside them (`set_destination`, `add_destination`, `del_destination`,
+  `toggle_destination`, `setconfig`, `reconfigure`, `reset`) are never called.
+
+### S10. The v9 template `ng_netflow` emits
+
+From https://github.com/opnsense/src/blob/stable/26.7/sys/netgraph/netflow/netflow_v9.c and `netflow_v9.h`:
+
+- Two data templates, sent every 600 seconds or every 500 packets, with no options template: IPv4
+  (`IPV4_SRC_ADDR`, `IPV4_DST_ADDR`, `IPV4_NEXT_HOP`) and IPv6 (`IPV6_*`), each followed by
+  `INPUT_SNMP` and `OUTPUT_SNMP` (2 octets), `IN_PKTS`, `IN_BYTES`, `OUT_PKTS`, `OUT_BYTES` (4 octets:
+  `COUNTERS_64` is not defined, `ng_netflow.h`; the `OUT_*` fields are always 0), `FIRST_SWITCHED`,
+  `LAST_SWITCHED`, `L4_SRC_PORT`, `L4_DST_PORT`, `TCP_FLAGS`, `PROTOCOL`, `TOS`, `SRC_AS`, `DST_AS`
+  (always 0), `SRC_MASK`, `DST_MASK`.
+- **No direction element** (RFC 3954 type 61) and **no sampling element**: every packet is counted.
+- ICMP: only TCP and UDP fill the ports; **an ICMP record carries ports 0 and no type or code**
+  (`netflow.c`, `ng_netflow_flow_add`). A non-first fragment is recorded with ports 0.
+- **Time resolution is one second.** The header's `sysUptime` and the records' `FIRST_SWITCHED` /
+  `LAST_SWITCHED` are `MILLIUPTIME(time_uptime)`, and `time_uptime` counts whole seconds.
+- The header's `source_id` is the FIB number (`fe->domain_id = fib`), 0 on an installation with one
+  routing table; the sequence number is **per node**, that is per captured interface.
+- Cache: 1 048 576 flows per node (`CACHESIZE`); timeouts as S5.
+
+### S11. Where the capture sits relative to pf
+
+- `ng_ether`'s `lower` hook receives "all incoming packets ... instead of being passed to the kernel
+  for upper layer processing", and its `upper` hook "all outgoing packets ... instead of being
+  transmitted"
+  (https://github.com/opnsense/src/blob/stable/26.7/share/man/man4/ng_ether.4,
+  https://github.com/opnsense/src/blob/stable/26.7/sys/netgraph/ng_ether.c). So **ingress is captured
+  before pf** (packets pf then blocks are exported) and **egress after pf** (packets pf blocks on the
+  way out are not, and egress addresses are as translated).
+- pf translates before it filters on the same pass (pf.conf(5), *Translation*: "Since translation
+  occurs before filtering ...",
+  https://github.com/opnsense/src/blob/stable/26.7/share/man/man5/pf.conf.5). `UNVERIFIED:` which form
+  pflog writes for a translated packet: the source does not state it here, and only the live data
+  (most WAN records post-translation, step 5A) suggests it.
+- **The observing interface is not exported.** Every node exports to the same `samplicate`, which
+  forwards from one socket: all records arrive from one exporter address with one `source_id`. A
+  record's indexes are the receiving interface and the route's interface whichever node saw it, and
+  no direction element exists. With two or more captured interfaces, a forwarded, untranslated
+  packet is exported by both nodes as **two records identical in every field**, and the per-node
+  sequence numbers interleave under one `source_id`, so a sequence gap cannot be detected per
+  RFC 3954. Only an installation capturing one interface knows its observation point.
+
+### S12. pf's state timeouts
+
+The defaults are pf's (`PFTM_*_VAL`,
+https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h): TCP first packet 120 s, opening
+30 s, established 86 400 s, closing 900 s, FIN wait 45 s, closed 90 s; UDP first 60 s, single 30 s,
+multiple 60 s; ICMP first 20 s, error reply 10 s; other first 60 s, single 30 s, multiple 60 s.
+OPNsense writes `set optimization <value>` (`normal` by default), adds
+`udp.first 300, udp.single 150, udp.multiple 900` under `conservative`, and adaptive timeouts only
+when both bounds are set (https://github.com/opnsense/core/blob/26.7.3/src/etc/inc/filter.inc); a rule
+can override `tcp.established` and the UDP timeouts
+(https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/library/OPNsense/Firewall/FilterRule.php).
+`UNVERIFIED:` a read-only endpoint exposing the timeouts in force: none was found, and a per-rule
+override is per state, so the timeout a given connection ran under is not readable.
+
+### S13. Suricata eve events over syslog
+
+**Negative.** The syslog `eve-log` output carries the type `alert` and no other (S7). The `http` and
+`tls` toggles (`eveLog.http.enable`, `eveLog.tls.enable`) add those types to the **file** output
+`eve.json` only (`suricata.yaml`). The template also includes `/usr/local/etc/suricata/conf.d/*.yaml`,
+but writing such a file means writing on the firewall, which neither `opnview` nor its instructions do.
+**`tls.sni` and `http.hostname` cannot be received over syslog on 26.7.3.** PS24's gate fails, and
+observed server names (PS25–PS30) are not built.
+
+### S14. `in_iface`
+
+`UNVERIFIED:`, not read: with S13 negative nothing depends on it.
+
+### The user's procedure
+
+**Remote syslog** (S1, S2, S3), *System > Settings > Logging*, tab *Remote*, add a target:
+
+1. *Transport*: **TCP(4)** or **TCP(6)** (UDP works for tables of a plugin's own, but only TCP may
+   replace a polled source, because UDP loss is invisible);
+2. *Applications*: the programs to send (`filterlog`; `suricata`), or none for every program, which
+   is the only way to send `unbound`;
+3. *Hostname*: the address `opnview` receives on; *Port*: the port given to `--syslog-tcp` (or
+   `--syslog-udp`), 1024 or more;
+4. *rfc5424*: on;
+5. save, then apply.
+
+For Suricata alerts, also turn on *Enable eve syslog output* (S7). For Unbound, turn on *Log Queries*
+and/or *Log Replies* (S8): the server is "significantly" slower with them, OPNsense's own help says.
+
+**NetFlow** (S5), *Reporting > NetFlow*: choose the interfaces to capture, *Version* v9, and add
+`<address>:<port>` of `opnview` (the port given to `--netflow-udp`) to the destinations; save and apply.
+Local collection (Insight) may stay on: it is one more destination.
+
 ## What the plugin ecosystem actually exposes, 2026-09-28
 
 Read from `docs.opnsense.org`, the plugin and core sources on GitHub, and the

@@ -119,8 +119,11 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | the record's class | `type` in both endpoints — the class `IN`, **not** the record type | not stored: every record either endpoint returns is of class IN, and the field is never read as the type | `scripts/unbound/wrapper.py`, whose regular expression captures `(IN)` into `type` |
 | the seconds a cached record has left | `ttl` (a string in the dump) | read into `resource_record_observation.covered_until_at` as the poll's instant plus it | same endpoint |
 | the firewall's own addresses, as a source or a destination | **This Firewall** — the rule editor's name for pf's `self` | `this_firewall`: `flow.src_is_this_firewall` / `dst_is_this_firewall`, `security_event.src_is_this_firewall`, `dns_resolution.client_is_this_firewall`, the `this_firewall_address` view, `traffic_scope = 'this_firewall'`, the directions `to_this_firewall` / `from_this_firewall`, the tree node `this_firewall`, and `blocked_decision.target_is_this_firewall` before them | <https://docs.opnsense.org/manual/how-tos/caddy.html>: "Create Firewall rules that allow `HTTP` and `HTTPS` to destination `This Firewall` on `WAN`"; `opnsense/core` 26.7.3, `src/opnsense/mvc/app/library/OPNsense/Firewall/FilterRule.php`, where the stored value `(self)` is rendered as `gettext("This Firewall")`, and `Firewall/Rule.php`, which passes `(self)` to pf unchanged; pf.conf(5), FreeBSD 15.1-RELEASE: "self Expands to all addresses assigned to all interfaces." The *manual/firewall.html* page does not carry the phrase |
+| the program that wrote a syslog line | **program** -- syslog-ng's filter `program()` and the target form's *Applications* (survey, *Push sources*, S1, S3) | a syslog push entry's `filter.program` | RFC 3164's TAG and RFC 5424's APP-NAME |
+| who sends syslog, who receives it | RFC 5424's **originator** and **collector** | the `sender` of a pushed message; `opnview` is the collector | RFC 5424, section 3 |
+| who sends NetFlow and its records | RFC 7011's **Exporter**, **Collector**, **Observation Domain**, **Information Element** | `exporterIPv4Address`, `observationDomainId`, the IANA registry's element names | RFC 7011, section 2; RFC 3954 |
 
-**Forty-four terms are `opnview`'s own, because OPNsense has no word for them.**
+**Fifty-one terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -173,6 +176,10 @@ vocabulary read off an endpoint:
 | **live interest**, the lease a request for a live figure renews (`live_interest_seconds`) | OPNsense's dashboard polls the firewall itself and has no notion of a reader asking a third party for a live figure | it says what the lease stands for: somebody's interest in a live figure, which lapses when nobody renews it |
 | the **live cadence** of a live pass, and the **live pass** itself | OPNsense has one cadence per widget of its own dashboard and no notion of a second pass that runs only while someone looks | **live** is the word the mockup's strip and the spec use; the cadence is the declaring plugin's setting (`docs/plugins.md`, *Live pass*) |
 | a **fine sample**, `measurement_sample.live_cadence_seconds IS NOT NULL` | nothing upstream keeps a reading at all, so it has no word for two resolutions of one | **fine** against **baseline**: a sample taken at the live cadence, kept `live_sample_retention_seconds`, beside the samples of the measurement interval |
+| a **push source**, and a push declaration's `push` entry | OPNsense names a remote syslog **target** (*System > Settings > Logging*, *Remote*) and a NetFlow **destination**, which are the sending side; it has no word for the receiving side's subscription | **push** is the roadmap's own word for data the firewall sends rather than data `opnview` asks for (`docs/plugins.md`, *Push sources*); the manifest key is `push`, because `stream` and `provider` already mean something else there |
+| a **source segment**, `provider_source_segment` | nothing upstream knows that one provider's records reached `opnview` by two paths | an interval of a provider's history and the one path -- `pull` or `push` -- whose records it keeps; segments never overlap, which is what keeps a record delivered by both paths from counting twice |
+| a push entry's **liveness** (`liveness_seconds`) | OPNsense sends and knows nothing of whether anybody receives | a push entry is **alive** while messages it accepts arrived within its span; the word is the ordinary one for that test |
+| `push_listener` | nothing upstream records that `opnview` was listening | the last instant each push listener was heard alive, so the interval it was not is a gap |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
@@ -437,7 +444,8 @@ it reproduces exactly what the refresh contract asserts. **No core table is a hy
 family is a continuous aggregate, in this cycle**, for the reasons below; every retention is the
 purge's own `DELETE`, inside the purge's transaction and ordered with derivation, on opnview's
 clock -- no TimescaleDB background job runs on a path the refresh contract orders. The plugins'
-tables are hypertables (`docs/plugins.md`, *Tables*).
+tables are hypertables (`docs/plugins.md`, *Tables*); a push output table is one chunked by day on its
+`instant` column, a `timestamptz`, written by batches of at most a thousand rows, one transaction each.
 
 **The growing tables.** Every one of them carries a surrogate `id BIGINT PRIMARY KEY` (or a
 natural key) that omits its time column, which a hypertable refuses; most are also referenced by a
@@ -2034,6 +2042,8 @@ detail, so a row's code never contradicts its words.
 | `download_failed` | a download that could not be completed |
 | `download_malformed` | a download that fetched something that is not the Public Suffix List |
 | `store_failure` | the source answered and `opnview` could not store what it returned: the fault is `opnview`'s database, not the source (the lease pass, `SPEC-step-5b-widget-api.md`, B8g, and since the 5B correction round the DNS-lookup pass and the resolver-cache and local-data record passes) |
+| `listener_not_configured` | a provider its push entries feed, while no listener of their protocol on a transport they accept is open: nothing can arrive (`docs/plugins.md`, *Push sources*) |
+| `no_message_received` | the same provider while its listener is open and nothing it accepts arrived within its liveness span |
 
 **Retention:** never purged. **Indexes:** the primary key.
 
@@ -2822,13 +2832,20 @@ total over a window that contains one is not a lower bound for the usual
 physical reason; it is a lower bound because `opnview` was not looking, and
 those are two different sentences to put next to a figure.
 
-**The four reasons are measured failure modes, not suppositions.**
+**The reasons are measured failure modes, not suppositions.**
 
 | `reason` | What was measured |
 |---|---|
 | `digest_outside_returned_window` | the filter log's `digest` is a de-duplication key and **not** a server-side cursor: passing it returned byte-identical output twice on a live firewall. So a poll whose oldest returned line is newer than the newest line stored has missed everything between them, and nothing can recover it |
 | `eve_rotation_lost` | rotation discarded the `eve.json` file a watermark pointed at. Detectable because `get_alert_logs` no longer lists it; permanent, and recorded as `rotation_state = 'lost'` as well |
 | `resolver_window_not_honoured` | `search_queries` ignores `timeStart` and `timeEnd` outright — a 5-minute and a 24-hour request returned the same span — so it is a ring buffer of the most recent lookups and a pass whose oldest row is newer than the newest stored one lost what was between them |
+| `push_buffer_overflow` | a push source's message dropped because `opnview`'s own queue was full (`docs/plugins.md`, *Push sources*): the interval spans the reception instants of what was lost |
+| `push_store_failed` | a batch of pushed records that could not be committed after its retries |
+| `push_listener_down` | the interval during which a push listener was not listening, `opnview`'s own downtime included (`push_listener`) |
+| `push_script_failed` | a push entry's parse function that threw or ran past its bound, over its messages' reception instants |
+| `push_not_alive` | a push entry that received nothing for longer than its liveness span; re-recorded, and extended, while the silence lasts |
+| `netflow_sequence_gap` | a jump in a NetFlow exporter's sequence numbers, confirmed by the next packet, between the export times on either side |
+| `netflow_template_missing` | NetFlow data whose template never arrived within the bound |
 | `download_failed` | a Public Suffix List download failed or returned something that is not a list (step 5A). The interval runs from the last successful refresh to the failure, the list held since then stays in use, and `detail` names the failure |
 
 The vocabulary is closed, and it may be because these are `opnview`'s own
@@ -2885,6 +2902,33 @@ to learn to skip. Here it is one row per interval.
 primary key, `idx_opnview_downtime_detected_at` for the purge, and
 `idx_opnview_downtime_interval` for the overlap search. `opnview_heartbeat` is
 bounded at one row by a `CHECK (id = 1)`.
+
+### `push_listener` — when each push listener was last heard alive
+
+One row per protocol and transport (`syslog`/`udp`, `syslog`/`tcp`, `netflow`/`udp`): the instant
+the listener last recorded that it was alive, every 30 seconds while it listens and when it stops.
+When it opens again, the interval since that instant -- `opnview`'s own downtime between runs included
+-- is a `push_listener_down` gap of every push entry it feeds. The row holds no address and no port,
+which are the installation's start parameters (`docs/plugins.md`, *Push sources*).
+
+**Retention:** never purged; a handful of rows. **Indexes:** the primary key.
+
+### `provider_source_segment` — which path delivered a provider's records at each instant
+
+A provider of a core kind may deliver its records by polling **and** through a push entry that
+replaces the polled endpoint (PS9 of the push amendment to `specs/SPEC-backend-completion-plugins.md`).
+The two paths' identities cannot meet -- a pushed record's `flow.log_digest` begins `push:` -- so what
+keeps a record both delivered from counting twice is that every instant belongs to one path: a
+segment is `(provider_id, path, from_at, to_at)`, `path` `pull` or `push`, `to_at` NULL for the open one;
+segments never overlap, each boundary closes one at a second and opens the next one second later; a
+record is stored only when its instant lies in a segment of the path that delivered it, and is
+otherwise **superseded** -- counted, not stored. `internal/collect` (`pushpaths.go`) decides the
+boundaries: from polling to push once both paths delivered an overlap, at the last second polling read
+whole; from push to polling at the last second the push path delivered. A gap polling detects is clipped
+by the push segment before it.
+
+**Retention:** never purged; one row per handover. **Indexes:** the primary key, and a unique partial
+index holding at most one open segment per provider.
 
 ### `measurement_sample` — one numeric reading of one subject at one instant
 

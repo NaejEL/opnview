@@ -55,6 +55,9 @@ type Manifest struct {
 	// Destinations are the hosts beyond the firewall the plugin contacts, each a scheme and a host
 	// (such as https://publicsuffix.org). The fetch facility refuses any other.
 	Destinations []string `json:"destinations,omitempty"`
+	// Push are the push sources the plugin receives: data the firewall sends to opnview over syslog
+	// or NetFlow, which the user configures on the firewall (push.go, docs/plugins.md "Push sources").
+	Push []PushDeclaration `json:"push,omitempty"`
 }
 
 // EndpointDeclaration is one firewall endpoint a plugin reads, in the fields an
@@ -132,6 +135,10 @@ type ProviderDeclaration struct {
 	// Live declares a live pass: a pass reading only live endpoints, run at a live cadence while
 	// somebody looks at a live figure (live.go, docs/plugins.md "Live pass"). Optional.
 	Live *LiveDeclaration `json:"live,omitempty"`
+	// Source is "push" for a provider of a kind of the plugin's own that its push declarations feed:
+	// it declares no probe, no read and no script function, and its availability is the push
+	// listener's and the declarations' liveness (push.go). Empty for every other provider.
+	Source string `json:"source,omitempty"`
 }
 
 // ProbeDeclaration is a declarative probe.

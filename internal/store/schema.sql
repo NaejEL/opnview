@@ -1927,7 +1927,8 @@ CREATE TABLE IF NOT EXISTS source_availability (
                                    'download_limit_reached', 'download_failed',
                                    'download_malformed', 'store_failure',
                                    'script_failed', 'script_timeout',
-                                   'records_invalid', 'firewall_version_unsupported')),
+                                   'records_invalid', 'firewall_version_unsupported',
+                                   'listener_not_configured', 'no_message_received')),
     probe       TEXT NOT NULL,
     detail      TEXT,
     checked_at  BIGINT NOT NULL CHECK (checked_at >= 0 AND checked_at < 4102444800),
@@ -3090,7 +3091,15 @@ CREATE TABLE IF NOT EXISTS collection_gap (
                       CHECK (reason IN ('digest_outside_returned_window',
                                         'eve_rotation_lost',
                                         'resolver_window_not_honoured',
-                                        'download_failed')),
+                                        'download_failed',
+                                        -- The push sources' (docs/plugins.md, "Push sources").
+                                        'push_buffer_overflow',
+                                        'push_store_failed',
+                                        'push_listener_down',
+                                        'push_script_failed',
+                                        'push_not_alive',
+                                        'netflow_sequence_gap',
+                                        'netflow_template_missing')),
     detail            TEXT,
     detected_at       BIGINT NOT NULL CHECK (detected_at >= 0 AND detected_at < 4102444800),
     CHECK (interval_end_at >= interval_start_at)
@@ -3145,6 +3154,52 @@ CREATE TABLE IF NOT EXISTS opnview_downtime (
 CREATE INDEX IF NOT EXISTS idx_opnview_downtime_detected_at ON opnview_downtime (detected_at);
 CREATE INDEX IF NOT EXISTS idx_opnview_downtime_interval
     ON opnview_downtime (interval_end_at, interval_start_at);
+
+-- ---------------------------------------------------------------------------
+-- push_listener -- when each push listener was last heard alive (PS7 of the push
+-- amendment to specs/SPEC-backend-completion-plugins.md).
+--
+-- Source: opnview itself. A listener records the instant it is alive every
+-- heartbeat and when it stops; when it opens again, the interval since that
+-- instant -- opnview's own downtime between runs included -- is a gap of reason
+-- push_listener_down of every declaration it feeds. One row per protocol and
+-- transport, a handful in all; the row holds no address and no port, which are
+-- the installation's start parameters.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS push_listener (
+    protocol  TEXT NOT NULL CHECK (length(protocol) > 0),
+    transport TEXT NOT NULL CHECK (transport IN ('udp', 'tcp')),
+    alive_at  BIGINT NOT NULL CHECK (alive_at >= 0 AND alive_at < 4102444800),
+    PRIMARY KEY (protocol, transport)
+);
+
+-- ---------------------------------------------------------------------------
+-- provider_source_segment -- which path delivered a provider's records at each
+-- instant, when one provider of a core kind is fed both by polling and by a push
+-- source that replaces it (PS9 of the push amendment).
+--
+-- Source: opnview itself. THE SEGMENTS NEVER OVERLAP: every instant of the
+-- provider's history belongs to at most one, and a record is stored only if its
+-- event instant falls in a segment of the path that delivered it; a record of the
+-- other path is superseded, counted and not stored. That is what keeps a
+-- connection from counting twice in flow, the pairing and every aggregate family
+-- when both paths deliver it: the two paths' record identities differ (a pushed
+-- line carries a header written for the push target, survey S4), so nothing
+-- could deduplicate them afterwards. to_at is NULL for the open segment, and
+-- from_at is 0 for the first.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS provider_source_segment (
+    provider_id BIGINT NOT NULL REFERENCES provider (id),
+    path        TEXT NOT NULL CHECK (path IN ('pull', 'push')),
+    from_at     BIGINT NOT NULL CHECK (from_at >= 0 AND from_at < 4102444800),
+    to_at       BIGINT CHECK (to_at >= 0 AND to_at < 4102444800),
+    CHECK (to_at IS NULL OR to_at >= from_at),
+    PRIMARY KEY (provider_id, from_at)
+);
+
+-- At most one open segment per provider.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_source_segment_open
+    ON provider_source_segment (provider_id) WHERE to_at IS NULL;
 
 -- ---------------------------------------------------------------------------
 -- Measurement sample — one numeric reading of one subject at one instant.

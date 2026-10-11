@@ -245,6 +245,7 @@ on the read connections in a read-only transaction.
 | `time_column` | its time column, or null |
 | `retention_seconds`, `retention_horizon_at` | how long a row is kept and the instant before which rows may be gone; null when kept without limit |
 | `freshness` | `{provider_kind, provider_key, last_success_at, condition}`: the provider whose last healthy pass dates it |
+| `loss_detectable` | present on a dataset a push source feeds: true when a loss between the firewall and `opnview` is detected and recorded as a gap (TCP syslog, NetFlow), false over UDP syslog |
 | `columns` | `{name, type, role, unit, nullable, carries_domain, aggregations}` each; `role` is `time`, `dimension` or `measure` |
 
 The listing never carries a set-aside table, `account`, `session`, `encrypted_credential`, a
@@ -345,6 +346,15 @@ and its counters; and every stream subscription held, with its subscribers and w
 table. It is authenticated like every route here: without a session it answers `401` with a JSON
 condition. **It never carries a field value, a credential, the firewall's address or an
 authorisation header.** A plugin reads the same content with `host.catalogue()`.
+
+Its `push` part is what `opnview` receives rather than calls (`docs/plugins.md`, *Push sources*):
+`listeners[]` -- each `{protocol, transport, state, received, decoded, connections, counters, seen,
+flags, loss_detectable}`, `seen` the programs or templates met with their counts --, `subscriptions[]`
+-- each push declaration `{id, protocol, plugin, entry, output_table | kind, columns, replaces,
+transports, listener_state, liveness, stored, flushes, queued, counters}`, `listener_state` being
+`listening` or `listener_not_configured` --, `senders` -- the accepted set's size, whether it has been
+derived, and the refused senders by address with their counts --, and `protocols`, those this build
+decodes. It carries no message and no field value.
 
 ## Live figures
 

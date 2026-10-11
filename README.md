@@ -27,8 +27,10 @@ installation.
 with nothing to set up by hand.** The database is PostgreSQL with TimescaleDB,
 run beside `opnview` by the installation itself. See the storage rule in
 [ROADMAP.md](ROADMAP.md), under *Rules that apply to every step*. The frontend
-is served by the service. Nothing is installed on the firewall and nothing is
-changed on it: everything goes through its REST API, read-only. Every request
+is served by the service. Nothing is installed on the firewall and `opnview`
+changes nothing on it: it reads the REST API, read-only, and can receive the
+firewall's syslog and NetFlow exports if you configure them on the firewall
+yourself (see *Push sources*). Every request
 to the firewall, a plugin's included, goes through `opnview`'s read-only
 broker, which refuses anything but a read before it is sent.
 
@@ -124,9 +126,66 @@ there is one: it says that names are inferred, shows the attribution rate, and
 says per name which of the two methods inferred it. The evidence is in
 [docs/opnsense-api-survey.md](docs/opnsense-api-survey.md).
 
+Nor can they be received over syslog: OPNsense's syslog output of Suricata's
+eve log carries alerts and no other event type (survey, *Push sources*, S13).
+
 For the heuristic to work at all the resolver has to be logging its queries.
 Turning that on is a manual step — the procedure will be documented here, and
 `opnview` never performs it for you: it only ever reads.
+
+## Push sources
+
+Besides reading the REST API, `opnview` can **receive** what the firewall sends
+when you tell it to: syslog lines and NetFlow records. Nothing changes on the
+firewall unless you change it, in its own pages; `opnview` only listens. What
+each export adds:
+
+- **The filter log over TCP syslog.** Polling reads the newest page of the log
+  every few seconds and records a gap when a burst outruns the page; a remote
+  syslog target sends every line as it is written. While it arrives, it
+  replaces polling of the filter log, and polling resumes on its own when it
+  stops. Every second belongs to one path, so no line is counted twice.
+- **Unbound's query and reply log**, into a table of its own: every query and
+  reply line, with its client, name, type, return code, time and size. It
+  cannot replace the resolver's query report, which also says whether a
+  blocklist answered, and it does not.
+- **NetFlow v9**, received and decoded for any plugin that subscribes to it. No
+  built-in plugin does yet: OPNsense's export does not say which interface
+  observed a record, so a connection crossing two captured interfaces arrives
+  twice, indistinguishably (survey, *Push sources*, S11).
+
+**On OPNsense** (the survey's *Push sources* section is the source of every step):
+
+1. *System > Settings > Logging*, tab *Remote*: add a target. *Transport*
+   **TCP(4)** or **TCP(6)** -- only TCP may replace polling, because a datagram
+   lost over UDP is invisible; *Applications* `filterlog`, or none to send every
+   program, the only way to send Unbound's lines; *Hostname* the address
+   `opnview` listens on; *Port* its syslog port; *rfc5424* on. Save, apply.
+2. For Unbound's lines: *Services > Unbound DNS > Advanced*, *Log Queries*
+   and/or *Log Replies* (OPNsense's own help warns that they slow the resolver).
+3. For NetFlow: *Reporting > NetFlow*: the interfaces to capture, *Version* v9,
+   and `<address>:<port>` of `opnview` among the destinations. Local collection
+   (Insight) may stay on: it is one more destination.
+
+**On `opnview`**, each listener is a start parameter with no default,
+`--push-listen <protocol>/<transport>=<host:port>`, and, from the development
+toolchain, an override file per listener whose port variable has no default:
+
+    OPNVIEW_LISTEN=8080 OPNVIEW_SYSLOG_TCP=<port> docker compose         -f docker-compose.serve.yml -f docker-compose.push-syslog-tcp.yml         run --rm --service-ports serve
+
+(`docker-compose.push-syslog-udp.yml` with `OPNVIEW_SYSLOG_UDP`,
+`docker-compose.push-netflow.yml` with `OPNVIEW_NETFLOW_UDP`.) `--service-ports`
+is required: `docker compose run` publishes no port without it. The container
+runs as an unprivileged user, so a port below 1024 -- syslog's registered 514
+-- fails to bind; choose one of 1024 or above, which OPNsense's target accepts.
+
+**Only the firewall may send.** A datagram or a connection is accepted only from
+the address your configured firewall URL resolves to, or one the firewall's own
+interfaces hold; anything else is refused, counted, and listed in the API
+catalogue. This is a check of the source address, not an authentication: a host
+on the path forging the firewall's address passes it. A Docker setup that
+rewrites the source address of published traffic makes every message refused --
+the catalogue then lists the address it saw -- and is a deployment to correct.
 
 ## Alerts — what an internal IDS is actually for
 
@@ -162,6 +221,9 @@ Exactly three things, and nothing else:
    The list is kept in `publicsuffix/` in the data directory; when a download
    fails, the copy already held stays in use, and before the first successful
    download no grouping is offered.
+
+The push listeners, when you open them, are inbound: they receive what you
+configured the firewall to send and make no call of their own.
 
 No telemetry, no version check, no resource loaded from a CDN. The interface
 loads nothing from anywhere: its stylesheet is served by `opnview` itself and

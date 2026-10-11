@@ -3,7 +3,7 @@
   "name": "unbound",
   "version": "1.0.0",
   "display_name": "Unbound",
-  "description": "Reads the Unbound resolver: its query report, the sole source of site names (data source 5), the records it holds in its cache, and the records it serves from its local data.",
+  "description": "Reads the Unbound resolver: its query report, the sole source of site names (data source 5), the records it holds in its cache, the records it serves from its local data, and, when the firewall sends them over syslog, its query and reply log lines.",
   "script": "unbound.js",
   "endpoints": [
     {
@@ -57,7 +57,40 @@
       "note": "{status, data: [{name, ttl, type, rrtype, value}]}; ttl is the configured TTL, type is the class."
     }
   ],
+  "tables": [
+    {
+      "name": "query_log",
+      "columns": [
+        {"name": "logged_at", "type": "instant"},
+        {"name": "client", "type": "ip"},
+        {"name": "name", "type": "text", "carries_domain": true},
+        {"name": "type", "type": "text"},
+        {"name": "class", "type": "text"},
+        {"name": "rcode", "type": "text", "nullable": true},
+        {"name": "resolve_seconds", "type": "real", "nullable": true, "role": "measure", "unit": "second"},
+        {"name": "cached", "type": "integer", "nullable": true, "role": "dimension"},
+        {"name": "reply_bytes", "type": "integer", "nullable": true, "role": "measure", "unit": "byte"}
+      ],
+      "retention": {"column": "logged_at"},
+      "nature": "event"
+    }
+  ],
+  "push": [
+    {
+      "name": "query_log",
+      "protocol": "syslog",
+      "filter": {"program": ["unbound"]},
+      "pattern": "^\\[\\d+:\\d+\\] info: (?P<client>[0-9A-Fa-f:.]+) (?P<name>\\S+) (?P<type>\\S+) (?P<class>\\S+)(?: (?P<rcode>[A-Z]+) (?P<resolve_seconds>\\d+\\.\\d+) (?P<cached>[01]) (?P<reply_bytes>\\d+))?(?: on \\S+ \\S+ \\d+)?$",
+      "output_table": "query_log",
+      "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources"
+    }
+  ],
   "providers": [
+    {
+      "kind": "unbound_query_log",
+      "display_name": "Unbound query log over syslog",
+      "source": "push"
+    },
     {
       "kind": "dns_lookup",
       "display_name": "Unbound",

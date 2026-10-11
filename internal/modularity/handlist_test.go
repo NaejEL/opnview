@@ -30,11 +30,13 @@ func repositoryRoot(t *testing.T) string {
 // implementationNames returns every name an implementation goes by, from the metadata file in
 // its own directory: provider keys (provider.json), widget types (manifest.json) and surface
 // names (surface.json), under internal/ and under plugins/, where a widget a plugin carries keeps
-// its manifest.json. The names are DISCOVERED from the tree, so this test lists none.
+// its manifest.json, and push protocol names (protocol.json). The names are DISCOVERED from the
+// tree, so this test lists none.
 func implementationNames(t *testing.T, root string) map[string]string {
 	t.Helper()
 	names := map[string]string{}
-	fields := map[string]string{"provider.json": "key", "manifest.json": "type", "surface.json": "name"}
+	fields := map[string]string{"provider.json": "key", "manifest.json": "type", "surface.json": "name",
+		"protocol.json": "name"}
 	for _, tree := range []string{"internal", "plugins"} {
 		implementationNamesIn(t, filepath.Join(root, tree), fields, names)
 	}

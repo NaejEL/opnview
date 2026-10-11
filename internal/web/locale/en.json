@@ -60,6 +60,13 @@
     "provider.flow_volume.insight": "NetFlow / Insight",
 
     "gap_reason.download_failed": "A reference list download failed",
+    "gap_reason.push_buffer_overflow": "Pushed messages dropped: opnview's queue was full",
+    "gap_reason.push_store_failed": "Pushed records could not be stored",
+    "gap_reason.push_listener_down": "The push listener was not listening",
+    "gap_reason.push_script_failed": "A push parse function failed",
+    "gap_reason.push_not_alive": "The push source sent nothing",
+    "gap_reason.netflow_sequence_gap": "NetFlow packets lost on the way",
+    "gap_reason.netflow_template_missing": "NetFlow records whose template never arrived",
 
     "unit.day.one": "day",
     "unit.day.other": "days",

@@ -119,21 +119,26 @@ func (a firewallLogAdapter) Records(ctx context.Context, session provider.Sessio
 	}
 	var converted []firewalllog.Record
 	for _, record := range records(checked, "records") {
-		converted = append(converted, firewalllog.Record{
-			Digest: text(record, "digest"), ObservedAt: integer(record, "observed_at"),
-			Device: text(record, "device"), SrcAddress: text(record, "src_address"),
-			DstAddress: text(record, "dst_address"), SrcPort: integerPointer(record, "src_port"),
-			DstPort: integerPointer(record, "dst_port"), Protocol: text(record, "protocol"),
-			IPVersion: integer(record, "ip_version"), Action: text(record, "action"),
-			Direction: text(record, "direction"), LogReason: textPointer(record, "log_reason"),
-			PacketBytes: integer(record, "packet_bytes"), Rid: textPointer(record, "rid"),
-			IPID: integerPointer(record, "ip_id"), TCPSeq: integerPointer(record, "tcp_seq"),
-		})
+		converted = append(converted, firewallLogRecord(record))
 	}
 	if invalid := firewallLogRecordsInvalid(converted); invalid != "" {
 		return a.invalid(invalid)
 	}
 	return converted, result, nil
+}
+
+// firewallLogRecord converts one checked firewall_log record, pulled or pushed.
+func firewallLogRecord(record map[string]any) firewalllog.Record {
+	return firewalllog.Record{
+		Digest: text(record, "digest"), ObservedAt: integer(record, "observed_at"),
+		Device: text(record, "device"), SrcAddress: text(record, "src_address"),
+		DstAddress: text(record, "dst_address"), SrcPort: integerPointer(record, "src_port"),
+		DstPort: integerPointer(record, "dst_port"), Protocol: text(record, "protocol"),
+		IPVersion: integer(record, "ip_version"), Action: text(record, "action"),
+		Direction: text(record, "direction"), LogReason: textPointer(record, "log_reason"),
+		PacketBytes: integer(record, "packet_bytes"), Rid: textPointer(record, "rid"),
+		IPID: integerPointer(record, "ip_id"), TCPSeq: integerPointer(record, "tcp_seq"),
+	}
 }
 
 // firewallLogRecordsInvalid checks what the contract's types cannot: the ranges.

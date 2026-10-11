@@ -31,6 +31,14 @@ const (
 	msgEditedNotSaved          messageKey = "notice.edited_not_saved"
 	msgSecretNotKept           messageKey = "state.secret_not_kept"
 	msgOpenInOPNsense          messageKey = "sources.label.opnsense_page"
+	// The push sources' gap reasons (docs/plugins.md, "Push sources").
+	msgGapPushBufferOverflow     messageKey = "gap_reason.push_buffer_overflow"
+	msgGapPushStoreFailed        messageKey = "gap_reason.push_store_failed"
+	msgGapPushListenerDown       messageKey = "gap_reason.push_listener_down"
+	msgGapPushScriptFailed       messageKey = "gap_reason.push_script_failed"
+	msgGapPushNotAlive           messageKey = "gap_reason.push_not_alive"
+	msgGapNetflowSequenceGap     messageKey = "gap_reason.netflow_sequence_gap"
+	msgGapNetflowTemplateMissing messageKey = "gap_reason.netflow_template_missing"
 )
 
 // vocabularyKeys is every key above.
@@ -61,5 +69,12 @@ func vocabularyKeys() []MessageKey {
 		msgEditedNotSaved,
 		msgSecretNotKept,
 		msgOpenInOPNsense,
+		msgGapPushBufferOverflow,
+		msgGapPushStoreFailed,
+		msgGapPushListenerDown,
+		msgGapPushScriptFailed,
+		msgGapPushNotAlive,
+		msgGapNetflowSequenceGap,
+		msgGapNetflowTemplateMissing,
 	}
 }

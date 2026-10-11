@@ -46,6 +46,9 @@ type ListedPlugin struct {
 	// to another plugin's (mirror_correction_conflict), the plugin loading all the same.
 	Endpoints           []ListedEndpoint     `json:"endpoints"`
 	CorrectionConflicts []CorrectionConflict `json:"correction_conflicts"`
+	// Push are its push declarations, each with its listener state and liveness once the receiver runs
+	// (docs/plugins.md, "Push sources"); the API catalogue carries their counters.
+	Push []PushEntry `json:"push"`
 }
 
 // ListedEndpoint is one endpoint a plugin reads, as the listing reports it.
@@ -101,6 +104,7 @@ func (l *Loaded) Listing(ctx context.Context, database ListingStore) ([]ListedPl
 			Events: append([]store.PluginTableEvent{}, plugin.Events...)}
 		entry.Endpoints = plugin.listedEndpoints()
 		entry.CorrectionConflicts = append([]CorrectionConflict{}, plugin.CorrectionConflicts...)
+		entry.Push = plugin.listedPush()
 		for _, table := range plugin.tables {
 			rows, err := database.PluginTableRows(ctx, table)
 			listedTable := ListedTable{Name: table.Table, Table: table.SQLName(), Rows: rows, Readable: err == nil}
@@ -129,7 +133,7 @@ func (l *Loaded) Listing(ctx context.Context, database ListingStore) ([]ListedPl
 			Reason: &ListedRefusal{Code: refusal.Code, Detail: refusal.Detail}, Providers: []ProviderInfo{},
 			Destinations: []string{}, Tables: []ListedTable{}, AsideTables: []store.AsideTable{},
 			Widgets: []string{}, Settings: []SettingValue{}, Events: []store.PluginTableEvent{},
-			Endpoints: []ListedEndpoint{}, CorrectionConflicts: []CorrectionConflict{}})
+			Endpoints: []ListedEndpoint{}, CorrectionConflicts: []CorrectionConflict{}, Push: []PushEntry{}})
 	}
 	return listed, nil
 }

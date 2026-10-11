@@ -108,6 +108,11 @@ func run() (err error) {
 			"because no address of any real network belongs in this repository")
 	version := flag.String("version-stamp", "",
 		"version to report in the start-up line, for a build that stamps one")
+	var listens pushListens
+	flag.Var(&listens, "push-listen",
+		"a push listener, as <protocol>/<transport>=<host:port> -- syslog/udp, syslog/tcp or netflow/udp -- "+
+			"repeatable. Optional and with no default, for the reason --listen has none: with none, no "+
+			"push socket is opened and the firewall's exports are not received (README, \"Push sources\")")
 	flag.Parse()
 
 	if *dataDir == "" {
@@ -311,7 +316,20 @@ func run() (err error) {
 		fmt.Fprintf(os.Stderr, "%s: %s: %v\n", buildinfo.AppName, taskName, err)
 	}
 
-	// The two long-running things, stopped by the one cancellation above.
+	// THE PUSH RECEIVER: the declarations of the loaded plugins are routed whether or not a listener
+	// is open, so each reports its listener state; a socket is opened only for a --push-listen given.
+	pushReceiver, err := startPush(ctx, listens, database, collector, plugins, credentials, func(err error) {
+		fmt.Fprintf(os.Stderr, "%s: push: %v\n", buildinfo.AppName, err)
+	})
+	if err != nil {
+		return err
+	}
+	for _, listen := range listens {
+		fmt.Printf("%s: receiving %s over %s on %s\n", buildinfo.AppName, listen.protocol, listen.transport,
+			listen.address)
+	}
+
+	// The long-running things, stopped by the one cancellation above.
 	var running sync.WaitGroup
 	var serveErr error
 	running.Add(1)
@@ -326,6 +344,8 @@ func run() (err error) {
 		append(append(collector.Tasks(live), collector.ServiceTasks(live)...),
 			collect.HeartbeatTask(live, database, collect.SystemClock{})), report)
 	running.Wait()
+	// Every record the push listeners accepted is flushed before the database closes.
+	_ = pushReceiver.Wait()
 
 	switch {
 	case collectErr != nil:

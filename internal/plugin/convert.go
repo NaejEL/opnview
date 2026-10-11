@@ -8,6 +8,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/store"
 )
 
@@ -330,6 +331,14 @@ func checkRow(table store.PluginTable, row map[string]any, path string) (map[str
 				return nil, fmt.Errorf("%s.%s is %T, not text", path, column.Name, value)
 			}
 			converted[column.Name] = text
+		default:
+			// boolean, ip, mac and instant (PS4 of the push amendment): an instant from a script is
+			// a number of UTC epoch seconds, the rest their JSON value or text.
+			typed, err := push.Convert(column.Type, value)
+			if err != nil {
+				return nil, fmt.Errorf("%s.%s: %w", path, column.Name, err)
+			}
+			converted[column.Name] = typed
 		}
 	}
 	return converted, nil

@@ -284,6 +284,27 @@ mapping version ranges to its routes or scripts is served by the one its version
 through the broker: they are not the firewall API, and the fetch facility makes them on its own
 timing.
 
+## Push sources — inbound, beside the broker
+
+Decision 15 of `specs/SPEC-backend-completion-plugins.md`: besides asking, `opnview` can receive what
+the firewall sends once the user configures it to -- syslog (RFC 5424, RFC 3164, over UDP and TCP)
+and NetFlow v9 / IPFIX (over UDP). Receiving is inbound: a listener calls nothing, so the broker
+stays the only path **to** the firewall's API, and the outbound rule is unchanged.
+
+| Part | Where | Why it is core |
+|---|---|---|
+| Listeners, routing, bounded queues, batching, gaps, senders, liveness | `internal/push` | protocol code against public standards, naming no protocol |
+| One decoder per protocol: the syslog header and RFC 6587 framing; NetFlow v9 / IPFIX templates | `internal/push/protocols/<protocol>/`, discovered | a protocol is a seam inside the core: one directory holding its `protocol.json`, linked by the generated `protocols_gen.go` |
+| The IANA IPFIX Information Elements registry | `internal/push/ipfixregistry` | a standard, held as data, like `internal/specialpurpose` |
+| What a program's message says, and which columns a record fills | the plugins' `push` entries | a program's format is its plugin's: the core names none |
+| One path per instant for a core kind fed by polling and by push | `internal/collect`, `pushpaths.go` | the kind's coordinator owns its identity and its gaps |
+
+**The path of one message.** A listener accepts a datagram or a frame only from the firewall's own
+addresses; its protocol's decoder decodes it **once**; routing looks its subscribers up by route key
+(a syslog program) or asks the subscribers that index nothing (NetFlow); each subscriber's records
+wait in a bounded queue and are handed in batches to its sink -- a plugin's table, or a core kind's
+coordinator -- which extracts only its own columns. A drop is a gap of the subscriber's provider.
+
 ## Storage
 
 **The engine.** PostgreSQL 17 with the TimescaleDB extension, one database per installation,

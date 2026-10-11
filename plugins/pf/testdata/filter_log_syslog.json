@@ -1,0 +1,19 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, section Push sources (which cites opnsense/core 26.7.3, syslog-ng's documentation and Unbound 1.26.1), never by recording what a firewall sent. If the survey is wrong about a header, a framing or a message, the tests that read this file pass and the reception is still wrong. Do not treat this file as evidence; replace it with recorded lines rewritten under X1 once LV-SY has run.",
+    "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources",
+    "field_list_from": "S4: rulenr, subrulenr, anchorname, rid, interface, reason, action, dir, ipversion, then the IPv4 or IPv6, UDP or TCP fields read_log.py lists",
+    "why_these_values": "The five filterlog CSV lines of filter_log_pulled.json as a remote syslog target sends them: even lines with the RFC 5424 option on, odd ones without it (RFC 3164, year-less), covering IPv4 TCP, IPv6 UDP, ICMP, a record whose rule id is appended, and a state-mismatch; plus one message of the program that is not a filter-log record.",
+    "example_values_are_not_a_network": "Every address is a synthesised documentation address (RFC 5737, RFC 3849) and every device, host and domain name a synthesised example name."
+  },
+  "body": [
+    "<134>1 2026-09-26T23:51:06+00:00 example-host filterlog 1000 - - 12,,,example-rule-label-1,exdev0,match,pass,in,4,0x0,,64,4321,0,DF,6,tcp,1420,198.51.100.10,203.0.113.20,44321,443,1368,S,123456789,,64240,,mss;sackOK",
+    "<134>Sep 26 23:51:04 example-host filterlog[1001]: 13,,,example-rule-label-2,exdev1,match,block,out,6,0x00,0x00000,64,udp,17,76,2001:db8::10,2001:db8::20,51515,53,36",
+    "<134>1 2026-09-26T23:51:02+00:00 example-host filterlog 1002 - - 14,,,example-rule-label-3,exdev2,match,pass,in,4,0x0,,64,999,0,none,1,icmp,84,198.51.100.12,203.0.113.22,request,1,2",
+    "<134>Sep 26 23:51:00 example-host filterlog[1003]: 15,,,0,exdev0,match,block,in,4,0x0,,64,1,0,none,17,udp,60,198.51.100.13,203.0.113.23,5000,6000,32,0123456789abcdef0123456789abcdef",
+    "<134>1 2026-09-26T23:50:58+00:00 example-host filterlog 1004 - - 16,,,example-rule-label-1,exdev0,state-mismatch,pass,out,4,0x0,,64,4322,0,DF,6,tcp,240,203.0.113.20,198.51.100.10,443,44321,188,PA,987654321,123456790,501,,",
+    "<134>1 2026-09-26T23:50:57+00:00 example-host filterlog 1099 - - this is not a filter-log record"
+  ]
+}

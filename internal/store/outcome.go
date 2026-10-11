@@ -107,6 +107,13 @@ const (
 	// its scripts, on a firewall whose version no range covers, or whose version is not known yet
 	// (A19 of the broker amendment). The closest range is never guessed: nothing is called.
 	OutcomeFirewallVersionUnsupported AvailabilityOutcome = "firewall_version_unsupported"
+	// OutcomeListenerNotConfigured is a push declaration whose protocol has no listener on a
+	// transport it accepts: the start parameter is not given, so nothing can arrive, and the
+	// silence is not an absence of data (docs/plugins.md, "Push sources").
+	OutcomeListenerNotConfigured AvailabilityOutcome = "listener_not_configured"
+	// OutcomeNoMessageReceived is a push declaration whose listener is open and which has received
+	// nothing within its liveness span: the firewall's export is off, filtered, or sent elsewhere.
+	OutcomeNoMessageReceived AvailabilityOutcome = "no_message_received"
 )
 
 // AvailabilityOutcomes is the closed set, in the order docs/data-model.md lists it. The
@@ -123,6 +130,7 @@ var AvailabilityOutcomes = []AvailabilityOutcome{
 	OutcomeDownloadRefused, OutcomeDownloadLimitReached, OutcomeDownloadFailed,
 	OutcomeDownloadMalformed, OutcomeStoreFailure,
 	OutcomeScriptFailed, OutcomeScriptTimeout, OutcomeRecordsInvalid, OutcomeFirewallVersionUnsupported,
+	OutcomeListenerNotConfigured, OutcomeNoMessageReceived,
 }
 
 // Valid reports whether the outcome is in the closed set.

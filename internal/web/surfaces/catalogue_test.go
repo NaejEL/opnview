@@ -2,6 +2,7 @@ package surfaces_test
 
 import (
 	"github.com/NaejEL/opnview/internal/auth"
+	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/webtest"
@@ -118,6 +119,17 @@ func TestNoUserVisibleStringIsALiteral(t *testing.T) {
 			if (strings.HasPrefix(key, "dataset.") || (strings.HasPrefix(key, "plugin.") &&
 				strings.Contains(key, ".dataset."))) && !shown[strings.TrimSpace(value)] {
 				unrenderable[key] = "a dataset label, served by GET /api/datasets"
+			}
+		}
+		// A kind a built-in plugin declares for itself, and its provider, are drawn by the Sources
+		// surface once the probe round registers the provider; the registry seeds only the core's
+		// kinds, and no state rendered here runs a probe round.
+		for _, kind := range plugin.Builtins().DeclaredKinds() {
+			for key, value := range catalogue.Strings {
+				if (key == "collection.kind."+kind || strings.HasPrefix(key, "provider."+kind+".")) &&
+					!shown[strings.TrimSpace(value)] {
+					unrenderable[key] = "the label of a built-in plugin's own kind, drawn once its provider is registered"
+				}
 			}
 		}
 		for key := range unrenderable {

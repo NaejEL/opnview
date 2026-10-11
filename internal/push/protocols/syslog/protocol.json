@@ -1,0 +1,4 @@
+{
+  "name": "syslog",
+  "description": "The syslog header, RFC 5424 and RFC 3164, received over UDP and over TCP with either framing of RFC 6587."
+}

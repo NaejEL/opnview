@@ -1,0 +1,18 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, section Push sources (which cites opnsense/core 26.7.3, syslog-ng's documentation and Unbound 1.26.1), never by recording what a firewall sent. If the survey is wrong about a header, a framing or a message, the tests that read this file pass and the reception is still wrong. Do not treat this file as evidence; replace it with recorded lines rewritten under X1 once LV-SY has run.",
+    "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources",
+    "field_list_from": "S8: [pid:thread] info: client name type class, then for a reply rcode seconds.microseconds cached size, optionally on transport address port",
+    "why_these_values": "Unbound's lines as a target with no program filter sends them: a reply with the RFC 5424 option on, a query line, a reply without the option (RFC 3164, year-less), a reply naming the address it answered on, and an informational line that is not a query.",
+    "example_values_are_not_a_network": "Every address is a synthesised documentation address (RFC 5737, RFC 3849) and every device, host and domain name a synthesised example name."
+  },
+  "body": [
+    "<30>1 2026-09-26T23:51:06+00:00 example-host unbound 4242 - - [4242:0] info: 192.0.2.10 example.org. A IN NOERROR 0.000123 1 56",
+    "<30>1 2026-09-26T23:51:05+00:00 example-host unbound 4242 - - [4242:1] info: 2001:db8::10 example.net. AAAA IN",
+    "<30>Sep 26 23:51:04 example-host unbound[4242]: [4242:0] info: 198.51.100.7 example.com. MX IN NXDOMAIN 0.012000 0 120",
+    "<30>1 2026-09-26T23:51:03+00:00 example-host unbound 4242 - - [4242:0] info: 192.0.2.11 example.org. TXT IN NOERROR 0.004000 0 88 on udp 192.0.2.1 53",
+    "<30>1 2026-09-26T23:51:02+00:00 example-host unbound 4242 - - [4242:0] info: service stopped (unbound 1.26.1)."
+  ]
+}

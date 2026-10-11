@@ -51,6 +51,9 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 		// live_cadence_seconds, 10 s by default (C3 of the backend-completion cycle). A tick with no
 		// live-interest lease does nothing.
 		"live sampling": 10 * time.Second,
+		// The unbound plugin's push-fed provider of its query log, whose pass reads the push hub and
+		// never the firewall, refreshing its availability every minute (docs/plugins.md, "Push sources").
+		"unbound_query_log unbound": time.Minute,
 	}
 	if len(tasks) != len(wanted) {
 		t.Fatalf("the scheduler has %d loops, want %d", len(tasks), len(wanted))

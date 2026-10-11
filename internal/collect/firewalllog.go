@@ -39,6 +39,17 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 		return fmt.Errorf("collect: the active firewall_log provider %q has no implementation",
 			providerKey)
 	}
+	// While a push entry that replaces this provider's polling is alive and past its overlap, the
+	// pass reads nothing: the push path answers (PS9, PS10; pushpaths.go).
+	if skip, err := c.planPull(ctx, providerKey, providerID, nil); err != nil {
+		return err
+	} else if skip.skip {
+		if err := c.writeAvailability(ctx, providerID, store.StateReachable, store.OutcomeHealthy,
+			scriptlessProbe(providerKey), pushAnswers(providerKey)); err != nil {
+			return err
+		}
+		return c.derive(ctx, derivation{})
+	}
 
 	records, result, readErr := source.Records(ctx, c, c.pages().FirewallLog)
 	if writeErr := c.writeAvailability(ctx, providerID, result.State,
@@ -58,6 +69,10 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	plan, err := c.planPull(ctx, providerKey, providerID, records)
+	if err != nil {
+		return err
+	}
 
 	snapshot := c.Discovery()
 	// No retention purge runs from here until the derivation has ended, so none can
@@ -68,8 +83,17 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 	now, ingest := c.beginIngest()
 	defer c.endIngest(ingest)
 	var stored derivation
-	passErr := c.storeFirewallLog(ctx, records, snapshot, now, providerID, newestStored, hasStored,
+	passErr := c.storeFirewallLog(ctx, records, plan, snapshot, now, providerID, newestStored, hasStored,
 		&stored)
+	if passErr == nil && plan.path != nil {
+		// An overlap ends once polling has read up to a second the push path covers.
+		accepted, err := c.handOver(ctx, providerID, plan.path, records)
+		if err != nil {
+			passErr = err
+		} else if len(accepted) > 0 {
+			passErr = c.storeRecords(ctx, accepted, snapshot, now, &stored)
+		}
+	}
 	if c.hooks.afterStore != nil {
 		c.hooks.afterStore()
 	}
@@ -86,14 +110,18 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 // reaches them even when this returns an error part-way. A record the retention purge
 // has already removed is not stored again: store.InsertFlow refuses it inside the
 // insert itself, so a purge committing at any moment of this loop is seen.
-func (c *Collector) storeFirewallLog(ctx context.Context, records []firewalllog.Record, snapshot Discovery,
-	now, providerID, newestStored int64, hasStored bool, stored *derivation) error {
+//
+// THE SOURCE SEGMENTS DECIDE WHICH RECORDS ARE KEPT (plan, pushpaths.go): a record of an instant a
+// push path covers is superseded, and a gap is clipped by what the push path stored.
+func (c *Collector) storeFirewallLog(ctx context.Context, records []firewalllog.Record, plan pullPlan,
+	snapshot Discovery, now, providerID, newestStored int64, hasStored bool, stored *derivation) error {
 	oldestReturned := int64(0)
 	for index, record := range records {
 		if index == 0 || record.ObservedAt < oldestReturned {
 			oldestReturned = record.ObservedAt
 		}
-
+	}
+	for _, record := range plan.keep {
 		seen, err := c.store.HasFlowDigest(ctx, record.Digest)
 		if err != nil {
 			return err
@@ -115,7 +143,11 @@ func (c *Collector) storeFirewallLog(ctx context.Context, records []firewalllog.
 		stored.widenPairing(record.ObservedAt, record.ObservedAt)
 	}
 
-	// The gap test.
+	// The gap test, clipped by the newest push segment: an interval whose records the push path
+	// stored is never a gap.
+	if plan.pushFloor > newestStored {
+		newestStored, hasStored = plan.pushFloor, true
+	}
 	if hasStored && oldestReturned > newestStored {
 		detail := fmt.Sprintf(
 			"the page of %d records began after the newest record stored, so the interval between "+

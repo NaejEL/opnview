@@ -66,6 +66,9 @@ so and amend this roadmap rather than quietly working around it.
   PostgreSQL the installer set up, over a Unix socket or the installation's
   private container network, and to no other host. Images pulled at install or
   update time are installation-time downloads, not calls the product makes.
+  Push listeners are inbound: they receive what the user configured the
+  firewall to send, accept only the firewall's own addresses, and make no
+  outbound call.
 - **The observation limit is documented, not printed**: the application only
   sees what crosses the router, so every figure is a lower bound.
 - **Degrade, never guess.** Suricata may be absent, installed but stopped, or
@@ -752,7 +755,7 @@ data.
 
 **Validation**: successful install from scratch on a PVE node.
 
-### Planned: push sources — syslog and NetFlow (maintainer, 12 October 2026; not yet scheduled)
+### Push sources: syslog and NetFlow (maintainer, 12 October 2026)
 
 Plugins may receive data **pushed** by the firewall, as well as pull it through the broker:
 - **syslog**, RFC 3164 and 5424, over UDP and TCP;
@@ -775,12 +778,12 @@ A plugin declares in its manifest:
 
 A syslog line that no plugin subscribes to is dropped at the header, at no cost.
 
-Points the specification of this step must settle:
+The specification settles them in Phase C, part 2 of the backend-completion cycle:
 
 - **Typed columns use the plugin type vocabulary** (`ip`, `mac`, `instant`, `integer`…), mapped to native PostgreSQL types such as `inet` and `timestamptz`. They are not free SQL type strings. This keeps validation, compression and the data catalogue's roles.
 - **A message a regex cannot express**, such as filterlog's CSV with its many variants, may name an optional JavaScript parse function. The regex stays the fast path.
 - **Only the configured firewall is accepted as a sender.** Spoofed UDP is never stored.
-  - TCP syslog uses RFC 6587 octet counting.
+  - TCP syslog uses RFC 6587 framing, octet counting or newline, detected per connection; OPNsense sends newline-framed messages (survey, *Push sources*, S2).
   - Receive buffers are bounded. A drop is counted and recorded as a gap, never silently.
 - **Timestamps.** RFC 3164 has no year and no zone. The firewall's measured UTC offset applies. NetFlow uses its own export time.
 - **NetFlow interface indexes** are mapped to OPNsense interfaces through the API, a read through the broker.

@@ -39,8 +39,17 @@ import (
 // at start keeps its schema and its tables, and the listing reports them as orphaned
 // (OrphanedPluginTables); removing them is the operator's act.
 
-// PluginColumnTypes are the column types a plugin table may declare, as PostgreSQL stores them.
-var PluginColumnTypes = map[string]string{"integer": "BIGINT", "real": "DOUBLE PRECISION", "text": "TEXT"}
+// PluginColumnTypes are the column types a plugin table may declare -- the plugin type vocabulary of
+// PS4 of the push amendment, words of a closed list and never SQL type strings -- as PostgreSQL
+// stores them. There is no JSON type: every captured property is its own column.
+var PluginColumnTypes = map[string]string{"integer": "BIGINT", "real": "DOUBLE PRECISION", "text": "TEXT",
+	"boolean": "BOOLEAN", "ip": "INET", "mac": "MACADDR", "instant": "TIMESTAMPTZ"}
+
+// PluginColumnTypeList is the vocabulary in the order docs/plugins.md lists it.
+var PluginColumnTypeList = []string{"integer", "real", "text", "boolean", "ip", "mac", "instant"}
+
+// pluginTypeInstant is the vocabulary's timestamp type, the time column of a push output table.
+const pluginTypeInstant = "instant"
 
 // The roles a plugin column may declare, which the data catalogue serves (P8).
 const (
@@ -203,8 +212,8 @@ func ValidatePluginTable(table PluginTable) error {
 		}
 		seen[column.Name] = true
 		if _, known := PluginColumnTypes[column.Type]; !known {
-			return fmt.Errorf("store: the column %q of %s has the type %q, not integer, real or text",
-				column.Name, table.SQLName(), column.Type)
+			return fmt.Errorf("store: the column %q of %s has the type %q, not one of %v",
+				column.Name, table.SQLName(), column.Type, PluginColumnTypeList)
 		}
 		switch column.Role {
 		case "", RoleDimension:
@@ -215,8 +224,8 @@ func ValidatePluginTable(table PluginTable) error {
 					"retention reads", column.Name, table.SQLName())
 			}
 		case RoleMeasure:
-			if column.Type == "text" {
-				return fmt.Errorf("store: the column %q of %s is a measure and holds text", column.Name,
+			if column.Type != "integer" && column.Type != "real" {
+				return fmt.Errorf("store: the column %q of %s is a measure and is not a number", column.Name,
 					table.SQLName())
 			}
 		default:
@@ -254,8 +263,8 @@ func ValidatePluginTable(table PluginTable) error {
 	}
 	if table.TimeColumn != "" {
 		column, found := table.column(table.TimeColumn)
-		if !found || column.Type != "integer" || column.Nullable {
-			return fmt.Errorf("store: the retention of %s reads %q, which is not a NOT NULL integer column",
+		if !found || (column.Type != "integer" && column.Type != pluginTypeInstant) || column.Nullable {
+			return fmt.Errorf("store: the retention of %s reads %q, which is not a NOT NULL integer or instant column",
 				table.SQLName(), table.TimeColumn)
 		}
 		if !strings.HasSuffix(column.Name, "_at") {
@@ -321,9 +330,14 @@ func (t PluginTable) createStatements() []string {
 		definition.String(),
 	}
 	if t.TimeColumn != "" {
+		// An integer time column is chunked by a span of its own unit; an instant one by an interval.
+		span := fmt.Sprintf("%d", hypertableChunkSeconds)
+		if column, _ := t.column(t.TimeColumn); column.Type == pluginTypeInstant {
+			span = fmt.Sprintf("INTERVAL '%d seconds'", hypertableChunkSeconds)
+		}
 		statements = append(statements, fmt.Sprintf(
-			"SELECT create_hypertable('%s', by_range('%s', %d), if_not_exists => true, migrate_data => true)",
-			strings.ReplaceAll(t.quoted(), "'", "''"), t.TimeColumn, hypertableChunkSeconds))
+			"SELECT create_hypertable('%s', by_range('%s', %s), if_not_exists => true, migrate_data => true)",
+			strings.ReplaceAll(t.quoted(), "'", "''"), t.TimeColumn, span))
 	}
 	for index, declared := range t.Indexes {
 		unique := ""
@@ -657,7 +671,11 @@ func (s *Store) WritePluginPass(ctx context.Context, plugin, provider string, ro
 		for _, row := range rows[name] {
 			arguments := make([]any, 0, len(table.Columns))
 			for _, column := range table.Columns {
-				arguments = append(arguments, row[column.Name])
+				argument, err := pluginArgument(column, row[column.Name])
+				if err != nil {
+					return fmt.Errorf("store: a row of %s: %w", table.SQLName(), err)
+				}
+				arguments = append(arguments, argument)
 			}
 			if _, err := transaction.ExecContext(ctx, statement, arguments...); err != nil {
 				return fmt.Errorf("store: writing a row of %s: %w", table.SQLName(), err)
@@ -694,7 +712,7 @@ func (t PluginTable) upsertStatement() string {
 	marks := make([]string, 0, len(t.Columns))
 	for _, column := range t.Columns {
 		names = append(names, quoteIdentifier(column.Name))
-		marks = append(marks, "?")
+		marks = append(marks, column.placeholder())
 	}
 	statement := "INSERT INTO " + t.quoted() + " (" + strings.Join(names, ", ") + ") VALUES (" +
 		strings.Join(marks, ", ") + ")"
@@ -760,13 +778,22 @@ func purgeTimeTable(ctx context.Context, transaction *sql.Tx, qualified, column 
 		qualified).Scan(&hypertable); err != nil {
 		return fmt.Errorf("store: looking up %s: %w", qualified, err)
 	}
+	instant, err := timeColumnIsInstant(ctx, transaction, qualified, column)
+	if err != nil {
+		return err
+	}
+	// An instant column is compared with the horizon as an instant, an integer one as an epoch.
+	bound := "?"
+	if instant {
+		bound = "to_timestamp(?)"
+	}
 	if hypertable {
-		if _, err := transaction.ExecContext(ctx, "SELECT drop_chunks(CAST(? AS regclass), older_than => ?)",
+		if _, err := transaction.ExecContext(ctx, "SELECT drop_chunks(CAST(? AS regclass), older_than => "+bound+")",
 			qualified, horizon); err != nil {
 			return fmt.Errorf("store: dropping the chunks of %s: %w", qualified, err)
 		}
 	}
-	if _, err := transaction.ExecContext(ctx, "DELETE FROM "+qualified+" WHERE "+quoteIdentifier(column)+" < ?",
+	if _, err := transaction.ExecContext(ctx, "DELETE FROM "+qualified+" WHERE "+quoteIdentifier(column)+" < "+bound,
 		horizon); err != nil {
 		return fmt.Errorf("store: purging %s: %w", qualified, err)
 	}

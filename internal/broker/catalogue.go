@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+
+	"github.com/NaejEL/opnview/internal/push"
 )
 
 // The learned API catalogue (A15 of the broker amendment): what the broker learned of every
@@ -22,6 +24,28 @@ type Catalogue struct {
 	// HitRatio is the share of requests the mirror answered.
 	HitRatio     *float64 `json:"mirror_hit_ratio"`
 	WriteRefused int64    `json:"write_refused"`
+	// Push is what opnview receives rather than calls (PS13 of the push amendment): its listeners,
+	// its push declarations and the senders it refused. Inbound, so it is not a firewall call.
+	Push push.Catalogue `json:"push"`
+}
+
+// SetPushCatalogue gives the catalogue its push part, read each time the catalogue is.
+func (b *Broker) SetPushCatalogue(source func() push.Catalogue) {
+	b.mutex.Lock()
+	defer b.mutex.Unlock()
+	b.pushCatalogue = source
+}
+
+// pushPart is the push part of the catalogue: the hub's, or, with no hub, no listener and no
+// declaration routed.
+func (b *Broker) pushPart() push.Catalogue {
+	b.mutex.Lock()
+	source := b.pushCatalogue
+	b.mutex.Unlock()
+	if source != nil {
+		return source()
+	}
+	return push.NewHub(push.Options{}).Catalogue()
 }
 
 // CatalogueEndpoint is one endpoint.
@@ -143,7 +167,7 @@ func percentile(encoded string, fraction float64) *float64 {
 
 // Catalogue assembles the catalogue from the mirror's metadata.
 func (b *Broker) Catalogue(ctx context.Context) (Catalogue, error) {
-	catalogue := Catalogue{Endpoints: []CatalogueEndpoint{}, Subscriptions: b.Subscriptions()}
+	catalogue := Catalogue{Endpoints: []CatalogueEndpoint{}, Subscriptions: b.Subscriptions(), Push: b.pushPart()}
 	if catalogue.Subscriptions == nil {
 		catalogue.Subscriptions = []SubscriptionState{}
 	}

@@ -1,0 +1,4 @@
+{
+  "name": "netflow",
+  "description": "NetFlow version 9 (RFC 3954) and IPFIX (RFC 7011) template decoding into fields named and typed by the IANA IPFIX Information Elements registry, received over UDP."
+}

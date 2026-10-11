@@ -197,6 +197,9 @@ type Collector struct {
 	// pass, through pages.
 	pageSizes config.PageSizes
 
+	// pushPaths are the source segments of the providers fed by two paths (pushpaths.go).
+	pushPaths pushPaths
+
 	mutex     sync.RWMutex
 	discovery Discovery
 	// probed is what the last probe round found for each kind, kept so that a

@@ -69,6 +69,7 @@ double underscore. A plugin directory holds no Go file; a test of the repository
 | `destinations` | no | The hosts beyond the firewall the plugin contacts, each a scheme and a host. |
 | `tables` | no | Tables the plugin owns. |
 | `widgets` | no | The widgets the plugin carries, each a directory `widgets/<type>/` (see *Widgets*). |
+| `push` | no | The push sources the plugin receives: syslog lines and NetFlow records the firewall sends (see *Push sources*). |
 
 ### Endpoints
 
@@ -88,7 +89,7 @@ A plugin reads the firewall through `opnview`'s own OPNsense client, by the endp
 | `floor_seconds` | The shortest interval the endpoint is ever refreshed at: a call asking for fresher is served at this age. Optional. |
 | `corrections` | Corrections of what the broker infers of the answers -- `nature`, `rows`, `key`, `cursor`, `parameters` (each a role: `window_start`, `window_end`, `page`, `page_size`, `identifying`, `ignored`), `types`, `domains`, `value_keyed`, `dedupe_on_content`. Optional: see *Corrections*. |
 | `discard_events` | For a stream: how many events each connection begins with that are discarded, such as an average since boot. |
-| `replaces` | For a stream: the name of another endpoint of the manifest the stream replaces while it runs. Equivalence is declared, never guessed. |
+| `replaces` | For a stream: the name of another endpoint of the manifest the stream replaces while it runs. A push entry declares one too (*Push sources*, *Replacing polling*). Equivalence is declared, never guessed. |
 | `versions`, `variants` | The range of OPNsense versions this declaration serves, and the routes of other ranges. Optional: see *OPNsense versions*. |
 
 **Nothing is ever written to the firewall.** A declared endpoint is refused at load when it is not
@@ -111,6 +112,7 @@ at every call, any path the plugins and the core have not declared.
 | `triggered_by` | Core notifications that also run a pass, for a provider that states its own cadence: below. |
 | `probe`, `read` | The declarative form, below. A provider declaring neither is served by the script. |
 | `live` | A live pass, for a `measurement_sample` provider served by a script: *Live pass*, below. |
+| `source` | `push` for a provider of a kind of the plugin's own that its push entries feed: no probe, no read, no script function, and no cadence to declare (its pass, every minute, reads the push receiver and never the firewall). See *Push sources*. |
 
 **A provider is served by the script, or declared.** A script exports, under the kind's name, the
 functions the kind's contract lists. A provider whose source is one endpoint answering rows can
@@ -216,9 +218,9 @@ table of the same name; a query names it `plugin_<plugin>.<table>`.
 | Key | What it is |
 |---|---|
 | `name` | The table's name: a lower-case snake_case word. |
-| `columns` | Each `name`, `type` (`integer`, `real` or `text`), and optionally `nullable`, `carries_domain` (the column holds a domain name, withheld under `aggregate_mode` = `no_domains`), `role` (`time`, `dimension` or `measure`; a dimension by default, time for the retention column), `unit` (a measure's lower-case word, such as `byte`) and `aggregations` (what the data catalogue admits on it; the role's defaults otherwise). |
+| `columns` | Each `name`, `type` (a word of the type vocabulary: `integer`, `real`, `text`, `boolean`, `ip`, `mac` or `instant`; see *Push sources*, *The type vocabulary*), and optionally `nullable`, `carries_domain` (the column holds a domain name, withheld under `aggregate_mode` = `no_domains`), `role` (`time`, `dimension` or `measure`; a dimension by default, time for the retention column), `unit` (a measure's lower-case word, such as `byte`) and `aggregations` (what the data catalogue admits on it; the role's defaults otherwise). |
 | `primary_key`, `indexes` | The keys. A row written again with the same primary key replaces the first. |
-| `retention` | The integer column holding each row's instant, in UTC epoch seconds, and how long a row is kept after it; `seconds` 0 follows the installation's retention. |
+| `retention` | The column holding each row's instant -- an `instant`, or an `integer` of UTC epoch seconds -- and how long a row is kept after it; `seconds` 0 follows the installation's retention. A push output table's is an `instant`. |
 | `nature` | `event` or `sample`: what a bucket of the data catalogue with no row means -- a true zero, or a gap. `sample` by default, which never draws a zero it did not read. |
 
 A table with a retention column is a TimescaleDB hypertable chunked by day on it, purged by whole
@@ -447,7 +449,7 @@ A plugin's tests are JavaScript, in `tests/*.test.js`, run by the interpreter th
 opnview plugin test <plugin directory>
 ```
 
-prints one line per test and exits non-zero when one failed. It touches no data directory and
+prints one line per test and exits non-zero when one failed. A plugin with push entries is tested by delivering recorded messages: see *Push sources*, *Testing a push entry*. It touches no data directory and
 contacts nothing. The repository runs the built-in plugins' tests the same way.
 
 Each test runs against a world of its own: a fake firewall answering only what the test arranged
@@ -509,6 +511,19 @@ a recorded answer in `testdata/`, `{"__provenance__": {...}, "body": ...}`; `fil
 | `widget_missing` | A widget the manifest names has no directory. |
 | `string_outside_namespace` | A catalogue string is outside the plugin's namespace. |
 | `live_pass_invalid` | A live pass is declared where it cannot run, or names a function, a cadence setting or an endpoint wrongly: see *Live pass*. |
+| `push_declaration_invalid` | A push entry's shape is wrong: no name or a name twice, a transport its protocol is not received over, a pattern and a parse function both, a parse function or a pattern for NetFlow, a field mapping naming no field or no column. |
+| `push_protocol_unknown` | A push entry names a protocol this build does not decode. |
+| `push_filter_invalid` | A push entry's filter is not its protocol's: no program for syslog, no required element for NetFlow, an unknown key, facility, severity or operator. |
+| `push_element_unknown` | A push entry names a field its protocol does not carry: a syslog header field outside its list, or an Information Element outside the IANA registry. |
+| `push_pattern_invalid` | A push entry's pattern does not compile under RE2, or a named group is not a column of its table. |
+| `push_destination_invalid` | A push entry names both or neither of `output_table` and `kind`, a table the plugin does not declare, or a kind it does not provide or no push path receives. |
+| `push_table_without_instant` | A push entry's table has no `instant` time column. |
+| `push_kind_without_replacement` | A push entry delivers a core kind the plugin also polls, and declares no `replaces`. |
+| `push_replaces_unknown` | `replaces` names an endpoint the manifest does not declare. |
+| `push_liveness_below_floor` | `liveness_seconds` is below 10. |
+| `push_provider_missing` | A push entry writes a table of the plugin's own, and the plugin declares not exactly one provider with `source` push. |
+| `push_column_unfilled` | A NOT NULL column of a push entry's table is filled by nothing. |
+| `push_parse_missing` | A push entry names a parse function the script does not export under `push`. |
 
 ## OPNsense versions
 
@@ -1610,6 +1625,461 @@ One event, decoded and normalised.
 | `protocol` | text | no |  | The protocol. |
 | `in_interface_device` | text | no |  | The device the event was seen on. |
 <!-- /contract:security_event -->
+
+## Push sources
+
+Most of what a plugin reads it **asks** the firewall for, through the broker. A push source is data
+the firewall **sends** to `opnview` once the user has configured it to: syslog lines (RFC 5424 and
+RFC 3164, over UDP and TCP) and NetFlow records (version 9, RFC 3954; IPFIX, RFC 7011, over UDP).
+`opnview` never configures the export: what the user does on OPNsense, and what OPNsense sends, is in
+`docs/opnsense-api-survey.md`, *Push sources: remote syslog and NetFlow export, read from source for
+push sources*, and in the README. Receiving is inbound: a listener makes no outbound call, and the
+broker stays the only path from `opnview` to the firewall's API.
+
+**The core knows the protocols and nothing of any program.** It holds the listeners, one decoder per
+protocol -- the syslog header; NetFlow and IPFIX templates, every field named and typed by the IANA
+IPFIX Information Elements registry -- and the routing. A message is decoded **once**, whoever
+subscribes; a syslog line no plugin subscribes to costs one header decode and one index lookup, runs
+no regular expression and no script, and is counted (`no_subscriber`) and dropped. What a program's
+message says, and which columns it fills, is the plugin's, declared under `push`.
+
+### Listening
+
+A listener is opened by a start parameter and by nothing else. **It has no default**, for the reason
+`--listen` has none: a port is one installation's configuration.
+
+```text
+opnview ... --push-listen syslog/tcp=<host:port> --push-listen syslog/udp=<host:port> --push-listen netflow/udp=<host:port>
+```
+
+Each is optional and repeatable. With none, no push socket is opened, and every push declaration's
+availability reads `listener_not_configured`: nothing can arrive, and the silence is not an absence of
+data.
+
+### The declaration
+
+```json
+"push": [{
+  "name": "logins",
+  "protocol": "syslog",
+  "filter": {"program": ["sshd"]},
+  "pattern": "^Accepted (?P<method>\\S+) for (?P<user>\\S+) from (?P<client>\\S+)",
+  "output_table": "logins"
+}]
+```
+
+| Key | What it is |
+|---|---|
+| `name` | The entry's name, a snake_case word: the parse function's name, and the catalogue's. |
+| `protocol` | `syslog` or `netflow`. |
+| `filter` | The header filter, in the protocol's form. Syslog: `{"program": [...], "facility": [...], "severity": [...]}`, the program -- RFC 3164's TAG, RFC 5424's APP-NAME -- by exact name and required, facility and severity by RFC 5424's names. NetFlow: `{"require": [...], "where": [...]}`, the Information Elements a row is built from, by registry name, and conditions `{element, operator, value or values}` with the data catalogue's operators (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `in`, `not_in`, `is_null`, `is_not_null`); a record lacking a required element is skipped for that entry and counted (`netflow_required_element_missing`). |
+| `transports` | The transports the entry accepts: `udp`, `tcp`; every one its protocol is received over by default. |
+| `pattern` | Syslog: a regular expression over the message, in RE2 syntax (Go's `regexp`: `(?P<name>...)` names a group; no backreference and no lookaround, because the input is network data and RE2 matches in linear time). Each named group fills the column of its name. A message it does not match is counted (`pattern_unmatched`). |
+| `parse` | Syslog: the name of a function the script exports under `push`, for a message a regular expression cannot express. Never with `pattern`. |
+| `fields` | Columns filled from fields every record carries: a syslog header field (`facility`, `severity`, `timestamp`, `hostname`, `program`, `process_id`, `message_id`, `structured_data`, `message`), or a NetFlow Information Element by registry name -- one name, or a list whose first present one wins. |
+| `output_table` | One of the plugin's tables, which receives the rows. |
+| `kind` | Instead, a core kind the plugin provides, whose records the parse function builds (see *Replacing polling*). Never with `output_table`. |
+| `replaces` | One of the plugin's endpoints, whose polling this entry replaces while it is alive. |
+| `liveness_seconds` | How long the entry stays alive with no message: 120 by default, 10 at least. |
+| `survey_section` | The section of the survey that establishes what the firewall sends; a built-in carries it. |
+
+**Where a row's values come from.** A row of an `output_table` entry is filled by its pattern's groups
+and its `fields`, or by its parse function; the table's time column, when nothing else names it, is
+filled with the record's own instant. Every NOT NULL column must be filled by one of these, or the
+declaration is refused (`push_column_unfilled`).
+
+**An `output_table` entry belongs to a provider.** The plugin declares one provider of a kind of its
+own with `"source": "push"`: it has no probe, no read and no script function, its availability is the
+entries' -- `listener_not_configured`, `no_message_received` within the liveness span, or healthy --
+and its gaps are the entries'. The table's dataset is dated by it.
+
+```json
+"providers": [{"kind": "example_logins", "display_name": "Example logins", "source": "push"}]
+```
+
+### The type vocabulary
+
+A column's `type` is a word of a closed list, for every plugin table, push or not:
+
+| Plugin type | PostgreSQL type | A value is |
+|---|---|---|
+| `integer` | `bigint` | a whole number; an unsigned 64-bit value above the signed range is refused, never wrapped |
+| `real` | `double precision` | a number |
+| `text` | `text` | text |
+| `boolean` | `boolean` | `true` or `false` |
+| `ip` | `inet` | an IPv4 or IPv6 address |
+| `mac` | `macaddr` | a 48-bit MAC address |
+| `instant` | `timestamptz` | an instant, at the precision the source has |
+
+There is no JSON type: every captured property is its own column. A push output table's time column
+is an `instant` (`push_table_without_instant` otherwise), named `*_at` like every instant of the
+schema, and the table is a hypertable chunked by day on it. The JSON API still serves every instant
+as an integer of UTC epoch seconds, and the data catalogue reads a boolean, an address and a MAC
+address as text. In a table a push entry writes, a column with no `role` takes the one its type
+implies: an `instant` is time, a number a measure, anything else a dimension; and the dataset's
+`nature` is `event` unless it says otherwise.
+
+A value that does not convert to its column's type is null in a nullable column, and refuses the row
+in a NOT NULL one; it is counted as `push_value_invalid` either way, never coerced. A NetFlow field is
+typed by its registry abstract type:
+
+| IANA abstract data type | Plugin type |
+|---|---|
+| `unsigned8` ... `unsigned64`, `signed8` ... `signed64` | `integer` |
+| `float32`, `float64` | `real` |
+| `ipv4Address`, `ipv6Address` | `ip` |
+| `macAddress` | `mac` |
+| `dateTimeSeconds`, `dateTimeMilliseconds`, `dateTimeMicroseconds`, `dateTimeNanoseconds` | `instant` |
+| `string` | `text` |
+| `boolean` | `boolean` |
+| `octetArray`, `unsigned256` and the list types | `text`, in lower-case hexadecimal |
+
+An enterprise-specific element is exposed as an octet array under `enterprise_<number>_<id>`. Beside
+the template's fields, every NetFlow record carries `exporterIPv4Address` or `exporterIPv6Address`,
+`observationDomainId`, `exportProtocolVersion` and `collectionTimeMilliseconds` (the reception), and
+`flowStartMilliseconds` / `flowEndMilliseconds` computed from v9's `FIRST_SWITCHED` / `LAST_SWITCHED`
+and the header's `unix_secs` and `sysUptime`, or from IPFIX's absolute or delta time elements.
+
+**Interface indexes.** `ingressInterface` and `egressInterface` are the exporter's interface
+indexes. Before a batch reaches its entry, each is mapped to the firewall's interface through the
+broker -- `GET /api/interfaces/overview/interfaces_info/1`, whose `statistics.index` is that index (survey,
+*Push sources*, S6) -- and the record gains `<field>_identifier` and `<field>_device` (text), the
+mapping in force at reception. An index no interface holds keeps its raw value, gains neither, and is
+counted (`interface_index_unmapped`); an index is never matched by position, name or count.
+
+### The parse function
+
+```js
+exports.push = {
+  logins: function (messages) {
+    return messages.map(function (message) { /* one row, or null */ });
+  }
+};
+```
+
+It is called with a batch of at most 500 decoded messages -- never once per message -- in a fresh
+interpreter, like every call. Each message is the header's fields (`facility`, `severity`, `timestamp`,
+`hostname`, `program`, `process_id`, `message_id`, `structured_data`, `message`), with `sender`,
+`transport` and `received_at`; every instant is UTC epoch seconds with its fraction. It answers a
+list of the batch's length: for each message a row of the output table (or, for a `kind` entry, a
+record of the kind's contract), or `null` to skip it (`skipped`). A call that throws, runs past its
+time bound, or answers anything but such a list fails that batch alone: its messages are counted
+(`script_failed`, `script_timeout`, `records_invalid`) and recorded as a gap (`push_script_failed`),
+and the next batch is processed. The regular expression stays the fast path: it calls no script. A
+plugin that maps OPNsense versions to scripts (*OPNsense versions*) has its parse function taken from
+the script of the firewall's version.
+
+### Instants
+
+An RFC 5424 timestamp, or an ISO one carrying its offset, is read as it stands. An RFC 3164 timestamp
+-- no year, no zone -- and an ISO one with no offset are read with the firewall's measured offset from
+UTC and the year rule of the filter log's timestamps, a line of 31 December read on 1 January
+included. The reception instant is recorded for liveness and gaps, and never substituted for a
+header instant that parsed.
+
+### Senders
+
+**Only the configured firewall may send.** The accepted addresses are derived at run time, never
+written down: the addresses the configured base URL's host resolves to, and every address the
+firewall's own interfaces hold as discovery read them. They are derived again every minute, with no
+restart. A datagram or a connection from any other address is refused before it is decoded, nothing
+of it is stored, and each refusal is counted per address in the API catalogue -- so a container
+network that rewrites source addresses is visible at once. **This is a source-address check. It
+refuses every other sender; it does not authenticate the firewall, and a forged source address on the
+path passes it.**
+
+### Liveness and gaps
+
+An entry is **alive** while messages it accepts have arrived within its liveness span. It stops being
+alive only after the span and half of it again, so a sender close to its span does not flip at every
+message. The interval during which an entry was not alive is recorded as a gap of its provider
+(`push_not_alive`), so a bucket outside it is a gap and never a zero.
+
+**Every queue is bounded, and every drop is a gap.** A drop is counted and recorded as a gap of the
+entry's provider, merged with the drops of the same reason less than ten seconds apart:
+
+| Reason | What it records |
+|---|---|
+| `push_buffer_overflow` | `opnview`'s own queues were full: a datagram found its listener's decode queue full, or a record its entry's queue |
+| `push_store_failed` | a batch that could not be committed after its retries |
+| `push_listener_down` | the interval during which the listener was not listening, `opnview`'s own downtime between runs included |
+| `push_script_failed` | a parse function call that failed, over its messages' reception instants |
+| `push_not_alive` | the entry received nothing for longer than its liveness span |
+| `netflow_sequence_gap` | a jump in an exporter's sequence numbers, between the export times on either side of it |
+| `netflow_template_missing` | NetFlow data whose template never arrived within the bound |
+
+The operating system's own receive-queue drops are not read.
+
+**Loss on the wire.** Syslog over UDP carries no sequence number: a datagram lost between the
+firewall and `opnview` is invisible. Every dataset a push entry feeds therefore carries
+`loss_detectable`: true when every transport the entry accepts detects its loss -- TCP syslog,
+NetFlow -- and false when it accepts UDP syslog.
+
+**A NetFlow exporter whose counters interleave.** A sequence number that goes backwards shows that
+several counters share one observation domain; from then on no gap is asserted for that exporter, and
+the listener's catalogue entry carries the flag `netflow_sequence_interleaved`. OPNsense's export is
+such an exporter as soon as two interfaces are captured (survey, *Push sources*, S11).
+
+| Bound | Value |
+|---|---|
+| UDP receive buffer asked of the system | 4 MiB |
+| One UDP datagram | 65 535 octets |
+| One TCP frame | 64 KiB; a longer frame closes its connection (`frame_too_large`) |
+| TCP connections per listener | 16 (`connections_refused` beyond), closed after 10 minutes of silence |
+| Datagrams waiting for a decoder | 4 096 |
+| Records waiting for one entry | 50 000 |
+| One batch | 1 000 records, or what arrived within one second |
+| NetFlow data sets held for their template | 1 024 per exporter and domain, 60 seconds |
+| NetFlow templates per exporter | 256 (`netflow_template_limit` beyond) |
+| Retries of a failing batch | 3, from 250 ms, doubling |
+
+### Replacing polling
+
+An entry with `kind` delivers records of a core kind the plugin also provides by polling; its parse
+function builds records of the kind's contract (*Kinds*), checked as a pulled answer is. Such an entry
+must name the polled endpoint it `replaces` (`push_kind_without_replacement` otherwise), and it is
+accepted **over TCP only**: UDP's loss is undetectable, and only a path whose loss is a gap may stand
+in for one that records its own. Today `firewall_log` is the one kind a push entry may deliver.
+
+**Nothing is counted twice.** The two paths' records cannot share an identity -- a pushed line carries
+a header written for the push target, and its identity is `opnview`'s own, `push:` and a digest of the
+pushed message -- so instead every instant belongs to one path: the provider's history is cut into
+**source segments** that never overlap, and a record is stored only if its instant lies in a segment
+of the path that delivered it. A record of the other path is **superseded**: counted, not stored.
+
+- **From polling to push.** When the entry becomes alive, polling goes on while the pushed records are
+  held; a pass in that overlap leaves out the newest second its page returned. The boundary is the
+  second before it, once the push path has been alive since before the boundary: polling closes its
+  segment there, the push segment opens after it, the held records after the boundary are stored and
+  the rest superseded, and polling stops -- the pass makes no call at all, and its availability says
+  the push source answers.
+- **From push to polling.** When the entry stops being alive, its segment closes at the last second it
+  delivered, and polling resumes at once; pulled records up to the boundary are superseded, and a gap
+  polling then detects starts at the boundary, never over what the push path stored.
+
+The segments, the mode and the superseded count are in the entry's catalogue entry. A built-in entry
+declares `replaces` only when a parity test passes: the same recorded lines, pulled and pushed, give
+records equal in every field of the contract but the identity.
+
+### The catalogue
+
+The API catalogue (*The API catalogue*) carries a `push` part: each listener with its protocol,
+transport, state, counts, the programs or templates it has seen and its drop counters; each entry with
+its plugin, destination, columns, transports, listener state (`listening` or
+`listener_not_configured`), liveness, stored rows and counters; and the accepted-sender set's size and
+the refused senders. It never carries a message, a field value, a credential or the base URL.
+
+### Testing a push entry
+
+| Function | What it does |
+|---|---|
+| `t.deliverSyslog(lines, {transport, sender})` | Delivers syslog messages, one per line, through the real decoder and router; TCP by default, from the test world's firewall address. |
+| `t.deliverNetflow(packets, {sender})` | Delivers NetFlow or IPFIX packets, each hexadecimal text. |
+| `t.acceptSender(address)` | Adds an address to the accepted senders. |
+| `t.pushed(entry)` | What the entry stored: rows (instants as epoch seconds, addresses as text), or records of its kind. |
+| `t.pushCounters(entry)`, `t.listenerCounters(protocol, transport)` | The counters. |
+| `t.fixture(file)` | The body of a recorded fixture of `testdata/`, such as a list of lines. |
+
+A test never calls its parse function directly to prove ingestion: it delivers recorded messages.
+
+### A syslog program into a table, with a regular expression
+
+`example_logins` keeps every accepted SSH login a remote syslog target sends, with no script.
+
+```json path=example_logins/plugin.json
+{
+  "api_version": 1,
+  "name": "example_logins",
+  "version": "1.0.0",
+  "display_name": "Example logins",
+  "description": "Keeps the SSH logins the firewall's syslog target sends.",
+  "tables": [
+    {
+      "name": "logins",
+      "columns": [
+        { "name": "logged_at", "type": "instant" },
+        { "name": "method", "type": "text" },
+        { "name": "user", "type": "text" },
+        { "name": "client", "type": "ip" }
+      ],
+      "retention": { "column": "logged_at" }
+    }
+  ],
+  "providers": [ { "kind": "example_logins", "display_name": "Example logins", "source": "push" } ],
+  "push": [
+    {
+      "name": "logins",
+      "protocol": "syslog",
+      "filter": { "program": ["sshd"] },
+      "pattern": "^Accepted (?P<method>\\S+) for (?P<user>\\S+) from (?P<client>\\S+)",
+      "output_table": "logins"
+    }
+  ]
+}
+```
+
+```json path=example_logins/locale/en.json
+{ "language": "en", "strings": { "provider.example_logins.example_logins": "Example logins",
+  "collection.kind.example_logins": "Logins", "plugin.example_logins.dataset.logins": "Logins" } }
+```
+
+```js path=example_logins/tests/example_logins.test.js
+test("an accepted login is a row, and anything else of the program is counted", function (t) {
+  t.deliverSyslog([
+    "<38>1 2026-09-27T10:00:00+00:00 example-host sshd 4242 - - Accepted publickey for operator from 192.0.2.50 port 50022 ssh2",
+    "<38>1 2026-09-27T10:00:01+00:00 example-host sshd 4242 - - Disconnected from user operator 192.0.2.50 port 50022"
+  ]);
+  var rows = t.pushed("logins");
+  t.equal(rows.length, 1, "rows");
+  t.equal(rows[0].user, "operator", "the user");
+  t.equal(rows[0].client, "192.0.2.50", "the client");
+  t.equal(rows[0].logged_at, 1790503200, "the header's instant");
+  t.equal(t.pushCounters("logins").pattern_unmatched, 1, "lines the pattern does not match");
+});
+```
+
+### A parse function
+
+`example_pairs` reads messages of `key=value` pairs, which no regular expression of fixed groups
+expresses.
+
+```json path=example_pairs/plugin.json
+{
+  "api_version": 1,
+  "name": "example_pairs",
+  "version": "1.0.0",
+  "display_name": "Example pairs",
+  "description": "Keeps the key=value messages of an example program.",
+  "script": "example_pairs.js",
+  "tables": [
+    {
+      "name": "events",
+      "columns": [
+        { "name": "logged_at", "type": "instant" },
+        { "name": "event", "type": "text" },
+        { "name": "bytes", "type": "integer", "nullable": true, "role": "measure", "unit": "byte" }
+      ],
+      "retention": { "column": "logged_at" }
+    }
+  ],
+  "providers": [ { "kind": "example_pairs", "display_name": "Example pairs", "source": "push" } ],
+  "push": [
+    {
+      "name": "events",
+      "protocol": "syslog",
+      "filter": { "program": ["example-daemon"] },
+      "parse": "events",
+      "output_table": "events"
+    }
+  ]
+}
+```
+
+```js path=example_pairs/example_pairs.js
+exports.push = {
+  events: function (messages) {
+    return messages.map(function (message) {
+      var pairs = {};
+      String(message.message).split(" ").forEach(function (part) {
+        var equals = part.indexOf("=");
+        if (equals > 0) {
+          pairs[part.slice(0, equals)] = part.slice(equals + 1);
+        }
+      });
+      if (!pairs.event) {
+        return null;
+      }
+      return { logged_at: message.timestamp, event: pairs.event, bytes: pairs.bytes === undefined ? null : Number(pairs.bytes) };
+    });
+  }
+};
+```
+
+```json path=example_pairs/locale/en.json
+{ "language": "en", "strings": { "provider.example_pairs.example_pairs": "Example pairs",
+  "collection.kind.example_pairs": "Pairs", "plugin.example_pairs.dataset.events": "Events" } }
+```
+
+```js path=example_pairs/tests/example_pairs.test.js
+test("each message with an event is a row, the others are skipped", function (t) {
+  t.deliverSyslog([
+    "<14>1 2026-09-27T10:00:00+00:00 example-host example-daemon - - - event=sync bytes=4096",
+    "<14>1 2026-09-27T10:00:01+00:00 example-host example-daemon - - - nothing to see"
+  ]);
+  var rows = t.pushed("events");
+  t.equal(rows.length, 1, "rows");
+  t.equal(rows[0].event, "sync", "the event");
+  t.equal(rows[0].bytes, 4096, "the bytes");
+  t.equal(t.pushCounters("events").skipped, 1, "skipped messages");
+  t.equal(t.pushCounters("events").script_calls, 1, "one call for the batch");
+});
+```
+
+### A NetFlow subscriber
+
+`example_flows` keeps the volume of every IPv4 and IPv6 flow record an exporter sends. A connection
+crossing two captured interfaces is exported once per interface, so **a sum of this table across
+interfaces counts such a connection once per interface**; and OPNsense's records do not say which
+interface observed them (survey, *Push sources*, S11). Traffic inside one interface's network never
+reaches the exporter at all.
+
+```json path=example_flows/plugin.json
+{
+  "api_version": 1,
+  "name": "example_flows",
+  "version": "1.0.0",
+  "display_name": "Example flows",
+  "description": "Keeps the flow records a NetFlow exporter sends.",
+  "tables": [
+    {
+      "name": "records",
+      "columns": [
+        { "name": "started_at", "type": "instant" },
+        { "name": "source", "type": "ip" },
+        { "name": "destination", "type": "ip" },
+        { "name": "protocol", "type": "integer", "role": "dimension" },
+        { "name": "input_index", "type": "integer", "role": "dimension" },
+        { "name": "octets", "type": "integer", "role": "measure", "unit": "byte" }
+      ],
+      "retention": { "column": "started_at" }
+    }
+  ],
+  "providers": [ { "kind": "example_flows", "display_name": "Example flows", "source": "push" } ],
+  "push": [
+    {
+      "name": "records",
+      "protocol": "netflow",
+      "filter": { "require": ["octetDeltaCount", "flowStartMilliseconds", "ingressInterface"] },
+      "fields": {
+        "started_at": "flowStartMilliseconds",
+        "source": ["sourceIPv4Address", "sourceIPv6Address"],
+        "destination": ["destinationIPv4Address", "destinationIPv6Address"],
+        "protocol": "protocolIdentifier",
+        "input_index": "ingressInterface",
+        "octets": "octetDeltaCount"
+      },
+      "output_table": "records"
+    }
+  ]
+}
+```
+
+```json path=example_flows/locale/en.json
+{ "language": "en", "strings": { "provider.example_flows.example_flows": "Example flows",
+  "collection.kind.example_flows": "Flow records", "plugin.example_flows.dataset.records": "Flow records, counted once per interface" } }
+```
+
+```js path=example_flows/tests/example_flows.test.js
+test("a v9 template and its record become one row", function (t) {
+  t.deliverNetflow(["00090002000186a06ab85c800000000100000000000000580101001400080004000c0004000f0004000a0002000e000200020004000100040018000400170004001600040015000400070002000b0002000600010004000100050001001000040011000400090001000d000101010040c633640acb00711400000000000300010000000a00003778000000000000000000009c4000017318ad2101bb1b060000000000000000001818000000"]);
+  var rows = t.pushed("records");
+  t.equal(rows.length, 1, "rows");
+  t.equal(rows[0].source, "198.51.100.10", "the source");
+  t.equal(rows[0].octets, 14200, "the octets");
+  t.equal(rows[0].input_index, 3, "the input index");
+  t.equal(rows[0].started_at, 1790467140, "uptime 40 s, exported at uptime 100 s");
+});
+```
 
 ## Worked examples
 

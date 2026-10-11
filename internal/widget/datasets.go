@@ -34,6 +34,9 @@ type ListedDataset struct {
 	RetentionHorizonAt *int64           `json:"retention_horizon_at"`
 	Freshness          DatasetFreshness `json:"freshness"`
 	Columns            []ListedColumn   `json:"columns"`
+	// LossDetectable is present on a dataset a push source feeds: whether a loss between the firewall
+	// and opnview is detected and recorded as a gap (docs/plugins.md, "Push sources").
+	LossDetectable *bool `json:"loss_detectable,omitempty"`
 }
 
 // DatasetFreshness is the provider whose last successful pass dates a dataset.
@@ -81,7 +84,7 @@ func (s *Service) ListDatasets(ctx context.Context) (DatasetListing, error) {
 	for _, declaration := range s.datasets.Declarations() {
 		listed := ListedDataset{Name: declaration.Name, Origin: declaration.Origin, Label: declaration.Label,
 			Nature: declaration.Nature, Columns: []ListedColumn{},
-			Freshness: datasetFreshness(declaration.Freshness, providers)}
+			Freshness: datasetFreshness(declaration.Freshness, providers), LossDetectable: declaration.LossDetectable}
 		if column, timed := declaration.TimeColumn(); timed {
 			name := column.Name
 			listed.TimeColumn = &name

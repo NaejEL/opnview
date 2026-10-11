@@ -18,6 +18,7 @@ import (
 
 	opnview "github.com/NaejEL/opnview"
 	"github.com/NaejEL/opnview/internal/broker"
+	"github.com/NaejEL/opnview/internal/collect/pluginkind"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/dataset"
@@ -56,7 +57,12 @@ const PluginsDirectory = "plugins"
 const (
 	FormScript      = "script"
 	FormDeclarative = "declarative"
+	// FormPush is a provider its push entries feed, which reads nothing of the firewall.
+	FormPush = "push"
 )
+
+// pushProviderCadenceSeconds is how often a push-fed provider's pass refreshes its availability.
+const pushProviderCadenceSeconds = 60
 
 // Options say where plugins are read from and what they are checked against.
 type Options struct {
@@ -81,6 +87,9 @@ type Options struct {
 	// HostAnswers, when set, is handed everything a host function answers a script, by function
 	// name: `opnview plugin test` searches it for credentials (BR-AC16). Nil in the product.
 	HostAnswers func(function string, answer any)
+
+	// pushes is what the load's push entries share, set by Load.
+	pushes *pushHost
 }
 
 // Plugin is one loaded plugin, as the listing reports it.
@@ -125,6 +134,9 @@ type Plugin struct {
 	widgets []widget.Source
 	// lives are its providers' live passes, by provider key (live.go).
 	lives map[string]*liveBinding
+	// pushes are its push entries (push.go), and pushHost the hub they are routed by once one runs.
+	pushes   []*pushBinding
+	pushHost *pushHost
 }
 
 // ProviderInfo is one provider a plugin declares.
@@ -155,6 +167,7 @@ type Loaded struct {
 	Set      *sources.Set
 	plugins  []*Plugin
 	refusals []Refusal
+	push     *pushHost
 }
 
 // Plugins returns the loaded plugins, built-ins first, each group by name.
@@ -251,7 +264,8 @@ func (p *Plugin) Call(ctx context.Context, session provider.Session, namespace, 
 // cannot be listed at all; a plugin it refuses is reported in Refusals, and the set's failures
 // carry a refused built-in.
 func Load(ctx context.Context, options Options) (*Loaded, error) {
-	loaded := &Loaded{Set: sources.New()}
+	loaded := &Loaded{Set: sources.New(), push: &pushHost{}}
+	options.pushes = loaded.push
 	builtins := options.Builtins
 	if builtins == nil {
 		builtins = opnview.BuiltinPlugins()
@@ -338,7 +352,7 @@ func loadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origi
 	plugin := &Plugin{
 		Name: manifest.Name, Version: manifest.Version, DisplayName: manifest.DisplayName,
 		Description: manifest.Description, APIVersion: manifest.APIVersion, Origin: origin, Directory: location,
-		manifest: manifest, Strings: map[string]map[string]string{},
+		manifest: manifest, Strings: map[string]map[string]string{}, pushHost: options.pushes,
 	}
 	endpoints, routes, refusal := declaredEndpoints(manifest)
 	if refusal != nil {
@@ -371,6 +385,15 @@ func loadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origi
 	if refusal != nil {
 		return nil, refusal
 	}
+	var exports map[string]map[string]string
+	if plugin.script != nil {
+		if exports, err = plugin.script.exportsOf(); err != nil {
+			return nil, refuse(name, RefusalScriptDoesNotCompile, "%v", err)
+		}
+	}
+	if plugin.pushes, refusal = checkPush(plugin, exports); refusal != nil {
+		return nil, refusal
+	}
 	if refusal := loadWidgets(plugin, directory, location, onDisk, origin); refusal != nil {
 		return nil, refusal
 	}
@@ -382,7 +405,7 @@ func loadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origi
 		infos = append(infos, declared.info)
 	}
 	for index, table := range tables {
-		declared, err := pluginDataset(name, manifest.Tables[index], table, infos)
+		declared, err := pluginDataset(name, manifest.Tables[index], table, infos, plugin.pushes)
 		if err != nil {
 			return nil, refuse(name, RefusalTableInvalid, "the table %s is not a dataset the catalogue can serve: %v",
 				table.Table, err)
@@ -588,6 +611,19 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *Refus
 			return nil, refuse(plugin.Name, RefusalManifestInvalid, "the %s provider has no display_name",
 				declaration.Kind)
 		}
+		switch declaration.Source {
+		case "":
+		case providerSourcePush:
+			if provider.IsCoreKind(declaration.Kind) || declaration.Probe != nil || declaration.Read != nil ||
+				declaration.Live != nil {
+				return nil, refuse(plugin.Name, RefusalManifestInvalid, "the %s provider has the source push, which "+
+					"only a provider of a kind of the plugin's own with no probe, read or live pass may have",
+					declaration.Kind)
+			}
+		default:
+			return nil, refuse(plugin.Name, RefusalManifestInvalid, "the %s provider has the source %q; the only "+
+				"source a provider names is push", declaration.Kind, declaration.Source)
+		}
 		if reason, coreOnly := provider.CoreOnly(declaration.Kind); coreOnly {
 			return nil, refuse(plugin.Name, RefusalCoreOnlyKind, "the kind %q is %s", declaration.Kind, reason)
 		}
@@ -609,6 +645,10 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *Refus
 				"the %s provider %q is already declared", declaration.Kind, key)
 		}
 		seen[identity] = true
+		if declaration.Source == providerSourcePush && declaration.CadenceSeconds == 0 {
+			// Its pass reads the hub, never the firewall: it refreshes the availability row.
+			declaration.CadenceSeconds = pushProviderCadenceSeconds
+		}
 		if refusal := checkCadence(plugin.Name, declaration, core && declaration.Kind != "reconciled_state"); refusal != nil {
 			return nil, refusal
 		}
@@ -630,6 +670,21 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *Refus
 		if (declaration.Probe != nil || declaration.Read != nil) && declaration.Live != nil {
 			_, refusal := checkLive(plugin, declaration, exports)
 			return nil, refusal
+		}
+		if declaration.Source == providerSourcePush {
+			info.Form = FormPush
+			manifest := provider.Manifest{Kind: declaration.Kind, Key: key, DisplayName: declaration.DisplayName}
+			declaration := declaration
+			checked = append(checked, checkedProvider{info: info, add: func(set *sources.Set) error {
+				if err := set.DeclareKind(manifest.Kind, plugin.Name); err != nil {
+					return err
+				}
+				return set.AddDeclared(manifest, pluginkind.Registration{Plugin: plugin.Name,
+					Cadence:    cadenceOf(declaration),
+					MinCadence: time.Duration(declaration.MinCadenceSeconds) * time.Second,
+					Source:     pushProviderAdapter{plugin: plugin, kind: manifest.Kind, key: manifest.Key}})
+			}})
+			continue
 		}
 		if declaration.Probe != nil || declaration.Read != nil {
 			info.Form = FormDeclarative

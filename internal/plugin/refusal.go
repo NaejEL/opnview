@@ -76,6 +76,43 @@ const (
 	// that is not a declared integer setting with a default and a lower bound of at least one
 	// second, or an endpoint the manifest does not declare or declares as a stream.
 	RefusalLivePassInvalid = "live_pass_invalid"
+	// The refusals of a push declaration (docs/plugins.md, "Push sources").
+	//
+	// RefusalPushDeclarationInvalid is a push entry whose shape is wrong: no name or a name twice, a
+	// transport its protocol is not received over, a regular expression and a parse function both
+	// or neither for syslog, a parse function or a pattern for NetFlow, or a field mapping naming
+	// no field.
+	RefusalPushDeclarationInvalid = "push_declaration_invalid"
+	// RefusalPushProtocolUnknown is a protocol no registered decoder serves.
+	RefusalPushProtocolUnknown = "push_protocol_unknown"
+	// RefusalPushFilterInvalid is a header filter its protocol does not read.
+	RefusalPushFilterInvalid = "push_filter_invalid"
+	// RefusalPushElementUnknown is a field name the protocol does not carry: a syslog header field
+	// outside its list, or an Information Element outside the IANA registry.
+	RefusalPushElementUnknown = "push_element_unknown"
+	// RefusalPushPatternInvalid is a regular expression that does not compile under RE2, or a named
+	// group that is not a column of the output table.
+	RefusalPushPatternInvalid = "push_pattern_invalid"
+	// RefusalPushDestinationInvalid is an entry naming both or neither of output_table and kind, an
+	// output table the plugin does not declare, or a kind none of its providers implements.
+	RefusalPushDestinationInvalid = "push_destination_invalid"
+	// RefusalPushTableWithoutInstant is an output table whose time column is not an instant.
+	RefusalPushTableWithoutInstant = "push_table_without_instant"
+	// RefusalPushKindWithoutReplacement is an entry feeding a core kind its plugin also reads through
+	// a polled endpoint, with no replaces: two paths of one provider would count records twice.
+	RefusalPushKindWithoutReplacement = "push_kind_without_replacement"
+	// RefusalPushReplacesUnknown is a replaces naming no endpoint of the manifest.
+	RefusalPushReplacesUnknown = "push_replaces_unknown"
+	// RefusalPushLivenessBelowFloor is a liveness span below the floor.
+	RefusalPushLivenessBelowFloor = "push_liveness_below_floor"
+	// RefusalPushProviderMissing is an output table entry in a plugin declaring no provider of a
+	// kind of its own with source push, which the entry's availability and gaps belong to.
+	RefusalPushProviderMissing = "push_provider_missing"
+	// RefusalPushColumnUnfilled is a NOT NULL column of the output table that neither the pattern,
+	// the field mapping, the parse function nor the record's instant fills.
+	RefusalPushColumnUnfilled = "push_column_unfilled"
+	// RefusalPushParseMissing is a parse function the script does not export under push.
+	RefusalPushParseMissing = "push_parse_missing"
 )
 
 // Refusal is one plugin the loader would not load, with its closed code.

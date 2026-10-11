@@ -108,6 +108,17 @@ const (
 	// List -- that could not be fetched or did not parse. The copy in use stays in
 	// use; the interval is how long it has gone without a refresh.
 	GapDownloadFailed GapReason = "download_failed"
+	// The push sources' gaps (docs/plugins.md, "Push sources"): a drop in opnview's own queues, a
+	// batch that could not be committed, a listener that was not listening, a parse function that
+	// threw or timed out, a source that stopped sending, and the two a NetFlow exporter's own
+	// numbering reveals.
+	GapPushBufferOverflow     GapReason = "push_buffer_overflow"
+	GapPushStoreFailed        GapReason = "push_store_failed"
+	GapPushListenerDown       GapReason = "push_listener_down"
+	GapPushScriptFailed       GapReason = "push_script_failed"
+	GapPushNotAlive           GapReason = "push_not_alive"
+	GapNetflowSequenceGap     GapReason = "netflow_sequence_gap"
+	GapNetflowTemplateMissing GapReason = "netflow_template_missing"
 )
 
 // LogReasons is the established value set of the filter log's `reason` field,

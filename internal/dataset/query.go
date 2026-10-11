@@ -523,7 +523,7 @@ func (q *Query) parseFilters(raw json.RawMessage, declaration Declaration) *Refu
 				return refuse(RefusalValueTypeMismatch, path+".value")
 			}
 		case OperatorLt, OperatorLe, OperatorGt, OperatorGe:
-			if column.Type == TypeText {
+			if readType(column.Type) == TypeText {
 				return refuse(RefusalOperatorNotAdmitted, path+".op")
 			}
 			typed, ok := typedValue(value, column.Type)
@@ -680,7 +680,18 @@ func typedValue(raw json.RawMessage, columnType string) (any, bool) {
 	if raw == nil || isNull(raw) {
 		return nil, false
 	}
-	switch columnType {
+	if columnType == TypeBoolean {
+		// A boolean column is read as the text true or false, and filtered by a JSON boolean.
+		var value bool
+		if json.Unmarshal(raw, &value) != nil {
+			return nil, false
+		}
+		if value {
+			return "true", true
+		}
+		return "false", true
+	}
+	switch readType(columnType) {
 	case TypeInteger:
 		value, ok := wholeNumber(raw)
 		return value, ok

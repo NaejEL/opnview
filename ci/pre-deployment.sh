@@ -14,6 +14,9 @@
 #   3. the broker budgets of BR-AC17 (the `brokerbudget` tag, without the race
 #      detector), each median printed beside its limit;
 #   4. ci/budget-self-test.sh, the test budget's own check;
+#   4b. the push decoders' fuzz targets (PS15 of the push amendment): the syslog
+#      header, the TCP framing and the NetFlow / IPFIX decoder, each fuzzed for
+#      PUSH_FUZZ_SECONDS; their seed corpora already run in the everyday suite;
 #   5. sql/schema-checks.sh: the schema, the seeds at 100 000 and 1 000 000 flow
 #      rows, the screen queries and their query plans, the widget and data
 #      catalogue response budgets, the wall time of ReclassifyEverything on the
@@ -76,6 +79,18 @@ report 'go test -race -count=1 -tags predeployment ./...' "$?"
 printf -- '== go test -count=1 -tags brokerbudget -run Budget ./internal/broker/ ./internal/plugin/\n'
 go test -count=1 -tags brokerbudget -run Budget -v ./internal/broker/ ./internal/plugin/ | grep -E '^(budget:|--- FAIL|FAIL|ok)'
 report 'broker budgets' "${PIPESTATUS[0]}"
+
+# The push decoders' fuzz targets, PUSH_FUZZ_SECONDS each: 30 s of the 45 s the push measures may
+# add to this command (PS15 of the push amendment).
+PUSH_FUZZ_SECONDS=10
+for target in "FuzzHeader ./internal/push/protocols/syslog" "FuzzFraming ./internal/push/protocols/syslog" \
+  "FuzzDecoder ./internal/push/protocols/netflow"; do
+  name="${target%% *}"
+  package="${target#* }"
+  printf -- '== go test -fuzz %s -fuzztime %ss %s\n' "$name" "$PUSH_FUZZ_SECONDS" "$package"
+  go test -run '^$' -fuzz "^${name}\$" -fuzztime "${PUSH_FUZZ_SECONDS}s" "$package"
+  report "fuzz $name" "$?"
+done
 
 printf -- '== ci/budget-self-test.sh\n'
 bash "$REPO_ROOT/ci/budget-self-test.sh"

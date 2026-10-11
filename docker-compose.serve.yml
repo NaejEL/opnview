@@ -31,6 +31,22 @@
 # installation's configuration shipped to every other. Compose refuses rather
 # than inventing one.
 #
+# PUSH SOURCES are optional, one override file each, added with a further -f
+# (README, "Push sources"). Compose cannot omit a ports: entry whose variable is
+# unset, so each listener's port lives in a file of its own, which publishes it
+# with its protocol and hands it to the service; the canonical invocation above
+# names none and runs unchanged:
+#
+#     docker-compose.push-syslog-tcp.yml   OPNVIEW_SYSLOG_TCP   syslog over TCP
+#     docker-compose.push-syslog-udp.yml   OPNVIEW_SYSLOG_UDP   syslog over UDP
+#     docker-compose.push-netflow.yml      OPNVIEW_NETFLOW_UDP  NetFlow over UDP
+#
+#     bash:  OPNVIEW_LISTEN=8080 OPNVIEW_SYSLOG_TCP=<port> docker compose #              -f docker-compose.serve.yml -f docker-compose.push-syslog-tcp.yml #              run --rm --service-ports serve
+#
+# None of the three variables has a default either. The serve container runs as
+# an unprivileged user, so a port below 1024 -- syslog's registered 514 -- fails
+# to bind: choose 1024 or above, which OPNsense's remote target accepts.
+#
 # Step 8 adds deployment. This file runs the service from source in the
 # development toolchain; it is not an install story and it is not a production
 # configuration.
@@ -56,6 +72,10 @@ services:
       # The installation's own database, by name on the private network, with the
       # password read from the passfile db-serve generated.
       OPNVIEW_DATABASE: "host=db-serve port=5432 user=opnview dbname=opnview passfile=/run/opnview-database/pgpass sslmode=disable"
+      # The push listeners' ports, empty unless an override file above sets one.
+      OPNVIEW_PUSH_SYSLOG_TCP: ""
+      OPNVIEW_PUSH_SYSLOG_UDP: ""
+      OPNVIEW_PUSH_NETFLOW_UDP: ""
     volumes:
       - serve-database-secret:/run/opnview-database:ro
     depends_on:
@@ -65,11 +85,17 @@ services:
     # key file and the plugins' data live there and never in the working tree.
     # That is what makes the key file survive a restart and stay out of git
     # status. The database is db-serve's. The command runs through sh so that
-    # $$OPNVIEW_DATABASE is the container's own variable, read when it starts.
+    # $$OPNVIEW_DATABASE is the container's own variable, read when it starts,
+    # and so that a push listener is asked for only when its port is set.
     command:
       - "sh"
       - "-c"
-      - "exec go run ./cmd/opnview --data-dir /data --database \"$$OPNVIEW_DATABASE\" --listen 0.0.0.0:${OPNVIEW_LISTEN}"
+      - |
+        set --
+        [ -n "$$OPNVIEW_PUSH_SYSLOG_TCP" ] && set -- "$$@" --push-listen "syslog/tcp=0.0.0.0:$$OPNVIEW_PUSH_SYSLOG_TCP"
+        [ -n "$$OPNVIEW_PUSH_SYSLOG_UDP" ] && set -- "$$@" --push-listen "syslog/udp=0.0.0.0:$$OPNVIEW_PUSH_SYSLOG_UDP"
+        [ -n "$$OPNVIEW_PUSH_NETFLOW_UDP" ] && set -- "$$@" --push-listen "netflow/udp=0.0.0.0:$$OPNVIEW_PUSH_NETFLOW_UDP"
+        exec go run ./cmd/opnview --data-dir /data --database "$$OPNVIEW_DATABASE" --listen 0.0.0.0:${OPNVIEW_LISTEN} "$$@"
 
   # The everyday test database of the base file, declared here because serve
   # extends dev, and dev waits for it: `extends` carries that dependency with it.

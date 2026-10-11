@@ -54,7 +54,7 @@ func TestAPurgeCommittingDuringAFilterLogPassDoesNotCountTwice(t *testing.T) {
 	}
 	// ...and the pass stores the page it read.
 	var stored derivation
-	if err := harness.collector.storeFirewallLog(ctx, records, harness.collector.Discovery(),
+	if err := harness.collector.storeFirewallLog(ctx, records, pullPlan{keep: records}, harness.collector.Discovery(),
 		referenceEpoch(), providerID, newestStored, hasStored, &stored); err != nil {
 		t.Fatalf("storing the page: %v", err)
 	}

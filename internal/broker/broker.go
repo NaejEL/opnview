@@ -31,6 +31,7 @@ import (
 	"github.com/NaejEL/opnview/internal/broker/schedule"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/push"
 )
 
 // The ways an answer was served.
@@ -185,6 +186,10 @@ type Broker struct {
 	// replaces with its own.
 	base   context.Context
 	cancel context.CancelFunc
+
+	// pushCatalogue is the push part of the catalogue, set by the service (catalogue.go); the
+	// mutex guards it.
+	pushCatalogue func() push.Catalogue
 }
 
 // Counters are the broker's counters, which a test and the catalogue read.

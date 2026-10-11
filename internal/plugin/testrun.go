@@ -165,6 +165,8 @@ type testWorld struct {
 	firewallVersion string
 	// widgets is the widget service serving the plugin's widgets, built at the first t.widget.
 	widgets *widget.Service
+	// push is the hub the push functions deliver through, built at the first one (testpush.go).
+	push *pushWorld
 }
 
 // testReply is an arranged answer.
@@ -546,6 +548,7 @@ func (w *testWorld) api(vm *goja.Runtime, result *TestResult) *goja.Object {
 	t := vm.NewObject()
 	fail := func(message string) { result.Failures = append(result.Failures, message) }
 	set := func(name string, function func(goja.FunctionCall) goja.Value) { _ = t.Set(name, function) }
+	w.pushAPI(vm, set)
 
 	set("answer", func(call goja.FunctionCall) goja.Value {
 		name := call.Argument(0).String()
