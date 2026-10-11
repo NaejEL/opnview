@@ -1,0 +1,219 @@
+{
+  "type": "source_availability",
+  "parameters": {
+    "compact": false,
+    "kinds": [
+      "firewall_log"
+    ],
+    "show_inactive": true
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": null,
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq DHCP",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "isc",
+      "display_name": "ISC dhcpd",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "kea",
+      "display_name": "Kea DHCP",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dns_lookup",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq resolver",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dns_lookup",
+      "provider_key": "unbound",
+      "display_name": "Unbound",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "flow_volume",
+      "provider_key": "insight",
+      "display_name": "NetFlow / Insight",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "ip_geolocation",
+      "provider_key": "maxmind_geolite2",
+      "display_name": "MaxMind GeoLite2",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "measurement_sample",
+      "provider_key": "insight",
+      "display_name": "NetFlow / Insight sampling",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "registrable_domain",
+      "provider_key": "public_suffix_list",
+      "display_name": "Public Suffix List",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "resolver_cache",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq cache",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "resolver_cache",
+      "provider_key": "unbound",
+      "display_name": "Unbound cache",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "resolver_local_data",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq local data",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "resolver_local_data",
+      "provider_key": "unbound",
+      "display_name": "Unbound local data",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "security_event",
+      "provider_key": "suricata",
+      "display_name": "Suricata",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    }
+  ],
+  "condition": "reachable",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "providers": [
+      {
+        "kind": "firewall_log",
+        "provider_key": "pf",
+        "display_name": "pf filter log",
+        "active": false,
+        "state": "unavailable",
+        "outcome": "not_yet_probed",
+        "probe": "not_yet_probed",
+        "checked_at": 0,
+        "detail": null,
+        "condition": "not_yet_probed"
+      }
+    ]
+  }
+}

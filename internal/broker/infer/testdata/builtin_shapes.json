@@ -1,0 +1,18 @@
+[
+  {"fixture": "pf/testdata/firewall_log.json", "path": "/api/diagnostics/firewall/log", "nature": "record_stream", "rows": "[]", "key": ["__digest__"], "cursor": ["__timestamp__"], "survey": "Data source 1 — Filter logs"},
+  {"fixture": "suricata/testdata/query_alerts.json", "path": "/api/ids/service/query_alerts", "nature": "record_stream", "rows": "rows[]", "key": ["fileid", "filepos"], "cursor": ["fileid", "filepos"], "survey": "Data source 2 — Suricata `eve.json`"},
+  {"fixture": "suricata/testdata/get_alert_logs.json", "path": "/api/ids/service/get_alert_logs", "nature": "record_stream", "rows": "[]", "key": [], "cursor": ["sequence"], "survey": "Data source 2 — Suricata `eve.json`"},
+  {"fixture": "suricata/testdata/ids_status_running.json", "path": "/api/ids/service/status", "nature": "snapshot", "rows": "", "key": [], "cursor": [], "survey": "Data source 2 — Suricata `eve.json`"},
+  {"fixture": "unbound/testdata/search_queries_page1.json", "path": "/api/unbound/overview/search_queries", "nature": "record_stream", "rows": "rows[]", "key": [], "cursor": ["time"], "survey": "Data source 5 — Resolver DNS lookups"},
+  {"fixture": "unbound/testdata/search_queries_page2.json", "path": "/api/unbound/overview/search_queries", "nature": "record_stream", "rows": "rows[]", "key": [], "cursor": ["time"], "survey": "Data source 5 — Resolver DNS lookups"},
+  {"fixture": "unbound/testdata/unbound_dumpcache.json", "path": "/api/unbound/diagnostics/dumpcache", "nature": "snapshot", "rows": "data[]", "key": [], "cursor": [], "survey": "Resolver cache and local data, read from source for the resolver-cache cycle"},
+  {"fixture": "unbound/testdata/unbound_listlocaldata.json", "path": "/api/unbound/diagnostics/listlocaldata", "nature": "snapshot", "rows": "data[]", "key": [], "cursor": [], "survey": "Resolver cache and local data, read from source for the resolver-cache cycle"},
+  {"fixture": "unbound/testdata/unbound_settings.json", "path": "/api/unbound/settings/get", "nature": "snapshot", "rows": "", "key": [], "cursor": [], "survey": "Data source 5 — Resolver DNS lookups"},
+  {"fixture": "kea/testdata/kea_leases.json", "path": "/api/kea/leases4/search", "nature": "snapshot", "rows": "rows[]", "key": ["address"], "cursor": [], "survey": "Data source 4 — DHCP leases"},
+  {"fixture": "kea/testdata/kea_dhcpv4_get.json", "path": "/api/kea/dhcpv4/get", "nature": "snapshot", "rows": "", "key": [], "cursor": [], "survey": "Data source 4 — DHCP leases"},
+  {"fixture": "dnsmasq/testdata/dnsmasq_leases.json", "path": "/api/dnsmasq/leases/search", "nature": "snapshot", "rows": "rows[]", "key": ["address"], "cursor": [], "survey": "Data source 4 — DHCP leases"},
+  {"fixture": "insight/testdata/traffic_top.json", "path": "/api/diagnostics/traffic/top", "nature": "snapshot", "rows": "*", "key": [], "cursor": [], "survey": "Verified against a live firewall, 2026-09-27"},
+  {"fixture": "insight/testdata/gateway_status.json", "path": "/api/routes/gateway/status", "nature": "snapshot", "rows": "items[]", "key": ["address"], "cursor": [], "survey": "Gateway status, read from source for step 5"},
+  {"fixture": "insight/testdata/system_disk.json", "path": "/api/diagnostics/system/systemDisk", "nature": "snapshot", "rows": "devices[]", "key": [], "cursor": [], "survey": "Verified against a live firewall, 2026-09-27"},
+  {"fixture": "insight/testdata/system_swap.json", "path": "/api/diagnostics/system/systemSwap", "nature": "snapshot", "rows": "swap[]", "key": [], "cursor": [], "survey": "Swap, read from source for step 5"}
+]

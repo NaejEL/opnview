@@ -1,0 +1,41 @@
+{
+  "type": "aggregate_freshness",
+  "parameters": {
+    "compact": false,
+    "periods": [
+      "1h"
+    ],
+    "show_bytes": true
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": null,
+  "gaps": [],
+  "availability": [],
+  "condition": "reachable",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "periods": [
+      {
+        "period": "1h",
+        "slots": 1,
+        "earliest_period_start_at": 1789995600,
+        "latest_period_end_at": 1789999200,
+        "last_computed_at": 1789999260,
+        "stale_slots": 0,
+        "stale": false,
+        "bytes": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 1500
+        },
+        "read_from": 1787320800
+      }
+    ]
+  }
+}

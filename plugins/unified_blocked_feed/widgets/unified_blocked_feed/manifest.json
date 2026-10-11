@@ -1,0 +1,89 @@
+{
+  "manifest_version": 1,
+  "type": "unified_blocked_feed",
+  "shape": "feed",
+  "providers": [
+    "firewall_log",
+    "dns_lookup",
+    "security_event"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "engines",
+      "kind": "enum_set",
+      "values": [
+        "firewall_rule",
+        "dns_advertising_list",
+        "dns_threat_list",
+        "security_engine"
+      ],
+      "default": [
+        "firewall_rule",
+        "dns_advertising_list",
+        "dns_threat_list",
+        "security_engine"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "clients",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "client",
+      "class": "data"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 50,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "group_by",
+      "kind": "enum",
+      "values": [
+        "none",
+        "engine",
+        "client",
+        "target"
+      ],
+      "default": "none",
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client",
+    "interface"
+  ],
+  "queries": [
+    "unified_blocked_feed.statements.sql"
+  ],
+  "script": "unified_blocked_feed.js",
+  "renderer": {
+    "reserved": true
+  }
+}

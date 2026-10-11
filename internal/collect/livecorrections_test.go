@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
 )
@@ -29,27 +30,27 @@ func TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name    string
-		arrange func(fake *fakeFirewall)
+		arrange func(fake *providertest.Firewall)
 		wording string
 	}{
-		{"authentication failed", func(fake *fakeFirewall) {
-			fake.answer(opnsense.GatewayStatus, http.StatusUnauthorized,
+		{"authentication failed", func(fake *providertest.Firewall) {
+			fake.Answer(opnsense.GatewayStatus, http.StatusUnauthorized,
 				[]byte(`{"status":401,"message":"Authentication Failed"}`))
 		}, "gateway latency and loss (authentication failed (HTTP 401): the firewall did not accept the API key and secret)"},
-		{"denied", func(fake *fakeFirewall) {
-			fake.answer(opnsense.GatewayStatus, http.StatusForbidden, []byte(`{"status":403,"message":"Forbidden"}`))
+		{"denied", func(fake *providertest.Firewall) {
+			fake.Answer(opnsense.GatewayStatus, http.StatusForbidden, []byte(`{"status":403,"message":"Forbidden"}`))
 		}, "gateway latency and loss (denied, HTTP 403: the API key's user needs the privilege \"System: Gateways\""},
-		{"not found", func(fake *fakeFirewall) {
-			fake.answer(opnsense.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
+		{"not found", func(fake *providertest.Firewall) {
+			fake.Answer(opnsense.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
 		}, "gateway latency and loss (not found, HTTP 404"},
-		{"failed", func(fake *fakeFirewall) {
-			fake.answerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "failed"})
+		{"failed", func(fake *providertest.Firewall) {
+			fake.AnswerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "failed"})
 		}, "gateway latency and loss (the endpoint answered \"status\": \"failed\" with no item, which it does both when no gateway is configured"},
-		{"no gateway", func(fake *fakeFirewall) {
-			fake.answerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "ok"})
+		{"no gateway", func(fake *providertest.Firewall) {
+			fake.AnswerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "ok"})
 		}, "gateway latency and loss (the endpoint answered \"status\": \"ok\" and listed no gateway)"},
-		{"no figure", func(fake *fakeFirewall) {
-			fake.answerFixture(opnsense.GatewayStatus, "gateway_status_unmonitored.json")
+		{"no figure", func(fake *providertest.Firewall) {
+			fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status_unmonitored.json")
 		}, "gateway latency and loss (2 of 2 gateways listed with no figure: dpinger.inc reports \"~\""},
 	}
 	seen := map[string]string{}
@@ -110,7 +111,7 @@ func TestTheGatewayMeasuresOfTheLiveShapeAreStoredPerGatewayWithFigures(t *testi
 func TestTheProbeRoundKeepsWhatTheLastSamplingPassCouldNotRead(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.fake.answerFixture(opnsense.GatewayStatus, "gateway_status_unmonitored.json")
+	harness.fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status_unmonitored.json")
 	ctx := context.Background()
 	if err := harness.collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("sampling: %v", err)
@@ -131,12 +132,12 @@ func lookupRow(client, domain string, at int64) map[string]any {
 }
 
 // answerLookups makes the query report return these rows.
-func answerLookups(fake *fakeFirewall, rows ...map[string]any) {
+func answerLookups(fake *providertest.Firewall, rows ...map[string]any) {
 	list := make([]any, 0, len(rows))
 	for _, row := range rows {
 		list = append(list, row)
 	}
-	fake.answerJSON(opnsense.SearchQueries, map[string]any{"total": len(rows), "rowCount": len(rows),
+	fake.AnswerJSON(opnsense.SearchQueries, map[string]any{"total": len(rows), "rowCount": len(rows),
 		"current": 1, "rows": list})
 }
 
@@ -146,7 +147,7 @@ func answerLookups(fake *fakeFirewall, rows ...map[string]any) {
 func TestALateLookupAttributesAFlowWithNoFurtherFlowPass(t *testing.T) {
 	t.Parallel()
 	harness := arrangeResolverCollection(t)
-	harness.fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
 	ctx := context.Background()
 	if err := harness.collector.probeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
@@ -237,7 +238,7 @@ func TestAnUnresolvedLookupStoredBeforeARestartIsResolvedByTheFirstLeasePassAfte
 	}
 
 	// The restart: a new collector over the same database, an hour later.
-	restarted := New(newFakeClient(t, harness.fake), harness.store,
+	restarted := newTestCollector(t, providertest.NewClient(t, harness.fake), harness.store,
 		newFixedClock(referenceInstant().Add(time.Hour)))
 	provider, err := harness.store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 	if err != nil {
@@ -284,7 +285,7 @@ func TestTheFilterLogStoresTheTwoPairingFieldsAndPairsTheTwoLegs(t *testing.T) {
 			"length": "80", "src": "2001:db8::10", "dst": "2001:db8:ffff::53", "srcport": "40002",
 			"dstport": "53", "rid": "example-rule-label-1", "reason": "match"},
 	}
-	harness.fake.answerJSON(opnsense.FirewallLog, rows)
+	harness.fake.AnswerJSON(opnsense.FirewallLog, rows)
 	ctx := context.Background()
 	if err := harness.collector.probeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
@@ -343,9 +344,9 @@ func TestAReacquiredAddressIsANewHoldingWhateverTheOrderInterfacesAreListed(t *t
 		t.Run(map[bool]string{true: "listed first", false: "listed last"}[heldFirst], func(t *testing.T) {
 			harness := newProbeHarness(t)
 			ctx := context.Background()
-			harness.fake.answerFixture(opnsense.InterfaceNames, "get_interface_names.json")
-			harness.fake.answerFixture(opnsense.SearchRule, "search_rule.json")
-			harness.fake.answerFixture(opnsense.SystemTime, "system_time.json")
+			harness.fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")
+			harness.fake.AnswerFixture(opnsense.SearchRule, "search_rule.json")
+			harness.fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
 			held := "192.0.2.1"
 			for index, read := range []bool{true, true, false, false, true} {
 				setClock(harness, referenceInstant().Add(time.Duration(index)*5*time.Minute))
@@ -353,7 +354,7 @@ func TestAReacquiredAddressIsANewHoldingWhateverTheOrderInterfacesAreListed(t *t
 				if read {
 					address = held
 				}
-				harness.fake.answerJSON(opnsense.InterfacesInfo, interfacesInfoBody(heldFirst, address))
+				harness.fake.AnswerJSON(opnsense.InterfacesInfo, interfacesInfoBody(heldFirst, address))
 				if err := harness.collector.RefreshDiscovery(ctx); err != nil {
 					t.Fatalf("discovery %d: %v", index, err)
 				}
@@ -409,7 +410,7 @@ func TestAFailedLeasePassDoesNotUseUpALookupsRetry(t *testing.T) {
 	unresolvedLookup(t, harness.store, "example-key-failed-pass", "example-host-failed.example.invalid",
 		referenceEpoch()-120, referenceEpoch()-100)
 
-	harness.fake.answer(opnsense.DnsmasqLeases, http.StatusInternalServerError, []byte(`{}`))
+	harness.fake.Answer(opnsense.DnsmasqLeases, http.StatusInternalServerError, []byte(`{}`))
 	if err := harness.collector.CollectDHCPLease(ctx); err == nil {
 		t.Fatal("a lease pass whose backend answered 500 reported no failure")
 	}
@@ -417,7 +418,7 @@ func TestAFailedLeasePassDoesNotUseUpALookupsRetry(t *testing.T) {
 		t.Fatal("a lease pass that read no lease examined the lookup, using up its retry")
 	}
 
-	harness.fake.answerFixture(opnsense.DnsmasqLeases, "dnsmasq_leases.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqLeases, "dnsmasq_leases.json")
 	provider, err := harness.store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 	if err != nil {
 		t.Fatalf("looking up the provider: %v", err)

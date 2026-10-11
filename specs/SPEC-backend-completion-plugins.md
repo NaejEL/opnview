@@ -1,0 +1,2305 @@
+# SPEC — Backend completion: JavaScript plugins for every source, service and widget, then owners, unnamed destinations, live rate, ports, the mockup audit, a readable core layout and live validation
+
+Status: APPROVED
+Cycle kind: standard
+
+**Why `standard`.** This cycle writes Go, SQL, JSON contracts, documents and **server-side** JavaScript. That JavaScript runs inside the binary, in the plugin interpreter. It reads the firewall, other services or the database, and produces records or JSON. None of it is shipped to a browser. The cycle writes no HTML, CSS, browser JavaScript, template, theme or catalogue string the interface renders, and it changes no rendered output (AC X3 checks this byte for byte). Whatever a user will eventually see (the plugin list, plugin settings, the People page, the live strip, every settings page) is served as JSON and rendered by the step-7 frontend. Where this spec touches a binding interface document (`docs/widget-catalogue.md`), it amends a data contract by name and changes no aesthetic rule.
+
+## Context
+
+**The maintainer's requirement, in his words (translated from French):** "We finish the backend, everything except the Suricata plugin, before attacking the frontend."
+
+**His corrections and decisions of 10 October 2026, which now shape the whole cycle:**
+
+1. **Order.** Plugins come first. Then the gaps. Then live validation on his firewall. Then the commit. Nothing is written twice.
+2. **Plugins are handled like widgets, with no gas factory.**
+   - A third party drops a directory into `<data-dir>/plugins/<name>/`. Nobody forks, opens a PR, recompiles or merges anything.
+   - There is no sandbox, no allowlist and no activation step: "if people install junk that breaks their firewall, that is not my problem".
+   - A plugin that fails to load is logged with its reason and skipped. The built-in wins on a name collision.
+   - POST read endpoints are allowed. Firewall calls go through opnview's client, whose refusal of mutating commands is unchanged, with nothing added on top.
+3. **A plugin carries its own data schema.** It is not limited to the existing kinds ("I won't guess every use case"). Mapping to an existing kind stays possible.
+4. **Every built-in source is rewritten as a JavaScript plugin.** Only the core stays in Go: store, classification, aggregation, the widget API engine, web, the plugin host and the OPNsense client.
+   - Behaviour stays identical.
+   - The existing tests are the behavioural spec. They run against the plugins, and none is weakened.
+5. **Widgets are plugins too,** in the same format and the same directory model. The 26 built-in widgets' Go hooks are rewritten in that format. Their JSON stays byte-identical, and the shared shape engine stays in the Go core. One plugin directory may provide a source, a widget, or both.
+6. **Every external service is a plugin kind. The Go core talks only to OPNsense.**
+   - MaxMind and the Public Suffix List become built-in plugins of service kinds. Their downloads are made by the plugins themselves, through a facility of the plugin host, never by a Go package.
+   - The core's outbound rule becomes "the firewall, nothing else". The built-in plugins' downloads belong to those plugins. A third-party plugin's destinations are its author's business.
+7. **Live rate.**
+   - A continuous, persisted baseline sampler.
+   - The finest cadence the firewall sustains while the interface is open, measured on the live device as the finest cadence adding at most 2 processor percentage points.
+   - Fine samples are persisted with a short retention. There are no gaps.
+   - The pf state table is used for rate by port and protocol if it verifies against `opnsense/core` 26.7.3 and its cost is acceptable.
+   - The live part of a response has a median budget of 100 ms at the 1 000 000-row seed.
+8. **The rest.**
+   - `top_sites` and `sites_by_client` stay withheld whole under `no_domains`.
+   - The mockup's `traffic_composition` keys `group_by: blocking_reason`, `split_by: direction` and `window_seconds`, and `line_interpolation`, are adopted. `destinations_per_owner` is not.
+   - Canvas and dashboard persistence get a separate spec before step 7.
+   - An assigned client is kept beyond retention.
+   - Undoing a person's deletion restores the original `owner_assigned_at`.
+9. **The pre-deployment suite runs in under 3 minutes,** enforced like the 60 s everyday budget.
+10. **A readable Go core layout.**
+    - `internal/store` holds 77 files flat, `internal/collect` 50, `internal/widget` 41 and `internal/web/webtest` 18.
+    - The maintainer: "we have folders with dozens of files in them; nobody can understand anything".
+    - Packages are split by responsibility, with an enforced rule. This is a move after the plugin work.
+11. **The frontend is a separate JavaScript application** (like the step-3 mockup), embedded in the binary and built in step 7. In the end `internal/web` holds only the JSON API, authentication and static-file serving.
+    - The Go-rendered pages stay in service until step 7 replaces them.
+    - This cycle invests nothing in them, and exposes every capability as JSON.
+12. **Process.**
+    - Test suites run once, when the work is ready to commit.
+    - Only a blocking defect sends work back: wrong behaviour, a broken binding rule, or a data leak.
+    - One verifier, no ergonomist.
+
+**`CLAUDE.md`, binding, quoted:**
+
+> "Modular at every layer, not only the frontend. A kind of thing is a seam and an implementation is a file behind it, selected at runtime by what the installation has … Adding a second implementation is adding a file and a registry row and touching nothing else."
+
+> "Somebody who has never read the source must be able to add any of the three easily and naturally, from the documentation alone; if adding one means editing a file that ships with the product, the rule is not met."
+
+**Where the repository stands (read for this revision).**
+
+- `main` is at `a1e2707`. The working tree holds two uncommitted pieces of work, neither validated live:
+  - step 5B (`specs/SPEC-step-5b-widget-api.md`, APPROVED);
+  - the restructuring that split providers into `internal/collect/<kind>/<impl>/` with a `provider.json` each, linked by a generated `internal/collect/providers_gen.go` (`go generate`).
+- **Twelve compiled provider implementations:**
+  - `firewalllog/pf`;
+  - `securityevent/suricata`;
+  - `dhcplease/{kea,dnsmasq,isc}`;
+  - `dnslookup/{unbound,dnsmasq}`;
+  - `resolvercache/{unbound,dnsmasq}`;
+  - `resolverlocaldata/{unbound,dnsmasq}`;
+  - `measurement/insight`.
+
+  Two shared product helpers sit beside them: `unboundctl` and `dnsmasqctl`.
+- **The port a provider is given is `provider.Session`** (`internal/collect/provider/session.go`). It grants:
+  - `Call` and `Stream` to the firewall;
+  - `ServiceState`, `ReadObject` and `ReadCollection`;
+  - `Normaliser`, the year-less timestamp normaliser with the firewall's measured UTC offset;
+  - `Now`.
+
+  It deliberately withholds the store, discovery, availability writes and activation. Each kind's `Source` interface says what an implementation returns:
+  - `Probe` returning a `Result` with state, outcome, probe, detail and `Separable`;
+  - `Records`, `Leases`, `Lookups` (with `PageBound` and `RequestedSpanSeconds`), `Cache`, `LocalData`, `Rotation` with `Alerts`, and `Sample`, which is handed the discovery snapshot.
+
+  Cursors, gap detection, identity, pairing and derivation are the kind coordinators' business, in `internal/collect/*.go`.
+- **Widgets.** 26 built-in widgets live in `internal/widget/widgets/<type>/`, each with `manifest.json`, `.sql` and a Go hook (`RegisterHook`), linked by a generated `hooks_gen.go`.
+  - Hooks read through shared helpers of `internal/widget`: `SiteRows`, `RegistrableGrouping`, `SiteAccumulator`, attribution, buckets, series, rates, chips and peers.
+  - Operator widgets in `<data-dir>/widgets/<type>/` are declarative only (manifest plus query).
+  - Operator queries are checked to be a single read statement (`internal/store/querycheck.go`). Nothing refuses a query reading `account`, `session`, `encrypted_credential` or `setting`.
+- **External services are compiled Go network clients:**
+  - `internal/maxmind`: GeoLite2 download, refresh, MMDB read, and `Locator` placing flow addresses;
+  - `internal/publicsuffix`: list download, conditional refresh, the held previous good copy, and grouping.
+
+  `internal/opnsense/source_policy_test.go` admits exactly three packages building HTTP requests. `provider/contract.go` marks `geo_asn` and `public_suffix` as core-only kinds.
+- **Web.** The Go-rendered surfaces are `account`, `settings`, `collection`, `interfaces` and `sources`, plus `widgetapi` (JSON), in `internal/web/surfaces/<name>/`, linked by `surfaces_gen.go`. Provider display strings live in the shipped `internal/web/locale/en.json`, for example `provider.dns_lookup.unbound`.
+- **What a builder already added from the previous text of this spec,** with this spec's verdict on each:
+  - **`github.com/dop251/goja` in `go.mod`**, with `regexp2`, `go-sourcemap` and `pprof` beside it. *Compatible*: it is the embedded pure-Go interpreter the maintainer named. It is listed `// indirect`; once imported it must be a direct requirement, and its transitive audit recorded (AC A14).
+  - **`internal/opnsense/plugin_endpoints.go`** checks a declared endpoint at load: path shape, `/api/` prefix, no `..`, `MutatingCommand`, GET or POST only, and no conflict with a compiled entry. *Compatible.* Declaring the endpoints a plugin reads is the client's existing rule ("a path that is not in the registry cannot be issued"), moved to load time. It is not an operator allowlist: nobody approves anything.
+  - **`internal/store/plugintables.go`** provides namespaced tables `plugin_<plugin>__<table>`, `CREATE … IF NOT EXISTS` at load, one-transaction `WritePluginPass` with `plugin_state`, and per-table retention in the purge. *Compatible, with one defect to change:*
+    - on a schema change it refuses to load the plugin (`ErrPluginTableChanged`), so an updated plugin stops working until somebody edits the database by hand;
+    - it compares only column names and types, so a change of nullability, primary key or index goes undetected.
+
+    Section A4 replaces this.
+  - **`internal/collect/provider/contract.go`** holds every core kind's record contract as data, the functions a script exports per kind, and `DeclareKind` for a plugin's own kind. *Compatible*, except `coreOnlyKinds`: `geo_asn` and `public_suffix` become plugin kinds (B2). `flow_volume` stays core-only, being derived.
+  - **`internal/collect/pluginkind`** and **`internal/collect/reconciledstate`**. *Compatible.*
+  - **`schema.sql`** gained:
+    - `plugin_state`;
+    - the outcomes `script_failed`, `script_timeout` and `records_invalid`;
+    - `state_since_after_at` / `state_since_by_at` on `source_availability`;
+    - a kind `CHECK` reduced to snake_case shape.
+
+    *Compatible.*
+- **Leftovers:**
+  - `.claude/worktrees/agent-*` (six directories) are still present in the tree;
+  - `docs/extending.md` describes `go generate`;
+  - `docs/architecture.md`, *What this is not*, still says "There is no plugin system".
+
+**Other backend gaps, established earlier and re-checked.**
+
+1. **Owners.**
+   - `client.owner_id` / `owner_assigned_at` and `owner (display_name UNIQUE)` exist, and nothing writes them.
+   - `interface.user_label` and `blocklist.purpose` have no writer either.
+   - No endpoint lists every client.
+2. **Unnamed destinations.**
+   - `top_sites` and `sites_by_client` omit them.
+   - `connection_tree` lumps them under `site:none`.
+   - About 34 % of live connections are named.
+   - ROADMAP step 5: "Never invent a domain: fall back to IP, country and operator."
+3. **Live rate.**
+   - Rates come from `measurement_sample` at 300 s.
+   - The sources are `traffic/top` (iftop for about 2 s per interface) and `traffic/interface` counters.
+   - The mockup strip ticks every 2 s.
+4. **Ports and protocols.**
+   - `service_port` slices carry the port without the protocol.
+   - The `connection_tree` "service port and protocol" level is not served.
+5. **Mockup coverage.** Rows 4, 8 and 39 of `docs/widget-api.md`, *Coverage of the mockup*, are **cannot**, and there are declared departures.
+6. **Nothing from 5B, the resolver-cache cycle or the 5A corrections has run on the maintainer's firewall.**
+
+## Scope
+
+The work is done in this order. A later phase never starts before the earlier one passes its own tests. The suites run once, at the end (*Rules*).
+
+**Phase A.** The plugin host and format.
+**Phase B.** Every built-in rewritten as a plugin: sources, services and widgets, plus the hard-wiring audit.
+**Phase C.** The gaps: live rate and pf states as plugins; owners, unnamed destinations, ports and the JSON settings API in the core; the mockup audit.
+**Phase D.** The core layout move.
+**Phase E.** The pre-deployment budget.
+
+Then `checks` and `pre-deployment` run once, then verification, then live validation, then the commit.
+
+**Baseline snapshot.** Before Phase B removes any Go implementation, the orchestrator records a read-only snapshot of the working tree outside the repository. That snapshot is the "before" of every byte-identity and test-preservation criterion.
+
+- It is taken with no git command that moves or discards work.
+- A test or hook file the in-flight builder has already altered is compared with its version in the git index, and the builder lists every such file.
+
+### Phase A: the plugin host
+
+**A1. What a plugin is.**
+
+- A plugin is a directory holding a manifest and the files it names:
+  - JavaScript scripts;
+  - SQL query files;
+  - string files (catalogue keys with English source text);
+  - optionally `testdata/`.
+- **Locations:**
+  - third party: `<data-dir>/plugins/<name>/`;
+  - built-in: a repository directory embedded in the binary (proposed: `plugins/<name>/` at the repository root; the Builder states the path in `docs/plugins.md`).
+- **Both go through the same loader and the same validator.**
+- **What a plugin provides.** One plugin may provide any combination of:
+  - **providers**, one or more, each of a kind: a core kind with a record contract, a service kind (B2), or a kind the plugin declares with its own tables (A4);
+  - **widgets**, one or more (B3);
+  - **tables** it owns (A4);
+  - **settings** it declares (A6).
+- **Product-centric grouping is expected.** For example, one `unbound` plugin provides `dns_lookup`, `resolver_cache` and `resolver_local_data`. Provider identity stays `(kind, provider_key)` as today.
+- **The manifest declares:**
+  - its name, a snake_case word;
+  - its version;
+  - the plugin API version it targets;
+  - its providers, each with:
+    - kind, `provider_key` and display-name catalogue key;
+    - the firewall endpoints it reads (path, method, body encoding, argument kind, stream flag, and for built-ins the survey citation);
+    - its cadence and lower bound where the kind has no core cadence;
+    - optionally a live pass (C3);
+  - its other outbound destinations, if any (A7);
+  - its tables (A4) and its settings (A6);
+  - its widgets (B3).
+- **Format.** JSON and/or YAML, the Builder's choice, stated in `docs/plugins.md`. Its schema is versioned with the plugin API.
+
+**A2. The interpreter.**
+
+- Scripts run in the embedded pure-Go interpreter already in `go.mod` (goja). It needs no cgo, no compilation step and no binary per architecture.
+- **Failure isolation, not a sandbox.** These are robustness, not security against the plugin:
+  - a script exception, a Go panic inside a host function, or an exceeded per-call time bound becomes a closed outcome (`script_failed`, `script_timeout`) on that provider's availability row, or a condition on that widget's response;
+  - the service, the kind's other providers and other plugins carry on.
+- Records failing their contract are refused whole (`records_invalid`). Nothing of that answer is stored.
+- **What the host does not grant.** No filesystem, network, environment or process access is granted beyond the host functions of A3, A6 and A7. The interpreter offers none by itself. No further isolation is built.
+
+**A3. The host API a source provider sees.** It is derived from `provider.Session` and the kind contracts. Each item names the Go capability it replaces:
+
+- **Firewall calls.**
+  - The capabilities: one call (with form or JSON body, pagination and positional path arguments); read an object; read a collection under named wrapper keys; probe a service's status; read a bounded event stream.
+  - Each answer carries the closed outcome, the status code and the detail the client classified today (`ResponseOutcome`).
+  - Calls go only to the configured firewall base URL, only for endpoints the manifest declares, and through the existing client and its `MutatingCommand` refusal, unchanged.
+- **Time.**
+  - The current instant as the UTC epoch.
+  - The timestamp normaliser: the year-less shape with the firewall's measured offset. The measurement itself stays core.
+- **Discovery snapshot.** The interface identifiers and devices, handed as an argument exactly where the kind contract says so: the `measurement_sample` sample and live passes, and own-kind collect passes.
+- **Kind settings.** The operator settings a kind passes today (page size, `page_bound`) arrive as call arguments, as now.
+- **Record emission.**
+  - For a core kind, the records of its contract (`contract.go`). The host validates them, and the core coordinator does what it does today: identity, gap detection, pairing, classification, attribution, aggregation.
+  - For an own kind, rows for its own tables (A4).
+- **Availability.** Every function returns a `result`: state, closed outcome, probe and detail, and `separable`. That is the plugin's report. The host writes availability; the plugin never does.
+- **Durable state** (cursors and watermarks) as key/value pairs, read at the start of a pass. They are committed in the same transaction as the pass's rows, so a restart neither loses nor repeats a record.
+- **Gaps.**
+  - For core kinds, gap detection stays in the coordinator, unchanged.
+  - An own-kind provider may report a gap interval with a reason code its manifest declares. It is stored with the provider, distinguishable from core reasons, and returned in the API's gap listings. The schema shape is the Builder's.
+- **Its own tables:** upsert rows, and run a read-only query bounded in time against **its own** tables only.
+- **Its own declared settings,** read-only (A6).
+- **Logging** to the service log, prefixed with the plugin name.
+- **Scheduling.** A plugin never sleeps or schedules.
+  - A provider of a core kind runs inside that kind's coordinator pass at the kind's existing interval setting.
+  - An own-kind provider runs at its manifest cadence, overridable by a namespaced setting, never below its declared lower bound.
+  - The live pass is described in C3.
+
+**A4. A plugin's own data schema.**
+
+- **Declaration.** A plugin declares tables: columns (integer, real, text; nullable or not; carries a domain name or not), primary key, indexes, an optional `*_at` time column, and a retention.
+  - Names are `plugin_<plugin>__<table>`, as `plugintables.go` builds them.
+  - No core table can collide with that pattern.
+- **Created by opnview** at load, applied at every start like the schema.
+- **Purged** in the retention purge's transaction:
+  - by the table's own retention, or by `retention_seconds` when it declares zero;
+  - a table with no time column is never purged, and `docs/plugins.md` says such a table must be bounded by its key.
+- **Readable by widget queries,** with the same checks as any query (B3, A8).
+- **Domain-carrying columns.** A query reading a column declared as carrying a domain name is withheld under `aggregate_mode = no_domains` (`withheld_by_aggregate_mode`).
+- **Freshness.** A widget bound to an own kind reports, as freshness, the instant of its provider's last successful pass.
+- **Not aggregated by the core.** Core aggregates are untouched. A plugin wanting summaries declares its own tables.
+- **Not part of the core schema checks** unless the plugin is built-in. `sql/schema-checks.sh` creates the tables every built-in plugin declares and plans every built-in widget query reading them.
+- **Schema change (decided here):**
+  - opnview records each plugin table's full declaration (columns, types, nullability, primary key, indexes, time column).
+  - At load, a declaration that differs in **any** of these from the recorded one is not refused. The existing table is **renamed aside** under a name that can never be read as a live plugin table, the new table is created empty, and the plugin's durable state is reset.
+  - The listing reports the event (`schema_rebuilt`) with the aside table's name and row count.
+  - An aside table is purged by its recorded retention and dropped when empty. One with no time column is kept and listed.
+  - This follows the project's rule: no migrations, rebuild rather than migrate, and nothing silently lost.
+
+**A5. Loading, collisions, listing.**
+
+- **Discovery at start**, like operator widgets. A plugin added to a running service is picked up at the next start. This is stated in `docs/plugins.md`.
+- **A plugin is refused at load, with a named closed reason, logged, and skipped** when it has:
+  - a malformed manifest;
+  - an unsupported API version;
+  - a name not in snake_case;
+  - an unknown core kind for a contract it claims;
+  - a declared kind colliding with a core kind;
+  - an endpoint refused by `plugin_endpoints.go` (every code there);
+  - a mapping to a field the contract lacks, or one missing a required field (detected at the first pass, as `records_invalid`);
+  - a script that does not compile;
+  - an invalid table declaration;
+  - a widget refused by the widget loader's existing codes;
+  - a collision.
+- **Built-in wins on any collision:**
+  - plugin name;
+  - `(kind, provider_key)`;
+  - declared kind name;
+  - widget type.
+
+  The third-party plugin is reported with the code naming the collision.
+- **No activation step.** A loaded plugin's providers enter the existing runtime selection unchanged: the probe round's `separable`, the operator's `Selection` setting, and the per-kind rules on how many providers may be active.
+- **Plugin listing, JSON, authenticated.** Every discovered plugin, built-ins included, with:
+  - name, version and API version;
+  - origin (built-in or data directory);
+  - state (loaded, refused, failed), with reason code;
+  - each provider's kind and key, and the endpoints and outbound destinations it declares;
+  - each table with its row count, and any aside tables;
+  - each widget type;
+  - each declared setting (value, default, bounds; a secret shows only whether it is set).
+
+  It carries no credential, ciphertext, session token or CSRF token.
+
+**A6. Settings a plugin declares.**
+
+- A plugin may declare settings: key, type (integer, number, boolean, text, enum, **secret**), default, bounds, and a catalogue key for the label. They are stored namespaced by the plugin.
+- A secret is stored encrypted with the existing credential mechanism (`encrypted_credential`). No endpoint ever returns it.
+- A plugin reads its settings through the host.
+- They are written through an authenticated, CSRF-safe JSON endpoint that validates them against the declaration. They are listed in the plugin listing.
+- **The built-in MaxMind and Public Suffix List plugins declare the setting keys the current settings surface already uses.** The Go-rendered settings page and the first-run wizard therefore keep working unchanged until step 7 replaces them, and LV-0 carries the values over.
+
+**A7. Fetching over HTTP(S) and caching in the plugin's data directory.** This is the facility the built-in service plugins use, and any third-party plugin may use it.
+
+- **Declaration.** A plugin declares, in its manifest, the outbound destinations it contacts (scheme and host).
+  - The host refuses a request to an undeclared host, so the plugin listing never misstates what a plugin contacts. This is the author's own declaration, not an operator allowlist.
+  - Whether a third-party destination is acceptable is its author's business.
+- **The facility:**
+  - fetches one URL with GET, with request headers the plugin sets (credentials from its secret settings included);
+  - is **conditional**: it sends the validators (`ETag` / `Last-Modified`) of the cached copy, and a 304 keeps it;
+  - **streams the body to a file** in the plugin's own data directory (`<data-dir>/plugin-data/<name>/` or similar; the Builder states the path), never into script memory, with a size bound the plugin declares;
+  - writes to a temporary file and **replaces the previous good copy only when the new one is complete and passes the plugin's check**, so a failed or malformed download leaves the previous copy in use;
+  - offers, as generic file-format helpers: gzip and tar extraction of a named entry, a SHA-256 digest, reading a text file line by line, and opening a **MaxMind DB (MMDB) format** file for lookups;
+  - reports a closed outcome the plugin maps to its availability. The existing `download_refused`, `download_limit_reached`, `download_failed`, `download_malformed`, `no_licence_key`, `licence_key_undecryptable` and `no_account_id` are reused.
+- **Why MMDB is a host helper.** MMDB is an open format that DB-IP and IPinfo also publish, so it is not one product's code. Parsing it in script would make every lookup pass far slower.
+- **File access.** A plugin reads files only in its own directory and its own data directory.
+- **The core makes no request to any host but the firewall.** No Go package other than the OPNsense client and this host facility builds an HTTP request. The facility is used only on a plugin's behalf.
+
+**A8. Documentation.** `docs/plugins.md` is new. A third party writes a source plugin, a service plugin or a widget plugin from it alone. It holds:
+
+- the manifest schema;
+- every kind's contract, generated from or tested against `contract.go`;
+- the A3, A6 and A7 host API, and the widget host API of B3;
+- the table rules of A4;
+- the refusal and outcome codes;
+- the collision rule;
+- the versioning policy;
+- complete worked examples: a source plugin of a core kind; a source plugin with its own kind and tables; a widget with JavaScript logic over that table; a service plugin downloading a file.
+
+**A Suricata-style alert example is not needed any more:** the built-in `suricata` plugin is itself the example. `docs/extending.md` is folded into `docs/plugins.md` or reduced to a pointer. `docs/architecture.md` (*What this is not*, *The widget registry*) and `docs/data-model.md` *Vocabulary* are amended by name. "Plugin" is opnview's own term and is distinguished from an OPNsense plugin package such as `os-ddclient`.
+
+### Phase B: every built-in becomes a plugin
+
+**B1. Firewall sources.**
+
+- **The twelve implementations become built-in plugins grouped by product:**
+
+  | Plugin | Providers (kind / provider_key) |
+  |---|---|
+  | `pf` | `firewall_log` / `pf` |
+  | `suricata` | `security_event` / `suricata` |
+  | `kea` | `dhcp_lease` / `kea` |
+  | `isc` | `dhcp_lease` / `isc` |
+  | `dnsmasq` | `dhcp_lease`, `dns_lookup`, `resolver_cache`, `resolver_local_data` / `dnsmasq` |
+  | `unbound` | `dns_lookup`, `resolver_cache`, `resolver_local_data` / `unbound` |
+  | `insight` | `measurement_sample` / `insight` |
+
+- **Provider keys and display names are unchanged,** so registry rows, `Selection` settings and availability keep their identity.
+- **Product logic moves into the plugin's script,** byte-for-byte in behaviour. This covers:
+  - the `unboundctl` and `dnsmasqctl` helpers;
+  - lease decoding and state normalisation;
+  - action normalisation;
+  - the unverified field-name candidate lists;
+  - the device-name guard of `traffic/top`;
+  - the Unbound deduplication key;
+  - the `PageBound` / `RequestedSpanSeconds` values;
+  - the availability detail wording.
+- A plugin is self-contained. It never imports another plugin's file, so a third party can copy one as a template.
+- **The Suricata plugin reproduces today's collector only.** Step 6 (alert ingestion as a shipped feature, severity resolution, G7, G8) stays out of scope.
+- **Discovery stays core:** interfaces, rules, ARP/NDP, the system time and offset (`internal/collect/discovery.go`). See B4.
+- **Provider display strings** (`provider.*` in `internal/web/locale/en.json`) move into each built-in plugin's string file. What the Go-rendered pages print stays byte-identical (X3).
+
+**B2. External services as plugin kinds.**
+
+- **Two service kinds are opened to plugins,** each with a contract in `contract.go` and `docs/plugins.md`:
+  - **`ip_geolocation`** (replaces the `geo_asn` registry kind; MaxMind's own term for its GeoLite2 products is "IP geolocation"). It has:
+    - a refresh function: acquire or update the dataset through A7;
+    - a lookup function: for a batch of public addresses, each address's country code, ASN and AS organisation, or a named miss;
+    - the dataset's build identity.
+  - **`registrable_domain`** ("registrable domain" is the Public Suffix List's and the URL Standard's term). It has:
+    - a refresh function;
+    - a grouping function: for a batch of names, each name's registrable domain or a named state;
+    - the list's version identity.
+- **The core keeps:**
+  - which addresses still need placing (`AddressesToGeolocate`, the build-keyed miss logic, the 20 000-per-pass bound, never looking up a non-public address — `internal/specialpurpose`);
+  - storing answers in `geo_asn`;
+  - the widget-side use of groupings;
+  - the cadences, which keep their setting keys.
+- **Re-placement.** A change of the active provider or of its build identity re-places addresses exactly as a new build does today.
+- **One active provider per service kind,** chosen by the existing `Selection`, defaulting to the built-in. This is decided here because a figure must not be placed by two datasets at once.
+- **MaxMind and the Public Suffix List become built-in plugins `maxmind` and `publicsuffix`.**
+  - Their downloads, conditional refreshes, licence-key handling and held previous good copy are done through A7, with the same outcomes and the same refresh cadences as today.
+  - **`internal/maxmind` and `internal/publicsuffix` are removed as Go network clients.** Any non-network code they hold that the core still needs moves into the core under a name that says what it is.
+- **`source_policy_test.go` is rewritten:**
+  - exactly two places build HTTP requests: the OPNsense client and the A7 facility;
+  - the built-in plugin set declares exactly two non-firewall destinations: the MaxMind download host and `publicsuffix.org`.
+
+**B3. Widgets as plugins.**
+
+- **A widget plugin is:**
+  - a manifest (today's widget manifest, unchanged in meaning);
+  - one or more SQL queries;
+  - optional JavaScript for logic a shape cannot express;
+  - the renderer slot, reserved until step 7.
+
+  It lives in a plugin directory, and one directory may hold sources and widgets. `<data-dir>/widgets/<type>/` keeps working through the same loader.
+- **The 26 built-in Go hooks are rewritten in that format.**
+  - `RegisterHook`, `hooks_gen.go` and its `go:generate` directive are removed.
+  - Every JSON payload documented in `docs/widget-api.md` and asserted by the existing widget tests stays **byte-identical**, except the fields Phase C changes by name.
+- **What the core keeps (the shared engine):**
+  - parameter parsing;
+  - references;
+  - windows;
+  - the envelope (availability, gaps, freshness, unknown, invalid and missing parameters, conditions, withheld);
+  - the declarative shape engine.
+
+  The shared figures several hooks use today are exposed to widget scripts as **documented host functions**, not reimplemented per widget:
+  - site rows;
+  - address rows (C2);
+  - attribution rate;
+  - registrable grouping through B2;
+  - buckets and series;
+  - rates and live figures (C3);
+  - the remainder and lower-bound figures.
+- **The widget host API grants:**
+  - the parsed parameters and resolved references;
+  - running the widget's own declared queries on the read-only pool with bound parameters and a time bound;
+  - the shared host functions above;
+  - setting states and conditions;
+  - declaring withheld fields under `no_domains`.
+
+  It grants **no firewall call** (5B boundary) and no outbound fetch.
+- **Every widget query** (built-in, plugin or operator) is refused, with a closed code, when it reads `account`, `session`, `encrypted_credential`, or a `setting` row holding a credential or secret. This is a data-leak guard on the HTTP API, not a sandbox of plugins: decision 12 makes a data leak blocking.
+- **Responses keep their 5B budgets** at the 1 000 000-row seed with scripts in the request path (AC B9).
+
+**B4. Audit of hard-wired products and services (done for this spec; the Builder records it in `docs/architecture.md`).**
+
+| Found | Where | Treatment |
+|---|---|---|
+| Twelve firewall-source implementations and two product helpers | `internal/collect/<kind>/<impl>/`, `unboundctl`, `dnsmasqctl`, `providers_gen.go` | Built-in plugins (B1); generation removed |
+| MaxMind GeoLite2 | `internal/maxmind`, `store/geo.go`, settings surface keys | `ip_geolocation` kind, built-in `maxmind` plugin (B2) |
+| Public Suffix List | `internal/publicsuffix`, `widget/sites.go` grouping | `registrable_domain` kind, built-in `publicsuffix` plugin (B2) |
+| 26 widget hooks | `internal/widget/widgets/<type>/*.go`, `hooks_gen.go` | Widget plugins (B3) |
+| Provider display strings | `internal/web/locale/en.json` | Carried by each plugin (B1) |
+| Product-shaped closed codes (`eve_rotation_lost`, `no_licence_key`, `download_*`) | `schema.sql` | Kept as a shared closed vocabulary any plugin may report; own-kind gap reasons are plugin-declared (A3) |
+| The OPNsense client: transport, auth, TLS trust, mutating guard, timestamp formats | `internal/opnsense`, `internal/decode` | **Not a seam. Stays core.** opnview is defined as observability for OPNsense (`CLAUDE.md`, ROADMAP), its vocabulary is OPNsense's, and every source plugin is written against OPNsense's API. A second firewall product would be a different product, not a second implementation |
+| Discovery (interfaces, rules, ARP/NDP, system time) | `internal/collect/discovery.go` | **Stays core,** for the same reason. It is named in `docs/architecture.md` as the one OPNsense-specific code outside plugins and the client |
+| IANA special-purpose registries | `internal/specialpurpose` | Stays core: a standard, no service, no outbound call, no plausible second implementation |
+| SQLite (modernc), goja, Argon2id | store, plugin host, auth | Stay core: an embedded engine (ROADMAP), the interpreter, and a mandated algorithm |
+| Test fixtures naming built-in providers | `internal/web/webtest/collection.go` | Acceptable: test data naming built-ins |
+
+**B5. The existing tests are the behavioural spec.**
+
+- Before any Go implementation is removed, the Builder records an **inventory** from the baseline snapshot as a committed test-data file: every test function in the implementation packages, the kind coordinators, `internal/maxmind`, `internal/publicsuffix` and `internal/widget/widgets`, each with its package and file.
+- After the rewrite, every inventoried test exists by name and runs against the plugin loaded through the plugin loader.
+- Its assertions are unchanged, except the lines that obtain the result.
+- **Retired tests.** A test whose subject is the compiled mechanism itself (`providers_gen.go` or `hooks_gen.go` staleness, the provider overlay test, `testdata/examplefake`) is retired. The inventory names it together with the test that replaces it (A-series proof tests).
+
+**B6. Removal.**
+
+- The Go implementation directories, `providers_gen.go` and its directive, `hooks_gen.go` and its directive, and `internal/maxmind` / `internal/publicsuffix` as network clients are removed.
+- The builder's in-progress `provider.Manifest` / `provider.json` mechanism is replaced by the plugin manifest.
+- `go generate` stays only where the core links its own Go code: the web surfaces until step 7.
+
+### Phase C: the gaps
+
+**C1. Owners, labels and purposes (Go core, JSON only).**
+
+All endpoints are authenticated, CSRF-safe and documented in a section *Write endpoints* of `docs/widget-api.md`. Paths are the Builder's.
+
+- **Owners:**
+  - list, each with its client count;
+  - create (`display_name` non-empty after trimming, unique as the schema's `UNIQUE` defines it);
+  - rename (same rules);
+  - delete. Every assignment is cleared and the answer enumerates the cleared assignments (client, `owner_assigned_at`).
+- **Undo a deletion.** Given the deleted person's name and the cleared assignments, it recreates the person and restores each assignment **with its original `owner_assigned_at`**. A client assigned to someone else in the meantime is reported and left as it is.
+- **Assignment:** assign one or several clients (sets `owner_assigned_at` to now), and unassign them.
+- **Client listing:** every client, with or without traffic, with:
+  - id;
+  - `identity_kind` and `identity_key`;
+  - hostname;
+  - MAC;
+  - last address;
+  - interface;
+  - `unstable_identity`;
+  - owner and `owner_assigned_at`;
+  - `last_seen_at`.
+- **Labels and purposes:**
+  - set or clear `interface.user_label`;
+  - set or clear `blocklist.purpose` within its `CHECK` vocabulary, with `purpose_assigned_at`.
+- **Rules carried from the data model:**
+  - Ownership is assigned, never inferred: an endpoint changes exactly the clients it names.
+  - A client with an unstable identity may be assigned and is listed as such.
+  - A reassignment forces recomputation of the owner family for every kept slot holding the client's traffic (`docs/data-model.md`, refresh contract rule 3). Until then `freshness` reports those slots stale.
+  - **An assigned client is never removed by the retention purge.**
+  - Nothing here contacts the firewall.
+  - Answers are JSON with closed codes and no English sentence.
+
+**C2. Unnamed destinations by address, operator and country (Go core, served through the B3 host functions).**
+
+- **The rule.** Wherever a widget names a destination at site level, a destination with no inferred name is shown as **its address with its operator (ASN, organisation) and country**, or with its `lookup_state` when unplaced. It is never one "unnamed" bucket.
+- **The computation lives in the core** (address rows beside site rows) and is exposed to widget plugins.
+- **`top_sites` and `sites_by_client`:**
+  - rows carry a kind, `site` or `address`;
+  - address rows are ranked with site rows and truncated by the same `limit` / `sites_per_client` and `min_flows`;
+  - a partly named address contributes its named flows to site rows and the rest to its address row.
+- **`connection_tree`:** the level below the operator holds site nodes and address nodes, and `site:none` disappears. Owner-rooted views follow the same rule.
+- **`client_traffic_detail`** is already compliant: verified, not changed.
+- **`traffic_sankey`:** each `other.unnamed` bin lists its addresses with figures summing to the bin.
+- **Beyond the flow horizon:** exact figures from a stored aggregate, or the named state `unnamed_destinations_beyond_flow_horizon`. Never an estimate.
+- **Under `no_domains`:**
+  - in `connection_tree`, owner-rooted views and `client_traffic_detail`, every destination is shown in address form, named ones included, so the response does not depend on whether a name was ever inferred;
+  - `top_sites` and `sites_by_client` stay withheld whole.
+- **Documents amended by name:** `docs/widget-catalogue.md` (*Top sites*, *Sites by client*, *Connection tree*) and `docs/widget-api.md` (the `no_domains` table).
+
+**C3. Live rate (a plugin capability, read by the core's widget functions).**
+
+- **C3.0, measured before building** (live validation step LV-C0, run by the orchestrator read-only on the live firewall before this part is written):
+  - the wall time of `traffic/top` per call and per interface count;
+  - the wall time of `traffic/interface`;
+  - the firewall's processor use from the existing `cpu_usage/stream` samples, with no extra sampling for 15 minutes, then at each candidate cadence for 15 minutes;
+  - for the pf state table (C4), if its endpoint verifies, the state count, the response size and time, and the processor cost.
+
+  The result is recorded in `docs/opnsense-api-survey.md` as proportions and timings only.
+- **Two modes, one sampler, in the built-in `insight` plugin:**
+  - **Baseline.** The existing `sample` pass at `measurement_interval` always runs and is persisted, whether anyone is watching or not.
+  - **Live.** The manifest declares a live pass reading only the live endpoints: `traffic/interface` counters, `traffic/top`, and `traffic/stream/<interval>` only if it verifies (below). It has a live cadence setting:
+    - its **default is the finest cadence LV-C0 found adding at most 2 processor percentage points** over the idle baseline, justified in a comment citing the measurement;
+    - its lower bound is the span of one `traffic/top` capture.
+
+    The host runs the live pass while **live interest** holds.
+- **Live interest.**
+  - Any authenticated request for a live figure (a widget response carrying a live part, or the rolling series) renews a lease of `live_interest_seconds`.
+  - Its default is 30 s: it survives a missed 2 s poll, and fine sampling stops within half a minute of the last viewer.
+- **Persistence:**
+  - every sample of either mode is persisted, so no sample leaves a gap;
+  - fine samples are distinguishable from baseline samples (the schema shape is the Builder's) and purged after `live_sample_retention_seconds`;
+  - baseline samples follow the normal retention;
+  - when a baseline pass and a live pass fall due together, one round of the live endpoints serves both;
+  - logged and sampled figures are never summed.
+
+  How fine samples are "rolled into the baseline" is open question 1. Scope follows its recommendation unless the maintainer answers otherwise.
+- **Candidate endpoint.** `/api/diagnostics/traffic/stream/<interval>` (`TrafficController::streamAction`) is `UNVERIFIED:`. It is read from `opnsense/core` 26.7.3 and recorded in the survey before any code uses it.
+- **The widget API never calls the firewall.** Every live figure is read from stored samples.
+- **Exposed fields:**
+  - `current_rates` in `traffic_composition`;
+  - `owner_activity` chips;
+  - `client_traffic_detail.current_rate`.
+
+  Each carries `measure`, `sampled_at`, the span one sample covers, `cadence_seconds` and `lower_bound`, and a named stale state when older than the cadence allows.
+- **The rolling strip (coverage row 8: servable).** A trailing series at the live cadence:
+  - throughput by direction, from the samples;
+  - decisions per engine per bucket (allowed, firewall rule, firewall no rule, DNS refusals), from filter-log timestamps and resolver lookup timestamps.
+
+  Each decision series carries `complete_until`. Buckets after it are gaps, never zeros.
+- **Budget.** The live part of a response has a **median of 100 ms at the 1 000 000-row seed**.
+
+**C4. Ports and protocols.**
+
+- **Logged volume** by protocol and by service port is served end to end:
+  - `service_port` slices carry protocol **and** port (IANA identifies a service by both), so 53/udp and 53/tcp are two slices;
+  - `port:not_recorded` stays.
+- **Every catalogue binding naming `flow.dst_port` or `flow.protocol` is served:**
+  - `client_traffic_detail` records;
+  - `traffic_composition`;
+  - the `connection_tree` "service port and protocol" level;
+  - the blocked feeds where the catalogue names them.
+- **Rate by port and protocol from the pf state table:**
+  - the endpoint is researched in 26.7.3 source and recorded;
+  - **built as a plugin only if it verifies and LV-C0 found its cost within the same 2-point threshold** at a cadence the Builder states;
+  - its figures carry `measure`, `sampled_at`, `cadence_seconds` and `lower_bound`, and are never summed with logged volumes;
+  - if it is not built, `docs/widget-api.md` states that the rate by port or protocol is unavailable, citing the `traffic_top.py` iftop invocation without `-P` and the LV-C0 or source finding, and coverage row 4 cites it.
+- **`traffic_composition` adopts the mockup keys:**
+  - `group_by: blocking_reason`;
+  - `split_by: direction`;
+  - `window_seconds`;
+  - `line_interpolation` (rendering class).
+
+  The catalogue is amended by name. `destinations_per_owner` is not adopted: `connection_tree` rooted at the owner serves it.
+
+**C5. The JSON API covers every current page.**
+
+- **No investment in the Go templates.** No new page, template feature, catalogue machinery or theme machinery.
+- **Every capability of this cycle is JSON only:**
+  - owners;
+  - plugin listing;
+  - plugin settings;
+  - live rate;
+  - labels;
+  - purposes.
+- **Every action and every displayed figure of the Go-rendered surfaces gets a JSON equivalent,** so step 7 can replace them without new backend work. The surfaces are `account`, `settings`, `collection`, `interfaces` and `sources`. Their content:
+  - **account:** first-account setup, sign-in, sign-out, key-file password reset;
+  - **settings:** the firewall URL, key and secret with TLS trust verification; the MaxMind settings (now the `maxmind` plugin's declared settings); the Public Suffix List refresh; the theme preference value;
+  - **collection:** per-kind polling intervals, measured record rate, suggestion, and the collection settings including `aggregate_mode`;
+  - **interfaces:** networks per interface and the link-local rule;
+  - **sources:** availability, recent gaps, the outage indicator.
+- **Same rules as the pages.** Each JSON endpoint applies the same validation and the same authentication and CSRF rules.
+- **Documentation and enforcement.** The mapping (page route → JSON route) is a table in `docs/widget-api.md`, *Settings API*, and a test enforces it (C-AC9).
+
+**C6. The mockup gap audit.**
+
+- `docs/widget-api.md`, *Coverage of the mockup*, is rewritten. Every element the mockup displays is either served (type and field) or carries an impossibility reason citing 26.7.3. That covers all 45 rows and the elements outside them.
+- Re-examinations:
+  - row 4: C4;
+  - row 8: C3, servable;
+  - row 39: **servable as a bounded interval**, from `state_since_after_at` / `state_since_by_at`, which come from opnview's own probes and are never stated as an exact instant.
+- Rows 2, 3, 18, 20 and 24 move to C3. Rows 19, 26 and 27–29 move to C2. Row 45, the labels and the purposes move to C1.
+- `client_activity_timeline` stays `unknown_widget_type`. Alert presets stay step 6. Canvases have their own spec.
+
+### Phase D: a readable Go core layout (a move after Phase C; no behaviour change)
+
+- **The rule, enforced by a test over `cmd/`, `internal/` and the built-in plugin tree:**
+  - no package directory holds more than **15 non-test source files** (`.go` and `.sql`);
+  - every package has a `doc.go` whose package comment says what the package is for.
+
+  Test files are not counted, because Go keeps them beside the package. `testdata/` is not counted.
+- **The proposed target, by responsibility.** The Builder may rename packages if the rule and the map hold.
+  - **`internal/store`:** opening, the schema, the statement registry, the read pool, the query check, closed vocabularies. Responsibilities move out to:
+    - `store/accounts` (accounts, sessions, credentials, settings rows);
+    - `store/flows` (write, records, pairing, chunking, classification, dual-stack, this-firewall, networks);
+    - `store/attribution` (attribution, record rate);
+    - `store/geo`;
+    - `store/aggregates` (aggregates, periods, downtime);
+    - `store/samples` (measurement samples, reconciled state);
+    - `store/purge`;
+    - `store/reads` (reads, widget rows, surfaces);
+    - `store/plugintables`.
+  - **`internal/collect`:** the collector and scheduler. Responsibilities move out to:
+    - `collect/discovery`;
+    - `collect/identity`;
+    - `collect/kinds/<kind>` (one coordinator per kind).
+  - **`internal/plugin`:** the host. It holds:
+    - `plugin/loader`;
+    - `plugin/runtime` (interpreter bindings);
+    - `plugin/contract` (from `contract.go`);
+    - `plugin/fetch` (A7).
+  - **`internal/widget`:** the engine. Responsibilities move out to:
+    - `widget/params`;
+    - `widget/envelope`;
+    - `widget/figures` (sites, addresses, attribution, buckets, series, rates);
+    - `widget/shapes`.
+  - **`internal/web/webtest`:** split by surface.
+- **Moves preserve history.** No identifier is renamed except where a split forces an export. Every such export is listed in the hand-back.
+- **`docs/architecture.md` gains a *Map of the tree*:** one line per package directory saying what it is for. A test asserts that the map and the tree list the same directories.
+
+### Phase E: the pre-deployment budget
+
+- **The budget.** `ci/pre-deployment.sh` measures its total wall time, prints it beside the CPU count, and fails above **180 s**. The value is one constant, written once, like `TEST_BUDGET_SECONDS`.
+- **`-race`** runs only on packages selected by a **stated mechanical rule**, not a hand list. The rule includes:
+  - every package that starts a goroutine;
+  - every package that uses `sync` or `sync/atomic`;
+  - every package that serves HTTP handlers;
+  - the plugin host.
+
+  The script prints the selected and excluded packages.
+- **The 1 000 000-row seed** is built **once** per run and reused by every check that needs it: plans, widget budgets, live budget, reclassify cost. Widget timings run on the large seed only.
+- **Reporting.** `ROADMAP.md`, *Development and test environment*, states the budget and the rule. If 180 s cannot be met without dropping a check, the Builder reports the figures rather than dropping it.
+
+### Phase F: documentation clean-up (last phase; documents the final state once)
+
+Phase F starts when Phases A to E are complete. It runs before the suites' single run and the live validation. The live-validation figures (LV-C0, proportions) are then written into the condensed documents, not into documents about to be rewritten.
+
+**F.1 Why.** The tree holds about 11,200 lines of documents and about 5,100 lines of specs. Several restate one another, and some contradict the code this cycle produces:
+- `docs/architecture.md`, *What this is not*;
+- `docs/extending.md` (`go generate`);
+- server-rendered pages described as the product's interface.
+
+Agents read whatever is in the tree as current. A superseded instruction kept beside its replacement is how the project drifted. The rule from here on: **the code and a small set of documents are the truth, and git history is the archive.**
+
+**F.2 The target document set.** Each document is kept because a named reader needs it and no other document answers that need.
+
+| Document | Reader and purpose | Target size | Action |
+|---|---|---|---|
+| `README.md` | Somebody installing opnview: install, first run, the setup wizard, what it sees, the observation-point limit, the read-only API key advice (Risk 6), one paragraph on dropping a plugin directory | ≤ 200 lines (from 295) | condensed |
+| `CLAUDE.md` | Agents: the project rules | ≤ 135 lines (no growth) | **not edited by the Builder.** The Builder hands back a proposed diff (corrected references, the restated outbound rule), which the orchestrator applies with the maintainer's agreement |
+| `ROADMAP.md` | Everybody: the rules that apply to every step, the development and test environment, and the remaining steps (6, 7, 8) | ≤ 300 lines (from 782) | condensed. *Rules that apply to every step* is kept in meaning, with every rule present (the outbound rule as restated in *Rules*). **Steps 3 and 7 as amended, which `CLAUDE.md` names as binding, keep every requirement.** Text may be reworded only where a requirement is unchanged. Completed steps 1, 2, 4 and 5 become one paragraph each: what was delivered, and the commit |
+| `docs/architecture.md` | A contributor: *Map of the tree* (D2), data flow, the plugin host, the B4 audit table, and a new section ***Decisions in force*** | ≤ 500 lines | rewritten. *Decisions in force* holds one entry per maintainer decision still governing the code: the decision, its date, the test that enforces it where one does. It replaces every code citation of a spec |
+| `docs/plugins.md` | A plugin author (source, service or widget): the whole guide, contracts, host API, worked examples | ≤ 1,200 lines | absorbs `docs/extending.md` and `docs/widget-authoring.md` |
+| `docs/widget-api.md` | The step-7 application and any API client: the HTTP contract, *Write endpoints*, *Settings API* (C-AC9), the plugin listing, *Coverage of the mockup* | ≤ 900 lines | grows with this cycle's endpoints, nothing else |
+| `docs/data-model.md` | A contributor touching the store: *Vocabulary* (full), the table families and their invariants, the refresh contract, and the figures pre-deployment records there (the `ReclassifyEverything` wall time) | ≤ 900 lines (from 3,535) | condensed. **Per-column descriptions live once, in `schema.sql`'s comments**, and are removed from this document, because two copies of the schema drift |
+| `docs/opnsense-api-survey.md` | Whoever touches a firewall read: every OPNsense fact the code or a built-in plugin relies on, each with its 26.7.3 source URL; the step-1 findings that shaped the design (Suricata's `dns`/`tls`/`http` not readable through the API); each `UNVERIFIED:` item | ≤ 700 lines (from 1,447) | condensed. Every section whose title is cited by an endpoint's survey citation (compiled registry or built-in manifest) keeps its exact title. Probing narrative and history are removed |
+| `docs/ui-references.md` | **Binding** (`CLAUDE.md`) | ≤ 500 lines (from 839) | reduced, preserving binding content, see F.3 |
+| `docs/widget-catalogue.md` | **Binding** | ≤ 1,100 lines (from 1,825) | reduced, preserving binding content, see F.3 |
+| `docs/dashboard-format.md` | **Binding** | unchanged (770) | kept, see F.3 |
+| `docs/mockups/canvas-mockup.html` and its `check-*.js` scripts | The step-7 reference | unchanged | kept |
+| `docs/ui-references/screenshots/*` | Referenced by `ui-references.md` | unchanged | kept: no screenshot is deleted in this cycle |
+
+Target total for the Markdown documents above, excluding `CLAUDE.md` and the unchanged `dashboard-format.md`: **≤ 6,500 lines**, from about 10,300.
+
+**F.3 The three binding interface documents.** Their paths do not change, because `CLAUDE.md` names them.
+- **`docs/ui-references.md`:**
+  - **Kept verbatim:** the section *The maintainer's recorded preferences* and the palette values reproduced from https://lequellec.xyz.
+  - **Condensed:** the survey of prior art becomes one table with one row per reference (product, screenshot path, what is taken, what is rejected, and why), so every screenshot stays referenced.
+  - **Removed:** content that describes the server-rendered Go pages as the product's interface, which decision 11 supersedes.
+- **`docs/widget-catalogue.md`:**
+  - **Kept:**
+    - the twelve shapes with every field (what is drawn, data requirements, parameters, empty and absent states, truncation);
+    - every preset with its **Data** binding and parameter table (tested against the manifests by the 5B parameter-table test and C-AC8);
+    - *Why twelve*, as its derivation summary;
+    - the *Gaps found* table with every gap still open.
+  - **Removed:**
+    - narratives of gaps already closed (a closed gap keeps one row: identifier, closed, and where it is served);
+    - implementation notes that restate a manifest.
+- **`docs/dashboard-format.md`:** unchanged except for sentences contradicted by decision 11. The format is not yet implemented (a separate spec, before step 7), and condensing a contract nobody can yet test against code would lose content silently.
+
+**F.4 Specs: deleted from the tree, not archived.** Every spec whose work is delivered is deleted. Git history keeps it (`git log --follow -- specs/<file>`).
+- **Why not archive.**
+  - An archive directory is still in the tree. It is still read and grep-matched by agents, and keeps presenting superseded requirements as instructions. This spec's own earlier text, which required a sandbox, an allowlist and an activation step, is the example.
+  - An archive also keeps the 185 code citations pointing at change requests rather than at the current rule.
+  - What a delivered spec still governs is a **decision in force**, and it moves to `docs/architecture.md` *Decisions in force* or to the document that owns the subject.
+- **Before a spec is deleted,** the Builder checks every requirement of it against the code. Any requirement found undelivered is moved, unchanged in meaning, into `ROADMAP.md` under the step that will deliver it, and listed in the hand-back.
+- **Every citation of a spec is rewritten** to cite the surviving document and section: Go and SQL comments, `sql/schema-checks.sh`, `ci/`, the `Dockerfile`, `.vscode/tasks.json`, `ROADMAP.md`, `docs/`. A check label in `sql/schema-checks.sh` (for example `AC7`) may stay as a label when its message states the assertion in words. A citation of a deleted file may not.
+- **This spec** is deleted by the orchestrator in this cycle's commit, after the maintainer accepts the live validation. Its decisions in force are recorded by F.2 before that.
+- `specs/.gitkeep` stays, so the factory scripts' directory exists.
+
+**F.5 Exact deletions, for the maintainer's approval.** The Builder deletes only these paths, each by exact path, shown first. No wildcard.
+
+Documents (content folded into `docs/plugins.md`):
+- `docs/extending.md`
+- `docs/widget-authoring.md`
+
+Specs (delivered; decisions in force moved per F.4):
+- `specs/SPEC-accounts-and-settings.md`
+- `specs/SPEC-canvas-mockup.md`
+- `specs/SPEC-collection-and-storage-core.md`
+- `specs/SPEC-correlation-classification-aggregation.md`
+- `specs/SPEC-deferred-interface-bundle.md`
+- `specs/SPEC-maxmind-geolite2.md`
+- `specs/SPEC-purge-serialisation.md`
+- `specs/SPEC-resolver-cache-attribution.md`
+- `specs/SPEC-resolver-cache-closing.md`
+- `specs/SPEC-resolver-cache-follow-ups.md`
+- `specs/SPEC-sizing-derived-from-usage.md`
+- `specs/SPEC-step-5a-corrections.md`
+- `specs/SPEC-step-5a-live-corrections.md`
+- `specs/SPEC-step-5b-widget-api.md`
+- `specs/SPEC-test-budget-and-two-live-defects.md`
+- `specs/SPEC-two-missing-kinds.md`
+
+Deleted by the orchestrator in the commit, not by the Builder:
+- `specs/SPEC-backend-completion-plugins.md`
+
+Any further deletion the Builder finds necessary is proposed in the hand-back and not performed.
+
+**F.6 Checks that keep the documents honest.** Phase F adds a document-consistency test to the everyday suite. F-AC4 and F-AC5 state what it covers.
+
+## Acceptance criteria
+
+### Phase A: plugin host
+
+- [ ] **A1. Source proof test.** A test writes, as files only into a temporary data directory, a plugin of an **own kind** with two tables and a script. The plugin is discovered, its tables are created, and it runs at its cadence against the fake firewall. Its rows and durable state are committed in one transaction. A restart neither loses nor duplicates a row. No repository file is created or changed (file list and hashes compared before and after).
+- [ ] **A2. Core-kind proof test.** The same, for a dropped plugin providing a second `dhcp_lease` provider. Its leases go through the identity cascade exactly as a built-in's do, and it has a registry row and an availability row.
+- [ ] **A3. Refusal codes.** One test per A5 refusal reason, including each code of `plugin_endpoints.go`. Each is logged, listed with its closed code, and skipped, while the service and every other plugin keep running.
+- [ ] **A4. Collisions.** A dropped plugin colliding with a built-in on plugin name, `(kind, provider_key)`, declared kind or widget type is reported with the collision code. The built-in is the one loaded.
+- [ ] **A5. Runtime failures.** One test each for a script exception, a host-function panic, a timeout and invalid records. The provider's availability carries `script_failed`, `script_timeout` or `records_invalid`. No row of that answer is stored. Other providers collect in the same run.
+- [ ] **A6. Schema change.** A plugin restarted with a declaration differing only in nullability, then only in primary key, then only in an index, then in columns, is loaded each time. Its old table is renamed aside, the new one is empty, its state is reset, and the listing reports `schema_rebuilt` with the aside table and its row count. An aside table with a time column is purged by its retention and dropped when empty.
+- [ ] **A7. Plugin tables in the core.**
+  - A plugin table is purged by its own retention, or by `retention_seconds` when it declares zero.
+  - A widget query reads it.
+  - A query reading a domain-carrying column answers `withheld_by_aggregate_mode` with `data: null` under `no_domains`, and answers data under `full`.
+  - Freshness reports the provider's last successful pass.
+- [ ] **A8. Settings.** A declared setting is listed, written through the JSON endpoint within its bounds, and refused outside them with a closed code naming the key. A secret is stored encrypted, read by the plugin, and absent from every response (string search over the listing and settings payloads for the plaintext and the ciphertext).
+- [ ] **A9. Fetch facility.** Against a local test server:
+  - a first fetch writes the file;
+  - a conditional fetch receiving 304 keeps it;
+  - a failed fetch keeps the previous good copy in use;
+  - a malformed download, refused by the plugin's check, keeps the previous good copy;
+  - a request to an undeclared host is refused before any connection;
+  - the body is written to the plugin's data directory, and no file is written outside it.
+- [ ] **A10. Firewall only, for the core.** The rewritten source-policy test passes: only the OPNsense client and the A7 facility build HTTP requests. A counting transport over a full run of the core and every built-in plugin, on fixtures, sees only:
+  - the firewall base URL;
+  - the MaxMind download host;
+  - `publicsuffix.org`.
+
+  The last two are requested only by the `maxmind` and `publicsuffix` plugins.
+- [ ] **A11. Listing.** It returns every plugin with the A5 fields. Without a session it answers 401 with a JSON condition. No response contains a credential, ciphertext, session token or CSRF token.
+- [ ] **A12. Derived enumerations.** No list of kinds, provider keys or widget types used at runtime is hand-maintained. A plugin added in A1, A2 or B8 appears in `source_availability`'s default `kinds`, in the selection keys and in the widget registry without any edit.
+- [ ] **A13. Record contracts.** Each kind's contract is defined once (`contract.go`), and a test asserts that `docs/plugins.md`'s tables equal it.
+- [ ] **A14. Interpreter dependency.**
+  - `go.mod` lists goja as a direct requirement, and `go mod tidy` produces no diff.
+  - `docs/plugins.md` records goja's full transitive dependency list.
+  - `CGO_ENABLED=0 go build ./...` succeeds.
+  - No warning is suppressed.
+- [ ] **A15. Documented examples run.** Each worked example of `docs/plugins.md`, copied verbatim by a test into a temporary data directory, loads and produces the result the document states.
+- [ ] **A16. Documents.**
+  - `docs/architecture.md` no longer says there is no plugin system.
+  - Neither `docs/extending.md` nor `docs/plugins.md` describes a step requiring `go generate`, a rebuild, Go code or a PR for a third party.
+  - `docs/data-model.md` *Vocabulary* defines "plugin" against OPNsense's use of the word.
+
+### Phase B: built-ins as plugins
+
+- [ ] **B1. No compiled implementation remains.**
+  - No Go package implements a firewall-source provider, an `ip_geolocation` provider, a `registrable_domain` provider or a widget hook.
+  - `providers_gen.go`, `hooks_gen.go` and their directives are gone.
+  - `internal/maxmind` and `internal/publicsuffix` build no HTTP request.
+- [ ] **B2. Same loader.** Every built-in plugin loads through the same loader as A1, and the listing shows all of them as loaded with origin built-in. The listing holds the B1 table's seven firewall-source plugins plus `maxmind`, `publicsuffix` and the 26 widgets.
+- [ ] **B3. Behavioural inventory.** The B5 inventory file exists. A test asserts that every inventoried test name exists and is not skipped, and that every retired test is named with its replacement. The verifier compares each test's assertions with the baseline snapshot and finds none removed or loosened.
+- [ ] **B4. Identity preserved.** Registry rows `(kind, provider_key)` and display names of every built-in provider are unchanged, except `geo_asn` → `ip_geolocation` and `public_suffix` → `registrable_domain`, which `docs/data-model.md` records by name.
+- [ ] **B5. Widget byte identity.** For every built-in widget type, at its defaults, at `24h` and `30d`, and at every parameter combination the existing widget tests exercise, the response body on the fixture database is byte-identical to the baseline snapshot's, except fields Phase C changes by name (each listed). The comparison is a test or a committed script output the verifier reruns.
+- [ ] **B6. Widget proof test.** A widget with JavaScript logic is written as files into a temporary data directory: a manifest, a query over the A1 plugin's table, and a script computing a figure the declarative engine cannot. `GET /api/widget/{type}` answers with the full 5B envelope, with its parameters parsed, defaulted and reported (unknown, invalid, missing) exactly as a built-in's, with no recompile.
+- [ ] **B7. Credential guard.** A widget query (built-in, plugin or operator) reading `account`, `session`, `encrypted_credential` or a credential or secret `setting` row is refused with a closed code. One test per table.
+- [ ] **B8. Service kinds.**
+  - A dropped `ip_geolocation` plugin reading a local MMDB file from its own directory places addresses when selected. Switching back to `maxmind` re-places them.
+  - A dropped `registrable_domain` plugin groups names when selected.
+  - Neither needs any edit to a shipped file.
+- [ ] **B9. Budgets with scripts in the path.** Every widget response budget of 5B holds at the 1 000 000-row seed with the JavaScript widgets. Pre-deployment reports each widget's median beside its budget.
+- [ ] **B10. Audit recorded.** `docs/architecture.md` carries the B4 table, including the statement that the OPNsense client and discovery are not seams, and why.
+
+### Phase C: gaps
+
+- [ ] **C-AC1. Owners.** Create, rename, delete, undo, assign, unassign and the client listing each have a test.
+  - A duplicate or empty `display_name` is refused with a closed condition, and no row changes.
+  - Delete returns every cleared assignment.
+  - Undo restores each assignment with its **original** `owner_assigned_at`, and reports, without changing, a client assigned elsewhere in the meantime.
+- [ ] **C-AC2. Assigned, never inferred.** Assigning a client changes no other client's `owner_id`, including clients sharing its hostname, vendor or MAC prefix (a fixture built to tempt a match). A client with `unstable_identity = 1` can be assigned and is listed as such.
+- [ ] **C-AC3. Kept beyond retention.** A client whose last flow is older than the retention horizon and which has an owner survives the purge. An unassigned one in the same position is purged as before.
+- [ ] **C-AC4. Auth and CSRF.** Every write endpoint of this cycle (owners, labels, purposes, plugin settings, the C5 settings API):
+  - refuses no session (401, JSON condition);
+  - refuses a missing or wrong CSRF proof or a cross-origin `Origin` (403, JSON condition);
+  - changes no row when it refuses.
+
+  No `GET` changes state. `TestEveryRouteIsPublicByDecisionOrRefusesAnUnauthenticatedRequest` covers the new routes.
+- [ ] **C-AC5. Reassignment.** After a reassignment and the next derivation, `owner_activity` at `1h`, `24h`, `7d` and `30d` attributes the client's volume to the new owner. Owners plus unassigned sum to the value before. Before the derivation, the affected slots are reported stale.
+- [ ] **C-AC6. Labels and purposes.** Both are visible in the next `interface_volume_ranking` and `blocked_dns_lookups` response respectively. An out-of-vocabulary purpose is refused with a closed condition.
+- [ ] **C-AC7. Unnamed destinations.** On a fixture with named, unnamed, partly named and unplaced destinations:
+  - for `top_sites` at any scope, rows plus remainder plus below-`min_flows` equal the `attribution.eligible_flows`, and each address row carries the address and `country_code`, `asn` and `operator`, or a `lookup_state`;
+  - no response of `top_sites`, `sites_by_client`, `connection_tree` (every root) or `owner_activity` holds a node standing for all unnamed destinations together;
+  - each `traffic_sankey` `other.unnamed` bin lists addresses summing to the bin;
+  - under `no_domains`, `connection_tree`, the owner-rooted views and `client_traffic_detail` are byte-identical to the same fixture with every `domain_attribution` row removed, and `top_sites` / `sites_by_client` are withheld whole;
+  - beyond a short-retention horizon, figures are exact or carry `unnamed_destinations_beyond_flow_horizon`.
+- [ ] **C-AC8. Ports.**
+  - A fixture with 53/udp and 53/tcp yields two `service_port` slices, and null ports fall in `port:not_recorded`.
+  - A test parses each catalogue preset's **Data** paragraph. For every preset naming `flow.dst_port` or `flow.protocol`, a response carries both values where the catalogue binds them, the `connection_tree` level included.
+  - The four adopted `traffic_composition` keys are in the manifest and the catalogue, and each `data`-class key changes the response.
+- [ ] **C-AC9. Settings API coverage.** A test enumerates every route of the `account`, `settings`, `collection`, `interfaces` and `sources` surfaces. For each state-changing route there is a JSON route in `docs/widget-api.md` *Settings API* that, given the same input, makes the same change and refuses the same invalid inputs (tested per route). For each page, every figure it renders is present in a JSON response (tested by comparing values on a fixture).
+- [ ] **C-AC10. Live endpoints verified.** Every endpoint the live pass and the pf-state plugin call is in `docs/opnsense-api-survey.md` with a 26.7.3 source URL. A candidate that does not verify is recorded as such, and no code calls it. A source the firewall does not answer yields a closed availability outcome.
+- [ ] **C-AC11. Live cadence and interest.** With a fake clock:
+  - the live pass runs only while a lease renewed by a live-figure request holds, and stops within `live_interest_seconds` of the last one;
+  - the baseline pass runs throughout;
+  - with N parallel readers, at most one round of live calls happens per live cadence;
+  - the widget API makes zero firewall calls.
+
+  The cadence, lease and retention are `setting` rows. An out-of-range value is refused at load, naming the key. The cadence default's comment cites the LV-C0 figures.
+- [ ] **C-AC12. Live persistence.**
+  - Fine and baseline samples are both stored and distinguishable.
+  - Fine samples older than `live_sample_retention_seconds` are purged and baseline samples are not.
+  - A window spanning a live period and an idle period has no bucket without a sample at the baseline cadence.
+  - No response sums logged and sampled figures.
+- [ ] **C-AC13. Live fields and strip.**
+  - Every live figure carries `measure`, `sampled_at`, span, `cadence_seconds` and `lower_bound`; one older than its bound yields the named stale state.
+  - Each decision series carries `complete_until`, and later buckets are gaps, never zeros.
+  - Buckets sum to the decisions of the fixture's flows and lookups.
+- [ ] **C-AC14. Live budget.** Pre-deployment reports the median response time of the live part at the 1 000 000-row seed, and it is at most 100 ms.
+- [ ] **C-AC15. pf states.**
+  - Either the pf-state plugin exists, its endpoint is cited, and its figures pass C-AC13's field check;
+  - or `docs/widget-api.md` states the limit, citing the source or the LV-C0 finding, and coverage row 4 cites it.
+- [ ] **C-AC16. Audit.**
+  - The coverage table has one row per mockup element. Each names a type and field or a 26.7.3-cited impossibility. Rows 4, 8 and 39 carry a re-examination.
+  - For row 39, an availability response carries per provider the current state's `since` bounds. A fixture transition between two probes yields exactly those two instants, and a state never seen changing yields a named absence.
+
+### Phase D: layout
+
+- [ ] **D1.** A test fails when any package directory under `cmd/`, `internal/` or the built-in plugin tree holds more than 15 non-test `.go` and `.sql` files, or lacks a `doc.go` with a package comment.
+- [ ] **D2.** `docs/architecture.md` *Map of the tree* lists every package directory with its purpose. A test asserts that the map and the tree list the same set of directories.
+- [ ] **D3.** After the move, B5's byte-identity comparison and the whole suite pass unchanged. The hand-back lists every identifier exported to make a split possible.
+
+### Phase E and the whole cycle
+
+- [ ] **E1.** `ci/pre-deployment.sh` prints its wall time beside the CPU count and fails above its 180 s constant. Its output shows:
+  - the `-race` package selection, with its rule;
+  - one build of the 1 000 000-row seed;
+  - widget timings on that seed only.
+- [ ] **X1.** The literal checks (no interface name, device, VLAN name, address or CIDR literal) pass over every new file, plugin scripts, examples and fixtures included. Fixtures carry a `__provenance__` block.
+- [ ] **X2.** Every criterion of 5B (AC1–AC40, AD1–AD3), the resolver-cache specs, the live corrections and the test budget still passes. `docker compose run --rm checks` stays within 60 s. `docker compose run --rm pre-deployment` passes within 180 s.
+- [ ] **X3.** Every page of the Go-rendered surfaces renders byte-identical HTML on the fixture database before (baseline snapshot) and after. No template, theme or catalogue machinery file gains a feature (diff inspection).
+- [ ] **X4.** No file or directory named `zz_*`, and nothing under `.claude/worktrees/`, is tracked or staged. No scratch output remains in the tree.
+
+### Phase F: documentation
+
+- [ ] **F-AC1. Sizes.** Each document of the F.2 table is within its target, and the total is ≤ 6,500 lines (line counts printed by the consistency test or a committed script the verifier reruns).
+- [ ] **F-AC2. Deletions.** Exactly the F.5 Builder paths are deleted, and no other tracked file. `git status` shows each as a deletion, not a move to another tracked path.
+- [ ] **F-AC3. Binding content preserved.**
+  - *The maintainer's recorded preferences* and the palette values of `docs/ui-references.md` are byte-identical to the baseline snapshot.
+  - Every screenshot under `docs/ui-references/screenshots/` is referenced by `docs/ui-references.md`.
+  - `docs/widget-catalogue.md` still holds the twelve shapes with every field, every preset with its **Data** paragraph and parameter table (the 5B parameter-table test and C-AC8 pass unchanged), and every open gap identifier of the baseline's *Gaps found* table.
+  - `docs/dashboard-format.md` differs from the baseline only in sentences listed in the hand-back as contradicted by decision 11.
+  - `ROADMAP.md` steps 3 and 7 keep every requirement: the verifier checks each baseline requirement sentence against the new text, listed in the hand-back.
+- [ ] **F-AC4. No orphan reference.** The consistency test fails when any Markdown file, Go or SQL comment, shell script, `Dockerfile` or `.vscode/tasks.json` holds:
+  - a relative link or backticked repository path that does not exist;
+  - a citation `<document>, *<Section>*` whose section heading does not exist in that document;
+  - a path to a file under `specs/` other than `specs/.gitkeep` and this spec. This spec is allowed until the commit; the orchestrator's deletion in the commit removes the last citations of it, which the verifier re-greps.
+- [ ] **F-AC5. No document contradicting the code.** The consistency test asserts:
+  - every API path in `docs/widget-api.md` is a registered route, and every route is documented;
+  - every firewall endpoint path in `docs/` or `README.md` is in the compiled registry or a built-in plugin manifest;
+  - every setting key named in a document exists in `internal/config` or a built-in plugin's declared settings;
+  - every closed code listed in a document (availability outcomes, gap reasons, plugin refusal codes, widget conditions, settings refusals) equals the code's set;
+  - every kind, provider key and widget type named in `docs/plugins.md` or `docs/widget-api.md` exists;
+  - `docs/architecture.md` *Map of the tree* equals the tree (D2).
+
+  Prose claims the test cannot parse are checked by the verifier against the code. Each finding is a defect only if it is wrong behaviour, a broken binding rule or a data leak (*Rules*).
+- [ ] **F-AC6. Decisions in force.** Every maintainer decision recorded in a deleted spec that still governs code appears in `docs/architecture.md` *Decisions in force* or in the owning document, with its date. The hand-back maps each deleted spec to where each of its decisions in force now lives, or states "none in force".
+- [ ] **F-AC7. Undelivered requirements.** The hand-back lists every requirement found undelivered in a deleted spec and where it now lives in `ROADMAP.md`, or states that none was found.
+- [ ] **F-AC8. `CLAUDE.md` untouched by the Builder.** `CLAUDE.md` is unchanged in the Builder's work. The hand-back carries the proposed diff, and after it every reference in `CLAUDE.md` resolves (F-AC4).
+- [ ] **F-AC9. Phase order.** No file under `docs/` changes after Phase F except to record the live-validation figures. The verifier compares the tree at the end of Phase F with the tree at commit.
+
+## Live validation (before anything is committed)
+
+The orchestrator runs this read-only against the firewall, after `checks` and `pre-deployment` pass, **except LV-C0, which runs before Phase C3/C4 is built**. Outputs are never committed, and documents record proportions and timings only.
+
+**LV-C0: firewall-side cost, before building C3 and C4.** The measurements listed in C3.0, reported to the maintainer.
+
+- The live cadence default is the finest cadence adding at most 2 processor percentage points.
+- The pf-state plugin is built only if its cost meets the same threshold at a cadence stated with the figures.
+
+**LV-0: database rebuild.** This amends `ROADMAP.md` step 5, *Rebuilding the database after step 5B*, by name.
+
+1. Take the 5B baseline queries on the old build's database (5B live validation, and V1–V10).
+2. Stop the service.
+3. On the old database, list every user-input table and its row count, and show the list to the maintainer:
+   - `account`;
+   - `encrypted_credential`;
+   - `setting`;
+   - `owner`;
+   - `interface.user_label`;
+   - `blocklist.purpose`;
+   - operator-set `interface_network` rows.
+4. **Move** `opnview.db` and, if present, its `-wal` and `-shm` companions aside, to exact paths shown first. The move is the backup. Nothing is deleted, and the key file stays in place.
+5. Start the new build so it creates the schema, then stop it.
+6. Carry over `account`, `encrypted_credential` and `setting`, plus the rows the maintainer chose at step 3, by exact statements shown first. MaxMind settings keep their keys (A6).
+7. Start the service. Sessions are not carried over.
+
+**LV-P: plugins on live data.**
+
+- **Parallel run.** For 15 minutes the old build (live) and the new build run concurrently against the firewall. The new build runs in the dev container with its own scratch data directory, never the live volume. Per provider, the rows each stored for the same window are compared:
+  - filter-log records by digest;
+  - lease generations;
+  - lookups by deduplication key;
+  - cache and local-data observations;
+  - measurement readings by subject and measure;
+  - geolocation answers for the same addresses;
+  - registrable groupings for the same names.
+
+  Every difference is explained by window-edge timing and named, or it is a defect.
+- The listing shows every built-in as loaded.
+- Each built-in plugin's pass wall time and the service's processor use are reported beside the old build's.
+- A third-party example plugin is dropped into the scratch data directory only, never into the live volume. It is discovered and loaded or refused as expected.
+
+**LV-W: per-widget checks.** After at least 25 minutes of collection, for every served widget type at defaults, `1h` and `24h`, record:
+
+- **correct**, **empty** or **wrong**;
+- the figures compared;
+- the independent query used (5B L1–L4, L10 and their kin).
+
+**The bar:** no widget is wrong, and every empty widget has a named reason that is true.
+
+**Regression checks:**
+
+- 5B L1–L14 and AD4;
+- V1–V10 of `specs/SPEC-resolver-cache-attribution.md`: V2, V3, V4, V5 and V10 are 0, and V9 shows samples or a named cause.
+
+**LV-O: owners** (with the maintainer's agreement):
+
+- create one test person;
+- assign two clients, one with an unstable identity if any exists;
+- check `owner_activity` after the next derivation;
+- delete the person and check the cleared assignments;
+- undo, and check the original `owner_assigned_at` values;
+- delete again.
+
+**LV-N: unnamed destinations.**
+
+- C-AC7's equality holds on live data for `24h`.
+- The share of eligible flows shown by address is recorded.
+
+**LV-I: the open `iftop` items** of ROADMAP step 5, each answered or named as still open with the reason:
+
+- whether a client talking between interfaces is counted on both;
+- the ten-line cap;
+- base 1024 against base 1000;
+- the span of one sample.
+
+**LV-R: live mode.**
+
+- With a client renewing live interest, live samples appear at the configured cadence, and the strip's `complete_until` trails real time by at most the filter-log poll interval plus one cadence.
+- After interest stops, live sampling stops within `live_interest_seconds`.
+- The processor use stays within the LV-C0 figure.
+
+**The validation passes when:**
+
+- LV-W's bar holds;
+- every zero check holds;
+- LV-P, LV-O and LV-N hold;
+- the maintainer accepts LV-C0, LV-I and LV-R.
+
+## Out of scope
+
+- **Step 7, and with it the end-state of `internal/web`.** The frontend is a separate JavaScript application, embedded in the binary and built in step 7. `internal/web` then holds only the JSON API, authentication and static-file serving, with no server-rendered HTML. The current Go-rendered pages (setup, sign-in, settings, collection, interfaces, sources) stay in service until step 7 replaces them, and are then deleted.
+- **Everything the step-7 application covers:**
+  - widget renderers;
+  - the theme and language files and their pickers;
+  - the plugin management screen;
+  - the plugin settings screen;
+  - the People page.
+
+  This cycle provides their JSON only.
+- **The Suricata feature of step 6:** alert ingestion as a shipped feature, severity resolution, G7, G8. The `suricata` plugin reproduces today's collector only.
+- Canvas and dashboard persistence, import and export: a separate spec, before step 7.
+- **Any write to the firewall.** Making the firewall client or discovery a seam (B4).
+- **Hot reload of plugins:** discovery is at start.
+- Migrations (step 8). `schema.sql` is edited in place, and LV-0 handles the one installation.
+- G12 (application classification). Inferring names from CNAME, PTR or registrable domain.
+
+## Risks
+
+1. **Size.** This is the largest cycle so far: three rewrites (sources, services, widgets), a host, the gaps and a layout move.
+   - The phases are ordered so each one is testable on its own.
+   - The Builder reports any unfinished phase rather than thinning it.
+   - The verifier checks phases in order.
+2. **Interpreter cost.**
+   - goja is markedly slower than Go. JavaScript now sits in two hot paths:
+     - the filter-log pass every 10 s (page decoding);
+     - every widget request.
+   - B9 and C-AC14 measure the second at the 1 000 000-row seed. LV-P measures the first live.
+   - A goja runtime is not safe for concurrent use, so concurrent widget requests need a pool of runtimes, with the memory that costs. Compiled programs should be cached per process to keep the 60 s everyday budget.
+3. **Test preservation is a manual comparison.** "No assertion loosened" (B3) needs the baseline snapshot. If the in-flight builder already changed files before the snapshot, the comparison falls back to the git index for them, which is weaker. The Builder must list those files.
+4. **Byte identity across a language change.** Go's and JavaScript's number formatting, map ordering and integer range differ:
+   - the epoch and the byte counters exceed 2^53 only in pathological cases;
+   - JSON key order and float printing are the real traps.
+
+   B5 catches them. The fix is in the host's serialisation, not in loosening the comparison.
+5. **The undeclared-host refusal (A7)** may read to the maintainer as an allowlist. It is the author's own declaration, kept so the listing never misstates what a plugin contacts. It costs one manifest line.
+6. **Declared endpoints.** A plugin reading a sensitive GET endpoint (a configuration backup, for example) is not stopped by the mutating guard. This is accepted by decision. The README must say the API key should hold read privileges only.
+7. **Service plugins on the request path.** Registrable grouping is called while serving widgets. A slow or failing `registrable_domain` plugin must degrade to the existing `registrable_domain_grouping_unavailable` state, never block a response.
+8. **Live mode cost.** If LV-C0 finds no cadence below today's 300 s within the 2-point threshold (for example, sequential iftop captures across many interfaces), the live mode's finest cadence is that measured value, and the 2 s strip is served at whatever cadence it is.
+9. **Phase D export churn.** Splitting `internal/store` across packages forces unexported helpers to become exported. Each one is listed. Package cycles (purge touches everything) may force a different split than the one proposed, which is acceptable if D1 and D2 hold.
+10. **The 180 s pre-deployment budget** is unmeasured against the current suite. Narrowing `-race` reduces race coverage to the packages the rule selects.
+11. **Live-validation writes** (LV-O) touch the live database through the product's API, with the maintainer's agreement. The LV-P parallel run doubles read load on the firewall for 15 minutes.
+12. **Two writers on binding documents.** The catalogue paragraphs amended in C2 and C4 are named exactly, so a parallel interface cycle can reconcile them.
+
+13. **Lost rationale.** Deleting specs removes the reasoning behind decisions from the tree. *Decisions in force* (F-AC6) keeps every decision that governs code. The reasoning stays in git history, which is reachable but not browsed. A future reader asking "why" must use `git log`.
+14. **Comment churn on top of the layout move.** Rewriting 185 citations in 84 files enlarges the Phase D diff, and the verifier's review of the move with it. Phase F runs after Phase D's byte-identity check (D3), so the two are reviewed separately.
+15. **Condensing binding documents can drop a rule silently.** F-AC3 pins the parts tested against code or quoted verbatim. The rest of the step 3 and step 7 text depends on the verifier's sentence-by-sentence check, which is the weakest criterion of the phase.
+16. **Existing tests read documents.** These tests read the documents and must keep passing, never be loosened:
+    - survey section names checked against endpoint citations;
+    - catalogue parameter tables checked against manifests;
+    - `docs/plugins.md` contract tables (A13);
+    - `docs/data-model.md` receiving the reclassify figure.
+
+    They constrain the condensation: a section a test reads keeps its exact title.
+17. **The size targets are judgement.** If a target cannot be met without losing content a test or a binding rule needs, the Builder reports the figure and the content that forced it, rather than cutting it.
+## Rules
+
+- **Test suites run once.** `docker compose run --rm checks` then `docker compose run --rm pre-deployment` run once, when the work is ready to commit, not after each change. The verifier runs them once per round.
+  - The one exception: after LV-C0 sets the live-cadence default, the one-line change is followed by one run of `checks`.
+- **Only a blocking defect sends work back:** wrong behaviour, a broken binding rule, a data leak. Cosmetic and documentation findings are listed and never open a new round.
+- **One verifier per round, no ergonomist** (standard cycle).
+- **No commit before the live validation passes and the maintainer accepts it.** No git command that moves or discards work.
+- **Deletion.** Exact paths only, shown first. No wildcard or background destructive command. The live `data` volume's `opnview.db*` is touched only by LV-0's shown steps.
+- **The outbound rule, restated.** The Go core contacts the firewall and nothing else. The built-in `maxmind` and `publicsuffix` plugins download from the MaxMind download host and `publicsuffix.org` respectively, so the product as shipped still contacts exactly the three destinations it does today. A third-party plugin's declared destinations are its author's business.
+  - `ROADMAP.md`'s *Rules that apply to every step* bullet is amended by the Builder.
+  - The matching sentence in `CLAUDE.md` is updated by the orchestrator with the maintainer's agreement, not by the Builder.
+- **Hard rules carried from the project:**
+  - no hardcoded configuration;
+  - no installation data in any file;
+  - read-only against the firewall;
+  - OPNsense's and each product's vocabulary, with new terms recorded in `docs/data-model.md` *Vocabulary*;
+  - English only;
+  - every OPNsense fact cites `opnsense/core` 26.7.3, and an unverified one is marked `UNVERIFIED:` with nothing built on it;
+  - degrade with a named state, never a zero;
+  - no warning suppressed;
+  - a full transitive audit for any new dependency.
+
+## Open questions
+
+1. **What "fine samples rolled into the baseline" means.** The maintainer's live-rate decision says fine samples are persisted with a short retention "and rolled into the baseline". Two readings:
+   - **(a) Promotion only.** The baseline sampler runs without interruption at its own cadence. When it falls due during live mode, one round of calls serves both, so no extra firewall call is made and the baseline series has no hole. When the fine samples are purged, nothing more is kept from them.
+   - **(b) Promotion plus summary rows.** Before fine samples are purged, each baseline interval they cover also keeps a summary row per subject and measure (count, mean and peak of the fine samples), marked as derived. That way the peaks seen while someone watched survive beyond the short retention.
+
+   **Recommendation: (a).** Interface counters are cumulative, so the baseline already yields exact average rates over each interval. The `traffic/top` per-client figures are 2 s snapshots, whose mean and peak over a few minutes of viewing add little to the long-term history, while (b) adds a second kind of row every reader must keep apart from the baseline. Scope C3 follows (a) unless the maintainer chooses (b).
+**Decided (maintainer, 10 October 2026):** open question 1 is answered (a), promotion only. No summary rows are kept.
+
+
+---
+
+**This amendment is part of the spec and overrides any earlier text it replaces.** Section 14 lists the earlier sentences that are obsolete. The Builder treats the earlier text as amended accordingly; the orchestrator folds the amendment into the body during Phase F.
+
+# Amendment to `specs/SPEC-backend-completion-plugins.md`: the storage engine moves to PostgreSQL + TimescaleDB (maintainer decision, 11 October 2026)
+
+**Fact check of the brief.** I read the repository and checked each stated reason.
+
+- **The single writer: confirmed.** `internal/store/store.go` uses `SetMaxOpenConns(1)`, WAL, `busy_timeout(5000)` and `secure_delete(FAST)`. It also carries a workaround: the table count is read *before* the schema transaction, because otherwise SQLite answers `SQLITE_BUSY` and ignores the busy timeout.
+- **The read pool: confirmed.** `readpool.go` holds 4 `query_only` connections with a hand-made statement cache. `querycheck.go` detects writes by scanning SQLite `EXPLAIN` opcodes.
+- **"database is locked" handling: partly confirmed.** It is handled through `busy_timeout`, plus `isMissingSchemaObject`, which matches SQLite error text. There is no explicit "database is locked" branch.
+- **The purge/derive mutexes: they exist, but they are not SQLite artefacts.** `purgeMutex` and `deriveMutex` in `internal/collect/collect.go` enforce the *ordering* rule of `docs/data-model.md` (*Refresh contract*, and "The refresh and the retention purge are ordered"). That rule is a logical invariant. It holds under any engine with concurrent transactions, so switching engines does not remove it by itself. The amendment below says this rather than promising its removal.
+- **Hand-built aggregates: confirmed.** There are 6 families × 4 periods = 24 tables, plus `purged_flow_hour`, refreshed by `aggregate.statements.sql`.
+  - The families key on mutable attributes: classification, attribution, client re-pointing and owner.
+  - They carry exact distinct counts (`distinct_peers`, `client_count`).
+  - They depend on a purged part.
+
+  All three limit where continuous aggregates can fit. The amendment gates their use on equivalence.
+- **One namespace for plugin tables: confirmed.** `plugintables.go` names every table `plugin_<p>__<t>` in the single namespace.
+- **Two constraints that are new for hypertables.**
+  - `flow.log_digest` is `UNIQUE`. A unique index on a hypertable must include its time column.
+  - `domain_attribution.flow_id` references `flow(id)`, a foreign key into a would-be hypertable.
+- **State of work.** Phase A and much of B are in the tree (`internal/plugin/`, `plugins/*/plugin.json`). No built-in plugin declares tables. Phase C (live rate) is not started.
+- **The SQLite surface.**
+  - 26 `.statements.sql` files.
+  - `sql/schema-checks.sh` holds 404 `check`/`expect_sql_*` assertions on the `sqlite3` CLI.
+  - About 60 test files call `.DB()` with raw SQLite SQL. These include `webtest/dbscan.go` (`sqlite_master`, `pragma_table_info`), `account_test.go` (`PRAGMA secure_delete`) and `store_test.go` (the `-wal`/`-shm` companions).
+- **Current versions and pins.** `go.mod` pins `modernc.org/sqlite v1.59.0`. The `Dockerfile` installs `sqlite3` and `gcc`.
+- **No README install section exists today.** The amendment specifies a new one.
+
+---
+
+## 1. Context: insertion after decision 12 ("Process"), as decision 13
+
+> 13. **The storage engine is PostgreSQL with the TimescaleDB extension** (maintainer, 11 October 2026). It replaces SQLite for everything, and it replaces the `ROADMAP.md` rule that storage engines be embedded libraries and that forbade PostgreSQL and TimescaleDB. The orchestrator wrote that rule, not the maintainer. The reasons:
+>     - SQLite's single writer forced a single read-write connection, a separate read-only pool and busy-timeout handling.
+>     - The hour/day/week/month rollups are hand-built SQL.
+>     - Plugin tables share one file and one namespace.
+>     - The maintainer wants plugins with their own data schema, a fine live rate, event-driven features and time series.
+>
+>     The install story is kept: one command installs, one command updates, nothing is provisioned by hand. Phase P carries the switch.
+>
+>     **A second requirement of the same day:** any widget can list the datasets that the core and every plugin expose, and a generic widget binds x, y, filters, period and aggregation to any of them with no code (P8).
+
+## 2. Context, *Where the repository stands*: append these bullets
+
+> - **Storage today (read for decision 13):**
+>   - `modernc.org/sqlite` (pure Go);
+>   - one read-write connection (`store.go`: WAL, `synchronous=NORMAL`, `busy_timeout`, `secure_delete(FAST)`, a WAL checkpoint on close);
+>   - four `query_only` read connections with a statement cache (`readpool.go`);
+>   - a widget-query check that plans the text and searches SQLite `EXPLAIN` opcodes for writes (`querycheck.go`);
+>   - `schema.sql` (about 3 300 lines, applied in one transaction at every start, no migrations);
+>   - `purge.sql`;
+>   - 26 `*.statements.sql` files under `internal/store` and `internal/widget`;
+>   - 24 aggregate tables (6 families × 4 calendar periods) plus `purged_flow_hour`, refreshed by hand under the *Refresh contract* of `docs/data-model.md`;
+>   - `sql/schema-checks.sh`: 404 assertions, query plans and the 100 000 / 1 000 000-row seeds on the `sqlite3` CLI.
+> - **The ordering mutexes.** `purgeMutex` and `deriveMutex` (`internal/collect/collect.go`) enforce the refresh contract's ordering of the purge against a pass's store-and-derive. That ordering is a logical rule, not an engine workaround.
+
+## 3. Context: verdicts amended
+
+- On the `internal/store/plugintables.go` bullet, replace "*Compatible, with one defect to change:*" with:
+  > *Compatible in contract; re-targeted by Phase P6 (one PostgreSQL schema per plugin). The defect below is fixed by A4 as amended.*
+- In the B4 audit table, replace the row `| SQLite (modernc), goja, Argon2id | store, plugin host, auth | Stay core: … |` with:
+  > `| PostgreSQL + TimescaleDB (via a pure-Go driver), goja, Argon2id | store, plugin host, auth | Stay core: the installation's store (ROADMAP, storage rule as replaced 11 October 2026), the interpreter, and a mandated algorithm. The store is not a seam: a second engine would be a second product to test |`
+
+## 4. Scope: replace the phase-order paragraph
+
+Replace from "**Phase A.** The plugin host and format." through "**Phase E.** The pre-deployment budget." with:
+
+> **Phase A.** The plugin host and format.
+> **Phase P.** The storage engine: PostgreSQL + TimescaleDB, the per-plugin schemas, the data catalogue.
+> **Phase B.** Every built-in rewritten as a plugin: sources, services and widgets, plus the hard-wiring audit.
+> **Phase C.** The gaps: live rate and pf states as plugins; owners, unnamed destinations, ports and the JSON settings API in the core; the mockup audit.
+> **Phase D.** The core layout move.
+> **Phase E.** The pre-deployment budget.
+> **Phase F.** Documentation clean-up.
+>
+> **Where Phase P sits, and why.** Phase A and part of Phase B are already in the tree. No built-in plugin declares a table, and Phase C has not started.
+> - Phase P runs **next**, from the current tree. It re-targets everything that touches storage, including the Phase A pieces already written: `plugintables.go`, durable plugin state, plugin settings, and the A-series tests that create plugin tables.
+> - It must be complete, and its own criteria must pass, **before**:
+>   - any built-in plugin declares a table;
+>   - any remaining Phase B storage work;
+>   - all of Phase C, whose live samples (C3) are written straight into the new store.
+> - Phase A and Phase B items not yet finished continue on PostgreSQL after it.
+>
+> **SQLite reference outputs, recorded before Phase P.** Before any store code changes, the Builder runs the baseline snapshot's code (on SQLite, in the pre-cycle development image) on the fixture database. It records the outputs as committed test data:
+> - every widget response of B5's comparison set;
+> - the result rows of every query in `sql/queries/*.sql`;
+> - a dump of every aggregate slot of every family and period.
+>
+> These are the "before" of P-AC6 and of B5. The baseline code cannot run once the development image no longer carries SQLite.
+
+## 5. Scope: new section, inserted after Phase A (before "### Phase B")
+
+### Phase P: the storage engine
+
+**P1. Engine, versions, licence, telemetry.**
+- **The store is PostgreSQL with the TimescaleDB extension.** One database per installation. `opnview` is its only client.
+- **Pinned versions.**
+  - The PostgreSQL major and the TimescaleDB release are each pinned by exact version and by image digest, verified against the publisher's release notes, and written once (one constant per pin, like `GO_VERSION`).
+  - The TimescaleDB release is the latest that supports the pinned PostgreSQL major on the day of pinning. The Builder records both, with the source URLs, in `docs/architecture.md`.
+  - A pin is changed deliberately, never floated.
+- **The licence, stated in `README.md` (*Licence*) and `docs/architecture.md`:**
+  - TimescaleDB's core (hypertables, `time_bucket`, chunk dropping) is Apache-2.0.
+  - Continuous aggregates, and any compression or background policy, are under the **Timescale License (TSL)**. The TSL permits this self-hosted use and forbids offering TimescaleDB itself as a hosted database service.
+  - `opnview` stays MIT. It neither links nor redistributes TimescaleDB; the installation pulls its image.
+  - The Builder verifies this split against the licence matrix of the pinned release, cites it, and lists every TSL feature `opnview` actually uses.
+- **Telemetry is off.** TimescaleDB's telemetry and version check would break the outbound rule ("no telemetry, no version check").
+  - Every compose service running the database sets it off.
+  - `opnview` reads the setting at start and **refuses to start**, with a named error, when it is not off.
+- **The driver** is pure Go, so `CGO_ENABLED=0` still holds. `modernc.org/sqlite` leaves `go.mod`.
+  - The driver becomes a direct requirement, `go mod tidy` produces no diff, and its full transitive dependency list is recorded in `docs/architecture.md`.
+  - No warning is suppressed.
+  - Library choice is the Builder's, subject to this rule.
+
+**P2. Installation shape.**
+- **Development and test (`docker-compose.yml`).**
+  - A test database service (TimescaleDB image, pinned as P1) is added, and `checks`, `pre-deployment` and `schema-checks` depend on it through a health check.
+  - The canonical strings `docker compose run --rm checks` and `docker compose run --rm pre-deployment` are unchanged.
+  - For `checks`, the test database keeps its data on a tmpfs. Durability-off settings (`fsync`, `synchronous_commit`, `full_page_writes`) are permitted **only** on that test service, each with a comment saying why.
+  - `pre-deployment` runs against a disk-backed instance with the production durability settings, so the whole suite meets a real disk once before a deployment, as today.
+- **Running the service (`docker-compose.serve.yml`).**
+  - `serve` gains the database service with a named volume for its data.
+  - The `opnview` data directory (`/data`) keeps the key file and the plugin data directories. It no longer holds a database file.
+- **The connection.**
+  - `opnview` receives its database connection as a **required start parameter with no default**, exactly like `--data-dir`. It refuses to start without it, naming the parameter.
+  - The compose files supply it.
+  - The database is reached over a Unix socket or the installation's private container network. **The database service publishes no port.**
+  - Any database credential is generated at first start into the installation's own storage (a secret file or volume, mode 0600), never written into a tracked file.
+  - The test service may use trust authentication on its private network. That is stated in a comment, and it is the only place it is allowed.
+- **Start.**
+  - `opnview` waits for the database for a bounded time, logging each attempt, then exits non-zero naming the database.
+  - At open it takes a **session advisory lock**. A second `opnview` against the same database refuses to start with a named error. This turns "one process" into a fact the in-process ordering mutexes (P7) can rely on.
+- **Backup.**
+  - **A backup is two things:** a `pg_dump` of the database (the exact command, run through compose, documented in `README.md`) and the key file in the data directory.
+  - Restore goes into the same pinned TimescaleDB release, following the restore procedure TimescaleDB documents for that release.
+  - The README says that a dump without the key file restores the history but not the stored credentials, as the key-file limitation already says.
+- **Step 8 (an always-on host or LXC).** The single-command story is restated in `ROADMAP.md` step 8 (text in §12 below):
+  - one command installs Docker Engine and its compose plugin if absent, writes the compose file and the generated database credential into the installation directory, and starts both containers;
+  - re-running it updates: it pulls the pinned images and restarts, and the database volume and data directory survive;
+  - an unprivileged Proxmox LXC needs nesting enabled for Docker, and the README says so.
+
+  Building `ct/install.sh` stays step 8 work.
+- **The outbound rule, restated.**
+  - The Go core makes network requests to the firewall and to nothing else.
+  - **The database connection is not an outbound call.** It goes to the installation's own database, configured by the installer, and to no other host.
+  - Image pulls at install or update time are installation-time downloads, as the `Dockerfile` already says of its own build-time fetches. They are not among the product's outbound calls.
+
+**P3. The core schema in PostgreSQL.**
+- `schema.sql` is rewritten in PostgreSQL's dialect, **keeping every table, column, constraint, index, view and comment in meaning.** Per-column descriptions stay in its comments (F.2).
+- **Every SQLite-specific construct is translated, not dropped:**
+  - `INTEGER PRIMARY KEY` row ids become generated identities;
+  - `ifnull`-wrapped unique indexes become `NULLS NOT DISTINCT` or equivalent expressions;
+  - `strftime`, `GLOB`, `instr`, the `json_*` functions, `INSERT OR …`, `CREATE VIEW IF NOT EXISTS` and every `PRAGMA` are translated;
+  - every upsert keeps its conflict target.
+- **Two semantics are pinned, because they change results silently:**
+  - **Text ordering is byte order**, as SQLite's `BINARY` collation gives it (the C collation or an equivalent);
+  - **`LIKE` keeps SQLite's ASCII case-insensitivity** wherever a statement relied on it. The Builder lists every `LIKE` and its translation.
+- **The JSON API keeps epoch seconds.** Every instant in every response stays an integer number of seconds since the epoch, byte-identical to today, whatever column type stores it. The constraint that drives the type choice: calendar-month buckets in TimescaleDB need a timestamp type. The choice is the Builder's.
+- **Namespace.** Core objects live in a dedicated schema, not `public`. No plugin schema can share its name (P6).
+- **Applied at every start, in one transaction where PostgreSQL allows it.** PostgreSQL's DDL is transactional. Any statement TimescaleDB refuses inside a transaction (for example, creating a continuous aggregate) runs after the transaction, idempotently, and the Builder lists those statements.
+  - **Re-applying changes nothing:** no schema object and no row count in any table (`schema-checks` AC1, restated).
+  - `ErrSchemaOutdated` keeps its meaning, detected from PostgreSQL's error codes for an undefined table or column rather than from message text.
+- **No migrations,** as before (*Out of scope*). P10 says what happens at deployment.
+- **Every SQL statement file** (`purge.sql`, every `*.statements.sql`, `sql/queries/*.sql`, `sql/seed.sql`) is translated with the same rules.
+  - The authoring syntax for named parameters in widget and plugin queries (`:name`) stays what `docs/plugins.md` documents. The core translates it.
+  - Operator and plugin queries are documented as **PostgreSQL** SQL.
+
+**P4. Hypertables and retention by chunk.**
+- **Hypertables.**
+  - A growing table whose rows carry an instant (candidates: `flow`, `dns_resolution`, `measurement_sample`, `security_event`, `resource_record_observation`, `dhcp_lease`) becomes a hypertable on that instant **only if every constraint it carries keeps its meaning**.
+  - The ones to verify are `flow.log_digest UNIQUE` (a hypertable's unique index must include the time column) and the foreign key `domain_attribution.flow_id → flow(id)`. Both are checked against the pinned release's documentation.
+  - A table that cannot keep its constraints stays a plain table, and the reason is recorded.
+- **Retention by chunk, driven by opnview's clock.**
+  - The purge keeps its signature, `Purge(ctx, now)`, and its horizon semantics are **exact**:
+    - whole chunks entirely past the horizon are dropped;
+    - the chunk that straddles the horizon is purged row by row;
+    - everything the purge writes first (the purged part, `retention_purge.purged_before`, the assigned-client exemption of C1) is written exactly as today, in the same transaction or ordering.
+  - TimescaleDB background retention jobs are **not** used for any table whose purge is ordered with derivation, because they run on the server's clock, outside that ordering, and invisible to the tests' fake clock.
+  - Fine live samples (C3), which share a table with baseline samples unless the Builder separates them, keep their own exact horizon (C-AC12).
+- **Not in this cycle: columnstore compression.** Reclassification rewrites rows across the whole retention (`ReclassifyEverything`). See *Out of scope*.
+- **The fit table.** `docs/data-model.md` gains a section ***Storage fit***. One row per growing table records:
+  - hypertable yes or no, and why;
+  - the retention mechanism;
+  - the test that proves the purge semantics unchanged.
+
+**P5. Aggregates: continuous where equivalent, hand-refreshed where not.**
+- **A family and period becomes a TimescaleDB continuous aggregate only where it reproduces exactly what the existing tests assert.** That means:
+  - a connection logged on two interfaces is **counted once** (the `in` record), its second leg counting only under its `exit_leg_device` in the volume family and in the rule family;
+  - **UTC calendar slots**: the hour, the day, the ISO week starting Monday 00:00 UTC, and the calendar month of 28 to 31 days, with `period_end_at` exact;
+  - **gaps are never zeros**, and a period predating collection shows its true coverage;
+  - the purged part of an hour under a retention shorter than an hour;
+  - late ingestion into a closed slot;
+  - reclassification and identity re-pointing moving a flow out of one slot into another;
+  - owner reassignment (*Refresh contract*, rule 3);
+  - exact `distinct_peers` and `client_count` in every period.
+- **The derivation drives refresh.** A continuous aggregate is refreshed by the derivation, over the slots the refresh contract selects (`refresh_continuous_aggregate` over an explicit window), **not** by a background policy, so rules 1 to 6 and the watermark semantics of `computed_at` hold. What `aggregate_freshness` and every widget's `freshness` report keeps its meaning.
+- **A family that fails any of the above stays a hand-refreshed table in PostgreSQL, and that is an acceptable outcome.**
+  - The families most at risk: the owner family (keyed on `client.owner_id`, a joined mutable attribute that continuous-aggregate invalidation does not track), the domain family (attribution), and every family's exact distinct counts.
+- **A family that is a pure regrouping of another by a mutable attribute** (the owner family, regrouped from the client family by the client's current owner) **may be computed at read time instead of stored**, provided:
+  - the widget responses stay byte-identical (B5, P-AC6);
+  - C-AC5 holds;
+  - the 5B budgets hold.
+- **Recording the decisions.** *Storage fit* records, per family and period, which of the three it became (continuous aggregate, hand-refreshed, read time), why, and the test proving equivalence.
+
+**P6. One PostgreSQL schema per plugin.** This replaces, in A4, "Names are `plugin_<plugin>__<table>`, as `plugintables.go` builds them" and "No core table can collide with that pattern".
+- **The schema.** Each plugin that declares tables gets its own PostgreSQL schema, named from the plugin name under a prefix that no core schema carries. Its tables keep their declared names inside it.
+  - Two plugins can never collide.
+  - A plugin's objects are listed, dumped and dropped as one namespace.
+- **The declaration (A4) gains, per column:**
+  - a **role**: `time`, `dimension` or `measure`;
+  - for a measure, an optional **unit**. A unit obeys the shape rule `measurement_sample.unit` already enforces (non-empty, lower-case, no space). The core's own terms are those of `internal/store/rows.go`, and a plugin's term is an ordinary value beside them, as for `measurement_sample`.
+
+  These feed the data catalogue (P8).
+- **A plugin table with a time column is created as a hypertable** on it.
+  - A declared primary key or unique index that omits the time column is **refused at load** with a closed code the Builder names and `docs/plugins.md` lists (TimescaleDB requires the time column in every unique index).
+  - Retention follows P4: exact horizon, by chunk then row. A7's criterion is unchanged.
+- **Schema change keeps A4's rule:** rebuild, never refuse, nothing silently lost.
+  - The previous table is **moved into a reserved aside schema**. That schema is never on any search path, never in the data catalogue, and never readable by a widget query.
+  - The new table is created empty, the plugin's durable state is reset, and the listing reports `schema_rebuilt` with the aside table and its row count.
+  - Aside tables are purged by their recorded retention and dropped when empty. One with no time column is kept and listed.
+- **No plugin is ever dropped silently.** A plugin no longer present at start keeps its schema and tables. The listing reports them as orphaned with their row counts. Removal is a deliberate operator act, documented in `docs/plugins.md` as a single SQL command.
+- **A plugin's durable state and settings stay in core tables** keyed by plugin, as today (`plugin_state`, namespaced settings, `encrypted_credential`).
+
+**P7. Concurrency.**
+- **Removed, being SQLite engine workarounds:**
+  - the single read-write connection (`SetMaxOpenConns(1)`) and its rationale;
+  - WAL, `synchronous`, `busy_timeout`, `secure_delete`, `query_only` and every other `PRAGMA`;
+  - the WAL checkpoint on close and every handling of `-wal`/`-shm` companions;
+  - the "count before the transaction" workaround in `applySchema`;
+  - matching SQLite error text;
+  - the separate read pool (`readpool.go`) and its hand-made statement cache. A pooled handle replaces both, with driver-level statement caching. AC31 of 5B ("a second call prepares nothing") is restated against that caching;
+  - `IntegrityCheck` (`PRAGMA integrity_check`). It is retired, with its replacement or reason named in the B5 inventory.
+- **Kept, being logical rules:**
+  - the ordering of the purge against a pass's store-and-derive (`purgeMutex`);
+  - the serialisation of derivations (`deriveMutex`);
+  - the in-flight ingestion watermark.
+
+  Each may become a transaction-scoped PostgreSQL advisory lock only if the Builder shows the same ordering. `purge_ordering_test.go` and the refresh-contract tests pass with unchanged assertions either way. The single-instance lock (P2) makes the in-process form sound.
+- **Read connections and the data-leak guard.** Widget queries, plugin read queries and catalogue queries (P8) run on connections that:
+  - log in as a **read role** with `SELECT` only on the readable core objects and on plugin schemas, and with **no privilege on `account`, `session`, `encrypted_credential`, or on any setting holding a credential or secret** (by splitting those rows out or by row-level security; the Builder's choice);
+  - are not members of any role that holds those privileges, so no `SELECT` can raise its own privileges;
+  - run every statement in a **read-only transaction** under a statement timeout.
+
+  The load-time closed refusal of B7 stays. The privilege is a second layer, replacing `query_only` and the `EXPLAIN`-opcode scan, which is retired.
+- **LISTEN/NOTIFY for event-driven work.**
+  - The core publishes a notification on commit of:
+    - every collection pass (kind, `provider_key`);
+    - every plugin pass (plugin, provider);
+    - every aggregate refresh (the periods refreshed).
+  - The channels and payloads are a closed list, documented in `docs/plugins.md`.
+  - **A provider of an own kind may declare, in its manifest, that its pass is also triggered by named core events**, in addition to its cadence. A triggered pass never runs more often than its declared lower bound and never concurrently with itself.
+  - Pushing notifications to a browser is step 7.
+
+**P8. The data catalogue API.** This is the maintainer's requirement of 11 October. All endpoints are JSON, authenticated, and documented in `docs/widget-api.md` under a new section *Data catalogue*. Paths are the Builder's; the ones below are proposed.
+- **Listing (`GET /api/datasets`).** Every dataset the core and every loaded plugin expose. Each entry carries:
+  - a namespaced name (core, or plugin plus table);
+  - its origin;
+  - a catalogue key for its label;
+  - its time column, if any;
+  - its retention horizon;
+  - the provider whose last successful pass is its freshness;
+  - whether it is an **event** dataset (a covered bucket with no row is a true zero) or a **sample** dataset (a bucket with no row is a gap);
+  - its columns, each with: name, type, role (`time`, `dimension`, `measure`), unit, nullable, carries-domain, and the aggregations it admits.
+- **What the listing never contains:** an aside table, `account`, `session`, `encrypted_credential`, a credential or secret setting, `plugin_state`.
+- **Core datasets.** The core declares its datasets as data, in the same declaration format plugins use. At minimum it declares the five sources of `custom_chart` (`traffic`, `firewall_metric`, `interface_throughput`, `dns`, `security_event`, `docs/widget-api.md`, *Series of `custom_chart`*), with the measures that section lists. Every plugin table is a dataset automatically.
+- **The query (`GET /api/datasets/{name}/query`).** Parameters are encoded the way `GET /api/widget/{type}` encodes `custom_chart`'s `series`. A query names:
+  - **`period`**, using the widget API's period and window vocabulary and parsing;
+  - **`x`**, either the time column with a `bucket` (`auto`, or seconds), or one dimension column;
+  - **`y`**, one or more measure columns, each with an aggregation from a closed list (`sum`, `mean`, `min`, `max`, `last`, `count`, plus `count_distinct` for dimensions), refused where the column's declaration does not admit it;
+  - **`filters`**, each a column, an operator from a closed list (`eq`, `ne`, `in`, `not_in`, `lt`, `le`, `gt`, `ge`, `is_null`, `is_not_null`) and a value typed against the column;
+  - optional **`split_by`**, one dimension, with a `limit` and a remainder entry;
+  - **`order`** and **`limit`** for a dimension `x`.
+- **Safety.**
+  - The server compiles a query into one parameterised `SELECT`.
+  - **Identifiers come only from the dataset's declaration**, quoted. **Values are only ever bound.**
+  - It runs on the P7 read connections.
+  - **No SQL text is accepted from the browser,** in any parameter.
+- **The response.**
+  - It uses the 5B envelope: availability, coverage, gaps, freshness, conditions, `withheld`, and parameters echoed with unknown, invalid and missing reported.
+  - Time buckets are aligned to UTC. A bucket of an hour, a day, a week or a month is aligned on the volume aggregates' period boundaries (ISO week, calendar month), as `docs/widget-catalogue.md`, *Custom chart*, requires.
+  - A bucket not covered by collection (a collection gap, downtime, an unavailable provider), or an empty bucket of a sample dataset, is a **gap and never a zero**.
+- **Under `no_domains`,** a query reading, filtering or splitting on a carries-domain column answers `withheld_by_aggregate_mode` with `data: null`.
+- **Closed refusal codes,** named by the Builder and listed in the document: unknown dataset, unknown column, aggregation not admitted, operator not admitted, value type mismatch, too many buckets, too many series, too many rows.
+- **Bounds.** Each is a constant written once and documented. Proposed:
+  - at most 1 000 buckets per series;
+  - at most 20 series (split values) plus the remainder;
+  - at most 1 000 rows for a dimension `x`;
+  - a statement timeout of 5 s.
+
+  The Builder may change a value with a measured justification in the hand-back.
+- **Budgets.** These are the 5B budgets: a median of at most 250 ms (24 h) and 500 ms (30 d) at the 100 000-row seed, and 1 s and 2 s at the 1 000 000-row seed. They are measured by the pre-deployment command for one default query per core dataset.
+- **`custom_chart` generalised.** Its series `source` accepts any dataset name, `measure`/`metric` any measure column of it, and `aggregation` that column's admitted aggregations.
+  - The five existing sources answer byte-identically (B5).
+  - `docs/widget-catalogue.md`, *Custom chart* (**Data**, **Parameters**), and `docs/widget-api.md`, *Series of `custom_chart`*, are amended by name. These are data contracts, and no aesthetic rule changes.
+  - Open question 2 governs any binding beyond `time_series`.
+
+**P9. Tests and checks on PostgreSQL.**
+- **The everyday suite stays within its 60 s `go test` budget** (`TEST_BUDGET_SECONDS`, unchanged), with the tests still parallel.
+  - Isolation is per test: a fresh database cloned from a template built once per run, or a per-test namespace. The Builder chooses by measurement and reports the figure.
+  - TimescaleDB background workers are disabled in test databases (they also block cloning from a template). A test of anything a job would do invokes it explicitly on the test's clock.
+- **The pre-deployment command stays within its 180 s budget (Phase E)** against the disk-backed instance. The 1 000 000-row seed is built once per run with set-based generation, then `ANALYZE`d before any plan check.
+- **`sql/schema-checks.sh` is re-targeted to `psql`.** Every assertion keeps its label and its meaning:
+  - **`expect_sql_failure`** matches the SQLSTATE class of an integrity-constraint violation (class 23) instead of the text "constraint failed". It still refuses a parse error or an undefined object as a false pass.
+  - **Plan checks** use PostgreSQL's `EXPLAIN` (machine-readable format) on the scale seed after `ANALYZE`. Each asserts the same thing as before: the named index is used, and no sequential scan of a growing table occurs where the SQLite check asserted a search.
+  - **Checks about the SQLite engine itself** (WAL companions, database files removed by exact path, RC-AC19) are restated against PostgreSQL: databases created by the run are dropped by exact name, an undeclared database beside them survives, and no wildcard drop exists.
+  - Checks whose subject no longer exists (`PRAGMA`s) are retired, each listed in the hand-back with its reason.
+- **Test SQL is translated by dialect only.** Raw SQL in Go tests (about 60 files call `.DB()`) is translated with no change of meaning.
+  - `webtest`'s database scan (`DatabaseContains`, `DatabaseBytesExcept`) covers **every schema**, plugin and aside schemas included.
+  - Engine-specific tests are retired in the B5 inventory with a named replacement or reason. Examples: `secure_delete` in `TestOverwritingACredentialLeavesNoPriorCiphertext`, the `-wal`/`-shm` companions in `store_test.go`, the busy-lock case of `schemaoutdated_test.go`. In the first, "exactly one row remains" stays.
+- **The `Dockerfile`.**
+  - `sqlite3` is replaced by the PostgreSQL client tools (`psql`, `pg_dump`) of the pinned major.
+  - Its comments about the SQLite driver and cgo are updated.
+  - No host tool is added.
+
+**P10. Deployment: rebuild, never migrate.**
+- The project still has no migrations. Deploying this cycle **rebuilds** the live installation's database in PostgreSQL. LV-0 (amended below) carries the user-input rows over, and the SQLite file is kept as the backup.
+- A plugin whose declared schema changes is handled by P6. The core schema still changes in place until step 8 introduces migrations.
+
+## 6. Scope: amendments inside existing phases
+
+- **A3, *Durable state*.** Append: "PostgreSQL transaction, together with the pass's rows (P6)."
+- **A4.**
+  - Replace the bullet "Names are `plugin_<plugin>__<table>`… / No core table can collide with that pattern." with: "**Names and namespace:** P6."
+  - Replace "Purged in the retention purge's transaction" with "Purged by the retention purge, with the exact horizon of P4."
+  - In "Not part of the core schema checks…", replace "creates the tables" with "creates, through `psql`, the schemas and tables".
+  - The *Schema change* bullets stay, with "renamed aside" read as "moved into the aside schema (P6)".
+  - The **Declaration** bullet gains "role and unit per column (P6)" and "a unique key must include the time column (P6)".
+- **B3, *The widget host API grants*.** Replace "running the widget's own declared queries on the read-only pool" with "running the widget's own declared queries on the read connections (P7)". Under *What the core keeps*, add "the data catalogue's query compiler (P8)".
+- **B7.** Append: "Enforced twice: the load-time refusal, and the read role's privileges (P7)."
+- **C3, *Persistence*.** Append: "Samples are stored in PostgreSQL (Phase P). Phase C starts only after Phase P passes."
+- **D, `internal/store` target.** Replace "opening, the schema, the statement registry, the read pool, the query check, closed vocabularies" with "opening, the schema, the statement registry, the read role and connections, the query check, closed vocabularies". Add `store/catalogue` (dataset declarations and the P8 query compiler).
+- **E.** Append: "The PostgreSQL test instance's start is not inside the measured wall time of `go test`, and it is inside the 180 s of the pre-deployment command."
+- **F.2 table, `README.md` row.** Add "the install section (§13 of this amendment), backup (`pg_dump` plus key file), the storage paragraph" to the purpose. The size target stays.
+- **F.2 table, `ROADMAP.md` row.** Add "the storage rule as replaced (§12); *Development and test environment* restated for the PostgreSQL test instance".
+- **F.2 table, `docs/data-model.md` row.** Add "*Storage fit* (P4, P5)".
+- **F.2 table, `docs/architecture.md` row.** Add "*Decisions in force* carries decision 13 with its date".
+
+## 7. Acceptance criteria: new section inserted before "### Phase A: plugin host"
+
+### Phase P: storage engine
+
+- [ ] **P-AC1. Engine and pins.**
+  - The PostgreSQL major and the TimescaleDB release are each pinned once, by version and digest, in every compose service that runs them.
+  - `docs/architecture.md` cites their release notes and the licence matrix, and lists every TSL feature in use.
+  - `go.mod` holds no SQLite driver. The PostgreSQL driver is direct, `go mod tidy` produces no diff, and `CGO_ENABLED=0 go build ./...` succeeds.
+  - The driver's transitive list is recorded. No warning is suppressed.
+- [ ] **P-AC2. Telemetry off, enforced.**
+  - On the test, pre-deployment and serve database services, the telemetry setting reads off.
+  - A test starting `opnview` against a database where it is not off sees a refusal to start, with the named error.
+- [ ] **P-AC3. No published database port, no credential in the tree.**
+  - No compose file publishes a port for a database service.
+  - A test or check searches every tracked file and finds no database password literal. The test service's trust authentication is the one documented exception.
+  - `opnview` started without the connection parameter exits naming it.
+- [ ] **P-AC4. Single instance.** A second `opnview` started against the same database exits non-zero with the named error, and the first keeps collecting.
+- [ ] **P-AC5. Schema idempotence.**
+  - The schema applies to an empty database.
+  - A second apply changes no schema object and no row count in any table, plugin schemas included.
+  - A database lacking a column the schema reads yields `ErrSchemaOutdated`, detected by error code. A refused connection does not.
+- [ ] **P-AC6. Engine equivalence.** On the fixture database, the following are equal to the SQLite reference outputs recorded before Phase P:
+  - every widget response of B5's set, byte for byte;
+  - the result rows of every query in `sql/queries/*.sql`, as typed rows;
+  - every aggregate slot of every family and period.
+
+  A difference is a defect unless it is a field Phase C changes by name.
+- [ ] **P-AC7. Pinned semantics.**
+  - A fixture with mixed-case and non-ASCII names orders exactly as byte order in every response that sorts text.
+  - Every `LIKE` the hand-back lists keeps SQLite's ASCII case-insensitivity where the statement relied on it, with one test per such statement.
+- [ ] **P-AC8. Purge semantics unchanged.**
+  - Every existing purge, purged-part and retention test passes with unchanged assertions, including a retention shorter than an hour, `purged_before` refusing late inserts, and an assigned client surviving.
+  - A test on a hypertable with several chunks shows whole chunks past the horizon dropped, the straddling chunk purged to the exact second, and nothing younger than the horizon removed.
+  - No TimescaleDB background job runs in any table's purge path ordered with derivation.
+- [ ] **P-AC9. Aggregate equivalence.** Every existing aggregate, refresh-contract and corrections test passes with unchanged assertions. In addition, an equivalence test computes every family slot independently from raw flows and compares it with the stored or computed slot, at `1h`, `24h`, `7d` and `30d`, over a fixture spanning:
+  - a 28-, 29-, 30- and 31-day month;
+  - an ISO week crossing a year boundary;
+  - a paired connection;
+  - a retention shorter than an hour;
+  - a late ingestion;
+  - a reclassification;
+  - an identity re-pointing;
+  - an owner reassignment.
+
+  Gaps answer as gaps, never zeros.
+- [ ] **P-AC10. Storage fit recorded.** `docs/data-model.md` *Storage fit* has one row per growing table and per aggregate family and period, each naming its mechanism, the reason, and the test from P-AC8 or P-AC9 that proves it.
+- [ ] **P-AC11. Plugin schemas.**
+  - A dropped plugin declaring two tables gets its own schema containing exactly those tables. Two plugins declaring the same table name do not collide.
+  - The table with a time column is a hypertable.
+  - A declaration whose unique key omits the time column is refused at load with the named code, and the service carries on.
+  - A6 and A7 pass on PostgreSQL. A6's aside tables live in the aside schema, absent from the catalogue and unreadable by a widget query (refused at load).
+  - A plugin removed from disk is listed as orphaned with its row counts, and its schema is untouched.
+- [ ] **P-AC12. The read role.** A widget, plugin or catalogue query reading `account`, `session`, `encrypted_credential` or a credential or secret setting:
+  - is refused at load with B7's code;
+  - fails with a permission error when the same text is executed directly on the read connections (one test per object);
+  - cannot gain privilege through a function call inside a `SELECT`.
+
+  A write attempted on the read connections fails.
+- [ ] **P-AC13. Concurrency machinery.**
+  - No source file sets a SQLite `PRAGMA` or a busy timeout, or handles `-wal`/`-shm` files. `readpool.go` and the `EXPLAIN`-opcode scan are gone.
+  - The ordering tests (`purge_ordering_test.go` and the refresh-contract race tests) pass with unchanged assertions.
+  - 5B AC31 is restated and passes: a second call of a read function prepares nothing new on that connection.
+- [ ] **P-AC14. Notifications.**
+  - A committed collection pass, a plugin pass and an aggregate refresh each emit the documented notification, and a rolled-back one emits none.
+  - An own-kind provider declaring an event trigger runs after the event, never more often than its lower bound, and never concurrently with itself (fake clock).
+- [ ] **P-AC15. Catalogue listing.** `GET /api/datasets`:
+  - lists the five `custom_chart` sources and every plugin table, with every P8 field;
+  - lists no aside table and none of the excluded objects (string search over the payload);
+  - answers 401 with a JSON condition without a session.
+- [ ] **P-AC16. Catalogue query, generic.**
+  - A test drops a plugin with an own table declaring a time column, a dimension and a measure with a unit, and queries it with time `x`, then dimension `x`, with a filter, a `split_by` and each admitted aggregation. **No file other than the plugin's directory is created or changed** (hashes compared).
+  - The results equal an independent SQL computation on the fixture.
+- [ ] **P-AC17. Catalogue safety.**
+  - A parameter carrying SQL text, an undeclared column, a quoted identifier, a semicolon or a comment marker is refused with the closed code, and no statement reaches the database (statement counter).
+  - Every refusal code of P8 has a test.
+  - Every bound is enforced with its code.
+- [ ] **P-AC18. Catalogue gaps and alignment.**
+  - For a sample dataset, a bucket with no row is a gap.
+  - For an event dataset, a covered bucket with no row is zero, and an uncovered one (a collection gap, downtime, an unavailable provider) is a gap.
+  - Hour, day, ISO-week and calendar-month buckets start on the volume aggregates' period boundaries.
+  - Under `no_domains`, a query touching a carries-domain column is `withheld_by_aggregate_mode` with `data: null`.
+- [ ] **P-AC19. `custom_chart` generalised.** A `custom_chart` series whose `source` is the P-AC16 plugin dataset answers with the full 5B envelope. The five existing sources stay byte-identical (B5). The catalogue's *Custom chart* paragraphs and `docs/widget-api.md` match the code (the 5B parameter-table test).
+- [ ] **P-AC20. Budgets.**
+  - `checks` stays within `TEST_BUDGET_SECONDS` (60 s), printing its wall time beside the CPU count.
+  - `pre-deployment` stays within 180 s, and its output shows the PostgreSQL scale seed built once, every 5B widget budget, and every catalogue budget of P8, each median beside its limit.
+- [ ] **P-AC21. Schema checks re-targeted.**
+  - `sql/schema-checks.sh` runs on `psql` and passes.
+  - Its assertion labels are a superset of the baseline's, minus those the hand-back retires, each retirement with its reason.
+  - `expect_sql_failure` accepts only SQLSTATE class 23.
+  - Every plan check asserts index use on the analysed scale seed.
+  - ShellCheck passes.
+- [ ] **P-AC22. Backup round trip.**
+  - The pre-deployment command dumps the 100 000-row seed database with `pg_dump`, restores it into a fresh database following the pinned release's documented restore procedure, and compares row counts per table across every schema. They are equal.
+  - The README's backup command is the one the check runs.
+- [ ] **P-AC23. Secret scan.** `webtest`'s database scan covers every schema, plugin and aside schemas included. AC16's existing tests (plaintext and ciphertext absent from responses; one credential row after an overwrite) pass on PostgreSQL.
+
+## 8. Acceptance criteria: amendments to existing ones
+
+- **A6.** Replace "its old table is renamed aside" with "its old table is moved into the aside schema (P6)".
+- **A7.** Append: "on PostgreSQL, with the exact horizon of P4."
+- **B7.** Append: "and P-AC12 passes."
+- **B9.** Append: "on PostgreSQL."
+- **X2.** Append: "The SQLite-era criteria whose subject was the engine are restated or retired as P9 lists, each in the hand-back."
+- **F-AC5.** Add to the list: "every dataset, notification channel and refusal code named in `docs/widget-api.md` *Data catalogue* or `docs/plugins.md` exists in code, and the reverse."
+
+## 9. Live validation: replace **LV-0** whole, and add **LV-DB**
+
+**LV-0: database rebuild into PostgreSQL.** This amends `ROADMAP.md` step 5, *Rebuilding the database after step 5B*, by name. Every command is shown to the maintainer first, and every path is exact.
+
+1. Take the 5B baseline queries on the old build's SQLite database (5B live validation, and V1–V10).
+2. **Before the development image is rebuilt,** tag the pre-cycle image under an exact name, so its `sqlite3` stays available.
+3. Stop the old service.
+4. On the old database, list every user-input table and its row count, and show the list to the maintainer:
+   - `account`;
+   - `encrypted_credential`;
+   - `setting`;
+   - `owner`;
+   - `interface.user_label`;
+   - `blocklist.purpose`;
+   - operator-set `interface_network` rows.
+5. **Export** exactly those rows, plus any the maintainer chose, to files at exact paths outside the repository, using the tagged image's `sqlite3`.
+6. **Move** `opnview.db` and, if present, its `-wal` and `-shm` companions aside, to exact paths shown first. **The move is the backup and the rollback:** running the old build with the file moved back restores the previous installation. The key file stays in the data directory.
+7. Start the PostgreSQL service on a **new** named volume, start the new build once so it creates the schema, then stop `opnview` and leave the database running.
+8. **Import** the exported rows by exact statements shown first. Then advance every identity sequence past the highest imported id, and show per table that the counts equal step 4.
+   - MaxMind settings keep their keys (A6).
+   - Sessions are not carried over.
+9. Start the service. Take the first `pg_dump` with the README's command, and keep it beside the SQLite backup.
+
+**LV-DB: the database on the live host,** reported to the maintainer:
+- after at least 25 minutes of collection, the resident memory of the database and of `opnview`, and the database's disk use;
+- the same figures for the old build;
+- the host's processor share for both.
+
+The README's *Install* section records these as the measured footprint, as proportions and sizes only.
+
+**The validation passes when**, as before, plus: LV-0's counts match and LV-DB is accepted by the maintainer.
+
+**LV-P** stays. Its new build runs against a scratch PostgreSQL database in the dev stack, never the live volume.
+
+## 10. Rules: amendments
+
+- **Deletion bullet.** Replace "The live `data` volume's `opnview.db*` is touched only by LV-0's shown steps." with:
+  > "The live `data` volume's `opnview.db*` is touched only by LV-0's shown steps, and is moved, never deleted, in this cycle. The live PostgreSQL volume is created by LV-0 and is never dropped in this cycle."
+- **The outbound rule, restated.** Append:
+  > "The database connection is not an outbound call: it goes to the installation's own PostgreSQL, configured by the installer, over a Unix socket or the installation's private container network, through no published port."
+- **Hard rules carried from the project.** Append:
+  - "PostgreSQL and TimescaleDB versions are pinned, and changed deliberately;"
+  - "TimescaleDB telemetry is off, and its absence is enforced at start;"
+  - "no SQL text from the browser;"
+  - "no background database job on a path the refresh contract orders."
+
+## 11. Out of scope, and Risks
+
+**Out of scope: replace** "Migrations (step 8). `schema.sql` is edited in place, and LV-0 handles the one installation." **with:**
+> - Migrations (step 8). `schema.sql` is edited in place, a plugin's changed table is rebuilt (P6), and LV-0 rebuilds the one installation's database into PostgreSQL.
+> - `ct/install.sh` and the deployment compose file for an always-on host: step 8, against the install story of §12.
+> - Columnstore compression. Reclassification rewrites rows across the whole retention. A later measurement decides.
+> - Continuous aggregates declared by a plugin. A plugin wanting summaries declares its own tables (A4), and the catalogue aggregates at query time.
+> - Pushing notifications to a browser (step 7).
+> - A second storage engine of any kind.
+
+**Risks: append**
+
+18. **Rewrite size.**
+    - Every SQL statement changes dialect: `schema.sql` (about 3 300 lines), `purge.sql`, 26 statement files, `sql/queries`, `sql/seed.sql`, 404 schema checks and the raw SQL in about 60 test files.
+    - The silent traps:
+      - `INTEGER PRIMARY KEY` row ids;
+      - `strftime` calendar arithmetic;
+      - `GLOB`;
+      - the `json_*` functions;
+      - `INSERT OR …` and the upsert conflict targets;
+      - unique indexes over `ifnull(…)`;
+      - partial indexes;
+      - `PRAGMA`s;
+      - `LIKE` case sensitivity;
+      - text collation;
+      - `sum`/`avg` over integers returning `numeric` (different JSON formatting);
+      - integer overflow erroring instead of turning into a real number.
+    - P-AC6 and P-AC7 catch them. The fix is in the statement, never in loosening a comparison.
+19. **Test-time budget.**
+    - Today's 60 s holds at about 12 s on SQLite with a tmpfs. Every test that opens a store now pays a database clone and a network round trip per statement.
+    - Template cloning is blocked while TimescaleDB background workers hold the template open.
+    - If 60 s cannot be met without moving tests behind the `predeployment` tag, the Builder reports the figures rather than moving them silently.
+20. **Continuous-aggregate fit.**
+    - Invalidation tracks changes to the hypertable's own rows, not to joined tables such as `client.owner_id`.
+    - Distinct counts do not compose across hierarchical aggregates.
+    - Calendar months need a timestamp-typed time column.
+    - Creating a continuous aggregate may not run inside a transaction.
+    - Possibly no family qualifies. P5 makes that an acceptable outcome rather than a reason to loosen equivalence.
+21. **Hypertable constraints.** `flow.log_digest UNIQUE` and the foreign key into `flow` may keep `flow` a plain table. Whether a foreign key referencing a hypertable is supported depends on the pinned release, and is verified, not assumed.
+22. **Clocks.** TimescaleDB jobs and `now()` run on the server's clock, not opnview's `Clock`. Any background policy would escape the fake-clock tests and the purge/derive ordering. That is why P4 and P5 drive retention and refresh from opnview.
+23. **Licence.** Continuous aggregates (and any policy or compression) are TSL. If the maintainer ever wants an Apache-only database image, every TSL feature in use must have a fallback. P-AC1 lists them so that cost stays visible.
+24. **Resources on small hosts.** A PostgreSQL + TimescaleDB container idles at a few hundred MB of memory, against a single process before. Its default memory settings may not suit a small LXC. LV-DB measures it, and the README states it.
+25. **Docker in an unprivileged LXC** needs nesting, which some Proxmox administrators disable. Step 8's installer must detect and name this.
+26. **Updates of the database itself.**
+    - A TimescaleDB release bump requires the extension update procedure that release documents.
+    - A PostgreSQL major bump requires a dump and restore, or `pg_upgrade`.
+    - Both are step-8 update-story items. Pins keep them deliberate.
+27. **Credential residue.** A replaced credential row leaves its previous version in the table's storage until PostgreSQL vacuums it, in the write-ahead log segments, and in any earlier `pg_dump`. This replaces the SQLite WAL residue, and the README says so in the same words of limit: encrypted under the key file, a superseded secret only.
+28. **Reference outputs.** P-AC6 needs SQLite outputs recorded before Phase P. If the in-flight builder already changed widget or store code before they are recorded, the reference falls back to the baseline snapshot's code run in the tagged pre-cycle image, which must stay available until verification ends.
+
+## 12. ROADMAP.md: replacement texts
+
+**Replace the whole bullet** "**One service, installed and updated by a single command, with no external data store to provision. Storage engines are embedded libraries, not servers.** … `README.md` and `CLAUDE.md` point at this bullet rather than restating it." **with:**
+
+> - **One service and its database, installed and updated by a single command. The user provisions nothing by hand.** The store is **PostgreSQL with the TimescaleDB extension** (the maintainer's decision of 11 October 2026). It runs beside `opnview` as part of the same installation: the installer creates, configures and starts it, and the user never creates a database, a role or a password.
+>
+>   This replaces an earlier rule, written by the orchestrator rather than the maintainer, that storage engines be embedded libraries and that forbade PostgreSQL and TimescaleDB. What that rule protected was the install story, and the install story is kept:
+>   - one command installs;
+>   - re-running it updates;
+>   - one documented command backs up: `pg_dump`, plus the key file in the data directory.
+>
+>   What changed is the judgement on the cost. SQLite's single writer, the hand-built calendar rollups and one shared file for every plugin's tables cost more than a second process does.
+>
+>   **Versions are pinned:** the PostgreSQL major and the TimescaleDB release, by exact version and image digest, and they are changed deliberately.
+>
+>   **Licence:** TimescaleDB's core is Apache-2.0. The features `opnview` uses beyond it (continuous aggregates, listed in `docs/architecture.md`) are under the Timescale License, which permits this self-hosted use. `opnview` stays MIT and neither links nor redistributes TimescaleDB.
+>
+>   **TimescaleDB's telemetry is off,** and `opnview` refuses to start if it is not.
+>
+>   **Not permitted:**
+>   - a second storage engine or data store, without a maintainer decision;
+>   - a database reachable through a published port;
+>   - a database credential in the repository.
+>
+>   `README.md` and `CLAUDE.md` point at this bullet rather than restating it.
+
+**Append to the "Three outbound calls" bullet** (as restated by this spec's *Rules*):
+> "The connection to the installation's own database is not an outbound call: it goes to the PostgreSQL the installer set up, over a Unix socket or the installation's private container network, and to no other host. Images pulled at install or update time are installation-time downloads, not calls the product makes."
+
+**In *Development and test environment*:**
+- Replace the sentence naming "file mode and umask on the SQLite file and its `-wal` / `-shm` companions" with "file mode and umask on the data directory and the key file".
+- Replace the tmpfs paragraph's SQLite fsync justification with "the everyday suite's PostgreSQL test instance keeps its data on a tmpfs with durability off, which nothing the suite asserts depends on; the pre-deployment command runs against a disk-backed instance with production settings".
+- Replace "the SQLite data directory live in named volumes" with "the database's data live in named volumes".
+
+**Step 8 row and section.** Deliverable: "`ct/install.sh`, compose (opnview + PostgreSQL/TimescaleDB), README". Add to its section:
+> "The single command installs Docker Engine and its compose plugin when absent (an unprivileged Proxmox LXC needs nesting enabled), writes the compose file and a generated database credential into the installation directory, and starts both containers. Re-running it updates: it pulls the pinned images and restarts, keeping the database volume and the data directory. Database version bumps follow the procedure each release documents."
+
+The step-2 title "Data model and SQLite schema" is condensed by Phase F, and should read "Data model and schema".
+
+## 13. README.md and CLAUDE.md
+
+**README, replace lines 26–31** ("**One service, installed and updated by a single command, with no external data store to provision.** … read-only.") **with:**
+> **One service and its database, installed and updated by a single command, with nothing to set up by hand.** The database is PostgreSQL with TimescaleDB, run beside `opnview` by the installation itself. See the storage rule in [ROADMAP.md](ROADMAP.md), under *Rules that apply to every step*. The frontend is served by the service. Nothing is installed on the firewall and nothing is changed on it: everything goes through its REST API, read-only.
+
+**README, new section *Install*, placed after *Status*:**
+> ## Install
+>
+> `opnview` runs as two containers: the service, and its PostgreSQL + TimescaleDB database. The database publishes no port and is reachable only by `opnview`. Nothing is installed on the firewall.
+>
+> Until the installer ships (step 8), run it from source:
+> `<the serve invocation, bash and PowerShell, as docker-compose.serve.yml states it>`.
+>
+> Step 8 replaces this with one command for an always-on Debian host or a Proxmox LXC. The LXC needs nesting enabled, which Docker requires. The command:
+> - installs Docker Engine and its compose plugin if they are absent;
+> - writes the compose file and a generated database password into the installation directory;
+> - starts both containers.
+>
+> Re-running it updates: it pulls the pinned images and restarts, and your database and data directory are kept.
+>
+> Then open the address it prints. The console prints a one-time setup token, and the setup surface demands it.
+>
+> **Backup is two things:** the database, with `<the pg_dump command P-AC22 runs>`, and the key file in the data directory. The dump without the key file restores your history but not your stored credentials. Restore into the same TimescaleDB version.
+>
+> **Footprint**, measured on a live installation: `<LV-DB figures>`.
+>
+> Installing pulls the two pinned container images. That is a download made by the installation, not a call `opnview` makes (see *What leaves your installation*).
+
+**README, other paragraphs.**
+- **Remove** "A power cut can roll back the last moments of collected history…". Production keeps PostgreSQL's default durability. If the Builder measures that the collector needs relaxed durability, that is reported as a maintainer decision, not taken.
+- **Replace** "Replacing a credential leaves the previous one in the write-ahead log until a checkpoint…" with the same limit stated for PostgreSQL (Risk 27).
+- **In the key-file paragraph,** replace "a file beside the database" with "a file in `opnview`'s data directory, outside the database". Replace "back up the key file with the database" with "back up the key file with the database dump".
+- **In *Licence*,** add the TimescaleDB licence sentence of P1.
+
+**CLAUDE.md, proposed wording.** This is for the orchestrator to apply with the maintainer's agreement; the Builder does not edit it.
+- **Project, second paragraph.** Replace "**One service, installed and updated by a single command, with no external data store to provision; storage engines are embedded libraries, not servers** — the permitted and forbidden engines are listed in `ROADMAP.md` under *Rules that apply to every step*, and that bullet is the single place the rule is stated. Local SQLite, frontend embedded in the binary and served by it." with:
+  > "**One service and its database, installed and updated by a single command; the user provisions nothing by hand.** The store is PostgreSQL with TimescaleDB, run by the installation beside the service. The rule, its pinned versions, its licence and what it forbids are in `ROADMAP.md` under *Rules that apply to every step*, and that bullet is the single place the rule is stated. Frontend embedded in the binary and served by it."
+- **Development section.** Replace "Never run `go`, `gofmt` or `sqlite3` on the host." with:
+  > "Never run `go`, `gofmt`, `psql` or `pg_dump` on the host; the test database is a compose service the two commands start themselves."
+
+## 14. Existing spec sentences that become obsolete (to delete or replace as indicated above)
+
+1. Context, the `plugintables.go` verdict: "*Compatible, with one defect to change:*" (replaced by §3).
+2. B4 table row: "| SQLite (modernc), goja, Argon2id | store, plugin host, auth | Stay core: an embedded engine (ROADMAP), the interpreter, and a mandated algorithm |" (replaced by §3).
+3. Scope, the phase list "**Phase A.** … **Phase E.** The pre-deployment budget." (replaced by §4).
+4. A4: "Names are `plugin_<plugin>__<table>`, as `plugintables.go` builds them." and "No core table can collide with that pattern." (replaced by P6).
+5. A4: "**Purged** in the retention purge's transaction:" (replaced, §6).
+6. A4: "The existing table is **renamed aside** under a name that can never be read as a live plugin table" (read as the aside schema, §6).
+7. B3: "running the widget's own declared queries on the read-only pool with bound parameters and a time bound" (replaced, §6).
+8. Phase D: "`internal/store`: opening, the schema, the statement registry, the read pool, the query check, closed vocabularies." (replaced, §6).
+9. Out of scope: "Migrations (step 8). `schema.sql` is edited in place, and LV-0 handles the one installation." (replaced, §11).
+10. LV-0, steps 1–7 as written ("**Move** `opnview.db` … Start the new build so it creates the schema, then stop it. … Carry over … by exact statements shown first.") (replaced whole, §9).
+11. Rules: "The live `data` volume's `opnview.db*` is touched only by LV-0's shown steps." (replaced, §10).
+12. A6 criterion: "Its old table is renamed aside" (replaced, §8).
+
+## 15. Open questions (additions)
+
+The existing open question 1 stays answered (a).
+
+2. **A generic dataset binding for shapes other than `time_series`.** P8's query already supports a dimension on `x` (ranked by a measure). Today only `custom_chart` (`time_series` with no binding) can take a dataset without code. Options:
+   - **(a)** This cycle opens datasets to `custom_chart` only. Whether `ranked_bars`, `table` and `figure` get an unbound counterpart is decided with step 7, against `docs/widget-catalogue.md`.
+   - **(b)** This cycle also adds unbound counterparts of `ranked_bars` and `table` to the binding catalogue (new types, data contracts only).
+
+   **Recommendation: (a).** The query endpoint serves both kinds of `x` now, so step 7 needs no backend work either way. Adding types to a binding interface document is better decided where they will be drawn. Scope follows (a) unless the maintainer chooses (b).
+
+No other question. The install shape (docker compose), the engine and the aggregate fallback were decided by the maintainer or follow from P5's equivalence gate.
+
+---
+
+
+---
+
+**This amendment is part of the spec and overrides any earlier text it replaces. Its section 12 lists the earlier sentences that are obsolete.**
+
+# Amendment to `specs/SPEC-backend-completion-plugins.md`: the firewall data broker and the learned API mirror (maintainer decisions, 11 October 2026)
+
+**Placement.** Append this after the PostgreSQL + TimescaleDB amendment, with its own `---` separator and the same preamble: "This amendment is part of the spec and overrides any earlier text it replaces. Section 12 lists the earlier sentences that are obsolete." **Cycle kind stays `standard`.** Everything below is Go, SQL, JSON contracts, server-side JavaScript and documents. The API catalogue is served as JSON only.
+
+**What I read and found (fact check of the brief).**
+
+- **Firewall callers today.** `Client.Call` / `Client.Stream` are called directly from five places:
+  - `internal/collect/provider/session.go` (`Host`: `Call`, `Stream`, `ServiceState`, `ReadObject`, `ReadCollection`);
+  - `internal/collect/discovery.go` (`interfaces_info`, `get_interface_names`, `search_rule`, `systemTime`);
+  - `internal/collect/dhcplease.go:386`;
+  - `internal/plugin/script.go` and `declarative.go`, through the `Session`;
+  - `internal/web/surfaces/settings/verify.go`, which verifies credentials before they are saved.
+
+  Nothing coalesces, caches or rate-limits these calls. Each core kind runs its own loop at its own interval (`internal/collect/scheduler.go`, `runLoop`).
+- **The plugin host hands a script the raw body.** `host.call` answers with `body` (a string) and `json()` (`script.go`, `responseObject`). The built-in plugins decode that body with `opnview.decode.rows(body)` and the other readers. The host has no way to know which fields a script reads.
+- **Streams are read in bounded chunks today.** `host.stream(name, {events, within_seconds})` opens a connection, reads N events and closes it (`stream.go`). Whether a response is a stream is a manifest flag (`stream: true`), not a detection.
+- **The read-only check is the mutating-command list, at load and at every call.** `plugin_endpoints.go` lets any POST through and says in a comment: "No allowlist is added on top … adds nothing else". Every POST endpoint the built-ins use today passes the new read rule: `search_rule`, `query_alerts`, `leases4/search`, `dnsmasq/leases/search`, `search_queries`. `carp_status` ends in `status`. On a POST it changes the CARP state, so the mutating list must keep being checked first.
+- **Survey facts the inference must respect, not trust:**
+  - `search_queries` ignores `timeStart`/`timeEnd` unless all of `client`, `timeStart` and `timeEnd` arrive as JSON integers, and its `uuid` is `null` on every row;
+  - the filter log's `digest` parameter has no effect;
+  - Suricata's resumable cursor is the pair `(fileid, filepos)`, and `current`/`rowCount` paging is not stable for resuming;
+  - grid searches take `current`, `rowCount` (`-1` meaning all rows), `searchPhrase` and `sort`;
+  - `traffic/top` is one iftop capture of about 2 s per interface, per call;
+  - `stream_log` is closed by the server after about 60 s;
+  - the first event of `cpu_usage/stream` after each connection is the average since boot, not a current reading.
+- **`traffic/stream` is `UNVERIFIED:`** (C3). Nothing below is built on it. Its tests use a fake stream.
+
+---
+
+## 1. Context: insertion after decision 13, as decision 14
+
+> 14. **A firewall data broker and a learned API mirror** (maintainer, 11 October 2026, arbitrated on a visual page).
+>     - **The plugin names the endpoint; the core makes the call.** A plugin author chooses the OPNsense endpoint and its parameters exactly as the API takes them, and states how old an answer may be and still be good enough (its **max age**). Plugins never hold the API key and never reach the firewall directly.
+>     - **The core learns what it reads.** At the first request for an endpoint, the core calls it, observes the request and the response, infers a schema and stores the answer in a PostgreSQL schema `opnsense`: **the mirror**.
+>       - Only fields a plugin actually reads are stored.
+>       - The schema evolves as plugins read more fields.
+>       - Whether a datum is a snapshot or a record stream, its identity key, its cursor and the role of its parameters are inferred. A plugin may correct any inference in its manifest.
+>     - **Serving.** An answer already in the mirror and fresh enough is served from PostgreSQL with no firewall call. Otherwise **one** call refreshes it for every requester waiting.
+>     - **Scheduling.** The scheduler serves the nearest deadline first, with a reserved share of the call budget for real-time data, ageing so that background data is never starved, global ceilings, and exponential back-off.
+>     - **Read-only is a core guarantee enforced by the broker for every plugin:** GET, and POST to read actions only. This adds no sandbox, no plugin allowlist and no activation step.
+>     - **Continuous event streams.** One subscription per stream, fanned out to every subscriber, recorded into a TimescaleDB hypertable when its fields are read. A plugin may declare that a stream replaces a polled endpoint.
+>     - **A learned API catalogue,** readable through the JSON API, that also feeds the data catalogue (P8).
+>     - **External downloads never enter the firewall queue.**
+>
+>     This decision supersedes the sentence of decision 2: "Firewall calls go through opnview's client, whose refusal of mutating commands is unchanged, with nothing added on top". The refusal is unchanged, and the broker's read rule is added on top of it.
+
+## 2. Context, *Where the repository stands*: append these bullets
+
+> - **Firewall calls today (read for decision 14).**
+>   - `Client.Call` and `Client.Stream` are called directly from the provider `Host` (`internal/collect/provider/session.go`), from discovery (`internal/collect/discovery.go`), from `internal/collect/dhcplease.go`, from the plugin host through the `Session`, and from the credential check of the settings surface (`internal/web/surfaces/settings/verify.go`).
+>   - Each core kind runs its own loop at its own interval (`internal/collect/scheduler.go`).
+>   - Nothing coalesces two requests for the same answer, caches an answer, or bounds the call rate toward the firewall.
+> - **The plugin host's firewall answer** is `{endpoint, outcome, ok, status_code, detail, body, body_bytes, availability_outcome, error, json()}`, with the body as raw text (`internal/plugin/script.go`). Streams are read as bounded chunks (`host.stream`, `internal/opnsense/stream.go`). Whether an endpoint streams is a manifest flag.
+
+## 3. Scope: phase order
+
+In the phase list as replaced by the PostgreSQL amendment (§4 there), insert between **Phase P** and **Phase B**:
+
+> **Phase A, part 2.** The firewall data broker, the learned API mirror, the deadline scheduler, event-stream subscriptions and the learned API catalogue (A9–A18). It is built **after Phase P**, because the mirror lives in PostgreSQL. It is complete, and its criteria (BR-AC) pass, **before**:
+> - the remaining Phase B work;
+> - all of Phase C.
+>
+> The built-in plugins already written are re-routed through it (A18).
+
+## 4. Scope: new section, inserted after Phase P (after P10, before "### Phase B")
+
+### Phase A, part 2: the firewall data broker and the learned API mirror
+
+**A9. The components.** These are three responsibilities of the Go core. The package names are the Builder's, under Phase D's rule.
+
+- **The broker** is the **only** path from opnview to the firewall API.
+  - It receives every request: from plugins, from discovery, from the probe round, from the core kind coordinators.
+  - It applies the read-only rule (A13).
+  - It answers from the mirror when the mirror is fresh enough (A11). Otherwise it queues one call with the scheduler.
+  - It hands the answer to every requester waiting for it.
+  - It is the only caller of `Client.Call` and `Client.Stream`.
+  - **The one exception is the settings surface's credential check** (`verify.go`). That check tests *candidate* credentials that are not yet saved, against a firewall that may not be the configured one. Its answer must never enter the mirror. It stays a direct call, and it is listed as the exception in `docs/architecture.md`.
+- **The mirror** is the PostgreSQL schema `opnsense`, together with its metadata. It stores what the broker observed (A10), serves it (A11) and records the learned API catalogue (A15).
+- **The scheduler** decides when each mirrored datum is refreshed and in what order calls leave (A12). Concurrently, it holds open the event-stream subscriptions (A14).
+- **Vocabulary.** OPNsense has no term for "broker", "mirror", "datum", "max age" or "freshness floor".
+  - These are opnview's own terms, recorded in `docs/data-model.md` *Vocabulary* with the reason.
+  - "Event stream" and "server-sent events" are the WHATWG HTML standard's terms and are used as such.
+  - A **datum** is one endpoint with one combination of identifying parameters (A10).
+
+**A10. The learned mirror.**
+
+- **First request.** The first request for a datum is a firewall call. The broker records the request (path, method, body encoding, positional arguments, query, body) and the response (status, content type, outcome, latency, body).
+- **Only fields actually read are stored.**
+  - A plugin receives the parsed answer as an **observed object**: reads are recorded per field path (for example `rows[].hwaddr`, or `total`). Whether the object is a JavaScript `Proxy` or a host-side dynamic object is the Builder's choice.
+  - The broker records which field paths each plugin read, per plugin version and per datum.
+  - A field no loaded plugin has read is not stored.
+  - When a plugin reads a field for the first time, the column is added and filled from the next call (see *No missing field because of the mirror*).
+  - A plugin that reads the raw text of the body, or serialises or enumerates a whole object, has read every field below that point. The broker records exactly that, and the catalogue reports the datum as `read_whole`.
+- **No missing field because of the mirror.** A plugin must never see a field as absent only because the mirror did not hold it.
+  - When an answer served from the mirror is asked for a field the mirror does not hold, the broker obtains that field's value from a firewall call made at that moment, at most one per datum.
+  - The values the plugin sees must stay consistent row by row. A value is never taken from a different row of a different answer.
+  - The mechanism is the Builder's. One option is to re-run the plugin's function against the fresh answer, since a call's records are committed only after it returns. The Builder states the choice.
+- **Inferred types.**
+  - The types are IP address, MAC address, timestamp, number, text and boolean.
+  - Timestamps are recognised only in the shapes `internal/decode` reads, with the firewall's measured offset.
+  - Nested objects are flattened, or become child tables. Arrays become rows of a child table, and their order is kept.
+  - **An object whose keys are values** (its key set differs between answers, or its keys are identifiers such as interface names) is stored as rows keyed by that key, **never as one column per key**. This keeps installation data such as interface names out of the schema.
+  - A value whose type is ambiguous, or that changes type, is stored as JSONB.
+- **Lossless round trip.** Every field served from the mirror is identical, in JSON type and in lexical value, to the firewall's answer that filled it. This includes:
+  - numeric strings with leading zeros;
+  - placeholder strings such as `~`;
+  - `null` against an absent field;
+  - the empty string;
+  - integers beyond 2^53;
+  - float formatting;
+  - row order.
+
+  The inferred type serves the catalogue and queries. It never changes what a plugin reads.
+- **Schema evolution, never a rebuild.**
+  - A new field read becomes a new column.
+  - A type conflict converts the column to JSONB without loss.
+  - Every change records a new schema version, with its instant and its cause.
+  - A column no loaded plugin reads any more stops being filled and is kept, with its rows, until retention. Nothing is dropped silently.
+  - This is the core's own mirror. A4's rebuild rule for **declared** plugin tables is unchanged.
+- **Nature.** Each datum is inferred to be one of two natures:
+  - **a snapshot** (leases, interfaces): the current state plus a change history, a history row being written when a stored field of a row changes;
+  - **a record stream** (logs, DNS lookups): a **cursor** is detected, either a timestamp or a monotonic id, and reads are incremental.
+- **Identity key.** The key is inferred from MAC, IP or id fields.
+  - A candidate key must be non-null on every row and unique within one answer. A field that is `null` on every row (Unbound's `uuid`, for example) is never a key.
+  - A snapshot with no key is stored as whole generations.
+  - A record stream with no key is de-duplicated on the stored content of its rows.
+- **Parameters.** Parameters are recognised from their names and values:
+  - the start and end of a time window;
+  - the page and the page size (the grid-search set `current` / `rowCount`, with `rowCount = -1` meaning all rows);
+  - everything else.
+  - **Window and page parameters do not identify a datum.** The other parameters do, so each combination of them is one subset of the mirror.
+  - **The core handles pagination.** It walks pages until the answer is complete, within the bound the request states.
+  - **A recognised window is verified, never trusted.** If a returned row's cursor lies outside the requested window, the parameter is recorded in the catalogue as `not_honoured` and is no longer relied on. The datum is then read in full and filtered on the cursor. This is the survey's finding for `search_queries` when `client` is absent and for the filter log's `digest`.
+- **Gaps.**
+  - In a record stream, if the oldest row of an answer is newer than the newest row stored, a **gap** is recorded for that interval, never bridged.
+  - A failed call is recorded as an unanswered interval, never as an empty answer.
+- **Corrections in the manifest.** A plugin may correct any inference for an endpoint it declares:
+  - the nature;
+  - the key, which may be composite (for example `hwaddr`);
+  - the cursor, which may be composite (for example `fileid, filepos`) or a timestamp;
+  - the role of each parameter;
+  - the type of a field;
+  - whether a field carries a domain name;
+  - for a stream, how many events to discard after each connection;
+  - a stream's declared equivalence (A14).
+
+  A correction always overrides inference. Two loaded plugins correcting the same datum differently: the built-in wins, and otherwise the plugin that loaded first wins. The other is listed with the code `mirror_correction_conflict`, and it still loads. **The core never needs to know an endpoint in advance.**
+- **Domain names.** A mirrored text column is marked as carrying a domain name:
+  - when a reading plugin's correction says so; or
+  - when an observed value has host-name shape, unless a correction says it does not.
+
+  Under `aggregate_mode = no_domains`, the data catalogue withholds such a column (P8). The API catalogue never contains values (A15).
+- **The firewall changes.** When the configured base URL changes, nothing in the mirror is fresh any more, and nothing is served as fresh. History is kept, marked with the firewall it came from (a non-secret identity of the base URL; the Builder's choice). It is never mixed into the new firewall's current state.
+- **Retention.**
+  - A mirror table follows `retention_seconds`, with the exact horizon of P4, unless a mirror retention setting overrides it.
+  - A record stream with a timestamp cursor is a hypertable on that cursor where P4's constraint rule allows it. Otherwise it stays a plain table, and *Storage fit* records the reason.
+- **A failed mirror write never fails a request.** The firewall's answer is still served, the failure is logged, and the datum is treated as not mirrored.
+
+**A11. Serving from the mirror.**
+
+- **A request names a datum and a max age.** If the mirror holds that datum's answer and it was fetched within the max age, the answer is served from PostgreSQL. **No call is made.**
+- **Otherwise exactly one call is made** for that datum. Every requester waiting for it, from any plugin or from the core, receives that one answer. This is single-flight per datum, on top of the mirror.
+- **Every answer carries how it was served:**
+  - `served_from` (`mirror` or `firewall`);
+  - `fetched_at`;
+  - `age_seconds`.
+- **An unsuccessful outcome counts for freshness without replacing data.**
+  - A non-OK outcome (`not_found`, `forbidden`, `server_error`, `transport_failure`, …) is remembered for freshness, so N plugins asking an absent endpoint cause one call.
+  - It never replaces mirrored rows.
+  - It is served with its outcome and its `fetched_at`. A3's availability mapping is unchanged.
+- **Reading a record stream after a cursor.** A plugin may ask for the rows after a cursor value it holds. Those rows are served from the mirror, together with any gap that falls inside the range.
+
+**A12. The scheduler: deadline-first, with a real-time reserve.**
+
+- **Demand.**
+  - Every request registers or renews its requester's demand for a datum at the requester's max age.
+  - A demand lapses when it has not been renewed for a span the Builder states, at least twice its max age.
+  - A datum with no live demand is not refreshed. **An endpoint's cadence follows its most demanding reader, and drops when nobody reads it.**
+- **Deadline.** A datum's deadline is its last fetch plus the shortest max age among its live demands.
+  - The scheduler refreshes data ahead of their deadlines, nearest deadline first, so that a reader's pass normally finds the mirror fresh.
+  - **The broker never has two calls in flight for one datum.**
+- **Freshness floor.** Each endpoint has a floor, the shortest refresh interval it is ever given. The floor is the largest of:
+  - the endpoint's observed median latency;
+  - a floor the built-in manifest declares from the LV-C measurement (`traffic/top` can never go below its capture of about 2 s);
+  - a floor a third-party manifest declares;
+  - the operator's override setting.
+
+  A request asking for less is served at the floor. Its answer's `age_seconds` says so, and the catalogue lists the endpoint's floor.
+- **The real-time reserve.**
+  - A share of the call budget is reserved for real-time data. The share is a setting, default **70 %**. Real-time data is a datum whose shortest live max age is in the real-time class (open question 4): current throughput, connected devices, active addresses and domains with their rate.
+  - Background data (interface names, leases, logs) uses the rest.
+  - The reserve is **guaranteed, not a cap**: while no real-time datum is due, background data may use it.
+- **Ageing.** A background datum gains priority the longer it waits past its deadline, so none is starved. **Its lateness under sustained real-time load is bounded**, and the Builder states the bound as a function of the settings.
+- **Ceilings.** Two settings:
+  - a maximum number of calls in flight toward the firewall;
+  - a maximum number of calls per second.
+
+  The proposed defaults are 2 and 5. The Builder may change them, with the LV-B figures, in the hand-back.
+- **Back-off.**
+  - A datum whose calls end in `server_error`, `transport_failure` or a time-out backs off exponentially, up to a setting.
+  - When failures or time-outs span several endpoints (the firewall is saturated or unreachable), the whole queue backs off.
+  - Back-off ends at the first successful answer.
+  - `forbidden` and `not_found` are states, reported through availability and retried at the reader's own cadence. Back-off does not apply to them.
+- **What the existing loops become.**
+  - The per-kind loops of `scheduler.go` remain the plugins' **passes**. A core kind's interval setting becomes its readers' max age.
+  - Discovery and the probe round are core readers whose max age is the discovery interval.
+  - A plugin still never sleeps or schedules (A3).
+  - All the setting keys above are new rows of the `setting` table. The proposed names are in the hand-back, and an out-of-range value is refused at load, naming the key.
+
+**A13. Read-only, enforced by the broker for every plugin.**
+
+- **What the broker forwards:**
+  - **GET**;
+  - **POST** only to a read action: a command (the fourth path element, compared in its snake_case spelling as `MutatingCommand` does) that **starts with `search`, `get`, `query` or `list`, or ends with `status`**.
+- **Everything else is refused before a request object exists.** The refusal is logged with the plugin's name, the path and a closed code (`write_refused`), and counted in the catalogue.
+- **`MutatingCommand` stays on top and is checked first.** So `carp_status`, which ends in `status` and changes the CARP state on a POST, is still refused.
+- **Two places, one rule.** `plugin_endpoints.go` also refuses, at load, a declared POST that is not a read action, with a new code that the A5 listing reports. The broker checks every request at run time, the core's own included.
+- **This is not the gas factory the maintainer rejected.** There is no sandbox, no allowlist of plugins and no activation step, and plugins stay free in everything else.
+- **The README keeps its advice** that the API key should hold read privileges only (Risk 6).
+- **Plugins never hold the credentials.** No host function answers a credential, a base URL or an authorisation header.
+
+**A14. Continuous event streams.**
+
+- **Detection.** A response with `Content-Type: text/event-stream` is detected as a stream **from its headers, before any body is read**, so a stream never holds a call until the client's time-out.
+  - The manifest's `stream` flag becomes optional. Where it is present and disagrees with what was observed, the catalogue reports the mismatch.
+  - The catalogue records, per stream: its endpoint, its event shape, the observed cadence of events, and the observed server cut-off (for example about 60 s for `stream_log`).
+- **One subscription per stream and parameters.**
+  - Its events are fanned out to every subscribed plugin.
+  - It opens at the first subscriber and closes at the last, **unless it feeds a table**. A stream feeds a table when a loaded plugin reads its fields, and it is then kept open while that plugin is loaded.
+- **Reconnection.**
+  - A dropped subscription reconnects with back-off.
+  - The interval with no events is recorded as a **gap, never zeros**.
+  - The events a manifest declares to discard after each connection are discarded. The built-in `insight` plugin declares one for `cpu_usage/stream`, whose first event is the average since boot (survey, *Processor stream*).
+- **Recording.** When at least one plugin reads fields of a stream:
+  - those fields go into a TimescaleDB hypertable in the `opnsense` schema, timestamped at reception;
+  - the detail is kept for a short retention (a setting; the Builder states the default with the disk figure measured on the scale seed);
+  - **continuous aggregates per minute and per hour** keep, for each numeric field read, its minimum, maximum, mean, last value and event count, for `retention_seconds`;
+  - aggregate refresh and detail retention are driven by opnview on its own clock, not by a TimescaleDB background policy, which keeps the fake-clock tests and the rule of P4 and P5;
+  - P1's list of TSL features in use gains these aggregates.
+- **Plugins read streams without waiting.**
+  - A plugin's pass reads the events received since a cursor it holds, from the subscription's buffer or from the hypertable.
+  - A provider of a kind of its own may be triggered by a core notification that names the stream (the P7 mechanism, with its lower bound).
+  - The bounded `host.stream` read of today is answered from the shared subscription.
+- **Declared equivalence.**
+  - A plugin may **declare** in its manifest that a stream replaces a polled endpoint (for example throughput).
+  - While the stream runs, that plugin's demand for the polled endpoint is suspended. Other readers of the endpoint keep their own demand.
+  - When the stream drops, the demand resumes from the next scheduling decision, and the plugin is told which source answered.
+  - **Equivalence is declared, never guessed.**
+  - Nothing is built on `traffic/stream` while it is `UNVERIFIED:` (C3). The proof uses a fake stream.
+
+**A15. The learned API catalogue.**
+
+- **Content.** It records:
+  - every endpoint seen, with method and body encoding;
+  - every recognised parameter with its role, and whether it is honoured;
+  - per datum, the inferred nature, key, cursor and schema, with every schema version;
+  - the corrections applied, and who applied them;
+  - the observed change frequency;
+  - call cost (median and 95th-percentile latency, response size);
+  - the freshness floor;
+  - the streams, with their shapes, cadence and cut-off;
+  - the plugins reading each datum, with their max ages and the field paths they read;
+  - the mirror hit ratio;
+  - the counts of refusals (`write_refused`).
+- **Access.**
+  - It is served as JSON, authenticated, and documented in `docs/widget-api.md` under a new section *API catalogue*. The path is the Builder's.
+  - Plugins read it through `host.catalogue()`.
+  - **It never contains a field value, a credential, the base URL or an authorisation header.** A third-party author reads it before writing a line.
+  - An endpoint that a third-party plugin reads with no `upstream_url` is listed as `uncited`.
+- **It feeds the data catalogue (P8).**
+  - Every mirror table and stream hypertable is a dataset with origin `opnsense`.
+  - Roles are inferred from types: timestamp → `time`, number → `measure`, everything else → `dimension`. They can be corrected in the manifest.
+  - Stream hypertables and snapshots are **sample** datasets. Record streams are **event** datasets, whose covered buckets are those outside recorded gaps.
+  - The `no_domains` rule of P8 applies through A10's domain-name marking.
+
+**A16. External downloads never enter the firewall queue.** The MaxMind and Public Suffix List downloads, and any third-party plugin's internet calls, go through the A7 fetch facility only. They take no broker slot, count against no firewall ceiling, and never enter the mirror.
+
+**A17. The plugin host API changes** (A3 amended; `docs/plugins.md` *The host* is rewritten to match).
+
+- **`host.call`, `host.readCollection`, `host.readObject` and `host.serviceState` go through the broker.**
+  - Each accepts a `max_age_seconds`. Its default is the endpoint's manifest default, then the kind's interval for a core kind, then the provider's cadence for a kind of its own.
+  - Each accepts an optional `after` cursor value for a record stream.
+  - Each answers with an observed object (A10), plus `served_from`, `fetched_at`, `age_seconds` and the gaps inside the range.
+  - Every field the answer carries today keeps its name and meaning. Reading `body` or calling `json()` counts as reading every field (A10).
+- **Streams:**
+  - a subscription to an event stream, renewed by use, that lapses like a demand;
+  - reading the events received after a cursor, with the gaps;
+  - `host.stream`'s bounded read, kept, answered from the shared subscription.
+- **`host.catalogue()`** gives read access to the learned API catalogue.
+- **New manifest keys for an endpoint:** a default `max_age_seconds`, an optional floor, the A10 corrections, the A14 equivalence, and the number of events to discard after a connection. `stream` becomes optional. The manifest schema stays at plugin API version 1 only if every existing manifest loads unchanged. Otherwise the version is raised under the versioning policy, and the hand-back says which.
+
+**A18. Built-ins and the core go through the broker.**
+
+- Every built-in plugin (`pf`, `suricata`, `kea`, `isc`, `dnsmasq`, `unbound`, `insight`, and the widgets' plugins, which make no firewall call), discovery, the probe round and the core coordinators reach the firewall only through the broker.
+- **Built-in plugins read through the observed object rather than raw body text,** so the mirror stores only what they use. Wherever a helper of `opnview.decode` takes a body, it accepts the observed object.
+- **Behaviour stays identical:** the B5 inventory and byte identity hold. The only difference allowed is the timing of when an answer was fetched, within each reader's max age.
+- **Corrections carried by the built-in manifests.** These are the inferences the survey contradicts or makes ambiguous, each citing its survey section:
+  - the filter log's key `__digest__` and cursor `__timestamp__`, with `digest` declared as not a cursor parameter;
+  - Suricata's composite cursor `(fileid, filepos)`;
+  - Unbound's content-composed de-duplication key and its window rule;
+  - the lease keys;
+  - `cpu_usage/stream`'s discarded first event.
+
+## 5. Scope: amendments inside existing sections
+
+- **A1, the manifest.** Replace "the firewall endpoints it reads (path, method, body encoding, argument kind, stream flag, and for built-ins the survey citation)" with "the firewall endpoints it reads (path, method, body encoding, argument kind, an optional stream flag, a default max age, an optional freshness floor, mirror corrections and stream equivalences (A17), and for built-ins the survey citation)".
+- **A3, *Firewall calls*.**
+  - Replace "Calls go only to the configured firewall base URL, only for endpoints the manifest declares, and through the existing client and its `MutatingCommand` refusal, unchanged." with "Calls go only through the broker (A9) to the configured firewall base URL, only for endpoints the manifest declares, under the broker's read-only rule (A13) with the client's `MutatingCommand` refusal checked first. Each request states a max age, and its answer may be served from the mirror (A11)."
+  - Replace "read a bounded event stream" with "subscribe to an event stream and read its events after a cursor (A14)".
+- **A3, *Scheduling*.** Append: "A pass's firewall requests are served by the broker under A12's scheduler. The kind's interval is the pass's max age."
+- **A5, refusals.** Add to the list: "a declared POST that is not a read action (A13)", and "a mirror correction naming a field path or parameter in a malformed way". A conflicting correction is listed, not refused (A10).
+- **A5, listing.** Add per provider: the endpoints it declared, the data it actually read (from the catalogue), its max ages, and its `write_refused` count.
+- **A8, `docs/plugins.md`.** Add:
+  - the broker, the max age and how answers are served;
+  - the observed object and the read-every-field rule;
+  - inference and corrections;
+  - streams and equivalence;
+  - the read-only rule;
+  - the API catalogue;
+  - a worked example: a plugin naming an endpoint with a max age and one correction, sharing a datum with a built-in.
+- **B4, the audit table.** Add the row: `| Firewall access: queueing, caching, scheduling, read-only rule | internal/collect, internal/plugin (direct Client calls) | The broker, the mirror and the scheduler (A9–A14). Core, not a seam: a single gate is what makes the call budget and the read-only guarantee enforceable |`.
+- **C3, *Live*.** Append to "The host runs the live pass while live interest holds.": "Its requests carry the live cadence as their max age, fall in the real-time class (A12), and are coalesced by the broker. The live cadence is never below the endpoint's freshness floor."
+- **C3, *Candidate endpoint*.** Append: "If it verifies, the `insight` plugin may declare it as replacing `traffic/interface` polling (A14)."
+- **P8, *Core datasets*.** Append: "The mirror's tables and stream hypertables are datasets with origin `opnsense` (A15)."
+- **P6.** Append: "The `opnsense` schema is the core's. No plugin schema can take that name, because plugin schemas carry their prefix."
+- **P7, *Read connections*.** Append: "The read role holds `SELECT` on the mirror's data tables and none on its broker metadata beyond what the catalogue serves."
+- **Phase D, map.** Add the broker, the mirror and the scheduler as packages named by responsibility, under the 15-file rule. One proposal: `internal/broker`, `internal/broker/mirror`, `internal/broker/schedule`, `internal/broker/catalogue`.
+- **Phase E.** Append: "The broker budgets of BR-AC17 are measured on the 1 000 000-row seed instance and printed beside their limits."
+- **F.2 table.**
+  - `docs/plugins.md` row: add "the broker host API, inference and corrections, streams, the read-only rule". The size target stays. If it cannot be met, the Builder reports it (Risk 17).
+  - `docs/widget-api.md` row: add "*API catalogue*".
+  - `docs/architecture.md` row: add "the broker, the mirror and the scheduler in the data flow; the `verify.go` exception; *Decisions in force* carries decision 14".
+  - `docs/opnsense-api-survey.md` row: add "the LV-C freshness floors and LV-B figures, as proportions and timings".
+  - `docs/data-model.md` row: add "*Vocabulary*: broker, mirror, datum, max age, freshness floor; *Storage fit*: the mirror's tables".
+
+## 6. Acceptance criteria: new section inserted after "### Phase A: plugin host" (before "### Phase B")
+
+### Phase A, part 2: broker, mirror, scheduler
+
+Every test runs against the fake firewall with a **counting transport** and a fake clock, on the PostgreSQL test instance.
+
+- [ ] **BR-AC1. One gate.** A test lists every non-test caller of `Client.Call` and `Client.Stream` in `cmd/` and `internal/`. The list is exactly the broker and `internal/web/surfaces/settings/verify.go`. A test shows that a verification call leaves no row in the mirror.
+- [ ] **BR-AC2. Two plugins share one call.** Two plugins written to a temporary data directory request the same datum at the same instant (max ages 30 s and 60 s). The firewall sees **one** call, and both receive identical values for the fields they read.
+- [ ] **BR-AC3. Served from the mirror when fresh.** A third request for the datum within its max age is served with `served_from: mirror` and **zero** firewall calls. A request past its max age causes exactly one call.
+- [ ] **BR-AC4. Only read fields are stored; a new field is added.**
+  - The fixture answer has fields `a`, `b` and `c`, and the plugin reads `a` and `b`. The mirror table has columns for `a` and `b` only, and the PostgreSQL catalogue shows no column for `c`.
+  - The plugin is replaced by a version that also reads `c`, against a fresh mirror answer. The plugin sees `c` with the firewall's value, at most one extra call is made, the column `c` exists and is filled, and a new schema version is recorded.
+  - A plugin reading `body` makes the datum `read_whole`.
+- [ ] **BR-AC5. Lossless round trip.** A fixture answer holds:
+  - a numeric string with leading zeros;
+  - `~`;
+  - `null` and an absent field;
+  - an empty string;
+  - an integer above 2^53;
+  - a float printed with trailing zeros;
+  - a nested object;
+  - an array of five rows;
+  - a value-keyed object.
+
+  Served from the mirror, every field the plugin reads is identical in JSON type and lexical value to the firewall's answer, with row order kept. The value-keyed object is stored as rows, not as one column per key (the PostgreSQL catalogue is inspected).
+- [ ] **BR-AC6. Type change.** A field answered as a number, then as text, ends in a JSONB column holding both values without loss, with a schema version recorded.
+- [ ] **BR-AC7. Nature, key and cursor.**
+  - On the recorded `testdata` answers of every built-in endpoint, after the built-in manifests' corrections, the nature, key and cursor equal a committed table. Each row of the table cites the survey section that establishes it.
+  - A `null`-on-every-row field is never inferred as a key.
+  - A correction overrides an inference.
+  - Conflicting corrections by two third-party plugins: the first loaded applies, the other is listed with `mirror_correction_conflict`, and both load.
+- [ ] **BR-AC8. The cursor gives incremental reads.** For a record stream with an honoured window:
+  - after the first fetch, each refresh asks only for the window after the last stored cursor (the request bodies are asserted);
+  - a plugin asking with `after` receives only newer rows;
+  - an answer whose oldest row is newer than the newest stored records a gap interval, and the gap is returned with the rows.
+- [ ] **BR-AC9. A window that is not honoured.** When the fake answers rows outside the requested window, the parameter is recorded as `not_honoured`, later refreshes read in full and filter on the cursor, and no row outside a requested range is served.
+- [ ] **BR-AC10. Pagination.** A paged datum (`current` / `rowCount`) of 3.5 pages is walked by the core to completion within the request's bound. Two requests that differ only in page parameters share one datum.
+- [ ] **BR-AC11. Deadline-first, and a starved background datum is still served.**
+  - Three data with different deadlines are refreshed in deadline order.
+  - Under real-time demand that saturates the per-second ceiling for ten minutes of fake time, a background datum (max age 300 s) is still refreshed, with lateness within the bound the Builder states.
+- [ ] **BR-AC12. The real-time reserve under load.**
+  - With background demand saturating the ceilings, a real-time datum is refreshed at its max age (or its floor), and real-time calls take at least the reserved share of calls (70 % by default, then 50 % when the setting changes).
+  - With no real-time demand, background calls use the whole budget.
+  - Concurrency and calls per second never exceed their settings (the transport records the maxima).
+- [ ] **BR-AC13. Cadence follows demand.** The refresh interval of a datum equals the shortest live max age. When that reader stops, it relaxes to the next reader's within the lapse span, and to no refresh at all when no reader remains. A request below the floor is served at the floor, and its `age_seconds` shows it.
+- [ ] **BR-AC14. Back-off.**
+  - Repeated `server_error` answers on one datum space its calls exponentially up to the maximum setting, and the first `ok` restores normal cadence.
+  - Time-outs across three endpoints back off the whole queue.
+  - `not_found` does not trigger back-off and is recorded as availability.
+- [ ] **BR-AC15. A write attempt is refused, and no call reaches the firewall.** A plugin issues:
+  - a POST to a command that is not a read action;
+  - a POST to `carp_status`;
+  - a PUT;
+  - a DELETE;
+  - a GET to a command in `MutatingCommand`.
+
+  Each is refused with its closed code and logged with the plugin's name, and **the counting transport records zero requests**. A manifest declaring such a POST is refused at load with the new code. Every POST endpoint of the built-ins passes the rule.
+- [ ] **BR-AC16. Credentials never reach a plugin.** A string search over everything every host function answers in the full built-in test run finds neither the API key, the secret, the base URL nor an `Authorization` value.
+- [ ] **BR-AC17. Broker budgets** (proposed constants, each written once; the Builder may change one with a measured justification in the hand-back). Measured by `pre-deployment` and printed beside their limits:
+  - serving a fresh 1 000-row datum to a plugin reading 10 fields per row: median host-call time **≤ 25 ms**;
+  - the broker's overhead on a call to a zero-latency fake answering 1 000 rows (observation, inference, mirror write): median **≤ 50 ms**;
+  - a pass reading 1 000 rows × 10 fields through the observed object: at most **2×** the same pass over a plain object.
+
+  `checks` stays within 60 s.
+- [ ] **BR-AC18. One subscription shared.** Three plugins subscribe to the same stream with the same parameters. The fake firewall sees **one** open connection, and every plugin receives every event. The connection closes after the last unsubscribes, unless a plugin reads fields of the stream, in which case it stays open while that plugin is loaded.
+- [ ] **BR-AC19. A stream cut is recorded as a gap.** The fake closes the stream after 60 s of fake time and refuses the first reconnection. The subscription reconnects with back-off, and the interval with no events is a gap in the hypertable, in its minute and hour aggregates, and in the data catalogue's answer, **never a zero**. The declared discarded first event is not stored.
+- [ ] **BR-AC20. Stream recording.**
+  - Fields read go into a hypertable timestamped at reception.
+  - Detail older than its retention is removed with P4's exact horizon.
+  - Minute and hour aggregates equal an independent computation from the detail.
+  - No TimescaleDB background job runs.
+- [ ] **BR-AC21. A declared stream replaces polling, and polling resumes when it drops.**
+  - A plugin declares that a fake stream replaces a polled endpoint. While the stream runs, that plugin causes **zero** calls to the polled endpoint, and another plugin's demand for it is still served.
+  - When the stream drops, polling resumes from the next scheduling decision, and the plugin is told which source answered.
+  - A plugin that declares nothing never has its polling replaced.
+- [ ] **BR-AC22. Detection by content type.** An endpoint not flagged as a stream that answers `text/event-stream` is detected from the headers. The call returns within the stream bound, not the client's time-out, and the catalogue records the stream.
+- [ ] **BR-AC23. The API catalogue.**
+  - It lists every field A15 names for the BR-AC2 to BR-AC21 fixtures.
+  - It answers 401 with a JSON condition without a session.
+  - A string search finds no field value, credential or base URL.
+  - `host.catalogue()` returns the same content.
+  - The P8 data catalogue lists the mirror tables, with inferred roles.
+  - Under `no_domains`, a query touching a mirrored column that carries a domain name answers `withheld_by_aggregate_mode`.
+- [ ] **BR-AC24. Downloads stay out of the queue.** With the broker saturated, a fetch through A7 completes on its own timing. No fetch appears in the broker's counters or in the mirror.
+- [ ] **BR-AC25. The firewall changes.** After the base URL changes, no answer is served from the mirror as fresh, and the first request causes a call. The previous firewall's history is not part of the new firewall's current state.
+- [ ] **BR-AC26. The source is verified and an unavailable one is reported.**
+  - Every endpoint the core or a built-in plugin reads carries a 26.7.3 citation in the survey (the existing citation test, extended).
+  - An endpoint answering `not_found` or `forbidden` yields that closed outcome to every reader, and the broker tries no other path in its place.
+  - A third-party endpoint without a citation is listed as `uncited`.
+- [ ] **BR-AC27. Built-ins through the broker.**
+  - The B5 inventory tests and byte identity pass with every built-in plugin routed through the broker.
+  - No built-in plugin script reads `body` or calls `json()` (a test greps the built-in tree), unless it is listed in the hand-back with the reason.
+
+## 7. Acceptance criteria: amendments to existing ones
+
+- **A3.** Add: "including the new A13 load-time code".
+- **A10.** Append: "and every firewall request the counting transport sees came through the broker (BR-AC1)".
+- **A11.** Append: "each provider's observed data, max ages and `write_refused` count".
+- **C-AC11.** Replace "with N parallel readers, at most one round of live calls happens per live cadence" with "with N parallel readers, at most one round of live calls happens per live cadence, by the broker's single-flight and mirror (BR-AC2, BR-AC3)".
+- **F-AC5.** Add: "every setting key, refusal code and catalogue field named in `docs/plugins.md` or `docs/widget-api.md` *API catalogue* exists in code, and the reverse".
+- **X2.** Append: "and BR-AC1 to BR-AC27".
+
+## 8. Live validation: amendments
+
+**LV-C0 becomes LV-C, extended.** In addition to C3.0, for every endpoint a built-in reads with a max age of 60 s or less (filter log, `traffic/top`, `traffic/interface`, `cpu_usage/stream`, resolver lookups, security events, resolver cache):
+
+- the call latency (median and 95th percentile) and the response size;
+- the firewall's processor use at candidate refresh intervals, with the finest interval adding at most 2 processor percentage points over the idle baseline recorded as the endpoint's **freshness floor**. `traffic/top` is never below its capture span.
+
+The floors are written into the built-in manifests as declared floors, each citing the measurement, and into the survey as proportions and timings. **No write attempt is ever sent to the live firewall**, not even to test a refusal: BR-AC15 is proved on fakes only.
+
+**New LV-B: the broker on live data**, during LV-P's 15-minute parallel run:
+
+- the firewall calls per endpoint made by the new build (the broker's counter), against the old build's calls for the same window. The old figure is computed from its fixed intervals and stated as computed;
+- the mirror hit ratio, per endpoint and overall;
+- the medians of BR-AC17 measured live;
+- the learned catalogue shown to the maintainer: per built-in datum, the inferred nature, key, cursor, honoured parameters and floor. Every inference that differs from the BR-AC7 table is either a correction added to a built-in manifest or a defect;
+- the `stream_log` and `cpu_usage/stream` subscriptions: one connection each whatever the number of subscribers, and the server cut-off recorded as gaps followed by reconnection.
+
+**The validation passes when**, as before, and in addition: the maintainer accepts LV-C's floors and LV-B's figures, and no LV-B inference difference is left unexplained.
+
+## 9. Rules, Out of scope, Risks
+
+**Rules, *Hard rules carried from the project*: append**
+
+- "every firewall request goes through the broker, except the credential check of candidate credentials;"
+- "GET, and POST to read actions, only, with `MutatingCommand` checked first;"
+- "a mirrored field is served exactly as the firewall answered it;"
+- "a stream cut, a failed call and an unanswered interval are gaps, never zeros."
+
+**Out of scope: append**
+
+- Runtime self-calibration of freshness floors from the firewall's processor use (open question 6).
+- A mirror shared between installations, or an export of the mirror.
+- Writing anything to the firewall, including to test the refusal.
+
+**Risks: append**
+
+29. **Inference errors.** Some OPNsense parameters are ignored silently (`search_queries` without `client`, the filter log's `digest`), keys can be `null` everywhere, and timestamps come in three shapes, one without a year. A wrong inference serves wrong rows. A10's verification of windows, BR-AC7's committed table, the built-in corrections and LV-B's review contain this. A third-party datum relies on its author's corrections.
+30. **Schema churn.** Value-keyed objects, polymorphic fields and plugin updates can add columns or convert them to JSONB repeatedly. The value-keyed rule and versioned schemas contain this. A churn rate the Builder finds pathological is reported in the catalogue, not hidden.
+31. **Proxy overhead in goja.** A `Proxy` trap per property read is far slower than a plain read, and the filter-log pass reads hundreds of rows every 10 s. BR-AC17's 2× bound may force a host-side dynamic object instead of a JavaScript `Proxy`, or a per-path read cache.
+32. **No missing field: consistency.** Supplying a newly read field from a fresh call while the rest of the answer came from the mirror can mismatch rows, a lease that disappeared for example. A10 forbids reading a value from another row. A re-run of the plugin's function is the safest mechanism, provided a call has no side effect before its records are committed. The fetch facility's file writes are the exception to check.
+33. **Mirror growth.** Built-in data is stored twice: as raw read fields in the mirror and as derived rows in the core tables. Stream detail grows at its event rate. The mirror retention setting, chunk retention and LV-DB's disk figure bound this, and *Storage fit* records it.
+34. **Explosion of parameter combinations.** Every combination of identifying parameters is its own datum. `traffic/top/<interface list>` with different lists, or a plugin varying `searchPhrase`, multiplies data and calls. Window and page parameters do not identify a datum. Other combinations are counted in the catalogue, and a plugin creating unbounded combinations is visible there.
+35. **The ceiling against a long call.** A `traffic/top` call over many interfaces holds a concurrency slot for several seconds. With the default of 2, it can delay the filter log. LV-B measures this, and the Builder may change the defaults.
+36. **Reference timing.** Behaviour identity (B5, LV-P) now allows answers up to one max age old where today's passes called at that instant. Gap and window logic in the coordinators must read `fetched_at`, not the pass's instant, or a gap can be misdated.
+37. **LV-C duration.** Measuring the processor at candidate intervals for seven endpoints at 15 minutes each takes hours of read load on the live firewall. The orchestrator may measure the endpoints in parallel only if their costs are proven separable.
+
+## 10. Phase P interaction (summary for the Builder)
+
+- **The `opnsense` schema** is a core schema created with the core schema, under P3's rules, idempotent (P-AC5). Its tables are created and altered at run time by the mirror, not by `schema.sql`. They are covered by `webtest`'s database scan (P-AC23) and by `pg_dump` (P-AC22).
+- **Hypertables and retention** follow P4, with the exact horizon, by chunk then row. Continuous aggregates on stream hypertables are refreshed by opnview (P5's reasoning, Risk 22).
+- **LV-0** creates an empty mirror. Nothing is carried over, because the mirror is learned again within the first passes.
+
+## 11. ROADMAP.md and README.md
+
+- **`ROADMAP.md`, *Rules that apply to every step*, read-only bullet.** Append: "Read-only is enforced by the broker for every plugin: GET, and POST to read actions (commands starting with `search`, `get`, `query` or `list`, or ending with `status`), with the list of mutating commands checked first."
+- **`README.md`.** Keep the read-only API key advice, and add one sentence saying that every plugin's firewall access goes through opnview's read-only broker.
+
+## 12. Existing spec sentences that become obsolete
+
+1. Context, decision 2: "POST read endpoints are allowed. Firewall calls go through opnview's client, whose refusal of mutating commands is unchanged, with nothing added on top." Superseded by decision 14 (§1). The `MutatingCommand` refusal stays unchanged, and the A13 read rule is added on top.
+2. A1: "the firewall endpoints it reads (path, method, body encoding, argument kind, stream flag, and for built-ins the survey citation)" (replaced, §5).
+3. A3: "Calls go only to the configured firewall base URL, only for endpoints the manifest declares, and through the existing client and its `MutatingCommand` refusal, unchanged." (replaced, §5).
+4. A3: "read a bounded event stream" (replaced, §5).
+5. The scope phase list as replaced by the PostgreSQL amendment §4 (amended by §3: Phase A, part 2 inserted after Phase P).
+6. C-AC11: "with N parallel readers, at most one round of live calls happens per live cadence" (amended, §7).
+7. LV-C0 as written (extended into LV-C, §8). The C3.0 references to "LV-C0" read as LV-C.
+8. Outside the spec, for the Builder to correct:
+   - the `internal/opnsense/plugin_endpoints.go` comment "No allowlist is added on top: … keeps the client's refusal of known mutating commands as it is and adds nothing else";
+   - `docs/plugins.md` *Endpoints*, "`method`: `GET` or `POST`. A POST that only reads, such as a grid search, is allowed." and "`stream`: `true` for a server-sent event stream";
+   - `docs/plugins.md` *The host*, the `host.call` and `host.stream` rows;
+   - the `provider.Session` comment that `Call` is "the ONLY outbound capability the port grants besides Stream".
+
+## 13. Open questions (additions)
+
+Open questions 1 and 2 stay as they are.
+
+3. **Must a plugin still declare its endpoints in the manifest?** Decision 1 says the plugin names the endpoint. Today it names it in `plugin.json`, checked at load.
+   - **(a)** Keep the manifest declaration mandatory. The load-time refusal, the listing and the read rule at load stay, and the script calls endpoints by declared name.
+   - **(b)** Also allow naming any path at run time from the script. The broker's A13 check is then the only gate, and the listing learns endpoints from the catalogue.
+
+   **Recommendation: (a).** A refused write shows in the listing before any pass runs, a third-party author's endpoints are readable without running the plugin, and none of the decisions requires run-time naming. Scope follows (a) unless the maintainer chooses (b).
+4. **What puts a datum in the real-time class?**
+   - **(a)** A threshold on the shortest live max age, a setting with a proposed default of 5 s. This keeps the 10 s filter log in the background, as the maintainer listed it.
+   - **(b)** The plugin marks a request as real-time.
+   - **(c)** A request made under C3's live interest is real-time.
+
+   **Recommendation: (a).** It follows from the max age the plugin already states, needs no new declaration, and the operator can tune it. Scope follows (a).
+5. **Does a widget bound to a mirrored dataset keep that datum refreshed?** Through the data catalogue (P8), a generic widget can bind to `opnsense.*` data that no loaded plugin reads any more. The widget API never calls the firewall.
+   - **(a)** A data-catalogue query on a mirrored dataset renews a demand lease, with C3's `live_interest_seconds`, at the shortest max age its last plugin reader used. The broker refreshes the datum while someone looks at it.
+   - **(b)** Widgets create no demand. Data nobody reads goes stale, and `freshness` says so.
+
+   **Recommendation: (a).** It reuses the lease the maintainer already decided for live figures, and keeps the widget API free of firewall calls. Scope follows (a).
+6. **Freshness floors on firewalls other than the maintainer's.** LV-C measures the floors on one device. A weaker firewall may need longer ones, and zero hardcoded configuration forbids assuming that device's figures for everybody.
+   - **(a)** The built-in floors are the LV-C figures, overridable by setting, with back-off as the protection.
+   - **(b)** In addition, the broker calibrates floors at run time from `cpu_usage/stream`, applying the same +2-point rule to each installation.
+
+   **Recommendation: (a) this cycle, (b) as a later step.** (b) needs its own measurement design and would delay the cycle. Back-off already protects a saturated firewall. Scope follows (a).
+7. **Secrets in firewall answers.** A plugin may read an endpoint whose answer carries a secret: a configuration export, or a key field (Risk 6). The mirror then stores it, and the data catalogue serves it to the authenticated user.
+   - **(a)** Accept it, as Risk 6 does. The API key's read privileges bound what can be read, and the README says so.
+   - **(b)** In addition, never store a field whose name matches a closed list of secret markers (`password`, `secret`, `psk`, `private_key`, `token`, `hash`), and report it in the catalogue.
+
+   **Recommendation: (a).** Any list of markers is a guess and gives false assurance. The maintainer already accepted Risk 6, and the data stays inside the installation's own authenticated API. Scope follows (a) unless the maintainer chooses (b).
+
+No other question. The scheduler's shape, the reserve, the read rule, streams and the catalogue were decided by the maintainer. The rest follows from them or from Phase P.
+
+---
+
+**Decided (maintainer, 11 October 2026), broker amendment open questions:**
+- Q3: (a), endpoints stay declared in the manifest.
+- Q4: (a), real-time means a short requested freshness, at or below a setting with a default of 5 s.
+- Q5: (a), a displayed widget keeps its mirror datum refreshed while someone looks at it.
+- Q6: (a), the floors measured on the maintainer's firewall are defaults, overridable by setting, with back-off as protection. Automatic calibration comes later.
+- Q7: (a), mirror columns are exposed like any other field. The API key's read-only privileges bound what can be read.
+- Q8 (plugin compatibility across OPNsense versions): (a), A19 adopted, extended by the maintainer:
+  - **Version selection is declarative and optional.** In its manifest, a plugin may map an OPNsense version range to **routes**: path, method, parameters, and field-name mapping, as A19 describes. It may also map a range to **a script**: a whole different script file for that range. Both may be combined.
+  - **A plugin that declares no version mapping has no version handling at all.** It runs as it is on every version, and nothing is required of its author.
+  - **The engine does the switching.** It reads the firewall's version and selects the matching routes or script, again when the version changes. The author never writes `if version > x` or `switch(version)`. A version that no declared range covers is a named availability outcome, never a guess.
+  - The same mechanism applies to an OPNsense plugin's own endpoints, for example os-zenarmor, whose version may differ from the core's. A range may name the version of the OPNsense core or of the named OPNsense plugin. How the engine reads an installed plugin's version is to be found in `opnsense/core` 26.7.3 and recorded in the survey, `UNVERIFIED:` until then.
+
+### A19. Firewall versions: one plugin, several OPNsense versions, no version tests in the script (part of Phase A, part 2)
+
+This section belongs with A9 to A18 of the broker amendment. Q8 above extends it.
+
+- **The core reads the firewall's OPNsense version** at discovery and on every discovery pass, so an upgrade is seen without a restart. It also reads the version of each installed OPNsense plugin a range refers to.
+  - The endpoints that give these versions are to be found in `opnsense/core` 26.7.3 and recorded in the survey before use. Until then they are `UNVERIFIED:` and nothing is built on them.
+  - The version is shown in the plugin listing, in the catalogue's schema versions, and in `host.firewall`, which is read-only.
+- **An endpoint name in a manifest is stable; its variants carry the differences.**
+  - Each variant has a version range, plus its own path, method, body, parameters and corrections.
+  - A field-name mapping presents the answer to the script under the stable names.
+  - A variant may add an adapter (a script function) where a rename is not enough.
+  - A range may instead select a whole script file.
+  - The core selects what matches the running versions. The script's logic is written once, against the stable names.
+  - **Everything here is optional.** A plugin that declares no variant runs unchanged on every version.
+- **Refusals and states:**
+  - overlapping ranges are refused at load, with a closed code;
+  - a running version that no declared range covers yields a closed availability outcome naming the versions, for example `firewall_version_unsupported`. The engine never guesses the closest range.
+- **The mirror stays a mirror of the API.** A different path is a different datum. Schema versions record which OPNsense version produced which shape.
+- **Tests.** A plugin's test data holds recorded answers per variant, and its JS tests run each variant and assert the same records.
+- **Docs.** `docs/plugins.md` gains a worked example: one endpoint renamed between two versions, with one field renamed and one restructured by an adapter, plus a range that selects another script.
+- **Acceptance (BR24):**
+  - a plugin with two variants serves the same records from each variant's recorded answers;
+  - a version outside every range yields the closed outcome;
+  - overlapping ranges are refused at load;
+  - a version change seen at discovery switches the variant with no restart;
+  - a range selecting a script runs that script;
+  - a plugin with no variants is unaffected;
+  - each version endpoint is cited, or `UNVERIFIED:` and unused.
+
+**Decided (maintainer, 12 October 2026), after the Phase P / A-part-2 checkpoint:**
+- **TimescaleDB licence:** the Timescale License features are **enabled** (`timescaledb.license=timescale`): continuous aggregates, compression and native retention policies. Self-hosted use is free under that licence. Where a continuous aggregate gives exactly the result the existing aggregate tests assert, it replaces the hand-built aggregate; otherwise the hand-built one stays. This is done in Phase E, with the performance work, and README and ROADMAP state the licence.
+- **Mirror write cost:** the mirror stamps the newest generation per datum instead of rewriting unchanged rows. The BR-AC17 broker overhead budget stays at **50 ms**.
+- **OPNsense plugin versions:** version ranges may name the OPNsense **core** version only. `/api/core/firmware/info` runs `pkg update` and is never called. A range naming an OPNsense plugin stays refused (`package_version_unavailable`) until a side-effect-free read is found and cited.
+- **Order of the rest:**
+  - B3a, the widget script host;
+  - B3b, the 26 widgets ported in parallel batches, with the existing golden JSON as the oracle;
+  - then C, D, E (including the licence switch and the open performance findings: five widgets over budget at 100k/30d, `purge_due_addresses` reading the whole index, the slow collect tests, pre-deployment within 3 minutes);
+  - then F.
+- `docker-compose.serve.yml` gains the pinned TimescaleDB service (no published port, generated password, `OPNVIEW_DATABASE`) before the live validation.
+- **Mirror datasets' `seen_at` (12 October):** the read role is granted `SELECT (id, fetched_at)` on `opnsense.mirror_datum`. That gives an exact "last fetched" without rewriting any row. It is a narrow, documented exception to A15.
+- **Domain withholding (12 October):** under `aggregate_mode = no_domains`, the core withholds every column marked carries-domain from every widget answer, built-in and third-party alike. Authors have nothing to do.

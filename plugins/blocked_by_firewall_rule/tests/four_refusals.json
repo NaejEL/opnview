@@ -1,0 +1,1242 @@
+{
+  "type": "blocked_by_firewall_rule",
+  "parameters": {
+    "clients": null,
+    "include_automatic": true,
+    "interfaces": null,
+    "limit": 20,
+    "period": "1h",
+    "sort": "blocked"
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789996800,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    }
+  ],
+  "condition": "not_yet_probed",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "rows": [
+      {
+        "state": "resolved",
+        "rule": {
+          "id": 5,
+          "pf_label": "label-five",
+          "description": "Block the guests",
+          "action": "",
+          "automatic": false
+        },
+        "rid": "label-five",
+        "fired_on": [
+          {
+            "device": "vlan0.10",
+            "description": "Inside",
+            "interface_id": 1
+          }
+        ],
+        "interfaces": [
+          1
+        ],
+        "clients": [
+          10
+        ],
+        "blocked_connections": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 2
+        },
+        "last_seen_at": 1789999802,
+        "timeline": [
+          {
+            "from": 1789996800,
+            "to": 1789996860,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996860,
+            "to": 1789996920,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996920,
+            "to": 1789996980,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996980,
+            "to": 1789997040,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997040,
+            "to": 1789997100,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997100,
+            "to": 1789997160,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997160,
+            "to": 1789997220,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997220,
+            "to": 1789997280,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997280,
+            "to": 1789997340,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997340,
+            "to": 1789997400,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997400,
+            "to": 1789997460,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997460,
+            "to": 1789997520,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997520,
+            "to": 1789997580,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997580,
+            "to": 1789997640,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997640,
+            "to": 1789997700,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997700,
+            "to": 1789997760,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997760,
+            "to": 1789997820,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997820,
+            "to": 1789997880,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997880,
+            "to": 1789997940,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997940,
+            "to": 1789998000,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998000,
+            "to": 1789998060,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998060,
+            "to": 1789998120,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998120,
+            "to": 1789998180,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998180,
+            "to": 1789998240,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998240,
+            "to": 1789998300,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998300,
+            "to": 1789998360,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998360,
+            "to": 1789998420,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998420,
+            "to": 1789998480,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998480,
+            "to": 1789998540,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998540,
+            "to": 1789998600,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998600,
+            "to": 1789998660,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998660,
+            "to": 1789998720,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998720,
+            "to": 1789998780,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998780,
+            "to": 1789998840,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998840,
+            "to": 1789998900,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998900,
+            "to": 1789998960,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998960,
+            "to": 1789999020,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999020,
+            "to": 1789999080,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999080,
+            "to": 1789999140,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999140,
+            "to": 1789999200,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999200,
+            "to": 1789999260,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999260,
+            "to": 1789999320,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999320,
+            "to": 1789999380,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999380,
+            "to": 1789999440,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999440,
+            "to": 1789999500,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999500,
+            "to": 1789999560,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999560,
+            "to": 1789999620,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999620,
+            "to": 1789999680,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999680,
+            "to": 1789999740,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999740,
+            "to": 1789999800,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999800,
+            "to": 1789999860,
+            "gap": true,
+            "value": 2
+          },
+          {
+            "from": 1789999860,
+            "to": 1789999920,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1789999920,
+            "to": 1789999980,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1789999980,
+            "to": 1790000040,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000040,
+            "to": 1790000100,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000100,
+            "to": 1790000160,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000160,
+            "to": 1790000220,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000220,
+            "to": 1790000280,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000280,
+            "to": 1790000340,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000340,
+            "to": 1790000400,
+            "gap": false,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "state": "rule_not_found",
+        "rule": null,
+        "rid": "label-gone",
+        "fired_on": [
+          {
+            "device": "vlan0.10",
+            "description": "Inside",
+            "interface_id": 1
+          }
+        ],
+        "interfaces": [
+          1
+        ],
+        "clients": [
+          10
+        ],
+        "blocked_connections": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 1
+        },
+        "last_seen_at": 1789999804,
+        "timeline": [
+          {
+            "from": 1789996800,
+            "to": 1789996860,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996860,
+            "to": 1789996920,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996920,
+            "to": 1789996980,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996980,
+            "to": 1789997040,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997040,
+            "to": 1789997100,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997100,
+            "to": 1789997160,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997160,
+            "to": 1789997220,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997220,
+            "to": 1789997280,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997280,
+            "to": 1789997340,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997340,
+            "to": 1789997400,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997400,
+            "to": 1789997460,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997460,
+            "to": 1789997520,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997520,
+            "to": 1789997580,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997580,
+            "to": 1789997640,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997640,
+            "to": 1789997700,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997700,
+            "to": 1789997760,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997760,
+            "to": 1789997820,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997820,
+            "to": 1789997880,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997880,
+            "to": 1789997940,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997940,
+            "to": 1789998000,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998000,
+            "to": 1789998060,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998060,
+            "to": 1789998120,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998120,
+            "to": 1789998180,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998180,
+            "to": 1789998240,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998240,
+            "to": 1789998300,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998300,
+            "to": 1789998360,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998360,
+            "to": 1789998420,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998420,
+            "to": 1789998480,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998480,
+            "to": 1789998540,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998540,
+            "to": 1789998600,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998600,
+            "to": 1789998660,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998660,
+            "to": 1789998720,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998720,
+            "to": 1789998780,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998780,
+            "to": 1789998840,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998840,
+            "to": 1789998900,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998900,
+            "to": 1789998960,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998960,
+            "to": 1789999020,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999020,
+            "to": 1789999080,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999080,
+            "to": 1789999140,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999140,
+            "to": 1789999200,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999200,
+            "to": 1789999260,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999260,
+            "to": 1789999320,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999320,
+            "to": 1789999380,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999380,
+            "to": 1789999440,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999440,
+            "to": 1789999500,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999500,
+            "to": 1789999560,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999560,
+            "to": 1789999620,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999620,
+            "to": 1789999680,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999680,
+            "to": 1789999740,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999740,
+            "to": 1789999800,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999800,
+            "to": 1789999860,
+            "gap": true,
+            "value": 1
+          },
+          {
+            "from": 1789999860,
+            "to": 1789999920,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1789999920,
+            "to": 1789999980,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1789999980,
+            "to": 1790000040,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000040,
+            "to": 1790000100,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000100,
+            "to": 1790000160,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000160,
+            "to": 1790000220,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000220,
+            "to": 1790000280,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000280,
+            "to": 1790000340,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000340,
+            "to": 1790000400,
+            "gap": false,
+            "value": 0
+          }
+        ]
+      },
+      {
+        "state": "resolved",
+        "rule": {
+          "id": 6,
+          "pf_label": "label-six",
+          "description": "Default deny",
+          "action": "",
+          "automatic": true
+        },
+        "rid": "label-six",
+        "fired_on": [
+          {
+            "device": "vlan0.10",
+            "description": "Inside",
+            "interface_id": 1
+          }
+        ],
+        "interfaces": [
+          1
+        ],
+        "clients": [
+          10
+        ],
+        "blocked_connections": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 1
+        },
+        "last_seen_at": 1789999803,
+        "timeline": [
+          {
+            "from": 1789996800,
+            "to": 1789996860,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996860,
+            "to": 1789996920,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996920,
+            "to": 1789996980,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996980,
+            "to": 1789997040,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997040,
+            "to": 1789997100,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997100,
+            "to": 1789997160,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997160,
+            "to": 1789997220,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997220,
+            "to": 1789997280,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997280,
+            "to": 1789997340,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997340,
+            "to": 1789997400,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997400,
+            "to": 1789997460,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997460,
+            "to": 1789997520,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997520,
+            "to": 1789997580,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997580,
+            "to": 1789997640,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997640,
+            "to": 1789997700,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997700,
+            "to": 1789997760,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997760,
+            "to": 1789997820,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997820,
+            "to": 1789997880,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997880,
+            "to": 1789997940,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997940,
+            "to": 1789998000,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998000,
+            "to": 1789998060,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998060,
+            "to": 1789998120,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998120,
+            "to": 1789998180,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998180,
+            "to": 1789998240,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998240,
+            "to": 1789998300,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998300,
+            "to": 1789998360,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998360,
+            "to": 1789998420,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998420,
+            "to": 1789998480,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998480,
+            "to": 1789998540,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998540,
+            "to": 1789998600,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998600,
+            "to": 1789998660,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998660,
+            "to": 1789998720,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998720,
+            "to": 1789998780,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998780,
+            "to": 1789998840,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998840,
+            "to": 1789998900,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998900,
+            "to": 1789998960,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998960,
+            "to": 1789999020,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999020,
+            "to": 1789999080,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999080,
+            "to": 1789999140,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999140,
+            "to": 1789999200,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999200,
+            "to": 1789999260,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999260,
+            "to": 1789999320,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999320,
+            "to": 1789999380,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999380,
+            "to": 1789999440,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999440,
+            "to": 1789999500,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999500,
+            "to": 1789999560,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999560,
+            "to": 1789999620,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999620,
+            "to": 1789999680,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999680,
+            "to": 1789999740,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999740,
+            "to": 1789999800,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999800,
+            "to": 1789999860,
+            "gap": true,
+            "value": 1
+          },
+          {
+            "from": 1789999860,
+            "to": 1789999920,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1789999920,
+            "to": 1789999980,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1789999980,
+            "to": 1790000040,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000040,
+            "to": 1790000100,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000100,
+            "to": 1790000160,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000160,
+            "to": 1790000220,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000220,
+            "to": 1790000280,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000280,
+            "to": 1790000340,
+            "gap": false,
+            "value": 0
+          },
+          {
+            "from": 1790000340,
+            "to": 1790000400,
+            "gap": false,
+            "value": 0
+          }
+        ]
+      }
+    ],
+    "remainder": {
+      "members": 0,
+      "count": {
+        "measure": "logged",
+        "lower_bound": true,
+        "value": 0
+      }
+    },
+    "excluded_automatic": {
+      "members": 0,
+      "count": {
+        "measure": "logged",
+        "lower_bound": true,
+        "value": 0
+      }
+    },
+    "total": {
+      "measure": "logged",
+      "lower_bound": true,
+      "value": 4
+    }
+  }
+}

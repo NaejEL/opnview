@@ -1,0 +1,26 @@
+{
+  "api_version": 1,
+  "name": "pf",
+  "version": "1.0.0",
+  "display_name": "pf filter log",
+  "description": "Reads the firewall's filter log: every packet a rule with logging on allowed or denied (data source 1).",
+  "script": "pf.js",
+  "endpoints": [
+    {
+      "name": "filter_log",
+      "path": "/api/diagnostics/firewall/log",
+      "corrections": {"nature": "record_stream", "key": ["__digest__"], "cursor": ["__timestamp__"], "parameters": {"limit": "page_size", "digest": "ignored"}},
+      "method": "GET",
+      "survey_section": "Data source 1 — Filter logs",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/FirewallController.php",
+      "note": "limit defaults to 1000; limit=0 is coerced back to 1000. An empty array does not distinguish disabled logging from no matching traffic."
+    }
+  ],
+  "providers": [
+    {
+      "kind": "firewall_log",
+      "display_name": "pf filter log",
+      "read_strategy": "full_reread"
+    }
+  ]
+}

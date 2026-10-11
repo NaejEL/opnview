@@ -1,0 +1,4 @@
+{
+  "name": "widgetapi",
+  "description": "The widget API: one authenticated JSON route per served widget type."
+}

@@ -1,0 +1,4 @@
+{
+  "name": "firewallcatalogue",
+  "description": "The learned API catalogue: what the firewall broker learned of every endpoint, in JSON."
+}

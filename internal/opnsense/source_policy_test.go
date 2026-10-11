@@ -12,11 +12,11 @@ import (
 // The source-policy tests. They read the repository's own Go source and fail on the
 // patterns the project rules forbid.
 //
-// WHY THEY LIVE HERE. internal/opnsense is one of the three packages allowed to build an
-// HTTP request — the firewall client — internal/maxmind is the second, the MaxMind
-// database download, and internal/publicsuffix the third, the Public Suffix List
-// download: the three outbound calls the roadmap allows, one package each. Asserting that
-// from here keeps the rule and its enforcement in one place.
+// WHY THEY LIVE HERE. internal/opnsense is one of the two packages allowed to build an HTTP
+// request -- the firewall client, the only request the Go core makes -- and internal/plugin/fetch
+// the other: the plugin host's fetch facility, which makes the requests a plugin's manifest
+// declares, on its behalf (A7 and A16 of specs/SPEC-backend-completion-plugins.md). Asserting
+// that from here keeps the rule and its enforcement in one place.
 //
 // WHAT IS IN SCOPE. Every non-test Go file under cmd/ and internal/. Test files and
 // testdata are excluded, deliberately and for a reason the project rules state:
@@ -29,14 +29,18 @@ import (
 // scannedRoots are the directories that hold the program.
 var scannedRoots = []string{"../../cmd", "../../internal"}
 
-// TestOnlyTheThreeOutboundPackagesBuildAnHTTPRequest is the three-chokepoint rule: one
-// package per outbound call the roadmap allows, and no fourth.
+// specialPurposeRegistry is the one file the address-literal scan exempts.
+const specialPurposeRegistry = "../../internal/specialpurpose/registry.go"
+
+// TestOnlyTheTwoOutboundPackagesBuildAnHTTPRequest is the chokepoint rule: the firewall client,
+// and the fetch facility through which a plugin reaches the destinations its manifest declares,
+// and no third.
 //
 // The forbidden names are the ones that reach the network without going through a
 // client somebody configured: the package-level helpers and the shared default
-// client and transport. http.NewRequestWithContext is allowed in internal/opnsense,
-// internal/maxmind and internal/publicsuffix and nowhere else.
-func TestOnlyTheThreeOutboundPackagesBuildAnHTTPRequest(t *testing.T) {
+// client and transport. http.NewRequestWithContext is allowed in internal/opnsense and
+// internal/plugin/fetch and nowhere else.
+func TestOnlyTheTwoOutboundPackagesBuildAnHTTPRequest(t *testing.T) {
 	builders := map[string]bool{}
 	for _, file := range goSourceFiles(t) {
 		for _, violation := range outboundViolations(file, readFile(t, file)) {
@@ -46,31 +50,31 @@ func TestOnlyTheThreeOutboundPackagesBuildAnHTTPRequest(t *testing.T) {
 			builders[filepath.Base(filepath.Dir(file))] = true
 		}
 	}
-	// And the three really are the three: each of them builds a request, so the rule is
-	// not passing because a package quietly stopped making its call.
-	for _, name := range []string{"opnsense", "maxmind", "publicsuffix"} {
+	// And the two really are the two: each of them builds a request, so the rule is not
+	// passing because a package quietly stopped making its call.
+	for _, name := range []string{"opnsense", "fetch"} {
 		if !builders[name] {
-			t.Errorf("internal/%s builds no HTTP request, so the three-package rule no longer "+
+			t.Errorf("the %s package builds no HTTP request, so the two-package rule no longer "+
 				"describes the program", name)
 		}
 	}
 }
 
-// TestAFourthPackageBuildingARequestFailsThePolicy is the teeth of the rule above: a file
-// in any package but the three, building a request, is reported, and the same text in
-// one of the three is not.
-func TestAFourthPackageBuildingARequestFailsThePolicy(t *testing.T) {
+// TestAThirdPackageBuildingARequestFailsThePolicy is the teeth of the rule above: a file in
+// any package but the two, building a request, is reported, and the same text in one of the two
+// is not.
+func TestAThirdPackageBuildingARequestFailsThePolicy(t *testing.T) {
 	body := "package fourth\n\nfunc call() { request, _ := http.NewRequestWithContext(ctx, " +
 		"http.MethodGet, target, nil) }\n"
 	if violations := outboundViolations("../../internal/fourth/call.go", body); len(violations) == 0 {
-		t.Error("a fourth package building an HTTP request passed the policy")
+		t.Error("a third package building an HTTP request passed the policy")
 	}
-	for _, allowed := range []string{"opnsense", "maxmind", "publicsuffix"} {
+	for _, allowed := range []string{"opnsense", "plugin/fetch"} {
 		if violations := outboundViolations("../../internal/"+allowed+"/call.go", body); len(violations) != 0 {
 			t.Errorf("internal/%s building a request was reported: %v", allowed, violations)
 		}
 	}
-	if violations := outboundViolations("../../internal/publicsuffix/call.go",
+	if violations := outboundViolations("../../internal/plugin/fetch/call.go",
 		"resp, err := http.Get(target)"); len(violations) == 0 {
 		t.Error("the shared default client passed the policy inside an outbound package")
 	}
@@ -96,9 +100,8 @@ func outboundViolations(file, body string) []string {
 	}
 	for _, restricted := range onlyHere {
 		if strings.Contains(body, restricted) {
-			violations = append(violations, fmt.Sprintf("%s uses %s; only internal/opnsense, "+
-				"internal/maxmind and internal/publicsuffix may construct an HTTP request",
-				file, restricted))
+			violations = append(violations, fmt.Sprintf("%s uses %s; only internal/opnsense and "+
+				"internal/plugin/fetch may construct an HTTP request", file, restricted))
 		}
 	}
 	return violations
@@ -113,42 +116,17 @@ var absoluteURLLiteral = regexp.MustCompile(`"https?://`)
 // The registry carries an upstream URL per endpoint as DATA, so a test can assert
 // each one is justified — which means internal/opnsense/endpoints.go necessarily
 // holds absolute URL literals. Rather than exempting the file, every such literal in
-// it must be a citation of the two admissible sources, on a line that assigns
-// UpstreamURL or defines one of the citation constants. A request target cannot hide
-// there without breaking that shape.
+// it must be a citation of the admissible sources -- the OPNsense documentation, the core
+// repository, and the plugins repository an OPNsense plugin's endpoints are cited from -- on a
+// line that assigns UpstreamURL or defines one of the citation constants. A request target
+// cannot hide there without breaking that shape.
 func TestTheOnlyAbsoluteURLLiteralsAreTheRegistryCitations(t *testing.T) {
 	citationHost := regexp.MustCompile(
-		`"https://(docs\.opnsense\.org|github\.com/opnsense/core)/`)
-	// The MaxMind registry may hold the one host it downloads from, and citations of
-	// MaxMind's own documentation, and nothing else.
-	maxmindLiteral := regexp.MustCompile(
-		`"https://(download\.maxmind\.com"|dev\.maxmind\.com/|www\.maxmind\.com/)`)
-	// The Public Suffix List registry may hold the one file it downloads, and citations of
-	// the list's own pages and licence, and nothing else.
-	publicSuffixLiteral := regexp.MustCompile(
-		`"https://(publicsuffix\.org/list/(public_suffix_list\.dat)?"|` +
-			`github\.com/publicsuffix/list/wiki/Format"|mozilla\.org/MPL/2\.0/")`)
-
+		`"https://(docs\.opnsense\.org|github\.com/opnsense/(core|plugins))/`)
 	for _, file := range goSourceFiles(t) {
 		body := readFile(t, file)
 		for number, line := range strings.Split(body, "\n") {
 			if !absoluteURLLiteral.MatchString(line) {
-				continue
-			}
-			if filepath.Base(file) == "endpoints.go" && strings.Contains(file, "/internal/publicsuffix/") {
-				if !publicSuffixLiteral.MatchString(line) {
-					t.Errorf("%s:%d holds an absolute URL literal that is neither the Public Suffix "+
-						"List's download nor a citation of its pages: %s",
-						file, number+1, strings.TrimSpace(line))
-				}
-				continue
-			}
-			if filepath.Base(file) == "endpoints.go" && strings.Contains(file, "/internal/maxmind/") {
-				if !maxmindLiteral.MatchString(line) {
-					t.Errorf("%s:%d holds an absolute URL literal that is neither the MaxMind "+
-						"download host nor a citation of MaxMind's documentation: %s",
-						file, number+1, strings.TrimSpace(line))
-				}
 				continue
 			}
 			if filepath.Base(file) != "endpoints.go" || !inThisPackage(file) {
@@ -158,7 +136,7 @@ func TestTheOnlyAbsoluteURLLiteralsAreTheRegistryCitations(t *testing.T) {
 			}
 			if !citationHost.MatchString(line) {
 				t.Errorf("%s:%d holds an absolute URL literal that is not a citation of "+
-					"docs.opnsense.org or github.com/opnsense/core: %s",
+					"docs.opnsense.org, github.com/opnsense/core or github.com/opnsense/plugins: %s",
 					file, number+1, strings.TrimSpace(line))
 			}
 		}
@@ -197,6 +175,12 @@ func TestNoInterfaceIdentifierAddressOrCIDRIsALiteral(t *testing.T) {
 		"a compressed IPv6 address": ipv6Compressed,
 	}
 	for _, file := range goSourceFiles(t) {
+		// The IANA special-purpose registries are standards, not installation data, and
+		// this one file holds them with their citations (specs/SPEC-step-5b-widget-api.md,
+		// AC39). It is exempt by its exact path and nothing else is.
+		if filepath.ToSlash(file) == specialPurposeRegistry {
+			continue
+		}
 		body := readFile(t, file)
 		for number, line := range strings.Split(body, "\n") {
 			for what, pattern := range patterns {
@@ -397,6 +381,9 @@ func walkGoFiles(t *testing.T, includeTests bool) []string {
 				if entry.Name() == "testdata" {
 					return filepath.SkipDir
 				}
+				if !includeTests && isTestSupportPackage(filepath.ToSlash(path)) {
+					return filepath.SkipDir
+				}
 				return nil
 			}
 			if !strings.HasSuffix(entry.Name(), ".go") {
@@ -426,8 +413,7 @@ func inThisPackage(path string) bool {
 // inAnOutboundPackage reports whether a file belongs to one of the three packages that
 // make the three outbound calls.
 func inAnOutboundPackage(path string) bool {
-	return inThisPackage(path) || strings.Contains(path, "/internal/maxmind/") ||
-		strings.Contains(path, "/internal/publicsuffix/")
+	return inThisPackage(path) || strings.Contains(filepath.ToSlash(path), "/internal/plugin/fetch/")
 }
 
 // readFile returns a file's contents.
@@ -438,4 +424,35 @@ func readFile(t *testing.T, path string) string {
 		t.Fatalf("reading %s: %v", path, err)
 	}
 	return string(raw)
+}
+
+// testSupportPackages are the packages that exist for tests only: a fake firewall and a
+// harness that must construct HTTP requests and clients to drive a server. They hold
+// non-test Go files because a test of another package imports them, which is why the scans
+// above skip them -- and TestTestSupportPackagesAreNeverLinkedIntoTheBinary is what makes
+// that skip sound: no non-test file may import one.
+var testSupportPackages = []string{"../../internal/web/webtest", "../../internal/collect/providertest"}
+
+// isTestSupportPackage reports whether a directory is one of the test-support packages.
+func isTestSupportPackage(directory string) bool {
+	for _, support := range testSupportPackages {
+		if directory == support {
+			return true
+		}
+	}
+	return false
+}
+
+// TestTestSupportPackagesAreNeverLinkedIntoTheBinary: only _test.go files import them.
+func TestTestSupportPackagesAreNeverLinkedIntoTheBinary(t *testing.T) {
+	for _, file := range walkGoFiles(t, false) {
+		body := readFile(t, file)
+		for _, support := range testSupportPackages {
+			imported := "github.com/NaejEL/opnview/" + strings.TrimPrefix(support, "../../")
+			if strings.Contains(body, "\""+imported) {
+				t.Errorf("%s imports the test-support package %s, which would link a fake into the binary",
+					file, imported)
+			}
+		}
+	}
 }

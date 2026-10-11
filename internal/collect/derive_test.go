@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/NaejEL/opnview/internal/plugin"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -20,7 +22,7 @@ import (
 func interfacesBody(t *testing.T) map[string]any {
 	t.Helper()
 	var body map[string]any
-	if err := json.Unmarshal(fixtureBody(t, "interfaces_info.json"), &body); err != nil {
+	if err := json.Unmarshal(providertest.FixtureBody(t, "interfaces_info.json"), &body); err != nil {
 		t.Fatalf("decoding the interfaces fixture: %v", err)
 	}
 	return body
@@ -87,7 +89,7 @@ func TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway(t *testing.T) {
 			object["gateways"] = []any{"192.0.2.254"}
 		}
 	}
-	harness.fake.answerJSON(opnsense.InterfacesInfo, moved)
+	harness.fake.AnswerJSON(opnsense.InterfacesInfo, moved)
 	if err := harness.collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("discovering: %v", err)
 	}
@@ -105,7 +107,7 @@ func TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway(t *testing.T) {
 		object["identifier"] = fmt.Sprintf("example_renamed_%d", index)
 		object["device"] = fmt.Sprintf("exrenamed%d", index)
 	}
-	harness.fake.answerJSON(opnsense.InterfacesInfo, renamed)
+	harness.fake.AnswerJSON(opnsense.InterfacesInfo, renamed)
 	if err := harness.collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("discovering: %v", err)
 	}
@@ -151,7 +153,7 @@ func render(value *int64) string {
 func TestTheClassificationDoesNotDependOnTheOrderRecordsArrive(t *testing.T) {
 	t.Parallel()
 	var records []any
-	if err := json.Unmarshal(fixtureBody(t, "firewall_log.json"), &records); err != nil {
+	if err := json.Unmarshal(providertest.FixtureBody(t, "firewall_log.json"), &records); err != nil {
 		t.Fatalf("decoding the filter-log fixture: %v", err)
 	}
 	// Two more records that make the order matter: a remote address named first on an
@@ -174,7 +176,7 @@ func TestTheClassificationDoesNotDependOnTheOrderRecordsArrive(t *testing.T) {
 	for _, page := range [][]any{records, reversed} {
 		harness := newProbeHarness(t)
 		arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-		harness.fake.answerJSON(opnsense.FirewallLog, page)
+		harness.fake.AnswerJSON(opnsense.FirewallLog, page)
 		if err := harness.collector.probeFirewallLog(context.Background()); err != nil {
 			t.Fatalf("probing: %v", err)
 		}
@@ -265,7 +267,7 @@ func TestOnePairReadOnTwoInterfacesAtOneInstantIsTwoReadings(t *testing.T) {
 			"details": []any{map[string]any{"address": "203.0.113.9", "rate_bits": 100, "cumulative_bytes": 25}},
 		}}}
 	}
-	harness.fake.answerJSON(opnsense.TrafficTop, map[string]any{"example_if_a": pair(), "example_if_b": pair()})
+	harness.fake.AnswerJSON(opnsense.TrafficTop, map[string]any{"example_if_a": pair(), "example_if_b": pair()})
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
@@ -345,19 +347,19 @@ func TestTelemetryIsSampledFromVerifiedFieldsAndAMissingFieldIsNoSample(t *testi
 		t.Errorf("the swap endpoint is registered at %s", registered)
 	}
 	for _, text := range []string{"1.2 ms", "0.0 ms"} {
-		if _, ok := parseMilliseconds(text); !ok {
+		if _, ok := insightParse(t, "parse_milliseconds", text); !ok {
 			t.Errorf("%q was not read", text)
 		}
 	}
 	for _, text := range []string{"~", "", "1.2", "-3 ms"} {
-		if _, ok := parseMilliseconds(text); ok {
+		if _, ok := insightParse(t, "parse_milliseconds", text); ok {
 			t.Errorf("%q was read as a round-trip time", text)
 		}
 	}
-	if value, ok := parseLossRatio("12.5 %"); !ok || value != 0.125 {
+	if value, ok := insightParse(t, "parse_loss_ratio", "12.5 %"); !ok || value != 0.125 {
 		t.Errorf("12.5 %% was read as %v", value)
 	}
-	if _, ok := parseLossRatio("~"); ok {
+	if _, ok := insightParse(t, "parse_loss_ratio", "~"); ok {
 		t.Error("~ was read as a loss")
 	}
 }
@@ -366,7 +368,7 @@ func TestTelemetryIsSampledFromVerifiedFieldsAndAMissingFieldIsNoSample(t *testi
 func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.fake.answer(opnsense.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
+	harness.fake.Answer(opnsense.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
@@ -379,7 +381,7 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 		t.Errorf("%d gateway readings were stored from an endpoint that did not answer", rows)
 	}
 
-	harness.fake.answerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "failed"})
+	harness.fake.AnswerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "failed"})
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
@@ -397,7 +399,7 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.fake.answer(opnsense.SystemSwap, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
+	harness.fake.Answer(opnsense.SystemSwap, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
@@ -412,7 +414,7 @@ func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 
 	// A firewall with no swap device is a fact about the machine, recorded, never a zero.
 	harness.clock.advance(time.Minute)
-	harness.fake.answerJSON(opnsense.SystemSwap, map[string]any{"swap": []any{}})
+	harness.fake.AnswerJSON(opnsense.SystemSwap, map[string]any{"swap": []any{}})
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
@@ -444,7 +446,7 @@ func TestTheRefreshRunsAfterEachFilterLogPass(t *testing.T) {
 		t.Error("the pass derived no per-pair volume")
 	}
 	// A pass that reads nothing still refreshes the current slots.
-	harness.fake.answerJSON(opnsense.FirewallLog, []any{})
+	harness.fake.AnswerJSON(opnsense.FirewallLog, []any{})
 	harness.clock.advance(time.Minute)
 	if err := harness.collector.CollectFirewallLog(context.Background()); err != nil {
 		t.Fatalf("collecting an empty page: %v", err)
@@ -574,4 +576,25 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 		WHERE period_start_at = ?`, closedHour); int64(computed) <= stamped {
 		t.Errorf("the slot is stamped %d, not later than its rows' %d, so it would never rest", computed, stamped)
 	}
+}
+
+// insightParse calls one of the insight plugin's dpinger parsers, as the sampler reads a gateway
+// figure: the value and whether it was read.
+func insightParse(t *testing.T, function, text string) (float64, bool) {
+	t.Helper()
+	insight, found := plugin.BuiltinsLoaded().Plugin("insight")
+	if !found {
+		t.Fatal("the insight plugin is not loaded")
+	}
+	answer, err := insight.Call(context.Background(), nil, "helpers", function, text)
+	if err != nil {
+		t.Fatalf("calling insight helpers.%s: %v", function, err)
+	}
+	switch value := answer.(type) {
+	case float64:
+		return value, true
+	case int64:
+		return float64(value), true
+	}
+	return 0, false
 }

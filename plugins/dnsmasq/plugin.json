@@ -1,0 +1,55 @@
+{
+  "api_version": 1,
+  "name": "dnsmasq",
+  "version": "1.0.0",
+  "display_name": "Dnsmasq",
+  "description": "Reads Dnsmasq's DHCP lease table, and probes Dnsmasq as a resolver, whose lookups, cache and local data the API does not expose (data sources 4 and 5).",
+  "script": "dnsmasq.js",
+  "endpoints": [
+    {
+      "name": "leases",
+      "path": "/api/dnsmasq/leases/search",
+      "corrections": {"nature": "snapshot", "key": ["address"], "parameters": {"current": "page", "rowCount": "page_size"}},
+      "method": "POST",
+      "body": "form",
+      "survey_section": "Verified against a live firewall, 2026-09-27",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Dnsmasq/Api/LeasesController.php",
+      "note": "Rows carry hwaddr, address, hostname, client_id, expire, is_reserved, mac_info and the interface under all three of its names. No parser is needed."
+    },
+    {
+      "name": "status",
+      "path": "/api/dnsmasq/service/status",
+      "method": "GET",
+      "survey_section": "Data source 4 — DHCP leases",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Dnsmasq/Api/ServiceController.php",
+      "note": "status field."
+    },
+    {
+      "name": "settings",
+      "path": "/api/dnsmasq/settings/get",
+      "method": "GET",
+      "survey_section": "Data source 4 — DHCP leases",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Dnsmasq/Dnsmasq.xml",
+      "note": "dnsmasq.enable (not enabled), dnsmasq.dhcp_ranges, dnsmasq.log_queries. See also https://docs.opnsense.org/manual/dnsmasq.html"
+    }
+  ],
+  "providers": [
+    {
+      "kind": "dhcp_lease",
+      "display_name": "Dnsmasq DHCP",
+      "read_strategy": "full_reread"
+    },
+    {
+      "kind": "dns_lookup",
+      "display_name": "Dnsmasq resolver"
+    },
+    {
+      "kind": "resolver_cache",
+      "display_name": "Dnsmasq cache"
+    },
+    {
+      "kind": "resolver_local_data",
+      "display_name": "Dnsmasq local data"
+    }
+  ]
+}

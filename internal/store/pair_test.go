@@ -70,8 +70,8 @@ func (n *testNetwork) derivePairs(t *testing.T, addresses []string, from, to int
 func pairState(t *testing.T, database *Store) string {
 	t.Helper()
 	rows, err := database.DB().Query(`SELECT f.interface_device || ' ' || f.src_address || ' ' || f.dst_address || ' ' || f.observed_at,
-		ifnull(f.pair_outcome, '-'),
-		ifnull(p.interface_device || ' ' || p.src_address || ' ' || p.dst_address || ' ' || p.observed_at, '-')
+		coalesce(f.pair_outcome, '-'),
+		coalesce(p.interface_device || ' ' || p.src_address || ' ' || p.dst_address || ' ' || p.observed_at, '-')
 		FROM flow AS f LEFT JOIN flow AS p ON p.id = f.paired_flow_id`)
 	if err != nil {
 		t.Fatalf("reading the pairs: %v", err)
@@ -93,8 +93,8 @@ func pairState(t *testing.T, database *Store) string {
 func outcomeOf(t *testing.T, database *Store, device, src, dst string) (string, string) {
 	t.Helper()
 	var outcome, partner string
-	if err := database.DB().QueryRow(`SELECT ifnull(f.pair_outcome, '-'),
-		ifnull(p.interface_device || ' ' || p.src_address || ' ' || p.dst_address, '-')
+	if err := database.DB().QueryRow(`SELECT coalesce(f.pair_outcome, '-'),
+		coalesce(p.interface_device || ' ' || p.src_address || ' ' || p.dst_address, '-')
 		FROM flow AS f LEFT JOIN flow AS p ON p.id = f.paired_flow_id
 		WHERE f.interface_device = ? AND f.src_address = ? AND f.dst_address = ?`, device, src, dst).
 		Scan(&outcome, &partner); err != nil {
@@ -339,7 +339,7 @@ func TestPairingReadsOnlyVerifiedFields(t *testing.T) {
 			t.Errorf("%s compares %v, whose invariance is not verified", name, offending)
 		}
 		for column := range verified {
-			if !strings.Contains(text, column+" IS :"+column) {
+			if !strings.Contains(text, column+" IS NOT DISTINCT FROM :"+column) {
 				t.Errorf("%s does not compare the verified field %s", name, column)
 			}
 		}

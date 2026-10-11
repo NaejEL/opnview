@@ -1,0 +1,96 @@
+{
+  "manifest_version": 1,
+  "type": "owner_activity",
+  "shape": "cards",
+  "providers": [
+    "firewall_log"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "owners",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "owner",
+      "class": "data"
+    },
+    {
+      "key": "include_unassigned",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    },
+    {
+      "key": "measure",
+      "kind": "enum",
+      "values": [
+        "bytes",
+        "allowed",
+        "blocked"
+      ],
+      "default": "bytes",
+      "class": "data"
+    },
+    {
+      "key": "scope",
+      "kind": "enum",
+      "values": [
+        "all",
+        "east_west",
+        "north_south"
+      ],
+      "default": "all",
+      "class": "data"
+    },
+    {
+      "key": "sort",
+      "kind": "enum",
+      "values": [
+        "volume",
+        "blocked",
+        "name",
+        "machines"
+      ],
+      "default": "volume",
+      "class": "data"
+    },
+    {
+      "key": "clients_per_card",
+      "kind": "integer",
+      "default": 6,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "show_timeline",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    }
+  ],
+  "references": [
+    "owner"
+  ],
+  "queries": [
+    "owner_activity.statements.sql"
+  ],
+  "script": "owner_activity.js",
+  "renderer": {
+    "reserved": true
+  }
+}

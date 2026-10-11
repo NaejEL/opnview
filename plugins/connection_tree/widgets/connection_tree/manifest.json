@@ -1,0 +1,115 @@
+{
+  "manifest_version": 1,
+  "type": "connection_tree",
+  "shape": "tree",
+  "providers": [
+    "firewall_log",
+    "dns_lookup",
+    "ip_geolocation"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "root",
+      "kind": "enum",
+      "values": [
+        "interface",
+        "client",
+        "owner"
+      ],
+      "default": "interface",
+      "class": "data"
+    },
+    {
+      "key": "depth",
+      "kind": "integer",
+      "default": 2,
+      "min": 1,
+      "max": 2,
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "clients",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "client",
+      "class": "data"
+    },
+    {
+      "key": "owners",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "owner",
+      "class": "data"
+    },
+    {
+      "key": "measure",
+      "kind": "enum",
+      "values": [
+        "bytes",
+        "connections"
+      ],
+      "default": "bytes",
+      "class": "data"
+    },
+    {
+      "key": "limit_per_level",
+      "kind": "integer",
+      "default": 10,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "sort",
+      "kind": "enum",
+      "values": [
+        "volume",
+        "connections",
+        "name",
+        "recency"
+      ],
+      "default": "volume",
+      "class": "data"
+    },
+    {
+      "key": "include_blocked",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client",
+    "interface",
+    "owner"
+  ],
+  "queries": [
+    "connection_tree.statements.sql"
+  ],
+  "script": "connection_tree.js",
+  "renderer": {
+    "reserved": true
+  }
+}

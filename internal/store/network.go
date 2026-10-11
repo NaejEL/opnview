@@ -151,7 +151,7 @@ func (s *Store) DetectNetworks(ctx context.Context, interfaceID int64, prefixes 
 			 ON CONFLICT (interface_id, network_address, prefix_length) DO UPDATE SET
 			     first_detected_at = coalesce(interface_network.first_detected_at,
 			                                  excluded.first_detected_at),
-			     last_detected_at = max(coalesce(interface_network.last_detected_at, 0),
+			     last_detected_at = GREATEST(coalesce(interface_network.last_detected_at, 0),
 			                            excluded.last_detected_at)`,
 			interfaceID, masked.Addr().String(), masked.Bits(), familyOfPrefix(masked),
 			now, now, now); err != nil {
@@ -367,7 +367,7 @@ func (s *Store) OnLinkFingerprint(ctx context.Context) (string, error) {
 	// corrections, item 1.5). last_seen_at and is_current are left out: the first moves
 	// at every discovery, and the second only stops a holding from extending past
 	// the instant the address was last seen, which no row already placed precedes by
-	// more than the margin -- see firewall_address_holdings in derive.sql.
+	// more than the margin -- see firewall_address_holdings in thisfirewall.statements.sql.
 	rows, err = s.db.QueryContext(ctx,
 		`SELECT address, interface_id, first_seen_at FROM this_firewall_address`)
 	if err != nil {

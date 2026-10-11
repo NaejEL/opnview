@@ -360,7 +360,7 @@ func (s *cacheScenario) rows(t *testing.T) []attributionRow {
 // attributionRows reads every attribution, by content.
 func attributionRows(t *testing.T, database *Store) []attributionRow {
 	t.Helper()
-	rows, err := database.DB().Query(`SELECT a.site_name, a.method, ifnull(o.owner_name, ''),
+	rows, err := database.DB().Query(`SELECT a.site_name, a.method, coalesce(o.owner_name, ''),
 		a.correlation_delay_seconds
 		FROM domain_attribution AS a
 		LEFT JOIN resource_record_observation AS o ON o.id = a.address_observation_id
@@ -541,7 +541,7 @@ func (s *cacheScenario) pollLocalDataAround(t *testing.T, secondsBefore int64, r
 // "" for an attribution that names none.
 func namedObservationHeldIn(t *testing.T, database *Store) []string {
 	t.Helper()
-	rows, err := database.DB().Query(`SELECT ifnull(o.held_in, '') FROM domain_attribution AS a
+	rows, err := database.DB().Query(`SELECT coalesce(o.held_in, '') FROM domain_attribution AS a
 		LEFT JOIN resource_record_observation AS o ON o.id = a.address_observation_id
 		ORDER BY a.site_name`)
 	if err != nil {
@@ -809,7 +809,7 @@ type fullAttributionRow struct {
 func fullAttributionRows(t *testing.T, database *Store) []fullAttributionRow {
 	t.Helper()
 	rows, err := database.DB().Query(`SELECT f.log_digest, r.lookup_key, a.site_name, a.method,
-		ifnull(o.owner_name || ' ' || o.rrtype || ' ' || o.value || ' ' || o.first_seen_at, ''),
+		coalesce(o.owner_name || ' ' || o.rrtype || ' ' || o.value || ' ' || o.first_seen_at, ''),
 		a.correlation_delay_seconds
 		FROM domain_attribution AS a
 		JOIN flow AS f ON f.id = a.flow_id
@@ -979,7 +979,7 @@ func TestTheMethodCheckRefusesAnUnknownValue(t *testing.T) {
 		"UPDATE domain_attribution SET method = 'resolver_cache_answer'",
 	} {
 		_, err := scenario.network.db.DB().Exec(statement)
-		if err == nil || !strings.Contains(err.Error(), "constraint failed") {
+		if !IsConstraintViolation(err) {
 			t.Errorf("%s gave %v, not a constraint failure", statement, err)
 		}
 	}
@@ -1235,36 +1235,40 @@ func TestThePurgeRemovesEndedObservationsAndKeepsReferencedOnes(t *testing.T) {
 		}
 	}
 	if violations := foreignKeyViolations(t, database); violations != 0 {
-		t.Errorf("after the purge, PRAGMA foreign_key_check reports %d rows", violations)
+		t.Errorf("after the purge, %d rows name a row that does not exist", violations)
 	}
 }
 
-// TestALoggedHostNameNoLeaseNamesResolvesThroughTheLocalData is AC16's store half: one
-// address answering gives local_data_hostname, two give ambiguous_hostname, and the local
-// data valid at the lookup's instant is what is read.
+// TestALoggedHostNameNoLeaseNamesResolvesThroughTheLocalData is AC16's store half, as
+// amended by group C of specs/SPEC-step-5b-widget-api.md: one address answering gives
+// local_data_hostname; two addresses of one family give ambiguous_hostname; one A and one
+// AAAA of one name with no querying family reported give dual_stack_hostname; and the
+// local data valid at the lookup's instant is what is read.
 func TestALoggedHostNameNoLeaseNamesResolvesThroughTheLocalData(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
-	pollLocalData(t, database, referenceNow,
+	records := []ResourceRecord{
 		localAddressRecord("single.example.test", outside(11, true)),
 		localAddressRecord("double.example.test", outside(12, false)),
-		localAddressRecord("double.example.test", outside(13, true)))
-	pollLocalData(t, database, referenceNow+300,
-		localAddressRecord("single.example.test", outside(11, true)),
-		localAddressRecord("double.example.test", outside(12, false)),
-		localAddressRecord("double.example.test", outside(13, true)))
+		localAddressRecord("double.example.test", outside(13, true)),
+		localAddressRecord("twofour.example.test", outside(14, false)),
+		localAddressRecord("twofour.example.test", outside(15, false)),
+	}
+	pollLocalData(t, database, referenceNow, records...)
+	pollLocalData(t, database, referenceNow+300, records...)
 	for _, testCase := range []struct {
 		logged, wantResolution, wantAddress string
 		at                                  int64
 	}{
 		{"SINGLE.example.test.", ClientResolutionLocalData, outside(11, true), referenceNow + 100},
 		{"single", ClientResolutionLocalData, outside(11, true), referenceNow + 300},
-		{"double.example.test", ClientResolutionAmbiguous, "double.example.test", referenceNow + 100},
+		{"double.example.test", ClientResolutionDualStack, "double.example.test", referenceNow + 100},
+		{"twofour.example.test", ClientResolutionAmbiguous, "twofour.example.test", referenceNow + 100},
 		{"single.example.test", ClientResolutionUnknown, "single.example.test", referenceNow + 301},
 		{"absent.example.test", ClientResolutionUnknown, "absent.example.test", referenceNow + 100},
 	} {
-		address, resolution, err := database.ResolveLoggedHostname(ctx, testCase.logged, testCase.at)
+		address, resolution, err := database.ResolveLoggedHostname(ctx, testCase.logged, nil, testCase.at)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1293,52 +1297,21 @@ func TestTheNewStatementsSearchAnIndex(t *testing.T) {
 		var arguments []any
 		for _, parameter := range []string{"address", "at", "name", "start", "end", "client_id", "label",
 			"provider_id", "owner_name", "rrtype", "value", "previous_at", "from", "to"} {
-			if usesParameter(text, parameter) {
+			if !usesParameter(text, parameter) {
+				continue
+			}
+			switch parameter {
+			case "address", "name", "label", "owner_name", "rrtype", "value":
+				arguments = append(arguments, sql.Named(parameter, "example"))
+			default:
 				arguments = append(arguments, sql.Named(parameter, referenceNow))
 			}
 		}
-		rows, err := database.DB().Query("EXPLAIN QUERY PLAN "+text, arguments...)
-		if err != nil {
-			t.Fatalf("planning %s: %v", name, err)
-		}
-		for rows.Next() {
-			var id, parent, unused int
-			var detail string
-			if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-				t.Fatal(err)
+		plan := planOf(t, database, text, arguments...)
+		for _, table := range []string{"resource_record_observation", "dns_resolution", "flow"} {
+			if scans(plan, table) {
+				t.Errorf("%s scans %s: %+v", name, table, plan)
 			}
-			for _, table := range []string{"resource_record_observation", "dns_resolution", "flow"} {
-				if strings.HasPrefix(detail, "SCAN") && containsWord(detail, table) {
-					t.Errorf("%s scans %s: %s", name, table, detail)
-				}
-			}
-		}
-		_ = rows.Close()
-	}
-}
-
-// TestTheDatabaseIsOpenedWithSynchronousNormalBesideWAL is AC20.
-func TestTheDatabaseIsOpenedWithSynchronousNormalBesideWAL(t *testing.T) {
-	t.Parallel()
-	database, _ := openTestStore(t)
-	if synchronous := queryInt(t, database, "PRAGMA synchronous"); synchronous != 1 {
-		t.Errorf("PRAGMA synchronous is %d, not 1 (NORMAL)", synchronous)
-	}
-	var mode string
-	if err := database.DB().QueryRow("PRAGMA journal_mode").Scan(&mode); err != nil {
-		t.Fatal(err)
-	}
-	if mode != "wal" {
-		t.Errorf("PRAGMA journal_mode is %q, not wal", mode)
-	}
-	source, err := os.ReadFile("store.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, citation := range []string{"https://www.sqlite.org/pragma.html#pragma_synchronous",
-		"https://www.sqlite.org/wal.html", "9 October\n\t// 2026"} {
-		if !strings.Contains(string(source), citation) {
-			t.Errorf("store.go does not document the trade with %q", citation)
 		}
 	}
 }

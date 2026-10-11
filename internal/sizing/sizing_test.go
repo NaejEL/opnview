@@ -11,6 +11,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
 // The tests of the derivation. Rebuilt after the loss of 2 October 2026: the
@@ -278,7 +279,7 @@ func TestTheMeasurementSQLIsTheDiagnosticInTheRepository(t *testing.T) {
 // reads.
 func TestTheRegistryAgreesWithTheSchema(t *testing.T) {
 	ctx := context.Background()
-	database, err := store.Open(ctx, t.TempDir())
+	database, err := store.Open(ctx, storetest.Database(t))
 	if err != nil {
 		t.Fatalf("opening a database: %v", err)
 	}

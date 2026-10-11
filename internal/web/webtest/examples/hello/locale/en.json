@@ -1,0 +1,8 @@
+{
+  "language": "en",
+  "strings": {
+    "hello.title": "Hello",
+    "hello.heading": "Hello",
+    "hello.greeting": "Accounts on this installation"
+  }
+}

@@ -18,7 +18,7 @@ import (
 // firewall (thisfirewall.go): it records the interface the address belonged to and no
 // client, and it is neither inside nor outside. The decision is per row, because it is
 // taken as of each row's own instant, and it is made inside the statements that place
-// the rows (derive.sql, classify_*).
+// the rows (classify.statements.sql, classify_*).
 //
 // MEMBERSHIP COMES FROM ON-LINK EVIDENCE AND FROM NOTHING ELSE. In order of
 // strength:
@@ -133,7 +133,7 @@ func (s *Store) Membership(ctx context.Context, address string) (*int64, error) 
 // its unplaced rows placed.
 //
 // Clients that nothing names any more afterwards, at the addresses placed in full,
-// are removed; see the purge statements in derive.sql for the exact guard.
+// are removed; see the purge statements in classify.statements.sql for the exact guard.
 func (s *Store) Reclassify(ctx context.Context, addresses []string, now int64) (Reclassification, error) {
 	unique := map[string]struct{}{}
 	for _, address := range addresses {
@@ -258,8 +258,13 @@ func (s *Store) reclassifyChunk(ctx context.Context, addresses []string, now int
 		return result, fmt.Errorf("store: starting a classification: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
-	// Every address runs the same statements, so each is prepared once per chunk.
-	prepared := newPreparedTx(transaction)
+	// Every address runs the same statements, each looking rows up by one address: PostgreSQL's
+	// generic plan for each is the plan every address gets, so it is planned once per connection
+	// rather than once per address.
+	if _, err := transaction.ExecContext(ctx, "SET LOCAL plan_cache_mode = force_generic_plan"); err != nil {
+		return result, fmt.Errorf("store: starting a classification: %w", err)
+	}
+	prepared := transaction
 
 	prefixes, err := loadPrefixes(ctx, prepared)
 	if err != nil {

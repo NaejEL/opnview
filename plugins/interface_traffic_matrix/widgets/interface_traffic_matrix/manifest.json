@@ -1,0 +1,72 @@
+{
+  "manifest_version": 1,
+  "type": "interface_traffic_matrix",
+  "shape": "matrix",
+  "providers": [
+    "firewall_log"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "scope",
+      "kind": "enum",
+      "values": [
+        "all",
+        "east_west",
+        "north_south",
+        "this_firewall"
+      ],
+      "default": "all",
+      "class": "data"
+    },
+    {
+      "key": "measure",
+      "kind": "enum",
+      "values": [
+        "bytes",
+        "allowed",
+        "blocked"
+      ],
+      "default": "bytes",
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "show_rules",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    }
+  ],
+  "references": [
+    "interface"
+  ],
+  "queries": [
+    "interface_traffic_matrix.statements.sql"
+  ],
+  "script": "interface_traffic_matrix.js",
+  "renderer": {
+    "reserved": true
+  }
+}

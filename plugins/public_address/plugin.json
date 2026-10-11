@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "public_address",
+  "version": "1.0.0",
+  "display_name": "Public address",
+  "description": "Per upstream interface, the addresses it holds and has held, each classified against the IANA special-purpose registries, so an installation behind an upstream NAT is said to be, never shown a private address as public.",
+  "widgets": [
+    "public_address"
+  ]
+}

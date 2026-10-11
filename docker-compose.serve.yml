@@ -34,6 +34,13 @@
 # Step 8 adds deployment. This file runs the service from source in the
 # development toolchain; it is not an install story and it is not a production
 # configuration.
+#
+# THE DATABASE. The service's store is its own PostgreSQL with TimescaleDB,
+# db-serve below, which `run serve` starts first and waits for. It publishes no
+# port: it is reached by name on this project's private network, by the serve
+# container alone. Its password is generated inside it at its first start, never
+# written here, and handed to opnview as a passfile on a volume only these two
+# services mount; opnview reads its connection from OPNVIEW_DATABASE.
 
 services:
   serve:
@@ -45,25 +52,105 @@ services:
     # cannot be reached on the container's own loopback.
     ports:
       - "${OPNVIEW_LISTEN:?set OPNVIEW_LISTEN to the port to serve on, e.g. OPNVIEW_LISTEN=8080}:${OPNVIEW_LISTEN}"
-    # --data-dir is /data, the named volume the base file mounts: the database,
-    # its -wal and -shm companions and the encryption key file live there and
-    # never in the working tree. That is what makes the key file survive a
-    # restart and stay out of git status.
+    environment:
+      # The installation's own database, by name on the private network, with the
+      # password read from the passfile db-serve generated.
+      OPNVIEW_DATABASE: "host=db-serve port=5432 user=opnview dbname=opnview passfile=/run/opnview-database/pgpass sslmode=disable"
+    volumes:
+      - serve-database-secret:/run/opnview-database:ro
+    depends_on:
+      db-serve:
+        condition: service_healthy
+    # --data-dir is /data, the named volume the base file mounts: the encryption
+    # key file and the plugins' data live there and never in the working tree.
+    # That is what makes the key file survive a restart and stay out of git
+    # status. The database is db-serve's. The command runs through sh so that
+    # $$OPNVIEW_DATABASE is the container's own variable, read when it starts.
     command:
-      - "go"
-      - "run"
-      - "./cmd/opnview"
-      - "--data-dir"
-      - "/data"
-      - "--listen"
-      - "0.0.0.0:${OPNVIEW_LISTEN}"
+      - "sh"
+      - "-c"
+      - "exec go run ./cmd/opnview --data-dir /data --database \"$$OPNVIEW_DATABASE\" --listen 0.0.0.0:${OPNVIEW_LISTEN}"
+
+  # The everyday test database of the base file, declared here because serve
+  # extends dev, and dev waits for it: `extends` carries that dependency with it.
+  # The project is the same, so it is the same service as the base file's.
+  db-test:
+    extends:
+      file: docker-compose.yml
+      service: db-test
+
+  # The installation's database: the pinned TimescaleDB image of the base file
+  # (the pin is written once, there), with production durability, its data on a
+  # named volume of its own -- never `data` -- and no published port.
+  db-serve:
+    extends:
+      file: docker-compose.yml
+      service: db-predeployment
+    environment:
+      # The test services trust every connection; this one asks for the password.
+      POSTGRES_HOST_AUTH_METHOD: "scram-sha-256"
+      POSTGRES_USER: "opnview"
+      POSTGRES_DB: "opnview"
+      POSTGRES_PASSWORD_FILE: "/run/opnview-database/postgres-password"
+      # Who owns the passfile: the serve container's user (docker-compose.yml, UID).
+      OPNVIEW_SERVE_UID: "${OPNVIEW_UID:-1000}"
+      OPNVIEW_SERVE_GID: "${OPNVIEW_GID:-1000}"
+    volumes:
+      - serve-database:/var/lib/postgresql/data
+      - serve-database-secret:/run/opnview-database
+    # THE PASSWORD IS GENERATED HERE, at the first start, and kept on the secret
+    # volume: 40 random letters and digits, the database's own copy readable by
+    # its server alone, and a passfile for opnview readable by the serve
+    # container's user alone. A later start keeps them. Then the image's own
+    # entrypoint runs as it always does.
+    entrypoint:
+      - "sh"
+      - "-c"
+      - |
+        set -eu
+        secrets=/run/opnview-database
+        if [ ! -s "$$secrets/postgres-password" ]; then
+          umask 077
+          password="$$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 40)"
+          printf '%s' "$$password" > "$$secrets/postgres-password"
+          printf 'db-serve:5432:opnview:opnview:%s\n' "$$password" > "$$secrets/pgpass"
+        fi
+        chown postgres "$$secrets/postgres-password"
+        chmod 0400 "$$secrets/postgres-password"
+        chown "$$OPNVIEW_SERVE_UID:$$OPNVIEW_SERVE_GID" "$$secrets/pgpass"
+        chmod 0600 "$$secrets/pgpass"
+        exec docker-entrypoint.sh "$$@"
+      - "db-serve"
+    # Telemetry off, as on every database of this project. The Timescale License
+    # features are on: continuous aggregates, compression and native retention
+    # policies, free for self-hosted use under that licence (the maintainer's
+    # decision of 12 October 2026, recorded at the end of
+    # specs/SPEC-backend-completion-plugins.md). Background workers run, as they
+    # do in production.
+    command:
+      - "postgres"
+      - "-c"
+      - "timescaledb.telemetry_level=off"
+      - "-c"
+      - "timescaledb.license=timescale"
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "opnview", "-d", "opnview"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
 
 # `extends` copies a service definition and nothing else, so the named volumes
 # the base file declares have to be declared here too. The names are the same and
 # the Compose project is the same, so these resolve to the SAME volumes: the
 # account created through this file is the account `docker compose run --rm dev`
-# sees, and the Go caches are not rebuilt.
+# sees, and the Go caches are not rebuilt. serve-database and
+# serve-database-secret are this file's own: the installation's database and its
+# generated password.
 volumes:
   go-mod-cache:
   go-build-cache:
   data:
+  predeployment-database:
+  test-database-socket:
+  serve-database:
+  serve-database-secret:

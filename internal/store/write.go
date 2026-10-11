@@ -30,6 +30,61 @@ func (s *Store) ProviderID(ctx context.Context, kind, providerKey string) (int64
 	return id, nil
 }
 
+// EnsureProvider returns the id of a registry row, creating it, and the availability row the
+// schema gives every registry row, when it does not exist yet. created reports whether it did
+// not.
+//
+// It is what lets an implementation be added as a directory and nothing else: an
+// implementation declares its kind, key and display name in its provider.json, and the
+// collector registers it here at the first probe round, so no schema file lists it. The
+// schema's own seed holds the implementations that shipped first; a row that exists is left
+// exactly as it is, activeness and availability included, and the call then writes nothing.
+// A new row is inactive (activeness is the probe round's to decide) and starts as
+// `unavailable` / `not_yet_probed`, which is the seed's own starting state. A kind outside the
+// schema's CHECK list is refused by the schema, and the refusal is returned.
+func (s *Store) EnsureProvider(ctx context.Context, kind, providerKey, displayName string,
+	now int64) (int64, bool, error) {
+	var id int64
+	err := s.db.QueryRowContext(ctx,
+		"SELECT id FROM provider WHERE kind = ? AND provider_key = ?", kind, providerKey).Scan(&id)
+	if err == nil {
+		return id, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, false, fmt.Errorf("store: looking up provider %s/%s: %w", kind, providerKey, err)
+	}
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, false, fmt.Errorf("store: starting the registration of %s/%s: %w", kind, providerKey, err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	result, err := transaction.ExecContext(ctx,
+		"INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) "+
+			"VALUES (?, ?, ?, 0, ?) ON CONFLICT (kind, provider_key) DO NOTHING",
+		kind, providerKey, displayName, now)
+	if err != nil {
+		return 0, false, fmt.Errorf("store: registering provider %s/%s: %w", kind, providerKey, err)
+	}
+	inserted, err := result.RowsAffected()
+	if err != nil {
+		return 0, false, fmt.Errorf("store: registering provider %s/%s: %w", kind, providerKey, err)
+	}
+	if err := transaction.QueryRowContext(ctx,
+		"SELECT id FROM provider WHERE kind = ? AND provider_key = ?", kind, providerKey).Scan(&id); err != nil {
+		return 0, false, fmt.Errorf("store: looking up provider %s/%s: %w", kind, providerKey, err)
+	}
+	if _, err := transaction.ExecContext(ctx,
+		"INSERT INTO source_availability (provider_id, state, outcome, probe, detail, checked_at) "+
+			"SELECT ?, 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0 "+
+			"WHERE NOT EXISTS (SELECT 1 FROM source_availability WHERE provider_id = ?)", id, id); err != nil {
+		return 0, false, fmt.Errorf("store: giving provider %s/%s its availability row: %w", kind, providerKey, err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return 0, false, fmt.Errorf("store: committing the registration of %s/%s: %w", kind, providerKey, err)
+	}
+	return id, inserted == 1, nil
+}
+
 // ProviderKey returns the provider_key of one registry row. It is how a collector
 // learns which implementation the probe round activated without the registry's
 // names being compiled into a branch anywhere else.
@@ -141,16 +196,39 @@ func (s *Store) SetActiveProviders(ctx context.Context, kind string, providerKey
 	return nil
 }
 
-// SetAvailability records the state of one provider, the probe that determined
-// it and when. Exactly one row exists per registry row for the life of the
-// database, so this is an update and never an insert.
+// SetAvailability records the state of one provider, the outcome code of the probe
+// or read that determined it, the probe, and when. Exactly one row exists per
+// registry row for the life of the database, so this is an update and never an
+// insert. An outcome outside AvailabilityOutcomes is refused here, before the
+// schema's CHECK would refuse it.
 func (s *Store) SetAvailability(ctx context.Context, providerID int64,
-	state AvailabilityState, probe string, detail *string, checkedAt int64) error {
+	state AvailabilityState, outcome AvailabilityOutcome, probe string, detail *string,
+	checkedAt int64) error {
+	if !outcome.Valid() {
+		return fmt.Errorf("store: %q is not an availability outcome (provider %d)", outcome, providerID)
+	}
+	// The bounds of when the state began (coverage row 39 of docs/widget-api.md). The SET
+	// expressions read the row's PREVIOUS values, as PostgreSQL evaluates an UPDATE: a check
+	// finding another state than the recorded one bounds the change between the previous
+	// check (checked_at, still the old value here) and this one. The row's first check after
+	// it was created bounds nothing, because "not yet probed" is not a state anything was
+	// seen in; a check finding the same state keeps the bounds it had.
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE source_availability
-		 SET state = ?, probe = ?, detail = ?, checked_at = ?
-		 WHERE provider_id = ?`,
-		string(state), probe, detail, checkedAt, providerID)
+		 SET state_since_after_at = CASE
+		         WHEN state = :state THEN state_since_after_at
+		         WHEN outcome = 'not_yet_probed' THEN NULL
+		         ELSE LEAST(checked_at, :checked_at) END,
+		     state_since_by_at = CASE
+		         WHEN state = :state THEN state_since_by_at
+		         WHEN outcome = 'not_yet_probed' THEN NULL
+		         ELSE :checked_at END,
+		     state = :state, outcome = :outcome, probe = :probe, detail = :detail,
+		     checked_at = :checked_at
+		 WHERE provider_id = :provider_id`,
+		sql.Named("state", string(state)), sql.Named("outcome", string(outcome)),
+		sql.Named("probe", probe), sql.Named("detail", detail), sql.Named("checked_at", checkedAt),
+		sql.Named("provider_id", providerID))
 	if err != nil {
 		return fmt.Errorf("store: recording availability for provider %d: %w", providerID, err)
 	}
@@ -243,7 +321,7 @@ func (s *Store) UpsertInterfaceAddress(ctx context.Context, address InterfaceAdd
 	err = transaction.QueryRowContext(ctx,
 		`SELECT id, last_seen_at FROM interface_address
 		 WHERE interface_id = ? AND source_field = ? AND address = ?
-		   AND ifnull(prefix_length, -1) = ifnull(?, -1)
+		   AND coalesce(prefix_length, -1) = coalesce(?, -1)
 		 ORDER BY first_seen_at DESC LIMIT 1`,
 		address.InterfaceID, address.SourceField, address.Address, address.PrefixLength).
 		Scan(&latestID, &latestSeen)
@@ -253,14 +331,14 @@ func (s *Store) UpsertInterfaceAddress(ctx context.Context, address InterfaceAdd
 	}
 	if found && (previousDiscovery == nil || latestSeen >= *previousDiscovery) {
 		_, err = transaction.ExecContext(ctx,
-			"UPDATE interface_address SET last_seen_at = max(last_seen_at, ?) WHERE id = ?", now, latestID)
+			"UPDATE interface_address SET last_seen_at = GREATEST(last_seen_at, ?) WHERE id = ?", now, latestID)
 	} else {
 		_, err = transaction.ExecContext(ctx,
 			`INSERT INTO interface_address (interface_id, source_field, address, prefix_length,
 			                                address_family, first_seen_at, last_seen_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)
-			 ON CONFLICT (interface_id, source_field, address, ifnull(prefix_length, -1), first_seen_at)
-			 DO UPDATE SET last_seen_at = max(interface_address.last_seen_at, excluded.last_seen_at)`,
+			 ON CONFLICT (interface_id, source_field, address, coalesce(prefix_length, -1), first_seen_at)
+			 DO UPDATE SET last_seen_at = GREATEST(interface_address.last_seen_at, excluded.last_seen_at)`,
 			address.InterfaceID, address.SourceField, address.Address, address.PrefixLength,
 			address.AddressFamily, now, now)
 	}
@@ -295,21 +373,22 @@ func (s *Store) UpsertInterfaceMapEntry(ctx context.Context, device, description
 func (s *Store) UpsertRule(ctx context.Context, rule Rule, now int64) (int64, error) {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO rule (pf_label, description, action, direction, interface, legacy,
-		                   logs_matches, enabled, is_automatic, discovered_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                   logs_matches, enabled, is_automatic, discovered_at, destination_net)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (pf_label) DO UPDATE SET
-		     description   = excluded.description,
-		     action        = excluded.action,
-		     direction     = excluded.direction,
-		     interface     = excluded.interface,
-		     legacy        = excluded.legacy,
-		     logs_matches  = excluded.logs_matches,
-		     enabled       = excluded.enabled,
-		     is_automatic  = excluded.is_automatic,
-		     discovered_at = excluded.discovered_at`,
+		     description     = excluded.description,
+		     action          = excluded.action,
+		     direction       = excluded.direction,
+		     interface       = excluded.interface,
+		     legacy          = excluded.legacy,
+		     logs_matches    = excluded.logs_matches,
+		     enabled         = excluded.enabled,
+		     is_automatic    = excluded.is_automatic,
+		     discovered_at   = excluded.discovered_at,
+		     destination_net = excluded.destination_net`,
 		rule.PfLabel, rule.Description, rule.Action, rule.Direction, rule.Interface,
 		boolToNullableInt(rule.Legacy), boolToNullableInt(rule.LogsMatches), boolToNullableInt(rule.Enabled),
-		boolToInt(rule.IsAutomatic), now)
+		boolToInt(rule.IsAutomatic), now, rule.DestinationNet)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing rule %s: %w", rule.PfLabel, err)
 	}
@@ -426,9 +505,10 @@ func (s *Store) InsertDHCPLease(ctx context.Context, providerID int64, lease DHC
 // of its derivation (internal/collect, purge.go), and moves the records it removes
 // into the purged part of their hour; the filter-log page keeps offering them. A
 // collector that read the watermark first and inserted afterwards could store again a
-// record a purge removed in between, and count it twice. SQLite runs one write at a
-// time, so the watermark read inside the insert sees every purge that committed before
-// it, and a purge that commits after it purges the row once.
+// record a purge removed in between, and count it twice. Read inside the insert, the
+// watermark is read in the insert's own snapshot, which holds every purge that committed
+// before it; a purge that commits after it cannot see the row it has not committed yet,
+// leaves it, and the next purge removes it -- once.
 //
 // traffic_scope is not a parameter: it is derived here from interface membership
 // through ScopeOf, so a collector cannot write a scope that disagrees with the
@@ -493,11 +573,24 @@ func (s *Store) HasFlowDigest(ctx context.Context, digest string) (bool, error) 
 // UpsertBlocklist writes one observed list name and returns its id. The NAME is
 // observed; the PURPOSE is user input and is absent from this statement, exactly
 // as owner_id and user_label are absent from theirs.
-func (s *Store) UpsertBlocklist(ctx context.Context, name string, now int64) (int64, error) {
+//
+// lookedUpAt is the instant of the lookup that named the list, and the two instants
+// are the lookups', not the ingestion's (decision 14 of
+// specs/SPEC-step-5b-widget-api.md): first_seen_at is the earliest looked_up_at of a
+// lookup naming the list and last_seen_at the latest, so "when did this list last
+// refuse something" is answered by the resolver's own clock. NEITHER EVER MOVES
+// BACKWARDS. The resolver's ring buffer offers the same lookups again on every pass
+// and a pass may meet an older lookup after a newer one, so each instant only ever
+// widens: min() for the first, max() for the last. Writing the ingestion instant, as
+// this did until step 5B, made last_seen_at the time opnview read the buffer, which
+// is later than any lookup and says nothing about the list.
+func (s *Store) UpsertBlocklist(ctx context.Context, name string, lookedUpAt int64) (int64, error) {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO blocklist (name, first_seen_at, last_seen_at) VALUES (?, ?, ?)
-		 ON CONFLICT (name) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
-		name, now, now)
+		 ON CONFLICT (name) DO UPDATE SET
+		     first_seen_at = LEAST(blocklist.first_seen_at, excluded.first_seen_at),
+		     last_seen_at  = GREATEST(blocklist.last_seen_at, excluded.last_seen_at)`,
+		name, lookedUpAt, lookedUpAt)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing blocklist %s: %w", name, err)
 	}
@@ -525,7 +618,7 @@ func (s *Store) InsertDNSResolution(ctx context.Context, lookup DNSResolution) e
 func (s *Store) StoreDNSResolution(ctx context.Context, lookup DNSResolution) (bool, error) {
 	var blocklistID *int64
 	if lookup.BlocklistName != "" {
-		id, err := s.UpsertBlocklist(ctx, lookup.BlocklistName, lookup.IngestedAt)
+		id, err := s.UpsertBlocklist(ctx, lookup.BlocklistName, lookup.LookedUpAt)
 		if err != nil {
 			return false, err
 		}
@@ -537,14 +630,14 @@ func (s *Store) StoreDNSResolution(ctx context.Context, lookup DNSResolution) (b
 	}
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO dns_resolution (lookup_key, client_address, client_hostname,
-		                             client_resolution, client_id, domain, resolver,
+		                             client_resolution, client_family, client_id, domain, resolver,
 		                             action, answer_source, rcode, dnssec_status, blocklist_id,
 		                             looked_up_at, ingested_at)
-		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 WHERE NOT EXISTS (SELECT 1 FROM retention_purge WHERE purged_before > ?)
 		 ON CONFLICT (lookup_key) DO NOTHING`,
 		lookup.LookupKey, lookup.ClientAddress, lookup.ClientHostname, resolution,
-		lookup.ClientID, lookup.Domain, lookup.Resolver,
+		lookup.ClientFamily, lookup.ClientID, lookup.Domain, lookup.Resolver,
 		lookup.Action, lookup.AnswerSource, lookup.Rcode, lookup.DNSSECStatus, blocklistID,
 		lookup.LookedUpAt, lookup.IngestedAt, lookup.LookedUpAt)
 	if err != nil {
@@ -674,13 +767,13 @@ func (s *Store) MarkEveFileLost(ctx context.Context, fileID string, now int64) e
 // THERE IS NO COLLECTOR WRITE PATH FOR pair_volume_observation, and that is the
 // ruling rather than an omission: the table is DERIVED from `flow`, because the only
 // per-pair endpoint carries neither a port nor a protocol and `flow` carries both.
-// The derivation is the statement insert_pair_volume of derive.sql, run by the
+// The derivation is the statement insert_pair_volume of pairvolume.statements.sql, run by the
 // refresh in aggregate.go, and a test fails if anything else writes the table.
 
 // InsertMeasurementSample writes one reading. Re-reading the same instant is a
 // no-op, which is what a sampler restarting inside one interval needs.
 //
-// The conflict target names ifnull(provider_id, -1) because the uniqueness of a
+// The conflict target names coalesce(provider_id, -1) because the uniqueness of a
 // reading includes the provider — this kind admits several concurrently active
 // providers, and two of them reading one subject at one instant are two readings —
 // and because the firewall's own gauges carry a null provider, which a bare column
@@ -690,7 +783,7 @@ func (s *Store) InsertMeasurementSample(ctx context.Context, sample MeasurementS
 		`INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
 		                                 unit, value, sampled_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT (subject_kind, subject_key, measure, sampled_at, ifnull(provider_id, -1))
+		 ON CONFLICT (subject_kind, subject_key, measure, sampled_at, coalesce(provider_id, -1))
 		 DO NOTHING`,
 		sample.ProviderID, string(sample.SubjectKind), sample.SubjectKey,
 		string(sample.Measure), string(sample.Unit), sample.Value, sample.SampledAt)

@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "interface_volume_ranking",
+  "version": "1.0.0",
+  "display_name": "Interface volume ranking",
+  "description": "Interfaces ranked by logged volume, each bar carrying its bytes, its clients, its blocked connections, its east-west and north-south parts, and the rules naming it that do not log.",
+  "widgets": [
+    "interface_volume_ranking"
+  ]
+}

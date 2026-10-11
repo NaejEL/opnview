@@ -355,7 +355,7 @@ func TestReclassifyingAStepFourDatabaseClearsTheRemoteClients(t *testing.T) {
 		}
 	}
 	if violations := foreignKeyViolations(t, network.db); violations != 0 {
-		t.Errorf("PRAGMA foreign_key_check reports %d rows", violations)
+		t.Errorf("%d rows name a row that does not exist", violations)
 	}
 	if disagreements := scopeDisagreements(t, network.db); disagreements != 0 {
 		t.Errorf("%d flows break the traffic_scope CHECK", disagreements)
@@ -448,11 +448,11 @@ func TestALeaseNamingAnAddressSeenOnlyInFlowsRepointsItsRows(t *testing.T) {
 	}
 
 	if stale := queryInt(t, network.db, `SELECT count(*) FROM flow
-		WHERE src_address = ? AND src_client_id IS NOT ?`, client.address, leaseClient); stale != 0 {
+		WHERE src_address = ? AND src_client_id IS DISTINCT FROM ?`, client.address, leaseClient); stale != 0 {
 		t.Errorf("%d flows of the address still name the old identity", stale)
 	}
 	if stale := queryInt(t, network.db, `SELECT count(*) FROM dns_resolution
-		WHERE client_address = ? AND client_id IS NOT ?`, client.address, leaseClient); stale != 0 {
+		WHERE client_address = ? AND client_id IS DISTINCT FROM ?`, client.address, leaseClient); stale != 0 {
 		t.Errorf("%d lookups of the address still name the old identity", stale)
 	}
 	if attributed := queryInt(t, network.db, `SELECT count(*) FROM domain_attribution a

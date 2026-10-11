@@ -1,0 +1,72 @@
+{
+  "manifest_version": 1,
+  "type": "sites_by_client",
+  "shape": "matrix",
+  "providers": [
+    "dns_lookup",
+    "resolver_cache",
+    "firewall_log",
+    "dhcp_lease"
+  ],
+  "primary": "dns_lookup",
+  "windowed": true,
+  "no_domains": "whole",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "clients",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "client",
+      "class": "data"
+    },
+    {
+      "key": "sites_per_client",
+      "kind": "integer",
+      "default": 5,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "min_flows",
+      "kind": "integer",
+      "default": 1,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "show_attribution_rate",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client",
+    "interface"
+  ],
+  "queries": [],
+  "script": "sites_by_client.js",
+  "renderer": {
+    "reserved": true
+  }
+}

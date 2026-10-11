@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/NaejEL/opnview/internal/collect/securityevent"
 	"github.com/NaejEL/opnview/internal/store"
 )
 
@@ -57,21 +58,21 @@ func (c *Collector) CollectSecurityEvent(ctx context.Context) error {
 // first, and surveying its shape is what that cycle would begin with.
 func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeSource) error {
 	providerKey, providerID := active.providerKey, active.providerID
-	source, registered := securityEventSources[providerKey]
+	source, registered := c.sources.SecurityEvent.Lookup(providerKey)
 	if !registered {
 		return fmt.Errorf("collect: the active security_event provider %q has no implementation",
 			providerKey)
 	}
 
-	view, rotationResult, err := source.rotation(ctx, c)
+	view, rotationResult, err := source.Rotation(ctx, c)
 	if err != nil {
 		return err
 	}
-	if !view.known {
+	if !view.Known {
 		// The rotation view is unavailable, so a lost file cannot be told from a present one.
 		// The state is recorded and nothing is concluded.
-		if writeErr := c.writeAvailability(ctx, providerID, rotationResult.state,
-			rotationResult.probe, rotationResult.detail); writeErr != nil {
+		if writeErr := c.writeAvailability(ctx, providerID, rotationResult.State,
+			rotationResult.Outcome, rotationResult.Probe, rotationResult.Detail); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -82,15 +83,15 @@ func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeS
 		return err
 	}
 
-	if view.known {
+	if view.Known {
 		if err := c.recordLostRotations(ctx, providerID, view, watermarks, now); err != nil {
 			return err
 		}
 	}
 
-	records, result, readErr := source.alerts(ctx, c, c.pages().SecurityEvent)
-	if writeErr := c.writeAvailability(ctx, providerID, result.state,
-		result.probe, result.detail); writeErr != nil {
+	records, result, readErr := source.Alerts(ctx, c, c.pages().SecurityEvent)
+	if writeErr := c.writeAvailability(ctx, providerID, result.State,
+		result.Outcome, result.Probe, result.Detail); writeErr != nil {
 		return writeErr
 	}
 	if readErr != nil {
@@ -123,7 +124,7 @@ func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeS
 		var sequence *int64
 		if parsed, err := strconv.ParseInt(fileID, 10, 64); err == nil {
 			sequence = &parsed
-			if view.highestSequence != nil && parsed == *view.highestSequence {
+			if view.HighestSequence != nil && parsed == *view.HighestSequence {
 				state = "current"
 			}
 		}
@@ -150,10 +151,10 @@ func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeS
 //
 // A file already marked lost is skipped: one loss is one row, not an unbounded stream of
 // identical rows every minute.
-func (c *Collector) recordLostRotations(ctx context.Context, providerID int64, view rotationView,
+func (c *Collector) recordLostRotations(ctx context.Context, providerID int64, view securityevent.Rotation,
 	watermarks map[string]store.EveWatermark, now int64) error {
 	for fileID, watermark := range watermarks {
-		if _, still := view.present[fileID]; still {
+		if _, still := view.Present[fileID]; still {
 			continue
 		}
 		if watermark.RotationState == "lost" {
@@ -184,7 +185,7 @@ func (c *Collector) recordLostRotations(ctx context.Context, providerID int64, v
 // on. The source machine is not resolved here: the event's source end is placed by the same
 // classification as a flow's, after the pass, so an attacker's address outside never becomes a
 // client row.
-func buildSecurityEvent(record alertRecord, now int64) store.SecurityEvent {
+func buildSecurityEvent(record securityevent.Alert, now int64) store.SecurityEvent {
 	return store.SecurityEvent{
 		// The key is composed here, from the file and the offset inside it, because that is the
 		// pair the provider guarantees stable. The ingestion coordinate itself is not a column

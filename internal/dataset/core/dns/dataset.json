@@ -1,0 +1,16 @@
+{
+  "nature": "event",
+  "freshness": {"kind": "dns_lookup"},
+  "retention": {"column": "looked_up_at"},
+  "columns": [
+    {"name": "looked_up_at", "type": "integer", "role": "time"},
+    {"name": "domain", "type": "text", "carries_domain": true},
+    {"name": "resolver", "type": "text"},
+    {"name": "action", "type": "text"},
+    {"name": "rcode", "type": "text", "nullable": true},
+    {"name": "client_id", "type": "integer", "nullable": true},
+    {"name": "interface", "type": "text", "nullable": true},
+    {"name": "lookups", "type": "integer", "role": "measure", "unit": "lookup", "aggregations": ["sum", "count"]},
+    {"name": "blocked", "type": "integer", "role": "measure", "unit": "lookup", "aggregations": ["sum"]}
+  ]
+}

@@ -57,12 +57,9 @@ func TestEveryStatementPreparesForEveryPeriod(t *testing.T) {
 			texts = append(texts, text)
 		}
 		for _, text := range texts {
-			statement, err := database.DB().PrepareContext(ctx, text)
-			if err != nil {
-				t.Errorf("the statement %s does not prepare: %v", name, err)
-				continue
+			if err := explainStatement(ctx, database, text); err != nil {
+				t.Errorf("the statement %s does not plan: %v", name, err)
 			}
-			_ = statement.Close()
 		}
 	}
 	if _, err := Statement("no_such_statement"); err == nil {
@@ -150,7 +147,7 @@ func TestNoCodeMatchesALogReasonOutsideTheEstablishedSet(t *testing.T) {
 
 	// The view names every established value but `match` as a drop no rule expresses.
 	schema, _ := sqlFiles.ReadFile("schema.sql")
-	view := string(schema)[strings.Index(string(schema), "CREATE VIEW blocked_decision"):]
+	view := string(schema)[strings.Index(string(schema), "CREATE OR REPLACE VIEW blocked_decision"):]
 	for _, reason := range LogReasons {
 		if !strings.Contains(view, "'"+reason+"'") {
 			t.Errorf("blocked_decision does not place the established reason %s", reason)

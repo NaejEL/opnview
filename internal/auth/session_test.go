@@ -12,7 +12,7 @@ import (
 // memorySessions is a session store in a map.
 //
 // IT IS HERE RATHER THAN A DATABASE because what these tests are about is the two
-// bounds and the digest, and neither is a fact about SQLite. The bounds are asserted
+// bounds and the digest, and neither is a fact about the database. The bounds are asserted
 // through the real store as well, from internal/web, against a real database and a real
 // HTTP surface.
 type memorySessions struct {

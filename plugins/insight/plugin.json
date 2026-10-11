@@ -1,0 +1,99 @@
+{
+  "api_version": 1,
+  "name": "insight",
+  "version": "1.0.0",
+  "display_name": "NetFlow / Insight sampling",
+  "description": "Samples the live per-pair traffic snapshot and reads the firewall's own gauges: memory, processor, temperature, uptime, load, disk, interface counters, gateways and swap (data source 3).",
+  "script": "insight.js",
+  "endpoints": [
+    {
+      "name": "netflow_is_enabled",
+      "path": "/api/diagnostics/netflow/is_enabled",
+      "method": "GET",
+      "survey_section": "Data source 3 — NetFlow / Insight",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/NetflowController.php",
+      "note": "Returns {netflow: 0|1, local: 0|1}."
+    },
+    {
+      "name": "traffic_top",
+      "path": "/api/diagnostics/traffic/top",
+      "method": "GET",
+      "argument": "interface_names",
+      "survey_section": "Verified against a live firewall, 2026-09-27",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/TrafficController.php",
+      "note": "Per interface, a records[] of local addresses with rate_bits_in/out, cumulative_bytes_in/out and a details[] of peers. No port and no protocol."
+    },
+    {
+      "name": "traffic_interface",
+      "path": "/api/diagnostics/traffic/interface",
+      "method": "GET",
+      "survey_section": "Verified against a live firewall, 2026-09-27",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/TrafficController.php",
+      "note": "Per-interface counters."
+    },
+    {
+      "name": "system_resources",
+      "path": "/api/diagnostics/system/systemResources",
+      "method": "GET",
+      "survey_section": "Verified against a live firewall, 2026-09-27",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php",
+      "note": "Memory figures. Field names not established by the survey."
+    },
+    {
+      "name": "system_temperature",
+      "path": "/api/diagnostics/system/systemTemperature",
+      "method": "GET",
+      "survey_section": "Verified against a live firewall, 2026-09-27",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php",
+      "note": "Per-sensor temperatures. Absent on hardware with no sensor, which is a state and not a zero."
+    },
+    {
+      "name": "system_time",
+      "path": "/api/diagnostics/system/systemTime",
+      "method": "GET",
+      "survey_section": "Verified against a live firewall, 2026-09-27",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php",
+      "note": "Uptime and load average."
+    },
+    {
+      "name": "system_disk",
+      "path": "/api/diagnostics/system/systemDisk",
+      "method": "GET",
+      "survey_section": "Verified against a live firewall, 2026-09-27",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php",
+      "note": "Filesystem usage. Field names not established by the survey."
+    },
+    {
+      "name": "gateway_status",
+      "path": "/api/routes/gateway/status",
+      "method": "GET",
+      "survey_section": "Gateway status, read from source for step 5",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Routes/Api/GatewayController.php",
+      "note": "Returns {items: [...], status: ok | failed}; each item carries name, address, status, loss, delay and stddev, or ~ where dpinger has no figure."
+    },
+    {
+      "name": "system_swap",
+      "path": "/api/diagnostics/system/systemSwap",
+      "method": "GET",
+      "survey_section": "Swap, read from source for step 5",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php",
+      "note": "Returns {swap: [{device, total, used}]}, total and used as strings in KiB."
+    },
+    {
+      "name": "cpu_usage_stream",
+      "path": "/api/diagnostics/cpu_usage/stream",
+      "method": "GET",
+      "stream": true,
+      "survey_section": "Processor stream, read from source for the resolver-cache cycle",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/CpuUsageController.php",
+      "note": "text/event-stream, one event about every second and no end; read only with a bound."
+    }
+  ],
+  "providers": [
+    {
+      "kind": "measurement_sample",
+      "display_name": "NetFlow / Insight sampling",
+      "read_strategy": "full_reread"
+    }
+  ]
+}

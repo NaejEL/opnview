@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "sites_by_client",
+  "version": "1.0.0",
+  "display_name": "Sites by client",
+  "description": "Clients down the side and their top inferred site names across, each cell carrying the flows, the logged bytes and the named flows per method, with each client's attribution rate beside its row.",
+  "widgets": [
+    "sites_by_client"
+  ]
+}

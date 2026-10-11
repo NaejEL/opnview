@@ -96,9 +96,6 @@ const (
 	docsDiagnostics = "https://docs.opnsense.org/development/api/core/diagnostics.html"
 	docsFirewall    = "https://docs.opnsense.org/development/api/core/firewall.html"
 	docsInterfaces  = "https://docs.opnsense.org/development/api/core/interfaces.html"
-	docsIDS         = "https://docs.opnsense.org/development/api/core/ids.html"
-	docsUnbound     = "https://docs.opnsense.org/development/api/core/unbound.html"
-	docsDHCP        = "https://docs.opnsense.org/manual/dhcp.html"
 	docsKea         = "https://docs.opnsense.org/manual/kea.html"
 	docsDnsmasq     = "https://docs.opnsense.org/manual/dnsmasq.html"
 
@@ -121,8 +118,12 @@ const (
 	srcUnboundModel = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/Unbound.xml"
 	srcGateways     = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Routes/Api/GatewayController.php"
 	docsRoutes      = "https://docs.opnsense.org/development/api/core/routes.html"
-	srcSystemSwap   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php"
-	srcSwapInfo     = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/system/swapinfo.py"
+	srcSystem       = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/SystemController.php"
+	srcTraffic      = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/TrafficController.php"
+	// srcISCService is the end-of-life ISC DHCP plugin's service controller, in the plugins
+	// repository at the tag matching the core: its status action is ApiMutableServiceControllerBase's.
+	srcISCService = "https://github.com/opnsense/plugins/blob/26.7.3/net/isc-dhcp/src/opnsense/mvc/app/controllers/OPNsense/DHCPv4/Api/ServiceController.php"
+	srcSwapInfo   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/system/swapinfo.py"
 
 	// The resolver's cache and local data: the controller, the configd actions it runs,
 	// the script those actions run, and the ACL page that admits the paths.
@@ -151,6 +152,7 @@ const (
 	sectionVerified  = "Verified against a live firewall, 2026-09-27"
 	sectionGateway   = "Gateway status, read from source for step 5"
 	sectionSwap      = "Swap, read from source for step 5"
+	sectionVersions  = "Firewall versions, read from source for A19 (broker amendment)"
 	sectionCache     = "Resolver cache and local data, read from source for the resolver-cache cycle"
 	sectionCPU       = "Processor stream, read from source for the resolver-cache cycle"
 )
@@ -212,7 +214,7 @@ var (
 	// running. 404, 401 or 403 means absent or not permitted.
 	IDSStatus = Endpoint{
 		Path: "/api/ids/service/status", Method: http.MethodGet,
-		SurveySection: sectionSource2, UpstreamURL: docsIDS,
+		SurveySection: sectionSource2, UpstreamURL: srcIDSService,
 		Note: "status of running / stopped / disabled / unknown.",
 	}
 	// IDSSettings carries the configured state and the covered interfaces.
@@ -247,19 +249,19 @@ var (
 	// IT TAKES INTERFACE NAMES. A device name returns an empty array with
 	// HTTP 200, which is indistinguishable from an absence of traffic — hence
 	// the InterfaceNameArgument kind declared here, and the guard that acts on
-	// it, which is guardInterfaceNames in internal/collect/flowvolume_insight.go:
+	// it, which is GuardInterfaceNames in internal/collect/measurement/insight:
 	// it compares the names about to be sent against the device set discovery
 	// read from the firewall, and refuses rather than sampling.
 	TrafficTop = Endpoint{
 		Path: "/api/diagnostics/traffic/top", Method: http.MethodGet, Argument: InterfaceNameArgument,
-		SurveySection: sectionVerified, UpstreamURL: docsDiagnostics,
+		SurveySection: sectionVerified, UpstreamURL: srcTraffic,
 		Note: "Per interface, a records[] of local addresses with rate_bits_in/out, cumulative_bytes_in/out and a details[] of peers. No port and no protocol.",
 	}
 	// TrafficInterface carries the per-interface packet and byte counters,
 	// errors, link state and line rate.
 	TrafficInterface = Endpoint{
 		Path: "/api/diagnostics/traffic/interface", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: docsDiagnostics,
+		SurveySection: sectionVerified, UpstreamURL: srcTraffic,
 		Note: "Per-interface counters. The survey establishes the endpoint and not its field names.",
 	}
 
@@ -307,7 +309,7 @@ var (
 	// which is a state and not a fault.
 	ISCStatus = Endpoint{
 		Path: "/api/dhcpv4/service/status", Method: http.MethodGet,
-		SurveySection: sectionSource4, UpstreamURL: docsDHCP,
+		SurveySection: sectionSource4, UpstreamURL: srcISCService,
 		Note: "404 means the end-of-life plugin is not installed. /api/dhcpv4/leases/searchLease answered 404 on a live 26.7.3_11, so no lease read is attempted. See also " + docsKea,
 	}
 	// ARPTable is a client-identity source the survey's inferred text did not
@@ -342,7 +344,7 @@ var (
 	// separates "reporting is switched off" from "the resolver is down".
 	UnboundIsEnabled = Endpoint{
 		Path: "/api/unbound/overview/is_enabled", Method: http.MethodGet,
-		SurveySection: sectionSource5, UpstreamURL: docsUnbound,
+		SurveySection: sectionSource5, UpstreamURL: srcUnboundOver,
 		Note: "enabled field.",
 	}
 	// UnboundStatus probes the Unbound service.
@@ -370,25 +372,25 @@ var (
 	// the processor figure comes from CPUUsageStream, and nothing else was read from it.
 	SystemResources = Endpoint{
 		Path: "/api/diagnostics/system/systemResources", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: docsDiagnostics,
+		SurveySection: sectionVerified, UpstreamURL: srcSystem,
 		Note: "Memory figures. Field names not established by the survey.",
 	}
 	// SystemTemperature carries the per-sensor temperatures.
 	SystemTemperature = Endpoint{
 		Path: "/api/diagnostics/system/systemTemperature", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: docsDiagnostics,
+		SurveySection: sectionVerified, UpstreamURL: srcSystem,
 		Note: "Per-sensor temperatures. Absent on hardware with no sensor, which is a state and not a zero.",
 	}
 	// SystemTime carries the uptime and the load averages.
 	SystemTime = Endpoint{
 		Path: "/api/diagnostics/system/systemTime", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: docsDiagnostics,
+		SurveySection: sectionVerified, UpstreamURL: srcSystem,
 		Note: "Uptime and load average. Field names not established by the survey.",
 	}
 	// SystemDisk carries the filesystem usage.
 	SystemDisk = Endpoint{
 		Path: "/api/diagnostics/system/systemDisk", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: docsDiagnostics,
+		SurveySection: sectionVerified, UpstreamURL: srcSystem,
 		Note: "Filesystem usage. Field names not established by the survey.",
 	}
 
@@ -410,10 +412,18 @@ var (
 	// firewall.
 	SystemSwap = Endpoint{
 		Path: "/api/diagnostics/system/systemSwap", Method: http.MethodGet,
-		SurveySection: sectionSwap, UpstreamURL: srcSystemSwap,
+		SurveySection: sectionSwap, UpstreamURL: srcSystem,
 		Note: "Returns {swap: [{device, total, used}]}, total and used as strings in KiB, one " +
 			"entry per /dev/ line of swapinfo -k and no Total line; {swap: []} with no swap " +
 			"device. Script: " + srcSwapInfo + ". Listed in " + docsDiagnostics,
+	}
+
+	// SystemInformation carries the firewall's OPNsense version, read at every discovery pass so
+	// a plugin's version ranges (A19 of the broker amendment) follow an upgrade without a restart.
+	SystemInformation = Endpoint{
+		Path: "/api/diagnostics/system/systemInformation", Method: http.MethodGet,
+		SurveySection: sectionVersions, UpstreamURL: srcSystem,
+		Note: "The first versions entry is '<product name> <version>-<arch>'.",
 	}
 
 	// UnboundDumpCache is the resolver's cache: every record Unbound holds and has not
@@ -425,10 +435,10 @@ var (
 	// the dump's message-cache section, which Unbound's dump_msg_ref (daemon/cachedump.c)
 	// prints as `name class type flags`, with no TTL and no record data. The regular
 	// expression matches it with its optional TTL group absent, re.split yields None, and
-	// json.dumps writes null; `value` is then the flags, typically "0". The answer is {status: "ok", data: [...]}, or {status:
-	// "failed"} with no data when the script printed nothing -- which it does when Unbound
-	// is not running. Admitted by the ACL page "Services: Unbound" (page-services-unbound,
-	// pattern api/unbound/*).
+	// json.dumps writes null; `value` is then the flags, typically "0". The answer is
+	// {status: "ok", data: [...]}, or {status: "failed"} with no data when the script
+	// printed nothing -- which it does when Unbound is not running. Admitted by the ACL
+	// page "Services: Unbound" (page-services-unbound, pattern api/unbound/*).
 	UnboundDumpCache = Endpoint{
 		Path: "/api/unbound/diagnostics/dumpcache", Method: http.MethodGet,
 		SurveySection: sectionCache, UpstreamURL: srcUnboundDiag,
@@ -484,12 +494,17 @@ func Registry() []Endpoint {
 		SystemResources, SystemTemperature, SystemTime, SystemDisk,
 		GatewayStatus, SystemSwap,
 		UnboundDumpCache, UnboundListLocalData, CPUUsageStream,
+		SystemInformation,
 	}
 }
 
-// registered reports whether ep is a registry entry, compared on the fields
-// that decide what reaches the firewall.
+// registered reports whether ep is a registry entry, or an endpoint a plugin declared and
+// that was admitted at load (plugin_endpoints.go), compared on the fields that decide what
+// reaches the firewall.
 func registered(ep Endpoint) bool {
+	if admitted(ep) {
+		return true
+	}
 	for _, known := range Registry() {
 		if known.Path == ep.Path && known.Method == ep.Method &&
 			known.Encoding == ep.Encoding && known.Argument == ep.Argument &&

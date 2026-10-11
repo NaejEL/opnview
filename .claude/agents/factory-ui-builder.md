@@ -57,6 +57,20 @@ exactly one copy of it, in that document, so that it cannot diverge from
 itself. Go and read it. `factory-ergonomist` checks your work against that same
 table, so skipping it does not save you a round — it costs you one.
 
+## Modularity — absolute rule, checked before anything else
+
+`CLAUDE.md` is binding. **A widget is a directory holding its manifest, its
+query and its renderer. A language is a file. A theme is a file.** Somebody
+who has never read the source must be able to add any of them from the
+documentation alone. If adding one means editing a file that ships with the
+product (a list, a switch, a registry, a shared stylesheet or template), the
+rule is not met.
+
+Every widget, language or theme you add is discovered, not listed. The
+repository's modularity test, which adds one by writing files only, must pass
+and must cover every kind you touch. A screen that works but breaks this rule
+is not delivered.
+
 ## No resource loads from any host, ever
 
 `opnview` makes exactly three outbound calls: the firewall API on the local

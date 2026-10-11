@@ -1,0 +1,17 @@
+{
+  "nature": "event",
+  "freshness": {"kind": "security_event"},
+  "retention": {"column": "occurred_at"},
+  "columns": [
+    {"name": "occurred_at", "type": "integer", "role": "time"},
+    {"name": "signature", "type": "text"},
+    {"name": "event_action", "type": "text"},
+    {"name": "normalised_severity", "type": "text", "nullable": true},
+    {"name": "protocol", "type": "text", "nullable": true},
+    {"name": "src_client_id", "type": "integer", "nullable": true},
+    {"name": "src_interface", "type": "text", "nullable": true},
+    {"name": "dst_port", "type": "integer", "nullable": true},
+    {"name": "events", "type": "integer", "role": "measure", "unit": "event", "aggregations": ["sum", "count"]},
+    {"name": "blocked", "type": "integer", "role": "measure", "unit": "event", "aggregations": ["sum"]}
+  ]
+}

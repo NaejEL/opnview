@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -18,7 +19,7 @@ func arrangeFilterLogCollection(t *testing.T) *probeHarness {
 	t.Helper()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
 	if err := harness.collector.probeFirewallLog(context.Background()); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
@@ -38,7 +39,7 @@ func TestAFilterLogPassStoresEveryRecordAndResolvesBothJoinKeys(t *testing.T) {
 	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	harness.fake.assertEveryPathIsRegistered()
+	harness.fake.AssertEveryPathIsRegistered()
 
 	records := len(fixtureRecords(t, "firewall_log.json"))
 	if stored := countRows(t, harness.store, "flow"); stored != records {
@@ -124,16 +125,16 @@ func TestTheCollectorSendsNoDigestBecauseItIsNotACursor(t *testing.T) {
 		t.Fatalf("collecting: %v", err)
 	}
 
-	requests := harness.fake.requestsTo(opnsense.FirewallLog)
+	requests := harness.fake.RequestsTo(opnsense.FirewallLog)
 	if len(requests) == 0 {
 		t.Fatal("the filter log was never requested")
 	}
 	for _, request := range requests {
-		if request.query.Get("digest") != "" {
+		if request.Query.Get("digest") != "" {
 			t.Errorf("a poll sent digest=%q, which does nothing and implies a cursor that does "+
-				"not exist", request.query.Get("digest"))
+				"not exist", request.Query.Get("digest"))
 		}
-		if request.query.Get("limit") == "" {
+		if request.Query.Get("limit") == "" {
 			t.Error("a poll sent no limit, so its cost is unbounded")
 		}
 	}
@@ -266,12 +267,12 @@ func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
 			arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
 			// The provider is activated from a healthy probe first, so the collector is
 			// exercised rather than skipped.
-			harness.fake.answerJSON(opnsense.FirewallLog, []any{})
+			harness.fake.AnswerJSON(opnsense.FirewallLog, []any{})
 			if err := harness.collector.probeFirewallLog(context.Background()); err != nil {
 				t.Fatalf("probing: %v", err)
 			}
 
-			harness.fake.answer(opnsense.FirewallLog, testCase.status, []byte(testCase.body))
+			harness.fake.Answer(opnsense.FirewallLog, testCase.status, []byte(testCase.body))
 			err := harness.collector.CollectFirewallLog(context.Background())
 			if testCase.wantState == store.StateUnavailable && err == nil {
 				t.Fatalf("%s was collected without an error (%s)", testCase.name, testCase.because)
@@ -296,14 +297,14 @@ func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
 func TestACollectorWithNoActiveProviderDoesNothing(t *testing.T) {
 	t.Parallel()
 	harness := newProbeHarness(t)
-	harness.fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
 
 	if err := harness.collector.CollectFirewallLog(context.Background()); err != nil {
 		t.Fatalf("collecting with no active provider: %v", err)
 	}
-	if harness.fake.requestCount() != 0 {
+	if harness.fake.RequestCount() != 0 {
 		t.Fatalf("the collector made %d requests although no provider is active",
-			harness.fake.requestCount())
+			harness.fake.RequestCount())
 	}
 	if stored := countRows(t, harness.store, "flow"); stored != 0 {
 		t.Fatalf("%d flows were stored with no active provider", stored)
@@ -313,7 +314,7 @@ func TestACollectorWithNoActiveProviderDoesNothing(t *testing.T) {
 // fixtureRecords decodes a fixture whose body is an array of records.
 func fixtureRecords(t *testing.T, name string) []decode.Object {
 	t.Helper()
-	rows, err := decode.Rows(fixtureBody(t, name))
+	rows, err := decode.Rows(providertest.FixtureBody(t, name))
 	if err != nil {
 		t.Fatalf("decoding %s: %v", name, err)
 	}

@@ -1,0 +1,75 @@
+{
+  "manifest_version": 1,
+  "type": "blocked_by_firewall_rule",
+  "shape": "table",
+  "providers": [
+    "firewall_log"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "clients",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "client",
+      "class": "data"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 20,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "include_automatic",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    },
+    {
+      "key": "sort",
+      "kind": "enum",
+      "values": [
+        "blocked",
+        "clients",
+        "recency"
+      ],
+      "default": "blocked",
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client",
+    "interface"
+  ],
+  "queries": [
+    "blocked_by_firewall_rule.statements.sql"
+  ],
+  "script": "blocked_by_firewall_rule.js",
+  "renderer": {
+    "reserved": true
+  }
+}

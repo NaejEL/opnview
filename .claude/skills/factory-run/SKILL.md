@@ -25,6 +25,49 @@ Every other cycle keeps the current two agents, unchanged. If a spec carries no
 kind line, treat it as `standard`, and say so in the final report so the gap is
 visible rather than silently assumed.
 
+**The ergonomist runs only on the product the maintainer will use**: the
+canvas, widgets, themes and dashboards of `ROADMAP.md` step 7 and the mockup.
+A settings, diagnostic or administration page is reviewed by
+`factory-verifier` alone, and only on the **last** round, never on every round.
+A spec that is not step-7 product work is marked `standard` even if it renders
+HTML. It goes to `factory-ui-builder` for the markup, but gets no ergonomist.
+
+## Cost discipline — the maintainer pays for every token
+
+1. **Before launching any build**, tell the maintainer in one line:
+   - what will be built;
+   - whether it is the mockup's product or not;
+   - the estimated tokens, based on what comparable past cycles consumed.
+
+   Do not launch until he says go.
+2. **The test suites run only when the work is ready to be committed**, once,
+   at the end of the build. They never run after each change. `pre-deployment`
+   runs once per cycle, at that point and nowhere else.
+2b. **Only a blocking defect sends work back**: wrong behaviour, a broken
+   binding rule, or a data leak. A cosmetic or documentation finding is fixed in
+   passing or listed in the report, and never opens a new round.
+3. **One verifier per round.** Never launch two agents to check the same thing.
+4. **Pick the model to fit the task.** Moving code, renaming or mechanical
+   restructuring: `model: "sonnet"`. Design-heavy or adversarial work: the
+   default.
+5. **Never run two cycles that will touch the same files.** Order them; do not
+   parallelise them.
+
+## Every brief carries the binding rules
+
+Every Builder and Verifier brief **quotes**, not merely names, `CLAUDE.md`'s
+modularity rule:
+
+> A kind of thing is a seam and an implementation is a file behind it…
+> a widget is a directory holding its manifest, its query and its renderer…
+> if adding one means editing a file that ships with the product, the rule
+> is not met.
+
+Every brief also asks for the test that adds an implementation by writing
+files only. A cycle whose diff breaks modularity is not approved, whatever its
+acceptance criteria say. Briefs also name the prior deliverables the work
+builds on, the mockup included when screens are concerned.
+
 ## Language — absolute rule
 
 **Every artifact this cycle produces is written in English**: the spec, its
@@ -96,9 +139,10 @@ cycle**, whatever the number of verifiers.
 
 1. Launch a **new** `factory-verifier` subagent (blank context, independent of
    the Builder; never reuse a previous Verifier through SendMessage) with the
-   path to the spec. On an `interface` cycle, launch a **new**
-   `factory-ergonomist` in the same way, in addition to it, never instead of
-   it. Take the final JSON block from each reply.
+   path to the spec. On an `interface` cycle (step-7 product work only), launch
+   a **new** `factory-ergonomist` **only once `factory-verifier` has approved
+   the round**. Paying for eyes on a build that does not pass its own tests is
+   waste. Take the final JSON block from each reply.
 
    **On an `interface` cycle, serve the interface BEFORE launching the
    Ergonomist, and give it the address.** It has eyes and nothing else; a cycle

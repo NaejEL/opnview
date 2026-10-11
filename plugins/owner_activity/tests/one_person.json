@@ -1,0 +1,245 @@
+{
+  "type": "owner_activity",
+  "parameters": {
+    "clients_per_card": 6,
+    "include_unassigned": true,
+    "measure": "bytes",
+    "owners": null,
+    "period": "24h",
+    "scope": "all",
+    "show_timeline": false,
+    "sort": "volume"
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789914000,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "reachable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "reachable"
+    }
+  ],
+  "condition": "reachable",
+  "freshness": [
+    {
+      "period": "1h",
+      "slots_read": 0,
+      "last_computed_at": null,
+      "stale_slots": 0,
+      "stale": false
+    }
+  ],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "measure": "bytes",
+    "cards": [
+      {
+        "key": "owner:1",
+        "owner": {
+          "id": 1,
+          "display_name": "Example Person"
+        },
+        "value": 3200,
+        "volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 3200,
+          "allowed_bytes": 3000,
+          "blocked_bytes": 200,
+          "unknown_bytes": 0,
+          "connections": 2,
+          "allowed_connections": 1,
+          "blocked_connections": 1,
+          "unknown_connections": 0
+        },
+        "machines": 1,
+        "chips": [
+          {
+            "client": {
+              "id": 10,
+              "identity_kind": "mac",
+              "identity_key": "00:11:22:33:44:55",
+              "interface_id": 1,
+              "mac": "00:11:22:33:44:55",
+              "hostname": null,
+              "last_address": "192.0.2.10",
+              "owner_id": 1,
+              "owner_assigned_at": 1789999800,
+              "unstable_identity": false,
+              "last_seen_at": 1789999800
+            },
+            "state": "measured",
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 3200,
+              "allowed_bytes": 3000,
+              "blocked_bytes": 200,
+              "unknown_bytes": 0,
+              "connections": 2,
+              "allowed_connections": 1,
+              "blocked_connections": 1,
+              "unknown_connections": 0
+            },
+            "current_rate": {
+              "state": "no_current_sample",
+              "measure": "sampled",
+              "in_bits_per_second": null,
+              "out_bits_per_second": null,
+              "out_measured": false,
+              "sampled_at": null
+            }
+          },
+          {
+            "client": {
+              "id": 13,
+              "identity_kind": "mac",
+              "identity_key": "00:11:22:33:44:88",
+              "interface_id": 1,
+              "mac": "00:11:22:33:44:88",
+              "hostname": null,
+              "last_address": "192.0.2.13",
+              "owner_id": 1,
+              "owner_assigned_at": 1789999800,
+              "unstable_identity": false,
+              "last_seen_at": 1789999800
+            },
+            "state": "no_data_in_period",
+            "volume": null,
+            "current_rate": {
+              "state": "no_current_sample",
+              "measure": "sampled",
+              "in_bits_per_second": null,
+              "out_bits_per_second": null,
+              "out_measured": false,
+              "sampled_at": null
+            }
+          }
+        ],
+        "chip_remainder": {
+          "members": 0,
+          "volume": {
+            "measure": "logged",
+            "lower_bound": true,
+            "bytes": 0,
+            "allowed_bytes": 0,
+            "blocked_bytes": 0,
+            "unknown_bytes": 0,
+            "connections": 0,
+            "allowed_connections": 0,
+            "blocked_connections": 0,
+            "unknown_connections": 0
+          }
+        }
+      }
+    ],
+    "unassigned": {
+      "key": "unassigned",
+      "owner": null,
+      "value": 700,
+      "volume": {
+        "measure": "logged",
+        "lower_bound": true,
+        "bytes": 700,
+        "allowed_bytes": 700,
+        "blocked_bytes": 0,
+        "unknown_bytes": 0,
+        "connections": 1,
+        "allowed_connections": 1,
+        "blocked_connections": 0,
+        "unknown_connections": 0
+      },
+      "machines": 1,
+      "chips": [
+        {
+          "client": {
+            "id": 11,
+            "identity_kind": "mac",
+            "identity_key": "00:11:22:33:44:66",
+            "interface_id": 1,
+            "mac": "00:11:22:33:44:66",
+            "hostname": null,
+            "last_address": "192.0.2.11",
+            "owner_id": null,
+            "owner_assigned_at": null,
+            "unstable_identity": false,
+            "last_seen_at": 1789999800
+          },
+          "state": "measured",
+          "volume": {
+            "measure": "logged",
+            "lower_bound": true,
+            "bytes": 700,
+            "allowed_bytes": 700,
+            "blocked_bytes": 0,
+            "unknown_bytes": 0,
+            "connections": 1,
+            "allowed_connections": 1,
+            "blocked_connections": 0,
+            "unknown_connections": 0
+          },
+          "current_rate": {
+            "state": "no_current_sample",
+            "measure": "sampled",
+            "in_bits_per_second": null,
+            "out_bits_per_second": null,
+            "out_measured": false,
+            "sampled_at": null
+          }
+        }
+      ],
+      "chip_remainder": {
+        "members": 0,
+        "volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        }
+      }
+    },
+    "totals_exclude_unassigned": false,
+    "total": {
+      "measure": "logged",
+      "lower_bound": true,
+      "bytes": 3900,
+      "allowed_bytes": 3700,
+      "blocked_bytes": 200,
+      "unknown_bytes": 0,
+      "connections": 3,
+      "allowed_connections": 2,
+      "blocked_connections": 1,
+      "unknown_connections": 0
+    }
+  }
+}

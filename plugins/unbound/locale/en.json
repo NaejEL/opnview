@@ -1,0 +1,8 @@
+{
+  "language": "en",
+  "strings": {
+    "provider.dns_lookup.unbound": "Unbound",
+    "provider.resolver_cache.unbound": "Unbound cache",
+    "provider.resolver_local_data.unbound": "Unbound local data"
+  }
+}

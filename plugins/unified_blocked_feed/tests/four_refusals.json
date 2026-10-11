@@ -1,0 +1,253 @@
+{
+  "type": "unified_blocked_feed",
+  "parameters": {
+    "clients": null,
+    "engines": [
+      "firewall_rule",
+      "dns_advertising_list",
+      "dns_threat_list",
+      "security_engine"
+    ],
+    "group_by": "none",
+    "interfaces": null,
+    "limit": 50,
+    "period": "1h"
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789996800,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "dns_lookup",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq resolver",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dns_lookup",
+      "provider_key": "unbound",
+      "display_name": "Unbound",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "security_event",
+      "provider_key": "suricata",
+      "display_name": "Suricata",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    }
+  ],
+  "condition": "not_yet_probed",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "resolver_window_bounded": false,
+  "data": {
+    "group_by": "none",
+    "entries": [
+      {
+        "source_table": "dns_resolution",
+        "source_id": 2,
+        "occurred_at": 1789999812,
+        "engine_kind": "dns_list_not_recorded",
+        "decided_by": {
+          "kind": "list_not_recorded",
+          "reference": null
+        },
+        "client_id": 10,
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "Inside",
+          "user_label": null,
+          "label": "Inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "target": "nolist.example",
+        "target_kind": "domain",
+        "target_is_this_firewall": false
+      },
+      {
+        "source_table": "dns_resolution",
+        "source_id": 1,
+        "occurred_at": 1789999811,
+        "engine_kind": "dns_advertising_list",
+        "decided_by": {
+          "kind": "list",
+          "reference": "list-one"
+        },
+        "client_id": 10,
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "Inside",
+          "user_label": null,
+          "label": "Inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "target": "ads.example",
+        "target_kind": "domain",
+        "target_is_this_firewall": false
+      },
+      {
+        "source_table": "flow",
+        "source_id": 2,
+        "occurred_at": 1789999802,
+        "engine_kind": "firewall_rule",
+        "decided_by": {
+          "kind": "rule_not_found",
+          "reference": "label-gone"
+        },
+        "client_id": 10,
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "Inside",
+          "user_label": null,
+          "label": "Inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "target": "203.0.113.7",
+        "target_kind": "address",
+        "target_is_this_firewall": false
+      },
+      {
+        "source_table": "flow",
+        "source_id": 1,
+        "occurred_at": 1789999801,
+        "engine_kind": "firewall_rule",
+        "decided_by": {
+          "kind": "rule",
+          "reference": "label-five",
+          "rule": {
+            "id": 5,
+            "pf_label": "label-five",
+            "description": "Block the guests",
+            "action": "block",
+            "automatic": false
+          }
+        },
+        "client_id": 10,
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "Inside",
+          "user_label": null,
+          "label": "Inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "target": "203.0.113.7",
+        "target_kind": "address",
+        "target_is_this_firewall": false
+      }
+    ],
+    "remainder": {
+      "members": 0,
+      "count": {
+        "measure": "refusals",
+        "lower_bound": true,
+        "value": 0
+      }
+    },
+    "sources": [
+      {
+        "provider_kind": "firewall_log",
+        "condition": "not_yet_probed",
+        "count": {
+          "measure": "refusals",
+          "lower_bound": true,
+          "value": 2
+        }
+      },
+      {
+        "provider_kind": "dns_lookup",
+        "condition": "not_yet_probed",
+        "count": {
+          "measure": "refusals",
+          "lower_bound": true,
+          "value": 2
+        }
+      },
+      {
+        "provider_kind": "security_event",
+        "condition": "not_yet_probed",
+        "count": {
+          "measure": "refusals",
+          "lower_bound": true,
+          "value": 0
+        }
+      }
+    ],
+    "counts_by_engine_kind": {
+      "dns_advertising_list": 1,
+      "dns_list_not_recorded": 1,
+      "firewall_rule": 2
+    },
+    "excluded_engine_kinds": {},
+    "total": {
+      "measure": "refusals",
+      "lower_bound": true,
+      "value": 4
+    }
+  }
+}

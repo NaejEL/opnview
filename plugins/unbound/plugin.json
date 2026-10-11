@@ -1,0 +1,77 @@
+{
+  "api_version": 1,
+  "name": "unbound",
+  "version": "1.0.0",
+  "display_name": "Unbound",
+  "description": "Reads the Unbound resolver: its query report, the sole source of site names (data source 5), the records it holds in its cache, and the records it serves from its local data.",
+  "script": "unbound.js",
+  "endpoints": [
+    {
+      "name": "search_queries",
+      "path": "/api/unbound/overview/search_queries",
+      "corrections": {"nature": "record_stream", "cursor": ["time"], "dedupe_on_content": true, "parameters": {"timeStart": "ignored", "timeEnd": "ignored", "current": "page", "rowCount": "page_size"}},
+      "method": "POST",
+      "body": "json",
+      "survey_section": "Verified against a live firewall, 2026-09-27",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/OverviewController.php",
+      "note": "Read-only. JSON body with integer timeStart/timeEnd is the correct form and is confirmed; the window is nevertheless ignored, so what comes back is never coverage of the window asked for."
+    },
+    {
+      "name": "is_enabled",
+      "path": "/api/unbound/overview/is_enabled",
+      "method": "GET",
+      "survey_section": "Data source 5 — Resolver DNS lookups",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/OverviewController.php",
+      "note": "enabled field."
+    },
+    {
+      "name": "status",
+      "path": "/api/unbound/service/status",
+      "method": "GET",
+      "survey_section": "Data source 5 — Resolver DNS lookups",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/ServiceController.php",
+      "note": "status field."
+    },
+    {
+      "name": "settings",
+      "path": "/api/unbound/settings/get",
+      "method": "GET",
+      "survey_section": "Data source 5 — Resolver DNS lookups",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/Unbound.xml",
+      "note": "unbound.general.enabled."
+    },
+    {
+      "name": "dump_cache",
+      "path": "/api/unbound/diagnostics/dumpcache",
+      "method": "GET",
+      "survey_section": "Resolver cache and local data, read from source for the resolver-cache cycle",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/DiagnosticsController.php",
+      "note": "{status, data: [{host, ttl, type, rrtype, value}]}; ttl is the remaining seconds as a string, or null on a message-cache reference line, which is not a record; type is the class."
+    },
+    {
+      "name": "list_local_data",
+      "path": "/api/unbound/diagnostics/listlocaldata",
+      "method": "GET",
+      "survey_section": "Resolver cache and local data, read from source for the resolver-cache cycle",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/DiagnosticsController.php",
+      "note": "{status, data: [{name, ttl, type, rrtype, value}]}; ttl is the configured TTL, type is the class."
+    }
+  ],
+  "providers": [
+    {
+      "kind": "dns_lookup",
+      "display_name": "Unbound",
+      "read_strategy": "full_reread"
+    },
+    {
+      "kind": "resolver_cache",
+      "display_name": "Unbound cache",
+      "read_strategy": "full_reread"
+    },
+    {
+      "kind": "resolver_local_data",
+      "display_name": "Unbound local data",
+      "read_strategy": "full_reread"
+    }
+  ]
+}

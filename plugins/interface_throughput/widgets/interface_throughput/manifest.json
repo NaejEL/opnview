@@ -1,0 +1,76 @@
+{
+  "manifest_version": 1,
+  "type": "interface_throughput",
+  "shape": "time_series",
+  "providers": [
+    "measurement_sample"
+  ],
+  "primary": "measurement_sample",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": false,
+  "parameters": [
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "direction",
+      "kind": "enum",
+      "values": [
+        "both",
+        "in",
+        "out"
+      ],
+      "default": "both",
+      "class": "data"
+    },
+    {
+      "key": "measure",
+      "kind": "enum",
+      "values": [
+        "bits_per_second",
+        "bytes",
+        "packets",
+        "errors"
+      ],
+      "default": "bits_per_second",
+      "class": "data"
+    },
+    {
+      "key": "stacked",
+      "kind": "boolean",
+      "default": false,
+      "class": "rendering"
+    },
+    {
+      "key": "per_interface_axis",
+      "kind": "boolean",
+      "default": false,
+      "class": "rendering"
+    }
+  ],
+  "references": [
+    "interface"
+  ],
+  "queries": [],
+  "script": "interface_throughput.js",
+  "renderer": {
+    "reserved": true
+  }
+}

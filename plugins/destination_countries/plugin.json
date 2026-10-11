@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "destination_countries",
+  "version": "1.0.0",
+  "display_name": "Destination countries",
+  "description": "The outside peers of the window grouped by the country the geolocation placed them in, with an explicit row for the addresses it did not place.",
+  "widgets": [
+    "destination_countries"
+  ]
+}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -17,7 +18,7 @@ import (
 // credential nobody typed.
 func TestASecondApplySeedsNoAccountNoSessionAndNoCredential(t *testing.T) {
 	t.Parallel()
-	directory := t.TempDir()
+	directory := testDatabase(t)
 	ctx := context.Background()
 
 	database, err := Open(ctx, directory)
@@ -82,21 +83,6 @@ func TestASecondApplySeedsNoAccountNoSessionAndNoCredential(t *testing.T) {
 	}
 }
 
-// TestTheDataDirectoryIsCreated is AC3's first clause: a data directory that does not
-// exist yet is created rather than refused, because a first start against a fresh
-// installation has nothing there.
-func TestTheDataDirectoryIsCreated(t *testing.T) {
-	t.Parallel()
-	nested := t.TempDir() + "/not/yet/there"
-	database, err := Open(context.Background(), nested)
-	if err != nil {
-		t.Fatalf("opening a database in a directory that does not exist: %v", err)
-	}
-	if err := database.Close(); err != nil {
-		t.Errorf("closing: %v", err)
-	}
-}
-
 // TestOverwritingACredentialLeavesNoPriorCiphertext is AC16's storage clause.
 func TestOverwritingACredentialLeavesNoPriorCiphertext(t *testing.T) {
 	t.Parallel()
@@ -130,19 +116,6 @@ func TestOverwritingACredentialLeavesNoPriorCiphertext(t *testing.T) {
 		t.Error("the current row still carries the previous ciphertext")
 	}
 
-	// AND THE PRAGMA THE CLAIM RESTS ON IS ACTUALLY IN FORCE. secure_delete is FAST,
-	// which SQLite reports as 2: it zeroes what is freed inside a page being
-	// rewritten, which is what a credential row replaced in place goes through. A typo
-	// in the DSN would leave it off altogether and nothing else in this package would
-	// notice.
-	var secureDelete int
-	if err := database.DB().QueryRowContext(ctx, "PRAGMA secure_delete").Scan(
-		&secureDelete); err != nil {
-		t.Fatalf("reading secure_delete: %v", err)
-	}
-	if secureDelete != 2 {
-		t.Errorf("secure_delete is %d rather than 2, which is FAST", secureDelete)
-	}
 }
 
 // TestAPasswordChangeRevokesEverySessionOfThatAccount: a password change whose old
@@ -316,10 +289,10 @@ func countRows(t *testing.T, database *Store, table string) int {
 	return count
 }
 
-// openTemporary opens a database in a fresh directory and closes it at the end.
+// openTemporary opens a database of the test's own and closes it at the end.
 func openTemporary(t *testing.T) *Store {
 	t.Helper()
-	database, err := Open(context.Background(), t.TempDir())
+	database, err := Open(context.Background(), testDatabase(t))
 	if err != nil {
 		t.Fatalf("opening the database: %v", err)
 	}
@@ -357,4 +330,39 @@ func randomValue(t *testing.T, bytes int) string {
 		encoded = append(encoded, digits[value>>4], digits[value&0x0f])
 	}
 	return string(encoded)
+}
+
+// TestConcurrentSetupsCreateExactlyOneAccount: setups racing with different logins, each on its
+// own connection, make exactly one account; every other is refused with ErrAccountExists. On
+// PostgreSQL the guard inside the statement is not enough by itself, so this is the test of the
+// table lock that serialises them.
+func TestConcurrentSetupsCreateExactlyOneAccount(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	database := openTemporary(t)
+	const racers = 8
+	results := make(chan error, racers)
+	start := make(chan struct{})
+	for index := range racers {
+		login := fmt.Sprintf("racer-%d-%s", index, randomValue(t, 4))
+		hash := somePasswordHash(t)
+		go func() {
+			<-start
+			_, err := database.CreateAccount(ctx, login, hash, 1_700_000_000)
+			results <- err
+		}()
+	}
+	close(start)
+	created := 0
+	for range racers {
+		switch err := <-results; {
+		case err == nil:
+			created++
+		case !errors.Is(err, ErrAccountExists):
+			t.Errorf("a racing setup failed otherwise: %v", err)
+		}
+	}
+	if created != 1 || countRows(t, database, "account") != 1 {
+		t.Errorf("%d setups succeeded and %d accounts exist, not one", created, countRows(t, database, "account"))
+	}
 }

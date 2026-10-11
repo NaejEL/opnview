@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
 )
@@ -206,20 +207,20 @@ func storedSlots(t *testing.T, database *store.Store, period store.Period, famil
 	var key, table string
 	switch family {
 	case "volume":
-		key = `period_start_at || '|' || ifnull(src_interface_id, 'null') || '|' ||
-			ifnull(dst_interface_id, 'null') || '|' || ifnull(peer_address, '') || '|' || traffic_direction`
+		key = `period_start_at || '|' || coalesce(CAST(src_interface_id AS TEXT), 'null') || '|' ||
+			coalesce(CAST(dst_interface_id AS TEXT), 'null') || '|' || coalesce(peer_address, '') || '|' || traffic_direction`
 		table = "volume_aggregate_" + period.Name
 	case "rule":
-		key = `period_start_at || '|' || ifnull(rule_id, 'null') || '|' ||
-			ifnull(src_interface_id, 'null') || '|' || ifnull(dst_interface_id, 'null')`
+		key = `period_start_at || '|' || coalesce(CAST(rule_id AS TEXT), 'null') || '|' ||
+			coalesce(CAST(src_interface_id AS TEXT), 'null') || '|' || coalesce(CAST(dst_interface_id AS TEXT), 'null')`
 	case "domain":
-		key = `period_start_at || '|' || site_name || '|' || ifnull(client_id, 'null')`
+		key = `period_start_at || '|' || site_name || '|' || coalesce(CAST(client_id AS TEXT), 'null')`
 	case "client":
 		key = `period_start_at || '|' || client_id || '|' || traffic_direction`
 	case "peer":
 		key = `period_start_at || '|' || client_id || '|' || traffic_direction || '|' || peer_address`
 	case "owner":
-		key = `period_start_at || '|' || ifnull(owner_id, 'null') || '|' || traffic_scope`
+		key = `period_start_at || '|' || coalesce(CAST(owner_id AS TEXT), 'null') || '|' || traffic_scope`
 	}
 	if table == "" {
 		table = family + "_volume_aggregate_" + period.Name
@@ -291,7 +292,7 @@ func arrangeProbeRecord(t *testing.T) (*probeHarness, int64) {
 	probe := pageRecord{digest: "exampledigest0000000000000000301", observedAt: observed, device: "exdev0",
 		src: "198.51.100.10", dst: "203.0.113.77", version: "4", action: "pass", bytes: 77}
 	// The page is the probe and nothing else, which a fixture would say nothing more about.
-	harness.fake.answerJSON(opnsense.FirewallLog, []any{probe.body()})
+	harness.fake.AnswerJSON(opnsense.FirewallLog, []any{probe.body()})
 	ctx := context.Background()
 	if err := harness.collector.probeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
@@ -424,7 +425,7 @@ func TestAPurgeBeforeTheFirstDerivationPlacesWhatItRemoves(t *testing.T) {
 	}
 
 	// This run: a collector over the same database, whose first act is the purge.
-	collector := New(newFakeClient(t, earlier.fake), earlier.store, earlier.clock)
+	collector := newTestCollector(t, providertest.NewClient(t, earlier.fake), earlier.store, earlier.clock)
 	if err := collector.Purge(ctx); err != nil {
 		t.Fatalf("purging: %v", err)
 	}
@@ -433,8 +434,8 @@ func TestAPurgeBeforeTheFirstDerivationPlacesWhatItRemoves(t *testing.T) {
 	}
 	inside := interfaceIDOf(t, earlier.store, "example_if_a")
 	var rows []string
-	result, err := earlier.store.DB().Query(`SELECT bytes, ifnull(src_interface_id, 0),
-		ifnull(dst_interface_id, 0), local_client_id IS NOT NULL, traffic_direction FROM purged_flow_hour
+	result, err := earlier.store.DB().Query(`SELECT bytes, coalesce(src_interface_id, 0),
+		coalesce(dst_interface_id, 0), local_client_id IS NOT NULL, traffic_direction FROM purged_flow_hour
 		ORDER BY bytes`)
 	if err != nil {
 		t.Fatalf("reading the purged part: %v", err)
@@ -492,7 +493,7 @@ func arrangeEveryStoringSource(t *testing.T) *probeHarness {
 		opnsense.UnboundIsEnabled: "unbound_is_enabled_on.json",
 		opnsense.SearchQueries:    "search_queries_page1.json",
 	} {
-		harness.fake.answerFixture(endpoint, fixture)
+		harness.fake.AnswerFixture(endpoint, fixture)
 	}
 	ctx := context.Background()
 	for _, probe := range []func(context.Context) error{harness.collector.probeFirewallLog,
@@ -569,7 +570,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 	}
 	// The resolver's page starts empty; each resolver pass replaces it.
 	emptyLookups := map[string]any{"total": 0, "rowCount": 0, "current": 1, "rows": []any{}}
-	harness.fake.answerJSON(opnsense.SearchQueries, emptyLookups)
+	harness.fake.AnswerJSON(opnsense.SearchQueries, emptyLookups)
 
 	const iterations = 36
 	var (
@@ -630,7 +631,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		}
 		offeredMutex.Unlock()
 		// The page is generated, newest first, as the endpoint returns it.
-		harness.fake.answerJSON(opnsense.FirewallLog, page)
+		harness.fake.AnswerJSON(opnsense.FirewallLog, page)
 		err := harness.collector.CollectFirewallLog(ctx)
 		for _, tick := range ticks {
 			tick <- struct{}{}
@@ -654,7 +655,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		}
 		offeredMutex.Unlock()
 		// The lookups are generated, one just before every outbound record, newest first.
-		harness.fake.answerJSON(opnsense.SearchQueries, map[string]any{
+		harness.fake.AnswerJSON(opnsense.SearchQueries, map[string]any{
 			"total": len(rows), "rowCount": len(rows), "current": 1, "rows": rows})
 		return harness.collector.CollectDNSLookup(ctx)
 	})

@@ -1,0 +1,112 @@
+{
+  "manifest_version": 1,
+  "type": "client_traffic_detail",
+  "shape": "table",
+  "providers": [
+    "firewall_log",
+    "dns_lookup",
+    "resolver_cache",
+    "ip_geolocation",
+    "dhcp_lease"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "client",
+      "kind": "reference",
+      "default": null,
+      "reference": "client",
+      "class": "data",
+      "required": true
+    },
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "action",
+      "kind": "enum",
+      "values": [
+        "all",
+        "allowed",
+        "blocked"
+      ],
+      "default": "all",
+      "class": "data"
+    },
+    {
+      "key": "scope",
+      "kind": "enum",
+      "values": [
+        "all",
+        "east_west",
+        "north_south"
+      ],
+      "default": "all",
+      "class": "data"
+    },
+    {
+      "key": "columns",
+      "kind": "enum_set",
+      "values": [
+        "observed_at",
+        "destination",
+        "port",
+        "protocol",
+        "action",
+        "scope",
+        "bytes",
+        "country",
+        "operator",
+        "site_name",
+        "method",
+        "correlation_delay",
+        "interface"
+      ],
+      "default": [
+        "observed_at",
+        "destination",
+        "port",
+        "protocol",
+        "action",
+        "scope",
+        "bytes",
+        "country",
+        "operator",
+        "site_name",
+        "method",
+        "correlation_delay",
+        "interface"
+      ],
+      "class": "rendering"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 100,
+      "min": 1,
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client"
+  ],
+  "queries": [
+    "client_traffic_detail.statements.sql"
+  ],
+  "script": "client_traffic_detail.js",
+  "renderer": {
+    "reserved": true
+  }
+}

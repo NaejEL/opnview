@@ -200,13 +200,14 @@ func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
 	}
 	if _, err := network.db.DB().Exec(`INSERT INTO geo_asn (address, provider_id, lookup_state,
 		country_code, asn, operator, dataset_build_at, looked_up_at)
-		SELECT DISTINCT dst_address, (SELECT id FROM provider WHERE kind = 'geo_asn'), 'resolved', 'ZZ',
+		SELECT DISTINCT dst_address, (SELECT id FROM provider WHERE kind = 'ip_geolocation'), 'resolved', 'ZZ',
 		       64500 + (length(dst_address) % 3), 'example operator', 1, 1
 		FROM flow WHERE dst_interface_id IS NULL AND id % 3 = 0`); err != nil {
 		t.Fatalf("placing addresses: %v", err)
 	}
-	if _, err := network.db.DB().Exec(`INSERT OR IGNORE INTO geo_asn (address, lookup_state, looked_up_at)
-		SELECT DISTINCT dst_address, 'miss', 1 FROM flow WHERE dst_interface_id IS NULL AND id % 3 = 1`); err != nil {
+	if _, err := network.db.DB().Exec(`INSERT INTO geo_asn (address, lookup_state, looked_up_at)
+		SELECT DISTINCT dst_address, 'miss', 1 FROM flow WHERE dst_interface_id IS NULL AND id % 3 = 1
+		ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatalf("recording misses: %v", err)
 	}
 	from, to := network.now-86400, network.now
@@ -413,7 +414,7 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 		t.Errorf("the rate counts %d eligible flows, not the %d a client sent outside", rate.EligibleFlows, sent)
 	}
 	unbound, _ := network.db.ProviderID(ctx, "dns_lookup", "unbound")
-	if err := network.db.SetAvailability(ctx, unbound, StateReachable, "example probe", nil, network.now); err != nil {
+	if err := network.db.SetAvailability(ctx, unbound, StateReachable, OutcomeHealthy, "example probe", nil, network.now); err != nil {
 		t.Fatalf("recording the resolver reachable: %v", err)
 	}
 	rate, err = network.db.ReadAttributionRate(ctx, network.now-86400, network.now+1, nil)
@@ -448,7 +449,7 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("writing a past lookup: %v", err)
 	}
-	if err := network.db.SetAvailability(ctx, unbound, StateUnavailable, "example probe", nil, network.now); err != nil {
+	if err := network.db.SetAvailability(ctx, unbound, StateUnavailable, OutcomeTransportFailure, "example probe", nil, network.now); err != nil {
 		t.Fatalf("recording the resolver unavailable: %v", err)
 	}
 	rate, err = network.db.ReadAttributionRate(ctx, past, past+86400, nil)

@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "client_volume_ranking",
+  "version": "1.0.0",
+  "display_name": "Client volume ranking",
+  "description": "Clients ranked by logged volume, connections or distinct destinations, with their host name, MAC, last address and interface; a randomised MAC is badged unstable identity.",
+  "widgets": [
+    "client_volume_ranking"
+  ]
+}

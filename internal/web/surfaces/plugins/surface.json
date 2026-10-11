@@ -1,0 +1,4 @@
+{
+  "name": "plugins",
+  "description": "The plugin listing and the plugin settings write endpoint, in JSON."
+}

@@ -41,7 +41,7 @@ import (
 //
 // AND THE REFRESH DOES NOT DEPEND ON THE ORDERING. The hours a purge writes a purged
 // part for are selected by the next refresh whatever ran before it
-// (internal/store/derive.sql, dirty_hours), so the slot invariant would survive a
+// (internal/store/aggregate.statements.sql, dirty_hours), so the slot invariant would survive a
 // broken ordering; orderingHooks.unordered is how a test proves it.
 
 // orderingHooks let a test stop a pass between its store and its derivation, see a
@@ -93,5 +93,8 @@ func (c *Collector) Purge(ctx context.Context) error {
 	if err := c.deriveLocked(ctx, derivation{addresses: due}); err != nil {
 		return fmt.Errorf("collect: placing what the purge is about to remove: %w", err)
 	}
-	return c.store.Purge(ctx, now)
+	if err := c.store.Purge(ctx, now); err != nil {
+		return err
+	}
+	return c.purgeMirror(ctx, now)
 }

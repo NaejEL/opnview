@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "blocked_traffic_world_map",
+  "version": "1.0.0",
+  "display_name": "Blocked-traffic world map",
+  "description": "Where the traffic that was stopped was heading or coming from, by the engine that stopped it, with the DNS refusals no map can show counted beside it.",
+  "widgets": [
+    "blocked_traffic_world_map"
+  ]
+}

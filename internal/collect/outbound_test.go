@@ -27,31 +27,31 @@ func TestDiscoveryAndEveryCollectorReachTheFirewallAndNothingElse(t *testing.T) 
 	// A firewall with every source answering, so each collector actually does its work
 	// rather than returning early on an unavailable provider.
 	fake := harness.fake
-	fake.answerFixture(opnsense.InterfacesInfo, "interfaces_info.json")
-	fake.answerFixture(opnsense.SystemTime, "system_time.json")
-	fake.answerFixture(opnsense.InterfaceNames, "get_interface_names.json")
-	fake.answerFixture(opnsense.SearchRule, "search_rule.json")
-	fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
-	fake.answerFixture(opnsense.IDSStatus, "ids_status_running.json")
-	fake.answerFixture(opnsense.AlertLogs, "get_alert_logs.json")
-	fake.answerFixture(opnsense.QueryAlerts, "query_alerts.json")
-	fake.answerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_local.json")
-	fake.answerFixture(opnsense.TrafficTop, "traffic_top.json")
-	fake.answerFixture(opnsense.TrafficInterface, "traffic_interface.json")
-	fake.answerFixture(opnsense.SystemResources, "system_resources.json")
-	fake.answerFixture(opnsense.SystemTemperature, "system_temperature.json")
-	fake.answerFixture(opnsense.SystemTime, "system_time.json")
-	fake.answerFixture(opnsense.SystemDisk, "system_disk.json")
-	fake.answerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
-	fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
-	fake.answerFixture(opnsense.DnsmasqLeases, "dnsmasq_leases.json")
-	fake.answerFixture(opnsense.ARPTable, "get_arp.json")
-	fake.answerFixture(opnsense.NDPTable, "get_ndp.json")
-	fake.answerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	fake.answerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-	fake.answerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	fake.answerFixture(opnsense.SearchQueries, "search_queries_page1.json")
+	fake.AnswerFixture(opnsense.InterfacesInfo, "interfaces_info.json")
+	fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
+	fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")
+	fake.AnswerFixture(opnsense.SearchRule, "search_rule.json")
+	fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
+	fake.AnswerFixture(opnsense.IDSStatus, "ids_status_running.json")
+	fake.AnswerFixture(opnsense.AlertLogs, "get_alert_logs.json")
+	fake.AnswerFixture(opnsense.QueryAlerts, "query_alerts.json")
+	fake.AnswerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_local.json")
+	fake.AnswerFixture(opnsense.TrafficTop, "traffic_top.json")
+	fake.AnswerFixture(opnsense.TrafficInterface, "traffic_interface.json")
+	fake.AnswerFixture(opnsense.SystemResources, "system_resources.json")
+	fake.AnswerFixture(opnsense.SystemTemperature, "system_temperature.json")
+	fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
+	fake.AnswerFixture(opnsense.SystemDisk, "system_disk.json")
+	fake.AnswerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
+	fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	fake.AnswerFixture(opnsense.DnsmasqLeases, "dnsmasq_leases.json")
+	fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
+	fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
+	fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
+	fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
+	fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
+	fake.AnswerFixture(opnsense.SearchQueries, "search_queries_page1.json")
 
 	if err := harness.collector.RefreshDiscovery(ctx); err != nil {
 		t.Fatalf("runtime discovery: %v", err)
@@ -74,7 +74,7 @@ func TestDiscoveryAndEveryCollectorReachTheFirewallAndNothingElse(t *testing.T) 
 
 	// The transport has already failed the test if anything left for another host. This is
 	// the other half: nothing asked for a path outside the registry.
-	fake.assertEveryPathIsRegistered()
+	fake.AssertEveryPathIsRegistered()
 
 	// And the whole of it wrote something, so the run above was not a sequence of early
 	// returns that happen to make no request at all.
@@ -95,11 +95,11 @@ func TestNoCollectorWritesToTheFirewall(t *testing.T) {
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
-	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
-	harness.fake.answerFixture(opnsense.ARPTable, "get_arp.json")
-	harness.fake.answerFixture(opnsense.NDPTable, "get_ndp.json")
+	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
+	harness.fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
 
 	if err := harness.collector.ProbeAll(ctx); err != nil {
 		t.Logf("the probe round reported: %v", err)
@@ -111,22 +111,20 @@ func TestNoCollectorWritesToTheFirewall(t *testing.T) {
 		t.Logf("collecting the leases reported: %v", err)
 	}
 
-	if harness.fake.requestCount() == 0 {
+	if harness.fake.RequestCount() == 0 {
 		t.Fatal("no request was made, so this assertion is vacuous")
 	}
-	harness.fake.mutex.Lock()
-	defer harness.fake.mutex.Unlock()
-	for _, request := range harness.fake.requests {
-		switch request.method {
+	for _, request := range harness.fake.Requests() {
+		switch request.Method {
 		case "GET", "POST":
 			// Both are read-only here: OPNsense has no framework-level method routing and
 			// its search and get helpers contain no write path at all, which is why the
 			// path rather than the verb is what has to be checked.
 		default:
-			t.Errorf("a request used the method %s", request.method)
+			t.Errorf("a request used the method %s", request.Method)
 		}
-		if command := opnsense.MutatingCommand(request.path); command != "" {
-			t.Errorf("a request named the mutating command %q in %s", command, request.path)
+		if command := opnsense.MutatingCommand(request.Path); command != "" {
+			t.Errorf("a request named the mutating command %q in %s", command, request.Path)
 		}
 	}
 }

@@ -1,0 +1,85 @@
+// The dnsmasq plugin's own tests, for each of the four kinds it implements.
+
+// The DHCP lease backend.
+
+test("the Dnsmasq lease implementation declares itself", function (t) {
+  t.assert(t.registered("dhcp_lease"), "the dnsmasq implementation is not registered in the dhcp_lease kind");
+});
+
+test("Dnsmasq is not separable without DHCP ranges", function (t) {
+  t.answer("status", { fixture: "dnsmasq_status_running.json" });
+  t.answer("settings", { fixture: "dnsmasq_settings_no_ranges.json" });
+  var probe = t.call("dhcp_lease", "probe");
+  t.assert(probe.error === null && !probe.result.separable, "a resolver with no ranges gave " + JSON.stringify(probe));
+});
+
+test("Dnsmasq is separable when it serves DHCP ranges", function (t) {
+  t.answer("status", { fixture: "dnsmasq_status_running.json" });
+  t.answer("settings", { fixture: "dnsmasq_settings.json" });
+  var probe = t.call("dhcp_lease", "probe");
+  t.assert(probe.error === null && probe.result.separable, "a serving backend gave " + JSON.stringify(probe));
+});
+
+test("Dnsmasq leases are read from the fixture with no validity start", function (t) {
+  t.answer("leases", { fixture: "dnsmasq_leases.json" });
+  var read = t.call("dhcp_lease", "leases", 100);
+  if (read.error !== null || !read.leases || read.leases.length === 0) {
+    t.fatal("reading the fixture gave " + JSON.stringify(read));
+  }
+  read.leases.forEach(function (lease) {
+    t.assert(lease.starts_at === undefined, "a Dnsmasq lease reports the start " + lease.starts_at +
+      "; only Kea reports one");
+  });
+});
+
+// The resolver: lookups.
+
+test("the Dnsmasq resolver is registered, probed and never read", function (t) {
+  t.assert(t.registered("dns_lookup"), "the dnsmasq implementation is not registered in the dns_lookup kind");
+  t.equal(t.value("dns_lookup", "page_bound"), 1, "the page bound");
+  t.equal(t.value("dns_lookup", "requested_span_seconds"), 0, "the requested span");
+  var read = t.call("dns_lookup", "lookups", 1);
+  t.assert(read.unsupported !== null, "the read returned " + JSON.stringify(read) + ", not the unsupported state");
+  t.equal(read.result.outcome, "log_grammar_not_recorded", "the outcome");
+});
+
+test("a running Dnsmasq resolver is never separable whatever its logging", function (t) {
+  t.answer("status", { fixture: "dnsmasq_status_running.json" });
+  t.answer("settings", { fixture: "dnsmasq_settings.json" });
+  var probe = t.call("dns_lookup", "probe");
+  t.assert(probe.error === null && !probe.result.separable && probe.result.outcome === "log_grammar_not_recorded",
+    "a running resolver gave " + JSON.stringify(probe));
+});
+
+// The resolver: cache.
+
+test("the Dnsmasq cache is registered, probed and never read", function (t) {
+  t.assert(t.registered("resolver_cache"), "the dnsmasq implementation is not registered in the resolver_cache kind");
+  var read = t.call("resolver_cache", "cache");
+  t.assert(read.unsupported !== null && read.result.outcome === "no_cache_read",
+    "the read gave " + JSON.stringify(read));
+});
+
+test("a running Dnsmasq names the absence of a cache read and is never separable", function (t) {
+  t.answer("status", { fixture: "dnsmasq_status_running.json" });
+  var probe = t.call("resolver_cache", "probe");
+  t.assert(probe.error === null && !probe.result.separable && probe.result.outcome === "no_cache_read",
+    "a running resolver gave " + JSON.stringify(probe));
+});
+
+// The resolver: local data.
+
+test("the Dnsmasq local data is registered, probed and never read", function (t) {
+  t.assert(t.registered("resolver_local_data"),
+    "the dnsmasq implementation is not registered in the resolver_local_data kind");
+  var read = t.call("resolver_local_data", "local_data");
+  t.assert(read.unsupported !== null && read.result.outcome === "no_local_data_read",
+    "the read gave " + JSON.stringify(read));
+});
+
+test("a running Dnsmasq names the local-data absence and is never separable", function (t) {
+  t.answer("status", { fixture: "dnsmasq_status_running.json" });
+  var probe = t.call("resolver_local_data", "probe");
+  t.assert(probe.error === null && !probe.result.separable && probe.result.outcome === "no_local_data_read",
+    "a running resolver gave " + JSON.stringify(probe));
+});

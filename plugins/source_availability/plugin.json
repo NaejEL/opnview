@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "source_availability",
+  "version": "1.0.0",
+  "display_name": "Source availability",
+  "description": "Every provider of every kind a widget can bind, with its condition, so what each source answers is visible rather than assumed.",
+  "widgets": [
+    "source_availability"
+  ]
+}

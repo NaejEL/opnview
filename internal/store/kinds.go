@@ -26,7 +26,7 @@ package store
 // provider of an exclusive kind whatever this file says. The set is here so the
 // probe round can activate every qualifying provider of a concurrent kind instead
 // of discovering the constraint by failing, and a test reads the index's own
-// definition out of sqlite_master and asserts the two agree.
+// definition out of the PostgreSQL catalogue and asserts the two agree.
 var concurrentKinds = map[string]struct{}{
 	"security_event":     {},
 	"dhcp_lease":         {},

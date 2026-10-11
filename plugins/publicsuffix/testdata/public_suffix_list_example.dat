@@ -1,0 +1,25 @@
+// __provenance__: synthesised for the publicsuffix plugin's tests from the format document,
+// github.com/publicsuffix/list/wiki/Format; not a copy of the list. Every name is under a
+// reserved suffix (RFC 2606) or an example rule, and none is a network of anybody's.
+// VERSION: example-version
+
+// ===BEGIN ICANN DOMAINS===
+
+com
+net
+org
+example
+invalid
+test
+co.example
+*.wild.example
+!keep.wild.example
+example-one
+example-two
+
+// ===END ICANN DOMAINS===
+// ===BEGIN PRIVATE DOMAINS===
+
+hosted.example
+
+// ===END PRIVATE DOMAINS===

@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -39,7 +40,7 @@ func TestAFilterLogPassThatFailsPartWayStillPlacesWhatItStored(t *testing.T) {
 			"length": "60", "src": "198.51.100.11", "dst": "203.0.113.78", "srcport": "40001", "dstport": "443",
 			"reason": "match"},
 	}
-	harness.fake.answerJSON(opnsense.FirewallLog, page)
+	harness.fake.AnswerJSON(opnsense.FirewallLog, page)
 	ctx := context.Background()
 	if err := harness.collector.probeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing: %v", err)
@@ -94,7 +95,7 @@ func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing
 			map[string]any{"ipaddr": "not an address"},
 		}
 	}
-	harness.fake.answerJSON(opnsense.InterfacesInfo, body)
+	harness.fake.AnswerJSON(opnsense.InterfacesInfo, body)
 	ctx := context.Background()
 	if err := harness.collector.RefreshDiscovery(ctx); err != nil {
 		t.Fatalf("discovering: %v", err)
@@ -181,7 +182,7 @@ func TestAnOperatorNetworkChangesClassificationAtTheNextDerivation(t *testing.T)
 		LEFT JOIN (SELECT period_start_at AS slot, traffic_direction, sum(bytes) AS bytes
 		           FROM volume_aggregate_1h GROUP BY 1, 2) AS v
 		  ON v.slot = f.slot AND v.traffic_direction = f.traffic_direction
-		WHERE v.bytes IS NOT f.bytes`)
+		WHERE v.bytes IS DISTINCT FROM f.bytes`)
 	if mismatches != 0 {
 		t.Errorf("%d hour slots differ from a direct computation over the reclassified flows", mismatches)
 	}
@@ -225,7 +226,7 @@ func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.
 	answer := "Recursion"
 	decide := func(logged string) (store.DNSResolution, int64) {
 		t.Helper()
-		record := lookupRecord{DeduplicationKey: "example-key-" + logged, ClientAddress: logged,
+		record := dnslookup.Record{DeduplicationKey: "example-key-" + logged, ClientAddress: logged,
 			Domain: "example-site.example.invalid", Action: "pass", AnswerSource: &answer,
 			LookedUpAt: observedAt - 2}
 		lookup, err := harness.collector.buildDNSResolution(ctx, record, "unbound", referenceEpoch())

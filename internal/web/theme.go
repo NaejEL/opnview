@@ -51,16 +51,16 @@ const (
 	ThemeDark Theme = "dark"
 )
 
-// themes is the three values in the order the selector offers them, each with the
-// catalogue key that names it.
-func themes() []struct {
+// ThemeChoice is one theme the selector offers.
+type ThemeChoice struct {
 	Value Theme
-	Label messageKey
-} {
-	return []struct {
-		Value Theme
-		Label messageKey
-	}{
+	Label MessageKey
+}
+
+// ThemeChoices is the three values in the order the selector offers them, each with the
+// catalogue key that names it.
+func ThemeChoices() []ThemeChoice {
+	return []ThemeChoice{
 		{ThemeSystem, msgThemeSystem},
 		{ThemeLight, msgThemeLight},
 		{ThemeDark, msgThemeDark},
@@ -71,7 +71,7 @@ func themes() []struct {
 // than falling back. A theme nobody offered, silently replaced by the default, is
 // a control that does not do what it says.
 func ParseTheme(value string) (Theme, error) {
-	for _, candidate := range themes() {
+	for _, candidate := range ThemeChoices() {
 		if string(candidate.Value) == value {
 			return candidate.Value, nil
 		}
@@ -96,14 +96,14 @@ func (t Theme) DocumentAttribute() string {
 	}
 }
 
-// readTheme reads the stored theme, defaulting to ThemeSystem when there is no
+// ReadTheme reads the stored theme, defaulting to ThemeSystem when there is no
 // row — which is the first-launch state.
 //
 // A row holding something this build does not offer is NOT an error here: the
 // interface still has to render, and the setting form is where the reader fixes
 // it. It is reported by falling back to following the operating system, which is
 // the documented default rather than an invented one.
-func (s *Server) readTheme(ctx context.Context) Theme {
+func (s *Server) ReadTheme(ctx context.Context) Theme {
 	value, present, err := s.store.Setting(ctx, config.KeyTheme)
 	if err != nil || !present {
 		return ThemeSystem

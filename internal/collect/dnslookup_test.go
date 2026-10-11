@@ -27,12 +27,12 @@ func arrangeResolverCollection(t *testing.T) *probeHarness {
 	t.Helper()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.answerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	harness.fake.answerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-	harness.fake.answerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
-	harness.fake.answerFixture(opnsense.SearchQueries, "search_queries_page1.json")
+	harness.fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
+	harness.fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
+	harness.fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.fake.AnswerFixture(opnsense.SearchQueries, "search_queries_page1.json")
 	if err := harness.collector.probeDNSLookup(context.Background()); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
@@ -53,30 +53,30 @@ func TestTheResolverQueryIsAJSONPostWithIntegerBounds(t *testing.T) {
 	if err := harness.collector.CollectDNSLookup(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	harness.fake.assertEveryPathIsRegistered()
+	harness.fake.AssertEveryPathIsRegistered()
 
-	requests := harness.fake.requestsTo(opnsense.SearchQueries)
+	requests := harness.fake.RequestsTo(opnsense.SearchQueries)
 	if len(requests) == 0 {
 		t.Fatal("the query report was never requested")
 	}
 	for index, request := range requests {
-		if request.method != "POST" {
-			t.Errorf("request %d was %s, not POST", index, request.method)
+		if request.Method != "POST" {
+			t.Errorf("request %d was %s, not POST", index, request.Method)
 		}
-		if request.contentType != "application/json" {
+		if request.ContentType != "application/json" {
 			t.Errorf("request %d carried Content-Type %q, not application/json",
-				index, request.contentType)
+				index, request.ContentType)
 		}
-		if len(request.query) != 0 {
+		if len(request.Query) != 0 {
 			t.Errorf("request %d put %v in the query string, where the bounds would be strings",
-				index, request.query)
+				index, request.Query)
 		}
 
 		// The bounds have to be JSON numbers, not strings. Decoding into json.Number and
 		// then requiring an integer conversion is what proves it: a quoted value fails
 		// the type assertion, and a float would fail Int64.
 		var body map[string]json.RawMessage
-		if err := json.Unmarshal(request.body, &body); err != nil {
+		if err := json.Unmarshal(request.Body, &body); err != nil {
 			t.Fatalf("request %d did not carry a JSON object: %v", index, err)
 		}
 		for _, bound := range []string{"timeStart", "timeEnd"} {
@@ -304,101 +304,27 @@ func TestTheCollectorWalksTheRingBufferAndStopsWhenAPageIsAllKnown(t *testing.T)
 	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	requests := harness.fake.requestsTo(opnsense.SearchQueries)
+	requests := harness.fake.RequestsTo(opnsense.SearchQueries)
 	if len(requests) < 2 {
 		t.Fatalf("the collector made %d requests; it must page rather than read one page", len(requests))
 	}
-	if len(requests) > dnsMaxPages {
+	if len(requests) > unboundPageBound(t) {
 		t.Fatalf("the collector made %d requests, above the %d-page bound; the endpoint caps "+
-			"its buffer, so a longer walk re-reads what it already saw", len(requests), dnsMaxPages)
+			"its buffer, so a longer walk re-reads what it already saw", len(requests), unboundPageBound(t))
 	}
 	pages := map[string]bool{}
 	for _, request := range requests {
 		var body map[string]any
-		if err := json.Unmarshal(request.body, &body); err != nil {
+		if err := json.Unmarshal(request.Body, &body); err != nil {
 			t.Fatalf("a request body did not decode: %v", err)
 		}
-		pages[string(request.body)] = true
+		pages[string(request.Body)] = true
 		if _, present := body["current"]; !present {
 			t.Error("a request asked for no page")
 		}
 	}
 	if len(pages) < 2 {
 		t.Error("every request asked for the same page, so the collector is not walking the buffer")
-	}
-}
-
-// TestTheLookupKeyDependsOnTheRowAndNotOnWhenItWasPolled is the unit test behind the
-// de-duplication, and it is the half the four-pass test above cannot reach.
-//
-// That test runs every pass at one fixed instant, so a key that had quietly included the
-// POLL time would still have collapsed and still have passed. This one separates the two
-// instants that matter: the lookup's own instant, which is part of the row and therefore
-// part of its identity, and the instant opnview happened to read it, which is not.
-func TestTheLookupKeyDependsOnTheRowAndNotOnWhenItWasPolled(t *testing.T) {
-	t.Parallel()
-	row := decode.Object{
-		"client":        "example-client-address",
-		"domain":        "example-name.invalid",
-		"action":        "block",
-		"source":        "local-data",
-		"rcode":         "NXDOMAIN",
-		"dnssec_status": "example-dnssec-verdict",
-		"blocklist":     "example-blocklist-name",
-		"time":          float64(1749990000),
-		"uuid":          nil,
-	}
-	const lookedUpAt = int64(1749990000)
-	base := unboundLookupKey(row, lookedUpAt)
-
-	if base == "" {
-		t.Fatal("the key is empty")
-	}
-	if !strings.HasPrefix(base, "content:") {
-		t.Fatalf("the key is %q, which does not say that it was composed from the row content",
-			base)
-	}
-	// The same row, composed again. The function takes no clock, so nothing about the
-	// moment of the call can reach the value.
-	if again := unboundLookupKey(row, lookedUpAt); again != base {
-		t.Fatalf("composing the same row twice gave %q and %q", base, again)
-	}
-
-	// Every field that distinguishes one lookup from another changes the key. A field
-	// missing from this list would be a field two different lookups could differ in while
-	// collapsing into one row, which is the under-count spreading from a coincidence to a
-	// class.
-	for _, field := range []string{
-		"client", "domain", "action", "source", "rcode", "dnssec_status", "blocklist",
-	} {
-		altered := decode.Object{}
-		for key, value := range row {
-			altered[key] = value
-		}
-		altered[field] = "a-different-value"
-		if changed := unboundLookupKey(altered, lookedUpAt); changed == base {
-			t.Errorf("changing %s left the key unchanged, so two lookups differing only in "+
-				"that field would collapse into one row", field)
-		}
-	}
-
-	// The lookup's OWN instant is part of its identity: the same client asking for the
-	// same domain a second later is a second lookup.
-	if later := unboundLookupKey(row, lookedUpAt+1); later == base {
-		t.Error("a lookup one second later has the same key, so a repeated query would " +
-			"never be counted twice")
-	}
-
-	// And the trade, asserted rather than only described: two rows identical in every
-	// field INCLUDING the instant are one row. This is the deliberate under-count, and a
-	// test that did not state it would leave somebody to discover it as a bug.
-	duplicate := decode.Object{}
-	for key, value := range row {
-		duplicate[key] = value
-	}
-	if unboundLookupKey(duplicate, lookedUpAt) != base {
-		t.Error("two rows identical in every field including the instant have different " +
-			"keys, so every re-read of the ring buffer would insert them again")
 	}
 }
 

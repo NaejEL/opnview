@@ -1,0 +1,146 @@
+{
+  "type": "blocked_dns_lookups",
+  "parameters": {
+    "blocklists": null,
+    "clients": null,
+    "interfaces": null,
+    "limit": 20,
+    "min_count": 1,
+    "period": "1h",
+    "purposes": [
+      "advertising",
+      "tracking",
+      "threat",
+      "parental",
+      "other",
+      "unassigned",
+      "not_recorded"
+    ]
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789996800,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "dns_lookup",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq resolver",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dns_lookup",
+      "provider_key": "unbound",
+      "display_name": "Unbound",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    }
+  ],
+  "condition": "not_yet_probed",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "resolver_window_bounded": false,
+  "data": {
+    "rows": [
+      {
+        "domain": "ads.example",
+        "list": "list-one",
+        "purpose": "advertising",
+        "lookups": {
+          "measure": "dns_lookups",
+          "lower_bound": true,
+          "value": 2
+        },
+        "clients": [
+          10
+        ],
+        "unmatched_client_addresses": [],
+        "interfaces": [
+          1
+        ],
+        "last_seen_at": 1789999802
+      },
+      {
+        "domain": "nolist.example",
+        "list": null,
+        "purpose": "not_recorded",
+        "lookups": {
+          "measure": "dns_lookups",
+          "lower_bound": true,
+          "value": 1
+        },
+        "clients": [
+          10
+        ],
+        "unmatched_client_addresses": [],
+        "interfaces": [
+          1
+        ],
+        "last_seen_at": 1789999804
+      },
+      {
+        "domain": "tracker.example",
+        "list": "list-two",
+        "purpose": "unassigned",
+        "lookups": {
+          "measure": "dns_lookups",
+          "lower_bound": true,
+          "value": 1
+        },
+        "clients": [],
+        "unmatched_client_addresses": [
+          "192.0.2.99"
+        ],
+        "interfaces": [],
+        "last_seen_at": 1789999803
+      }
+    ],
+    "remainder": {
+      "members": 0,
+      "count": {
+        "measure": "dns_lookups",
+        "lower_bound": true,
+        "value": 0
+      }
+    },
+    "below_min_count": {
+      "members": 0,
+      "count": {
+        "measure": "dns_lookups",
+        "lower_bound": true,
+        "value": 0
+      }
+    },
+    "total": {
+      "measure": "dns_lookups",
+      "lower_bound": true,
+      "value": 4
+    }
+  }
+}

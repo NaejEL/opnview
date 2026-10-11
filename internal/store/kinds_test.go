@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -140,8 +141,7 @@ func TestTheConcurrentKindsInCodeAreTheOnesTheSchemaExempts(t *testing.T) {
 
 	var definition string
 	if err := database.DB().QueryRowContext(context.Background(),
-		`SELECT sql FROM sqlite_master
-		 WHERE type = 'index' AND name = 'uq_provider_active_per_exclusive_kind'`).
+		`SELECT pg_get_indexdef('uq_provider_active_per_exclusive_kind'::regclass)`).
 		Scan(&definition); err != nil {
 		t.Fatalf("reading the exclusivity index out of the schema: %v", err)
 	}
@@ -153,50 +153,14 @@ func TestTheConcurrentKindsInCodeAreTheOnesTheSchemaExempts(t *testing.T) {
 		}
 	}
 
-	// And the other direction: every kind the index exempts is one the code knows about. The
-	// kinds are read from the registry's own CHECK rather than from a list here.
-	var table string
-	if err := database.DB().QueryRowContext(context.Background(),
-		"SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'provider'").
-		Scan(&table); err != nil {
-		t.Fatalf("reading the registry definition: %v", err)
-	}
-	for _, kind := range everyKindInCheck(t, table) {
-		exempt := strings.Contains(definition, "'"+kind+"'")
-		if exempt != KindAdmitsSeveralActiveProviders(kind) {
-			t.Errorf("the index exempts %s: %v, and the code says %v", kind, exempt,
-				KindAdmitsSeveralActiveProviders(kind))
+	// And the other direction: every kind the index exempts is one the code says admits several
+	// active providers. The exempt kinds are read out of the index's own definition rather than
+	// from a list here.
+	for _, quoted := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(definition, -1) {
+		if !KindAdmitsSeveralActiveProviders(quoted[1]) {
+			t.Errorf("the index exempts %s and the code says it admits one active provider", quoted[1])
 		}
 	}
-}
-
-// everyKindInCheck returns the kinds the registry's CHECK admits, read out of the DDL text.
-//
-// It reads the schema rather than repeating the list, because a list here would be the third
-// copy of something that already has one authority and one mirror.
-func everyKindInCheck(t *testing.T, definition string) []string {
-	t.Helper()
-	marker := "kind IN ("
-	start := strings.Index(definition, marker)
-	if start < 0 {
-		t.Fatal("the registry definition carries no CHECK over kind")
-	}
-	rest := definition[start+len(marker):]
-	end := strings.Index(rest, ")")
-	if end < 0 {
-		t.Fatal("the registry's CHECK over kind is not closed")
-	}
-	var kinds []string
-	for _, quoted := range strings.Split(rest[:end], ",") {
-		kind := strings.Trim(strings.TrimSpace(quoted), "'")
-		if kind != "" {
-			kinds = append(kinds, kind)
-		}
-	}
-	if len(kinds) < 8 {
-		t.Fatalf("the CHECK over kind yielded %d kinds, want the eight the model carries", len(kinds))
-	}
-	return kinds
 }
 
 // TestTheMeasurementSampleKindHasARegistryRowAndAnAvailabilityRow is the promotion itself.

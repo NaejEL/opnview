@@ -1,0 +1,67 @@
+{
+  "manifest_version": 1,
+  "type": "interface_volume_ranking",
+  "shape": "ranked_bars",
+  "providers": [
+    "firewall_log"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "measure",
+      "kind": "enum",
+      "values": [
+        "bytes",
+        "connections",
+        "clients"
+      ],
+      "default": "bytes",
+      "class": "data"
+    },
+    {
+      "key": "scope",
+      "kind": "enum",
+      "values": [
+        "all",
+        "east_west",
+        "north_south"
+      ],
+      "default": "all",
+      "class": "data"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 10,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "include_unlabelled",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    }
+  ],
+  "references": [],
+  "queries": [],
+  "script": "interface_volume_ranking.js",
+  "renderer": {
+    "reserved": true
+  }
+}

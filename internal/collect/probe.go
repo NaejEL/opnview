@@ -2,13 +2,19 @@ package collect
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sort"
 
+	"github.com/NaejEL/opnview/internal/collect/dhcplease"
+	"github.com/NaejEL/opnview/internal/collect/dnslookup"
+	"github.com/NaejEL/opnview/internal/collect/firewalllog"
+	"github.com/NaejEL/opnview/internal/collect/measurement"
+	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/collect/resolvercache"
+	"github.com/NaejEL/opnview/internal/collect/resolverlocaldata"
+	"github.com/NaejEL/opnview/internal/collect/securityevent"
+	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/decode"
-	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
 )
 
@@ -35,69 +41,17 @@ import (
 // about the others.
 type probeable struct {
 	providerKey string
-	run         func(ctx context.Context, host session) (probeResult, error)
+	run         func(ctx context.Context, host provider.Session) (provider.Result, error)
 }
 
-// firewallLogProbeables returns the registered implementations of the firewall_log kind.
-func firewallLogProbeables() []probeable {
-	probeables := make([]probeable, 0, len(firewallLogSources))
-	for key, source := range firewallLogSources {
-		probeables = append(probeables, probeable{providerKey: key, run: source.probe})
-	}
-	return sortedProbeables(probeables)
-}
-
-// securityEventProbeables returns the registered implementations of the security_event kind.
-func securityEventProbeables() []probeable {
-	probeables := make([]probeable, 0, len(securityEventSources))
-	for key, source := range securityEventSources {
-		probeables = append(probeables, probeable{providerKey: key, run: source.probe})
-	}
-	return sortedProbeables(probeables)
-}
-
-// measurementProbeables returns the registered implementations of the measurement_sample kind.
-func measurementProbeables() []probeable {
-	probeables := make([]probeable, 0, len(measurementSources))
-	for key, source := range measurementSources {
-		probeables = append(probeables, probeable{providerKey: key, run: source.probe})
-	}
-	return sortedProbeables(probeables)
-}
-
-// leaseProbeables returns the registered implementations of the dhcp_lease kind.
-func leaseProbeables() []probeable {
-	probeables := make([]probeable, 0, len(leaseSources))
-	for key, source := range leaseSources {
-		probeables = append(probeables, probeable{providerKey: key, run: source.probe})
-	}
-	return sortedProbeables(probeables)
-}
-
-// lookupProbeables returns the registered implementations of the dns_lookup kind.
-func lookupProbeables() []probeable {
-	probeables := make([]probeable, 0, len(lookupSources))
-	for key, source := range lookupSources {
-		probeables = append(probeables, probeable{providerKey: key, run: source.probe})
-	}
-	return sortedProbeables(probeables)
-}
-
-// cacheProbeables returns the registered implementations of the resolver_cache kind.
-func cacheProbeables() []probeable {
-	probeables := make([]probeable, 0, len(cacheSources))
-	for key, source := range cacheSources {
-		probeables = append(probeables, probeable{providerKey: key, run: source.probe})
-	}
-	return sortedProbeables(probeables)
-}
-
-// localDataProbeables returns the registered implementations of the resolver_local_data
-// kind.
-func localDataProbeables() []probeable {
-	probeables := make([]probeable, 0, len(localDataSources))
-	for key, source := range localDataSources {
-		probeables = append(probeables, probeable{providerKey: key, run: source.probe})
+// probeablesOf returns the implementations of one kind in the collector's source set, each
+// reduced to its key and its probe.
+func probeablesOf[S any](registry *sources.Registry[S], probe func(S) func(context.Context,
+	provider.Session) (provider.Result, error)) []probeable {
+	implementations := registry.Sources()
+	probeables := make([]probeable, 0, len(implementations))
+	for key, source := range implementations {
+		probeables = append(probeables, probeable{providerKey: key, run: probe(source)})
 	}
 	return sortedProbeables(probeables)
 }
@@ -126,6 +80,13 @@ func sortedProbeables(probeables []probeable) []probeable {
 // a connector for one of them is not this cycle's work.
 func (c *Collector) ProbeAll(ctx context.Context) error {
 	var failures []error
+	// Every implementation announces itself with a provider.json, and a refusal met while it did
+	// (a malformed manifest, a kind mismatch, a duplicate key) is reported here, once per round,
+	// rather than crashing the service: the implementations that did load are still probed.
+	failures = append(failures, c.sources.Failures()...)
+	if err := c.ensureProviders(ctx); err != nil {
+		failures = append(failures, err)
+	}
 	for _, probe := range []func(context.Context) error{
 		c.probeFirewallLog,
 		c.probeSecurityEvent,
@@ -134,6 +95,8 @@ func (c *Collector) ProbeAll(ctx context.Context) error {
 		c.probeDNSLookup,
 		c.probeResolverCache,
 		c.probeResolverLocalData,
+		c.probeReconciledState,
+		c.probeDeclaredKinds,
 	} {
 		if err := probe(ctx); err != nil {
 			failures = append(failures, err)
@@ -147,37 +110,37 @@ func (c *Collector) ProbeAll(ctx context.Context) error {
 
 // probeFirewallLog probes every implementation of the firewall_log kind.
 func (c *Collector) probeFirewallLog(ctx context.Context) error {
-	return c.resolveKind(ctx, KindFirewallLog, firewallLogProbeables())
+	return c.resolveKind(ctx, KindFirewallLog, probeablesOf(c.sources.FirewallLog, firewallLogProbe))
 }
 
 // probeSecurityEvent probes every implementation of the security_event kind.
 func (c *Collector) probeSecurityEvent(ctx context.Context) error {
-	return c.resolveKind(ctx, KindSecurityEvent, securityEventProbeables())
+	return c.resolveKind(ctx, KindSecurityEvent, probeablesOf(c.sources.SecurityEvent, securityEventProbe))
 }
 
 // probeMeasurement probes every implementation of the measurement_sample kind.
 func (c *Collector) probeMeasurement(ctx context.Context) error {
-	return c.resolveKind(ctx, KindMeasurementSample, measurementProbeables())
+	return c.resolveKind(ctx, KindMeasurementSample, probeablesOf(c.sources.Measurement, measurementProbe))
 }
 
 // probeDHCPLease probes every implementation of the dhcp_lease kind.
 func (c *Collector) probeDHCPLease(ctx context.Context) error {
-	return c.resolveKind(ctx, KindDHCPLease, leaseProbeables())
+	return c.resolveKind(ctx, KindDHCPLease, probeablesOf(c.sources.DHCPLease, leaseProbe))
 }
 
 // probeDNSLookup probes every implementation of the dns_lookup kind.
 func (c *Collector) probeDNSLookup(ctx context.Context) error {
-	return c.resolveKind(ctx, KindDNSLookup, lookupProbeables())
+	return c.resolveKind(ctx, KindDNSLookup, probeablesOf(c.sources.DNSLookup, lookupProbe))
 }
 
 // probeResolverCache probes every implementation of the resolver_cache kind.
 func (c *Collector) probeResolverCache(ctx context.Context) error {
-	return c.resolveKind(ctx, KindResolverCache, cacheProbeables())
+	return c.resolveKind(ctx, KindResolverCache, probeablesOf(c.sources.ResolverCache, cacheProbe))
 }
 
 // probeResolverLocalData probes every implementation of the resolver_local_data kind.
 func (c *Collector) probeResolverLocalData(ctx context.Context) error {
-	return c.resolveKind(ctx, KindResolverLocalData, localDataProbeables())
+	return c.resolveKind(ctx, KindResolverLocalData, probeablesOf(c.sources.ResolverLocalData, localDataProbe))
 }
 
 // probedSource is one implementation as a probe round found it: its registry row and what
@@ -185,7 +148,7 @@ func (c *Collector) probeResolverLocalData(ctx context.Context) error {
 type probedSource struct {
 	providerKey string
 	providerID  int64
-	result      probeResult
+	result      provider.Result
 }
 
 // resolveKind probes each implementation of one kind, records what the firewall said about
@@ -223,8 +186,8 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 	active, ambiguity := decideActive(kind, outcomes, selections)
 
 	for _, entry := range outcomes {
-		detail := entry.result.detail
-		if ambiguity != "" && entry.result.separable {
+		detail := entry.result.Detail
+		if ambiguity != "" && entry.result.Separable {
 			if detail == "" {
 				detail = ambiguity
 			} else {
@@ -251,12 +214,26 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 				detail += "; " + read
 			}
 		}
-		state := entry.result.state
-		if state == "" {
-			state = store.StateUnavailable
+		state, outcome := entry.result.State, entry.result.Outcome
+		// A probe that found the source healthy restates what the last read or sampling
+		// pass recorded, in its code as well as in its words, so the row's code never
+		// contradicts its detail.
+		if outcome == store.OutcomeHealthy {
+			if read := c.readOutcome(entry.providerID); read != "" && read != store.OutcomeHealthy {
+				outcome = read
+			} else if c.sampleAbsence(entry.providerID) != "" {
+				outcome = store.OutcomePartialReadings
+			}
 		}
-		if err := c.writeAvailability(ctx, entry.providerID, state,
-			entry.result.probe, detail); err != nil {
+		if state == "" {
+			// The probe ended on an error before any answer was classified.
+			state = store.StateUnavailable
+			if outcome == "" {
+				outcome = store.OutcomeRequestNotMade
+			}
+		}
+		if err := c.writeAvailability(ctx, entry.providerID, state, outcome,
+			entry.result.Probe, detail); err != nil {
 			return err
 		}
 	}
@@ -333,7 +310,7 @@ func decideActive(kind string, outcomes []probedSource,
 			forced = append(forced, entry.providerKey)
 			continue
 		}
-		if entry.result.separable {
+		if entry.result.Separable {
 			separable = append(separable, entry.providerKey)
 		}
 	}
@@ -414,106 +391,6 @@ func (c *Collector) activeSourceKey(ctx context.Context, kind string) (string, i
 	return sources[0].providerKey, sources[0].providerID, true, nil
 }
 
-// serviceState probes a service status endpoint and reports whether it is running, along with
-// the availability state and detail its answer implies. Every implementation whose product
-// exposes an OPNsense service uses it, which is why it lives here rather than in one of them.
-func (c *Collector) serviceState(ctx context.Context, endpoint opnsense.Endpoint) (
-	bool, store.AvailabilityState, string, error) {
-	response, err := c.client.Call(ctx, endpoint, opnsense.RequestOptions{})
-	if err != nil && response.Outcome == "" {
-		return false, store.StateUnavailable, "", err
-	}
-	if !response.OK() {
-		return false, store.StateUnavailable, response.Detail, nil
-	}
-	var body decode.Object
-	if err := json.Unmarshal(response.Body, &body); err != nil {
-		return false, store.StateUnavailable, "the status body could not be read", nil
-	}
-	status, present := decode.String(body, "status")
-	if !present {
-		return false, store.StateUnavailable, "the status body reported no status", nil
-	}
-	if decode.LowerASCII(status) == "running" {
-		return true, store.StateReachable, "", nil
-	}
-	return false, store.StatePresentButDisabled,
-		"the service reported " + quoteForDetail(status), nil
-}
-
-// readObject calls an endpoint and decodes its body as a JSON object, reporting whether that
-// worked. A failure is not an error here: the caller turns it into an availability state,
-// which is what an unreadable answer is.
-func (c *Collector) readObject(ctx context.Context, endpoint opnsense.Endpoint) (
-	decode.Object, bool, error) {
-	response, err := c.client.Call(ctx, endpoint, opnsense.RequestOptions{})
-	if err != nil && response.Outcome == "" {
-		return nil, false, err
-	}
-	if !response.OK() {
-		return nil, false, nil
-	}
-	var body decode.Object
-	if err := json.Unmarshal(response.Body, &body); err != nil {
-		return nil, false, nil
-	}
-	return body, true, nil
-}
-
-// readCollection calls an endpoint and returns its rows, whatever collection shape it used: a
-// bare array, a grid-search envelope, a map keyed by something, or a list under one of the
-// wrapper keys the caller names.
-//
-// The wrapper keys are an UNVERIFIED assumption, like the telemetry field names: the survey
-// establishes that those endpoints answer and not how they shape their answers. A body whose
-// shape none of them matches yields no rows, which the caller records as an absent reading
-// rather than as a zero.
-func (c *Collector) readCollection(ctx context.Context, endpoint opnsense.Endpoint,
-	wrapperKeys ...string) ([]decode.Object, bool, error) {
-	response, err := c.client.Call(ctx, endpoint, opnsense.RequestOptions{})
-	if err != nil && response.Outcome == "" {
-		return nil, false, err
-	}
-	if !response.OK() {
-		return nil, false, nil
-	}
-
-	var decoded any
-	if err := json.Unmarshal(response.Body, &decoded); err != nil {
-		return nil, false, nil
-	}
-	if object, isObject := decoded.(decode.Object); isObject {
-		for _, key := range wrapperKeys {
-			if nested, present := object[key]; present {
-				if rows := decode.Objects(nested); len(rows) > 0 {
-					return rows, true, nil
-				}
-			}
-		}
-	}
-	rows, err := decode.Rows(response.Body)
-	if err != nil {
-		return nil, false, nil
-	}
-	return rows, true, nil
-}
-
-// stream reads one server-sent event stream within a bound. It is the port's second
-// outbound capability, and it hands over a bounded read and its events, nothing more.
-func (c *Collector) stream(ctx context.Context, endpoint opnsense.Endpoint,
-	bound opnsense.StreamBound) (opnsense.StreamResponse, error) {
-	return c.client.Stream(ctx, endpoint, bound)
-}
-
-// quoteForDetail renders a value the firewall reported for an availability detail, so a reader
-// can tell an empty answer from a missing one.
-func quoteForDetail(value string) string {
-	if value == "" {
-		return "an empty status"
-	}
-	return "a status of " + value
-}
-
 // joinWithComma joins names for a human-readable detail.
 func joinWithComma(names []string) string {
 	joined := ""
@@ -524,4 +401,53 @@ func joinWithComma(names []string) string {
 		joined += name
 	}
 	return joined
+}
+
+// ensureProviders creates the registry row of every implementation that declared itself and has
+// none yet, with the availability row the schema gives every registry row.
+//
+// THIS IS WHAT MAKES ADDING AN IMPLEMENTATION A DIRECTORY AND NOTHING ELSE. The schema seeds the
+// rows of the implementations that shipped first, and that seed is historical: an implementation
+// added later declares itself in its provider.json and gets its row here, at the first probe
+// round, so no schema file is edited. A row that exists is left exactly as it is.
+func (c *Collector) ensureProviders(ctx context.Context) error {
+	var failures []error
+	for _, manifest := range c.sources.Declared() {
+		if _, _, err := c.store.EnsureProvider(ctx, manifest.Kind, manifest.Key, manifest.DisplayName,
+			c.now()); err != nil {
+			failures = append(failures, err)
+		}
+	}
+	return joinErrors(failures)
+}
+
+// The probe of each core kind's implementations, as probeablesOf takes it.
+func firewallLogProbe(source firewalllog.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
+}
+
+func securityEventProbe(source securityevent.Source) func(context.Context, provider.Session) (
+	provider.Result, error) {
+	return source.Probe
+}
+
+func measurementProbe(source measurement.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
+}
+
+func leaseProbe(source dhcplease.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
+}
+
+func lookupProbe(source dnslookup.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
+}
+
+func cacheProbe(source resolvercache.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
+}
+
+func localDataProbe(source resolverlocaldata.Source) func(context.Context, provider.Session) (
+	provider.Result, error) {
+	return source.Probe
 }

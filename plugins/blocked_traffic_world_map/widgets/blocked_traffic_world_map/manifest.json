@@ -1,0 +1,97 @@
+{
+  "manifest_version": 1,
+  "type": "blocked_traffic_world_map",
+  "shape": "map",
+  "providers": [
+    "firewall_log",
+    "security_event",
+    "ip_geolocation"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "engines",
+      "kind": "enum_set",
+      "values": [
+        "firewall_rule",
+        "security_engine"
+      ],
+      "default": [
+        "firewall_rule",
+        "security_engine"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "endpoint",
+      "kind": "enum",
+      "values": [
+        "destination",
+        "source"
+      ],
+      "default": "destination",
+      "class": "data"
+    },
+    {
+      "key": "size_by",
+      "kind": "enum",
+      "values": [
+        "connections",
+        "bytes",
+        "events"
+      ],
+      "default": "connections",
+      "class": "data"
+    },
+    {
+      "key": "min_count",
+      "kind": "integer",
+      "default": 0,
+      "class": "data"
+    },
+    {
+      "key": "show_unplaced",
+      "kind": "boolean",
+      "default": true,
+      "class": "rendering"
+    },
+    {
+      "key": "cluster",
+      "kind": "boolean",
+      "default": true,
+      "class": "rendering"
+    }
+  ],
+  "references": [
+    "interface"
+  ],
+  "queries": [
+    "blocked_traffic_world_map.statements.sql"
+  ],
+  "script": "blocked_traffic_world_map.js",
+  "renderer": {
+    "reserved": true
+  }
+}

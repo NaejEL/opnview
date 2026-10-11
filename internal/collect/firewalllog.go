@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/NaejEL/opnview/internal/collect/firewalllog"
 	"github.com/NaejEL/opnview/internal/store"
 )
 
@@ -12,7 +13,7 @@ import (
 // Everything here is true of any source of packet-level records, whichever product produced
 // them: the two first-class join keys are resolved, a client identity is composed, and a gap
 // is detected. The product-specific half — which endpoint, which field names, which words for
-// an action — is in that implementation's own file.
+// an action — is in that implementation's own directory.
 //
 // THE GAP DETECTION IS THE POINT OF THIS FILE. There is no server-side resume point for this
 // kind on OPNsense: the filter log's `digest` is a de-duplication key and not a cursor,
@@ -33,15 +34,15 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 		// Collecting anyway would be reading a source opnview has just said it cannot read.
 		return nil
 	}
-	source, registered := firewallLogSources[providerKey]
+	source, registered := c.sources.FirewallLog.Lookup(providerKey)
 	if !registered {
 		return fmt.Errorf("collect: the active firewall_log provider %q has no implementation",
 			providerKey)
 	}
 
-	records, result, readErr := source.records(ctx, c, c.pages().FirewallLog)
-	if writeErr := c.writeAvailability(ctx, providerID, result.state,
-		result.probe, result.detail); writeErr != nil {
+	records, result, readErr := source.Records(ctx, c, c.pages().FirewallLog)
+	if writeErr := c.writeAvailability(ctx, providerID, result.State,
+		result.Outcome, result.Probe, result.Detail); writeErr != nil {
 		return writeErr
 	}
 	if readErr != nil {
@@ -85,7 +86,7 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 // reaches them even when this returns an error part-way. A record the retention purge
 // has already removed is not stored again: store.InsertFlow refuses it inside the
 // insert itself, so a purge committing at any moment of this loop is seen.
-func (c *Collector) storeFirewallLog(ctx context.Context, records []logRecord, snapshot Discovery,
+func (c *Collector) storeFirewallLog(ctx context.Context, records []firewalllog.Record, snapshot Discovery,
 	now, providerID, newestStored int64, hasStored bool, stored *derivation) error {
 	oldestReturned := int64(0)
 	for index, record := range records {
@@ -148,7 +149,7 @@ func (c *Collector) storeFirewallLog(ctx context.Context, records []logRecord, s
 // whatever interface happened to log it first. Until the derivation runs the row is
 // north-south with no interface on either end, which is what the schema's CHECK requires of
 // an unplaced row.
-func buildFlow(record logRecord, snapshot Discovery, now int64) store.Flow {
+func buildFlow(record firewalllog.Record, snapshot Discovery, now int64) store.Flow {
 	interfaceState := store.LookupNotFound
 	switch {
 	case snapshot.RefreshedAt == 0:

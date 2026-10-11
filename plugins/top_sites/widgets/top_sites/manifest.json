@@ -1,0 +1,72 @@
+{
+  "manifest_version": 1,
+  "type": "top_sites",
+  "shape": "table",
+  "providers": [
+    "dns_lookup",
+    "resolver_cache",
+    "firewall_log",
+    "ip_geolocation"
+  ],
+  "primary": "dns_lookup",
+  "windowed": true,
+  "no_domains": "whole",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "clients",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "client",
+      "class": "data"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 20,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "min_flows",
+      "kind": "integer",
+      "default": 1,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "group_by_registrable_domain",
+      "kind": "boolean",
+      "default": false,
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client",
+    "interface"
+  ],
+  "queries": [],
+  "script": "top_sites.js",
+  "renderer": {
+    "reserved": true
+  }
+}

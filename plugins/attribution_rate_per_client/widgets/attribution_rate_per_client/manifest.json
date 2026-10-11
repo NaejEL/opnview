@@ -1,0 +1,67 @@
+{
+  "manifest_version": 1,
+  "type": "attribution_rate_per_client",
+  "shape": "table",
+  "providers": [
+    "dns_lookup"
+  ],
+  "primary": "dns_lookup",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "clients",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "client",
+      "class": "data"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 20,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "sort",
+      "kind": "enum",
+      "values": [
+        "worst_first",
+        "best_first",
+        "by_volume"
+      ],
+      "default": "worst_first",
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client",
+    "interface"
+  ],
+  "queries": [],
+  "script": "attribution_rate_per_client.js",
+  "renderer": {
+    "reserved": true
+  }
+}

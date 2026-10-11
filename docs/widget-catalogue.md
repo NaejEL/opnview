@@ -1524,14 +1524,19 @@ telemetry series with a traffic series on one chart requires both families to
 share a time axis and a bucketing rule**: bucket boundaries have to be the volume
 aggregates' period boundaries, or the chart will lie about simultaneity. One
 query per series, joined on the time bucket at the presentation layer rather than
-in SQL, because the series may come from tables with no join key in common.
+in SQL, because the series may come from tables with no join key in common. A series
+may also be drawn from any dataset of the data catalogue that has a time column -- a plugin's
+table included -- through the catalogue's compiled query on the same UTC-aligned buckets
+(`docs/widget-api.md`, *Data catalogue*); the sources above keep their own reads.
 
 **Parameters** — `period`; `series` — an ordered **list**, each entry naming
-`source` (which catalogue data a series is drawn from), `metric` or `measure`,
+`source` (which catalogue data a series is drawn from: one of the five sources, or the name of
+any dataset of the data catalogue with a time column), `metric` or `measure` (for a dataset, one
+of its measure columns),
 an optional reference scoping it (an interface, a client, a rule, a
 provider), `axis` (`left` | `right`), `label`, `render` (`line` | `area` |
 `bars` | `points`) and `aggregation` (`mean` | `min` | `max` | `sum` | `last`,
-for the bucket a pixel covers); `axes` (per axis, unit, scale and an optional
+for the bucket a pixel covers; for a dataset, any aggregation its measure column admits); `axes` (per axis, unit, scale and an optional
 fixed range); `legend` (`table` | `inline` | `hidden`); `tooltip`
 (`single` | `all_series` — the second being Grafana's full stacked breakdown at
 the hovered instant, which the preferences section names as worth taking);
@@ -1709,7 +1714,12 @@ a reader of a binding needs it.
    operator or country right-hand side, require a `LEFT JOIN` with a null
    right-hand side counted as `pending` and a `lookup_state` of `miss` counted as
    unplaced — which is what makes mapped plus unplaced equal the total. *This is a
-   defect in the query, not a preference of the widget.*
+   defect in the query, not a preference of the widget.* **Fixed in step 5B:**
+   `screen: Map` now reads `geo_asn` through a `LEFT JOIN`, as the widget API does,
+   and returns a peer with no cache row under the lookup state `no_row` — never
+   looked up, which the API reports apart from `pending` — so its volume stays in
+   the total; `sql/schema-checks.sh` asserts it by removing one peer's cache row
+   inside a transaction it rolls back.
 3. **`owner_volume_aggregate_*.client_count` is the distinct machines that
    contributed to one slot and must not be summed across slots.** A card covering
    several slots counts its machines from `client`.

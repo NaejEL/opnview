@@ -370,6 +370,9 @@ type Rule struct {
 	Enabled *bool
 	// IsAutomatic is API field `is_automatic`.
 	IsAutomatic bool
+	// DestinationNet is API field `destination_net`, verbatim; nil means not reported.
+	// It is stored and never evaluated: no flow is matched against it.
+	DestinationNet *string
 }
 
 // ClientIdentity is one level of the client identity cascade.
@@ -559,6 +562,10 @@ type DNSResolution struct {
 	// ClientResolution says which: one of the ClientResolution constants. Empty is
 	// ClientResolutionLoggedAddress.
 	ClientResolution string
+	// ClientFamily is the family of the querying address, 4 or 6, from the row's
+	// `family` field; nil when the row carried none. It is the evidence the
+	// dual-stack rule reads (ResolveLoggedHostname).
+	ClientFamily *int64
 	// ClientID is the machine that address resolved to, when one is known.
 	ClientID *int64
 	// Domain is `domain`.
@@ -601,6 +608,12 @@ const (
 	// address answered for in the resolver's local data held at that instant. The
 	// term is opnview's own (docs/data-model.md, Vocabulary).
 	ClientResolutionLocalData = "local_data_hostname"
+	// ClientResolutionDualStack is a host name no lease named, for which the local
+	// data held one IPv4 and one IPv6 address under one name at that instant, and
+	// whose lookup did not report the querying family, so which of the two asked is
+	// not known (decision 15 of specs/SPEC-step-5b-widget-api.md). The term is
+	// opnview's own (docs/data-model.md, Vocabulary).
+	ClientResolutionDualStack = "dual_stack_hostname"
 	// ClientResolutionThisFirewall is a host name that names this firewall:
 	// `localhost`, what a reverse lookup of a loopback address returns. A protocol
 	// constant (decision 11 of the step-5A live corrections), not configuration.
@@ -665,7 +678,7 @@ type EveCursor struct {
 // There is deliberately NO row shape for pair_volume_observation. That table is
 // DERIVED and not collected -- the maintainer's ruling, recorded on the table
 // itself -- and its rows are computed from `flow` by the refresh, through the
-// statement insert_pair_volume of derive.sql, without passing through Go values.
+// statement insert_pair_volume of pairvolume.statements.sql, without passing through Go values.
 
 // StateSnapshot is one provider's complete set of things of one type, as of one
 // instant, with the things in it.

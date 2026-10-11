@@ -1,0 +1,336 @@
+{
+  "type": "sites_by_client",
+  "parameters": {
+    "clients": null,
+    "interfaces": null,
+    "min_flows": 1,
+    "period": "24h",
+    "show_attribution_rate": true,
+    "sites_per_client": 5
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789914000,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq DHCP",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "isc",
+      "display_name": "ISC dhcpd",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "kea",
+      "display_name": "Kea DHCP",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dns_lookup",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq resolver",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dns_lookup",
+      "provider_key": "unbound",
+      "display_name": "Unbound",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "resolver_cache",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq cache",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "resolver_cache",
+      "provider_key": "unbound",
+      "display_name": "Unbound cache",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    }
+  ],
+  "condition": "not_yet_probed",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "resolver_window_bounded": false,
+  "data": {
+    "rows": [
+      {
+        "client": {
+          "id": 10,
+          "identity_kind": "mac",
+          "identity_key": "00:11:22:33:44:55",
+          "interface_id": 1,
+          "mac": "00:11:22:33:44:55",
+          "hostname": null,
+          "last_address": "192.0.2.10",
+          "owner_id": null,
+          "owner_assigned_at": null,
+          "unstable_identity": false,
+          "last_seen_at": 1789999800
+        },
+        "state": "named",
+        "sites": [
+          {
+            "name": "example.org",
+            "flows": {
+              "measure": "logged",
+              "lower_bound": true,
+              "value": 2
+            },
+            "bytes": {
+              "measure": "logged",
+              "lower_bound": true,
+              "value": 4000
+            },
+            "clients": 1,
+            "client_ids": [
+              10
+            ],
+            "methods": {
+              "resolver_cache_answer": 0,
+              "lookup_timing": 2,
+              "not_recorded_beyond_flow_horizon": 0
+            },
+            "mean_delay_seconds": 3,
+            "max_delay_seconds": 4,
+            "country_code": null,
+            "asn": null,
+            "operator": null
+          }
+        ],
+        "remainder": {
+          "members": 0,
+          "count": {
+            "measure": "logged",
+            "lower_bound": true,
+            "value": 0
+          }
+        },
+        "below_min_flows": {
+          "members": 0,
+          "count": {
+            "measure": "logged",
+            "lower_bound": true,
+            "value": 0
+          }
+        },
+        "attribution": {
+          "client": {
+            "id": 10,
+            "identity_kind": "mac",
+            "identity_key": "00:11:22:33:44:55",
+            "interface_id": 1,
+            "mac": "00:11:22:33:44:55",
+            "hostname": null,
+            "last_address": "192.0.2.10",
+            "owner_id": null,
+            "owner_assigned_at": null,
+            "unstable_identity": false,
+            "last_seen_at": 1789999800
+          },
+          "eligible_flows": {
+            "measure": "logged",
+            "lower_bound": true,
+            "value": 3
+          },
+          "eligible_bytes": {
+            "measure": "logged",
+            "lower_bound": true,
+            "value": 4500
+          },
+          "named_flows": {
+            "measure": "logged",
+            "lower_bound": true,
+            "value": 2
+          },
+          "methods": {
+            "resolver_cache_answer": 0,
+            "lookup_timing": 2,
+            "not_recorded_beyond_flow_horizon": 0
+          },
+          "rate": 0.6666666666666666,
+          "rate_state": "defined",
+          "mean_delay_seconds": 3,
+          "max_delay_seconds": 4
+        }
+      },
+      {
+        "client": {
+          "id": 11,
+          "identity_kind": "mac",
+          "identity_key": "00:11:22:33:44:66",
+          "interface_id": 1,
+          "mac": "00:11:22:33:44:66",
+          "hostname": null,
+          "last_address": "192.0.2.11",
+          "owner_id": null,
+          "owner_assigned_at": null,
+          "unstable_identity": false,
+          "last_seen_at": 1789999800
+        },
+        "state": "named",
+        "sites": [
+          {
+            "name": "example.net",
+            "flows": {
+              "measure": "logged",
+              "lower_bound": true,
+              "value": 1
+            },
+            "bytes": {
+              "measure": "logged",
+              "lower_bound": true,
+              "value": 700
+            },
+            "clients": 1,
+            "client_ids": [
+              11
+            ],
+            "methods": {
+              "resolver_cache_answer": 0,
+              "lookup_timing": 1,
+              "not_recorded_beyond_flow_horizon": 0
+            },
+            "mean_delay_seconds": 1,
+            "max_delay_seconds": 1,
+            "country_code": null,
+            "asn": null,
+            "operator": null
+          }
+        ],
+        "remainder": {
+          "members": 0,
+          "count": {
+            "measure": "logged",
+            "lower_bound": true,
+            "value": 0
+          }
+        },
+        "below_min_flows": {
+          "members": 0,
+          "count": {
+            "measure": "logged",
+            "lower_bound": true,
+            "value": 0
+          }
+        },
+        "attribution": {
+          "client": {
+            "id": 11,
+            "identity_kind": "mac",
+            "identity_key": "00:11:22:33:44:66",
+            "interface_id": 1,
+            "mac": "00:11:22:33:44:66",
+            "hostname": null,
+            "last_address": "192.0.2.11",
+            "owner_id": null,
+            "owner_assigned_at": null,
+            "unstable_identity": false,
+            "last_seen_at": 1789999800
+          },
+          "eligible_flows": {
+            "measure": "logged",
+            "lower_bound": true,
+            "value": 1
+          },
+          "eligible_bytes": {
+            "measure": "logged",
+            "lower_bound": true,
+            "value": 700
+          },
+          "named_flows": {
+            "measure": "logged",
+            "lower_bound": true,
+            "value": 1
+          },
+          "methods": {
+            "resolver_cache_answer": 0,
+            "lookup_timing": 1,
+            "not_recorded_beyond_flow_horizon": 0
+          },
+          "rate": 1,
+          "rate_state": "defined",
+          "mean_delay_seconds": 1,
+          "max_delay_seconds": 1
+        }
+      }
+    ]
+  }
+}

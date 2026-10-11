@@ -23,12 +23,14 @@ fill each with the widgets you want, moving between them with tabs rather than
 menus; a canvas can be exported to a file and imported into another
 installation.
 
-**One service, installed and updated by a single command, with no external
-data store to provision.** Storage engines are embedded libraries, not servers
-— see the storage rule in [ROADMAP.md](ROADMAP.md), under *Rules that apply to
-every step*, for what that permits and forbids. Local SQLite, frontend served
-by the service. Nothing is installed on the firewall and nothing is changed on
-it: everything goes through its REST API, read-only.
+**One service and its database, installed and updated by a single command,
+with nothing to set up by hand.** The database is PostgreSQL with TimescaleDB,
+run beside `opnview` by the installation itself. See the storage rule in
+[ROADMAP.md](ROADMAP.md), under *Rules that apply to every step*. The frontend
+is served by the service. Nothing is installed on the firewall and nothing is
+changed on it: everything goes through its REST API, read-only. Every request
+to the firewall, a plugin's included, goes through `opnview`'s read-only
+broker, which refuses anything but a read before it is sent.
 
 ## Status
 
@@ -193,16 +195,6 @@ database like everything else, so they are governed by the same retention, and t
 aggregate mode — no domain names — withholds them from the screens as it does the
 site names, without stopping them being stored.
 
-**A power cut can roll back the last moments of collected history.** The database
-runs SQLite in write-ahead-log mode with `synchronous = NORMAL`, a trade the
-maintainer approved on 9 October 2026 for the write rate a collector needs: a
-transaction committed shortly before a power loss or an operating-system crash may
-be rolled back when the database recovers; the database is not corrupted; and a
-crash of `opnview` itself loses nothing
-([sqlite.org, `PRAGMA synchronous`](https://www.sqlite.org/pragma.html#pragma_synchronous);
-[sqlite.org, write-ahead log](https://www.sqlite.org/wal.html)). Most of what is
-lost the next polls read again.
-
 **Alert coverage is per interface.** Suricata may be absent, installed but
 stopped, or running on only some interfaces. Alerts exist for the interfaces it
 monitors and for no others; the UI states per interface whether it is covered,
@@ -221,8 +213,8 @@ per-address-pair traffic at a one-day resolution, for 62 days. Shorter periods
 are built from `opnview`'s own history, so the 1 h and 24 h views are only as
 deep as the time it has been running.
 
-**The encryption key is a file beside the database, and the limit is stated
-rather than dressed up.** Your OPNsense API secret and your MaxMind licence key
+**The encryption key is a file in `opnview`'s data directory, outside the
+database, and the limit is stated rather than dressed up.** Your OPNsense API secret and your MaxMind licence key
 are encrypted at rest with authenticated encryption; the key that opens them is
 created on first start, in the data directory, with permissions denying group
 and other. **This protects a database that is copied, backed up, sent by mistake
@@ -234,7 +226,7 @@ was taken deliberately.
 
 Two consequences follow, and neither is a defect:
 
-- **back up the key file with the database, or separately, but do not lose it.**
+- **back up the key file with the database dump, or separately, but do not lose it.**
   Without it the stored credentials cannot be read and have to be entered again;
   the history in the database is untouched either way;
 - **a forgotten password is recovered by presenting that same key file**, and by
@@ -242,11 +234,12 @@ Two consequences follow, and neither is a defect:
   requiring it grants an attacker nothing they did not have — and it returns the
   installation without deleting the database.
 
-**Replacing a credential leaves the previous one in the write-ahead log until a
-checkpoint, and that is said rather than glossed over.** A credential is stored as
-one row, replaced in place, so no row holds the previous value. But while the
-service is running, `opnview.db-wal` beside the database holds the previous
-ciphertext as well as the current one. It is encrypted under the same key file, so
+**Replacing a credential leaves the previous one in the database's files until
+PostgreSQL reclaims it, and that is said rather than glossed over.** A credential is
+stored as one row, replaced in place, so no live row holds the previous value. But
+PostgreSQL keeps the replaced row version until a vacuum reclaims its space, and its
+write-ahead log holds it until the log segment is recycled, so for a while the
+database's files hold the previous ciphertext as well as the current one. It is encrypted under the same key file, so
 it discloses nothing to anyone who does not hold that file, and only a
 **superseded** secret to anyone who holds both — the same people the limitation
 above already names. Forcing a full checkpoint after every credential write would
@@ -279,9 +272,32 @@ stored.
 In a workplace setting, informing the people concerned is a legal obligation
 in most jurisdictions.
 
+### Backup
+
+A backup is two things: the database, and the key file in the data directory.
+The database is the installation's own PostgreSQL database; dump it with
+
+```
+pg_dump --format=custom --file=opnview.dump "host=<host> port=<port> user=<user> dbname=<database>"
+```
+
+replacing the four placeholders with that database's connection, and giving the
+password through a password file or the `PGPASSWORD` environment variable rather
+than on the command line. The dump without the key file restores the history but
+not the stored credentials. Restore into the same TimescaleDB version, by the
+procedure TimescaleDB documents for a logical backup: create the database and the
+`timescaledb` extension, run `SELECT timescaledb_pre_restore();`, then
+`pg_restore --dbname=<database> opnview.dump` (without `-j`), then
+`SELECT timescaledb_post_restore();`. The pre-deployment checks run this exact
+dump and this restore on a seeded database and compare every table's row count.
+
 ## Licence
 
 [MIT](LICENSE).
+
+The database is PostgreSQL with the TimescaleDB extension, run beside `opnview` by the
+installation; `opnview` uses only TimescaleDB's Apache-2.0 edition, and neither links
+nor redistributes it.
 
 This product includes GeoLite Data created by MaxMind, available from
 <https://www.maxmind.com>. The databases are downloaded on your own MaxMind

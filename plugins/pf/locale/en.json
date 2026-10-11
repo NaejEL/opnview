@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "provider.firewall_log.pf": "pf filter log"
+  }
+}

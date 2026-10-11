@@ -95,6 +95,13 @@ const (
 	// specs/SPEC-test-budget-and-two-live-defects.md). The schema writes its default
 	// row.
 	KeyLeaseBackendFailurePassLimit = "lease_backend_failure_pass_limit"
+	// KeyHeartbeatInterval is how often, in seconds, the running service records that
+	// it is alive (SPEC-step-5b-widget-api.md, D2). The schema writes its default row.
+	KeyHeartbeatInterval = "heartbeat_interval_seconds"
+	// KeyDowntimeThreshold is how long, in seconds, the service must have been gone for
+	// the interval to be recorded as opnview not running. The schema writes its default
+	// row.
+	KeyDowntimeThreshold = "downtime_threshold_seconds"
 )
 
 // The setting keys of the page sizes: how many records one request asks the
@@ -275,6 +282,19 @@ const DefaultCacheAnswerDelaySeconds int64 = store.DefaultCacheAnswerDelaySecond
 // exists only so a database with no row still behaves.
 const DefaultLegPairingWindowSeconds int64 = store.DefaultPairingWindowSeconds
 
+// MaxLegPairingWindowSeconds is the largest pairing window accepted: 60 s, the
+// maintainer's decision 13 of specs/SPEC-step-5b-widget-api.md.
+//
+// WHY A BOUND AT ALL. The two records of one connection are the same packet logged
+// on two interfaces, written by pf within the same instant; the default of 1 s
+// already allows for the filter log's whole-second timestamps. A window of minutes
+// would pair records of DIFFERENT connections that merely share their two ends and
+// port, and each such false pair drops a real connection from every total, which is
+// a wrong figure that looks right. A minute is generous beyond anything a log
+// timestamp needs and still short of that failure; a value above it is refused at
+// load, naming the setting, rather than stored and quietly applied.
+const MaxLegPairingWindowSeconds int64 = 60
+
 // DefaultLeaseBackendFailurePassLimit is 3 passes: at the default lease interval of
 // five minutes, a backend that has failed for a quarter of an hour stops holding the
 // unresolved host-name lookups back. One or two failed passes are what a restart of
@@ -285,6 +305,18 @@ const DefaultLegPairingWindowSeconds int64 = store.DefaultPairingWindowSeconds
 // is written in the schema and read from the database; the constant exists only so a
 // database with no row still behaves.
 const DefaultLeaseBackendFailurePassLimit int64 = 3
+
+// DefaultHeartbeatIntervalSeconds is 60 s. After a crash the last beat is the only bound
+// opnview holds on when it stopped, so the recorded interval can start up to one heartbeat
+// early; a minute is finer than every collection interval but the filter log's, and one
+// single-row UPDATE a minute costs nothing measurable beside the collection's writes.
+const DefaultHeartbeatIntervalSeconds int64 = 60
+
+// DefaultDowntimeThresholdSeconds is 300 s: five heartbeats, so a beat delayed by a busy
+// moment is never read as downtime, and the five minutes of the default lease and local-data
+// intervals, so a restart for an update -- a few seconds -- records nothing, while an
+// absence long enough for a source to have been left unread for a whole poll is recorded.
+const DefaultDowntimeThresholdSeconds int64 = 300
 
 // Config is the whole of opnview's runtime configuration.
 type Config struct {
@@ -329,6 +361,11 @@ type Config struct {
 	// LeaseBackendFailurePassLimit is how many lease passes in a row a backend may fail
 	// before the unresolved host-name lookups are examined without it.
 	LeaseBackendFailurePassLimit int64
+	// HeartbeatIntervalSeconds is how often the running service records that it is alive,
+	// and DowntimeThresholdSeconds how long it must have been gone for the interval to be
+	// recorded as opnview not running.
+	HeartbeatIntervalSeconds int64
+	DowntimeThresholdSeconds int64
 }
 
 // Defaults returns the configuration of a database that carries no setting row
@@ -354,6 +391,8 @@ func Defaults() Config {
 		AttributionMaxDelaySeconds:   DefaultAttributionMaxDelaySeconds,
 		LegPairingWindowSeconds:      DefaultLegPairingWindowSeconds,
 		LeaseBackendFailurePassLimit: DefaultLeaseBackendFailurePassLimit,
+		HeartbeatIntervalSeconds:     DefaultHeartbeatIntervalSeconds,
+		DowntimeThresholdSeconds:     DefaultDowntimeThresholdSeconds,
 		// The page sizes are defaults a row overrides, like the intervals.
 		FirewallLogPageSize:   DefaultFirewallLogPageSize,
 		SecurityEventPageSize: DefaultSecurityEventPageSize,
@@ -508,6 +547,10 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 			return loaded, fmt.Errorf("config: %s must be 0 or more whole seconds, got %d",
 				KeyLegPairingWindow, seconds)
 		}
+		if seconds > MaxLegPairingWindowSeconds {
+			return loaded, fmt.Errorf("config: %s must be at most %d seconds, got %d",
+				KeyLegPairingWindow, MaxLegPairingWindowSeconds, seconds)
+		}
 		loaded.LegPairingWindowSeconds = seconds
 	}
 
@@ -526,6 +569,37 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 				KeyLeaseBackendFailurePassLimit, passes)
 		}
 		loaded.LeaseBackendFailurePassLimit = passes
+	}
+
+	// The heartbeat interval and the downtime threshold are positive whole numbers of
+	// seconds, and the threshold must exceed the interval: a running service leaves up to
+	// one interval between two beats, so a threshold at or below it would record the
+	// service's own cadence as downtime (SPEC-step-5b-widget-api.md, D2).
+	for _, setting := range []struct {
+		key    string
+		target *int64
+	}{
+		{KeyHeartbeatInterval, &loaded.HeartbeatIntervalSeconds},
+		{KeyDowntimeThreshold, &loaded.DowntimeThresholdSeconds},
+	} {
+		if value, present, err := reader.Setting(ctx, setting.key); err != nil {
+			return loaded, err
+		} else if present {
+			seconds, err := strconv.ParseInt(value, 10, 64)
+			if err != nil {
+				return loaded, fmt.Errorf("config: %s is not a whole number of seconds: %w", setting.key, err)
+			}
+			if seconds <= 0 || seconds > MaxIntervalSeconds {
+				return loaded, fmt.Errorf("config: %s must be a positive whole number of seconds no "+
+					"larger than %d, got %d", setting.key, MaxIntervalSeconds, seconds)
+			}
+			*setting.target = seconds
+		}
+	}
+	if loaded.DowntimeThresholdSeconds <= loaded.HeartbeatIntervalSeconds {
+		return loaded, fmt.Errorf("config: %s (%d s) must be longer than %s (%d s), or the service's "+
+			"own heartbeat cadence would read as downtime", KeyDowntimeThreshold,
+			loaded.DowntimeThresholdSeconds, KeyHeartbeatInterval, loaded.HeartbeatIntervalSeconds)
 	}
 
 	return loaded, nil

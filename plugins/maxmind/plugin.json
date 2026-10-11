@@ -1,0 +1,33 @@
+{
+  "api_version": 1,
+  "name": "maxmind",
+  "version": "1.0.0",
+  "display_name": "MaxMind GeoLite2",
+  "description": "Downloads MaxMind's GeoLite2 City and ASN databases on the operator's own account, keeps them current, and places public addresses with them.",
+  "script": "maxmind.js",
+  "destinations": [
+    "https://download.maxmind.com",
+    "https://mm-prod-geoip-databases.a2649acb697e2c09b632799562c076f2.r2.cloudflarestorage.com"
+  ],
+  "settings": [
+    {
+      "key": "account_id",
+      "type": "integer",
+      "min": 1,
+      "label": "plugin.maxmind.setting.account_id"
+    },
+    {
+      "key": "licence_key",
+      "type": "secret",
+      "label": "plugin.maxmind.setting.licence_key"
+    }
+  ],
+  "providers": [
+    {
+      "kind": "ip_geolocation",
+      "key": "maxmind_geolite2",
+      "display_name": "MaxMind GeoLite2",
+      "read_strategy": "full_reread"
+    }
+  ]
+}

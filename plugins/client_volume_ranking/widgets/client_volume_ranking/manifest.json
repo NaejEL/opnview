@@ -1,0 +1,78 @@
+{
+  "manifest_version": 1,
+  "type": "client_volume_ranking",
+  "shape": "ranked_bars",
+  "providers": [
+    "firewall_log",
+    "dhcp_lease"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "identity",
+      "kind": "enum",
+      "values": [
+        "any",
+        "dhcp_client_id",
+        "mac",
+        "address_in_interface"
+      ],
+      "default": "any",
+      "class": "data"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 10,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "include_unstable",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    },
+    {
+      "key": "measure",
+      "kind": "enum",
+      "values": [
+        "bytes",
+        "connections",
+        "destinations"
+      ],
+      "default": "bytes",
+      "class": "data"
+    }
+  ],
+  "references": [
+    "interface"
+  ],
+  "queries": [],
+  "script": "client_volume_ranking.js",
+  "renderer": {
+    "reserved": true
+  }
+}

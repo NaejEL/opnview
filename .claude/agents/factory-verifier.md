@@ -56,10 +56,26 @@ rule recorded in `CLAUDE.md`, and you must report it as such.
 
    For every shell script touched, also run `bash -n <script>`, and
    `shellcheck` if installed. These may run on the host.
-4. Check **one by one** every acceptance criterion: for each, state which test
+4. **Check modularity before the criteria — it is `CLAUDE.md`'s binding
+   rule, whether or not the spec repeats it.** A kind of thing is a seam, and
+   an implementation is a directory behind it, discovered at runtime. A widget
+   is a directory with its manifest, query and renderer. A provider is a
+   directory with its code, SQL and tests. Adding one must mean adding a
+   directory and nothing else. For every implementation the diff adds:
+   - Can a third party add a sibling by writing files only, from the
+     documentation alone? Show the test that proves it, or try it in a scratch
+     copy.
+   - Does adding one require editing a shipped list, switch, registry file or
+     shared SQL file?
+   - Does a package directory accumulate unrelated implementations side by
+     side?
+
+   Any "yes" to the last two, or a "no" to the first, is a `major` issue,
+   even when every acceptance criterion passes.
+5. Check **one by one** every acceptance criterion: for each, state which test
    or which factual evidence covers it. A criterion with no dedicated test is a
    `major` issue at minimum, even when the suite passes.
-5. Try to break it. At minimum:
+6. Try to break it. At minimum:
    - **Hardcoded configuration** — `grep` the diff for interface names (`igb`,
      `em0`, `vtnet`, `lan`, `wan`, `opt1`…), literal private CIDRs or IPs
      (`192.168.`, `10.`, `172.16.`…), VLAN names, an assumed segment count.
@@ -88,7 +104,7 @@ rule recorded in `CLAUDE.md`, and you must report it as such.
      it.
    - Sham tests: a test that asserts nothing, `t.Skip`, a tautological
      assertion, a test that only exercises the mock.
-6. Modify **no** file, under any pretext — including to "try" a fix. You
+7. Modify **no** file, under any pretext — including to "try" a fix. You
    observe and you report.
 
 ## What you have no competence to judge

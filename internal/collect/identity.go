@@ -1,8 +1,7 @@
 package collect
 
 import (
-	"strings"
-
+	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/store"
 )
 
@@ -57,44 +56,14 @@ func addressIdentityKey(interfaceID *int64, address string, now int64) string {
 	return store.AddressIdentityKey(interfaceID, address, now)
 }
 
-// normaliseMAC lower-cases a hardware address and reports whether the result is
-// the seventeen-character form the schema constrains.
-//
-// The constraint is not decoration: client.mac_is_randomised tests the SECOND HEX
-// DIGIT for the IEEE locally-administered bit, and that test is only total on a
-// value of known shape. A MAC opnview cannot normalise is stored as absent rather
-// than stored wrong, because a wrong second digit would mark a real burned-in
-// address as an unstable identity.
-func normaliseMAC(raw string) (string, bool) {
-	trimmed := strings.ToLower(strings.TrimSpace(raw))
-	if len(trimmed) != 17 {
-		return "", false
-	}
-	for index := 0; index < len(trimmed); index++ {
-		character := trimmed[index]
-		if index%3 == 2 {
-			if character != ':' {
-				return "", false
-			}
-			continue
-		}
-		isDigit := character >= '0' && character <= '9'
-		isHex := character >= 'a' && character <= 'f'
-		if !isDigit && !isHex {
-			return "", false
-		}
-	}
-	return trimmed, true
-}
+// normaliseMAC lower-cases a hardware address and reports whether the result is the
+// seventeen-character form the schema constrains. The rule is the dhcplease kind's
+// (dhcplease.NormaliseMAC), because the lease decoders apply it; the neighbour tables apply it
+// here.
+func normaliseMAC(raw string) (string, bool) { return dhcplease.NormaliseMAC(raw) }
 
 // macPointer returns a normalised MAC as a nullable column value.
-func macPointer(raw string) *string {
-	normalised, ok := normaliseMAC(raw)
-	if !ok {
-		return nil
-	}
-	return &normalised
-}
+func macPointer(raw string) *string { return dhcplease.MACPointer(raw) }
 
 // DayStart truncates an instant to the start of its UTC day.
 //

@@ -1,0 +1,49 @@
+{
+  "manifest_version": 1,
+  "type": "aggregate_freshness",
+  "shape": "table",
+  "providers": [],
+  "primary": "",
+  "windowed": false,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "periods",
+      "kind": "enum_set",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "show_bytes",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    },
+    {
+      "key": "compact",
+      "kind": "boolean",
+      "default": false,
+      "class": "rendering"
+    }
+  ],
+  "references": [],
+  "queries": [
+    "aggregate_freshness.statements.sql"
+  ],
+  "script": "aggregate_freshness.js",
+  "renderer": {
+    "reserved": true
+  }
+}

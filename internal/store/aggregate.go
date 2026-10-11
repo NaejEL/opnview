@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sort"
 )
@@ -60,8 +61,9 @@ import (
 // is not rewritten unless it is current: a late flow inside it is purged at the
 // next pass anyway, and its purged part then joins the hour's.
 //
-// Every family is rewritten together, slot by slot, in one transaction per slot;
-// the day slot rewrites the derived per-pair volume as well.
+// Every family is rewritten together: the hours of a refresh in one transaction for the set
+// (rewriteHours), every coarser slot in one transaction per slot; the day slot rewrites the
+// derived per-pair volume as well.
 
 // baseFamilies are the families an hour computes from `flow` and its purged part,
 // and a day, a week or a month composes from its finer slots, in order.
@@ -121,12 +123,6 @@ func (s *Store) RefreshAggregatesAt(ctx context.Context, since, watermark, now i
 		return result, err
 	}
 
-	// Every slot of a period runs the same statements, each slot in its own
-	// transaction, so the statements are prepared once for the whole refresh
-	// (statementCache, exec.go).
-	cache := newStatementCache(s.db)
-	defer cache.close()
-
 	for _, period := range Periods() {
 		candidates := map[int64]bool{}
 		for _, hour := range hours {
@@ -144,13 +140,26 @@ func (s *Store) RefreshAggregatesAt(ctx context.Context, since, watermark, now i
 		}
 		sort.Slice(starts, func(i, j int) bool { return starts[i] < starts[j] })
 
+		if period == PeriodHour {
+			// The hours are rewritten together (aggregatehours.statements.sql): the same rows as
+			// one slot at a time, in one transaction for the set.
+			rewritten, err := s.rewriteHours(ctx, starts, candidates, current, bounded, horizon, watermark)
+			if err != nil {
+				return result, err
+			}
+			for _, start := range rewritten {
+				result.Rewritten = append(result.Rewritten, SlotRef{Period: period.Name, Start: start})
+			}
+			continue
+		}
+
 		for _, start := range starts {
 			end := period.SlotEnd(start)
 			if start != current && bounded && period.Purgeable(start, horizon) {
 				continue
 			}
 			if !candidates[start] {
-				stale, err := slotIsStale(ctx, cache.direct(), period, start, end)
+				stale, err := slotIsStale(ctx, s.db, period, start, end)
 				if err != nil {
 					return result, err
 				}
@@ -158,16 +167,89 @@ func (s *Store) RefreshAggregatesAt(ctx context.Context, since, watermark, now i
 					continue
 				}
 			}
-			if err := cache.warm(ctx); err != nil {
-				return result, err
-			}
-			if err := s.rewriteSlot(ctx, cache, period, start, end, watermark); err != nil {
+			if err := s.rewriteSlot(ctx, period, start, end, watermark); err != nil {
 				return result, err
 			}
 			result.Rewritten = append(result.Rewritten, SlotRef{Period: period.Name, Start: start})
 		}
 	}
+	// Every slot rewritten is committed: the listeners hear which periods changed.
+	if len(result.Rewritten) > 0 {
+		var periods []string
+		for _, slot := range result.Rewritten {
+			if !contains(periods, slot.Period) {
+				periods = append(periods, slot.Period)
+			}
+		}
+		if err := notify(ctx, s.db, ChannelAggregateRefresh, map[string]any{"periods": periods}); err != nil {
+			return result, err
+		}
+	}
 	return result, nil
+}
+
+// rewriteHours selects, among the candidate hours, those the contract rewrites -- a forced or the
+// current hour, or a stale one, never one the purge would remove outright unless current -- and
+// rewrites them together, in one transaction. It returns the hours rewritten, in order.
+func (s *Store) rewriteHours(ctx context.Context, starts []int64, forced map[int64]bool, current int64,
+	bounded bool, horizon, watermark int64) ([]int64, error) {
+	var kept, unforced []int64
+	for _, start := range starts {
+		if start != current && bounded && PeriodHour.Purgeable(start, horizon) {
+			continue
+		}
+		kept = append(kept, start)
+		if !forced[start] {
+			unforced = append(unforced, start)
+		}
+	}
+	if len(kept) == 0 {
+		return nil, nil
+	}
+	stale := map[int64]bool{}
+	if len(unforced) > 0 {
+		listed, err := queryInts(ctx, s.db, "stale_hours", hourParameters(unforced, watermark))
+		if err != nil {
+			return nil, err
+		}
+		for _, start := range listed {
+			stale[start] = true
+		}
+	}
+	var rewrite []int64
+	for _, start := range kept {
+		if forced[start] || stale[start] {
+			rewrite = append(rewrite, start)
+		}
+	}
+	if len(rewrite) == 0 {
+		return nil, nil
+	}
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("store: starting the hour slots: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	parameters := hourParameters(rewrite, watermark)
+	for _, name := range []string{"delete_volume_hours", "delete_rule_hours", "delete_domain_hours",
+		"delete_peer_hours", "delete_client_hours", "delete_owner_hours", "insert_volume_hours",
+		"insert_rule_hours", "insert_domain_hours", "insert_peer_hours", "regroup_client_hours",
+		"regroup_owner_hours"} {
+		if _, err := execNamed(ctx, transaction, name, parameters); err != nil {
+			return nil, err
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		return nil, fmt.Errorf("store: committing the hour slots: %w", err)
+	}
+	return rewrite, nil
+}
+
+// hourParameters are the parameters of the hour statements over a set of hours.
+func hourParameters(hours []int64, watermark int64) map[string]any {
+	encoded, _ := json.Marshal(hours)
+	return map[string]any{"hours": string(encoded), "from": hours[0], "to": hours[len(hours)-1] + 3600,
+		"now": watermark}
 }
 
 // slotIsStale is rule 3: a slot is stale when its computed_at is not strictly later
@@ -203,14 +285,14 @@ func slotIsStale(ctx context.Context, q querier, period Period, start, end int64
 // rewriteSlot replaces one slot of every family, in one transaction: an hour from
 // `flow` and its purged part, any other period composed from its finer period's
 // slots, and the client and owner families regrouped from the slot itself.
-func (s *Store) rewriteSlot(ctx context.Context, cache *statementCache, period Period,
+func (s *Store) rewriteSlot(ctx context.Context, period Period,
 	start, end, computedAt int64) error {
 	transaction, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("store: starting the %s slot at %d: %w", period.Name, start, err)
 	}
 	defer func() { _ = transaction.Rollback() }()
-	cached := cache.in(transaction)
+	cached := transaction
 
 	parameters := map[string]any{"slot_start": start, "slot_end": end, "now": computedAt}
 	for _, family := range append(append([]string{}, baseFamilies...), regroupedFamilies...) {

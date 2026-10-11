@@ -54,6 +54,10 @@ type Task struct {
 	// for the interval, which then starts again. It is how a save on the settings
 	// surface reaches a loop whose interval is a day long.
 	Wake <-chan struct{}
+	// MinGap, when positive, is the least time between the starts of two passes: a wake that
+	// comes sooner runs its pass once the gap has passed, never earlier. It is how a pass a
+	// notification triggers is held to its declared lower bound.
+	MinGap time.Duration
 }
 
 // ErrorReporter is told about every failed pass. It is an interface-free function so
@@ -82,6 +86,12 @@ func FixedInterval(interval time.Duration) func() time.Duration {
 // The retention purge is this collector's own Purge, so it is ordered against the
 // passes whoever builds the loops (purge.go).
 func (c *Collector) Tasks(settings *config.Live) []Task {
+	tasks := append(c.coreTasks(settings), c.declaredTasks()...)
+	return append(tasks, c.listenTask()...)
+}
+
+// coreTasks are the loops of the core kinds, discovery, the probe round and the purge.
+func (c *Collector) coreTasks(settings *config.Live) []Task {
 	return []Task{
 		{
 			Name:       "runtime discovery",
@@ -101,31 +111,31 @@ func (c *Collector) Tasks(settings *config.Live) []Task {
 		{
 			Name:       "filter log",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.FirewallLogInterval }),
-			Run:        c.CollectFirewallLog,
+			Run:        c.afterPass(KindFirewallLog, c.CollectFirewallLog),
 			RunAtStart: true,
 		},
 		{
 			Name:       "security events",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.SecurityEventInterval }),
-			Run:        c.CollectSecurityEvent,
+			Run:        c.afterPass(KindSecurityEvent, c.CollectSecurityEvent),
 			RunAtStart: true,
 		},
 		{
 			Name:       "sampled measurement",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.MeasurementInterval }),
-			Run:        c.CollectMeasurement,
+			Run:        c.afterPass(KindMeasurementSample, c.CollectMeasurement),
 			RunAtStart: true,
 		},
 		{
 			Name:       "DHCP leases",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DHCPLeaseInterval }),
-			Run:        c.CollectDHCPLease,
+			Run:        c.afterPass(KindDHCPLease, c.CollectDHCPLease),
 			RunAtStart: true,
 		},
 		{
 			Name:       "resolver lookups",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DNSLookupInterval }),
-			Run:        c.CollectDNSLookup,
+			Run:        c.afterPass(KindDNSLookup, c.CollectDNSLookup),
 			RunAtStart: true,
 		},
 		{
@@ -134,14 +144,22 @@ func (c *Collector) Tasks(settings *config.Live) []Task {
 			// gives answer addresses to.
 			Name:       "resolver cache",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.ResolverCacheInterval }),
-			Run:        c.CollectResolverCache,
+			Run:        c.afterPass(KindResolverCache, c.CollectResolverCache),
 			RunAtStart: true,
 		},
 		{
 			// The resolver's local data, every five minutes by default: decision 4 again.
 			Name:       "resolver local data",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.ResolverLocalDataInterval }),
-			Run:        c.CollectResolverLocalData,
+			Run:        c.afterPass(KindResolverLocalData, c.CollectResolverLocalData),
+			RunAtStart: true,
+		},
+		{
+			// The broker: its scheduler and its stream subscriptions. Its pass returns only when
+			// the run stops.
+			Name:       "firewall broker",
+			Interval:   FixedInterval(time.Minute),
+			Run:        func(ctx context.Context) error { c.broker.Run(ctx); return nil },
 			RunAtStart: true,
 		},
 		{
@@ -201,6 +219,25 @@ func runLoop(ctx context.Context, clock Clock, task Task, report ErrorReporter) 
 	// the next pass. One that is not positive keeps the last good one rather than
 	// spinning the loop: Run already refused to start a task with none.
 	interval := task.Interval()
+	var lastStart time.Time
+	run := func() {
+		if task.MinGap > 0 && !lastStart.IsZero() {
+			if wait := task.MinGap - clock.Now().Sub(lastStart); wait > 0 {
+				select {
+				case <-ctx.Done():
+					return
+				case <-clock.After(wait):
+				}
+			}
+		}
+		lastStart = clock.Now()
+		if err := task.Run(ctx); err != nil && ctx.Err() == nil {
+			report(task.Name, err)
+		}
+	}
+	if task.RunAtStart {
+		lastStart = clock.Now()
+	}
 	for {
 		if next := task.Interval(); next > 0 {
 			interval = next
@@ -214,16 +251,12 @@ func runLoop(ctx context.Context, clock Clock, task Task, report ErrorReporter) 
 			if ctx.Err() != nil {
 				return
 			}
-			if err := task.Run(ctx); err != nil && ctx.Err() == nil {
-				report(task.Name, err)
-			}
+			run()
 		case <-clock.After(interval):
 			if ctx.Err() != nil {
 				return
 			}
-			if err := task.Run(ctx); err != nil && ctx.Err() == nil {
-				report(task.Name, err)
-			}
+			run()
 		}
 	}
 }

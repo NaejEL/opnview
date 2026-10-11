@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/NaejEL/opnview/internal/collect/dhcplease"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -16,11 +18,11 @@ import (
 // What is true of any lease source, and is therefore here: the identity cascade, resolving
 // the interface the backend named, reading one page of the standard envelope, normalising the
 // field-name differences away, and writing one row per lease generation. Which backend, and
-// what each one's own facts are, is in dhcplease_kea.go, dhcplease_dnsmasq.go and
-// dhcplease_isc.go — one file each, which is what makes a fourth backend one more file.
+// what each one's own facts are, is in internal/collect/dhcplease/<product>/ — one directory each,
+// which is what makes a fourth backend one more directory.
 //
 // THIS IS THE KIND THAT MAKES THE SEAM NECESSARY RATHER THAN NOTIONAL. All three are
-// registered in the schema today; on the firewall the survey probed, Dnsmasq serves DHCP and
+// implementations today; on the firewall the survey probed, Dnsmasq serves DHCP and
 // Kea is disabled, and somebody else's firewall is the other way round.
 //
 // THE VALIDITY START IS REPORTED BY KEA AND BY NO OTHER BACKEND, and the model now says so
@@ -109,7 +111,7 @@ func (c *Collector) CollectDHCPLease(ctx context.Context) error {
 // read. It is complete when it read at least one backend and every backend it did not
 // read is one of these two (defect L1 of specs/SPEC-test-budget-and-two-live-defects.md):
 //
-//   - a backend that cannot be read by design, which answers ErrUnsupportedRead. It
+//   - a backend that cannot be read by design, which answers provider.ErrUnsupportedRead. It
 //     contributes no lease, at this pass or any later one, so waiting for it would wait
 //     for ever: before this rule an ISC plugin active beside Dnsmasq kept every
 //     unresolved lookup unexamined;
@@ -217,46 +219,61 @@ func leaseFailureDetail(failed, limit int64) string {
 func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource, seen *[]string) (
 	leaseBackendOutcome, error) {
 	providerKey, providerID := active.providerKey, active.providerID
-	source, registered := leaseSources[providerKey]
+	source, registered := c.sources.DHCPLease.Lookup(providerKey)
 	if !registered {
 		failed, limit := c.noteLeaseFailure(providerID)
 		return failedOutcome(failed, limit), fmt.Errorf(
 			"collect: the active dhcp_lease provider %q has no implementation", providerKey)
 	}
 
-	observations, result, readErr := source.leases(ctx, c, c.pages().DHCPLease)
-	if errors.Is(readErr, ErrUnsupportedRead) {
+	observations, result, readErr := source.Leases(ctx, c, c.pages().DHCPLease)
+	if errors.Is(readErr, provider.ErrUnsupportedRead) {
 		// The implementation is registered and its material cannot be read. That is a state,
 		// recorded with its reason, and not a failed pass: nothing was attempted.
 		c.clearLeaseFailures(providerID)
-		return leaseBackendUnsupported, c.writeAvailability(ctx, providerID, result.state,
-			result.probe, readErr.Error())
+		return leaseBackendUnsupported, c.writeAvailability(ctx, providerID, result.State,
+			result.Outcome, result.Probe, readErr.Error())
 	}
 	if readErr != nil {
 		failed, limit := c.noteLeaseFailure(providerID)
 		detail := leaseFailureDetail(failed, limit)
-		if result.detail != "" {
-			detail = result.detail + "; " + detail
+		if result.Detail != "" {
+			detail = result.Detail + "; " + detail
 		}
-		if writeErr := c.writeAvailability(ctx, providerID, result.state,
-			result.probe, detail); writeErr != nil {
+		if writeErr := c.writeAvailability(ctx, providerID, result.State,
+			result.Outcome, result.Probe, detail); writeErr != nil {
 			return failedOutcome(failed, limit), writeErr
 		}
 		return failedOutcome(failed, limit), readErr
 	}
-	c.clearLeaseFailures(providerID)
-	if writeErr := c.writeAvailability(ctx, providerID, result.state,
-		result.probe, result.detail); writeErr != nil {
-		return leaseBackendFailed, writeErr
-	}
 
+	// THE AVAILABILITY IS WRITTEN AFTER THE LEASES ARE STORED, not before (SPEC-step-5b-
+	// widget-api.md, B8g). Written first, a store failure in ingestLease left the backend
+	// reading `reachable` with the read's detail, which said the opposite of what had
+	// happened: the firewall answered, and opnview kept nothing of it.
 	snapshot := c.Discovery()
 	now := c.now()
 	for _, observation := range observations {
 		if err := c.ingestLease(ctx, observation, snapshot, providerID, providerKey, now); err != nil {
-			return leaseBackendFailed, err
+			// A failed pass for the host-name retry, exactly as a read failure is: the
+			// leases this pass would have contributed are not in the store.
+			failed, limit := c.noteLeaseFailure(providerID)
+			detail := fmt.Sprintf("the backend answered and its leases could not be stored: %v; %s",
+				err, leaseFailureDetail(failed, limit))
+			// Unavailable, because nothing of this backend's answer reached the store a
+			// widget reads; the outcome says the fault is opnview's, not the firewall's.
+			if writeErr := c.writeAvailability(ctx, providerID, store.StateUnavailable,
+				store.OutcomeStoreFailure, result.Probe, detail); writeErr != nil {
+				return failedOutcome(failed, limit), joinErrors([]error{err, writeErr})
+			}
+			return failedOutcome(failed, limit), err
 		}
 		*seen = append(*seen, observation.Address)
+	}
+	c.clearLeaseFailures(providerID)
+	if writeErr := c.writeAvailability(ctx, providerID, result.State,
+		result.Outcome, result.Probe, result.Detail); writeErr != nil {
+		return leaseBackendFailed, writeErr
 	}
 	return leaseBackendRead, nil
 }
@@ -269,7 +286,7 @@ func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource, 
 // implementation has one backend; the row keeps both so that a second
 // implementation reading the same shape somewhere else does not collapse into the
 // first.
-func (c *Collector) ingestLease(ctx context.Context, observation leaseObservation,
+func (c *Collector) ingestLease(ctx context.Context, observation dhcplease.Observation,
 	snapshot Discovery, providerID int64, backend string, now int64) error {
 	// The lease endpoints report the interface under up to three names. Only two of them are
 	// join keys opnview already holds — the configuration key and the device — so both are
@@ -341,7 +358,7 @@ func (c *Collector) ingestLease(ctx context.Context, observation leaseObservatio
 // the machine's own to send. It is reachable if a backend stops reporting a field the other
 // reports. Closing it would mean merging identities across cascade levels on a shared MAC, which
 // is a change to the cascade rather than to this kind, and it is not attempted here.
-func leaseIdentity(observation leaseObservation, interfaceID *int64,
+func leaseIdentity(observation dhcplease.Observation, interfaceID *int64,
 	now int64) store.ClientIdentity {
 	for _, candidate := range []*string{
 		observation.DHCPClientID, observation.DUID, observation.IAID,
@@ -366,7 +383,7 @@ func (c *Collector) collectNeighbours(ctx context.Context, seen *[]string) error
 	var failures []error
 
 	for _, endpoint := range []opnsense.Endpoint{opnsense.ARPTable, opnsense.NDPTable} {
-		response, err := c.client.Call(ctx, endpoint, opnsense.RequestOptions{})
+		response, err := c.read(ctx, "dhcp_lease", endpoint, opnsense.RequestOptions{}, c.leaseMaxAge())
 		if err != nil && response.Outcome == "" {
 			failures = append(failures, err)
 			continue
@@ -399,7 +416,7 @@ func (c *Collector) collectNeighbours(ctx context.Context, seen *[]string) error
 // ingestNeighbour turns one ARP or NDP row into a machine at the MAC level.
 func (c *Collector) ingestNeighbour(ctx context.Context, row decode.Object,
 	snapshot Discovery, now int64) error {
-	mac := macPointer(decode.RawString(row, "mac"))
+	mac := dhcplease.MACPointer(decode.RawString(row, "mac"))
 	address, hasAddress := decode.String(row, "ip")
 	if mac == nil || !hasAddress {
 		// Without both there is nothing here the cascade can use: a MAC with no address names a
@@ -440,118 +457,6 @@ func (c *Collector) ingestNeighbour(ctx context.Context, row decode.Object,
 		LastAddress: &address,
 	}, now)
 	return err
-}
-
-// readLeaseRows is the part of a lease read that is the same for every backend: one page, the
-// standard envelope, and the availability state the answer implies.
-//
-// The page holds pageSize rows, the operator's page size for the kind. The table is small —
-// one row per active lease — so one page is the whole of it in practice.
-//
-// IT IS A FREE FUNCTION OVER THE PORT RATHER THAN A METHOD ON IT. Only this kind's
-// implementations call it, and a port that gains a method for one kind's convenience stops
-// being a boundary: the six methods `session` grants are ones any kind could plausibly need,
-// and that is what keeps the list short enough to become a protocol. Written this way it reads
-// identically at the call site and costs a connector nothing, and when connectors speak a
-// protocol it travels with the lease reader instead of becoming a verb the far side has to
-// implement.
-func readLeaseRows(ctx context.Context, host session, endpoint opnsense.Endpoint, pageSize int) (
-	[]decode.Object, probeResult, error) {
-	result := probeResult{probe: endpoint, state: store.StateUnavailable}
-
-	response, err := host.call(ctx, endpoint, opnsense.RequestOptions{
-		Form: opnsense.Pagination(1, pageSize),
-	})
-	if err != nil && response.Outcome == "" {
-		return nil, result, err
-	}
-	if !response.OK() {
-		result.detail = response.Detail
-		return nil, result, fmt.Errorf("collect: %s answered %s", endpoint.Path, response.Outcome)
-	}
-
-	rows, err := decode.Rows(response.Body)
-	if err != nil {
-		result.detail = "the lease table could not be read"
-		return nil, result, fmt.Errorf("collect: reading %s: %w", endpoint.Path, err)
-	}
-	result.state = store.StateReachable
-	result.separable = true
-	if len(rows) == 0 {
-		// Returned as an empty, non-nil slice so a caller can tell "read nothing" from "did
-		// not read".
-		return []decode.Object{}, result, nil
-	}
-	return rows, result, nil
-}
-
-// decodeLease reads the fields the two current backends and the legacy plugin share, with the
-// field-name differences normalised — `hwaddr` against `mac`, `state` against `lease_type` and
-// `is_reserved`.
-//
-// IT DOES NOT INVENT A VALIDITY START. What the shared envelope carries is an expiry; the start
-// is left nil here, and only a backend that genuinely reports one — Kea, through
-// `valid_lifetime` — fills it in its own file.
-func decodeLease(row decode.Object) (leaseObservation, bool) {
-	address, present := decode.String(row, "address")
-	if !present {
-		// A lease with no address names no machine and keys nothing.
-		return leaseObservation{}, false
-	}
-
-	mac := macPointer(decode.RawString(row, "hwaddr"))
-	if mac == nil {
-		// `mac` is the legacy plugin's spelling of the same field, and normalising the two
-		// names is the only normalisation the survey says leases need.
-		mac = macPointer(decode.RawString(row, "mac"))
-	}
-
-	expiresAt := decode.EpochPointer(row, "expire")
-	if expiresAt == nil {
-		expiresAt = decode.EpochPointer(row, "ends")
-	}
-
-	observation := leaseObservation{
-		Address:             address,
-		MAC:                 mac,
-		Hostname:            decode.StringPointer(row, "hostname"),
-		DHCPClientID:        decode.StringPointer(row, "client_id"),
-		DUID:                decode.StringPointer(row, "duid"),
-		IAID:                decode.StringPointer(row, "iaid"),
-		VendorHint:          decode.StringPointer(row, "mac_info"),
-		LeaseState:          normaliseLeaseState(row),
-		InterfaceIdentifier: decode.RawString(row, "if_name"),
-		InterfaceDevice:     decode.RawString(row, "device"),
-		ExpiresAt:           expiresAt,
-	}
-	return observation, true
-}
-
-// normaliseLeaseState maps the three backends' several state fields onto the one vocabulary
-// the schema constrains: `state` on Kea, `lease_type` plus `is_reserved` on Dnsmasq, and
-// `state` plus `status` on the legacy plugin.
-//
-// A value none of them matches is `unknown`, never folded into `active`: a screen that showed
-// an expired lease as active would name a machine that has gone.
-func normaliseLeaseState(row decode.Object) string {
-	if reserved := decode.Flag(row, "is_reserved"); reserved != nil && *reserved {
-		return "reserved"
-	}
-	for _, key := range []string{"state", "lease_type", "status"} {
-		value, present := decode.String(row, key)
-		if !present {
-			continue
-		}
-		switch decode.LowerASCII(value) {
-		case "active", "assigned", "1":
-			return "active"
-		case "expired", "released", "free", "backup", "0":
-			return "expired"
-		case "reserved", "static":
-			return "reserved"
-		}
-	}
-	return "unknown"
 }
 
 // leaseFailurePasses is how many lease passes in a row one backend has failed.

@@ -44,6 +44,9 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 		// The two reads of the resolver-cache cycle, at decision 4's 60 s and 300 s.
 		"resolver cache":      settings.ResolverCacheInterval,
 		"resolver local data": settings.ResolverLocalDataInterval,
+		// The broker's own loop: its scheduler and its subscriptions, which returns only when the
+		// run stops (A12 of the broker amendment).
+		"firewall broker": time.Minute,
 	}
 	if len(tasks) != len(wanted) {
 		t.Fatalf("the scheduler has %d loops, want %d", len(tasks), len(wanted))

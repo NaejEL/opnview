@@ -1,0 +1,72 @@
+{
+  "manifest_version": 1,
+  "type": "traffic_over_time_by_scope",
+  "shape": "time_series",
+  "providers": [
+    "firewall_log"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "scopes",
+      "kind": "enum_set",
+      "values": [
+        "outbound",
+        "inbound",
+        "inter_interface"
+      ],
+      "default": [
+        "outbound",
+        "inbound",
+        "inter_interface"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "measure",
+      "kind": "enum",
+      "values": [
+        "bytes",
+        "connections"
+      ],
+      "default": "bytes",
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "stacked",
+      "kind": "boolean",
+      "default": false,
+      "class": "rendering"
+    }
+  ],
+  "references": [
+    "interface"
+  ],
+  "queries": [],
+  "script": "traffic_over_time_by_scope.js",
+  "renderer": {
+    "reserved": true
+  }
+}

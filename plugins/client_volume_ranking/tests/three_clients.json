@@ -1,0 +1,261 @@
+{
+  "type": "client_volume_ranking",
+  "parameters": {
+    "identity": "any",
+    "include_unstable": true,
+    "interfaces": null,
+    "limit": 10,
+    "measure": "bytes",
+    "period": "24h"
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789914000,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq DHCP",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "isc",
+      "display_name": "ISC dhcpd",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "kea",
+      "display_name": "Kea DHCP",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "reachable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "reachable"
+    }
+  ],
+  "condition": "reachable",
+  "freshness": [
+    {
+      "period": "1h",
+      "slots_read": 0,
+      "last_computed_at": null,
+      "stale_slots": 0,
+      "stale": false
+    }
+  ],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "measure": "bytes",
+    "bars": [
+      {
+        "client": {
+          "id": 10,
+          "identity_kind": "mac",
+          "identity_key": "00:11:22:33:44:55",
+          "interface_id": 1,
+          "mac": "00:11:22:33:44:55",
+          "hostname": null,
+          "last_address": "192.0.2.10",
+          "owner_id": null,
+          "owner_assigned_at": null,
+          "unstable_identity": false,
+          "last_seen_at": 1789999800
+        },
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "Inside",
+          "user_label": null,
+          "label": "Inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "value": 4000,
+        "volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 4000,
+          "allowed_bytes": 4000,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 2,
+          "allowed_connections": 2,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "destinations": 2
+      },
+      {
+        "client": {
+          "id": 11,
+          "identity_kind": "mac",
+          "identity_key": "02:11:22:33:44:66",
+          "interface_id": 1,
+          "mac": "02:11:22:33:44:66",
+          "hostname": null,
+          "last_address": "192.0.2.11",
+          "owner_id": null,
+          "owner_assigned_at": null,
+          "unstable_identity": true,
+          "last_seen_at": 1789999800
+        },
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "Inside",
+          "user_label": null,
+          "label": "Inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "value": 700,
+        "volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 700,
+          "allowed_bytes": 700,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 1,
+          "allowed_connections": 1,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "destinations": 1
+      },
+      {
+        "client": {
+          "id": 12,
+          "identity_kind": "mac",
+          "identity_key": "00:11:22:33:44:77",
+          "interface_id": 1,
+          "mac": "00:11:22:33:44:77",
+          "hostname": null,
+          "last_address": "192.0.2.12",
+          "owner_id": null,
+          "owner_assigned_at": null,
+          "unstable_identity": false,
+          "last_seen_at": 1789999800
+        },
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "Inside",
+          "user_label": null,
+          "label": "Inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "value": 200,
+        "volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 200,
+          "allowed_bytes": 0,
+          "blocked_bytes": 200,
+          "unknown_bytes": 0,
+          "connections": 1,
+          "allowed_connections": 0,
+          "blocked_connections": 1,
+          "unknown_connections": 0
+        },
+        "destinations": 1
+      }
+    ],
+    "remainder": {
+      "members": 0,
+      "volume": {
+        "measure": "logged",
+        "lower_bound": true,
+        "bytes": 0,
+        "allowed_bytes": 0,
+        "blocked_bytes": 0,
+        "unknown_bytes": 0,
+        "connections": 0,
+        "allowed_connections": 0,
+        "blocked_connections": 0,
+        "unknown_connections": 0
+      }
+    },
+    "excluded": {
+      "members": 0,
+      "volume": {
+        "measure": "logged",
+        "lower_bound": true,
+        "bytes": 0,
+        "allowed_bytes": 0,
+        "blocked_bytes": 0,
+        "unknown_bytes": 0,
+        "connections": 0,
+        "allowed_connections": 0,
+        "blocked_connections": 0,
+        "unknown_connections": 0
+      }
+    },
+    "total": {
+      "measure": "logged",
+      "lower_bound": true,
+      "bytes": 4900,
+      "allowed_bytes": 4700,
+      "blocked_bytes": 200,
+      "unknown_bytes": 0,
+      "connections": 4,
+      "allowed_connections": 3,
+      "blocked_connections": 1,
+      "unknown_connections": 0
+    }
+  }
+}

@@ -1,27 +1,31 @@
 // Package collect reads the five sources, decides which implementation of each
 // kind opnview reads, records what it could not read, and writes the result.
 //
-// THE FILE NAMES ARE THE SEAM, AND THE LISTING IS THE DOCUMENTATION. There is
-// not one collector per source here: there are KINDS, and several of them already have
-// more than one implementation. So every file is named for exactly one of three
-// things, and `ls` is enough to tell which:
+// THE DIRECTORY TREE IS THE SEAM, AND THE LISTING IS THE DOCUMENTATION. There is not one
+// collector per source here: there are KINDS, and several of them already have more than one
+// implementation. So every directory below this one is named for exactly one of three things, and
+// `ls` is enough to tell which:
 //
-//	<kind>.go               the kind: its coordinator, its cursor, its gap
-//	                        handling — everything true of any implementation of it
-//	<kind>_<product>.go     one implementation of that kind, holding only facts
-//	                        about that product
-//	everything else         machinery that genuinely spans the kinds: the contract
-//	                        (provider.go) and how an implementation announces
-//	                        itself (registry.go), runtime discovery, the probe
-//	                        round, the identity cascade, timestamp normalisation,
-//	                        the value helpers, the scheduler
+//	<kind>/                  one KIND'S CONTRACT: its doc.go, its record types, its Source
+//	                         interface and its registry (firewalllog, securityevent, dhcplease,
+//	                         dnslookup, resolvercache, resolverlocaldata, measurement)
+//	<kind>/<product>/        one IMPLEMENTATION of that kind: provider.json, its code, its
+//	                         fixtures and its tests, holding only facts about that product
+//	provider/                the contract every kind shares: the session port, the probe result,
+//	                         the manifest and the registry primitive
 //
-// The rule that layout has to keep passing — ROADMAP.md, "Rules that apply to
-// every step": ADDING AN IMPLEMENTATION IS ADDING ONE FILE AND ONE REGISTRY ROW,
-// and touches nothing else. A Kea equivalent for another firewall is
-// `dhcplease_<product>.go` and a row in the schema's registry; no file here
-// changes, because nothing selects an implementation at compile time and nothing
-// branches on a product name outside that product's own file.
+// What stays in this package is machinery that genuinely spans the kinds -- each kind's
+// COORDINATOR (<kind>.go: its cursor, its gap handling, everything true of any implementation of
+// it, which needs the store and the discovery snapshot an implementation is never handed),
+// runtime discovery, the probe round, the identity cascade, timestamp normalisation, the value
+// helpers and the scheduler.
+//
+// The rule that layout has to keep passing -- ROADMAP.md, "Rules that apply to every step":
+// ADDING AN IMPLEMENTATION IS ADDING A DIRECTORY, and touches nothing else. A Kea equivalent for
+// another firewall is `dhcplease/<product>/` with a provider.json; no file here changes, because
+// nothing selects an implementation at compile time, nothing branches on a product name outside
+// that product's own directory, and the one file linking the directories into the binary
+// (providers_gen.go) is generated from the tree. See docs/extending.md.
 //
 // Three further properties are worth stating before the code, because each one is
 // the answer to something measured rather than a style choice.
@@ -47,44 +51,60 @@ package collect
 import (
 	"context"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/broker"
+	"github.com/NaejEL/opnview/internal/broker/mirror"
+	"github.com/NaejEL/opnview/internal/collect/dhcplease"
+	"github.com/NaejEL/opnview/internal/collect/dnslookup"
+	"github.com/NaejEL/opnview/internal/collect/firewalllog"
+	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
+	"github.com/NaejEL/opnview/internal/collect/measurement"
+	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
+	"github.com/NaejEL/opnview/internal/collect/resolvercache"
+	"github.com/NaejEL/opnview/internal/collect/resolverlocaldata"
+	"github.com/NaejEL/opnview/internal/collect/securityevent"
+	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/store"
 )
 
-// The provider kinds, which are the eleven the schema constrains `provider.kind` to.
+// The provider kinds, which are the eleven the schema constrains `provider.kind` to. Those with a
+// collector-side implementation take their value from their kind package.
 const (
-	// KindPublicSuffix is the Public Suffix List. This package neither probes nor
-	// reads it: internal/publicsuffix does, and the third outbound destination lives
-	// there alone.
-	KindPublicSuffix = "public_suffix"
+	// KindRegistrableDomain is a list giving a site name its registrable domain. It is a
+	// service kind: services.go refreshes and consults its active provider, which acquires
+	// the list through the plugin host's fetch facility.
+	KindRegistrableDomain = registrabledomain.Kind
 	// KindFirewallLog is data source 1.
-	KindFirewallLog = "firewall_log"
+	KindFirewallLog = firewalllog.Kind
 	// KindSecurityEvent is data source 2. It admits several concurrently active
 	// providers: people run Suricata, CrowdSec and Zenarmor together.
-	KindSecurityEvent = "security_event"
+	KindSecurityEvent = securityevent.Kind
 	// KindFlowVolume is data source 3, and nothing collects it. Its destination,
 	// pair_volume_observation, is DERIVED from flow by step 5: the only per-pair
 	// endpoint carries neither a port nor a protocol and the filter log carries
 	// both. No implementation of it is registered here, deliberately.
 	KindFlowVolume = "flow_volume"
 	// KindDHCPLease is data source 4.
-	KindDHCPLease = "dhcp_lease"
+	KindDHCPLease = dhcplease.Kind
 	// KindDNSLookup is data source 5.
-	KindDNSLookup = "dns_lookup"
-	// KindGeoASN is the MaxMind dataset. This package neither probes nor reads it:
-	// internal/maxmind does, and the second outbound destination lives there alone.
-	KindGeoASN = "geo_asn"
+	KindDNSLookup = dnslookup.Kind
+	// KindIPGeolocation is a dataset placing public addresses. It is a service kind:
+	// services.go refreshes its active provider and places addresses with it.
+	KindIPGeolocation = ipgeolocation.Kind
 	// KindMeasurementSample is the sampled reading: the firewall's own gauges and
 	// the live per-pair traffic snapshot, and the kind eight of the ten surveyed
 	// sources that fit an existing shape fit. It owns the sampler this package
 	// already had, which was registered under flow_volume only because the kind
 	// did not exist. It admits several concurrently active providers.
-	KindMeasurementSample = "measurement_sample"
+	KindMeasurementSample = measurement.Kind
 	// KindReconciledState is the complete set of things of one type as of one
 	// instant — the shape ten of the eleven sources that fit nothing else produce.
 	// No implementation is registered for it: the kind gives such a source a
@@ -94,45 +114,13 @@ const (
 	// addresses the query report does not carry. "Cache" is Unbound's own word
 	// (unbound-control(8), dump_cache). It admits several active providers, since
 	// every record it stores names the provider that read it.
-	KindResolverCache = "resolver_cache"
+	KindResolverCache = resolvercache.Kind
 	// KindResolverLocalData is the records a resolver serves from its local data,
 	// host overrides among them: Unbound's own words again (unbound.conf(5),
 	// local-data; unbound-control(8), list_local_data). Concurrent for the same
 	// reason.
-	KindResolverLocalData = "resolver_local_data"
+	KindResolverLocalData = resolverlocaldata.Kind
 )
-
-// The provider keys the schema registers. They are data, not configuration:
-// nothing branches on them beyond choosing which endpoint set to call, which is
-// exactly what a provider is.
-const (
-	// ProviderPf is the pf filter log.
-	ProviderPf = "pf"
-	// ProviderSuricata is the IDS alert feed.
-	ProviderSuricata = "suricata"
-	// ProviderInsight is the firewall's own sampler: the live per-pair traffic
-	// snapshot and the system gauges, whose activeness the firewall's NetFlow
-	// configuration governs. It keeps the key it was registered under in 4A; the
-	// kind it answers for is measurement_sample.
-	ProviderInsight = "insight"
-	// ProviderKea is the Kea DHCP backend.
-	ProviderKea = "kea"
-	// ProviderDnsmasq is the Dnsmasq backend, which serves both DHCP and DNS.
-	ProviderDnsmasq = "dnsmasq"
-	// ProviderISC is the end-of-life ISC dhcpd plugin.
-	ProviderISC = "isc"
-	// ProviderUnbound is the Unbound resolver.
-	ProviderUnbound = "unbound"
-)
-
-// authenticationFailed is the wording of an HTTP 401, whichever endpoint answered it.
-// ApiControllerBase's beforeExecuteRoute (opnsense/core 26.7.3,
-// mvc/app/controllers/OPNsense/Base/ApiControllerBase.php) answers 401 "Authentication
-// Failed" only when the key and secret do not authenticate, and 403 "Forbidden" when they
-// do but the ACL refuses the page. A 401 therefore names no privilege: granting one would
-// not cure it.
-const authenticationFailed = "authentication failed (HTTP 401): the firewall did not accept the API " +
-	"key and secret"
 
 // Clock is the time the scheduler and the collectors read. It is an interface so
 // that a test drives every loop deterministically instead of sleeping.
@@ -152,32 +140,9 @@ func (SystemClock) Now() time.Time { return time.Now() }
 // After returns a channel that delivers once, after d.
 func (SystemClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
-// Discovery is the snapshot of the firewall's own configuration the collectors
-// join against: the two first-class join keys, and the interface identifiers the
-// per-pair sampler needs.
-type Discovery struct {
-	// InterfaceIDByIdentifier maps a configuration key to its stored row.
-	InterfaceIDByIdentifier map[string]int64
-	// InterfaceIDByDevice maps a network device name to its stored row. A device
-	// absent from this map is the modelled `not_found` state, never a dropped row.
-	InterfaceIDByDevice map[string]int64
-	// Identifiers are the configuration keys, which is what
-	// /api/diagnostics/traffic/top takes.
-	Identifiers []opnsense.InterfaceName
-	// Devices are the network device names, which is what that endpoint must
-	// NEVER be given: a device name returns an empty array with HTTP 200, which
-	// is indistinguishable from an absence of traffic.
-	Devices map[string]struct{}
-	// RuleIDByPfLabel maps a filter-log `rid` to its stored rule. A rid absent
-	// from this map is normal: the rule was removed.
-	RuleIDByPfLabel map[string]int64
-	// Upstream holds the interfaces the firewall reports a gateway behind. Evidence
-	// read on one of them -- a neighbour, a lease -- does not make an address a member
-	// of it: an address reached through an upstream interface is outside.
-	Upstream map[int64]struct{}
-	// RefreshedAt is when this snapshot was read.
-	RefreshedAt int64
-}
+// Discovery is the snapshot of the firewall's own configuration the collectors join against.
+// It is declared in the provider contract, because the measurement sampler is handed it.
+type Discovery = provider.Discovery
 
 // newDiscovery returns an empty snapshot. Empty is the honest starting state: on
 // the first pass nothing is discovered, so every join key reports `pending`
@@ -195,9 +160,27 @@ func newDiscovery() Discovery {
 // Collector holds everything the collectors share: the one HTTP client, the
 // store, the clock, and the discovery snapshot they join against.
 type Collector struct {
+	// Host is the session port an implementation is handed: the one outbound capability, the
+	// normaliser and the clock, and nothing else (provider.Session). It is embedded so that the
+	// collector IS the session of every implementation it runs.
+	*provider.Host
+
+	// sources are the implementations this collector reads: the built-in plugins and the
+	// plugins of its data directory, as the plugin host loaded them (internal/collect/sources).
+	sources *sources.Set
+
+	// triggers routes the core notifications to the loops of the providers that named them
+	// (notifications.go).
+	triggers triggers
+
 	client *opnsense.Client
-	store  *store.Store
-	clock  Clock
+	// broker is the one path to the firewall API: the collector's host, discovery and the probe
+	// round ask it.
+	broker *broker.Broker
+	// cadences are the intervals in force, each a core kind's readers' max age.
+	cadences config.Config
+	store    *store.Store
+	clock    Clock
 
 	// firewallOffsetSeconds is survey gap 7: the firewall's offset from UTC, needed
 	// by the timestamps that carry no zone. It is zero until discovery has measured
@@ -233,6 +216,8 @@ type Collector struct {
 	// probe round's rewrite of the availability row restates it rather than erasing it.
 	// The mutex guards it.
 	readDetails map[int64]string
+	// readOutcomes holds the outcome code of the same reads, beside their words.
+	readOutcomes map[int64]store.AvailabilityOutcome
 	// leaseReadAt and localDataReadAt are the instants the last complete lease pass and
 	// the last successful local-data pass of this run began, zero before either; and
 	// localDataFailed whether the last local-data pass failed. The unresolved host-name
@@ -275,6 +260,8 @@ type Collector struct {
 	// the purge holds it for writing. It is taken before deriveMutex, never after; see
 	// purge.go.
 	purgeMutex sync.RWMutex
+	// services is what the collector last heard from each service kind (services.go).
+	services services
 	// hooks are the test hooks of the purge's ordering, zero outside a test.
 	hooks orderingHooks
 }
@@ -284,10 +271,20 @@ type Collector struct {
 // for every collector at once. The page sizes start at their defaults until
 // Configure is called with the loaded configuration.
 func New(client *opnsense.Client, database *store.Store, clock Clock) *Collector {
+	return NewWithSources(client, database, clock, plugin.Builtins())
+}
+
+// NewWithSources returns a collector reading the implementations of one source set: the built-in
+// plugins and those of a data directory, as plugin.Load returns them.
+func NewWithSources(client *opnsense.Client, database *store.Store, clock Clock, set *sources.Set) *Collector {
+	if set == nil {
+		set = plugin.Builtins()
+	}
 	if clock == nil {
 		clock = SystemClock{}
 	}
-	return &Collector{
+	c := &Collector{
+		sources:         set,
 		client:          client,
 		store:           database,
 		clock:           clock,
@@ -302,7 +299,50 @@ func New(client *opnsense.Client, database *store.Store, clock Clock) *Collector
 		pairingWindowSeconds: config.DefaultLegPairingWindowSeconds,
 		leaseFailureLimit:    config.DefaultLeaseBackendFailurePassLimit,
 		leaseFailures:        map[int64]int64{},
+		cadences:             config.Defaults(),
 	}
+	var mirrored *mirror.Mirror
+	if database != nil {
+		mirrored = mirror.New(database, c.now)
+	}
+	// THE BROKER IS THE ONE PATH TO THE FIREWALL (A9 of the broker amendment): every pass, the
+	// probe round and discovery ask it, and it answers from its mirror or from one call.
+	var settingReader broker.SettingReader
+	if database != nil {
+		settingReader = database.Setting
+	}
+	c.broker = broker.New(client, mirrored, broker.Options{Clock: clock, Firewall: client.BaseURL,
+		Normaliser: c.knownNormaliser, Vocabulary: c.vocabulary, Setting: settingReader})
+	if settingReader != nil {
+		settings, refused := broker.LoadSettings(context.Background(), settingReader)
+		for _, refusal := range refused {
+			fmt.Fprintf(os.Stderr, "opnview: %v\n", refusal)
+		}
+		c.broker.Scheduler().SetSettings(settings)
+	}
+	for _, loaded := range set.Declarers() {
+		loaded(c.broker)
+	}
+	c.declareCoreEndpoints()
+	c.Host = provider.NewHost(c.broker, c.measureNormaliser, c.now)
+	return c
+}
+
+// Broker is the collector's broker: the one path to the firewall API.
+func (c *Collector) Broker() *broker.Broker { return c.broker }
+
+// vocabulary is the installation's interface identifiers and devices, which mark an object keyed
+// by them as value-keyed in the mirror. They are read from discovery, never written into a schema.
+func (c *Collector) vocabulary() []string {
+	snapshot := c.Discovery()
+	names := make([]string, 0, len(snapshot.InterfaceIDByIdentifier)+len(snapshot.Devices))
+	for identifier := range snapshot.InterfaceIDByIdentifier {
+		names = append(names, identifier)
+	}
+	for device := range snapshot.Devices {
+		names = append(names, device)
+	}
+	return names
 }
 
 // Configure applies a configuration to a running collector: the page sizes and the
@@ -313,6 +353,7 @@ func New(client *opnsense.Client, database *store.Store, clock Clock) *Collector
 func (c *Collector) Configure(settings config.Config) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
+	c.cadences = settings
 	c.pageSizes = config.PageSizes{
 		FirewallLog:   settings.FirewallLogPageSize,
 		SecurityEvent: settings.SecurityEventPageSize,
@@ -347,13 +388,20 @@ func (c *Collector) setSampleAbsence(providerID int64, absent string) {
 }
 
 // setReadDetail records what one resolver-record provider's last read said.
-func (c *Collector) setReadDetail(providerID int64, detail string) {
+//
+// The outcome is kept beside the words for the same reason: a probe round restating a
+// read's refusal in the detail must not stamp the row `healthy` beside it.
+func (c *Collector) setReadDetail(providerID int64, outcome store.AvailabilityOutcome, detail string) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.readDetails == nil {
 		c.readDetails = map[int64]string{}
 	}
+	if c.readOutcomes == nil {
+		c.readOutcomes = map[int64]store.AvailabilityOutcome{}
+	}
 	c.readDetails[providerID] = detail
+	c.readOutcomes[providerID] = outcome
 }
 
 // readDetail is what one resolver-record provider's last read said, or empty.
@@ -361,6 +409,13 @@ func (c *Collector) readDetail(providerID int64) string {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	return c.readDetails[providerID]
+}
+
+// readOutcome is the outcome of one resolver-record provider's last read, or empty.
+func (c *Collector) readOutcome(providerID int64) store.AvailabilityOutcome {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.readOutcomes[providerID]
 }
 
 // sampleAbsence is what one provider's last sampling pass could not read, or empty.
@@ -398,21 +453,7 @@ func (c *Collector) setDiscovery(snapshot Discovery) {
 	c.discovery = snapshot
 }
 
-// call issues one request to the firewall API.
-//
-// It exists so that the port an implementation is handed can grant ONE OUTBOUND
-// CALL rather than the client that makes it. The client is the only thing in
-// opnview that builds an HTTP request, and handing it across the seam would hand
-// over its construction, its credentials and whatever it grows next; handing over
-// this method hands over a request and a response and nothing else. It is also the
-// shape that survives connectors moving out of process, where the host performs the
-// call and the connector never holds a client at all.
-func (c *Collector) call(ctx context.Context, endpoint opnsense.Endpoint,
-	options opnsense.RequestOptions) (opnsense.Response, error) {
-	return c.client.Call(ctx, endpoint, options)
-}
-
-// normaliser returns the timestamp normaliser for this instant, carrying the
+// measureNormaliser returns the timestamp normaliser for this instant, carrying the
 // reference time the year-less filter-log shape needs and the firewall's offset
 // from UTC.
 //
@@ -420,7 +461,7 @@ func (c *Collector) call(ctx context.Context, endpoint opnsense.Endpoint,
 // and discovery run side by side, so a collector that gets here first measures the
 // offset itself; if that fails, its pass fails and is retried, rather than storing
 // records at a guessed time that nothing would later correct.
-func (c *Collector) normaliser(ctx context.Context) (decode.Normaliser, error) {
+func (c *Collector) measureNormaliser(ctx context.Context) (decode.Normaliser, error) {
 	c.mutex.RLock()
 	offset, measured := c.firewallOffsetSeconds, c.offsetMeasured
 	c.mutex.RUnlock()
@@ -477,18 +518,26 @@ func (c *Collector) recordOutcome(ctx context.Context, providerID int64,
 			detail += "; " + extra
 		}
 	}
-	return c.writeAvailability(ctx, providerID, state, response.Endpoint, detail)
+	return c.writeAvailability(ctx, providerID, state, provider.ResponseOutcome(response), response.Endpoint, detail)
 }
 
-// writeAvailability records a state determined by one probe endpoint.
+// writeAvailability records a state determined by one probe endpoint, with the outcome
+// code that names why. An empty outcome is refused rather than defaulted: a code nobody
+// chose is a code that would have to be guessed back from the detail.
 func (c *Collector) writeAvailability(ctx context.Context, providerID int64,
-	state store.AvailabilityState, probe opnsense.Endpoint, detail string) error {
+	state store.AvailabilityState, outcome store.AvailabilityOutcome, probe opnsense.Endpoint,
+	detail string) error {
+	if outcome == "" {
+		return fmt.Errorf("collect: the availability of provider %d (%s %s) was written with no "+
+			"outcome code", providerID, probe.Method, probe.Path)
+	}
 	var detailValue *string
 	if detail != "" {
 		detailValue = &detail
 	}
 	probeName := probe.Method + " " + probe.Path
-	if err := c.store.SetAvailability(ctx, providerID, state, probeName, detailValue, c.now()); err != nil {
+	if err := c.store.SetAvailability(ctx, providerID, state, outcome, probeName, detailValue,
+		c.now()); err != nil {
 		return fmt.Errorf("collect: recording availability: %w", err)
 	}
 	return nil
@@ -509,3 +558,6 @@ func joinErrors(errs []error) error {
 	}
 	return joined
 }
+
+// Sources returns the implementations this collector reads.
+func (c *Collector) Sources() *sources.Set { return c.sources }

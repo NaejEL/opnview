@@ -1,365 +1,23 @@
 package collect
 
 import (
-	"bytes"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
-	"encoding/json"
-	"io"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
-	"os"
-	"path/filepath"
 	"runtime"
-	"sort"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/broker/schedule"
+	"github.com/NaejEL/opnview/internal/collect/providertest"
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
-// The fake firewall every collector test runs against.
-//
-// IT IS BUILT FROM A DOCUMENT, AND THAT IS THE LIMIT OF WHAT THESE TESTS PROVE.
-// Cycle 4A cannot reach an OPNsense: credentials are entered in opnview's own
-// interface, which is cycle 4B. So every response below comes from a fixture
-// synthesised by reading docs/opnsense-api-survey.md, each fixture says so in its
-// own file, and if the survey is wrong about a field, an envelope or a status code
-// these tests pass and the collection is still wrong. Only the end of 4B closes
-// that.
-//
-// What the fake does enforce, and what a document cannot get wrong:
-//
-//   - every path ever requested is a registry entry, so an invented endpoint fails
-//     the test rather than reaching a firewall;
-//   - the transport refuses any host but the fake, so a second outbound destination
-//     fails the test rather than being noticed later;
-//   - the credentials are generated per test, so no key or secret exists in the
-//     repository to leak.
-
-// fixtureRoot is where the labelled response fixtures live.
-const fixtureRoot = "testdata"
-
-// reply is one canned answer.
-type reply struct {
-	status int
-	body   []byte
-}
-
-// recorded is one request the fake received.
-type recorded struct {
-	method      string
-	path        string
-	contentType string
-	query       url.Values
-	body        []byte
-	// endpointPath is the registry path the request resolved to, or the empty
-	// string when it resolved to none — which is a test failure.
-	endpointPath string
-	// arguments are the positional path elements after the command.
-	arguments []string
-}
-
-// fakeFirewall answers the registry's paths and records what was asked.
-type fakeFirewall struct {
-	t      *testing.T
-	server *httptest.Server
-
-	mutex    sync.Mutex
-	replies  map[string]reply
-	streams  map[string]streamReply
-	requests []recorded
-	unknown  []string
-}
-
-// streamReply is a canned server-sent event stream: the events' data, each written as
-// "event: message", "data: <data>" and a blank line, and then either the end of the
-// stream or, when forever is set, silence until the reader closes the connection -- which
-// is what the firewall's stream does.
-type streamReply struct {
-	events  [][]byte
-	forever bool
-}
-
-// newFakeFirewall starts a fake. Every registry path answers 404 until a reply is
-// configured for it, which is the honest default: an endpoint the test did not
-// arrange is a component that is not installed.
-func newFakeFirewall(t *testing.T) *fakeFirewall {
-	t.Helper()
-	fake := &fakeFirewall{t: t, replies: map[string]reply{}}
-	fake.server = httptest.NewServer(http.HandlerFunc(fake.serve))
-	t.Cleanup(fake.server.Close)
-	return fake
-}
-
-// serve routes one request to the longest registry path that prefixes it.
-func (f *fakeFirewall) serve(writer http.ResponseWriter, request *http.Request) {
-	body := make([]byte, 0)
-	if request.Body != nil {
-		read, err := io.ReadAll(request.Body)
-		if err == nil {
-			body = read
-		}
-	}
-
-	matched := ""
-	for _, endpoint := range opnsense.Registry() {
-		if request.URL.Path == endpoint.Path ||
-			strings.HasPrefix(request.URL.Path, endpoint.Path+"/") {
-			if len(endpoint.Path) > len(matched) {
-				matched = endpoint.Path
-			}
-		}
-	}
-
-	var arguments []string
-	if matched != "" && len(request.URL.Path) > len(matched) {
-		arguments = strings.Split(strings.TrimPrefix(request.URL.Path, matched+"/"), "/")
-	}
-
-	f.mutex.Lock()
-	f.requests = append(f.requests, recorded{
-		method:       request.Method,
-		path:         request.URL.Path,
-		contentType:  request.Header.Get("Content-Type"),
-		query:        request.URL.Query(),
-		body:         body,
-		endpointPath: matched,
-		arguments:    arguments,
-	})
-	if matched == "" {
-		f.unknown = append(f.unknown, request.URL.Path)
-	}
-	answer, configured := f.replies[matched]
-	stream, streams := f.streams[matched]
-	f.mutex.Unlock()
-
-	if matched != "" && streams {
-		writer.Header().Set("Content-Type", "text/event-stream")
-		writer.WriteHeader(http.StatusOK)
-		flusher, _ := writer.(http.Flusher)
-		for _, event := range stream.events {
-			_, _ = writer.Write([]byte("event: message\ndata: " + string(event) + "\n\n"))
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
-		if stream.forever {
-			<-request.Context().Done()
-		}
-		return
-	}
-	if matched == "" || !configured {
-		writer.WriteHeader(http.StatusNotFound)
-		_, _ = writer.Write([]byte(`{"errorMessage":"Endpoint not found","errorTitle":"Not Found"}`))
-		return
-	}
-	writer.WriteHeader(answer.status)
-	_, _ = writer.Write(answer.body)
-}
-
-// answer configures the reply for one endpoint.
-func (f *fakeFirewall) answer(endpoint opnsense.Endpoint, status int, body []byte) {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-	f.replies[endpoint.Path] = reply{status: status, body: body}
-}
-
-// answerStream configures a server-sent event stream for one endpoint.
-func (f *fakeFirewall) answerStream(endpoint opnsense.Endpoint, events [][]byte, forever bool) {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-	if f.streams == nil {
-		f.streams = map[string]streamReply{}
-	}
-	f.streams[endpoint.Path] = streamReply{events: events, forever: forever}
-}
-
-// answerStreamFixture configures a stream from a labelled fixture whose body is
-// {"events": [...]}: one event per element, the element as its data, and the stream then
-// held open, as the firewall's is.
-func (f *fakeFirewall) answerStreamFixture(endpoint opnsense.Endpoint, name string) {
-	f.t.Helper()
-	var body struct {
-		Events []json.RawMessage `json:"events"`
-	}
-	if err := json.Unmarshal(fixtureBody(f.t, name), &body); err != nil {
-		f.t.Fatalf("decoding the stream fixture %s: %v", name, err)
-	}
-	events := make([][]byte, 0, len(body.Events))
-	for _, event := range body.Events {
-		// One line per event, as the script prints it: a data line cannot hold a newline.
-		var compact bytes.Buffer
-		if err := json.Compact(&compact, event); err != nil {
-			f.t.Fatalf("compacting an event of %s: %v", name, err)
-		}
-		events = append(events, compact.Bytes())
-	}
-	f.answerStream(endpoint, events, true)
-}
-
-// answerFixture configures the reply for one endpoint from a labelled fixture.
-func (f *fakeFirewall) answerFixture(endpoint opnsense.Endpoint, name string) {
-	f.answer(endpoint, http.StatusOK, fixtureBody(f.t, name))
-}
-
-// answerJSON configures the reply from a value encoded here. It is used only for
-// bodies a fixture would say nothing more about than the value itself — an empty
-// array, a status object a test is varying on purpose — and the reason is recorded
-// at each call site.
-func (f *fakeFirewall) answerJSON(endpoint opnsense.Endpoint, value any) {
-	f.t.Helper()
-	encoded, err := json.Marshal(value)
-	if err != nil {
-		f.t.Fatalf("encoding a fake answer for %s: %v", endpoint.Path, err)
-	}
-	f.answer(endpoint, http.StatusOK, encoded)
-}
-
-// requestsTo returns the requests made to one endpoint.
-func (f *fakeFirewall) requestsTo(endpoint opnsense.Endpoint) []recorded {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-	var matched []recorded
-	for _, request := range f.requests {
-		if request.endpointPath == endpoint.Path {
-			matched = append(matched, request)
-		}
-	}
-	return matched
-}
-
-// requestCount returns how many requests the fake received in total.
-func (f *fakeFirewall) requestCount() int {
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-	return len(f.requests)
-}
-
-// assertEveryPathIsRegistered fails if any request resolved to no registry entry.
-// It is the recording half of the registry guarantee: the client refuses an
-// unregistered Endpoint value, and this refuses an unregistered PATH, so neither a
-// hand-built struct nor a hand-built URL can slip through.
-func (f *fakeFirewall) assertEveryPathIsRegistered() {
-	f.t.Helper()
-	f.mutex.Lock()
-	defer f.mutex.Unlock()
-	if len(f.unknown) > 0 {
-		f.t.Fatalf("these requested paths are in no registry entry: %v", f.unknown)
-	}
-}
-
-// firewallOnlyTransport refuses any host but the fake firewall.
-//
-// It is what makes "one outbound destination" a property a test can fail on. A
-// second destination — a CDN, a telemetry endpoint, a MaxMind download that
-// wandered out of internal/maxmind — does not merely get noticed: the call errors.
-type firewallOnlyTransport struct {
-	t           *testing.T
-	allowedHost string
-	inner       http.RoundTripper
-}
-
-// RoundTrip refuses a request to any other host.
-func (transport *firewallOnlyTransport) RoundTrip(request *http.Request) (*http.Response, error) {
-	if request.URL.Host != transport.allowedHost {
-		transport.t.Errorf("a request left for %s, which is not the configured firewall %s",
-			request.URL.Host, transport.allowedHost)
-		return nil, &url.Error{
-			Op:  request.Method,
-			URL: request.URL.String(),
-			Err: os.ErrPermission,
-		}
-	}
-	return transport.inner.RoundTrip(request)
-}
-
-// newFakeClient returns a client pointed at the fake, through a transport that
-// refuses every other host, with credentials generated here so none exists in the
-// repository.
-func newFakeClient(t *testing.T, fake *fakeFirewall) *opnsense.Client {
-	t.Helper()
-	target, err := url.Parse(fake.server.URL)
-	if err != nil {
-		t.Fatalf("parsing the fake firewall address: %v", err)
-	}
-	return opnsense.NewClient(
-		opnsense.Credentials{
-			BaseURL:   fake.server.URL,
-			APIKey:    randomCredential(t),
-			APISecret: randomCredential(t),
-		},
-		&firewallOnlyTransport{t: t, allowedHost: target.Host, inner: http.DefaultTransport},
-		5*time.Second,
-	)
-}
-
-// randomCredential generates a credential for one test run.
-func randomCredential(t *testing.T) string {
-	t.Helper()
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
-		t.Fatalf("generating a test credential: %v", err)
-	}
-	return hex.EncodeToString(raw)
-}
-
-// fixtureFile is the on-disk shape of a labelled fixture: the provenance, and the
-// response body the fake serves.
-type fixtureFile struct {
-	Provenance struct {
-		SynthesisedFrom       string `json:"synthesised_from"`
-		CapturedFromAFirewall bool   `json:"captured_from_a_firewall"`
-		Statement             string `json:"statement"`
-		SurveySection         string `json:"survey_section"`
-		FieldListFrom         string `json:"field_list_from"`
-		WhyTheseValues        string `json:"why_these_values"`
-		ExampleValues         string `json:"example_values_are_not_a_network"`
-	} `json:"__provenance__"`
-	Body json.RawMessage `json:"body"`
-}
-
-// fixtureBody returns one fixture's response body.
-func fixtureBody(t *testing.T, name string) []byte {
-	t.Helper()
-	return readFixture(t, name).Body
-}
-
-// readFixture reads and decodes one fixture.
-func readFixture(t *testing.T, name string) fixtureFile {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(fixtureRoot, name))
-	if err != nil {
-		t.Fatalf("reading the fixture %s: %v", name, err)
-	}
-	var decoded fixtureFile
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		t.Fatalf("decoding the fixture %s: %v", name, err)
-	}
-	return decoded
-}
-
-// fixtureNames lists every fixture file.
-func fixtureNames(t *testing.T) []string {
-	t.Helper()
-	entries, err := os.ReadDir(fixtureRoot)
-	if err != nil {
-		t.Fatalf("listing the fixtures: %v", err)
-	}
-	var names []string
-	for _, entry := range entries {
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".json") {
-			names = append(names, entry.Name())
-		}
-	}
-	sort.Strings(names)
-	return names
-}
+// The fake firewall every collector test runs against is internal/collect/providertest: an
+// implementation's own tests run against the same one. What is left here is what only the
+// coordinators' tests need.
 
 // fixedClock is a clock a test drives. It never advances on its own, so nothing in a
 // test sleeps and nothing depends on how fast the machine is.
@@ -445,7 +103,7 @@ func (c *fixedClock) advance(by time.Duration) {
 // a -wal or a -shm file into the working tree.
 func newTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	database, err := store.Open(context.Background(), t.TempDir())
+	database, err := store.Open(context.Background(), storetest.Database(t))
 	if err != nil {
 		t.Fatalf("opening the test database: %v", err)
 	}
@@ -469,14 +127,14 @@ func countRows(t *testing.T, database *store.Store, table string) int {
 
 // arrangeDiscoverableFirewall configures the fake with the discovery responses and
 // runs one discovery pass, which is the precondition of every collector.
-func arrangeDiscoverableFirewall(t *testing.T, fake *fakeFirewall, collector *Collector) {
+func arrangeDiscoverableFirewall(t *testing.T, fake *providertest.Firewall, collector *Collector) {
 	t.Helper()
-	fake.answerFixture(opnsense.InterfacesInfo, "interfaces_info.json")
-	fake.answerFixture(opnsense.InterfaceNames, "get_interface_names.json")
-	fake.answerFixture(opnsense.SearchRule, "search_rule.json")
+	fake.AnswerFixture(opnsense.InterfacesInfo, "interfaces_info.json")
+	fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")
+	fake.AnswerFixture(opnsense.SearchRule, "search_rule.json")
 	// The firewall's clock, from which discovery measures its offset from UTC: the
 	// fixture is a firewall on UTC at the reference instant, so the offset is zero.
-	fake.answerFixture(opnsense.SystemTime, "system_time.json")
+	fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
 	if err := collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("runtime discovery: %v", err)
 	}
@@ -494,3 +152,23 @@ func referenceInstant() time.Time {
 
 // referenceEpoch is referenceInstant as the UTC epoch every column stores.
 func referenceEpoch() int64 { return referenceInstant().Unix() }
+
+// newTestCollector is a collector for a test: its broker's ceilings raised past anything a test
+// reaches -- a test's clock does not move, so a calls-per-second ceiling would hold its calls for
+// ever -- and its broker closed when the test ends, so no subscription holds the fake firewall.
+func newTestCollector(t *testing.T, client *opnsense.Client, database *store.Store, clock Clock) *Collector {
+	t.Helper()
+	collector := New(client, database, clock)
+	collector.Broker().Scheduler().SetSettings(schedule.Settings{MaxInFlight: 64, MaxPerSecond: 1e6})
+	// A test runs its passes back to back at one frozen instant, where a pass at its interval would
+	// find the answer it read an instant before fresh in the mirror: its readers' max ages are zero,
+	// so every pass asks the firewall, as each test arranges it. The broker's serving from its mirror
+	// is internal/broker's tests' subject.
+	settings := config.Defaults()
+	settings.DiscoveryInterval, settings.FirewallLogInterval, settings.SecurityEventInterval = 0, 0, 0
+	settings.MeasurementInterval, settings.DHCPLeaseInterval, settings.DNSLookupInterval = 0, 0, 0
+	settings.ResolverCacheInterval, settings.ResolverLocalDataInterval = 0, 0
+	collector.Configure(settings)
+	t.Cleanup(collector.Broker().Close)
+	return collector
+}

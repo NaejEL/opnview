@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
 // settingTable is a SettingReader backed by a map, so this package is tested without
@@ -327,7 +328,7 @@ func TestTheLegPairingWindowIsAValidatedSettingWhoseDefaultIsOne(t *testing.T) {
 	if err != nil || loaded.LegPairingWindowSeconds != 1 || Defaults().LegPairingWindowSeconds != 1 {
 		t.Errorf("with no row the pairing window is %d (%v), not 1", loaded.LegPairingWindowSeconds, err)
 	}
-	database, err := store.Open(ctx, t.TempDir())
+	database, err := store.Open(ctx, storetest.Database(t))
 	if err != nil {
 		t.Fatalf("opening a database: %v", err)
 	}
@@ -345,6 +346,23 @@ func TestTheLegPairingWindowIsAValidatedSettingWhoseDefaultIsOne(t *testing.T) {
 		if _, err := Load(ctx, settingTable{rows: map[string]string{KeyLegPairingWindow: value}}); err == nil ||
 			!strings.Contains(err.Error(), KeyLegPairingWindow) {
 			t.Errorf("the window %q was accepted, or refused without naming the key: %v", value, err)
+		}
+	}
+}
+
+// TestTheLegPairingWindowAboveSixtySecondsIsRefusedNamingTheSetting is AC32 of
+// specs/SPEC-step-5b-widget-api.md: the bound of decision 13 is accepted, and one
+// second above it is refused with a message naming the setting.
+func TestTheLegPairingWindowAboveSixtySecondsIsRefusedNamingTheSetting(t *testing.T) {
+	ctx := context.Background()
+	loaded, err := Load(ctx, settingTable{rows: map[string]string{KeyLegPairingWindow: "60"}})
+	if err != nil || loaded.LegPairingWindowSeconds != 60 {
+		t.Errorf("the bound itself, 60, gave %d (%v)", loaded.LegPairingWindowSeconds, err)
+	}
+	for _, value := range []string{"61", "3600", "9223372036854775807"} {
+		_, err := Load(ctx, settingTable{rows: map[string]string{KeyLegPairingWindow: value}})
+		if err == nil || !strings.Contains(err.Error(), KeyLegPairingWindow) {
+			t.Errorf("the window %s was accepted, or refused without naming the key: %v", value, err)
 		}
 	}
 }
@@ -372,7 +390,7 @@ func TestTheLeaseBackendFailureLimitIsAValidatedSettingWhoseDefaultIsThree(t *te
 	if err != nil || loaded.LeaseBackendFailurePassLimit != 3 || Defaults().LeaseBackendFailurePassLimit != 3 {
 		t.Errorf("with no row the limit is %d (%v), not 3", loaded.LeaseBackendFailurePassLimit, err)
 	}
-	database, err := store.Open(ctx, t.TempDir())
+	database, err := store.Open(ctx, storetest.Database(t))
 	if err != nil {
 		t.Fatalf("opening a database: %v", err)
 	}
@@ -408,7 +426,7 @@ func TestTheResolverCacheSettingsAreValidated(t *testing.T) {
 		t.Errorf("with no row the settings are %d, %v and %v (%v)", loaded.CacheAnswerDelaySeconds,
 			loaded.ResolverCacheInterval, loaded.ResolverLocalDataInterval, err)
 	}
-	database, err := store.Open(ctx, t.TempDir())
+	database, err := store.Open(ctx, storetest.Database(t))
 	if err != nil {
 		t.Fatalf("opening a database: %v", err)
 	}

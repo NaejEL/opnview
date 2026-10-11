@@ -10,7 +10,7 @@ import (
 )
 
 // The write-path tests. Each one is a guarantee the model rests on, exercised against a
-// real SQLite database under t.TempDir rather than against a mock, because the
+// real PostgreSQL database of their own rather than against a mock, because the
 // guarantees are constraints in the schema and a mock would assert nothing about them.
 
 // TestIngestingTheSamePageTwiceProducesTheSameFlowCount is idempotence on the filter
@@ -149,14 +149,14 @@ func TestTheTwoDirectionsOfOnePairCollapseToOneVolume(t *testing.T) {
 // pair_volume_observation is derived from `flow` and collected from nowhere: the only per-pair
 // endpoint the survey found carries neither a port nor a protocol, and the filter log carries
 // both exactly. So exactly two statements may write it -- delete_pair_volume and
-// insert_pair_volume of derive.sql, the derivation -- plus the retention purge, which removes
+// insert_pair_volume of pairvolume.statements.sql, the derivation -- plus the retention purge, which removes
 // old rows and writes nothing new. Every other non-test Go or SQL file under cmd/ and internal/
 // is scanned, and a writer anywhere else fails this test.
 //
 // The scan NORMALISES EACH FILE WHOLE, because a long SQL statement in Go is ordinarily
 // wrapped -- a raw literal spanning lines, or quoted fragments joined with + -- and EVERY
-// WRITING VERB IS ENUMERATED, REPLACE INTO included, which is SQLite's alias for INSERT OR
-// REPLACE and the likeliest way to re-derive a slot.
+// WRITING VERB IS ENUMERATED, REPLACE INTO included -- SQLite's alias for INSERT OR REPLACE, which PostgreSQL refuses but a
+// statement carried over from the previous engine could still hold.
 func TestOnlyTheDerivationWritesThePairVolumeTable(t *testing.T) {
 	t.Parallel()
 	var offenders []string
@@ -188,7 +188,7 @@ func TestOnlyTheDerivationWritesThePairVolumeTable(t *testing.T) {
 		}
 	}
 	if len(offenders) > 0 {
-		t.Errorf("pair_volume_observation is derived from flow by derive.sql alone, and these "+
+		t.Errorf("pair_volume_observation is derived from flow by pairvolume.statements.sql alone, and these "+
 			"write it: %s", strings.Join(offenders, "; "))
 	}
 
@@ -217,8 +217,8 @@ func TestThePairVolumeGuardHasTeeth(t *testing.T) {
 			t.Errorf("the guard admits a writer in another SQL file: %q", writer)
 		}
 	}
-	derivation, _ := statementFiles.ReadFile("derive.sql")
-	if offenders := pairVolumeWriters("../../internal/store/derive.sql", string(derivation)); len(offenders) != 0 {
+	derivation, _ := ownStatements.ReadFile("pairvolume.statements.sql")
+	if offenders := pairVolumeWriters("../../internal/store/pairvolume.statements.sql", string(derivation)); len(offenders) != 0 {
 		t.Errorf("the guard refuses the derivation itself: %v", offenders)
 	}
 	purge, _ := sqlFiles.ReadFile("purge.sql")
@@ -230,7 +230,7 @@ func TestThePairVolumeGuardHasTeeth(t *testing.T) {
 // pairVolumeWriters returns the writing statements one file holds against the derived
 // table, unless the file is the derivation or the retention purge.
 func pairVolumeWriters(path, source string) []string {
-	if strings.HasSuffix(path, "/internal/store/derive.sql") ||
+	if strings.HasSuffix(path, "/internal/store/pairvolume.statements.sql") ||
 		strings.HasSuffix(path, "/internal/store/purge.sql") {
 		return nil
 	}

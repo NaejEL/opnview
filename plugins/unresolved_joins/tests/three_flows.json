@@ -1,0 +1,154 @@
+{
+  "type": "unresolved_joins",
+  "parameters": {
+    "counters": [
+      "interface",
+      "rule",
+      "client_identity",
+      "geo"
+    ],
+    "interfaces": null,
+    "period": "1h",
+    "show_records": false
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789996800,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq DHCP",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "isc",
+      "display_name": "ISC dhcpd",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "kea",
+      "display_name": "Kea DHCP",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "ip_geolocation",
+      "provider_key": "maxmind_geolite2",
+      "display_name": "MaxMind GeoLite2",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    }
+  ],
+  "condition": "not_yet_probed",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "counters": [
+      {
+        "counter": "interface",
+        "unresolved": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 1
+        },
+        "of": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 3
+        }
+      },
+      {
+        "counter": "rule",
+        "unresolved": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 1
+        },
+        "of": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 3
+        }
+      },
+      {
+        "counter": "client_identity",
+        "unresolved": {
+          "measure": "clients",
+          "lower_bound": true,
+          "value": 1
+        },
+        "of": {
+          "measure": "clients",
+          "lower_bound": true,
+          "value": 1
+        }
+      },
+      {
+        "counter": "geo",
+        "unresolved": {
+          "measure": "addresses",
+          "lower_bound": true,
+          "value": 2
+        },
+        "of": {
+          "measure": "addresses",
+          "lower_bound": true,
+          "value": 2
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "language": "en",
+  "strings": {
+    "sources.title": "Sources",
+
+    "indicator.outages": "Outages",
+    "indicator.no_outage": "No outage",
+
+    "sources.heading.providers": "Providers",
+    "sources.heading.gaps": "Collection gaps, last 24 hours",
+    "sources.column.kind": "Kind",
+    "sources.column.provider": "Provider",
+    "sources.column.active": "Active",
+    "sources.column.checked": "Checked",
+    "sources.column.probe": "Probe",
+    "sources.column.detail": "Detail",
+    "sources.column.start": "Interval start",
+    "sources.column.end": "Interval end",
+    "state.source.never_checked": "Never checked",
+    "state.source.no_detail": "No detail",
+    "state.source.no_recent_gap": "No gap in the last 24 hours",
+
+    "sources.label.opnsense_page": "Turned on in OPNsense, never by opnview",
+    "opnsense_page.ids_administration": "Services: Intrusion Detection: Administration",
+    "opnsense_page.kea_dhcpv4": "Services: Kea DHCP: Kea DHCPv4",
+    "opnsense_page.dnsmasq_dhcp_ranges": "Services: Dnsmasq DNS & DHCP: DHCP ranges",
+    "opnsense_page.unbound_general": "Services: Unbound DNS: General",
+    "opnsense_page.unbound_reporting": "Reporting: Unbound DNS",
+    "opnsense_page.netflow": "Reporting: NetFlow",
+    "indicator.unknown": "Outages unknown",
+    "sources.heading.outages": "Current outages",
+    "sources.column.outage": "In outage",
+    "state.outage.kind": "No implementation healthy",
+    "state.outage.provider": "Turned on by the operator, not healthy"
+  }
+}

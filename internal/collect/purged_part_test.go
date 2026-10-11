@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"testing"
 	"time"
 
@@ -57,7 +58,7 @@ func TestAHostNameLookupReadBeforeItsLeaseIsResolvedByTheLeasePass(t *testing.T)
 	ctx := context.Background()
 	answer := "Recursion"
 	logged := "example-host-three.example.invalid"
-	lookup, err := harness.collector.buildDNSResolution(ctx, lookupRecord{
+	lookup, err := harness.collector.buildDNSResolution(ctx, dnslookup.Record{
 		DeduplicationKey: "example-key-early", ClientAddress: logged,
 		Domain: "example-site.example.invalid", Action: "pass", AnswerSource: &answer,
 		LookedUpAt: referenceEpoch() - 60,

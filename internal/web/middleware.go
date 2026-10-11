@@ -4,10 +4,14 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"mime"
 	"net/http"
+	"net/url"
+	"sort"
 
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/widget"
 )
 
 // The middleware every route passes through.
@@ -66,6 +70,10 @@ func (s *Server) guard(route Route) http.HandlerFunc {
 		// 2. The session.
 		session, err := s.resolveSession(request)
 		if route.Access == AccessAuthenticated && session == nil {
+			if route.JSON {
+				refuseUnauthenticatedJSON(writer, err)
+				return
+			}
 			s.refuseUnauthenticated(writer, request, err)
 			return
 		}
@@ -74,25 +82,31 @@ func (s *Server) guard(route Route) http.HandlerFunc {
 				context.WithValue(request.Context(), sessionContextKey{}, session))
 		}
 
-		// 3. The form token, on every mutating request.
-		if route.Method == http.MethodPost {
+		// 3. The form token, on every mutating request: a page's form carries it as a field, a JSON
+		// write as a header beside a same-origin JSON body (jsonProofValid).
+		if route.Method == http.MethodPost && route.JSON {
+			if !s.jsonProofValid(request, session) {
+				widget.WriteJSON(writer, http.StatusForbidden, widget.Failure{Condition: ConditionCSRFRefused})
+				return
+			}
+		} else if route.Method == http.MethodPost {
 			if err := request.ParseForm(); err != nil {
-				s.refuseFormToken(writer, request)
+				s.refuseFormToken(writer, request, route)
 				return
 			}
 			if !s.formTokenValid(request, session) {
-				s.refuseFormToken(writer, request)
+				s.refuseFormToken(writer, request, route)
 				return
 			}
 		}
 
 		// 4. The key file, on the one route authorised by possession of it.
 		if route.Access == AccessKeyFile && !s.keyFilePresented(request) {
-			s.refuseKeyFile(writer, request)
+			s.refuseKeyFile(writer, request, route)
 			return
 		}
 
-		route.handler(writer, request)
+		route.Handler(writer, request)
 	}
 }
 
@@ -141,6 +155,39 @@ func (s *Server) formTokenValid(request *http.Request, session *store.Session) b
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(submitted), []byte(expected)) == 1
+}
+
+// HeaderCSRFToken is the header a JSON write carries its session's form token in.
+const HeaderCSRFToken = "X-CSRF-Token"
+
+// ConditionCSRFRefused is the condition a JSON write is refused with when its proof is missing,
+// wrong, another session's, or sent from another origin.
+const ConditionCSRFRefused = "csrf_refused"
+
+// jsonProofValid is the form token rule for a JSON write. A JSON write is made by the application
+// with a session, so the expected token is always the session's own; it travels in a header, which
+// a page of another origin cannot set without the browser asking this server first; the body is
+// JSON, which no plain HTML form can send; and an Origin header, when the browser sends one, names
+// this server's own host.
+func (s *Server) jsonProofValid(request *http.Request, session *store.Session) bool {
+	if session == nil || session.CSRFToken == "" {
+		return false
+	}
+	if mediaType, _, err := mime.ParseMediaType(request.Header.Get("Content-Type")); err != nil ||
+		mediaType != "application/json" {
+		return false
+	}
+	if origin := request.Header.Get("Origin"); origin != "" {
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Host != request.Host {
+			return false
+		}
+	}
+	if request.Header.Get("Sec-Fetch-Site") == "cross-site" {
+		return false
+	}
+	submitted := request.Header.Get(HeaderCSRFToken)
+	return submitted != "" && subtle.ConstantTimeCompare([]byte(submitted), []byte(session.CSRFToken)) == 1
 }
 
 // keyFilePresented reports whether the request carried the contents of the key
@@ -235,7 +282,11 @@ func setFlash(writer http.ResponseWriter, key messageKey) {
 
 // takeFlash reads and clears a carried key, dropping anything that is not on the
 // closed list.
-func takeFlash(writer http.ResponseWriter, request *http.Request) messageKey {
+//
+// The list is closed over the keys the core and the mounted surfaces declared as
+// carriable (Surface.Notices, Surface.Refusals), so a value a reader was sent in a link
+// can only ever be one of those.
+func (s *Server) takeFlash(writer http.ResponseWriter, request *http.Request) MessageKey {
 	cookie, err := request.Cookie(cookieNotice)
 	if err != nil || cookie.Value == "" {
 		return ""
@@ -248,35 +299,35 @@ func takeFlash(writer http.ResponseWriter, request *http.Request) messageKey {
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 	})
-	for _, permitted := range flashKeys() {
-		if string(permitted) == cookie.Value {
-			return permitted
-		}
+	carried := MessageKey(cookie.Value)
+	if _, permitted := s.notices[carried]; permitted {
+		return carried
+	}
+	if _, permitted := s.refusals[carried]; permitted {
+		return carried
 	}
 	return ""
 }
 
-// flashKeys is the closed list of keys a redirect may carry.
-func flashKeys() []messageKey {
-	return append(noticeKeys(),
-		msgSetupClosed, msgSessionExpired, msgSignInRefused, msgKeyFileRefused)
-}
-
-// noticeKeys is the subset of flashKeys that reports something the reader asked
-// for having happened. A key outside it renders as a refusal rather than a notice,
-// which is how one cookie carries both without a second one.
-func noticeKeys() []messageKey {
-	return []messageKey{msgSetupDone, msgSettingsSaved, msgPasswordReset, msgSignedOut}
-}
-
-// isNotice reports whether a carried key is a notice rather than a refusal.
-func isNotice(key messageKey) bool {
-	for _, candidate := range noticeKeys() {
-		if candidate == key {
-			return true
-		}
+// FlashKeys returns the closed list of keys a redirect may carry, sorted, for a test.
+func (s *Server) FlashKeys() []MessageKey {
+	var keys []MessageKey
+	for key := range s.notices {
+		keys = append(keys, key)
 	}
-	return false
+	for key := range s.refusals {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool { return keys[i] < keys[j] })
+	return keys
+}
+
+// isNotice reports whether a carried key is a notice rather than a refusal. A key outside
+// the notices renders as a refusal, which is how one cookie carries both without a second
+// one.
+func (s *Server) isNotice(key MessageKey) bool {
+	_, notice := s.notices[key]
+	return notice
 }
 
 // refuseUnauthenticated turns away a request with no live session.
@@ -312,31 +363,59 @@ func (s *Server) refuseSetupClosed(writer http.ResponseWriter, request *http.Req
 		s.redirectWithError(writer, request, PathSignIn, msgSetupClosed)
 		return
 	}
-	s.renderRefusal(writer, request, http.StatusForbidden, pageSignIn, msgSetupClosed)
+	s.RenderRefusal(writer, request, http.StatusForbidden, PageSignIn, msgSetupClosed)
+}
+
+// RefuseSetupClosed is refuseSetupClosed for a surface: the account surface answers a lost
+// race for the first account with the same permanent closure the middleware does.
+func (s *Server) RefuseSetupClosed(writer http.ResponseWriter, request *http.Request) {
+	s.refuseSetupClosed(writer, request)
 }
 
 // refuseFormToken turns away a mutating request whose form token is missing,
-// wrong, or another session's.
-func (s *Server) refuseFormToken(writer http.ResponseWriter, request *http.Request) {
-	s.renderRefusal(writer, request, http.StatusForbidden, s.pageFor(request), msgFormTokenRefused)
+// wrong, or another session's. The refusal is drawn on the page the route names, so the
+// reader lands on the form they were filling in.
+func (s *Server) refuseFormToken(writer http.ResponseWriter, request *http.Request, route Route) {
+	s.RenderRefusal(writer, request, http.StatusForbidden, pageOf(route), msgFormTokenRefused)
 }
 
 // refuseKeyFile turns away a reset that did not present the key file.
-func (s *Server) refuseKeyFile(writer http.ResponseWriter, request *http.Request) {
-	s.renderRefusal(writer, request, http.StatusForbidden, pageRecover, msgKeyFileRefused)
+func (s *Server) refuseKeyFile(writer http.ResponseWriter, request *http.Request, route Route) {
+	s.RenderRefusal(writer, request, http.StatusForbidden, pageOf(route), msgKeyFileRefused)
 }
 
-// pageFor is the page a refusal on this path should be rendered as, so the reader
-// lands on the form they were filling in rather than somewhere else.
-func (s *Server) pageFor(request *http.Request) string {
-	switch request.URL.Path {
-	case PathSetup:
-		return pageSetup
-	case PathSettings:
-		return pageSettings
-	case PathRecover:
-		return pageRecover
-	default:
-		return pageSignIn
+// pageOf is the page a refusal on this route is drawn on: the one the route names, or the
+// sign-in page.
+func pageOf(route Route) string {
+	if route.Page != "" {
+		return route.Page
 	}
+	return PageSignIn
+}
+
+// SessionFrom returns the session a request was resolved to, if any. The middleware has
+// resolved it before a surface's handler runs.
+func SessionFrom(request *http.Request) *store.Session { return sessionFrom(request) }
+
+// SetSessionCookie puts a freshly issued session token in the cookie.
+func SetSessionCookie(writer http.ResponseWriter, token string) { setSessionCookie(writer, token) }
+
+// ClearSessionCookie removes the session cookie.
+func ClearSessionCookie(writer http.ResponseWriter) { clearSessionCookie(writer) }
+
+// The conditions an unauthenticated API request is refused with (decision 4 of
+// specs/SPEC-step-5b-widget-api.md).
+const (
+	conditionNoSession      = "no_session"
+	conditionSessionExpired = "session_expired"
+)
+
+// refuseUnauthenticatedJSON turns away an API request with no live session: 401, and the
+// condition saying whether a session expired or there never was one. It serves no data.
+func refuseUnauthenticatedJSON(writer http.ResponseWriter, reason error) {
+	condition := conditionNoSession
+	if errors.Is(reason, auth.ErrSessionExpired) {
+		condition = conditionSessionExpired
+	}
+	widget.WriteJSON(writer, http.StatusUnauthorized, widget.Failure{Condition: condition})
 }

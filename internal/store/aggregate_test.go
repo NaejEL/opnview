@@ -226,18 +226,18 @@ func storedFamily(t *testing.T, database *Store, period Period, family string) m
 	var query string
 	switch family {
 	case "volume":
-		query = `SELECT period_start_at || '|' || ifnull(src_interface_id, 'null') || '|' ||
-			ifnull(dst_interface_id, 'null') || '|' || ifnull(peer_address, '') || '|' || traffic_direction ||
-			'|' || ifnull(exit_leg_device, '')`
+		query = `SELECT period_start_at || '|' || coalesce(CAST(src_interface_id AS TEXT), 'null') || '|' ||
+			coalesce(CAST(dst_interface_id AS TEXT), 'null') || '|' || coalesce(peer_address, '') || '|' || traffic_direction ||
+			'|' || coalesce(exit_leg_device, '')`
 	case "owner":
-		query = `SELECT period_start_at || '|' || ifnull(owner_id, 'null') || '|' || traffic_scope`
+		query = `SELECT period_start_at || '|' || coalesce(CAST(owner_id AS TEXT), 'null') || '|' || traffic_scope`
 	case "client":
 		query = `SELECT period_start_at || '|' || client_id || '|' || traffic_direction`
 	case "domain":
-		query = `SELECT period_start_at || '|' || site_name || '|' || ifnull(client_id, 'null')`
+		query = `SELECT period_start_at || '|' || site_name || '|' || coalesce(CAST(client_id AS TEXT), 'null')`
 	case "rule":
-		query = `SELECT period_start_at || '|' || ifnull(rule_id, 'null') || '|' ||
-			ifnull(src_interface_id, 'null') || '|' || ifnull(dst_interface_id, 'null')`
+		query = `SELECT period_start_at || '|' || coalesce(CAST(rule_id AS TEXT), 'null') || '|' ||
+			coalesce(CAST(src_interface_id AS TEXT), 'null') || '|' || coalesce(CAST(dst_interface_id AS TEXT), 'null')`
 	case "peer":
 		query = `SELECT period_start_at || '|' || client_id || '|' || traffic_direction || '|' ||
 			peer_address`

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
 )
@@ -25,11 +26,11 @@ func arrangeRecordCollection(t *testing.T) *probeHarness {
 	t.Helper()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.answerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	harness.fake.answerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-	harness.fake.answerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
+	harness.fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
+	harness.fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
 	ctx := context.Background()
 	if err := harness.collector.probeResolverCache(ctx); err != nil {
 		t.Fatalf("probing the cache: %v", err)
@@ -51,19 +52,19 @@ func fixtureRows(t *testing.T, name string) []map[string]any {
 	var body struct {
 		Data []map[string]any `json:"data"`
 	}
-	if err := json.Unmarshal(fixtureBody(t, name), &body); err != nil {
+	if err := json.Unmarshal(providertest.FixtureBody(t, name), &body); err != nil {
 		t.Fatalf("decoding %s: %v", name, err)
 	}
 	return body.Data
 }
 
 // answerRecords makes one record endpoint answer status ok with these rows.
-func answerRecords(fake *fakeFirewall, endpoint opnsense.Endpoint, rows []map[string]any) {
+func answerRecords(fake *providertest.Firewall, endpoint opnsense.Endpoint, rows []map[string]any) {
 	list := make([]any, 0, len(rows))
 	for _, row := range rows {
 		list = append(list, row)
 	}
-	fake.answerJSON(endpoint, map[string]any{"status": "ok", "data": list})
+	fake.AnswerJSON(endpoint, map[string]any{"status": "ok", "data": list})
 }
 
 // observationCount counts the stored resolver records.
@@ -237,7 +238,7 @@ func TestEachRecordReadAbsenceHasItsOwnWordingAndStoresNothing(t *testing.T) {
 			{"failed status", http.StatusOK, `{"status":"failed"}`, `status "failed"`},
 		} {
 			harness := arrangeRecordCollection(t)
-			harness.fake.answer(endpoint.endpoint, absence.status, []byte(absence.body))
+			harness.fake.Answer(endpoint.endpoint, absence.status, []byte(absence.body))
 			if err := endpoint.collect(harness.collector, context.Background()); err == nil {
 				t.Errorf("%s %s: the pass reported no failure", endpoint.endpoint.Path, absence.name)
 			}
@@ -320,7 +321,7 @@ func TestTheCacheAndTheQueryReportKeepTheirOwnAvailability(t *testing.T) {
 	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("reading the query report: %v", err)
 	}
-	harness.fake.answer(opnsense.UnboundDumpCache, http.StatusForbidden, []byte(`{}`))
+	harness.fake.Answer(opnsense.UnboundDumpCache, http.StatusForbidden, []byte(`{}`))
 	_ = harness.collector.CollectResolverCache(ctx)
 	if state, _, _ := harness.availabilityOf(t, KindDNSLookup, ProviderUnbound); state != store.StateReachable {
 		t.Errorf("a refused cache read moved the query report to %q", state)
@@ -333,7 +334,7 @@ func TestTheCacheAndTheQueryReportKeepTheirOwnAvailability(t *testing.T) {
 	if err := harness.collector.CollectResolverCache(ctx); err != nil {
 		t.Fatalf("reading the cache: %v", err)
 	}
-	harness.fake.answer(opnsense.SearchQueries, http.StatusInternalServerError, []byte(`{}`))
+	harness.fake.Answer(opnsense.SearchQueries, http.StatusInternalServerError, []byte(`{}`))
 	_ = harness.collector.CollectDNSLookup(ctx)
 	if state, _, _ := harness.availabilityOf(t, KindResolverCache, ProviderUnbound); state != store.StateReachable {
 		t.Errorf("a failed query report moved the cache to %q", state)
@@ -353,7 +354,7 @@ func TestACacheReadNamesAFlowThatThreeLookupsCouldNot(t *testing.T) {
 	if err := harness.collector.probeDNSLookup(ctx); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
-	harness.fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
 	if err := harness.collector.probeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
@@ -449,7 +450,10 @@ func localDataRows(hostname, address string) []map[string]any {
 // TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater is AC16 through the
 // collector, in both families and across a restart: the lookup is stored unresolved, the
 // local data naming its host arrives at a later pass, and that pass resolves it to
-// local_data_hostname. Two addresses give ambiguous_hostname.
+// local_data_hostname. Two addresses of one family give ambiguous_hostname, and, as AC16
+// is amended by group C of specs/SPEC-step-5b-widget-api.md, one A and one AAAA with no
+// querying family reported give dual_stack_hostname (the family cases are in
+// dualstack_test.go).
 func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 	t.Parallel()
 	for _, testCase := range []struct {
@@ -461,7 +465,10 @@ func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 		{"one IPv4 address", []string{"192.0.2.40"}, false, store.ClientResolutionLocalData},
 		{"one IPv6 address", []string{"2001:db8::40"}, false, store.ClientResolutionLocalData},
 		{"one address, across a restart", []string{"2001:db8::41"}, true, store.ClientResolutionLocalData},
-		{"two addresses", []string{"192.0.2.42", "2001:db8::42"}, false, store.ClientResolutionAmbiguous},
+		{"two addresses of one family", []string{"192.0.2.42", "192.0.2.43"}, false,
+			store.ClientResolutionAmbiguous},
+		{"one A and one AAAA, no family reported", []string{"192.0.2.44", "2001:db8::44"}, false,
+			store.ClientResolutionDualStack},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
@@ -485,7 +492,7 @@ func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 
 			collector := harness.collector
 			if testCase.restart {
-				collector = New(newFakeClient(t, harness.fake), harness.store,
+				collector = newTestCollector(t, providertest.NewClient(t, harness.fake), harness.store,
 					newFixedClock(referenceInstant().Add(time.Hour)))
 			} else {
 				setClock(harness, referenceInstant().Add(5*time.Minute))
@@ -518,8 +525,8 @@ func TestALeasePassWaitsForTheLocalDataBeforeExaminingALookup(t *testing.T) {
 	t.Parallel()
 	harness := arrangeLeaseCollection(t)
 	ctx := context.Background()
-	harness.fake.answerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	harness.fake.answerFixture(opnsense.UnboundSettings, "unbound_settings.json")
+	harness.fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
+	harness.fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
 	if err := harness.collector.probeResolverLocalData(ctx); err != nil {
 		t.Fatalf("probing the local data: %v", err)
 	}
@@ -560,7 +567,7 @@ func arrangeProcessorStream(t *testing.T, events ...string) *probeHarness {
 	for _, event := range events {
 		payloads = append(payloads, []byte(event))
 	}
-	harness.fake.answerStream(opnsense.CPUUsageStream, payloads, true)
+	harness.fake.AnswerStream(opnsense.CPUUsageStream, payloads, true)
 	return harness
 }
 
@@ -596,14 +603,14 @@ func TestTheProcessorReadingIsTheDocumentedDerivationOfTheSecondEvent(t *testing
 	var body struct {
 		Events []struct{ Total, Idle float64 } `json:"events"`
 	}
-	if err := json.Unmarshal(fixtureBody(t, "cpu_usage_stream.json"), &body); err != nil {
+	if err := json.Unmarshal(providertest.FixtureBody(t, "cpu_usage_stream.json"), &body); err != nil {
 		t.Fatal(err)
 	}
 	want := body.Events[1].Total / (body.Events[1].Total + body.Events[1].Idle)
 	if got := processorReadings(t, harness.store); len(got) != 1 || got[0] != want {
 		t.Errorf("the processor readings are %v, want the second event's %v", got, want)
 	}
-	if requests := harness.fake.requestsTo(opnsense.CPUUsageStream); len(requests) != 1 {
+	if requests := harness.fake.RequestsTo(opnsense.CPUUsageStream); len(requests) != 1 {
 		t.Errorf("the stream was requested %d times", len(requests))
 	}
 	// getActivity carries no processor figure, so it is not registered at all
@@ -622,31 +629,31 @@ func TestEachProcessorAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name    string
-		arrange func(*fakeFirewall)
+		arrange func(*providertest.Firewall)
 		want    string
 	}{
-		{"authentication failed", func(fake *fakeFirewall) {
-			fake.answer(opnsense.CPUUsageStream, http.StatusUnauthorized,
+		{"authentication failed", func(fake *providertest.Firewall) {
+			fake.Answer(opnsense.CPUUsageStream, http.StatusUnauthorized,
 				[]byte(`{"status":401,"message":"Authentication Failed"}`))
 		}, "authentication failed (HTTP 401)"},
-		{"denied", func(fake *fakeFirewall) {
-			fake.answer(opnsense.CPUUsageStream, http.StatusForbidden, []byte(`{}`))
+		{"denied", func(fake *providertest.Firewall) {
+			fake.Answer(opnsense.CPUUsageStream, http.StatusForbidden, []byte(`{}`))
 		}, `privilege "Lobby: Dashboard"`},
-		{"not found", func(fake *fakeFirewall) {
-			fake.answer(opnsense.CPUUsageStream, http.StatusNotFound, []byte(`{}`))
+		{"not found", func(fake *providertest.Firewall) {
+			fake.Answer(opnsense.CPUUsageStream, http.StatusNotFound, []byte(`{}`))
 		}, "not found, HTTP 404"},
-		{"no event in time", func(fake *fakeFirewall) {
-			fake.answerStream(opnsense.CPUUsageStream, nil, true)
+		{"no event in time", func(fake *providertest.Firewall) {
+			fake.AnswerStream(opnsense.CPUUsageStream, nil, true)
 		}, "no event within 5 s"},
-		{"only the since-boot event", func(fake *fakeFirewall) {
-			fake.answerStream(opnsense.CPUUsageStream, [][]byte{[]byte(`{"total":9,"idle":91}`)}, true)
+		{"only the since-boot event", func(fake *providertest.Firewall) {
+			fake.AnswerStream(opnsense.CPUUsageStream, [][]byte{[]byte(`{"total":9,"idle":91}`)}, true)
 		}, "no event after the first within 5 s"},
-		{"an undecodable event", func(fake *fakeFirewall) {
-			fake.answerStream(opnsense.CPUUsageStream, [][]byte{[]byte(`{"total":9,"idle":91}`),
+		{"an undecodable event", func(fake *providertest.Firewall) {
+			fake.AnswerStream(opnsense.CPUUsageStream, [][]byte{[]byte(`{"total":9,"idle":91}`),
 				[]byte(`not json`)}, true)
 		}, "could not be read as {total, idle}"},
-		{"a stream that ends at once", func(fake *fakeFirewall) {
-			fake.answerStream(opnsense.CPUUsageStream, nil, false)
+		{"a stream that ends at once", func(fake *providertest.Firewall) {
+			fake.AnswerStream(opnsense.CPUUsageStream, nil, false)
 		}, "the stream ended before any event"},
 	}
 	// Each absence has its own wording: no two cases expect the same words.
@@ -663,9 +670,7 @@ func TestEachProcessorAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 			harness := arrangeMeasurementCollection(t)
 			// The stream answer of the arrangement is replaced; a plain answer needs the
 			// stream entry gone.
-			harness.fake.mutex.Lock()
-			delete(harness.fake.streams, opnsense.CPUUsageStream.Path)
-			harness.fake.mutex.Unlock()
+			harness.fake.RemoveStream(opnsense.CPUUsageStream)
 			testCase.arrange(harness.fake)
 			started := time.Now()
 			if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
@@ -709,11 +714,11 @@ func TestTheUnverifiedProcessorPathIsGone(t *testing.T) {
 			t.Errorf("%s still carries the unverified processor keys", entry.Name())
 		}
 	}
-	for _, name := range fixtureNames(t) {
+	for _, name := range providertest.FixtureNames(t) {
 		// A body that is not an object carries no key, so a decoding failure here is no
 		// finding: readFixture already holds every fixture to valid JSON.
 		var body map[string]any
-		if err := json.Unmarshal(fixtureBody(t, name), &body); err != nil {
+		if err := json.Unmarshal(providertest.FixtureBody(t, name), &body); err != nil {
 			continue
 		}
 		if _, present := body["cpu"]; present {
@@ -756,7 +761,7 @@ func TestLocalDataPTRRecordsMapTheirReverseNameToAnAddressAndTheirTargetToAHost(
 	}
 
 	ptr := stringColumn(t, harness.store, `SELECT owner_name || ' | ' || value || ' | ' ||
-		ifnull(address, 'NULL') || ' | ' || ifnull(host_label, 'NULL')
+		coalesce(CAST(address AS TEXT), 'NULL') || ' | ' || coalesce(CAST(host_label AS TEXT), 'NULL')
 		FROM resource_record_observation WHERE rrtype = 'PTR' ORDER BY address`)
 	want := []string{
 		"20.2.0.192.in-addr.arpa | host-a.example.test | 192.0.2.20 | host-a",
@@ -793,3 +798,7 @@ func TestLocalDataPTRRecordsMapTheirReverseNameToAnAddressAndTheirTargetToAHost(
 		}
 	}
 }
+
+// processorStreamWithin is the bound the insight plugin reads the processor's stream within: five
+// seconds (plugins/insight/insight.js, processorStreamWithin).
+const processorStreamWithin = 5 * time.Second

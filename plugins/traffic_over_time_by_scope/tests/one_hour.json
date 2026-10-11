@@ -1,0 +1,1629 @@
+{
+  "type": "traffic_over_time_by_scope",
+  "parameters": {
+    "interfaces": null,
+    "measure": "bytes",
+    "period": "1h",
+    "scopes": [
+      "outbound",
+      "inbound",
+      "inter_interface"
+    ],
+    "stacked": false
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789996800,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "reachable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "reachable"
+    }
+  ],
+  "condition": "reachable",
+  "freshness": [
+    {
+      "period": "1h",
+      "slots_read": 0,
+      "last_computed_at": null,
+      "stale_slots": 0,
+      "stale": false
+    }
+  ],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "bucket_seconds": 60,
+    "series": [
+      {
+        "key": "outbound",
+        "condition": "reachable",
+        "availability": [
+          {
+            "kind": "firewall_log",
+            "provider_key": "pf",
+            "display_name": "pf filter log",
+            "active": false,
+            "state": "reachable",
+            "outcome": "not_yet_probed",
+            "probe": "not_yet_probed",
+            "checked_at": 0,
+            "detail": null,
+            "condition": "reachable"
+          }
+        ],
+        "window": {
+          "requested": {
+            "from": 1789996800,
+            "to": 1790000400
+          },
+          "covered": {
+            "from": 1789999801,
+            "to": 1790000400
+          },
+          "coverage": "partially_covered",
+          "flow_horizon_at": 1782224400
+        },
+        "gaps": [],
+        "unresolved_references": [],
+        "measure": "logged",
+        "lower_bound": true,
+        "unit": "bytes",
+        "total": 4200,
+        "total_volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 4200,
+          "allowed_bytes": 4000,
+          "blocked_bytes": 200,
+          "unknown_bytes": 0,
+          "connections": 3,
+          "allowed_connections": 2,
+          "blocked_connections": 1,
+          "unknown_connections": 0
+        },
+        "buckets": [
+          {
+            "from": 1789996800,
+            "to": 1789996860,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996860,
+            "to": 1789996920,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996920,
+            "to": 1789996980,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996980,
+            "to": 1789997040,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997040,
+            "to": 1789997100,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997100,
+            "to": 1789997160,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997160,
+            "to": 1789997220,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997220,
+            "to": 1789997280,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997280,
+            "to": 1789997340,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997340,
+            "to": 1789997400,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997400,
+            "to": 1789997460,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997460,
+            "to": 1789997520,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997520,
+            "to": 1789997580,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997580,
+            "to": 1789997640,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997640,
+            "to": 1789997700,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997700,
+            "to": 1789997760,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997760,
+            "to": 1789997820,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997820,
+            "to": 1789997880,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997880,
+            "to": 1789997940,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997940,
+            "to": 1789998000,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998000,
+            "to": 1789998060,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998060,
+            "to": 1789998120,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998120,
+            "to": 1789998180,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998180,
+            "to": 1789998240,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998240,
+            "to": 1789998300,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998300,
+            "to": 1789998360,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998360,
+            "to": 1789998420,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998420,
+            "to": 1789998480,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998480,
+            "to": 1789998540,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998540,
+            "to": 1789998600,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998600,
+            "to": 1789998660,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998660,
+            "to": 1789998720,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998720,
+            "to": 1789998780,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998780,
+            "to": 1789998840,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998840,
+            "to": 1789998900,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998900,
+            "to": 1789998960,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998960,
+            "to": 1789999020,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999020,
+            "to": 1789999080,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999080,
+            "to": 1789999140,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999140,
+            "to": 1789999200,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999200,
+            "to": 1789999260,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999260,
+            "to": 1789999320,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999320,
+            "to": 1789999380,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999380,
+            "to": 1789999440,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999440,
+            "to": 1789999500,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999500,
+            "to": 1789999560,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999560,
+            "to": 1789999620,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999620,
+            "to": 1789999680,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999680,
+            "to": 1789999740,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999740,
+            "to": 1789999800,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999800,
+            "to": 1789999860,
+            "gap": true,
+            "value": 4200,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 4200,
+              "allowed_bytes": 4000,
+              "blocked_bytes": 200,
+              "unknown_bytes": 0,
+              "connections": 3,
+              "allowed_connections": 2,
+              "blocked_connections": 1,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1789999860,
+            "to": 1789999920,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1789999920,
+            "to": 1789999980,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1789999980,
+            "to": 1790000040,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000040,
+            "to": 1790000100,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000100,
+            "to": 1790000160,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000160,
+            "to": 1790000220,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000220,
+            "to": 1790000280,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000280,
+            "to": 1790000340,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000340,
+            "to": 1790000400,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          }
+        ]
+      },
+      {
+        "key": "inbound",
+        "condition": "reachable_no_rows",
+        "availability": [
+          {
+            "kind": "firewall_log",
+            "provider_key": "pf",
+            "display_name": "pf filter log",
+            "active": false,
+            "state": "reachable",
+            "outcome": "not_yet_probed",
+            "probe": "not_yet_probed",
+            "checked_at": 0,
+            "detail": null,
+            "condition": "reachable"
+          }
+        ],
+        "window": {
+          "requested": {
+            "from": 1789996800,
+            "to": 1790000400
+          },
+          "covered": {
+            "from": 1789999801,
+            "to": 1790000400
+          },
+          "coverage": "partially_covered",
+          "flow_horizon_at": 1782224400
+        },
+        "gaps": [],
+        "unresolved_references": [],
+        "measure": "logged",
+        "lower_bound": true,
+        "unit": "bytes",
+        "total": 0,
+        "total_volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "buckets": [
+          {
+            "from": 1789996800,
+            "to": 1789996860,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996860,
+            "to": 1789996920,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996920,
+            "to": 1789996980,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996980,
+            "to": 1789997040,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997040,
+            "to": 1789997100,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997100,
+            "to": 1789997160,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997160,
+            "to": 1789997220,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997220,
+            "to": 1789997280,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997280,
+            "to": 1789997340,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997340,
+            "to": 1789997400,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997400,
+            "to": 1789997460,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997460,
+            "to": 1789997520,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997520,
+            "to": 1789997580,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997580,
+            "to": 1789997640,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997640,
+            "to": 1789997700,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997700,
+            "to": 1789997760,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997760,
+            "to": 1789997820,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997820,
+            "to": 1789997880,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997880,
+            "to": 1789997940,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997940,
+            "to": 1789998000,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998000,
+            "to": 1789998060,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998060,
+            "to": 1789998120,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998120,
+            "to": 1789998180,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998180,
+            "to": 1789998240,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998240,
+            "to": 1789998300,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998300,
+            "to": 1789998360,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998360,
+            "to": 1789998420,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998420,
+            "to": 1789998480,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998480,
+            "to": 1789998540,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998540,
+            "to": 1789998600,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998600,
+            "to": 1789998660,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998660,
+            "to": 1789998720,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998720,
+            "to": 1789998780,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998780,
+            "to": 1789998840,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998840,
+            "to": 1789998900,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998900,
+            "to": 1789998960,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998960,
+            "to": 1789999020,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999020,
+            "to": 1789999080,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999080,
+            "to": 1789999140,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999140,
+            "to": 1789999200,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999200,
+            "to": 1789999260,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999260,
+            "to": 1789999320,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999320,
+            "to": 1789999380,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999380,
+            "to": 1789999440,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999440,
+            "to": 1789999500,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999500,
+            "to": 1789999560,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999560,
+            "to": 1789999620,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999620,
+            "to": 1789999680,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999680,
+            "to": 1789999740,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999740,
+            "to": 1789999800,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999800,
+            "to": 1789999860,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999860,
+            "to": 1789999920,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1789999920,
+            "to": 1789999980,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1789999980,
+            "to": 1790000040,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000040,
+            "to": 1790000100,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000100,
+            "to": 1790000160,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000160,
+            "to": 1790000220,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000220,
+            "to": 1790000280,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000280,
+            "to": 1790000340,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000340,
+            "to": 1790000400,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          }
+        ]
+      },
+      {
+        "key": "inter_interface",
+        "condition": "reachable_no_rows",
+        "availability": [
+          {
+            "kind": "firewall_log",
+            "provider_key": "pf",
+            "display_name": "pf filter log",
+            "active": false,
+            "state": "reachable",
+            "outcome": "not_yet_probed",
+            "probe": "not_yet_probed",
+            "checked_at": 0,
+            "detail": null,
+            "condition": "reachable"
+          }
+        ],
+        "window": {
+          "requested": {
+            "from": 1789996800,
+            "to": 1790000400
+          },
+          "covered": {
+            "from": 1789999801,
+            "to": 1790000400
+          },
+          "coverage": "partially_covered",
+          "flow_horizon_at": 1782224400
+        },
+        "gaps": [],
+        "unresolved_references": [],
+        "measure": "logged",
+        "lower_bound": true,
+        "unit": "bytes",
+        "total": 0,
+        "total_volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "buckets": [
+          {
+            "from": 1789996800,
+            "to": 1789996860,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996860,
+            "to": 1789996920,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996920,
+            "to": 1789996980,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789996980,
+            "to": 1789997040,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997040,
+            "to": 1789997100,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997100,
+            "to": 1789997160,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997160,
+            "to": 1789997220,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997220,
+            "to": 1789997280,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997280,
+            "to": 1789997340,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997340,
+            "to": 1789997400,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997400,
+            "to": 1789997460,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997460,
+            "to": 1789997520,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997520,
+            "to": 1789997580,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997580,
+            "to": 1789997640,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997640,
+            "to": 1789997700,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997700,
+            "to": 1789997760,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997760,
+            "to": 1789997820,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997820,
+            "to": 1789997880,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997880,
+            "to": 1789997940,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789997940,
+            "to": 1789998000,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998000,
+            "to": 1789998060,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998060,
+            "to": 1789998120,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998120,
+            "to": 1789998180,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998180,
+            "to": 1789998240,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998240,
+            "to": 1789998300,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998300,
+            "to": 1789998360,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998360,
+            "to": 1789998420,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998420,
+            "to": 1789998480,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998480,
+            "to": 1789998540,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998540,
+            "to": 1789998600,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998600,
+            "to": 1789998660,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998660,
+            "to": 1789998720,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998720,
+            "to": 1789998780,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998780,
+            "to": 1789998840,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998840,
+            "to": 1789998900,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998900,
+            "to": 1789998960,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789998960,
+            "to": 1789999020,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999020,
+            "to": 1789999080,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999080,
+            "to": 1789999140,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999140,
+            "to": 1789999200,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999200,
+            "to": 1789999260,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999260,
+            "to": 1789999320,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999320,
+            "to": 1789999380,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999380,
+            "to": 1789999440,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999440,
+            "to": 1789999500,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999500,
+            "to": 1789999560,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999560,
+            "to": 1789999620,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999620,
+            "to": 1789999680,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999680,
+            "to": 1789999740,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999740,
+            "to": 1789999800,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999800,
+            "to": 1789999860,
+            "gap": true,
+            "value": null
+          },
+          {
+            "from": 1789999860,
+            "to": 1789999920,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1789999920,
+            "to": 1789999980,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1789999980,
+            "to": 1790000040,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000040,
+            "to": 1790000100,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000100,
+            "to": 1790000160,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000160,
+            "to": 1790000220,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000220,
+            "to": 1790000280,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000280,
+            "to": 1790000340,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          },
+          {
+            "from": 1790000340,
+            "to": 1790000400,
+            "gap": false,
+            "value": 0,
+            "volume": {
+              "measure": "logged",
+              "lower_bound": true,
+              "bytes": 0,
+              "allowed_bytes": 0,
+              "blocked_bytes": 0,
+              "unknown_bytes": 0,
+              "connections": 0,
+              "allowed_connections": 0,
+              "blocked_connections": 0,
+              "unknown_connections": 0
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

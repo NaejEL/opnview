@@ -178,16 +178,8 @@ func TestThePurgeLeavesTheForeignKeysConsistent(t *testing.T) {
 		t.Fatalf("purging: %v", err)
 	}
 
-	rows, err := database.DB().QueryContext(ctx, "PRAGMA foreign_key_check")
-	if err != nil {
-		t.Fatalf("running the foreign-key check: %v", err)
-	}
-	defer func() { _ = rows.Close() }()
-	if rows.Next() {
-		t.Fatal("the foreign-key check returned a row after the purge")
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("running the foreign-key check: %v", err)
+	if violations := foreignKeyViolations(t, database); violations != 0 {
+		t.Fatalf("%d rows name a missing row after the purge", violations)
 	}
 }
 
@@ -203,6 +195,7 @@ func purgeableTables() map[string]string {
 		"client":             "last_seen_at",
 		"geo_asn":            "looked_up_at",
 		"collection_gap":     "detected_at",
+		"opnview_downtime":   "detected_at",
 		"measurement_sample": "sampled_at",
 		"state_snapshot":     "captured_at",
 	}
@@ -225,7 +218,7 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 	if err != nil {
 		t.Fatalf("looking up the security-event provider: %v", err)
 	}
-	geoProviderID, err := database.ProviderID(ctx, "geo_asn", "maxmind_geolite2")
+	geoProviderID, err := database.ProviderID(ctx, "ip_geolocation", "maxmind_geolite2")
 	if err != nil {
 		t.Fatalf("looking up the geo provider: %v", err)
 	}
@@ -296,6 +289,13 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 			Reason: GapDigestOutsideWindow, DetectedAt: instant,
 		}); err != nil {
 			t.Fatalf("seeding a gap: %v", err)
+		}
+
+		// An interval opnview was not running, detected at the restart.
+		if _, err := database.DB().ExecContext(ctx,
+			`INSERT INTO opnview_downtime (interval_start_at, interval_end_at, clean_stop, detected_at)
+			 VALUES (?, ?, 0, ?)`, instant-600, instant, instant); err != nil {
+			t.Fatalf("seeding an interval opnview was not running: %v", err)
 		}
 
 		if err := database.InsertMeasurementSample(ctx, MeasurementSample{

@@ -150,26 +150,11 @@ func TestTheHostNameRetryReadsAnIndexAndNoGrowingTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rows, err := database.DB().Query("EXPLAIN QUERY PLAN "+text, sql.Named("ingested_before", referenceNow))
-	if err != nil {
-		t.Fatalf("planning: %v", err)
+	plan := planOf(t, database, text, sql.Named("ingested_before", referenceNow))
+	if scans(plan, "dns_resolution") {
+		t.Errorf("the retry scans dns_resolution: %+v", plan)
 	}
-	defer func() { _ = rows.Close() }()
-	searched := false
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
-			t.Fatal(err)
-		}
-		if len(detail) >= 4 && detail[:4] == "SCAN" && containsWord(detail, "dns_resolution") {
-			t.Errorf("the retry scans dns_resolution: %s", detail)
-		}
-		if containsWord(detail, "idx_dns_resolution_hostname_unexamined") {
-			searched = true
-		}
-	}
-	if !searched {
+	if !usesIndex(plan, "idx_dns_resolution_hostname_unexamined", "") {
 		t.Error("the retry does not read the partial index of the lookups waiting")
 	}
 }

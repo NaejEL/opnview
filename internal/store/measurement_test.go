@@ -154,9 +154,9 @@ func TestAFirewallGaugeNamesNoProviderAndASampledReadingNamesItsOwn(t *testing.T
 //
 // Two active measurement providers reading the same subject and measure at the same instant are
 // two readings and must both survive. But the firewall's own gauges carry a NULL provider, and
-// SQLite treats nulls in a uniqueness constraint as distinct — so a bare column in the key would
-// have made every gauge non-idempotent, which is the opposite of what a sampler restarting inside
-// one interval needs. The index wraps the column in ifnull, and both halves are asserted here.
+// a uniqueness constraint treats nulls as distinct -- so a bare column in the key would have made
+// every gauge non-idempotent, which is the opposite of what a sampler restarting inside one
+// interval needs. The index wraps the column in coalesce, and both halves are asserted here.
 func TestTwoProvidersReadingOneSubjectAtOneInstantAreTwoReadingsAndOneGaugeIsStillIdempotent(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
@@ -217,8 +217,17 @@ func TestTwoProvidersReadingOneSubjectAtOneInstantAreTwoReadingsAndOneGaugeIsSti
 func schemaDefinitions(t *testing.T, database *Store) string {
 	t.Helper()
 	rows, err := database.DB().QueryContext(context.Background(),
-		`SELECT type || ' ' || name || ' ' || coalesce(sql, '') FROM sqlite_master
-		 ORDER BY type, name`)
+		`SELECT CAST(c.relkind AS TEXT) || ' ' || n.nspname || '.' || c.relname || ' ' ||
+		        coalesce(pg_get_indexdef(c.oid), pg_get_viewdef(c.oid), '') ||
+		        coalesce((SELECT string_agg(a.attname || ':' || format_type(a.atttypid, a.atttypmod), ','
+		                                    ORDER BY a.attnum)
+		                  FROM pg_attribute AS a WHERE a.attrelid = c.oid AND a.attnum > 0
+		                    AND NOT a.attisdropped), '')
+		 FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
+		 WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname NOT IN ('information_schema')
+		   AND n.nspname NOT LIKE '_timescaledb%' AND n.nspname <> 'timescaledb_information'
+		   AND n.nspname <> 'timescaledb_experimental'
+		 ORDER BY 1`)
 	if err != nil {
 		t.Fatalf("reading the schema: %v", err)
 	}

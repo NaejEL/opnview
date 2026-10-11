@@ -75,13 +75,14 @@ func (s *Store) UpsertGeoASN(ctx context.Context, row GeoASN) error {
 }
 
 // AddressesToGeolocate returns every address the stored flows carry, as source or
-// destination, that has no geo_asn row or one answered by a build older than
-// build, in address order.
+// destination, that has no geo_asn row, or one answered by another provider, or by a
+// build older than build, in address order: a change of the active provider or of its
+// build places every address again.
 //
 // Every address is returned, private ones included: whether an address is worth
 // asking a dataset about is the caller's decision, made on a parsed address rather
 // than on text in SQL.
-func (s *Store) AddressesToGeolocate(ctx context.Context, build int64) ([]string, error) {
+func (s *Store) AddressesToGeolocate(ctx context.Context, providerID, build int64) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT seen.address
 		   FROM (SELECT src_address AS address FROM flow
@@ -89,9 +90,10 @@ func (s *Store) AddressesToGeolocate(ctx context.Context, build int64) ([]string
 		         SELECT dst_address FROM flow) AS seen
 		   LEFT JOIN geo_asn AS g ON g.address = seen.address
 		  WHERE seen.address IS NOT NULL
-		    AND (g.address IS NULL OR g.dataset_build_at IS NULL OR g.dataset_build_at < ?)
+		    AND (g.address IS NULL OR g.dataset_build_at IS NULL OR g.dataset_build_at < ?
+		         OR g.provider_id IS NOT ?)
 		  ORDER BY seen.address`,
-		build)
+		build, providerID)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing the addresses to geolocate: %w", err)
 	}

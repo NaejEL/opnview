@@ -2,7 +2,6 @@ package collect
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -26,17 +25,17 @@ func arrangeMeasurementCollection(t *testing.T) *probeHarness {
 	t.Helper()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.answerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_local.json")
-	harness.fake.answerFixture(opnsense.TrafficTop, "traffic_top.json")
-	harness.fake.answerFixture(opnsense.TrafficInterface, "traffic_interface.json")
-	harness.fake.answerFixture(opnsense.SystemResources, "system_resources.json")
-	harness.fake.answerFixture(opnsense.SystemTemperature, "system_temperature.json")
-	harness.fake.answerFixture(opnsense.SystemTime, "system_time.json")
-	harness.fake.answerFixture(opnsense.SystemDisk, "system_disk.json")
+	harness.fake.AnswerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_local.json")
+	harness.fake.AnswerFixture(opnsense.TrafficTop, "traffic_top.json")
+	harness.fake.AnswerFixture(opnsense.TrafficInterface, "traffic_interface.json")
+	harness.fake.AnswerFixture(opnsense.SystemResources, "system_resources.json")
+	harness.fake.AnswerFixture(opnsense.SystemTemperature, "system_temperature.json")
+	harness.fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
+	harness.fake.AnswerFixture(opnsense.SystemDisk, "system_disk.json")
 	// The processor figure's source since the resolver-cache cycle: a stream that never ends.
-	harness.fake.answerStreamFixture(opnsense.CPUUsageStream, "cpu_usage_stream.json")
-	harness.fake.answerFixture(opnsense.GatewayStatus, "gateway_status.json")
-	harness.fake.answerFixture(opnsense.SystemSwap, "system_swap.json")
+	harness.fake.AnswerStreamFixture(opnsense.CPUUsageStream, "cpu_usage_stream.json")
+	harness.fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status.json")
+	harness.fake.AnswerFixture(opnsense.SystemSwap, "system_swap.json")
 	if err := harness.collector.probeMeasurement(context.Background()); err != nil {
 		t.Fatalf("probing the volume source: %v", err)
 	}
@@ -58,7 +57,7 @@ func TestThePerPairSamplerSendsInterfaceNamesAndNeverADeviceName(t *testing.T) {
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	harness.fake.assertEveryPathIsRegistered()
+	harness.fake.AssertEveryPathIsRegistered()
 
 	snapshot := harness.collector.Discovery()
 	if len(snapshot.Identifiers) == 0 || len(snapshot.Devices) == 0 {
@@ -73,16 +72,16 @@ func TestThePerPairSamplerSendsInterfaceNamesAndNeverADeviceName(t *testing.T) {
 		}
 	}
 
-	requests := harness.fake.requestsTo(opnsense.TrafficTop)
+	requests := harness.fake.RequestsTo(opnsense.TrafficTop)
 	if len(requests) == 0 {
 		t.Fatal("the per-pair endpoint was never requested")
 	}
 	sent := 0
 	for _, request := range requests {
-		if len(request.arguments) == 0 {
+		if len(request.Arguments) == 0 {
 			t.Error("a request carried no positional argument, which reaches a different command")
 		}
-		for _, argument := range request.arguments {
+		for _, argument := range request.Arguments {
 			for _, name := range strings.Split(argument, ",") {
 				sent++
 				if _, isDevice := snapshot.Devices[name]; isDevice {
@@ -98,38 +97,6 @@ func TestThePerPairSamplerSendsInterfaceNamesAndNeverADeviceName(t *testing.T) {
 	}
 	if sent == 0 {
 		t.Fatal("no interface name was sent at all")
-	}
-}
-
-// TestTheSamplerRefusesRatherThanSamplingWhenAnArgumentIsADeviceName is the runtime guard
-// behind the wire check.
-//
-// It is driven by a discovery snapshot in which the identifiers were, wrongly, filled with
-// device names — which is what a decoder reading the wrong key, or a refactor, would
-// produce. The call is refused, because the alternative is an empty answer that reads as a
-// quiet network.
-func TestTheSamplerRefusesRatherThanSamplingWhenAnArgumentIsADeviceName(t *testing.T) {
-	t.Parallel()
-	snapshot := newDiscovery()
-	snapshot.RefreshedAt = referenceEpoch()
-	snapshot.InterfaceIDByIdentifier["example_if_a"] = 1
-	snapshot.InterfaceIDByDevice["exdev0"] = 1
-	snapshot.Devices["exdev0"] = struct{}{}
-	// The defect: the device name where the identifier belongs.
-	snapshot.Identifiers = []opnsense.InterfaceName{"exdev0"}
-
-	if _, err := guardInterfaceNames(snapshot); !errors.Is(err, ErrDeviceNameArgument) {
-		t.Fatalf("the guard returned %v, not the refusal", err)
-	}
-
-	// And a correct snapshot passes, so the guard is not simply refusing everything.
-	snapshot.Identifiers = []opnsense.InterfaceName{"example_if_a"}
-	names, err := guardInterfaceNames(snapshot)
-	if err != nil {
-		t.Fatalf("the guard refused a correct snapshot: %v", err)
-	}
-	if len(names) != 1 || names[0] != "example_if_a" {
-		t.Fatalf("the guard returned %v", names)
 	}
 }
 
@@ -279,7 +246,7 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 	// An empty array: the endpoint answered and reported no sensor, which is a fact about
 	// the hardware. Written here rather than as a fixture because the empty value is the
 	// whole of what it says.
-	harness.fake.answerJSON(opnsense.SystemTemperature, []any{})
+	harness.fake.AnswerJSON(opnsense.SystemTemperature, []any{})
 
 	before := harness.availabilityInstant(t, KindMeasurementSample, ProviderInsight)
 	// The clock is advanced so "the row moved" is an observable fact rather than an
@@ -334,18 +301,18 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 	for _, endpoint := range []opnsense.Endpoint{
 		opnsense.SystemResources, opnsense.SystemTime,
 	} {
-		harness.fake.answerJSON(endpoint, map[string]any{
+		harness.fake.AnswerJSON(endpoint, map[string]any{
 			"a_key_no_candidate_list_names": 1, "another": "two",
 		})
 	}
 	// The processor's stream answers too, with events whose fields are none of the two
 	// the reading is derived from.
-	harness.fake.answerStream(opnsense.CPUUsageStream, [][]byte{
+	harness.fake.AnswerStream(opnsense.CPUUsageStream, [][]byte{
 		[]byte(`{"a_key_no_candidate_list_names":1}`), []byte(`{"another":"two"}`),
 	}, true)
-	harness.fake.answerJSON(opnsense.SystemDisk,
+	harness.fake.AnswerJSON(opnsense.SystemDisk,
 		map[string]any{"devices": []any{map[string]any{"a_key_no_candidate_list_names": 1}}})
-	harness.fake.answerJSON(opnsense.TrafficInterface, map[string]any{
+	harness.fake.AnswerJSON(opnsense.TrafficInterface, map[string]any{
 		"example_if_a": map[string]any{"a_key_no_candidate_list_names": 1},
 	})
 
@@ -377,7 +344,7 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 func TestAnEmptyTrafficSnapshotIsNotReportedAsAnAbsenceOfTraffic(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.fake.answerJSON(opnsense.TrafficTop, map[string]any{})
+	harness.fake.AnswerJSON(opnsense.TrafficTop, map[string]any{})
 
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)

@@ -3,12 +3,11 @@ package collect
 import (
 	"context"
 	"errors"
-	"os"
-	"reflect"
-	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/store"
 )
 
@@ -63,7 +62,7 @@ func TestEveryRegistryRowOfACollectedKindHasAnImplementation(t *testing.T) {
 	registered := registeredKeysByKind()
 
 	for _, provider := range everyProvider(t, database) {
-		if provider.kind == KindGeoASN || provider.kind == KindFlowVolume || provider.kind == KindPublicSuffix {
+		if provider.kind == KindIPGeolocation || provider.kind == KindFlowVolume || provider.kind == KindRegistrableDomain {
 			continue
 		}
 		found := false
@@ -116,9 +115,9 @@ func TestAnImplementationTheFirewallDoesNotSeparateIsNeverActivatedWhateverItsPo
 	ctx := context.Background()
 
 	// Kea is the first key in sort order and is disabled; Dnsmasq is second and is serving.
-	harness.fake.answerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
-	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.fake.AnswerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
 
 	if err := harness.collector.probeDHCPLease(ctx); err != nil {
 		t.Logf("the lease probe reported: %v", err)
@@ -129,8 +128,8 @@ func TestAnImplementationTheFirewallDoesNotSeparateIsNeverActivatedWhateverItsPo
 	}
 
 	// The probe order is the sorted one, which is what makes a request sequence comparable.
-	keys := make([]string, 0, len(leaseProbeables()))
-	for _, candidate := range leaseProbeables() {
+	keys := make([]string, 0, len(probeablesOf(plugin.Builtins().DHCPLease, leaseProbe)))
+	for _, candidate := range probeablesOf(plugin.Builtins().DHCPLease, leaseProbe) {
 		keys = append(keys, candidate.providerKey)
 	}
 	for index := 1; index < len(keys); index++ {
@@ -192,12 +191,12 @@ func TestTheUnreadableImplementationsReturnTheUnsupportedSentinel(t *testing.T) 
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 
-	if _, _, err := leaseSources[ProviderISC].leases(ctx, harness.collector, 1); !errors.Is(
-		err, ErrUnsupportedRead) {
+	if _, _, err := mustLeaseSource(t, ProviderISC).Leases(ctx, harness.collector, 1); !errors.Is(
+		err, provider.ErrUnsupportedRead) {
 		t.Errorf("the ISC lease read returned %v, not the unsupported sentinel", err)
 	}
-	if _, _, err := lookupSources[ProviderDnsmasq].lookups(ctx, harness.collector, 1); !errors.Is(
-		err, ErrUnsupportedRead) {
+	if _, _, err := mustLookupSource(t, ProviderDnsmasq).Lookups(ctx, harness.collector, 1); !errors.Is(
+		err, provider.ErrUnsupportedRead) {
 		t.Errorf("the Dnsmasq lookup read returned %v, not the unsupported sentinel", err)
 	}
 }
@@ -237,104 +236,26 @@ func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testi
 // registeredKeysByKind lists what each kind's registry in this package holds.
 func registeredKeysByKind() map[string][]string {
 	registered := map[string][]string{}
-	for key := range firewallLogSources {
+	for key := range plugin.Builtins().FirewallLog.Sources() {
 		registered[KindFirewallLog] = append(registered[KindFirewallLog], key)
 	}
-	for key := range securityEventSources {
+	for key := range plugin.Builtins().SecurityEvent.Sources() {
 		registered[KindSecurityEvent] = append(registered[KindSecurityEvent], key)
 	}
-	for key := range measurementSources {
+	for key := range plugin.Builtins().Measurement.Sources() {
 		registered[KindMeasurementSample] = append(registered[KindMeasurementSample], key)
 	}
-	for key := range leaseSources {
+	for key := range plugin.Builtins().DHCPLease.Sources() {
 		registered[KindDHCPLease] = append(registered[KindDHCPLease], key)
 	}
-	for key := range lookupSources {
+	for key := range plugin.Builtins().DNSLookup.Sources() {
 		registered[KindDNSLookup] = append(registered[KindDNSLookup], key)
 	}
-	for key := range cacheSources {
+	for key := range plugin.Builtins().ResolverCache.Sources() {
 		registered[KindResolverCache] = append(registered[KindResolverCache], key)
 	}
-	for key := range localDataSources {
+	for key := range plugin.Builtins().ResolverLocalData.Sources() {
 		registered[KindResolverLocalData] = append(registered[KindResolverLocalData], key)
 	}
 	return registered
-}
-
-// TestThePortGrantsExactlyTheEnumeratedCapabilities is what keeps the seam narrow after this
-// file stops being read.
-//
-// The port is the half of the contract that will become a protocol when connectors move out of
-// process, so a method added to it is a verb added to that protocol and removing one later is a
-// compatibility break. This test fails in BOTH directions on purpose: a capability granted that
-// nothing needs is as much a defect as a missing one, because the argument for the port is that
-// an implementation cannot reach the store, discovery, availability or activation — and that
-// argument is only true while the list below is the whole list.
-func TestThePortGrantsExactlyTheEnumeratedCapabilities(t *testing.T) {
-	t.Parallel()
-	granted := map[string]bool{}
-	port := reflect.TypeOf((*session)(nil)).Elem()
-	for index := 0; index < port.NumMethod(); index++ {
-		granted[port.Method(index).Name] = true
-	}
-
-	for _, capability := range []string{
-		"call", "serviceState", "readObject", "readCollection", "normaliser", "now",
-		// The bounded read of the one endpoint that streams, the processor's: call reads
-		// a body to its end and that body has none (resolver-cache cycle, scope E).
-		"stream",
-	} {
-		if !granted[capability] {
-			t.Errorf("the port no longer grants %q, which an implementation needs", capability)
-		}
-		delete(granted, capability)
-	}
-	for surplus := range granted {
-		t.Errorf("the port grants %q, which is not in the enumerated boundary: either an "+
-			"implementation now needs it and the enumeration should say so, or the port was "+
-			"widened to make a call site compile", surplus)
-	}
-}
-
-// TestNoImplementationReachesPastThePort is the other half of the boundary, and it has to be
-// checked in the source rather than at runtime.
-//
-// A port narrows the STATIC type an implementation is handed; it cannot narrow the dynamic one.
-// The value behind `session` is a *Collector, so `host.(*Collector)` compiles and succeeds, and
-// an implementation that wrote it would have the store, the identity cascade and every
-// coordinator back. No reflection can detect that from outside — what the assertion recovers is
-// exactly what the type system was asked to hide. So the guarantee is stated where it is
-// visible: no implementation file names the host type at all.
-//
-// The implementation files are the ones with a product in their name, which is the layout rule
-// collect.go states, so this also fails if an implementation is added that reaches past the
-// port on its first day.
-func TestNoImplementationReachesPastThePort(t *testing.T) {
-	t.Parallel()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatalf("reading the package directory: %v", err)
-	}
-
-	checked := 0
-	for _, entry := range entries {
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") ||
-			!strings.Contains(strings.TrimSuffix(name, ".go"), "_") {
-			continue
-		}
-		source, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatalf("reading %s: %v", name, err)
-		}
-		checked++
-		if strings.Contains(string(source), "Collector") {
-			t.Errorf("%s names Collector; an implementation is handed the port and the host type "+
-				"is not its business — reaching it back, by assertion or by parameter, undoes "+
-				"every absence the port is for", name)
-		}
-	}
-	if checked == 0 {
-		t.Fatal("no implementation file was checked, so this test proves nothing")
-	}
 }

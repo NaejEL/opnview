@@ -1,0 +1,25 @@
+{
+  "api_version": 1,
+  "name": "isc",
+  "version": "1.0.0",
+  "display_name": "ISC dhcpd",
+  "description": "The end-of-life ISC DHCP plugin: probed for its presence and never read, because its lease contract is unverified (data source 4).",
+  "script": "isc.js",
+  "endpoints": [
+    {
+      "name": "status",
+      "path": "/api/dhcpv4/service/status",
+      "method": "GET",
+      "survey_section": "Data source 4 — DHCP leases",
+      "upstream_url": "https://github.com/opnsense/plugins/blob/26.7.3/net/isc-dhcp/src/opnsense/mvc/app/controllers/OPNsense/DHCPv4/Api/ServiceController.php",
+      "note": "404 means the end-of-life plugin is not installed. /api/dhcpv4/leases/searchLease answered 404 on a live 26.7.3_11, so no lease read is attempted. See also https://docs.opnsense.org/manual/kea.html"
+    }
+  ],
+  "providers": [
+    {
+      "kind": "dhcp_lease",
+      "display_name": "ISC dhcpd",
+      "read_strategy": "full_reread"
+    }
+  ]
+}

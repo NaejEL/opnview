@@ -2,11 +2,13 @@ package collect
 
 import (
 	"context"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -23,7 +25,7 @@ import (
 
 // probeHarness is a collector, a fake and a store, wired together.
 type probeHarness struct {
-	fake      *fakeFirewall
+	fake      *providertest.Firewall
 	store     *store.Store
 	collector *Collector
 	clock     *fixedClock
@@ -34,13 +36,13 @@ type probeHarness struct {
 // installed.
 func newProbeHarness(t *testing.T) *probeHarness {
 	t.Helper()
-	fake := newFakeFirewall(t)
+	fake := providertest.NewFirewall(t)
 	database := newTestStore(t)
 	clock := newFixedClock(referenceInstant())
 	return &probeHarness{
 		fake:      fake,
 		store:     database,
-		collector: New(newFakeClient(t, fake), database, clock),
+		collector: newTestCollector(t, providertest.NewClient(t, fake), database, clock),
 		clock:     clock,
 	}
 }
@@ -174,7 +176,7 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		name string
 		// arrange puts the fake in the state the survey documents as present-but-disabled
 		// for this source.
-		arrange func(fake *fakeFirewall)
+		arrange func(fake *providertest.Firewall)
 		kind    string
 		key     string
 		// wantState is the state the survey names for that condition.
@@ -198,8 +200,8 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 	}{
 		{
 			name: "the intrusion-detection engine is installed and stopped",
-			arrange: func(fake *fakeFirewall) {
-				fake.answerFixture(opnsense.IDSStatus, "ids_status_stopped.json")
+			arrange: func(fake *providertest.Firewall) {
+				fake.AnswerFixture(opnsense.IDSStatus, "ids_status_stopped.json")
 			},
 			kind: KindSecurityEvent, key: ProviderSuricata,
 			wantState: store.StatePresentButDisabled,
@@ -212,8 +214,8 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		},
 		{
 			name: "the firewall exports its flow data elsewhere and keeps none",
-			arrange: func(fake *fakeFirewall) {
-				fake.answerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_export_only.json")
+			arrange: func(fake *providertest.Firewall) {
+				fake.AnswerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_export_only.json")
 			},
 			kind: KindMeasurementSample, key: ProviderInsight,
 			wantState:          store.StatePresentButDisabled,
@@ -224,9 +226,9 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		},
 		{
 			name: "the DHCP backend runs and serves no range",
-			arrange: func(fake *fakeFirewall) {
-				fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-				fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings_no_ranges.json")
+			arrange: func(fake *providertest.Firewall) {
+				fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+				fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings_no_ranges.json")
 			},
 			kind: KindDHCPLease, key: ProviderDnsmasq,
 			wantState:          store.StatePresentButDisabled,
@@ -241,10 +243,10 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		},
 		{
 			name: "the resolver runs and its query reporting is off",
-			arrange: func(fake *fakeFirewall) {
-				fake.answerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-				fake.answerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-				fake.answerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_off.json")
+			arrange: func(fake *providertest.Firewall) {
+				fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
+				fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
+				fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_off.json")
 			},
 			kind: KindDNSLookup, key: ProviderUnbound,
 			wantState: store.StatePresentButDisabled,
@@ -257,11 +259,11 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		},
 		{
 			name: "the filter log answers with a body that is not an array",
-			arrange: func(fake *fakeFirewall) {
+			arrange: func(fake *providertest.Firewall) {
 				// HTTP 200 with a body of the wrong shape. The survey names this as a
 				// backend failure, distinct from an empty array, which is a healthy but
 				// silent log.
-				fake.answer(opnsense.FirewallLog, http.StatusOK, []byte(`{"result":"failed"}`))
+				fake.Answer(opnsense.FirewallLog, http.StatusOK, []byte(`{"result":"failed"}`))
 			},
 			kind: KindFirewallLog, key: ProviderPf,
 			wantState:          store.StateUnavailable,
@@ -293,7 +295,7 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 				// what it could not reach, which is the point; it is not a test failure.
 				t.Logf("the probe round reported: %v", err)
 			}
-			harness.fake.assertEveryPathIsRegistered()
+			harness.fake.AssertEveryPathIsRegistered()
 
 			state, probe, checkedAt := harness.availabilityOf(t, testCase.kind, testCase.key)
 			if state != testCase.wantState {
@@ -347,10 +349,10 @@ func TestASourceThatAnswers404IsUnavailableAndNotActivated(t *testing.T) {
 	if err := harness.collector.ProbeAll(context.Background()); err == nil {
 		t.Log("the probe round reported no failure, which is acceptable: every state was recorded")
 	}
-	harness.fake.assertEveryPathIsRegistered()
+	harness.fake.AssertEveryPathIsRegistered()
 
 	for _, provider := range everyProvider(t, harness.store) {
-		if provider.kind == KindGeoASN {
+		if provider.kind == KindIPGeolocation {
 			// Not probed here: internal/maxmind records the dataset's availability, and
 			// this package makes no call outside the firewall.
 			continue
@@ -378,10 +380,10 @@ func TestASourceThatAnswers404IsUnavailableAndNotActivated(t *testing.T) {
 func TestAReachableSourceWithNothingToSayStaysReachable(t *testing.T) {
 	t.Parallel()
 	harness := newProbeHarness(t)
-	harness.fake.answerFixture(opnsense.IDSStatus, "ids_status_running.json")
+	harness.fake.AnswerFixture(opnsense.IDSStatus, "ids_status_running.json")
 	// An empty array, written here rather than as a fixture because the value is the
 	// whole of what it says: the engine answered and had nothing to report.
-	harness.fake.answerJSON(opnsense.FirewallLog, []any{})
+	harness.fake.AnswerJSON(opnsense.FirewallLog, []any{})
 
 	if err := harness.collector.ProbeAll(context.Background()); err != nil {
 		t.Logf("the probe round reported: %v", err)
@@ -428,11 +430,12 @@ func TestTwoProvidersOfAnExclusiveKindTheFirewallDoesNotSeparateActivateNeitherA
 	// dns_resolution.lookup_key carries no provider, so a lookup that transited two resolvers
 	// would be two records nothing could tell apart from two lookups.
 	separable := func(key string) probeable {
-		return probeable{providerKey: key, run: func(context.Context, session) (probeResult, error) {
-			return probeResult{
-				state:     store.StateReachable,
-				probe:     opnsense.UnboundIsEnabled,
-				separable: true,
+		return probeable{providerKey: key, run: func(context.Context, provider.Session) (provider.Result, error) {
+			return provider.Result{
+				State:     store.StateReachable,
+				Outcome:   store.OutcomeHealthy,
+				Probe:     opnsense.UnboundIsEnabled,
+				Separable: true,
 			}, nil
 		}}
 	}
@@ -469,11 +472,12 @@ func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *te
 	ctx := context.Background()
 
 	separable := func(key string) probeable {
-		return probeable{providerKey: key, run: func(context.Context, session) (probeResult, error) {
-			return probeResult{
-				state:     store.StateReachable,
-				probe:     opnsense.KeaStatus,
-				separable: true,
+		return probeable{providerKey: key, run: func(context.Context, provider.Session) (provider.Result, error) {
+			return provider.Result{
+				State:     store.StateReachable,
+				Outcome:   store.OutcomeHealthy,
+				Probe:     opnsense.KeaStatus,
+				Separable: true,
 			}, nil
 		}}
 	}
@@ -499,9 +503,9 @@ func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *te
 func TestOneBackendTheFirewallSeparatesIsActivated(t *testing.T) {
 	t.Parallel()
 	harness := newProbeHarness(t)
-	harness.fake.answerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
-	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.fake.AnswerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
 
 	if err := harness.collector.ProbeAll(context.Background()); err != nil {
 		t.Logf("the probe round reported: %v", err)
@@ -526,12 +530,12 @@ func TestOneBackendTheFirewallSeparatesIsActivated(t *testing.T) {
 func TestTheDnsmasqResolverIsDetectedAndReportedAndNeverActivated(t *testing.T) {
 	t.Parallel()
 	harness := newProbeHarness(t)
-	harness.fake.answerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	harness.fake.answerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-	harness.fake.answerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
+	harness.fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
+	harness.fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
 	// log_queries is on in this fixture, so the state is detected rather than inferred.
-	harness.fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
 
 	if err := harness.collector.ProbeAll(context.Background()); err != nil {
 		t.Logf("the probe round reported: %v", err)
@@ -622,8 +626,9 @@ func (h *probeHarness) selectSource(t *testing.T, kind, providerKey, value strin
 
 // reachableAndSeparable is a probeable of an exclusive kind the firewall marks as serving.
 func reachableAndSeparable(key string) probeable {
-	return probeable{providerKey: key, run: func(context.Context, session) (probeResult, error) {
-		return probeResult{state: store.StateReachable, probe: opnsense.UnboundIsEnabled, separable: true}, nil
+	return probeable{providerKey: key, run: func(context.Context, provider.Session) (provider.Result, error) {
+		return provider.Result{State: store.StateReachable, Outcome: store.OutcomeHealthy,
+			Probe: opnsense.UnboundIsEnabled, Separable: true}, nil
 	}}
 }
 
@@ -634,7 +639,7 @@ func TestASourceTheOperatorTurnedOffIsNotCollectedAlthoughItIsReachable(t *testi
 	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
-	harness.fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
 	harness.selectSource(t, KindFirewallLog, ProviderPf, string(config.SelectionOff))
 
 	if err := harness.collector.probeFirewallLog(ctx); err != nil {
@@ -647,11 +652,11 @@ func TestASourceTheOperatorTurnedOffIsNotCollectedAlthoughItIsReachable(t *testi
 		t.Errorf("the reachable filter log reads %q; the selection must not change what was reported", state)
 	}
 
-	probes := len(harness.fake.requestsTo(opnsense.FirewallLog))
+	probes := len(harness.fake.RequestsTo(opnsense.FirewallLog))
 	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("a collector pass over a source turned off: %v", err)
 	}
-	if read := len(harness.fake.requestsTo(opnsense.FirewallLog)) - probes; read != 0 {
+	if read := len(harness.fake.RequestsTo(opnsense.FirewallLog)) - probes; read != 0 {
 		t.Errorf("the pass read a source turned off %d times", read)
 	}
 	if stored := countRows(t, harness.store, "flow"); stored != 0 {
@@ -666,7 +671,7 @@ func TestASourceTheOperatorTurnedOnIsCollectedAlthoughTheProbeWouldHaveDroppedIt
 	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
-	harness.fake.answer(opnsense.FirewallLog, http.StatusInternalServerError, []byte(`{}`))
+	harness.fake.Answer(opnsense.FirewallLog, http.StatusInternalServerError, []byte(`{}`))
 	harness.selectSource(t, KindFirewallLog, ProviderPf, string(config.SelectionOn))
 
 	if err := harness.collector.probeFirewallLog(ctx); err != nil {
@@ -680,15 +685,18 @@ func TestASourceTheOperatorTurnedOnIsCollectedAlthoughTheProbeWouldHaveDroppedIt
 	}
 
 	// The next pass reads it, at the page size in force, and reports what the read returned.
-	probes := len(harness.fake.requestsTo(opnsense.FirewallLog))
+	// It reads it at its interval, past the back-off the failed probe began (A12 of the broker
+	// amendment), so the clock moves on as it would.
+	harness.clock.advance(time.Minute)
+	probes := len(harness.fake.RequestsTo(opnsense.FirewallLog))
 	if err := harness.collector.CollectFirewallLog(ctx); err == nil {
 		t.Error("a pass over a source answering 500 reported no failure")
 	}
-	requests := harness.fake.requestsTo(opnsense.FirewallLog)
+	requests := harness.fake.RequestsTo(opnsense.FirewallLog)
 	if len(requests)-probes != 1 {
 		t.Fatalf("the pass sent %d requests to the filter log, want 1", len(requests)-probes)
 	}
-	if limit := requests[len(requests)-1].query.Get("limit"); limit != "500" {
+	if limit := requests[len(requests)-1].Query.Get("limit"); limit != "500" {
 		t.Errorf("the pass asked for %q records, want the default page of 500", limit)
 	}
 }
@@ -749,7 +757,7 @@ func TestTurningOneOnBreaksTheTieThatUsedToReadNeither(t *testing.T) {
 // countingProbeable is reachableAndSeparable, counting how often its probe runs.
 func countingProbeable(key string, runs *int) probeable {
 	inner := reachableAndSeparable(key)
-	return probeable{providerKey: key, run: func(ctx context.Context, host session) (probeResult, error) {
+	return probeable{providerKey: key, run: func(ctx context.Context, host provider.Session) (provider.Result, error) {
 		*runs++
 		return inner.run(ctx, host)
 	}}

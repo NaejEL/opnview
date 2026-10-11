@@ -1,0 +1,73 @@
+{
+  "manifest_version": 1,
+  "type": "destination_countries",
+  "shape": "table",
+  "providers": [
+    "firewall_log",
+    "ip_geolocation"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 20,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "series",
+      "kind": "enum_set",
+      "values": [
+        "allowed",
+        "blocked"
+      ],
+      "default": [
+        "allowed",
+        "blocked"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "sort",
+      "kind": "enum",
+      "values": [
+        "bytes",
+        "blocked",
+        "peers"
+      ],
+      "default": "bytes",
+      "class": "data"
+    }
+  ],
+  "references": [
+    "interface"
+  ],
+  "queries": [],
+  "script": "destination_countries.js",
+  "renderer": {
+    "reserved": true
+  }
+}

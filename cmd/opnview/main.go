@@ -14,9 +14,9 @@
 // a defect.
 //
 // WHAT IT STILL CANNOT DO, STATED SO NOBODY LOOKS FOR IT. There is no canvas, no
-// widget and no dashboard: the interface is four surfaces — setup, sign-in,
-// settings and collection — and the widget endpoints are step 5, the canvases
-// step 7. The MaxMind GeoLite2 databases are downloaded with the account ID and the
+// widget and no dashboard: the interface is a handful of surfaces — setup, sign-in,
+// settings, collection, interfaces and sources — and the widget endpoints are step
+// 5, the canvases step 7. The MaxMind GeoLite2 databases are downloaded with the account ID and the
 // licence key entered on the settings surface, kept beside the database, and used to
 // place the addresses the flows carry; the map that shows them is step 7. The Public
 // Suffix List is downloaded from publicsuffix.org once a day, conditionally, to group
@@ -32,7 +32,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -41,12 +40,14 @@ import (
 	"github.com/NaejEL/opnview/internal/buildinfo"
 	"github.com/NaejEL/opnview/internal/collect"
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/maxmind"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/publicsuffix"
+	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/web"
+	// Every surface of the interface is a directory below this package that registers itself;
+	// importing it links them all into the binary.
+	_ "github.com/NaejEL/opnview/internal/web/surfaces"
 )
 
 // shutdownDeadline bounds how long a stop may take after the signal. The loops all
@@ -60,16 +61,14 @@ const shutdownDeadline = 20 * time.Second
 // database cannot be closed until the handlers have stopped touching it.
 const httpGrace = 5 * time.Second
 
-// geoipTimeout bounds one MaxMind request, download included. The City database is
-// tens of megabytes; ten minutes allows for a slow line without letting a stalled
-// download hold the refresh loop for ever.
-const geoipTimeout = 10 * time.Minute
-
-// publicSuffixTimeout bounds one Public Suffix List request. The list is a few
-// hundred kilobytes, so a minute is generous on a slow line.
-const publicSuffixTimeout = time.Minute
-
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "plugin" {
+		if err := runPluginCommand(context.Background(), os.Args[2:], os.Stdout); err != nil {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", buildinfo.AppName, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", buildinfo.AppName, err)
 		os.Exit(1)
@@ -85,9 +84,13 @@ func main() {
 // cannot survive, so it has to be able to fail the process.
 func run() (err error) {
 	dataDir := flag.String("data-dir", "",
-		"directory holding the database and the encryption key. Required: there is "+
+		"directory holding the encryption key and the plugins' data. Required: there is "+
 			"deliberately no default, because one would pre-empt the directory layout "+
 			"the installer chooses")
+	databaseConnection := flag.String("database", "",
+		"connection to the installation's own PostgreSQL database, as key=value pairs "+
+			"(host, port, user, dbname, passfile, sslmode). Required: there is deliberately "+
+			"no default, for the reason --data-dir has none")
 	listen := flag.String("listen", "",
 		"address the interface listens on, as host:port. Required: there is "+
 			"deliberately no default, for the same reason --data-dir has none, and "+
@@ -98,6 +101,9 @@ func run() (err error) {
 
 	if *dataDir == "" {
 		return config.ErrNoDataDir
+	}
+	if *databaseConnection == "" {
+		return store.ErrNoDatabase
 	}
 	if *listen == "" {
 		return errors.New("--listen is required and has no default")
@@ -111,7 +117,9 @@ func run() (err error) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer stop()
 
-	database, err := store.Open(ctx, *dataDir)
+	database, err := store.OpenWith(ctx, store.Options{DSN: *databaseConnection, Log: func(message string) {
+		fmt.Printf("%s: %s\n", buildinfo.AppName, message)
+	}})
 	if err != nil {
 		return err
 	}
@@ -133,6 +141,26 @@ func run() (err error) {
 	if err != nil {
 		return err
 	}
+
+	// THE INTERVAL OPNVIEW WAS NOT RUNNING is recorded before anything collects, so the
+	// first pass of every source already sits after it (SPEC-step-5b-widget-api.md, D2).
+	// The clean stop is recorded once the loops have stopped, by this defer, which runs
+	// before the database's own close above it.
+	if absence, err := collect.RecordStart(ctx, database, settings, collect.SystemClock{}); err != nil {
+		return err
+	} else if absence != nil {
+		fmt.Printf("%s was not running from %s to %s; that interval is recorded as a gap of every "+
+			"source\n", buildinfo.AppName, time.Unix(absence.From, 0).UTC().Format(time.RFC3339),
+			time.Unix(absence.To, 0).UTC().Format(time.RFC3339))
+	}
+	defer func() {
+		// The start context is cancelled by the stop signal, so the record gets its own.
+		stopping, cancel := context.WithTimeout(context.Background(), shutdownDeadline)
+		defer cancel()
+		if stopErr := collect.RecordCleanStop(stopping, database, collect.SystemClock{}); stopErr != nil {
+			fmt.Fprintf(os.Stderr, "%s: recording the clean stop: %v\n", buildinfo.AppName, stopErr)
+		}
+	}()
 
 	// The key file beside the database, created on first start with permissions
 	// denying group and other.
@@ -166,7 +194,30 @@ func run() (err error) {
 	credentials.Set(initial)
 
 	client := opnsense.NewClientFromSource(credentials, nil, 0)
-	collector := collect.New(client, database, collect.SystemClock{})
+
+	// THE PLUGINS: the built-in ones embedded in the binary, then those dropped in
+	// <data-dir>/plugins. A refused plugin is reported with its reason and the service starts
+	// without it; a refused built-in is also a failure the probe round records.
+	var sealer plugin.Sealer
+	if box != nil {
+		sealer = box
+	}
+	plugins, err := plugin.Load(ctx, plugin.Options{DataDir: *dataDir, Store: database, Sealer: sealer})
+	if err != nil {
+		return err
+	}
+	for _, refusal := range plugins.Refusals() {
+		fmt.Fprintf(os.Stderr, "%s: plugin not loaded: %v\n", buildinfo.AppName, &refusal)
+	}
+	collector := collect.NewWithSources(client, database, collect.SystemClock{}, plugins.Set)
+	// The mirror stores what the loaded plugins read, by plugin and version.
+	loadedReaders := map[string]string{}
+	for _, loaded := range plugins.Plugins() {
+		loadedReaders[loaded.Name] = loaded.Version
+	}
+	if mirrored := collector.Broker().Mirror(); mirrored != nil {
+		mirrored.SetLoadedReaders(loadedReaders)
+	}
 	// The page sizes the collector asks for come from the configuration, like the
 	// intervals the scheduler waits.
 	collector.Configure(settings)
@@ -177,32 +228,9 @@ func run() (err error) {
 	// loads it.
 	live := config.NewLive(settings)
 
-	// THE SECOND OUTBOUND CALL: the MaxMind databases, in <data-dir>/geoip. A database
-	// on disk that does not open is reported and left for the next refresh to replace;
-	// it does not stop the service.
-	geoipDataset, err := maxmind.OpenDataset(filepath.Join(*dataDir, "geoip"))
-	if geoipDataset == nil {
-		return err
-	}
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%s: %v\n", buildinfo.AppName, err)
-	}
-	defer func() { _ = geoipDataset.Close() }()
-	geoipCredentials := func(ctx context.Context) (config.MaxMindCredentials, config.CredentialState, error) {
-		return config.LoadMaxMindCredentials(ctx, database, unsealer)
-	}
-	refresher := maxmind.NewRefresher(maxmind.NewClient(geoipTimeout), geoipDataset, database,
-		geoipCredentials, time.Now)
-	locator := maxmind.NewLocator(geoipDataset, database, time.Now)
-
-	// THE THIRD OUTBOUND CALL: the Public Suffix List, in <data-dir>/publicsuffix. A copy
-	// on disk that does not parse is reported and left for the next refresh to replace.
-	suffixes, err := publicsuffix.NewRefresher(publicsuffix.NewClient(publicSuffixTimeout),
-		filepath.Join(*dataDir, "publicsuffix"), database, time.Now)
-	if suffixes == nil {
-		return err
-	}
-	if err != nil {
+	// The datasets the service plugins downloaded on a previous run are in use at once; a copy
+	// that does not open is reported and left for the next refresh to replace.
+	if err := collector.LoadServices(ctx); err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", buildinfo.AppName, err)
 	}
 
@@ -219,10 +247,22 @@ func run() (err error) {
 		SetupToken:  setupToken,
 		Settings:    live,
 		Collector:   collector,
-		GeoIP:       refresher,
+		GeoIP:       collector,
+		// The settings surface reads the list in use from here, in memory: drawing it
+		// contacts nothing.
+		PublicSuffix: collector,
+		// The widget API groups names through the active registrable_domain provider, which
+		// answers from the copy its own refresh downloaded.
+		SuffixLists: collector,
+		Plugins:     plugins,
+		Broker:      collector.Broker(),
 	})
 	if err != nil {
 		return err
+	}
+	// A refused operator widget is reported with its reason and the service starts without it.
+	for _, refusal := range server.Widgets().Refusals() {
+		fmt.Fprintf(os.Stderr, "%s: operator widget not loaded: %v\n", buildinfo.AppName, &refusal)
 	}
 	if err := server.CollectExpiredSessions(ctx); err != nil {
 		return err
@@ -265,8 +305,8 @@ func run() (err error) {
 	fmt.Printf("%s: the interface is listening on %s\n", buildinfo.AppName, *listen)
 
 	collectErr := collect.Run(ctx, collect.SystemClock{},
-		append(append(collector.Tasks(live), maxmind.Tasks(live, refresher, locator)...),
-			publicsuffix.Tasks(live, suffixes)...), report)
+		append(append(collector.Tasks(live), collector.ServiceTasks(live)...),
+			collect.HeartbeatTask(live, database, collect.SystemClock{})), report)
 	running.Wait()
 
 	switch {
@@ -276,16 +316,7 @@ func run() (err error) {
 		return serveErr
 	}
 
-	// Both have stopped. The deferred close runs next, and the deadline below is
-	// what stops a wedged checkpoint from hanging the process.
-	shutdown, cancelShutdown := context.WithTimeout(context.Background(), shutdownDeadline)
-	defer cancelShutdown()
-	if result, err := database.IntegrityCheck(shutdown); err != nil {
-		fmt.Fprintf(os.Stderr, "%s: the integrity check did not run: %v\n", buildinfo.AppName, err)
-	} else if result != "ok" {
-		return fmt.Errorf("the database reported %q rather than ok on shutdown", result)
-	}
-
+	// Both have stopped. The deferred close runs next.
 	fmt.Printf("%s stopped\n", buildinfo.AppName)
 	// nil, not the close error: the close has not run yet. The deferred function above
 	// is what turns a failed close into a non-zero exit, and it can only do that

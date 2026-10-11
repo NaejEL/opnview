@@ -19,7 +19,7 @@
 -- Order matters only for readability: domain_attribution is removed by the
 -- ON DELETE CASCADE of both its parents, so deleting an old flow or an old
 -- resolver lookup takes its attribution with it. After the purge,
--- PRAGMA foreign_key_check returns no rows.
+-- no foreign key is left dangling, which PostgreSQL enforces on every statement.
 --
 -- What survives: interface, owner, blocklist, rule, interface_map, provider,
 -- provider_rule_info, source_availability, eve_ingest_cursor,
@@ -58,9 +58,8 @@
 -- attribution of a surviving flow names is kept, so no family loses a client's
 -- bytes or a flow's site name to the purge while the slot that holds them is kept.
 
-PRAGMA foreign_keys = ON;
 
-BEGIN IMMEDIATE;
+BEGIN;
 
 -- A flow with an end that is this firewall keeps classified_flow's peer_address,
 -- the volume family's key, which is NULL when its other end is not outside; it
@@ -89,32 +88,32 @@ SELECT (f.observed_at / 3600) * 3600,
 FROM classified_flow AS f
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 WHERE f.observed_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
 GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11;
 
 INSERT INTO retention_purge (id, purged_before, purged_at)
-SELECT 1, :now - CAST(value AS INTEGER), :now
+SELECT 1, :now - CAST(value AS BIGINT), :now
 FROM setting
-WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 ON CONFLICT (id) DO UPDATE SET
-    purged_before = max(retention_purge.purged_before, excluded.purged_before),
+    purged_before = GREATEST(retention_purge.purged_before, excluded.purged_before),
     purged_at = excluded.purged_at;
 
 DELETE FROM domain_attribution
 WHERE attributed_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM flow
 WHERE observed_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 -- A lookup an attribution of a surviving flow still names is kept: it was made up to
@@ -123,9 +122,9 @@ WHERE observed_at < (
 -- The flows above go first, taking their attributions with them.
 DELETE FROM dns_resolution
 WHERE looked_up_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND NOT EXISTS (SELECT 1 FROM domain_attribution a WHERE a.dns_resolution_id = dns_resolution.id);
 
@@ -137,9 +136,9 @@ WHERE looked_up_at < (
 -- attributions with them.
 DELETE FROM resource_record_observation
 WHERE covered_until_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND NOT EXISTS (SELECT 1 FROM domain_attribution a
                   WHERE a.address_observation_id = resource_record_observation.id);
@@ -150,23 +149,23 @@ WHERE covered_until_at < (
 -- eve_ingest_cursor and is a watermark rather than event data.
 DELETE FROM security_event
 WHERE occurred_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM dhcp_lease
 WHERE observed_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM pair_volume_observation
 WHERE day_start_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 -- The purged part of an hour is kept exactly as long as the hour slot it feeds:
@@ -175,19 +174,19 @@ WHERE day_start_at < (
 -- is removed with it rather than one purge later.
 DELETE FROM purged_flow_hour
 WHERE hour_start_at + 3600 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (hour_start_at / 86400) * 86400 - (((hour_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', hour_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(hour_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 -- A client is removed only once every observation that named it has gone. Its
@@ -197,9 +196,9 @@ WHERE hour_start_at + 3600 < (
 -- time this one runs the guards below see the purged state.
 DELETE FROM client
 WHERE last_seen_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
 AND NOT EXISTS (SELECT 1 FROM flow f
                 WHERE f.src_client_id = client.id OR f.dst_client_id = client.id)
@@ -211,57 +210,57 @@ AND NOT EXISTS (SELECT 1 FROM purged_flow_hour p WHERE p.src_client_id = client.
 
 DELETE FROM geo_asn
 WHERE looked_up_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM volume_aggregate_1h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM volume_aggregate_24h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM volume_aggregate_7d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM volume_aggregate_30d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 -- The per-owner aggregates purge by period_end_at like the four above. The
@@ -269,50 +268,50 @@ WHERE period_end_at < (
 -- outlives both the machine and the month.
 DELETE FROM owner_volume_aggregate_1h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM owner_volume_aggregate_24h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM owner_volume_aggregate_7d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM owner_volume_aggregate_30d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 -- ---------------------------------------------------------------------------
@@ -327,16 +326,26 @@ WHERE period_end_at < (
 
 DELETE FROM collection_gap
 WHERE detected_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
+);
+
+-- An interval during which opnview was not running is purged by the same rule as
+-- a collection gap, and for the same reason: once the observations of its window
+-- are gone, it describes nothing a screen still reads.
+DELETE FROM opnview_downtime
+WHERE detected_at < (
+    SELECT :now - CAST(value AS BIGINT)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM measurement_sample
 WHERE sampled_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 
@@ -348,204 +357,204 @@ WHERE sampled_at < (
 -- ---------------------------------------------------------------------------
 DELETE FROM client_volume_aggregate_1h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM client_volume_aggregate_24h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM client_volume_aggregate_7d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM client_volume_aggregate_30d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM domain_volume_aggregate_1h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM domain_volume_aggregate_24h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM domain_volume_aggregate_7d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM domain_volume_aggregate_30d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM rule_volume_aggregate_1h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM rule_volume_aggregate_24h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM rule_volume_aggregate_7d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM rule_volume_aggregate_30d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 -- The peer family, added by the step-5A corrections, purges as the families above.
 DELETE FROM peer_volume_aggregate_1h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM peer_volume_aggregate_24h
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
   AND (period_start_at / 86400) * 86400 - (((period_start_at / 86400) + 3) % 7) * 86400 + 604800 < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 )
-  AND CAST(strftime('%s', period_start_at, 'unixepoch', 'start of month', '+1 month') AS INTEGER) < (
-    SELECT :now - CAST(value AS INTEGER)
+  AND next_month_start_at(period_start_at) < (
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM peer_volume_aggregate_7d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 DELETE FROM peer_volume_aggregate_30d
 WHERE period_end_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 -- An address's classification record is purged by the instant it was last placed
 -- in full; an address with no record is placed in full again at its next pass.
 DELETE FROM address_classification
 WHERE classified_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 -- An interface address is purged by the last instant discovery saw it. A current
@@ -553,9 +562,9 @@ WHERE classified_at < (
 -- the horizon goes.
 DELETE FROM interface_address
 WHERE last_seen_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 -- ---------------------------------------------------------------------------
@@ -570,9 +579,9 @@ WHERE last_seen_at < (
 -- ---------------------------------------------------------------------------
 DELETE FROM state_snapshot
 WHERE captured_at < (
-    SELECT :now - CAST(value AS INTEGER)
+    SELECT :now - CAST(value AS BIGINT)
     FROM setting
-    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
 COMMIT;

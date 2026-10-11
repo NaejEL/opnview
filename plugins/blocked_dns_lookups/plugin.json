@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "blocked_dns_lookups",
+  "version": "1.0.0",
+  "display_name": "Blocked DNS lookups",
+  "description": "The names the resolver refused, ranked by count, with the clients that asked, the interfaces they sit in and the list that refused them; the domain is withheld under aggregate_mode = no_domains.",
+  "widgets": [
+    "blocked_dns_lookups"
+  ]
+}

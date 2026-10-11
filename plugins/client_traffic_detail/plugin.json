@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "client_traffic_detail",
+  "version": "1.0.0",
+  "display_name": "Client traffic detail",
+  "description": "One client's records over the window, newest first, with their geolocation and site name, and which server issued each of its leases.",
+  "widgets": [
+    "client_traffic_detail"
+  ]
+}

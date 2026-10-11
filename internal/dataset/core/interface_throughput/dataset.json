@@ -1,0 +1,13 @@
+{
+  "nature": "sample",
+  "freshness": {"kind": "measurement_sample"},
+  "retention": {"column": "sampled_at"},
+  "columns": [
+    {"name": "sampled_at", "type": "integer", "role": "time"},
+    {"name": "interface", "type": "text", "nullable": true},
+    {"name": "device", "type": "text"},
+    {"name": "counter", "type": "text"},
+    {"name": "increase", "type": "real", "role": "measure", "nullable": true},
+    {"name": "per_second", "type": "real", "role": "measure", "nullable": true, "aggregations": ["mean", "min", "max", "last", "count"]}
+  ]
+}

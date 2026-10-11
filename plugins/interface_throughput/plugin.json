@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "interface_throughput",
+  "version": "1.0.0",
+  "display_name": "Interface throughput",
+  "description": "Per interface, bandwidth, bytes, packets or errors in and out over time, from the interface's own counters, with the counter resets counted and never drawn.",
+  "widgets": [
+    "interface_throughput"
+  ]
+}

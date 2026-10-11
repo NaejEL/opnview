@@ -1,0 +1,83 @@
+{
+  "manifest_version": 1,
+  "type": "custom_chart",
+  "shape": "time_series",
+  "providers": [],
+  "primary": "",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "series",
+      "kind": "series",
+      "default": [],
+      "class": "data"
+    },
+    {
+      "key": "axes",
+      "kind": "object",
+      "default": null,
+      "class": "rendering"
+    },
+    {
+      "key": "legend",
+      "kind": "enum",
+      "values": [
+        "table",
+        "inline",
+        "hidden"
+      ],
+      "default": "table",
+      "class": "rendering"
+    },
+    {
+      "key": "tooltip",
+      "kind": "enum",
+      "values": [
+        "single",
+        "all_series"
+      ],
+      "default": "single",
+      "class": "rendering"
+    },
+    {
+      "key": "annotations",
+      "kind": "enum_set",
+      "values": [
+        "security_events",
+        "blocked_spikes"
+      ],
+      "default": [],
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client",
+    "country",
+    "interface",
+    "operator",
+    "provider",
+    "rule",
+    "site"
+  ],
+  "queries": [
+    "custom_chart.statements.sql"
+  ],
+  "script": "custom_chart.js",
+  "renderer": {
+    "reserved": true
+  }
+}

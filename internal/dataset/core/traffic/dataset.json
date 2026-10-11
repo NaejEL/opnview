@@ -1,0 +1,22 @@
+{
+  "nature": "event",
+  "freshness": {"kind": "firewall_log"},
+  "retention": {"column": "observed_at"},
+  "columns": [
+    {"name": "observed_at", "type": "integer", "role": "time"},
+    {"name": "src_interface", "type": "text", "nullable": true},
+    {"name": "dst_interface", "type": "text", "nullable": true},
+    {"name": "src_client_id", "type": "integer", "nullable": true},
+    {"name": "dst_client_id", "type": "integer", "nullable": true},
+    {"name": "rule_id", "type": "integer", "nullable": true},
+    {"name": "protocol", "type": "text"},
+    {"name": "ip_version", "type": "integer"},
+    {"name": "action", "type": "text"},
+    {"name": "direction", "type": "text"},
+    {"name": "dst_port", "type": "integer", "nullable": true},
+    {"name": "bytes", "type": "integer", "role": "measure", "unit": "byte"},
+    {"name": "connections", "type": "integer", "role": "measure", "unit": "connection", "aggregations": ["sum", "count"]},
+    {"name": "allowed", "type": "integer", "role": "measure", "unit": "connection", "aggregations": ["sum"]},
+    {"name": "blocked", "type": "integer", "role": "measure", "unit": "connection", "aggregations": ["sum"]}
+  ]
+}

@@ -355,10 +355,36 @@ func TestTheDataModelCarriesNoLowerBoundForDistinctPeers(t *testing.T) {
 	}
 }
 
-// totalChanges reads the rows the connection has written since it opened.
-func totalChanges(t *testing.T, database *Store) int64 {
+// rowVersions fingerprints every row version of the core tables: a row inserted, updated or
+// deleted changes it, because PostgreSQL gives every new row version its own location and creating
+// transaction, so two equal fingerprints mean nothing was written in between.
+func rowVersions(t *testing.T, database *Store) string {
 	t.Helper()
-	return queryInt(t, database, "SELECT total_changes()")
+	ctx := context.Background()
+	rows, err := database.DB().QueryContext(ctx,
+		"SELECT tablename FROM pg_tables WHERE schemaname = ? ORDER BY tablename", CoreSchema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables []string
+	for rows.Next() {
+		var table string
+		if err := rows.Scan(&table); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, table)
+	}
+	_ = rows.Close()
+	var fingerprint strings.Builder
+	for _, table := range tables {
+		var versions string
+		if err := database.DB().QueryRowContext(ctx, "SELECT count(*) || '/' || coalesce(md5(string_agg(ctid::text || ':' || xmin::text, ',' ORDER BY ctid)), '') FROM "+table).
+			Scan(&versions); err != nil {
+			t.Fatalf("fingerprinting %s: %v", table, err)
+		}
+		fingerprint.WriteString(table + "=" + versions + " ")
+	}
+	return fingerprint.String()
 }
 
 // TestASecondClassificationPassWithNothingChangedWritesNoRow is AC5, its first part.
@@ -387,13 +413,13 @@ func TestASecondClassificationPassWithNothingChangedWritesNoRow(t *testing.T) {
 	if _, err := network.db.Reclassify(ctx, addresses, network.now); err != nil {
 		t.Fatalf("the first pass: %v", err)
 	}
-	before := totalChanges(t, network.db)
+	before := rowVersions(t, network.db)
 	second, err := network.db.Reclassify(ctx, addresses, network.now)
 	if err != nil {
 		t.Fatalf("the second pass: %v", err)
 	}
-	if written := totalChanges(t, network.db) - before; written != 0 {
-		t.Errorf("a second pass with no evidence changed wrote %d rows", written)
+	if after := rowVersions(t, network.db); after != before {
+		t.Errorf("a second pass with no evidence changed wrote rows:\n before %s\n after  %s", before, after)
 	}
 	if len(second.FlowInstants) != 0 || len(second.LookupInstants) != 0 || second.Placed != 0 {
 		t.Errorf("a second pass changed %d flows and %d lookups and placed %d addresses in full",
@@ -408,8 +434,8 @@ func TestASecondClassificationPassWithNothingChangedWritesNoRow(t *testing.T) {
 func flowEnds(t *testing.T, database *Store) map[string]string {
 	t.Helper()
 	rows, err := database.DB().Query(`SELECT log_digest, src_address, dst_address,
-		ifnull(src_interface_id, -1), ifnull(dst_interface_id, -1), ifnull(src_client_id, -1),
-		ifnull(dst_client_id, -1), traffic_scope FROM flow`)
+		coalesce(src_interface_id, -1), coalesce(dst_interface_id, -1), coalesce(src_client_id, -1),
+		coalesce(dst_client_id, -1), traffic_scope FROM flow`)
 	if err != nil {
 		t.Fatalf("reading the flows: %v", err)
 	}
@@ -535,7 +561,7 @@ func prefixesOf(t *testing.T, texts ...string) []netip.Prefix {
 // placedOn reads the interface a flow end at an address was placed on, or -1.
 func placedOn(t *testing.T, database *Store, address string) int64 {
 	t.Helper()
-	return queryInt(t, database, `SELECT coalesce(max(ifnull(src_interface_id, -1)), -2) FROM flow
+	return queryInt(t, database, `SELECT coalesce(max(coalesce(src_interface_id, -1)), -2) FROM flow
 		WHERE src_address = ?`, address)
 }
 

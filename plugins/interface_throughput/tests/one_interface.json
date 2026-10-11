@@ -1,0 +1,103 @@
+{
+  "type": "interface_throughput",
+  "parameters": {
+    "direction": "both",
+    "interfaces": null,
+    "measure": "bits_per_second",
+    "per_interface_axis": false,
+    "period": "1h",
+    "stacked": false
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789996800,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999800,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "measurement_sample",
+      "provider_key": "insight",
+      "display_name": "NetFlow / Insight sampling",
+      "active": false,
+      "state": "reachable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "reachable"
+    }
+  ],
+  "condition": "reachable",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "series": [
+      {
+        "key": "interface:1:in",
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "Inside",
+          "user_label": null,
+          "label": "Inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "direction": "in",
+        "measure": "interface_counter",
+        "unit": "bits_per_second",
+        "lower_bound": true,
+        "points": [
+          {
+            "at": 1790000100,
+            "value": 80
+          }
+        ],
+        "resets": 1,
+        "current": {
+          "at": 1790000100,
+          "value": 80
+        }
+      },
+      {
+        "key": "interface:1:out",
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "Inside",
+          "user_label": null,
+          "label": "Inside",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "direction": "out",
+        "measure": "interface_counter",
+        "unit": "bits_per_second",
+        "lower_bound": true,
+        "points": [],
+        "resets": 0,
+        "current": null
+      }
+    ]
+  }
+}

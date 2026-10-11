@@ -1,0 +1,50 @@
+{
+  "manifest_version": 1,
+  "type": "public_address",
+  "shape": "table",
+  "providers": [],
+  "primary": "",
+  "windowed": false,
+  "no_domains": "none",
+  "lower_bound": false,
+  "parameters": [
+    {
+      "key": "families",
+      "kind": "enum_set",
+      "values": [
+        "ipv4",
+        "ipv6"
+      ],
+      "default": [
+        "ipv4",
+        "ipv6"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "gateways",
+      "kind": "string_list",
+      "default": null,
+      "class": "data"
+    },
+    {
+      "key": "show_history",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    },
+    {
+      "key": "history_limit",
+      "kind": "integer",
+      "default": 5,
+      "min": 1,
+      "class": "data"
+    }
+  ],
+  "references": [],
+  "queries": [],
+  "script": "public_address.js",
+  "renderer": {
+    "reserved": true
+  }
+}

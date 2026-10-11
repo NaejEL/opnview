@@ -1,0 +1,81 @@
+{
+  "manifest_version": 1,
+  "type": "firewall_health_overview",
+  "shape": "figure",
+  "providers": [
+    "measurement_sample"
+  ],
+  "primary": "measurement_sample",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": false,
+  "parameters": [
+    {
+      "key": "metrics",
+      "kind": "enum_set",
+      "values": [
+        "uptime",
+        "cpu",
+        "memory",
+        "swap",
+        "disk",
+        "temperature",
+        "gateway_latency",
+        "gateway_loss"
+      ],
+      "default": [
+        "uptime",
+        "cpu",
+        "memory",
+        "swap",
+        "disk",
+        "temperature",
+        "gateway_latency",
+        "gateway_loss"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "thresholds",
+      "kind": "object",
+      "default": null,
+      "class": "data"
+    },
+    {
+      "key": "layout",
+      "kind": "enum",
+      "values": [
+        "tiles",
+        "rows"
+      ],
+      "default": "tiles",
+      "class": "rendering"
+    },
+    {
+      "key": "show_last_sampled",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    }
+  ],
+  "references": [],
+  "queries": [
+    "firewall_health_overview.statements.sql"
+  ],
+  "script": "firewall_health_overview.js",
+  "renderer": {
+    "reserved": true
+  }
+}

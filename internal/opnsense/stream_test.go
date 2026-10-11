@@ -251,9 +251,10 @@ func TestTheRegistryAddsExactlyTheResolverCacheCycleEndpoints(t *testing.T) {
 			}
 		}
 	}
-	if got := len(Registry()); got != 34 {
+	if got := len(Registry()); got != 35 {
 		t.Errorf("the registry holds %d endpoints; 32 before this cycle, the three it adds and the "+
-			"getActivity entry it removes make 34", got)
+			"getActivity entry it removes make 34, and systemInformation, which A19 of the broker "+
+			"amendment adds, 35", got)
 	}
 }
 

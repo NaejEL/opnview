@@ -1,0 +1,257 @@
+{
+  "type": "interface_volume_ranking",
+  "parameters": {
+    "include_unlabelled": true,
+    "limit": 10,
+    "measure": "bytes",
+    "period": "1h",
+    "scope": "all"
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789996800,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    }
+  ],
+  "condition": "not_yet_probed",
+  "freshness": [
+    {
+      "period": "1h",
+      "slots_read": 0,
+      "last_computed_at": null,
+      "stale_slots": 0,
+      "stale": false
+    }
+  ],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "measure": "bytes",
+    "bars": [
+      {
+        "interface": {
+          "id": 1,
+          "identifier": "opt1",
+          "device": "vlan0.10",
+          "description": "First",
+          "user_label": "Workshop",
+          "label": "Workshop",
+          "labelled": true,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "value": 3000,
+        "volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 3000,
+          "allowed_bytes": 3000,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 1,
+          "allowed_connections": 1,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "east_west": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "north_south": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 3000,
+          "allowed_bytes": 3000,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 1,
+          "allowed_connections": 1,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "this_firewall": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "exit_legs": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "clients_seen": 1,
+        "clients_known": 1,
+        "rules_not_logging": 1
+      },
+      {
+        "interface": {
+          "id": 2,
+          "identifier": "opt2",
+          "device": "vlan0.20",
+          "description": "Second",
+          "user_label": null,
+          "label": "Second",
+          "labelled": false,
+          "link_kind": "vlan",
+          "vlan_tag": null,
+          "upstream": false
+        },
+        "value": 500,
+        "volume": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 500,
+          "allowed_bytes": 500,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 1,
+          "allowed_connections": 1,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "east_west": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "north_south": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 500,
+          "allowed_bytes": 500,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 1,
+          "allowed_connections": 1,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "this_firewall": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "exit_legs": {
+          "measure": "logged",
+          "lower_bound": true,
+          "bytes": 0,
+          "allowed_bytes": 0,
+          "blocked_bytes": 0,
+          "unknown_bytes": 0,
+          "connections": 0,
+          "allowed_connections": 0,
+          "blocked_connections": 0,
+          "unknown_connections": 0
+        },
+        "clients_seen": 1,
+        "clients_known": 1,
+        "rules_not_logging": 0
+      }
+    ],
+    "remainder": {
+      "members": 0,
+      "volume": {
+        "measure": "logged",
+        "lower_bound": true,
+        "bytes": 0,
+        "allowed_bytes": 0,
+        "blocked_bytes": 0,
+        "unknown_bytes": 0,
+        "connections": 0,
+        "allowed_connections": 0,
+        "blocked_connections": 0,
+        "unknown_connections": 0
+      }
+    },
+    "unattributed": {
+      "measure": "logged",
+      "lower_bound": true,
+      "bytes": 0,
+      "allowed_bytes": 0,
+      "blocked_bytes": 0,
+      "unknown_bytes": 0,
+      "connections": 0,
+      "allowed_connections": 0,
+      "blocked_connections": 0,
+      "unknown_connections": 0
+    },
+    "total": {
+      "measure": "logged",
+      "lower_bound": true,
+      "bytes": 3500,
+      "allowed_bytes": 3500,
+      "blocked_bytes": 0,
+      "unknown_bytes": 0,
+      "connections": 2,
+      "allowed_connections": 2,
+      "blocked_connections": 0,
+      "unknown_connections": 0
+    },
+    "floating_rules_not_logging": 0,
+    "unresolved_rules_not_logging": 0,
+    "rules_logging_not_reported": 0
+  }
+}

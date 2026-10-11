@@ -1,0 +1,73 @@
+{
+  "manifest_version": 1,
+  "type": "source_availability",
+  "shape": "table",
+  "providers": [
+    "firewall_log",
+    "security_event",
+    "flow_volume",
+    "dhcp_lease",
+    "dns_lookup",
+    "ip_geolocation",
+    "measurement_sample",
+    "reconciled_state",
+    "registrable_domain",
+    "resolver_cache",
+    "resolver_local_data"
+  ],
+  "primary": "",
+  "windowed": false,
+  "no_domains": "none",
+  "lower_bound": false,
+  "parameters": [
+    {
+      "key": "kinds",
+      "kind": "enum_set",
+      "values": [
+        "firewall_log",
+        "security_event",
+        "flow_volume",
+        "dhcp_lease",
+        "dns_lookup",
+        "ip_geolocation",
+        "measurement_sample",
+        "reconciled_state",
+        "registrable_domain",
+        "resolver_cache",
+        "resolver_local_data"
+      ],
+      "default": [
+        "firewall_log",
+        "security_event",
+        "flow_volume",
+        "dhcp_lease",
+        "dns_lookup",
+        "ip_geolocation",
+        "measurement_sample",
+        "reconciled_state",
+        "registrable_domain",
+        "resolver_cache",
+        "resolver_local_data"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "show_inactive",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    },
+    {
+      "key": "compact",
+      "kind": "boolean",
+      "default": false,
+      "class": "rendering"
+    }
+  ],
+  "references": [],
+  "queries": [],
+  "script": "source_availability.js",
+  "renderer": {
+    "reserved": true
+  }
+}

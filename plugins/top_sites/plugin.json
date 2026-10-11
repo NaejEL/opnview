@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "top_sites",
+  "version": "1.0.0",
+  "display_name": "Top sites",
+  "description": "Inferred site names ranked by attributed flows, with the clients that reached them, the logged bytes, the country and operator behind them, the named flows per method, and the window's attribution rate beside the list.",
+  "widgets": [
+    "top_sites"
+  ]
+}

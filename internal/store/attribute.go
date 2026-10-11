@@ -138,8 +138,9 @@ func (s *Store) AttributeWith(ctx context.Context, from, to int64, windows Attri
 		return result, fmt.Errorf("store: starting an attribution: %w", err)
 	}
 	defer func() { _ = transaction.Rollback() }()
-	// The same statements run once per record, so each is prepared once (exec.go).
-	prepared := newPreparedTx(transaction)
+	// The same statements run once per record; each text is prepared once per connection by the
+	// driver's statement cache (driver.go).
+	prepared := transaction
 
 	text, err := Statement("attribution_candidates")
 	if err != nil {
@@ -483,22 +484,19 @@ func earlierObservation(a, b heldRecord) bool {
 // host, through the resolver's local data held then (scope D of
 // specs/SPEC-resolver-cache-attribution.md). Two leases naming it are ambiguous whatever
 // the local data holds: the leases already say two machines carried the name.
-func (s *Store) ResolveLoggedHostname(ctx context.Context, hostname string, at int64) (string, string, error) {
+//
+// family is the lookup's querying family, 4 or 6, or nil when its row reported none. It
+// decides only the dual-stack case -- one IPv4 and one IPv6 address of one name in the
+// local data -- which resolves to the address of that family, or is dual_stack_hostname
+// without it (dualstack.go). Two addresses of one family stay ambiguous, and a lease
+// still wins.
+func (s *Store) ResolveLoggedHostname(ctx context.Context, hostname string, family *int64, at int64) (
+	string, string, error) {
 	address, resolution, err := s.ResolveLeaseHostname(ctx, hostname, at)
 	if err != nil || resolution != ClientResolutionUnknown {
 		return address, resolution, err
 	}
-	local, count, err := s.ResolveLocalDataHostname(ctx, hostname, at)
-	if err != nil {
-		return "", "", err
-	}
-	switch {
-	case count == 1:
-		return local, ClientResolutionLocalData, nil
-	case count > 1:
-		return hostname, ClientResolutionAmbiguous, nil
-	}
-	return hostname, ClientResolutionUnknown, nil
+	return s.resolveLocalData(ctx, hostname, family, at)
 }
 
 // ResolveLeaseHostname resolves a host name the resolver logged as a lookup's client to
@@ -619,19 +617,22 @@ func (s *Store) ResolveLoggedHostnames(ctx context.Context, ingestedBefore, now 
 		id         int64
 		hostname   string
 		lookedUpAt int64
+		family     *int64
 	}
 	var lookups []pending
 	for rows.Next() {
 		var (
 			lookup   pending
 			hostname sql.NullString
+			family   sql.NullInt64
 		)
-		if err := rows.Scan(&lookup.id, &hostname, &lookup.lookedUpAt); err != nil {
+		if err := rows.Scan(&lookup.id, &hostname, &lookup.lookedUpAt, &family); err != nil {
 			_ = rows.Close()
 			return result, fmt.Errorf("store: unresolved_hostname_lookups: %w", err)
 		}
 		if hostname.Valid {
 			lookup.hostname = hostname.String
+			lookup.family = nullableInt(family)
 			lookups = append(lookups, lookup)
 		}
 	}
@@ -643,7 +644,7 @@ func (s *Store) ResolveLoggedHostnames(ctx context.Context, ingestedBefore, now 
 
 	for _, lookup := range lookups {
 		result.Examined++
-		address, resolution, err := s.ResolveLoggedHostname(ctx, lookup.hostname, lookup.lookedUpAt)
+		address, resolution, err := s.ResolveLoggedHostname(ctx, lookup.hostname, lookup.family, lookup.lookedUpAt)
 		if err != nil {
 			return result, err
 		}

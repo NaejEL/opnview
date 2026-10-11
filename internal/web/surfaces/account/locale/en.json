@@ -1,0 +1,36 @@
+{
+  "language": "en",
+  "strings": {
+    "action.sign_in": "Sign in",
+    "action.create_account": "Create the account",
+    "action.reset_password": "Reset the password",
+
+    "field.login": "Login",
+    "field.password": "Password",
+    "field.password_again": "Password, again",
+    "field.new_password": "New password",
+    "field.setup_token": "Setup token",
+    "field.key_file": "Key file contents",
+
+    "setup.title": "Create the first account",
+    "setup.heading": "Create the first account",
+
+    "sign_in.title": "Sign in",
+    "sign_in.heading": "Sign in",
+    "sign_in.recover": "Reset the password with the key file",
+
+    "recover.title": "Reset the password",
+    "recover.heading": "Reset the password",
+
+    "notice.setup_done": "The account was created.",
+    "notice.password_reset": "The password was reset.",
+    "notice.signed_out": "Signed out.",
+
+    "error.setup_token_refused": "The setup token was refused.",
+    "error.login_required": "A login is required.",
+    "error.password_required": "A password is required.",
+    "error.password_mismatch": "The two passwords are not the same.",
+    "error.password_too_short": "A password of at least twelve characters is required.",
+    "error.sign_in_refused": "The login and password were refused."
+  }
+}

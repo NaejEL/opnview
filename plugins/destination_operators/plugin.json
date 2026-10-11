@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "destination_operators",
+  "version": "1.0.0",
+  "display_name": "Destination operators",
+  "description": "The outside peers of the window grouped by autonomous system or operator, with an explicit row for the addresses the geolocation did not place.",
+  "widgets": [
+    "destination_operators"
+  ]
+}

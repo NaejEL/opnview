@@ -188,3 +188,106 @@ func readEvents(ctx context.Context, answer *http.Response, limit int) ([][]byte
 	}
 	return events, StreamEndedByServer
 }
+
+// Listen holds one event stream open and hands every event to onEvent, until the caller's context
+// ends or the server closes the stream (A14 of the broker amendment). It is the broker's
+// subscription: one connection per stream and parameters, whatever the number of readers.
+//
+// The refusals are Call's, in Call's order. The time-out of the client bounds the wait for the
+// answer's headers only: a subscription lasts as long as the stream does. onOpen is called once
+// the stream answered with HTTP 2xx, before its first event.
+func (c *Client) Listen(ctx context.Context, ep Endpoint, opt RequestOptions, onOpen func(),
+	onEvent func(data []byte)) (StreamResponse, error) {
+	response := StreamResponse{Endpoint: ep}
+	credentials := c.source.Credentials()
+	if !registered(ep) {
+		return response, fmt.Errorf("%w: %s", ErrEndpointNotRegistered, ep.Path)
+	}
+	if command := MutatingCommand(ep.Path); command != "" {
+		return response, fmt.Errorf("%w: %s in %s", ErrMutatingCommand, command, ep.Path)
+	}
+	if credentials.BaseURL == "" {
+		return response, ErrNoBaseURL
+	}
+	for _, argument := range opt.Arguments {
+		if argument == "" {
+			return response, fmt.Errorf("%w: %s", ErrEmptyArgument, ep.Path)
+		}
+		if !safeArgument(argument) {
+			return response, fmt.Errorf("%w: %q in %s", ErrUnsafeArgument, argument, ep.Path)
+		}
+	}
+	target := strings.TrimRight(credentials.BaseURL, "/") + ep.Path
+	for _, argument := range opt.Arguments {
+		target += "/" + argument
+	}
+	if len(opt.Query) > 0 {
+		target += "?" + opt.Query.Encode()
+	}
+	listenCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	request, err := http.NewRequestWithContext(listenCtx, ep.Method, target, nil)
+	if err != nil {
+		return response, fmt.Errorf("opnsense: building a request for %s: %w", ep.Path, err)
+	}
+	request.Header.Set("Accept", "text/event-stream")
+	request.SetBasicAuth(credentials.APIKey, credentials.APISecret)
+
+	// The headers must arrive within the client's time-out; the body may last as long as it does.
+	headers := time.AfterFunc(c.timeout, cancel)
+	answer, err := c.listening.Do(request)
+	headerTimedOut := !headers.Stop()
+	if err != nil {
+		if ctx.Err() != nil {
+			return response, fmt.Errorf("opnsense: listening to %s: %w", ep.Path, ctx.Err())
+		}
+		if certificateRefused(err) {
+			response.Outcome = OutcomeCertificateRefused
+			response.Detail = "the firewall's certificate was refused"
+		} else {
+			response.Outcome = OutcomeTransportFailure
+			response.Detail = "the firewall did not answer"
+			if headerTimedOut {
+				response.Detail = "the stream did not open within the client's time-out"
+			}
+		}
+		return response, fmt.Errorf("opnsense: listening to %s: %w", ep.Path, err)
+	}
+	defer func() { _ = answer.Body.Close() }()
+	response.StatusCode = answer.StatusCode
+	if answer.StatusCode < 200 || answer.StatusCode > 299 {
+		response.Outcome, response.Detail = classify(answer.StatusCode, nil)
+		return response, nil
+	}
+	response.Outcome = OutcomeOK
+	if onOpen != nil {
+		onOpen()
+	}
+	var (
+		data    []string
+		hasData bool
+	)
+	scanner := bufio.NewScanner(answer.Body)
+	scanner.Buffer(make([]byte, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSuffix(scanner.Text(), "\r")
+		switch {
+		case line == "":
+			if hasData {
+				onEvent([]byte(strings.Join(data, "\n")))
+				data, hasData = nil, false
+			}
+		case strings.HasPrefix(line, ":"):
+		case line == "data" || strings.HasPrefix(line, "data:"):
+			value := strings.TrimPrefix(strings.TrimPrefix(line, "data"), ":")
+			data = append(data, strings.TrimPrefix(value, " "))
+			hasData = true
+		}
+	}
+	if ctx.Err() != nil {
+		response.EndedBy = StreamEndedAtTimeLimit
+		return response, nil
+	}
+	response.EndedBy = StreamEndedByServer
+	return response, nil
+}

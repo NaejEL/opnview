@@ -1,0 +1,291 @@
+{
+  "type": "client_traffic_detail",
+  "parameters": {
+    "action": "all",
+    "client": {
+      "by": "mac",
+      "kind": "client",
+      "value": "00:11:22:33:44:55"
+    },
+    "columns": [
+      "observed_at",
+      "destination",
+      "port",
+      "protocol",
+      "action",
+      "scope",
+      "bytes",
+      "country",
+      "operator",
+      "site_name",
+      "method",
+      "correlation_delay",
+      "interface"
+    ],
+    "limit": 100,
+    "period": "24h",
+    "scope": "all"
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": {
+    "requested": {
+      "from": 1789914000,
+      "to": 1790000400
+    },
+    "covered": {
+      "from": 1789999801,
+      "to": 1790000400
+    },
+    "coverage": "partially_covered",
+    "flow_horizon_at": 1782224400
+  },
+  "gaps": [],
+  "availability": [
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq DHCP",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "isc",
+      "display_name": "ISC dhcpd",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dhcp_lease",
+      "provider_key": "kea",
+      "display_name": "Kea DHCP",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dns_lookup",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq resolver",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "dns_lookup",
+      "provider_key": "unbound",
+      "display_name": "Unbound",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "firewall_log",
+      "provider_key": "pf",
+      "display_name": "pf filter log",
+      "active": false,
+      "state": "reachable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "reachable"
+    },
+    {
+      "kind": "ip_geolocation",
+      "provider_key": "maxmind_geolite2",
+      "display_name": "MaxMind GeoLite2",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "resolver_cache",
+      "provider_key": "dnsmasq",
+      "display_name": "Dnsmasq cache",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    },
+    {
+      "kind": "resolver_cache",
+      "provider_key": "unbound",
+      "display_name": "Unbound cache",
+      "active": false,
+      "state": "unavailable",
+      "outcome": "not_yet_probed",
+      "probe": "not_yet_probed",
+      "checked_at": 0,
+      "detail": null,
+      "condition": "not_yet_probed"
+    }
+  ],
+  "condition": "reachable",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "resolver_window_bounded": false,
+  "data": {
+    "client": {
+      "id": 10,
+      "identity_kind": "mac",
+      "identity_key": "00:11:22:33:44:55",
+      "interface_id": 1,
+      "mac": "00:11:22:33:44:55",
+      "hostname": null,
+      "last_address": "192.0.2.10",
+      "owner_id": null,
+      "owner_assigned_at": null,
+      "unstable_identity": false,
+      "last_seen_at": 1789999800
+    },
+    "current_rate": {
+      "state": "no_current_sample",
+      "measure": "sampled",
+      "in_bits_per_second": null,
+      "out_bits_per_second": null,
+      "out_measured": false,
+      "sampled_at": null
+    },
+    "leases": [],
+    "records": [
+      {
+        "flow_id": 3,
+        "observed_at": 1789999803,
+        "destination": "203.0.113.7",
+        "port": 22,
+        "protocol": "tcp",
+        "action": "block",
+        "scope": "north_south",
+        "bytes": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 300
+        },
+        "geo": {
+          "lookup_state": "no_row",
+          "country_code": null,
+          "country_name": null,
+          "latitude": null,
+          "longitude": null,
+          "asn": null,
+          "operator": null,
+          "dataset_build_at": null
+        },
+        "site_name": null,
+        "method": null,
+        "correlation_delay_seconds": null,
+        "interface_device": "vlan0.10",
+        "interface_description": null
+      },
+      {
+        "flow_id": 2,
+        "observed_at": 1789999802,
+        "destination": "203.0.113.7",
+        "port": 80,
+        "protocol": "tcp",
+        "action": "pass",
+        "scope": "north_south",
+        "bytes": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 400
+        },
+        "geo": {
+          "lookup_state": "no_row",
+          "country_code": null,
+          "country_name": null,
+          "latitude": null,
+          "longitude": null,
+          "asn": null,
+          "operator": null,
+          "dataset_build_at": null
+        },
+        "site_name": null,
+        "method": null,
+        "correlation_delay_seconds": null,
+        "interface_device": "vlan0.10",
+        "interface_description": null
+      },
+      {
+        "flow_id": 1,
+        "observed_at": 1789999801,
+        "destination": "203.0.113.7",
+        "port": 443,
+        "protocol": "tcp",
+        "action": "pass",
+        "scope": "north_south",
+        "bytes": {
+          "measure": "logged",
+          "lower_bound": true,
+          "value": 1000
+        },
+        "geo": {
+          "lookup_state": "no_row",
+          "country_code": null,
+          "country_name": null,
+          "latitude": null,
+          "longitude": null,
+          "asn": null,
+          "operator": null,
+          "dataset_build_at": null
+        },
+        "site_name": "example.org",
+        "method": "lookup_timing",
+        "correlation_delay_seconds": 2,
+        "interface_device": "vlan0.10",
+        "interface_description": null
+      }
+    ],
+    "remainder": {
+      "members": 0,
+      "count": {
+        "measure": "logged",
+        "lower_bound": true,
+        "value": 0
+      }
+    },
+    "total": {
+      "members": 3,
+      "count": {
+        "measure": "logged",
+        "lower_bound": true,
+        "value": 1700
+      }
+    }
+  }
+}

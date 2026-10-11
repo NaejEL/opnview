@@ -1,0 +1,43 @@
+{
+  "api_version": 1,
+  "name": "kea",
+  "version": "1.0.0",
+  "display_name": "Kea DHCP",
+  "description": "Reads the lease table of the Kea DHCPv4 server through its control agent (data source 4).",
+  "script": "kea.js",
+  "endpoints": [
+    {
+      "name": "leases",
+      "path": "/api/kea/leases4/search",
+      "corrections": {"nature": "snapshot", "key": ["address"], "parameters": {"current": "page", "rowCount": "page_size"}},
+      "method": "POST",
+      "body": "form",
+      "survey_section": "Data source 4 — DHCP leases",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Kea/Api/Leases4Controller.php",
+      "note": "Read-only grid search against the running Kea daemon through its control agent. If that agent is off the list is empty although DHCP works."
+    },
+    {
+      "name": "status",
+      "path": "/api/kea/service/status",
+      "method": "GET",
+      "survey_section": "Data source 4 — DHCP leases",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Kea/Api/ServiceController.php",
+      "note": "status field."
+    },
+    {
+      "name": "dhcpv4",
+      "path": "/api/kea/dhcpv4/get",
+      "method": "GET",
+      "survey_section": "Data source 4 — DHCP leases",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Kea/Api/Dhcpv4Controller.php",
+      "note": "dhcpv4.general.enabled."
+    }
+  ],
+  "providers": [
+    {
+      "kind": "dhcp_lease",
+      "display_name": "Kea DHCP",
+      "read_strategy": "full_reread"
+    }
+  ]
+}

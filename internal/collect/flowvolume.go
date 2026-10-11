@@ -22,7 +22,7 @@ import (
 //
 // What is true of any measurement source, and is therefore here: writing the readings, and
 // recording what did not answer. How the readings are obtained — which endpoint, which argument,
-// which field names — is in flowvolume_insight.go.
+// which field names — is in internal/collect/measurement/insight.
 //
 // THE READINGS ARE A SAMPLE AND NOT A CACHE. No endpoint exposes a per-pair aggregate over a
 // past window: the per-pair data is a live snapshot, measured on a live firewall. So opnview's
@@ -59,7 +59,7 @@ func (c *Collector) CollectMeasurement(ctx context.Context) error {
 // collectMeasurementFrom runs one pass of one implementation.
 func (c *Collector) collectMeasurementFrom(ctx context.Context, active activeSource) error {
 	providerKey, providerID := active.providerKey, active.providerID
-	source, registered := measurementSources[providerKey]
+	source, registered := c.sources.Measurement.Lookup(providerKey)
 	if !registered {
 		return fmt.Errorf("collect: the active measurement_sample provider %q has no implementation",
 			providerKey)
@@ -68,7 +68,7 @@ func (c *Collector) collectMeasurementFrom(ctx context.Context, active activeSou
 	now := c.now()
 	snapshot := c.Discovery()
 
-	readings, missing, result, err := source.sample(ctx, c, snapshot, providerID, now)
+	readings, missing, result, err := source.Sample(ctx, c, snapshot, providerID, now)
 	if err != nil {
 		return err
 	}
@@ -82,7 +82,7 @@ func (c *Collector) collectMeasurementFrom(ctx context.Context, active activeSou
 	// because that is what this provider is; the DETAIL names every reading that did not
 	// answer, so an absent sensor is a recorded fact rather than a missing row nobody can tell
 	// from a quiet one.
-	detail := result.detail
+	detail := result.Detail
 	absent := ""
 	if len(missing) > 0 {
 		absent = "these firewall telemetry readings did not answer and were not written as " +
@@ -97,9 +97,17 @@ func (c *Collector) collectMeasurementFrom(ctx context.Context, active activeSou
 	// nothing about the readings; what the last pass could not read is kept so the
 	// probe round restates it rather than erasing it.
 	c.setSampleAbsence(providerID, absent)
-	state := result.state
+	state, outcome := result.State, result.Outcome
 	if state == "" {
 		state = store.StateReachable
 	}
-	return c.writeAvailability(ctx, providerID, state, result.probe, detail)
+	if outcome == "" {
+		outcome = store.OutcomeHealthy
+	}
+	// The volume half answered and some readings did not: the outcome says so, so a
+	// reader tells a partial pass from a whole one without reading the detail.
+	if len(missing) > 0 && (outcome == store.OutcomeHealthy || outcome == store.OutcomeHealthyEmpty) {
+		outcome = store.OutcomePartialReadings
+	}
+	return c.writeAvailability(ctx, providerID, state, outcome, result.Probe, detail)
 }

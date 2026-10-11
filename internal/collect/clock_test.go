@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 )
 
@@ -40,7 +41,7 @@ func TestTheFilterLogIsStoredInUTCWhateverTheFirewallsZone(t *testing.T) {
 	}
 
 	onCEST := arrangeFilterLogCollection(t)
-	onCEST.fake.answerJSON(opnsense.SystemTime, systemTimeAt(2*time.Hour, "CEST"))
+	onCEST.fake.AnswerJSON(opnsense.SystemTime, systemTimeAt(2*time.Hour, "CEST"))
 	if err := onCEST.collector.RefreshDiscovery(ctx); err != nil {
 		t.Fatalf("rediscovering: %v", err)
 	}
@@ -65,8 +66,8 @@ func TestNoFilterLogLineIsStoredBeforeTheOffsetIsKnown(t *testing.T) {
 	ctx := context.Background()
 	harness := arrangeFilterLogCollection(t)
 
-	fresh := New(newFakeClient(t, harness.fake), harness.store, harness.clock)
-	harness.fake.answerJSON(opnsense.SystemTime, systemTimeAt(2*time.Hour, "CEST"))
+	fresh := newTestCollector(t, providertest.NewClient(t, harness.fake), harness.store, harness.clock)
+	harness.fake.AnswerJSON(opnsense.SystemTime, systemTimeAt(2*time.Hour, "CEST"))
 	if err := fresh.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting before discovery: %v", err)
 	}
@@ -75,8 +76,8 @@ func TestNoFilterLogLineIsStoredBeforeTheOffsetIsKnown(t *testing.T) {
 	}
 
 	silent := arrangeFilterLogCollection(t)
-	blind := New(newFakeClient(t, silent.fake), silent.store, silent.clock)
-	silent.fake.answer(opnsense.SystemTime, 404, nil)
+	blind := newTestCollector(t, providertest.NewClient(t, silent.fake), silent.store, silent.clock)
+	silent.fake.Answer(opnsense.SystemTime, 404, nil)
 	if err := blind.CollectFirewallLog(ctx); err == nil {
 		t.Error("a pass with no way to know the firewall's zone succeeded")
 	}

@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "provider.dhcp_lease.kea": "Kea DHCP"
+  }
+}

@@ -189,7 +189,7 @@ func TestPurgingALookupOrAFlowRemovesItsAttribution(t *testing.T) {
 	if rows := queryInt(t, network.db, "SELECT count(*) FROM domain_attribution"); rows != 2 {
 		t.Fatalf("%d attributions before the purge, not 2", rows)
 	}
-	if _, err := network.db.DB().Exec("PRAGMA foreign_keys = ON; DELETE FROM dns_resolution WHERE lookup_key = 'example-purge-lookup-0'"); err != nil {
+	if _, err := network.db.DB().Exec("DELETE FROM dns_resolution WHERE lookup_key = 'example-purge-lookup-0'"); err != nil {
 		t.Fatalf("purging a lookup: %v", err)
 	}
 	if _, err := network.db.DB().Exec("DELETE FROM flow WHERE observed_at = ?", network.now-500); err != nil {
@@ -199,7 +199,7 @@ func TestPurgingALookupOrAFlowRemovesItsAttribution(t *testing.T) {
 		t.Errorf("%d attributions survived their lookup or their flow", rows)
 	}
 	if violations := foreignKeyViolations(t, network.db); violations != 0 {
-		t.Errorf("PRAGMA foreign_key_check reports %d rows", violations)
+		t.Errorf("%d rows name a row that does not exist", violations)
 	}
 
 	// And through the retention purge itself, on an attribution that is still there when the
@@ -230,6 +230,6 @@ func TestPurgingALookupOrAFlowRemovesItsAttribution(t *testing.T) {
 		t.Errorf("%d attributions survived the retention purge of their flow and lookup", rows)
 	}
 	if violations := foreignKeyViolations(t, network.db); violations != 0 {
-		t.Errorf("after the retention purge, PRAGMA foreign_key_check reports %d rows", violations)
+		t.Errorf("after the retention purge, %d rows name a row that does not exist", violations)
 	}
 }

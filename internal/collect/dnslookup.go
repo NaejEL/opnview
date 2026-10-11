@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"net/netip"
 
-	"github.com/NaejEL/opnview/internal/decode"
+	"github.com/NaejEL/opnview/internal/collect/dnslookup"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store"
 )
 
@@ -15,7 +16,7 @@ import (
 // What is true of any source of resolver lookups, and is therefore here: resolving the
 // querying machine, resolving the list that refused a lookup, walking the pages, and detecting
 // a gap. Which resolver, how its window behaves, and what can serve as a de-duplication key
-// are in dnslookup_unbound.go and dnslookup_dnsmasq.go, because all three are facts about a
+// are in internal/collect/dnslookup/<product>/, because all three are facts about a
 // product.
 //
 // THE KIND NEVER PRESENTS WHAT IT READ AS COVERAGE OF A WINDOW. The one implementation that
@@ -36,7 +37,7 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 		// neither is an absence of lookups.
 		return nil
 	}
-	source, registered := lookupSources[providerKey]
+	source, registered := c.sources.DNSLookup.Lookup(providerKey)
 	if !registered {
 		return fmt.Errorf("collect: the active dns_lookup provider %q has no implementation",
 			providerKey)
@@ -55,11 +56,11 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 	// next resolves host names from past lookups not yet committed.
 	now, ingest := c.beginIngest()
 	defer c.endIngest(ingest)
-	span := source.requestedSpanSeconds()
+	span := source.RequestedSpanSeconds()
 	windowStart := now - span
 
 	var (
-		lastResult             probeResult
+		lastResult             provider.Result
 		oldestSeen             int64
 		haveOldest             bool
 		outsideRequestedWindow int
@@ -67,17 +68,18 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 		totalRows              int
 	)
 
-	for page := 1; page <= source.pageBound(); page++ {
-		records, result, readErr := source.lookups(ctx, c, page)
+	for page := 1; page <= source.PageBound(); page++ {
+		records, result, readErr := source.Lookups(ctx, c, page)
 		lastResult = result
-		if errors.Is(readErr, ErrUnsupportedRead) {
+		if errors.Is(readErr, provider.ErrUnsupportedRead) {
 			// Registered, probed, and not readable. A state with its reason, not a failed pass.
-			return c.writeAvailability(ctx, providerID, result.state, result.probe, readErr.Error())
+			return c.writeAvailability(ctx, providerID, result.State, result.Outcome, result.Probe,
+				readErr.Error())
 		}
 		if readErr != nil {
 			// The pages read before this one are stored, and are derived all the same.
-			if writeErr := c.writeAvailability(ctx, providerID, result.state,
-				result.probe, result.detail); writeErr != nil {
+			if writeErr := c.writeAvailability(ctx, providerID, result.State,
+				result.Outcome, result.Probe, result.Detail); writeErr != nil {
 				return c.deriveAfter(ctx, stored, joinErrors([]error{readErr, writeErr}))
 			}
 			return c.deriveAfter(ctx, stored, readErr)
@@ -103,11 +105,11 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 			// without inserting it, and lost such a lookup (step-5A live corrections, F6).
 			lookup, err := c.buildDNSResolution(ctx, record, providerKey, now)
 			if err != nil {
-				return c.deriveAfter(ctx, stored, err)
+				return c.deriveAfter(ctx, stored, c.lookupStoreFailure(ctx, providerID, result, err))
 			}
 			inserted, err := c.store.StoreDNSResolution(ctx, lookup)
 			if err != nil {
-				return c.deriveAfter(ctx, stored, err)
+				return c.deriveAfter(ctx, stored, c.lookupStoreFailure(ctx, providerID, result, err))
 			}
 			if !inserted {
 				continue
@@ -139,8 +141,12 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 		detail = "reachable and the query report returned no lookup, which is not an absence of " +
 			"lookups"
 	}
-	if err := c.writeAvailability(ctx, providerID, store.StateReachable,
-		lastResult.probe, detail); err != nil {
+	outcome := store.OutcomeHealthy
+	if totalRows == 0 {
+		outcome = store.OutcomeHealthyEmpty
+	}
+	if err := c.writeAvailability(ctx, providerID, store.StateReachable, outcome,
+		lastResult.Probe, detail); err != nil {
 		return c.deriveAfter(ctx, stored, err)
 	}
 
@@ -169,8 +175,24 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 	return c.derive(ctx, stored)
 }
 
+// lookupStoreFailure records that the resolver's query report answered and its lookups
+// could not be stored, and returns the store's error with any failure to record it. The
+// provider is unavailable, because what a widget reads did not receive the answer, and the
+// outcome names the fault as opnview's rather than the firewall's, as the lease pass does
+// (SPEC-step-5b-widget-api.md, B8g). The pages stored before the failure stay stored.
+func (c *Collector) lookupStoreFailure(ctx context.Context, providerID int64, result provider.Result,
+	storeErr error) error {
+	detail := fmt.Sprintf("the resolver's query report answered and its lookups could not be stored: %v",
+		storeErr)
+	if writeErr := c.writeAvailability(ctx, providerID, store.StateUnavailable, store.OutcomeStoreFailure,
+		result.Probe, detail); writeErr != nil {
+		return joinErrors([]error{storeErr, writeErr})
+	}
+	return storeErr
+}
+
 // buildDNSResolution turns one record into a row, resolving the querying machine.
-func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
+func (c *Collector) buildDNSResolution(ctx context.Context, record dnslookup.Record,
 	resolver string, now int64) (store.DNSResolution, error) {
 	// The resolver's query report gives, in place of the querying address, the name a
 	// reverse lookup of it returned whenever there was one (opnsense/core 26.7.3,
@@ -187,7 +209,8 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 		if _, err := netip.ParseAddr(clientAddress); err != nil {
 			logged := clientAddress
 			clientHostname = &logged
-			clientAddress, resolution, err = c.store.ResolveLoggedHostname(ctx, logged, record.LookedUpAt)
+			clientAddress, resolution, err = c.store.ResolveLoggedHostname(ctx, logged, record.ClientFamily,
+				record.LookedUpAt)
 			if err != nil {
 				return store.DNSResolution{}, err
 			}
@@ -216,6 +239,7 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 		ClientAddress:    clientAddress,
 		ClientHostname:   clientHostname,
 		ClientResolution: resolution,
+		ClientFamily:     record.ClientFamily,
 		ClientID:         clientID,
 		Domain:           record.Domain,
 		Resolver:         resolver,
@@ -227,20 +251,4 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 		LookedUpAt:       record.LookedUpAt,
 		IngestedAt:       now,
 	}, nil
-}
-
-// normaliseLookupAction maps a resolver's action onto the closed vocabulary the schema
-// constrains. Anything else is `unknown`: a lookup whose verdict opnview cannot name must not
-// be counted as allowed.
-func normaliseLookupAction(raw string) string {
-	switch decode.LowerASCII(raw) {
-	case "pass", "passed", "allowed":
-		return "pass"
-	case "block", "blocked":
-		return "block"
-	case "drop", "dropped":
-		return "drop"
-	default:
-		return "unknown"
-	}
 }

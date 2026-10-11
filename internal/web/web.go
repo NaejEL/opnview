@@ -1,26 +1,26 @@
-// Package web is opnview's HTTP surface: the server, the routing, the session and
-// CSRF middleware, the three surfaces this cycle ships, the embedded templates and
-// stylesheet, and the string catalogue.
+// Package web is opnview's HTTP core: the server, the route table, the session and CSRF
+// middleware, the layout, the themes, the embedded stylesheet, the string catalogue and the
+// seam the interface's surfaces plug into.
 //
-// WHAT THE SEAM IS. The server owns routing, sessions and the static-asset story;
-// a feature owns its handlers and registers them. Step 5 adds widget endpoints by
-// adding files and route rows, not by rewriting cmd/opnview/main.go. That is why
-// the routes are a TABLE with a declared access level per row rather than a
-// sequence of mux calls: a route added later carries a decision about who may
-// reach it, and a test enumerates the table and fails on a route that carries
-// none.
+// WHAT THE SEAM IS. The server owns routing, sessions and the static-asset story; a surface
+// owns its handlers, its templates and its catalogue keys, lives in a directory of its own
+// under internal/web/surfaces, and registers itself (surface.go). The routes are a TABLE with
+// a declared access level per row rather than a sequence of mux calls: a route added later
+// carries a decision about who may reach it, and a test enumerates the table and fails on a
+// route that carries none.
 //
-// WHAT IT SERVES, AND NOTHING MORE. Setup, sign-in and sign-out, settings, the
-// collection surface and one stylesheet. There is no widget endpoint, no canvas, no
-// dashboard format and no language picker here: those are steps 5 and 7.
+// WHAT THE CORE SERVES ITSELF, AND NOTHING MORE. The root, which sends a reader to whichever
+// surface applies, and the one stylesheet. Every page, the sign-in and setup surfaces
+// included, is a surface. There is no canvas, no dashboard format and no language picker
+// here: those are step 7.
 //
-// NO CONTROL ON ANY PAGE CAN CHANGE A FIREWALL SETTING, and none suggests that it
-// can. The only call this package makes to the firewall is the credential
-// verification in verify.go, which is a read of one registry endpoint.
+// NO CONTROL ON ANY PAGE CAN CHANGE A FIREWALL SETTING, and none suggests that it can. The
+// only call the interface makes to the firewall is the credential verification of the
+// settings surface, which is a read of one registry endpoint.
 //
-// NOTHING IS LOADED FROM OFF-HOST. Every byte a page needs is embedded in this
-// package and served by this binary. No font, no script, no icon set, no favicon,
-// no analytics, no version check.
+// NOTHING IS LOADED FROM OFF-HOST. Every byte a page needs is embedded in this package or in
+// a surface's package and served by this binary. No font, no script, no icon set, no
+// favicon, no analytics, no version check.
 package web
 
 import (
@@ -28,18 +28,29 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/auth"
+	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/widget"
+	// Linking the built-in widget tree is what makes the built-in widgets exist in the binary
+	// and in every test that builds a server.
+	_ "github.com/NaejEL/opnview/internal/widget/widgets"
 )
 
-// The paths. They are constants because a template links to them and a test
-// enumerates them, and two spellings of one path is a route that exists and a link
-// that does not.
+// The paths the core itself knows. They are constants because a template links to them and
+// a test enumerates them, and two spellings of one path is a route that exists and a link
+// that does not. A path that belongs to one surface only is that surface's constant, in its
+// own package.
 const (
 	// PathRoot sends a reader to whichever surface applies.
 	PathRoot = "/"
@@ -49,21 +60,18 @@ const (
 	PathSignIn = "/sign-in"
 	// PathSignOut ends a session.
 	PathSignOut = "/sign-out"
-	// PathSettings is where credentials enter the product.
+	// PathSettings is where credentials enter the product, and where a signed-in reader
+	// lands.
 	PathSettings = "/settings"
-	// PathCollection is where the operator sees, per source kind, the pair that
-	// governs its polling, the record rate opnview has measured, and the pair it
-	// would suggest, and saves a new pair.
-	//
-	// It is a route of its own rather than a fourth card on the settings page: the
-	// settings surface is where credentials enter, and this one reads the database
-	// and writes configuration rows only.
-	PathCollection = "/collection"
 	// PathRecover is the password reset authorised by the key file.
 	PathRecover = "/recover"
 	// PathStylesheet is the one static asset.
 	PathStylesheet = "/asset/style.css"
 )
+
+// PageSignIn is the page a refusal is drawn on when a route names none: the sign-in page,
+// which the account surface provides.
+const PageSignIn = "signin"
 
 // The cookies.
 //
@@ -78,6 +86,9 @@ const (
 	cookieCSRF    = "opnview_csrf"
 	cookieNotice  = "opnview_notice"
 )
+
+// SessionCookieName is the name of the session cookie, for a test that reads the jar.
+const SessionCookieName = cookieSession
 
 // Access is who may reach a route. Every route declares one, and a test asserts
 // that the membership of each set is the one somebody decided on.
@@ -114,8 +125,14 @@ type Route struct {
 	// into the GET handler only leaves the POST open. Both of those are the classic
 	// first-run hole, and this cycle's stated top risk is exactly that hole.
 	RequiresNoAccount bool
-
-	handler http.HandlerFunc
+	// JSON marks a route of the widget API: refused in JSON, never redirected to a page.
+	JSON bool
+	// Page is the page a refusal by the middleware -- a missing form token, a key file not
+	// presented -- is drawn on, so the reader lands on the form they were filling in. Empty
+	// is the sign-in page.
+	Page string
+	// Handler answers the request once the middleware has let it through.
+	Handler http.HandlerFunc
 }
 
 // Options are what a server needs.
@@ -158,6 +175,34 @@ type Options struct {
 	// saved, and asked which build is in use. Nil, as in a test that does not need it,
 	// wakes nothing and reports no build.
 	GeoIP GeoIP
+	// PublicSuffix is the Public Suffix List's copy in use, asked for its figures
+	// when the settings surface is drawn. Nil, as in a test that does not need it,
+	// reports no copy held.
+	PublicSuffix PublicSuffixList
+	// SuffixLists is the Public Suffix List in use, which the widget API groups site names
+	// by. Nil reports the grouping unavailable.
+	SuffixLists widget.SuffixLists
+	// Plugins are the plugins the collector was built with: their catalogue strings join the
+	// catalogue, and the plugin listing reports them. Nil is the built-in plugins alone, loaded
+	// with no data directory, as a test that does not drop a plugin of its own needs.
+	Plugins *plugin.Loaded
+	// Broker is the firewall broker the collector asks: its learned API catalogue is served, and its
+	// mirror's tables join the data catalogue. Nil serves an empty API catalogue.
+	Broker *broker.Broker
+	// Surfaces are surfaces mounted on this server in addition to the registered ones. The
+	// product passes none: every surface linked into the binary registers itself. A test
+	// passes the surface it is about, which is how a surface is exercised without
+	// registering it for every other server of the process.
+	Surfaces []Surface
+}
+
+// PublicSuffixList is what the settings surface needs of the Public Suffix List's
+// refresh: the copy this process holds, its version, its rule count and when a
+// refresh last confirmed it current. It is answered from memory and contacts
+// nothing, and it is an interface so this package does not import the refresher.
+// The figures never come from the availability row's free-text detail.
+type PublicSuffixList interface {
+	Held() (version string, rules int, confirmedAt int64, held bool)
 }
 
 // GeoIP is what the settings surface needs of the MaxMind refresh: to be told that
@@ -178,7 +223,7 @@ type Reconfigurable interface {
 	Reselect(ctx context.Context, kind string) error
 }
 
-// Server is the HTTP surface. One per process: it holds the routes, the renderer
+// Server is the HTTP core. One per process: it holds the routes, the renderer
 // and the session store, and nothing a request can change.
 type Server struct {
 	store       *store.Store
@@ -207,9 +252,36 @@ type Server struct {
 	collector Reconfigurable
 	// geoip is woken by a save of the MaxMind credentials; it may be nil.
 	geoip GeoIP
+	// publicSuffix answers for the Public Suffix List's copy in use; it may be nil.
+	publicSuffix PublicSuffixList
+	// plugins are the loaded plugins.
+	plugins *plugin.Loaded
+	// broker is the firewall broker, nil where none was given.
+	broker *broker.Broker
+	// widgets is the widget API.
+	widgets *widget.Service
+
+	// surfaces are the accepted surfaces, in name order, and refused the others with why.
+	surfaces []vetted
+	refused  []SurfaceRefusal
+	// pages are the pages of the accepted surfaces by name.
+	pages map[string]Page
+	// tabs and indicators are the top bar's, built from the accepted surfaces.
+	tabs       []Tab
+	indicators []indicatorSource
+	// notices and refusals are the closed list of keys a redirect may carry.
+	notices  map[MessageKey]struct{}
+	refusals map[MessageKey]struct{}
 
 	routes []Route
 	mux    *http.ServeMux
+}
+
+// indicatorSource is one surface's top-bar indicator.
+type indicatorSource struct {
+	surface string
+	read    func(ctx context.Context, host Host) (Indicator, error)
+	unknown Indicator
 }
 
 // New returns a server with every route registered.
@@ -225,15 +297,6 @@ func New(options Options) (*Server, error) {
 		return nil, errors.New("web: an OPNsense client is required")
 	case options.SetupToken == nil:
 		return nil, errors.New("web: a setup token is required")
-	}
-
-	catalogue, err := LoadCatalogue(SourceLanguage)
-	if err != nil {
-		return nil, err
-	}
-	built, err := newRenderer(catalogue)
-	if err != nil {
-		return nil, err
 	}
 
 	params := options.PasswordParams
@@ -262,62 +325,118 @@ func New(options Options) (*Server, error) {
 		client:        options.Client,
 		setupToken:    options.SetupToken,
 		sessions:      auth.NewSessions(options.Store, auth.DefaultLifetimes()),
-		renderer:      built,
 		params:        params,
 		now:           clock,
 		decoyPassword: decoy,
 		settings:      options.Settings,
 		collector:     options.Collector,
 		geoip:         options.GeoIP,
+		publicSuffix:  options.PublicSuffix,
+		plugins:       options.Plugins,
+		broker:        options.Broker,
 	}
-	server.register()
+	if server.plugins == nil {
+		server.plugins = plugin.BuiltinsLoaded()
+	}
+	// The data catalogue: the core's datasets and every table of a loaded plugin.
+	datasets, err := dataset.NewCatalogue(server.plugins.Datasets())
+	if err != nil {
+		return nil, err
+	}
+	if options.Broker != nil {
+		gate := options.Broker
+		datasets.SetDynamic(func() []dataset.Declaration { return gate.Datasets(context.Background()) })
+	}
+	server.widgets, err = widget.New(options.Store, widget.Options{Now: clock, SuffixLists: options.SuffixLists,
+		Datasets: datasets,
+		// The widgets the loaded plugins carry: the built-ins' and the data directory's.
+		Plugins: server.plugins.WidgetSources(),
+		// Operator widgets are read from <data-dir>/widgets; a refused one is reported by
+		// Widgets().Refusals() and never stops the service.
+		OperatorDir: filepath.Join(options.DataDir, "widgets")})
+	if err != nil {
+		return nil, err
+	}
+
+	candidates := append(RegisteredSurfaces(), options.Surfaces...)
+	accepted, refused, contributed := vetSurfaces(server, coreRoutes(server), candidates)
+	server.surfaces, server.refused = accepted, refused
+	for _, refusal := range refused {
+		fmt.Fprintf(os.Stderr, "opnview: web: %v\n", refusal)
+	}
+
+	catalogue, err := buildCatalogue(SourceLanguage, accepted, withDatasetStrings(SourceLanguage,
+		server.plugins.Strings(SourceLanguage)))
+	if err != nil {
+		return nil, err
+	}
+	server.renderer, err = newRenderer(catalogue, accepted)
+	if err != nil {
+		return nil, err
+	}
+	server.assemble(contributed)
 	return server, nil
 }
 
-// register builds the route table and the router from it.
-//
-// THE TABLE IS THE WHOLE LIST. Nothing else calls mux.Handle, so a route that is
-// not here does not exist, and a route that is here carries an access level.
-func (s *Server) register() {
-	s.routes = []Route{
+// coreRoutes are the rows the core itself serves.
+func coreRoutes(s *Server) []Route {
+	return []Route{
 		// The root is authenticated, not public: it serves no content to a reader
 		// with no session, it redirects them to the surface that applies.
 		{Method: http.MethodGet, Pattern: PathRoot, Access: AccessAuthenticated,
-			handler: s.handleRoot},
-
-		{Method: http.MethodGet, Pattern: PathSetup, Access: AccessPublic,
-			RequiresNoAccount: true, handler: s.handleSetupForm},
-		{Method: http.MethodPost, Pattern: PathSetup, Access: AccessPublic,
-			RequiresNoAccount: true, handler: s.handleSetupSubmit},
-
-		{Method: http.MethodGet, Pattern: PathSignIn, Access: AccessPublic,
-			handler: s.handleSignInForm},
-		{Method: http.MethodPost, Pattern: PathSignIn, Access: AccessPublic,
-			handler: s.handleSignInSubmit},
-		{Method: http.MethodPost, Pattern: PathSignOut, Access: AccessAuthenticated,
-			handler: s.handleSignOut},
-
-		{Method: http.MethodGet, Pattern: PathSettings, Access: AccessAuthenticated,
-			handler: s.handleSettingsForm},
-		{Method: http.MethodPost, Pattern: PathSettings, Access: AccessAuthenticated,
-			handler: s.handleSettingsSubmit},
-		// The collection surface reads the local database and writes setting rows only.
-		{Method: http.MethodGet, Pattern: PathCollection, Access: AccessAuthenticated,
-			handler: s.handleCollectionForm},
-		{Method: http.MethodPost, Pattern: PathCollection, Access: AccessAuthenticated,
-			handler: s.handleCollectionSubmit},
-
-		// The reset form discloses nothing — it names no login and lists nothing —
-		// so it is reachable by somebody who has forgotten their password, which is
-		// the only person who needs it. The SUBMISSION is the guarded half.
-		{Method: http.MethodGet, Pattern: PathRecover, Access: AccessPublic,
-			handler: s.handleRecoverForm},
-		{Method: http.MethodPost, Pattern: PathRecover, Access: AccessKeyFile,
-			handler: s.handleRecoverSubmit},
-
+			Handler: s.handleRoot},
 		{Method: http.MethodGet, Pattern: PathStylesheet, Access: AccessPublic,
-			handler: s.handleStylesheet},
+			Handler: s.handleStylesheet},
 	}
+}
+
+// handleRoot sends a signed-in reader to the settings surface.
+//
+// There is nothing else to send them to yet: canvases are step 7. The middleware
+// has already turned away a reader with no session, so reaching here means there is
+// one.
+func (s *Server) handleRoot(writer http.ResponseWriter, request *http.Request) {
+	http.Redirect(writer, request, PathSettings, http.StatusSeeOther)
+}
+
+// assemble builds the route table, the pages, the tabs, the indicators and the flash lists
+// from the accepted surfaces, and the router from the table.
+//
+// THE TABLE IS THE WHOLE LIST. Nothing else calls mux.Handle, so a route that is
+// not here does not exist, and a route that is here carries an access level.
+func (s *Server) assemble(contributed map[string][]Route) {
+	s.routes = coreRoutes(s)
+	s.pages = map[string]Page{}
+	s.notices = map[MessageKey]struct{}{}
+	s.refusals = map[MessageKey]struct{}{
+		msgSetupClosed: {}, msgSessionExpired: {}, msgKeyFileRefused: {},
+	}
+	for _, accepted := range s.surfaces {
+		surface := accepted.surface
+		s.routes = append(s.routes, contributed[surface.Name]...)
+		for _, page := range surface.Pages {
+			s.pages[page.Name] = page
+		}
+		if surface.Tab != nil {
+			s.tabs = append(s.tabs, *surface.Tab)
+		}
+		if surface.Indicator != nil {
+			s.indicators = append(s.indicators, indicatorSource{surface: surface.Name,
+				read: surface.Indicator, unknown: surface.IndicatorUnknown})
+		}
+		for _, key := range surface.Notices {
+			s.notices[key] = struct{}{}
+		}
+		for _, key := range surface.Refusals {
+			s.refusals[key] = struct{}{}
+		}
+	}
+	sort.SliceStable(s.tabs, func(i, j int) bool {
+		if s.tabs[i].Order != s.tabs[j].Order {
+			return s.tabs[i].Order < s.tabs[j].Order
+		}
+		return s.tabs[i].Page < s.tabs[j].Page
+	})
 
 	s.mux = http.NewServeMux()
 	for _, route := range s.routes {
@@ -332,6 +451,20 @@ func (s *Server) Routes() []Route {
 	copied := make([]Route, len(s.routes))
 	copy(copied, s.routes)
 	return copied
+}
+
+// RefusedSurfaces returns the surfaces left out of this server, each with its reason.
+func (s *Server) RefusedSurfaces() []SurfaceRefusal {
+	return append([]SurfaceRefusal(nil), s.refused...)
+}
+
+// MountedSurfaces returns the names of the surfaces this server serves, sorted.
+func (s *Server) MountedSurfaces() []string {
+	names := make([]string, 0, len(s.surfaces))
+	for _, accepted := range s.surfaces {
+		names = append(names, accepted.surface.Name)
+	}
+	return names
 }
 
 // ServeHTTP lets the server be used as a handler directly, which is what a test
@@ -393,3 +526,58 @@ func (s *Server) ListenAndServe(ctx context.Context, address string, grace time.
 	}
 	return nil
 }
+
+// The Host interface, answered by the server.
+
+// Store is the database.
+func (s *Server) Store() *store.Store { return s.store }
+
+// Now is the clock.
+func (s *Server) Now() time.Time { return s.now() }
+
+// DataDir is where the database and the key file live.
+func (s *Server) DataDir() string { return s.dataDir }
+
+// Box opens and seals stored credentials; nil when the key file is lost.
+func (s *Server) Box() *secret.Box { return s.box }
+
+// Credentials is the live holder the OPNsense client reads.
+func (s *Server) Credentials() *config.FirewallCredentials { return s.credentials }
+
+// Client is the OPNsense client used to verify what was typed.
+func (s *Server) Client() *opnsense.Client { return s.client }
+
+// SetupToken is the one-time token printed at start-up.
+func (s *Server) SetupToken() *auth.SetupToken { return s.setupToken }
+
+// Sessions issues, validates and revokes sessions.
+func (s *Server) Sessions() *auth.Sessions { return s.sessions }
+
+// PasswordParams are the Argon2id parameters a new record is written with.
+func (s *Server) PasswordParams() auth.Params { return s.params }
+
+// DecoyPassword is a record nobody's password matches.
+func (s *Server) DecoyPassword() store.PasswordHash { return s.decoyPassword }
+
+// LiveSettings is the configuration holder the scheduler reads; may be nil.
+func (s *Server) LiveSettings() *config.Live { return s.settings }
+
+// Collector is told the configuration after a save; may be nil.
+func (s *Server) Collector() Reconfigurable { return s.collector }
+
+// GeoIP is woken by a save of the MaxMind credentials; may be nil.
+func (s *Server) GeoIP() GeoIP { return s.geoip }
+
+// PublicSuffix answers for the Public Suffix List's copy in use; may be nil.
+func (s *Server) PublicSuffix() PublicSuffixList { return s.publicSuffix }
+
+// Plugins are the loaded plugins.
+func (s *Server) Plugins() *plugin.Loaded { return s.plugins }
+
+// Broker is the firewall broker, nil where none was given.
+func (s *Server) Broker() *broker.Broker { return s.broker }
+
+// Widgets is the widget API's service.
+func (s *Server) Widgets() *widget.Service { return s.widgets }
+
+var _ Host = (*Server)(nil)

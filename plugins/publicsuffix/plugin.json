@@ -1,0 +1,19 @@
+{
+  "api_version": 1,
+  "name": "publicsuffix",
+  "version": "1.0.0",
+  "display_name": "Public Suffix List",
+  "description": "Downloads the Public Suffix List from publicsuffix.org once a day, conditionally, and gives each site name its registrable domain.",
+  "script": "publicsuffix.js",
+  "destinations": [
+    "https://publicsuffix.org"
+  ],
+  "providers": [
+    {
+      "kind": "registrable_domain",
+      "key": "public_suffix_list",
+      "display_name": "Public Suffix List",
+      "read_strategy": "full_reread"
+    }
+  ]
+}

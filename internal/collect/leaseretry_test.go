@@ -82,7 +82,7 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 	if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, ProviderDnsmasq, ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
-	harness.fake.answer(opnsense.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
+	harness.fake.Answer(opnsense.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
 
 	limit := int(config.DefaultLeaseBackendFailurePassLimit)
 	if limit < 2 {
@@ -115,7 +115,7 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 
 	// A read that succeeds again ends the count: the next failure holds the retry back
 	// from the start.
-	harness.fake.answerFixture(opnsense.KeaLeases, "kea_leases.json")
+	harness.fake.AnswerFixture(opnsense.KeaLeases, "kea_leases.json")
 	setClock(harness, referenceInstant().Add(time.Duration(limit+1)*5*time.Minute))
 	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("the pass whose backends both answered: %v", err)
@@ -135,7 +135,7 @@ func TestTheLimitIsAValidatedSettingOfTheLeasePass(t *testing.T) {
 	if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, ProviderDnsmasq, ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
-	harness.fake.answer(opnsense.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
+	harness.fake.Answer(opnsense.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
 	settings := config.Defaults()
 	settings.LeaseBackendFailurePassLimit = 1
 	harness.collector.Configure(settings)
@@ -186,13 +186,13 @@ func TestANeighbourAtAnAddressThisFirewallHoldsCreatesNoClient(t *testing.T) {
 	device := stringColumn(t, harness.store, `SELECT device FROM interface WHERE is_upstream = 0
 		ORDER BY id LIMIT 1`)[0]
 
-	harness.fake.answerJSON(opnsense.ARPTable, []any{
+	harness.fake.AnswerJSON(opnsense.ARPTable, []any{
 		map[string]any{"mac": "0a:11:22:33:44:f1", "ip": heldV4, "intf": device,
 			"manufacturer": "example vendor string", "expired": false, "permanent": true},
 		map[string]any{"mac": "0a:11:22:33:44:f2", "ip": "198.51.100.77", "intf": device,
 			"manufacturer": "example vendor string", "expired": false, "permanent": false},
 	})
-	harness.fake.answerJSON(opnsense.NDPTable, []any{
+	harness.fake.AnswerJSON(opnsense.NDPTable, []any{
 		map[string]any{"mac": "0a:11:22:33:44:f3", "ip": heldV6, "intf": device,
 			"manufacturer": "example vendor string", "expired": false, "permanent": true},
 	})

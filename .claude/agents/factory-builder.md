@@ -34,6 +34,28 @@ touch is a defect to fix, not a style to match.
 - The module already exists: `go.mod` declares `github.com/NaejEL/opnview`.
   Never run `go mod init`, and never change the module path.
 
+## Modularity — absolute rule, checked before anything else
+
+`CLAUDE.md` is binding: **a kind of thing is a seam, and an implementation is
+a directory behind it, discovered at runtime.** A widget is a directory holding
+its manifest, its query and its renderer. A provider (a lease source, a lookup
+source, a resolver cache…) is a directory holding its code, its SQL and its
+tests. **Adding one is adding a directory, and nothing else:** no edit to a
+shipped list, switch, registry file or shared SQL file. Somebody who has never
+read the source must be able to add one from the documentation alone.
+
+Before you hand back:
+- Every new implementation you wrote lives in its own directory, and it is
+  discovered (embedded walk, `init()` registration in its own file, or a
+  directory read at start), never listed by hand.
+- The repository's modularity test, which adds a fake implementation by
+  writing files only, still passes. Extend it to every new kind you
+  introduced.
+- No package directory grows a flat pile of unrelated implementations. If the
+  spec's layout would force one, stop and report it rather than building it.
+
+A change that works but breaks this rule is not delivered.
+
 ## Interface work is not yours — you defer it
 
 Interface work belongs to **`factory-ui-builder`**, a sibling Builder whose

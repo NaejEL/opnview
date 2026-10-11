@@ -191,12 +191,12 @@ func TestThisFirewallIsRecognisedAtEveryEndInBothFamilies(t *testing.T) {
 				}
 				if got := queryInt(t, network.db, `SELECT count(*) FROM security_event
 					WHERE src_address = ? AND src_is_this_firewall = 1 AND src_client_id IS NULL
-					  AND src_interface_id IS ?`, address, optional(iface)); got != 1 {
+					  AND src_interface_id IS NOT DISTINCT FROM ?`, address, optional(iface)); got != 1 {
 					t.Errorf("the event from %s is not recorded as this firewall's", address)
 				}
 				if got := queryInt(t, network.db, `SELECT count(*) FROM dns_resolution
 					WHERE client_address = ? AND client_is_this_firewall = 1 AND client_id IS NULL
-					  AND interface_id IS ?`, address, optional(iface)); got != 1 {
+					  AND interface_id IS NOT DISTINCT FROM ?`, address, optional(iface)); got != 1 {
 					t.Errorf("the lookup from %s is not recorded as this firewall's", address)
 				}
 				if clients := queryInt(t, network.db, "SELECT count(*) FROM client WHERE last_address = ?",

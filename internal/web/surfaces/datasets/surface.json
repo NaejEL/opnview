@@ -1,0 +1,4 @@
+{
+  "name": "datasets",
+  "description": "The data catalogue: every dataset, and one query against one, in JSON."
+}

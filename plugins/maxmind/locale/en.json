@@ -1,0 +1,8 @@
+{
+  "language": "en",
+  "strings": {
+    "provider.ip_geolocation.maxmind_geolite2": "MaxMind GeoLite2",
+    "plugin.maxmind.setting.account_id": "MaxMind account ID",
+    "plugin.maxmind.setting.licence_key": "MaxMind licence key"
+  }
+}

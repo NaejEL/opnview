@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "aggregate_freshness",
+  "version": "1.0.0",
+  "display_name": "Aggregate freshness",
+  "description": "One row per pre-computed period: how many slots it holds over the last 31 days, the span they cover, their last computation and the bytes they hold, flagged stale when a slot is behind its flows.",
+  "widgets": [
+    "aggregate_freshness"
+  ]
+}

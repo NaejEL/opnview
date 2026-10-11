@@ -73,11 +73,16 @@ FROM volume_aggregate_30d;
 --
 -- Availability and activeness are two different facts. Two implementations of
 -- one kind may both be 'reachable'; at most one of them is active.
+--
+-- outcome is the closed code naming why the state is what it is
+-- (SPEC-step-5b-widget-api.md, D1); it is what an interface translates, and
+-- detail is diagnostic text that nothing reads to decide anything.
 SELECT
     p.kind        AS kind,
     p.provider_key AS provider_key,
     p.display_name AS display_name,
     a.state       AS state,
+    a.outcome     AS outcome,
     a.probe       AS probe,
     a.detail      AS detail,
     a.checked_at  AS checked_at,
@@ -141,7 +146,7 @@ WHERE r.action IN ('block', 'drop')
   AND r.looked_up_at >= :window_start
   AND r.looked_up_at < :window_end
 GROUP BY r.blocklist_id, b.name, attribution_state, purpose
-ORDER BY lookup_count DESC, blocklist_id;
+ORDER BY lookup_count DESC, blocklist_id NULLS FIRST;
 
 -- diagnostic: Owner aggregate coverage per period
 -- One row per pre-computed per-owner period, with how many slots it holds, how
@@ -230,7 +235,7 @@ SELECT
     k.kind AS kind,
     :window_start AS window_start_at,
     :window_end AS window_end_at,
-    (SELECT CAST(value AS INTEGER) FROM setting
+    (SELECT CAST(value AS BIGINT) FROM setting
       WHERE key = 'retention_seconds')
         AS retention_seconds,
     (SELECT count(*) FROM flow
@@ -266,7 +271,7 @@ SELECT
     k.kind AS kind,
     :window_start AS window_start_at,
     :window_end AS window_end_at,
-    (SELECT CAST(value AS INTEGER) FROM setting
+    (SELECT CAST(value AS BIGINT) FROM setting
       WHERE key = 'retention_seconds')
         AS retention_seconds,
     (SELECT count(*) FROM security_event
@@ -302,7 +307,7 @@ SELECT
     k.kind AS kind,
     :window_start AS window_start_at,
     :window_end AS window_end_at,
-    (SELECT CAST(value AS INTEGER) FROM setting
+    (SELECT CAST(value AS BIGINT) FROM setting
       WHERE key = 'retention_seconds')
         AS retention_seconds,
     (SELECT count(*) FROM dhcp_lease
@@ -336,7 +341,7 @@ SELECT
     k.kind AS kind,
     :window_start AS window_start_at,
     :window_end AS window_end_at,
-    (SELECT CAST(value AS INTEGER) FROM setting
+    (SELECT CAST(value AS BIGINT) FROM setting
       WHERE key = 'retention_seconds')
         AS retention_seconds,
     (SELECT count(*) FROM dns_resolution
@@ -370,13 +375,21 @@ GROUP BY k.kind, g.reason;
 
 -- diagnostic: Unresolved host names by cause
 -- Every lookup whose logged host name named no machine through the leases --
--- client_resolution 'unknown_hostname', and 'local_data_hostname', which the
--- resolver's local data resolved where no lease did -- in the window, sorted into the
+-- client_resolution 'unknown_hostname', 'local_data_hostname', which the
+-- resolver's local data resolved where no lease did, and 'dual_stack_hostname',
+-- which it held under two families -- in the window, sorted into the
 -- first cause that applies, in this order (step-5A live corrections, item 3.1, and
 -- scope D of specs/SPEC-resolver-cache-attribution.md). The leases are compared as of
 -- the lookup's instant where the cause says so:
 --   local_data       resolved by local data: exactly one address answered for the
---                    name in the resolver's local data held at the lookup's instant
+--                    name in the resolver's local data held at the lookup's instant,
+--                    or one IPv4 and one IPv6 address of one name did and the lookup
+--                    reported its querying family (group C of
+--                    specs/SPEC-step-5b-widget-api.md)
+--   dual_stack       the local data held one IPv4 and one IPv6 address of one name
+--                    at the lookup's instant, and the lookup reported no querying
+--                    family, so which of the two asked is not known
+--                    (dual_stack_hostname)
 --   this_firewall    the name is `localhost`, which names this firewall
 --   exact_match      a lease carries the logged name exactly, case aside, at the
 --                    lookup's instant
@@ -401,6 +414,7 @@ FROM (
     SELECT
         CASE
             WHEN r.client_resolution = 'local_data_hostname' THEN 'local_data'
+            WHEN r.client_resolution = 'dual_stack_hostname' THEN 'dual_stack'
             WHEN lower(rtrim(r.client_hostname, '.')) = 'localhost' THEN 'this_firewall'
             WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
                          WHERE lower(l.hostname) = lower(r.client_hostname)
@@ -409,16 +423,16 @@ FROM (
                 THEN 'exact_match'
             WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
                          WHERE lower(l.hostname) = lower(CASE
-                                   WHEN instr(r.client_hostname, '.') > 0
-                                       THEN substr(r.client_hostname, 1, instr(r.client_hostname, '.') - 1)
+                                   WHEN strpos(r.client_hostname, '.') > 0
+                                       THEN substr(r.client_hostname, 1, strpos(r.client_hostname, '.') - 1)
                                    ELSE r.client_hostname END)
                            AND (l.starts_at IS NULL OR l.starts_at <= r.looked_up_at)
                            AND (l.expires_at IS NULL OR l.expires_at >= r.looked_up_at))
                 THEN 'logged_label'
             WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
                          WHERE l.hostname_label = lower(CASE
-                                   WHEN instr(r.client_hostname, '.') > 0
-                                       THEN substr(r.client_hostname, 1, instr(r.client_hostname, '.') - 1)
+                                   WHEN strpos(r.client_hostname, '.') > 0
+                                       THEN substr(r.client_hostname, 1, strpos(r.client_hostname, '.') - 1)
                                    ELSE r.client_hostname END)
                            AND (l.starts_at IS NULL OR l.starts_at <= r.looked_up_at)
                            AND (l.expires_at IS NULL OR l.expires_at >= r.looked_up_at))
@@ -430,23 +444,23 @@ FROM (
                 THEN 'trailing_dot'
             WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
                          WHERE l.hostname_label = lower(CASE
-                                   WHEN instr(rtrim(r.client_hostname, '.'), '.') > 0
+                                   WHEN strpos(rtrim(r.client_hostname, '.'), '.') > 0
                                        THEN substr(rtrim(r.client_hostname, '.'), 1,
-                                                   instr(rtrim(r.client_hostname, '.'), '.') - 1)
+                                                   strpos(rtrim(r.client_hostname, '.'), '.') - 1)
                                    ELSE rtrim(r.client_hostname, '.') END))
                 THEN 'not_at_instant'
             WHEN EXISTS (SELECT 1 FROM resource_record_observation AS o
                          WHERE o.held_in = 'local_data'
                            AND o.host_label = lower(CASE
-                                   WHEN instr(rtrim(r.client_hostname, '.'), '.') > 0
+                                   WHEN strpos(rtrim(r.client_hostname, '.'), '.') > 0
                                        THEN substr(rtrim(r.client_hostname, '.'), 1,
-                                                   instr(rtrim(r.client_hostname, '.'), '.') - 1)
+                                                   strpos(rtrim(r.client_hostname, '.'), '.') - 1)
                                    ELSE rtrim(r.client_hostname, '.') END))
                 THEN 'local_data_not_at_instant'
             ELSE 'neither_lease_nor_local_data'
         END AS cause
     FROM dns_resolution AS r
-    WHERE r.client_resolution IN ('unknown_hostname', 'local_data_hostname')
+    WHERE r.client_resolution IN ('unknown_hostname', 'local_data_hostname', 'dual_stack_hostname')
       AND r.looked_up_at >= :window_start
       AND r.looked_up_at < :window_end
 )
@@ -467,18 +481,18 @@ WHERE f.observed_at >= :window_start
   AND ((f.src_is_this_firewall = 0
         AND EXISTS (SELECT 1 FROM this_firewall_address AS h
                     WHERE h.address = f.src_address
-                      AND h.first_seen_at - coalesce((SELECT CAST(s.value AS INTEGER) FROM setting AS s
+                      AND h.first_seen_at - coalesce((SELECT CAST(s.value AS BIGINT) FROM setting AS s
                             WHERE s.key = 'refresh_interval_discovery_seconds'), 300) <= f.observed_at
                       AND (h.is_current = 1
-                           OR h.last_seen_at + coalesce((SELECT CAST(s.value AS INTEGER) FROM setting AS s
+                           OR h.last_seen_at + coalesce((SELECT CAST(s.value AS BIGINT) FROM setting AS s
                             WHERE s.key = 'refresh_interval_discovery_seconds'), 300) >= f.observed_at)))
     OR (f.dst_is_this_firewall = 0
         AND EXISTS (SELECT 1 FROM this_firewall_address AS h
                     WHERE h.address = f.dst_address
-                      AND h.first_seen_at - coalesce((SELECT CAST(s.value AS INTEGER) FROM setting AS s
+                      AND h.first_seen_at - coalesce((SELECT CAST(s.value AS BIGINT) FROM setting AS s
                             WHERE s.key = 'refresh_interval_discovery_seconds'), 300) <= f.observed_at
                       AND (h.is_current = 1
-                           OR h.last_seen_at + coalesce((SELECT CAST(s.value AS INTEGER) FROM setting AS s
+                           OR h.last_seen_at + coalesce((SELECT CAST(s.value AS BIGINT) FROM setting AS s
                             WHERE s.key = 'refresh_interval_discovery_seconds'), 300) >= f.observed_at))));
 
 -- diagnostic: live_anonymous_north_south
@@ -572,7 +586,7 @@ SELECT (SELECT count(*) FROM classified_flow AS f
 -- Expected 0.
 WITH RECURSIVE
 windows AS (
-    SELECT coalesce((SELECT CAST(value AS INTEGER) FROM setting
+    SELECT coalesce((SELECT CAST(value AS BIGINT) FROM setting
                      WHERE key = 'attribution_max_cache_answer_delay_seconds'), 3600) AS cap
 ),
 eligible AS (
@@ -593,7 +607,7 @@ paths (flow_id, observed_at, name, covered_from, held_in, links) AS (
      AND o.covered_until_at >= e.observed_at
      AND o.covered_from_at <= e.observed_at
     UNION
-    SELECT p.flow_id, p.observed_at, c.owner_name, max(p.covered_from, c.covered_from_at), 'cache',
+    SELECT p.flow_id, p.observed_at, c.owner_name, GREATEST(p.covered_from, c.covered_from_at), 'cache',
            p.links + 1
     FROM paths AS p
     JOIN resource_record_observation AS c
@@ -611,7 +625,7 @@ exact AS (
     JOIN eligible AS e ON e.id = p.flow_id
     JOIN dns_resolution AS r
       ON lower(rtrim(r.domain, '.')) = p.name
-     AND r.looked_up_at >= max(p.covered_from, e.observed_at - (SELECT cap FROM windows))
+     AND r.looked_up_at >= GREATEST(p.covered_from, e.observed_at - (SELECT cap FROM windows))
      AND r.looked_up_at <= e.observed_at
     WHERE r.action = 'pass'
       AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
@@ -636,9 +650,9 @@ WHERE a.flow_id IS NULL OR a.method <> 'resolver_cache_answer';
 -- destination was not one -- and which carry no lookup_timing attribution. Expected 0.
 WITH RECURSIVE
 windows AS (
-    SELECT coalesce((SELECT CAST(value AS INTEGER) FROM setting
+    SELECT coalesce((SELECT CAST(value AS BIGINT) FROM setting
                      WHERE key = 'attribution_max_delay_seconds'), 5) AS timing,
-           coalesce((SELECT CAST(value AS INTEGER) FROM setting
+           coalesce((SELECT CAST(value AS BIGINT) FROM setting
                      WHERE key = 'attribution_max_cache_answer_delay_seconds'), 3600) AS cap
 ),
 eligible AS (
@@ -659,7 +673,7 @@ paths (flow_id, observed_at, name, covered_from, held_in, links) AS (
      AND o.covered_until_at >= e.observed_at
      AND o.covered_from_at <= e.observed_at
     UNION
-    SELECT p.flow_id, p.observed_at, c.owner_name, max(p.covered_from, c.covered_from_at), 'cache',
+    SELECT p.flow_id, p.observed_at, c.owner_name, GREATEST(p.covered_from, c.covered_from_at), 'cache',
            p.links + 1
     FROM paths AS p
     JOIN resource_record_observation AS c
@@ -677,7 +691,7 @@ exact AS (
     JOIN eligible AS e ON e.id = p.flow_id
     JOIN dns_resolution AS r
       ON lower(rtrim(r.domain, '.')) = p.name
-     AND r.looked_up_at >= max(p.covered_from, e.observed_at - (SELECT cap FROM windows))
+     AND r.looked_up_at >= GREATEST(p.covered_from, e.observed_at - (SELECT cap FROM windows))
      AND r.looked_up_at <= e.observed_at
     WHERE r.action = 'pass'
       AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
@@ -746,7 +760,7 @@ answers AS (
      AND o.covered_until_at >= l.looked_up_at
      AND o.covered_from_at <= l.looked_up_at
     WHERE (o.held_in = 'cache' OR l.answer_source = 'Local-data')
-      AND (instr(o.address, ':') > 0) = (instr(l.dst_address, ':') > 0)
+      AND (strpos(o.address, ':') > 0) = (strpos(l.dst_address, ':') > 0)
 ),
 contradicted AS (
     SELECT flow_id FROM answers
@@ -799,7 +813,7 @@ WHERE t.observation_id IS NULL
    OR t.address <> t.dst_address
    OR t.covered_from_at > t.looked_up_at
    OR t.covered_until_at < t.observed_at
-   OR (t.held_in = 'local_data' AND (t.answer_source IS NOT 'Local-data' OR t.owner_name <> t.name))
+   OR (t.held_in = 'local_data' AND (t.answer_source IS DISTINCT FROM 'Local-data' OR t.owner_name <> t.name))
    OR (t.held_in = 'cache'
        AND NOT EXISTS (SELECT 1 FROM reach AS w WHERE w.flow_id = t.flow_id AND w.name = t.owner_name));
 
@@ -812,10 +826,11 @@ WHERE t.observation_id IS NULL
 -- flow's instant -- local-data records counting for a lookup answered from Local-data,
 -- and only those of the looked-up name itself (decision 6): no CNAME is followed into
 -- the local data (specs/SPEC-resolver-cache-follow-ups.md, scope 1, stated at
--- MaxCNAMELinks in internal/store/records.go). A flow counted here had none of the destination's family and at least
--- one of the other: the resolver held the name, in the family the client did not use,
--- so the exact method could not name the flow and timing did. A large count says the
--- clients reach names over the family the cache read sees less of.
+-- MaxCNAMELinks in internal/store/records.go). A flow counted here had none of the
+-- destination's family and at least one of the other: the resolver held the name, in
+-- the family the client did not use, so the exact method could not name the flow and
+-- timing did. A large count says the clients reach names over the family the cache
+-- read sees less of.
 WITH RECURSIVE
 timed AS (
     SELECT a.flow_id, f.observed_at, f.dst_address, lower(rtrim(r.domain, '.')) AS name,
@@ -843,9 +858,9 @@ reach (flow_id, name, links) AS (
 ),
 families AS (
     SELECT t.flow_id,
-           sum(CASE WHEN (instr(o.address, ':') > 0) = (instr(t.dst_address, ':') > 0)
+           sum(CASE WHEN (strpos(o.address, ':') > 0) = (strpos(t.dst_address, ':') > 0)
                     THEN 1 ELSE 0 END) AS same_family,
-           sum(CASE WHEN (instr(o.address, ':') > 0) <> (instr(t.dst_address, ':') > 0)
+           sum(CASE WHEN (strpos(o.address, ':') > 0) <> (strpos(t.dst_address, ':') > 0)
                     THEN 1 ELSE 0 END) AS other_family
     FROM timed AS t
     JOIN reach AS w ON w.flow_id = t.flow_id
@@ -881,7 +896,7 @@ SELECT count(*) AS eligible_flows,
                                              AND o.held_in = 'cache'
                                              AND o.covered_until_at >= f.observed_at
                                              AND o.covered_from_at <= f.observed_at)
-                              THEN 1 ELSE 0 END) / max(count(*), 1), 1) AS covered_percent
+                              THEN 1 ELSE 0 END) / greatest(count(*), 1), 1) AS covered_percent
 FROM flow AS f
 WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end

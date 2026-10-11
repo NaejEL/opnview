@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"testing"
 	"time"
 
@@ -38,7 +39,7 @@ func TestAPurgeCommittingDuringAFilterLogPassDoesNotCountTwice(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the active source: %v", err)
 	}
-	records, _, err := firewallLogSources[ProviderPf].records(ctx, harness.collector,
+	records, _, err := mustFirewallLogSource(t, ProviderPf).Records(ctx, harness.collector,
 		harness.collector.pages().FirewallLog)
 	if err != nil {
 		t.Fatalf("reading the page: %v", err)
@@ -88,7 +89,7 @@ func TestALeasePassResolvesOnlyTheHostNameLookupsSinceThePreviousOne(t *testing.
 	answer := "Recursion"
 	ingest := func(key, logged string, at int64) {
 		t.Helper()
-		lookup, err := harness.collector.buildDNSResolution(ctx, lookupRecord{
+		lookup, err := harness.collector.buildDNSResolution(ctx, dnslookup.Record{
 			DeduplicationKey: key, ClientAddress: logged, Domain: "example-site.example.invalid",
 			Action: "pass", AnswerSource: &answer, LookedUpAt: at,
 		}, "unbound", harness.clock.Now().Unix())

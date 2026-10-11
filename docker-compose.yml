@@ -2,9 +2,9 @@
 #
 # No line of this project is built or tested on the host OS: the production
 # target is an unprivileged Debian LXC, and Windows masks precisely the bug
-# classes opnview will hit (file mode and umask on the SQLite file and its
-# -wal / -shm companions, filesystem case sensitivity, SIGTERM handling,
-# timestamp normalisation).
+# classes opnview will hit (file mode and umask on the data directory and the
+# key file, filesystem case sensitivity, SIGTERM handling, timestamp
+# normalisation).
 #
 # Canonical invocation for the four project commands, byte-for-byte identical
 # in PowerShell and in bash:
@@ -15,10 +15,48 @@
 #
 #     docker compose run --rm dev bash
 #
-# Step 8 will add a separate compose file for deploying opnview on a
-# non-Proxmox host. This file is the development environment and nothing else:
-# no published port, no environment file, no secret, no OPNsense URL, no
-# network configuration.
+# THE DATABASE. opnview's store is PostgreSQL with the TimescaleDB extension
+# (ROADMAP.md, "Rules that apply to every step"). The test commands start their
+# own database service and wait for its health check; nothing is provisioned by
+# hand. No database service publishes a port: each is reached by name on the
+# Compose project's private network, and only by the containers of this file.
+#
+# This file is the development environment and nothing else: no published
+# port, no environment file, no secret, no OPNsense URL, no network
+# configuration.
+
+# THE PIN, written once. The TimescaleDB release and the PostgreSQL major are
+# both named by the image tag (TimescaleDB 2.30.2 on PostgreSQL 17.11) and fixed
+# by the digest, verified on 11 October 2026 against
+# https://github.com/timescale/timescaledb/releases/tag/2.30.2 (it supports
+# PostgreSQL 16, 17 and 18). docs/architecture.md, "Storage", records why
+# PostgreSQL 17 and the licence of what is used. The pin is changed
+# deliberately, never floated.
+x-timescaledb-image: &timescaledb-image timescale/timescaledb:2.30.2-pg17@sha256:b346edcdb51a1fd6020e3965e0bd1c9f3406fa6d5fbce1e28f4852587ef934e2
+
+# What every database service of this project runs with. Telemetry and the
+# version check are off: opnview makes no outbound call but to the firewall,
+# and refuses to start against a database where telemetry is on.
+x-database-base: &database-base
+  image: *timescaledb-image
+  healthcheck:
+    test: ["CMD", "pg_isready", "-U", "postgres", "-d", "postgres"]
+    interval: 1s
+    timeout: 3s
+    retries: 60
+
+x-test-database-environment: &test-database-environment
+  # The image's own initialisation reads this and turns the telemetry job off.
+  TIMESCALEDB_TELEMETRY: "off"
+  # Byte-order text and ASCII-only case mapping: opnview's text ordering is
+  # byte order (docs/architecture.md, "Storage"), and the store refuses a
+  # database created otherwise.
+  POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8"
+  # TRUST AUTHENTICATION, ON THE TWO TEST SERVICES ONLY. They hold nothing but
+  # the databases a test run creates and drops, they publish no port, and they
+  # are reached only on this project's private network. The serve file's
+  # database uses a generated password; this exception is the only one.
+  POSTGRES_HOST_AUTH_METHOD: trust
 
 x-dev-base: &dev-base
   build:
@@ -32,24 +70,85 @@ x-dev-base: &dev-base
       GID: ${OPNVIEW_GID:-1000}
   working_dir: /workspace
   init: true
+  environment:
+    # Where the tests create their databases: the everyday test instance.
+    OPNVIEW_TEST_DATABASE: "host=/run/opnview-test-database port=5432 user=postgres dbname=postgres sslmode=disable"
+  depends_on:
+    db-test:
+      condition: service_healthy
   volumes:
     # The repository, bind-mounted read-write. Sources reach the container this
     # way rather than through a COPY, so the build context stays empty.
     - .:/workspace
-    # The three named volumes below are mounted at paths outside the bind
-    # mount, deliberately:
-    #   - SQLite in WAL mode on a Windows bind mount has pathological locking
-    #     behaviour, so the database directory must not live in the working
-    #     tree;
-    #   - a database file, a -wal or a -shm companion on the bind mount would
-    #     also pollute the working tree and show up in git status;
-    #   - the Go caches are large, churn constantly, and are irrelevant to the
-    #     repository.
+    # The Go caches are large, churn constantly, and are irrelevant to the
+    # repository, so they live in named volumes; so does the data directory
+    # (the key file and the plugins' data), which must never land in the
+    # working tree.
     - go-mod-cache:/home/dev/go/pkg/mod
     - go-build-cache:/home/dev/.cache/go-build
     - data:/data
+    - test-database-socket:/run/opnview-test-database
 
 services:
+  # The everyday test database. Its data is on a tmpfs and its durability is
+  # off -- fsync, synchronous_commit and full_page_writes -- because nothing the
+  # everyday suite asserts depends on a write reaching a disk, and a commit that
+  # waits for one is most of what a test would otherwise spend. These three
+  # settings are permitted here and on no other service. TimescaleDB's
+  # background workers are off: a test invokes what a job would do on its own
+  # clock, and a worker holding a template database open would stop the
+  # per-test clones.
+  db-test:
+    <<: *database-base
+    environment: *test-database-environment
+    tmpfs:
+      - /var/lib/postgresql/data:mode=0700,uid=70,gid=70
+    volumes:
+      - test-database-socket:/var/run/postgresql
+    command:
+      - "postgres"
+      - "-c"
+      - "timescaledb.telemetry_level=off"
+      - "-c"
+      - "timescaledb.max_background_workers=0"
+      # The Apache-2 edition only: opnview uses no feature of the Timescale License
+      # (docs/architecture.md, "Storage"), and running the tests with the TSL code
+      # switched off is what proves it.
+      - "-c"
+      - "timescaledb.license=apache"
+      - "-c"
+      - "max_connections=500"
+      # Durability off: the tmpfs loses everything at a stop anyway.
+      - "-c"
+      - "fsync=off"
+      - "-c"
+      - "synchronous_commit=off"
+      - "-c"
+      - "full_page_writes=off"
+
+  # The pre-deployment test database: on a disk (a named volume) with
+  # PostgreSQL's production durability, so the whole suite meets a real disk
+  # once before a deployment. Background workers are off for the same reason
+  # as above.
+  db-predeployment:
+    <<: *database-base
+    environment: *test-database-environment
+    volumes:
+      - predeployment-database:/var/lib/postgresql/data
+    command:
+      - "postgres"
+      - "-c"
+      - "timescaledb.telemetry_level=off"
+      - "-c"
+      - "timescaledb.max_background_workers=0"
+      # The Apache-2 edition only: opnview uses no feature of the Timescale License
+      # (docs/architecture.md, "Storage"), and running the tests with the TSL code
+      # switched off is what proves it.
+      - "-c"
+      - "timescaledb.license=apache"
+      - "-c"
+      - "max_connections=500"
+
   # Arbitrary commands inside the Debian toolchain.
   dev:
     <<: *dev-base
@@ -64,15 +163,11 @@ services:
   # This is the EVERYDAY suite: gofmt, go vet, go build and go test without
   # -race, and every test except those moved to the pre-deployment command
   # below. Its go test wall time has a budget, one constant in ci/checks.sh, and
-  # exceeding it fails the run.
+  # exceeding it fails the run. Its databases live on db-test.
   #
-  # /tmp IS A TMPFS HERE, and only here. Every test database is created under
-  # t.TempDir, which is /tmp, and on the container's overlay filesystem each
-  # SQLite commit waited about 5 ms on its fsync; on a tmpfs the same commit takes
-  # about 11 us. Nothing the everyday suite asserts depends on a write reaching
-  # a disk. exec is required because go test builds and runs its test binaries
-  # under /tmp. The pre-deployment command keeps the overlay filesystem, so the
-  # whole suite still runs once against a real disk before a deployment.
+  # /tmp IS A TMPFS HERE, and only here: go test builds and runs its test
+  # binaries under /tmp, and nothing the everyday suite asserts depends on a
+  # write reaching a disk. exec is required for that reason.
   checks:
     <<: *dev-base
     tmpfs:
@@ -87,28 +182,38 @@ services:
   # It runs go vet and go test -race -count=1 over the whole suite with the
   # tests moved out of the everyday suite compiled in (the `predeployment` build
   # tag), the test budget's own check, and the schema checks below with their
-  # 100 000- and 1 000 000-row seeds and their query plans. Its databases live
-  # under /tmp on the overlay filesystem and, for the schema checks, under
-  # /data as the schema-checks service's do.
+  # 100 000- and 1 000 000-row seeds and their query plans -- all against
+  # db-predeployment, a disk-backed instance with production durability.
   pre-deployment:
     <<: *dev-base
+    environment:
+      OPNVIEW_TEST_DATABASE: "host=db-predeployment port=5432 user=postgres dbname=postgres sslmode=disable"
+    depends_on:
+      db-predeployment:
+        condition: service_healthy
     command: ["bash", "/workspace/ci/pre-deployment.sh"]
 
-  # The schema checks: migrations, seed, the seven screen queries and their
-  # query plans. Separate from `checks` so a schema failure stays
+  # The schema checks: the schema, the seed, the screen queries and their query
+  # plans, on psql. Separate from `checks` so a schema failure stays
   # distinguishable from a failure of the four Go commands. The command is
   # baked in for the same reason as above, so the host invocation is
   #
   #     docker compose run --rm schema-checks
   #
   # quoting-free and identical in PowerShell and in bash. Every database it
-  # creates lives in the `data` volume mounted at /data, never in the working
-  # tree.
+  # creates is created and dropped by its exact name on db-predeployment.
   schema-checks:
     <<: *dev-base
+    environment:
+      OPNVIEW_TEST_DATABASE: "host=db-predeployment port=5432 user=postgres dbname=postgres sslmode=disable"
+    depends_on:
+      db-predeployment:
+        condition: service_healthy
     command: ["bash", "/workspace/sql/schema-checks.sh"]
 
 volumes:
   go-mod-cache:
   go-build-cache:
   data:
+  predeployment-database:
+  test-database-socket:

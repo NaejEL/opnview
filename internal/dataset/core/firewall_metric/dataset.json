@@ -1,0 +1,13 @@
+{
+  "nature": "sample",
+  "freshness": {"kind": "measurement_sample"},
+  "retention": {"column": "sampled_at"},
+  "columns": [
+    {"name": "sampled_at", "type": "integer", "role": "time"},
+    {"name": "subject_kind", "type": "text"},
+    {"name": "subject_key", "type": "text"},
+    {"name": "measure", "type": "text"},
+    {"name": "unit", "type": "text"},
+    {"name": "value", "type": "real", "role": "measure", "aggregations": ["mean", "min", "max", "last", "count"]}
+  ]
+}

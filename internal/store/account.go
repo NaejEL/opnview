@@ -94,32 +94,40 @@ var ErrAccountExists = errors.New("store: the installation already has an accoun
 // first and inserts afterwards leaves a window between the two: two requests
 // carrying the same valid setup token and two DIFFERENT logins both pass the
 // count and both insert, and the UNIQUE login is a backstop only when the logins
-// collide. The guard being inside the statement means SQLite's own write
-// serialisation settles the race, and the loser is told the installation has an
-// account rather than quietly getting a second one.
+// collide. On PostgreSQL a statement's snapshot does not see another transaction's
+// uncommitted row, so the statement alone would let both through: the insert runs in
+// a transaction that first takes a lock on the table no two writers can hold at once,
+// the second waits for the first to commit, and its count then sees the first
+// account. The loser is told the installation has an account rather than quietly
+// getting a second one.
 func (s *Store) CreateAccount(ctx context.Context, login string, password PasswordHash,
 	now int64) (int64, error) {
-	result, err := s.db.ExecContext(ctx,
+	var id int64
+	transaction, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("store: creating an account: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if _, err := transaction.ExecContext(ctx, "LOCK TABLE account IN SHARE ROW EXCLUSIVE MODE"); err != nil {
+		return 0, fmt.Errorf("store: creating an account: %w", err)
+	}
+	err = transaction.QueryRowContext(ctx,
 		`INSERT INTO account (login, password_algorithm, password_memory_kib,
 		     password_iterations, password_parallelism, password_salt,
 		     password_digest, created_at, password_set_at)
 		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?
-		 WHERE NOT EXISTS (SELECT 1 FROM account)`,
+		 WHERE NOT EXISTS (SELECT 1 FROM account)
+		 RETURNING id`,
 		login, password.Algorithm, password.MemoryKiB, password.Iterations,
-		password.Parallelism, password.Salt, password.Digest, now, now)
-	if err != nil {
+		password.Parallelism, password.Salt, password.Digest, now, now).Scan(&id)
+	switch {
+	case errors.Is(err, sql.ErrNoRows):
+		return 0, ErrAccountExists
+	case err != nil:
 		return 0, fmt.Errorf("store: creating an account: %w", err)
 	}
-	inserted, err := result.RowsAffected()
-	if err != nil {
-		return 0, fmt.Errorf("store: reading whether the account was created: %w", err)
-	}
-	if inserted == 0 {
-		return 0, ErrAccountExists
-	}
-	id, err := result.LastInsertId()
-	if err != nil {
-		return 0, fmt.Errorf("store: reading the new account id: %w", err)
+	if err := transaction.Commit(); err != nil {
+		return 0, fmt.Errorf("store: creating an account: %w", err)
 	}
 	return id, nil
 }

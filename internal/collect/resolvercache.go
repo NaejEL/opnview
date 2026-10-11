@@ -12,7 +12,7 @@ import (
 // records are read once per pass, the A, AAAA and CNAME records are stored as observations
 // whose coverage interval a later poll extends, every other type is counted, and the flows
 // whose attribution the new records can change are decided again. Which resolver, which
-// endpoint and which envelope are in resolvercache_unbound.go and resolvercache_dnsmasq.go.
+// endpoint and which envelope are in resolvercache/unbound and resolvercache/dnsmasq.
 //
 // THE CACHE READ AND THE QUERY REPORT ARE TWO KINDS WITH TWO AVAILABILITY ROWS, and neither
 // ever writes the other's (scope B1 of specs/SPEC-resolver-cache-attribution.md). A
@@ -27,11 +27,11 @@ func (c *Collector) CollectResolverCache(ctx context.Context) error {
 	defer c.storing()()
 	_, request, passErr := c.readResourceRecords(ctx, KindResolverCache, store.HeldInCache,
 		func(providerKey string) (recordReader, bool) {
-			source, registered := cacheSources[providerKey]
+			source, registered := c.sources.ResolverCache.Lookup(providerKey)
 			if !registered {
 				return nil, false
 			}
-			return source.cache, true
+			return source.Cache, true
 		})
 	return c.deriveRecordPass(ctx, request, passErr)
 }

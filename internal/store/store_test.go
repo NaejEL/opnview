@@ -2,17 +2,16 @@ package store
 
 import (
 	"context"
-	"os"
-	"path/filepath"
+	"errors"
 	"strings"
 	"testing"
 )
 
-// openTestStore opens a database under t.TempDir, so no test ever writes a database,
-// a -wal or a -shm companion into the working tree.
+// openTestStore opens a database of the test's own on the test instance (testdatabase.go), and
+// returns its connection parameter, which reopens the same database.
 func openTestStore(t *testing.T) (*Store, string) {
 	t.Helper()
-	directory := t.TempDir()
+	directory := testDatabase(t)
 	database, err := Open(context.Background(), directory)
 	if err != nil {
 		t.Fatalf("opening the database: %v", err)
@@ -28,9 +27,9 @@ func openTestStore(t *testing.T) (*Store, string) {
 // TestApplyingTheSchemaTwiceChangesNothing is what makes a schema with no migration
 // runner safe to apply on every start.
 //
-// There is no schema_version table and no runner, by decision: nothing is deployed and
-// nobody has data. What replaces them is idempotence, and this is that property under
-// test — the object count, the registry, the availability rows and the settings are all
+// There is no schema_version table and no runner, by decision: the one deployment's
+// history is re-collectable (ROADMAP.md, step 5). What replaces them is idempotence,
+// and this is that property under test — the object count, the registry, the availability rows and the settings are all
 // unchanged by a second apply, so a restart cannot reset a probed state or undo a
 // setting the user changed.
 func TestApplyingTheSchemaTwiceChangesNothing(t *testing.T) {
@@ -99,7 +98,7 @@ func TestAProbedAvailabilityRowSurvivesTheSchemaBeingAppliedAgain(t *testing.T) 
 		t.Fatalf("looking up the filter-log provider: %v", err)
 	}
 	detail := "probed by this test"
-	if err := database.SetAvailability(ctx, providerID, StateReachable,
+	if err := database.SetAvailability(ctx, providerID, StateReachable, OutcomeHealthy,
 		"GET /api/diagnostics/firewall/log", &detail, 1750000000); err != nil {
 		t.Fatalf("recording availability: %v", err)
 	}
@@ -124,31 +123,29 @@ func TestAProbedAvailabilityRowSurvivesTheSchemaBeingAppliedAgain(t *testing.T) 
 	}
 }
 
-// TestClosingLeavesNoHotJournalAndAConsistentDatabase is the shutdown guarantee the
-// restart story rests on.
-//
-// The write-ahead log is checkpointed and the last connection is closed, so SQLite
-// removes the -wal and -shm companions; a hot journal left behind is exactly what a
-// restart must not meet. The integrity check is run on a freshly reopened database
-// rather than on the one that wrote it, because that is the state the next start sees.
-func TestClosingLeavesNoHotJournalAndAConsistentDatabase(t *testing.T) {
+// TestClosingReleasesTheDatabaseForTheNextStart is the shutdown guarantee the restart story rests
+// on, restated for PostgreSQL (P-AC4, P-AC13): a clean close releases the instance lock, so the
+// next start opens the same database and finds what was written; while a store holds it, a second
+// start is refused naming the reason, and the first keeps working.
+func TestClosingReleasesTheDatabaseForTheNextStart(t *testing.T) {
 	t.Parallel()
 	database, directory := openTestStore(t)
 	ctx := context.Background()
 
-	// Something to write, so the log is not empty when the checkpoint runs.
 	if err := database.SetSetting(ctx, "example_setting", "example value", 1750000000); err != nil {
 		t.Fatalf("writing a setting: %v", err)
 	}
+	if second, err := Open(ctx, directory); !errors.Is(err, ErrAlreadyRunning) {
+		if second != nil {
+			_ = second.Close()
+		}
+		t.Fatalf("a second start against a held database gave %v, not ErrAlreadyRunning", err)
+	}
+	if err := database.SetSetting(ctx, "example_setting", "still written", 1750000001); err != nil {
+		t.Fatalf("the first store stopped working after a refused second start: %v", err)
+	}
 	if err := database.Close(); err != nil {
 		t.Fatalf("closing: %v", err)
-	}
-
-	for _, companion := range []string{DatabaseFilename + "-wal", DatabaseFilename + "-shm"} {
-		if _, err := os.Stat(filepath.Join(directory, companion)); err == nil {
-			t.Errorf("%s survived a clean close, which is a hot journal for the next start",
-				companion)
-		}
 	}
 
 	reopened, err := Open(ctx, directory)
@@ -156,13 +153,8 @@ func TestClosingLeavesNoHotJournalAndAConsistentDatabase(t *testing.T) {
 		t.Fatalf("reopening after a clean close: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
-
-	result, err := reopened.IntegrityCheck(ctx)
-	if err != nil {
-		t.Fatalf("the integrity check did not run: %v", err)
-	}
-	if result != "ok" {
-		t.Fatalf("the integrity check reported %q", result)
+	if value, _, err := reopened.Setting(ctx, "example_setting"); err != nil || value != "still written" {
+		t.Fatalf("the setting reads %q after a restart (%v)", value, err)
 	}
 }
 
@@ -179,11 +171,14 @@ func TestClosingTwiceIsNotAnError(t *testing.T) {
 	}
 }
 
-// TestOpeningWithNoDataDirectoryIsRefused is decision 11 at the storage layer.
-func TestOpeningWithNoDataDirectoryIsRefused(t *testing.T) {
+// TestOpeningWithNoDatabaseIsRefused is decision 11 at the storage layer, for the database
+// connection as for the data directory: there is no default, and the refusal names the parameter
+// (P-AC3).
+func TestOpeningWithNoDatabaseIsRefused(t *testing.T) {
 	t.Parallel()
-	if _, err := Open(context.Background(), ""); err == nil {
-		t.Fatal("opening with no data directory succeeded")
+	_, err := Open(context.Background(), "")
+	if !errors.Is(err, ErrNoDatabase) || !strings.Contains(err.Error(), "--database") {
+		t.Fatalf("opening with no database connection gave %v", err)
 	}
 }
 
@@ -200,7 +195,7 @@ func TestAFreshDatabaseHasNoActiveProvider(t *testing.T) {
 	// Every kind, including the three that admit several active providers — which are read
 	// through the plural accessor, because asking those for THE active one is refused.
 	for _, kind := range []string{"firewall_log", "security_event", "flow_volume",
-		"dhcp_lease", "dns_lookup", "geo_asn", "measurement_sample", "reconciled_state"} {
+		"dhcp_lease", "dns_lookup", "ip_geolocation", "measurement_sample", "reconciled_state"} {
 		ids, err := database.ActiveProviderIDs(ctx, kind)
 		if err != nil {
 			t.Fatalf("reading the active %s providers: %v", kind, err)
@@ -314,7 +309,9 @@ func schemaFingerprint(t *testing.T, database *Store) string {
 
 	var objects int
 	if err := database.DB().QueryRowContext(ctx,
-		"SELECT count(*) FROM sqlite_master").Scan(&objects); err != nil {
+		`SELECT count(*) FROM pg_class AS c JOIN pg_namespace AS n ON n.oid = c.relnamespace
+		 WHERE n.nspname NOT LIKE 'pg_%' AND n.nspname NOT IN ('information_schema', 'public')
+		   AND n.nspname NOT LIKE '_timescaledb%'`).Scan(&objects); err != nil {
 		t.Fatalf("counting schema objects: %v", err)
 	}
 	var builder strings.Builder
@@ -322,8 +319,10 @@ func schemaFingerprint(t *testing.T, database *Store) string {
 	builder.WriteString(itoa(objects))
 
 	rows, err := database.DB().QueryContext(ctx,
-		`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-		 ORDER BY name`)
+		`SELECT quote_ident(schemaname) || '.' || quote_ident(tablename) FROM pg_tables
+		 WHERE schemaname NOT LIKE 'pg_%' AND schemaname NOT IN ('information_schema', 'public')
+		   AND schemaname NOT LIKE '_timescaledb%'
+		 ORDER BY 1`)
 	if err != nil {
 		t.Fatalf("listing the tables: %v", err)
 	}
@@ -343,8 +342,8 @@ func schemaFingerprint(t *testing.T, database *Store) string {
 	}
 
 	for _, table := range tables {
-		count, err := database.CountRows(ctx, table)
-		if err != nil {
+		var count int
+		if err := database.DB().QueryRowContext(ctx, "SELECT count(*) FROM "+table).Scan(&count); err != nil {
 			t.Fatalf("counting %s: %v", table, err)
 		}
 		builder.WriteString(" ")
@@ -366,4 +365,18 @@ func itoa(value int) string {
 		value /= 10
 	}
 	return string(digits)
+}
+
+// TestADatabaseWithTelemetryOnIsRefused is P-AC2's start half: a database whose TimescaleDB
+// telemetry is not off is refused before anything is applied to it, naming the setting.
+func TestADatabaseWithTelemetryOnIsRefused(t *testing.T) {
+	t.Parallel()
+	dsn := testDatabase(t) + " options='-c timescaledb.telemetry_level=basic'"
+	database, err := Open(context.Background(), dsn)
+	if err == nil {
+		_ = database.Close()
+	}
+	if !errors.Is(err, ErrTelemetryOn) || !strings.Contains(err.Error(), "timescaledb.telemetry_level") {
+		t.Fatalf("a database with telemetry on gave %v, not ErrTelemetryOn", err)
+	}
 }

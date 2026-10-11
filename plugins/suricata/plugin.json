@@ -1,0 +1,43 @@
+{
+  "api_version": 1,
+  "name": "suricata",
+  "version": "1.0.0",
+  "display_name": "Suricata",
+  "description": "Reads the Suricata intrusion-detection engine's alerts from its eve.json log, the one path OPNsense opens on it (data source 2).",
+  "script": "suricata.js",
+  "endpoints": [
+    {
+      "name": "query_alerts",
+      "path": "/api/ids/service/query_alerts",
+      "corrections": {"nature": "record_stream", "key": ["fileid", "filepos"], "cursor": ["fileid", "filepos"], "parameters": {"current": "page", "rowCount": "page_size", "fileid": "identifying", "searchPhrase": "identifying"}},
+      "method": "POST",
+      "body": "form",
+      "survey_section": "Data source 2 — Suricata `eve.json`",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/IDS/Api/ServiceController.php",
+      "note": "Read-only. Paging is offset-from-end-of-file and therefore unstable; the durable cursor is (fileid, filepos)."
+    },
+    {
+      "name": "alert_logs",
+      "path": "/api/ids/service/get_alert_logs",
+      "method": "GET",
+      "survey_section": "Data source 2 — Suricata `eve.json`",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/suricata/listAlertLogs.py",
+      "note": "One entry per rotated file with filename, size, modified and sequence."
+    },
+    {
+      "name": "status",
+      "path": "/api/ids/service/status",
+      "method": "GET",
+      "survey_section": "Data source 2 — Suricata `eve.json`",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/IDS/Api/ServiceController.php",
+      "note": "status of running / stopped / disabled / unknown."
+    }
+  ],
+  "providers": [
+    {
+      "kind": "security_event",
+      "display_name": "Suricata",
+      "read_strategy": "watermark"
+    }
+  ]
+}

@@ -1,0 +1,114 @@
+{
+  "type": "public_address",
+  "parameters": {
+    "families": [
+      "ipv4",
+      "ipv6"
+    ],
+    "gateways": null,
+    "history_limit": 5,
+    "show_history": true
+  },
+  "unknown_parameters": {},
+  "invalid_parameters": [],
+  "missing_parameters": [],
+  "unresolved_references": [],
+  "window": null,
+  "gaps": [],
+  "availability": [],
+  "condition": "reachable",
+  "freshness": [],
+  "aggregate_mode": "full",
+  "withheld": [],
+  "states": [],
+  "data": {
+    "upstreams": [
+      {
+        "interface": {
+          "id": 1,
+          "identifier": "wan",
+          "device": "igc0",
+          "description": "Uplink",
+          "user_label": null,
+          "label": "Uplink",
+          "labelled": false,
+          "link_kind": "physical",
+          "vlan_tag": null,
+          "upstream": true
+        },
+        "current": [
+          {
+            "address": "100.64.0.5",
+            "family": "ipv4",
+            "prefix_length": 10,
+            "source_field": "addr4",
+            "special_purpose": {
+              "block": "100.64.0.0/10",
+              "name": "Shared Address Space",
+              "reference": "RFC 6598",
+              "globally_reachable": false
+            },
+            "public": false,
+            "first_seen_at": 1789568400,
+            "last_seen_at": 1790000400,
+            "changed_at": 1789568400,
+            "change_state": "changed"
+          },
+          {
+            "address": "2a00:1450::5",
+            "family": "ipv6",
+            "prefix_length": 64,
+            "source_field": "addr6",
+            "special_purpose": null,
+            "public": true,
+            "first_seen_at": 1789136400,
+            "last_seen_at": 1790000400,
+            "change_state": "not_recorded_only_one_address_seen"
+          }
+        ],
+        "history": [
+          {
+            "address": "192.168.1.2",
+            "family": "ipv4",
+            "prefix_length": 24,
+            "source_field": "addr4",
+            "special_purpose": {
+              "block": "192.168.0.0/16",
+              "name": "Private-Use",
+              "reference": "RFC 1918",
+              "globally_reachable": false
+            },
+            "public": false,
+            "first_seen_at": 1789136400,
+            "last_seen_at": 1789568400
+          }
+        ],
+        "history_remainder": {
+          "members": 0
+        },
+        "gateways": [
+          {
+            "address": "100.64.0.1",
+            "family": "ipv4",
+            "prefix_length": null,
+            "source_field": "gateways",
+            "special_purpose": {
+              "block": "100.64.0.0/10",
+              "name": "Shared Address Space",
+              "reference": "RFC 6598",
+              "globally_reachable": false
+            },
+            "public": false,
+            "first_seen_at": 1789136400,
+            "last_seen_at": 1790000400
+          }
+        ],
+        "behind_upstream_nat": true
+      }
+    ],
+    "registries": [
+      "iana-ipv4-special-registry",
+      "iana-ipv6-special-registry"
+    ]
+  }
+}

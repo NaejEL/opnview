@@ -118,7 +118,7 @@ func TestASavedPageSizeReachesARunningCollector(t *testing.T) {
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.answerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
 	if err := harness.collector.probeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
@@ -141,8 +141,8 @@ func TestASavedPageSizeReachesARunningCollector(t *testing.T) {
 	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("a filter-log pass: %v", err)
 	}
-	requests := harness.fake.requestsTo(opnsense.FirewallLog)
-	if limit := requests[len(requests)-1].query.Get("limit"); limit != "250" {
+	requests := harness.fake.RequestsTo(opnsense.FirewallLog)
+	if limit := requests[len(requests)-1].Query.Get("limit"); limit != "250" {
 		t.Errorf("the pass after a saved page asked for %q records, want 250", limit)
 	}
 }

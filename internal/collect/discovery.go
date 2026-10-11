@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -43,6 +44,7 @@ func (c *Collector) RefreshDiscovery(ctx context.Context) error {
 	if err := c.discoverClock(ctx); err != nil {
 		failures = append(failures, err)
 	}
+	c.discoverVersion(ctx)
 
 	// The snapshot is published even when something failed, because the part that
 	// answered is better than the part that is stale.
@@ -74,7 +76,7 @@ func (c *Collector) RefreshDiscovery(ctx context.Context) error {
 
 // discoverInterfaces reads /api/interfaces/overview/interfaces_info.
 func (c *Collector) discoverInterfaces(ctx context.Context, snapshot *Discovery) error {
-	response, err := c.client.Call(ctx, opnsense.InterfacesInfo, opnsense.RequestOptions{})
+	response, err := c.read(ctx, "discovery", opnsense.InterfacesInfo, opnsense.RequestOptions{}, c.discoveryMaxAge())
 	if err != nil {
 		return err
 	}
@@ -295,7 +297,7 @@ func linkKind(vlanTag *int64) string {
 // the first of the two first-class join keys: the raw device name the filter log
 // reports, to the user-given description.
 func (c *Collector) discoverInterfaceNames(ctx context.Context, snapshot *Discovery) error {
-	response, err := c.client.Call(ctx, opnsense.InterfaceNames, opnsense.RequestOptions{})
+	response, err := c.read(ctx, "discovery", opnsense.InterfaceNames, opnsense.RequestOptions{}, c.discoveryMaxAge())
 	if err != nil {
 		return err
 	}
@@ -334,9 +336,9 @@ func (c *Collector) discoverInterfaceNames(ctx context.Context, snapshot *Discov
 // fields, because the latter are localised for legacy rows and machine logic must
 // never read a translated value.
 func (c *Collector) discoverRules(ctx context.Context, snapshot *Discovery) error {
-	response, err := c.client.Call(ctx, opnsense.SearchRule, opnsense.RequestOptions{
+	response, err := c.read(ctx, "discovery", opnsense.SearchRule, opnsense.RequestOptions{
 		Form: opnsense.Pagination(1, -1),
-	})
+	}, c.discoveryMaxAge())
 	if err != nil {
 		return err
 	}
@@ -372,6 +374,9 @@ func (c *Collector) discoverRules(ctx context.Context, snapshot *Discovery) erro
 			Interface:   ruleInterface(row),
 			Legacy:      decode.Flag(row, "legacy"),
 			IsAutomatic: decode.FlagOrFalse(decode.Flag(row, "is_automatic")),
+			// Verbatim and never evaluated (B8a of specs/SPEC-step-5b-widget-api.md):
+			// opnview matches no flow against a rule's criteria.
+			DestinationNet: ruleDestinationNet(row),
 		}
 		id, err := c.store.UpsertRule(ctx, rule, now)
 		if err != nil {
@@ -396,6 +401,22 @@ func ruleInterface(row decode.Object) *string {
 	}
 	trimmed := strings.TrimSpace(text)
 	return &trimmed
+}
+
+// ruleDestinationNet reads the rule's `destination_net` field exactly as the endpoint
+// returned it -- an address, a network, an alias name or `any` -- with no trimming and
+// no interpretation. A field the row does not carry, or one that is not text, is nil:
+// not reported.
+func ruleDestinationNet(row decode.Object) *string {
+	raw, present := row["destination_net"]
+	if !present || raw == nil {
+		return nil
+	}
+	text, isText := raw.(string)
+	if !isText {
+		return nil
+	}
+	return &text
 }
 
 // rawTwin reads the %-prefixed raw value in preference to the human-facing one.
@@ -452,7 +473,7 @@ func normaliseRuleDirection(raw string) *string {
 // change because one request failed.
 func (c *Collector) discoverClock(ctx context.Context) error {
 	readAt := c.clock.Now()
-	body, ok, err := c.readObject(ctx, opnsense.SystemTime)
+	body, ok, err := c.ReadObject(ctx, opnsense.SystemTime)
 	if err != nil {
 		return err
 	}
@@ -473,4 +494,25 @@ func (c *Collector) discoverClock(ctx context.Context) error {
 	c.firewallOffsetSeconds, c.offsetMeasured = offset, true
 	c.mutex.Unlock()
 	return nil
+}
+
+// discoverVersion reads the firewall's OPNsense version from
+// /api/diagnostics/system/systemInformation (docs/opnsense-api-survey.md, "Firewall versions,
+// read from source for A19"): a plugin's version ranges are selected against it, at every pass, so
+// an upgrade is followed without a restart. A firewall that does not answer leaves the version as
+// it was; only a plugin declaring a range notices, with firewall_version_unsupported, so discovery
+// is not incomplete for it.
+func (c *Collector) discoverVersion(ctx context.Context) {
+	body, ok, err := c.ReadObject(ctx, opnsense.SystemInformation)
+	if err != nil || !ok {
+		return
+	}
+	entries, _ := body["versions"].([]any)
+	if len(entries) == 0 {
+		return
+	}
+	first, _ := entries[0].(string)
+	if version, read := broker.ProductVersion(first); read {
+		c.broker.SetFirewallVersion(version)
+	}
 }

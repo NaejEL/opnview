@@ -1,0 +1,9 @@
+{
+  "language": "en",
+  "strings": {
+    "provider.dhcp_lease.dnsmasq": "Dnsmasq DHCP",
+    "provider.dns_lookup.dnsmasq": "Dnsmasq resolver",
+    "provider.resolver_cache.dnsmasq": "Dnsmasq cache",
+    "provider.resolver_local_data.dnsmasq": "Dnsmasq local data"
+  }
+}

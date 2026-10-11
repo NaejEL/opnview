@@ -27,7 +27,7 @@ import (
 // THE MEASUREMENT IS ONE QUERY, AND THE SAME ONE A PERSON RUNS. RecordRateBranch
 // builds the SQL; sql/queries/diagnostics.sql carries it under the name
 // RecordRateDiagnosticName, so the figure the collection surface prints can be
-// reproduced by hand with sqlite3 against the same database, and a figure that
+// reproduced by hand with psql against the same database, and a figure that
 // looks wrong can be checked rather than argued about.
 //
 // Rebuilt after the loss of 2 October 2026 from the compiled package of that
@@ -193,7 +193,7 @@ func RecordRateBranch(spec RecordRateSpec, bucketSeconds int64) string {
 		"    k.kind AS kind,",
 		"    :window_start AS window_start_at,",
 		"    :window_end AS window_end_at,",
-		"    (SELECT CAST(value AS INTEGER) FROM setting",
+		"    (SELECT CAST(value AS BIGINT) FROM setting",
 		"      WHERE key = 'retention_seconds')",
 		"        AS retention_seconds,",
 		"    " + scalar("count(*)"),

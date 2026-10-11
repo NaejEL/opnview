@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/netip"
+	"strings"
 	"testing"
 )
 
@@ -325,17 +326,56 @@ func queryInt(t *testing.T, database *Store, query string, arguments ...any) int
 	return value
 }
 
-// foreignKeyViolations runs PRAGMA foreign_key_check.
+// foreignKeyViolations counts the rows of the core tables whose foreign key names a row that does
+// not exist. PostgreSQL enforces every foreign key on every statement, so this is zero unless a
+// constraint is missing or was dropped; the check is kept to assert that it is not. Every foreign
+// key of the core schema is read from the catalogue and checked by its own columns.
 func foreignKeyViolations(t *testing.T, database *Store) int {
 	t.Helper()
-	rows, err := database.DB().QueryContext(context.Background(), "PRAGMA foreign_key_check")
+	ctx := context.Background()
+	rows, err := database.DB().QueryContext(ctx, `
+		SELECT c.conrelid::regclass::text, c.confrelid::regclass::text,
+		       (SELECT string_agg(quote_ident(a.attname), ',' ORDER BY k.ordinality)
+		        FROM unnest(c.conkey) WITH ORDINALITY AS k(attnum, ordinality)
+		        JOIN pg_attribute AS a ON a.attrelid = c.conrelid AND a.attnum = k.attnum),
+		       (SELECT string_agg(quote_ident(a.attname), ',' ORDER BY k.ordinality)
+		        FROM unnest(c.confkey) WITH ORDINALITY AS k(attnum, ordinality)
+		        JOIN pg_attribute AS a ON a.attrelid = c.confrelid AND a.attnum = k.attnum)
+		FROM pg_constraint AS c
+		JOIN pg_namespace AS n ON n.oid = c.connamespace
+		WHERE c.contype = 'f' AND n.nspname = ?`, CoreSchema)
 	if err != nil {
-		t.Fatalf("running the foreign-key check: %v", err)
+		t.Fatalf("listing the foreign keys: %v", err)
 	}
-	defer func() { _ = rows.Close() }()
-	count := 0
+	type key struct{ child, parent, childColumns, parentColumns string }
+	var keys []key
 	for rows.Next() {
-		count++
+		var k key
+		if err := rows.Scan(&k.child, &k.parent, &k.childColumns, &k.parentColumns); err != nil {
+			t.Fatal(err)
+		}
+		keys = append(keys, k)
 	}
-	return count
+	_ = rows.Close()
+	violations := 0
+	for _, k := range keys {
+		var count int
+		query := "SELECT count(*) FROM " + k.child + " AS child WHERE (" + k.childColumns +
+			") IS NOT NULL AND NOT EXISTS (SELECT 1 FROM " + k.parent + " AS parent WHERE (" +
+			prefixColumns("parent", k.parentColumns) + ") = (" + prefixColumns("child", k.childColumns) + "))"
+		if err := database.DB().QueryRowContext(ctx, query).Scan(&count); err != nil {
+			t.Fatalf("checking %s -> %s: %v", k.child, k.parent, err)
+		}
+		violations += count
+	}
+	return violations
+}
+
+// prefixColumns qualifies a comma-separated column list with an alias.
+func prefixColumns(alias, columns string) string {
+	parts := strings.Split(columns, ",")
+	for index, column := range parts {
+		parts[index] = alias + "." + column
+	}
+	return strings.Join(parts, ", ")
 }

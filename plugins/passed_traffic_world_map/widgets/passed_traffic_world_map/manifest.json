@@ -1,0 +1,80 @@
+{
+  "manifest_version": 1,
+  "type": "passed_traffic_world_map",
+  "shape": "map",
+  "providers": [
+    "firewall_log",
+    "ip_geolocation"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "scope",
+      "kind": "enum",
+      "values": [
+        "north_south",
+        "all"
+      ],
+      "default": "north_south",
+      "class": "data"
+    },
+    {
+      "key": "size_by",
+      "kind": "enum",
+      "values": [
+        "bytes",
+        "connections"
+      ],
+      "default": "bytes",
+      "class": "data"
+    },
+    {
+      "key": "min_bytes",
+      "kind": "integer",
+      "default": 0,
+      "class": "data"
+    },
+    {
+      "key": "show_unplaced",
+      "kind": "boolean",
+      "default": true,
+      "class": "rendering"
+    },
+    {
+      "key": "cluster",
+      "kind": "boolean",
+      "default": true,
+      "class": "rendering"
+    }
+  ],
+  "references": [
+    "interface"
+  ],
+  "queries": [],
+  "script": "passed_traffic_world_map.js",
+  "renderer": {
+    "reserved": true
+  }
+}

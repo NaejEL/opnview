@@ -49,7 +49,10 @@ so and amend this roadmap rather than quietly working around it.
   the authenticated REST API and nothing else. Where a firewall setting has to
   be turned on for a source to exist — the resolver query log, for instance —
   it is a manual step the user performs, documented in the README. The
-  application never performs it.
+  application never performs it. Read-only is enforced by the broker for every
+  plugin: GET, and POST to read actions (commands starting with `search`,
+  `get`, `query` or `list`, or ending with `status`), with the list of
+  mutating commands checked first.
 - **Three outbound calls, not one more**: the firewall API (local network),
   the MaxMind database download, and the Public Suffix List download from
   publicsuffix.org. The third was added by the maintainer's decision for step
@@ -58,28 +61,53 @@ so and amend this roadmap rather than quietly working around it.
   every suffix added after the build wrongly, with no way to tell. It is
   refreshed daily and fetched conditionally, so an unchanged list costs a 304,
   and the previous good copy stays in use when a download fails. No telemetry,
-  no version check, no resource loaded from a CDN.
+  no version check, no resource loaded from a CDN. The connection to the
+  installation's own database is not an outbound call: it goes to the
+  PostgreSQL the installer set up, over a Unix socket or the installation's
+  private container network, and to no other host. Images pulled at install or
+  update time are installation-time downloads, not calls the product makes.
 - **The observation limit is documented, not printed**: the application only
   sees what crosses the router, so every figure is a lower bound.
 - **Degrade, never guess.** Suricata may be absent, installed but stopped, or
   running on only some interfaces. Which interfaces its alerts cover is a fact
   about the data, documented here; the interface does not recite it.
-- **One service, installed and updated by a single command, with no external
-  data store to provision. Storage engines are embedded libraries, not
-  servers.** This replaces the earlier "single Go binary" rule, which was an
-  inherited assumption rather than a reasoned constraint and was on the point
-  of deciding the telemetry storage engine for no stated reason. What the old
-  rule actually protected is the install story, and that is what the new one
-  keeps. **Permitted**: SQLite, unchanged and still the store for everything
-  the current schema holds; DuckDB, which is a library rather than a server and
-  which OPNsense itself already ships behind the Unbound query report; and a
-  time-series store written in pure Go, on the same test. **Forbidden**:
-  PostgreSQL, TimescaleDB, InfluxDB, VictoriaMetrics — not on their merits, but
-  because each would make someone installing a network-visibility tool into an
-  unprivileged LXC administer a separate database. Several storage engines is
-  not several processes: the install, update, systemd and backup stories are
-  unchanged. `README.md` and `CLAUDE.md` point at this bullet rather than
-  restating it.
+- **One service and its database, installed and updated by a single command.
+  The user provisions nothing by hand.** The store is **PostgreSQL with the
+  TimescaleDB extension** (the maintainer's decision of 11 October 2026). It
+  runs beside `opnview` as part of the same installation: the installer
+  creates, configures and starts it, and the user never creates a database, a
+  role or a password.
+
+  This replaces an earlier rule, written by the orchestrator rather than the
+  maintainer, that storage engines be embedded libraries and that forbade
+  PostgreSQL and TimescaleDB. What that rule protected was the install story,
+  and the install story is kept:
+  - one command installs;
+  - re-running it updates;
+  - one documented command backs up: `pg_dump`, plus the key file in the data
+    directory.
+
+  What changed is the judgement on the cost. SQLite's single writer, the
+  hand-built calendar rollups and one shared file for every plugin's tables
+  cost more than a second process does.
+
+  **Versions are pinned:** the PostgreSQL major and the TimescaleDB release, by
+  exact version and image digest, and they are changed deliberately.
+
+  **Licence:** `opnview` uses TimescaleDB's Apache-2.0 edition only -- no
+  continuous aggregate and no TimescaleDB background job
+  (`docs/architecture.md`, *Storage*). `opnview` stays MIT and neither links
+  nor redistributes TimescaleDB.
+
+  **TimescaleDB's telemetry is off,** and `opnview` refuses to start if it is
+  not.
+
+  **Not permitted:**
+  - a second storage engine or data store, without a maintainer decision;
+  - a database reachable through a published port;
+  - a database credential in the repository.
+
+  `README.md` and `CLAUDE.md` point at this bullet rather than restating it.
 - **The vocabulary is OPNsense's, and that of every product `opnview` reads. It
   never invents a term for something those products already name.** When the
   right term is not known it is researched — in
@@ -129,10 +157,12 @@ from `/api/unbound/diagnostics/*` and need no setting turned on.
 No line of this project is built or tested on the host OS, and **no Go
 toolchain is installed on the host**. The toolchain lives in a Debian
 `trixie-slim` container defined by `Dockerfile` and `docker-compose.yml`, with
-the Go version pinned and checksum-verified. The production target is an
+the Go version pinned and checksum-verified, and ShellCheck pinned and verified the
+same way, so the shell scripts are checked in the container by `sql/schema-checks.sh`
+rather than on the host. The production target is an
 unprivileged Debian LXC, and a Windows host masks exactly the bug classes
-`opnview` will hit: file mode and umask on the SQLite file and its `-wal` /
-`-shm` companions, filesystem case sensitivity, `SIGTERM` handling for the
+`opnview` will hit: file mode and umask on the data directory and the key file,
+filesystem case sensitivity, `SIGTERM` handling for the
 future systemd unit, and normalising the OPNsense filter-log timestamps, which
 carry neither year nor timezone.
 
@@ -158,10 +188,10 @@ maintainer's test budget of 7 October 2026,
   constant `TEST_BUDGET_SECONDS` in `ci/checks.sh`: the script measures the time,
   prints it beside the container's CPU count so a slower or busier machine is
   identifiable, and fails above the budget with a message that names it. `-count=1`
-  makes the time the suite's rather than a cache hit's. Its `/tmp`, where every test
-  database is created, is a tmpfs: each SQLite commit waited about 5 ms on its
-  fsync on the container's overlay filesystem, and nothing the everyday suite
-  asserts depends on a write reaching a disk.
+  makes the time the suite's rather than a cache hit's. The everyday suite's
+  PostgreSQL test instance keeps its data on a tmpfs with durability off, which
+  nothing the suite asserts depends on; the pre-deployment command runs against a
+  disk-backed instance with production settings.
 - **`docker compose run --rm pre-deployment` is the gate run before a
   deployment**, not on every iteration. It runs `go vet` and
   `go test -race -count=1` over the whole suite with the moved tests compiled in,
@@ -180,13 +210,26 @@ maintainer's test budget of 7 October 2026,
   derivation, running the tests in parallel, rendering the web pages once per
   package and putting `/tmp` on a tmpfs, so nothing had to leave it.
 
+**`OPNVIEW_DATA_DIR` and Git Bash.** The data directory of the scripts the
+pre-deployment command runs is `OPNVIEW_DATA_DIR`, **`/data` by default** — the
+`data` volume, mounted outside the bind-mounted working tree so that nothing they
+write lands in the repository; their databases live on the PostgreSQL instance
+`db-predeployment`. The value is a path **inside the container**: a relative one resolves
+against `/workspace`, the repository itself. From Git Bash, MSYS path conversion
+rewrites a POSIX-looking path into a Windows one before docker sees it — `/data`
+arrives as `C:/Program Files/Git/data` — so a docker command passing a container
+path from Git Bash is prefixed with `MSYS_NO_PATHCONV=1`. Both scripts refuse, before
+any step runs and naming the variable, a value that is not absolute or that carries a
+drive letter, a `:` or a `\` (`ci/data-dir-guard.sh`, decision 16 of
+`specs/SPEC-step-5b-widget-api.md`); leaving the variable unset is always right.
+
 `docker compose run --rm dev
 bash` opens an interactive shell in the same environment, and
 `.devcontainer/devcontainer.json` reuses the same `dev` service so VS Code
 "Reopen in Container" gives the editor that toolchain too. The Go module cache,
-the Go build cache and the SQLite data directory live in named volumes mounted
-outside the bind-mounted working tree, so a database and its WAL companions
-never land in the repository and never suffer Windows bind-mount locking.
+the Go build cache and the database's data live in named volumes mounted
+outside the bind-mounted working tree, so a database never lands in the
+repository and never suffers Windows bind-mount locking.
 
 **What this environment does not prove.** Docker provides the Debian userland
 and the Linux kernel, and nothing more. It does **not** exercise, and must
@@ -203,16 +246,21 @@ container run says nothing about deployment.
 
 ## Steps
 
+**Order of work.** Step 7 is done before step 6 (decided by the maintainer on 10 October
+2026): the canvas of the step-3 mockup is built on the step-5 widget API first, and the
+alerts of step 6 follow as widgets on it. The numbers are kept, because code and
+documents refer to them.
+
 |#|Step|Deliverable|Status|
 |---|---|---|---|
 |1|OPNsense API exploration|Verified findings document|Done|
 |2|Data model and SQLite schema|Schema + model document|Done|
 |3|Static HTML mockup — overview|HTML file for a representative canvas, fake data|Done|
 |4|Backend: collection and storage|Collectors + persistence + tests|Done — validated against a live OPNsense 26.7 on 3 October 2026|
-|5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|In progress — 5A (correlation, classification, aggregation) implemented, **not yet validated live**: its first live run, on 5 October 2026, measured the defects `specs/SPEC-step-5a-live-corrections.md` corrects; the resolver-cache cycle (`specs/SPEC-resolver-cache-attribution.md`) attributes site names from the resolver cache first and by timing as the fallback, records the method on each attribution, resolves host names through local data and reads the processor from its stream, **implemented, not yet validated live**; 5B (HTTP API) to do|
-|6|Backend: alerts and client correlation|Alert model + API + tests|To do|
+|5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|In progress — 5A (correlation, classification, aggregation) implemented, **not yet validated live**: its first live run, on 5 October 2026, measured the defects `specs/SPEC-step-5a-live-corrections.md` corrects; the resolver-cache cycle (`specs/SPEC-resolver-cache-attribution.md`) attributes site names from the resolver cache first and by timing as the fallback, records the method on each attribution, resolves host names through local data and reads the processor from its stream, **implemented, not yet validated live**; 5B (the widget HTTP API, `docs/widget-api.md`; `specs/SPEC-step-5b-widget-api.md`) implemented, **not yet validated live**|
 |7|Full frontend|Canvases, widgets, dashboard import/export|To do|
-|8|Install, packaging, documentation|`ct/install.sh`, compose, README|To do|
+|6|Backend: alerts and client correlation|Alert model + API + tests|To do|
+|8|Install, packaging, documentation|`ct/install.sh`, compose (opnview + PostgreSQL/TimescaleDB), README|To do|
 
 ### Step 1 — OPNsense API exploration
 
@@ -390,7 +438,10 @@ every step** above. Prerequisite: the containerised toolchain described under
 - Continuous incremental ingestion of `eve.json` with a durable cursor.
 - SQLite persistence, own history independent of the firewall's retention.
 - **The schema is one file, applied idempotently on every start, and there are
-  no migrations.** Nothing is deployed and nobody has data, so numbered files, a
+  no migrations.** The one deployment is the maintainer's live validation
+  installation, whose history is re-collectable from the firewall (a schema change
+  means rebuilding its database: step 5, *Rebuilding the database after step 5B*),
+  so numbered files, a
   `schema_version` table and a runner are machinery for a problem that does not
   exist. **Migrations begin the day the product runs somewhere with data worth
   keeping**: that file becomes the baseline and the first real migration is the
@@ -442,7 +493,28 @@ every step** above. Prerequisite: the containerised toolchain described under
   canvas will legitimately show different periods. A multi-series endpoint
   accepts a list of series and returns a list of series, each carrying its own
   availability state, so one missing source degrades one line rather than the
-  whole chart.
+  whole chart. *Implemented by 5B* (`specs/SPEC-step-5b-widget-api.md`): 26 of the
+  29 presets are served at `GET /api/widget/{type}`, the three alert presets wait for
+  step 6, and the contract is `docs/widget-api.md`.
+
+**Rebuilding the database after step 5B.** Step 5B edits `schema.sql` in place, as
+every step before step 8 does: it adds `source_availability.outcome`,
+`rule.destination_net`, `dns_resolution.client_family`, and the tables
+`opnview_heartbeat` and `opnview_downtime`. `CREATE TABLE IF NOT EXISTS` does not add
+a column to a table that already exists, so **a database written by any build before
+step 5B (`a1e2707` and earlier) does not open under it**: the service refuses to start
+with `ErrSchemaOutdated` (`internal/store/store.go`), which names this paragraph,
+rather than run on a half-applied schema. The one installation this concerns is the
+maintainer's live validation deployment, and its history is re-collectable: before
+the 5B build first starts there, the service is stopped and `opnview.db` — with its
+`-wal` and `-shm` companions, if a crash left them — is moved aside by exact path,
+never deleted, then the service starts on an empty database and collects again. The
+setup wizard runs again, because the accounts and settings live in the same file;
+the key file beside it is kept. What is lost is the history older than the firewall's
+own retention, and the live-validation baseline of
+`specs/SPEC-step-5b-widget-api.md` is therefore taken on the old build's database
+before the move. Migrations still begin with step 8, when an installation holds data
+somebody other than the maintainer cannot re-collect.
 
 **Validation**: the numbers are correct, and the heuristic's attribution rate
 is honest.
@@ -504,6 +576,8 @@ addresses or counts are recorded here.
 
 ### Step 6 — Backend: alerts and client correlation
 
+Done after step 7 (see *Order of work* above).
+
 - Ingest Suricata alerts: signature, source, destination, timestamp. The API
   flattens the nested alert object to the signature string, so severity and
   category are resolved separately through `get_rule_info/<sid>` and cached.
@@ -518,6 +592,23 @@ addresses or counts are recorded here.
 right client and interface.
 
 ### Step 7 — Full frontend
+
+**The frontend follows the same plugin model as the backend (maintainer, 11 October
+2026).** Themes, languages, widget renderers and **front-only widgets** are plugins:
+a directory dropped into the installation, discovered at start, with no fork, PR,
+build step or merge.
+- A front-only widget is a renderer that computes and draws from data the API
+  already serves, such as the data catalogue, and needs no backend part.
+- A widget plugin may also carry a renderer for data its own backend part
+  provides.
+- The step-7 specification defines the front plugin contract (manifest,
+  renderer entry point, theme tokens, strings) on the same footing as
+  `docs/plugins.md`.
+- **One generic settings page serves every plugin and widget (maintainer, 11
+  October 2026).** It is drawn from the settings a plugin declares, optionally,
+  in its manifest: type, default, bounds, choices, label, and secrets. No plugin
+  writes a settings screen. Secrets are write-only: the page shows their state,
+  never their value. The plugin reads what the user set through `host.settings`.
 
 The canvas frontend, served by the binary, no exotic build chain, fonts and
 scripts included in the binary. **There is no fixed screen list and no view
@@ -643,6 +734,12 @@ data.
   the end, update by re-running the same command without data loss. Asks
   **nothing** about OPNsense or MaxMind.
 - `docker-compose.yml` for non-Proxmox users.
+- The single command installs Docker Engine and its compose plugin when absent
+  (an unprivileged Proxmox LXC needs nesting enabled), writes the compose file
+  and a generated database credential into the installation directory, and
+  starts both containers. Re-running it updates: it pulls the pinned images and
+  restarts, keeping the database volume and the data directory. Database
+  version bumps follow the procedure each release documents.
 - README: problem solved, screenshots of **representative canvases with the
   dashboard files that produced them committed as examples** — which has a
   second benefit, since those files exercise import on every clone — one-line
@@ -654,6 +751,41 @@ data.
   (`LICENSE`).
 
 **Validation**: successful install from scratch on a PVE node.
+
+### Planned: push sources — syslog and NetFlow (maintainer, 12 October 2026; not yet scheduled)
+
+Plugins may receive data **pushed** by the firewall, as well as pull it through the broker:
+- **syslog**, RFC 3164 and 5424, over UDP and TCP;
+- **NetFlow v9 / IPFIX**, over UDP.
+
+The user configures OPNsense to send to opnview. opnview itself still never writes to the firewall.
+
+**The core stays agnostic.** It holds:
+- the listeners;
+- a generic decoder for each protocol: the syslog header, and NetFlow template decoding;
+- routing by subscription.
+
+It holds no knowledge of any program's message format.
+
+A plugin declares in its manifest:
+- the source (`syslog` or `netflow`);
+- a header filter (for syslog, the `program`);
+- for syslog, a named-group regular expression applied to the message;
+- the output table and its typed columns, which become a TimescaleDB hypertable on its time column.
+
+A syslog line that no plugin subscribes to is dropped at the header, at no cost.
+
+Points the specification of this step must settle:
+
+- **Typed columns use the plugin type vocabulary** (`ip`, `mac`, `instant`, `integer`…), mapped to native PostgreSQL types such as `inet` and `timestamptz`. They are not free SQL type strings. This keeps validation, compression and the data catalogue's roles.
+- **A message a regex cannot express**, such as filterlog's CSV with its many variants, may name an optional JavaScript parse function. The regex stays the fast path.
+- **Only the configured firewall is accepted as a sender.** Spoofed UDP is never stored.
+  - TCP syslog uses RFC 6587 octet counting.
+  - Receive buffers are bounded. A drop is counted and recorded as a gap, never silently.
+- **Timestamps.** RFC 3164 has no year and no zone. The firewall's measured UTC offset applies. NetFlow uses its own export time.
+- **NetFlow interface indexes** are mapped to OPNsense interfaces through the API, a read through the broker.
+- **One catalogue.** Pushed sources appear in the API catalogue and the data catalogue like pulled ones. A plugin may declare that a pushed source replaces a polled endpoint, as for event streams: polling stops while the push is alive and resumes when it stops.
+- **One decoding, several subscribers.** Several plugins subscribed to the same program or flow share one decoding pass. Each writes only its own declared columns.
 
 ## Superseded decisions
 

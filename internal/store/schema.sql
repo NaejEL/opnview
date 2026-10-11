@@ -1,7 +1,9 @@
 -- opnview — the schema. One file, applied in place.
 --
 -- THERE ARE NO MIGRATIONS, AND THAT IS A DECISION RATHER THAN AN OMISSION.
--- Nothing is deployed and nobody has data, so numbered files, a
+-- The one deployment is the maintainer's live validation installation, whose
+-- history is re-collectable from the firewall (ROADMAP.md, step 5, "Rebuilding
+-- the database after step 5B"), so numbered files, a
 -- `schema_version` table and a runner would be machinery for a problem that
 -- does not exist. This file is edited in place, and it is applied on every
 -- start: every statement below is idempotent, so applying it to a database
@@ -39,12 +41,71 @@
 -- millisecond value mistakenly stored as seconds, and a negative instant.
 
 -- ---------------------------------------------------------------------------
+-- The engine and the namespace (decision 13 of
+-- specs/SPEC-backend-completion-plugins.md). The store is PostgreSQL with the
+-- TimescaleDB extension; every core object lives in the schema `opnview`, never
+-- in `public`, so a plugin's schema (prefixed, plugintables.go) and the
+-- learned mirror's (`opnsense`) never share a namespace with the core.
+-- ---------------------------------------------------------------------------
+CREATE EXTENSION IF NOT EXISTS timescaledb;
+CREATE SCHEMA IF NOT EXISTS opnview;
+SET LOCAL search_path TO opnview, public;
+
+-- THE CALENDAR MONTH OF AN INSTANT, IN UTC. Every instant is stored as integer
+-- epoch seconds (the JSON API serves them so, byte for byte), and the monthly
+-- aggregates and the purge need the month an instant falls in: its first second
+-- and the first second of the next month, 28 to 31 days later. Computed in UTC
+-- whatever the server's time zone.
+CREATE OR REPLACE FUNCTION month_start_at(at BIGINT) RETURNS BIGINT
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$ SELECT CAST(extract(epoch FROM date_trunc('month', to_timestamp(at) AT TIME ZONE 'UTC')) AS BIGINT) $$;
+
+CREATE OR REPLACE FUNCTION next_month_start_at(at BIGINT) RETURNS BIGINT
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$ SELECT CAST(extract(epoch FROM date_trunc('month', to_timestamp(at) AT TIME ZONE 'UTC')
+                                     + interval '1 month') AS BIGINT) $$;
+
+-- ROW IDS ARE ASSIGNED AS THEY ALWAYS WERE: one more than the largest in use.
+-- Every table whose rows are numbered by `id` keeps the numbering the store
+-- was written against, and that every widget response carries -- a key such as
+-- "interface:3" is that number. A PostgreSQL sequence would advance on every
+-- upsert that conflicts and skip numbers a later insert then takes, so a run
+-- would number its interfaces and clients differently from the same run a
+-- moment earlier. A BEFORE INSERT trigger therefore gives a row without an id
+-- the largest id of its table plus one, under a transaction-scoped advisory
+-- lock on the table, so two concurrent writers can never take the same number:
+-- the writers of one table are serialised, which is what the store was
+-- written against. The lock's first key, 1, keeps it apart from the
+-- instance lock (store.go). The trigger function is one per table, with
+-- static SQL, so its plan is prepared once per connection.
+CREATE OR REPLACE FUNCTION install_assign_id(target regclass) RETURNS void
+LANGUAGE plpgsql AS $install$
+DECLARE
+    name text := (SELECT relname FROM pg_class WHERE oid = target);
+BEGIN
+    EXECUTE format($function$
+        CREATE OR REPLACE FUNCTION %I() RETURNS trigger LANGUAGE plpgsql AS $body$
+        BEGIN
+            IF NEW.id IS NULL THEN
+                PERFORM pg_advisory_xact_lock(1, %s);
+                NEW.id := coalesce((SELECT max(id) FROM %s), 0) + 1;
+            END IF;
+            RETURN NEW;
+        END
+        $body$
+    $function$, name || '_assign_id', target::oid::integer, target);
+    EXECUTE format('CREATE OR REPLACE TRIGGER assign_id BEFORE INSERT ON %s FOR EACH ROW EXECUTE FUNCTION %I()',
+                   target, name || '_assign_id');
+END
+$install$;
+
+-- ---------------------------------------------------------------------------
 -- Configuration. Bounded: one row per setting key.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS setting (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
-    updated_at INTEGER NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
+    updated_at BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------
@@ -73,17 +134,17 @@ CREATE TABLE IF NOT EXISTS setting (
 -- Argon2id output over (password, salt, parameters) and nothing else.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS account (
-    id                   INTEGER PRIMARY KEY,
+    id                   BIGINT PRIMARY KEY,
     login                TEXT NOT NULL UNIQUE CHECK (length(login) > 0),
     password_algorithm   TEXT NOT NULL CHECK (length(password_algorithm) > 0),
-    password_memory_kib  INTEGER NOT NULL CHECK (password_memory_kib > 0),
-    password_iterations  INTEGER NOT NULL CHECK (password_iterations > 0),
-    password_parallelism INTEGER NOT NULL CHECK (password_parallelism > 0),
-    password_salt        BLOB NOT NULL CHECK (length(password_salt) >= 16),
-    password_digest      BLOB NOT NULL CHECK (length(password_digest) >= 16),
-    created_at           INTEGER NOT NULL
+    password_memory_kib  BIGINT NOT NULL CHECK (password_memory_kib > 0),
+    password_iterations  BIGINT NOT NULL CHECK (password_iterations > 0),
+    password_parallelism BIGINT NOT NULL CHECK (password_parallelism > 0),
+    password_salt        BYTEA NOT NULL CHECK (length(password_salt) >= 16),
+    password_digest      BYTEA NOT NULL CHECK (length(password_digest) >= 16),
+    created_at           BIGINT NOT NULL
                          CHECK (created_at >= 0 AND created_at < 4102444800),
-    password_set_at      INTEGER NOT NULL
+    password_set_at      BIGINT NOT NULL
                          CHECK (password_set_at >= 0 AND password_set_at < 4102444800)
 );
 
@@ -108,11 +169,11 @@ CREATE TABLE IF NOT EXISTS account (
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS session (
     token_digest TEXT PRIMARY KEY,
-    account_id   INTEGER NOT NULL REFERENCES account(id) ON DELETE CASCADE,
+    account_id   BIGINT NOT NULL REFERENCES account(id) ON DELETE CASCADE,
     csrf_token   TEXT NOT NULL CHECK (length(csrf_token) > 0),
-    created_at   INTEGER NOT NULL CHECK (created_at >= 0 AND created_at < 4102444800),
-    last_seen_at INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
-    expires_at   INTEGER NOT NULL CHECK (expires_at >= 0 AND expires_at < 4102444800)
+    created_at   BIGINT NOT NULL CHECK (created_at >= 0 AND created_at < 4102444800),
+    last_seen_at BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
+    expires_at   BIGINT NOT NULL CHECK (expires_at >= 0 AND expires_at < 4102444800)
 );
 
 CREATE INDEX IF NOT EXISTS idx_session_account
@@ -155,9 +216,9 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
     name       TEXT PRIMARY KEY,
     algorithm  TEXT NOT NULL CHECK (length(algorithm) > 0),
     key_id     TEXT NOT NULL CHECK (length(key_id) > 0),
-    nonce      BLOB NOT NULL CHECK (length(nonce) > 0),
-    ciphertext BLOB NOT NULL CHECK (length(ciphertext) > 0),
-    updated_at INTEGER NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
+    nonce      BYTEA NOT NULL CHECK (length(nonce) > 0),
+    ciphertext BYTEA NOT NULL CHECK (length(ciphertext) > 0),
+    updated_at BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------
@@ -166,9 +227,14 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 -- implementation known to the project.
 --
 -- Registering an implementation is an INSERT, never a migration: nothing here
--- enumerates provider names in a CHECK. What is constrained is the `kind`, the
--- eight seams docs/architecture.md names, because a kind is a contract opnview
--- implements and not data a deployment supplies.
+-- enumerates provider names in a CHECK. And since the plugin cycle
+-- (specs/SPEC-backend-completion-plugins.md, Decisions) nothing enumerates the
+-- KINDS either: a plugin may declare a kind of its own, with tables of its own
+-- (docs/plugins.md), and its provider row names that kind. What the CHECK keeps
+-- is the shape of a kind name, a snake_case word. The core kinds -- the seams
+-- listed below -- are defined once, with their record contracts, in
+-- internal/collect/provider (contract.go), which docs/plugins.md is tested
+-- against.
 --
 -- Endpoints, one citation per kind, all in docs/opnsense-api-survey.md:
 --   firewall_log    /api/diagnostics/firewall/log            (data source 1)
@@ -179,8 +245,10 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 --                   /api/dhcpv4/leases/searchLease           (data source 4)
 --   dns_lookup      /api/unbound/overview/search_queries,
 --                   /api/diagnostics/log/core/dnsmasq        (data source 5)
---   geo_asn         the MaxMind GeoLite2 City and ASN databases, the second of
---                   the three outbound calls the project allows
+--   ip_geolocation  a dataset placing public addresses; the built-in provider
+--                   is the maxmind plugin (MaxMind GeoLite2 City and ASN),
+--                   which downloads through the plugin host's fetch facility
+--                   (docs/plugins.md). Its answers are rows of geo_asn.
 --   measurement_sample
 --                   /api/diagnostics/system/systemResources,
 --                   /api/diagnostics/system/systemTemperature,
@@ -206,13 +274,13 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 --                   overrides among them. "Local data" is Unbound's own word
 --                   (unbound.conf(5), local-data; unbound-control(8),
 --                   list_local_data).
---   public_suffix   the Public Suffix List, downloaded from publicsuffix.org,
---                   the third of the three outbound calls the project allows.
---                   It supplies no row of observed data: it is the rule set
---                   the registrable domain of a site name is computed from
---                   (internal/publicsuffix). It is a kind because it has a
---                   provider, an availability and failures to record, exactly
---                   as geo_asn does.
+--   registrable_domain
+--                   a list giving a site name its registrable domain; the
+--                   built-in provider is the publicsuffix plugin (the Public
+--                   Suffix List, from publicsuffix.org, through the fetch
+--                   facility). It supplies no row of observed data. It is a
+--                   kind because it has a provider, an availability and
+--                   failures to record, exactly as ip_geolocation does.
 --   reconciled_state
 --                   no endpoint is read for it yet. It is the shape ten of the
 --                   eleven surveyed sources that fit no kind at all produce:
@@ -265,13 +333,13 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 --   flow_volume         (day_start_at, endpoints, port, protocol)   no
 --   dhcp_lease          (address, generation_key, provider_id)      YES
 --   dns_lookup          dns_resolution.lookup_key                   no
---   geo_asn             geo_asn.address                             no
+--   ip_geolocation      geo_asn.address                             no
 --   measurement_sample  (subject, measure, sampled_at, provider)    YES
 --   reconciled_state    (provider_id, set_key, captured_at)         YES
 --   resolver_cache      (provider_id, owner_name, rrtype, value,    YES
 --                        first_seen_at) of resource_record_observation
 --   resolver_local_data the same, of the same table                  YES
---   public_suffix       one list file on disk, no row                no
+--   registrable_domain  one list file on disk, no row                no
 --
 -- dhcp_lease IS CONCURRENT, AND THE DEPLOYMENT IS THE ORDINARY ONE: one server
 -- issuing on one VLAN and another on a second, two scopes with no overlap. The
@@ -289,37 +357,25 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 -- could report the same backend -- a second implementation reading a Kea running
 -- somewhere else would -- and the rule above is stated in terms of the provider,
 -- so keying on the backend would have satisfied the letter of it and not the
--- substance. No `ifnull` wrapper is needed here, unlike measurement_sample: a
+-- substance. No `coalesce` wrapper is needed here, unlike measurement_sample: a
 -- lease with no provider is not reachable, because a lease is issued by a server,
 -- and the column is NOT NULL.
 --
--- geo_asn is exclusive because its row is one cache entry per address and a
+-- ip_geolocation is exclusive because its row is one cache entry per address and a
 -- second provider would overwrite the first's answer rather than add to it.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS provider (
-    id            INTEGER PRIMARY KEY,
+    id            BIGINT PRIMARY KEY,
     kind          TEXT NOT NULL
-                  CHECK (kind IN ('firewall_log', 'security_event', 'flow_volume',
-                                  'dhcp_lease', 'dns_lookup', 'geo_asn',
-                                  'measurement_sample', 'reconciled_state',
-                                  'public_suffix', 'resolver_cache',
-                                  'resolver_local_data')),
+                  CHECK (length(kind) BETWEEN 1 AND 64
+                         AND translate(kind, 'abcdefghijklmnopqrstuvwxyz0123456789_', '') = ''),
     provider_key  TEXT NOT NULL,
     display_name  TEXT NOT NULL,
-    is_active     INTEGER NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
-    registered_at INTEGER NOT NULL CHECK (registered_at >= 0 AND registered_at < 4102444800),
+    is_active     BIGINT NOT NULL DEFAULT 0 CHECK (is_active IN (0, 1)),
+    registered_at BIGINT NOT NULL CHECK (registered_at >= 0 AND registered_at < 4102444800),
     UNIQUE (kind, provider_key)
 );
 
--- The index that admitted one active provider per kind, dropped by name.
---
--- It is named here rather than merely deleted because this file is applied on
--- every start: an object the file no longer declares would otherwise survive in
--- a database that already carries it, and the old index would then reject the
--- second concurrent activation that is now the normal case.
--- Naming a removal is the only form of removal an idempotent single-file schema
--- can express, and it is not a migration runner arriving by the back door.
-DROP INDEX IF EXISTS uq_provider_active_per_kind;
 
 -- At most one active provider per EXCLUSIVE kind, by the rule above. A partial
 -- index, so the many inactive rows of one kind do not collide with each other,
@@ -373,7 +429,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_active_per_exclusive_kind
 -- link_kind alone and from nothing that carries a name.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS interface (
-    id             INTEGER PRIMARY KEY,
+    id             BIGINT PRIMARY KEY,
     identifier     TEXT NOT NULL UNIQUE,
     device         TEXT NOT NULL UNIQUE,
     description    TEXT NOT NULL,
@@ -383,10 +439,10 @@ CREATE TABLE IF NOT EXISTS interface (
     link_type      TEXT NOT NULL,
     link_kind      TEXT NOT NULL
                    CHECK (link_kind IN ('physical', 'vlan', 'tunnel', 'other')),
-    is_tunnel      INTEGER GENERATED ALWAYS AS
-                   (CASE WHEN link_kind = 'tunnel' THEN 1 ELSE 0 END) VIRTUAL,
-    vlan_tag       INTEGER,
-    address_family INTEGER CHECK (address_family IS NULL OR address_family IN (4, 6)),
+    is_tunnel      BIGINT GENERATED ALWAYS AS
+                   (CASE WHEN link_kind = 'tunnel' THEN 1 ELSE 0 END) STORED,
+    vlan_tag       BIGINT,
+    address_family BIGINT CHECK (address_family IS NULL OR address_family IN (4, 6)),
     -- is_upstream is 1 exactly when the last interfaces_info response reported a
     -- non-empty `gateways[]` for this interface, and 0 otherwise. The API field
     -- is the only input: no name, description, link type or address decides it.
@@ -397,7 +453,7 @@ CREATE TABLE IF NOT EXISTS interface (
     -- An address reached through an upstream interface is OUTSIDE: it has no
     -- interface membership, and on-link evidence on an upstream interface is not
     -- evidence of membership (docs/data-model.md, "Classification").
-    is_upstream    INTEGER NOT NULL DEFAULT 0 CHECK (is_upstream IN (0, 1)),
+    is_upstream    BIGINT NOT NULL DEFAULT 0 CHECK (is_upstream IN (0, 1)),
     -- link_local_evidence is the OPERATOR'S rule, and discovery never writes it:
     -- whether an IPv6 link-local address (RFC 4291, section 2.5.6) seen on this
     -- interface is evidence that the address belongs to it. A link-local prefix
@@ -405,9 +461,9 @@ CREATE TABLE IF NOT EXISTS interface (
     -- where a machine sits unless the operator says it does. The default is no
     -- (0), and setting it on one interface makes such an address evidence on
     -- that interface only (docs/data-model.md, "Classification").
-    link_local_evidence INTEGER NOT NULL DEFAULT 0 CHECK (link_local_evidence IN (0, 1)),
-    first_seen_at  INTEGER NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
-    last_seen_at   INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800)
+    link_local_evidence BIGINT NOT NULL DEFAULT 0 CHECK (link_local_evidence IN (0, 1)),
+    first_seen_at  BIGINT NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
+    last_seen_at   BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------
@@ -454,27 +510,25 @@ CREATE TABLE IF NOT EXISTS interface (
 -- last_seen_at, which never drops a current row because discovery moves it.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS interface_address (
-    id             INTEGER PRIMARY KEY,
-    interface_id   INTEGER NOT NULL REFERENCES interface (id),
+    id             BIGINT PRIMARY KEY,
+    interface_id   BIGINT NOT NULL REFERENCES interface (id),
     source_field   TEXT NOT NULL
                    CHECK (source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6', 'gateways')),
     address        TEXT NOT NULL CHECK (length(address) > 0),
-    prefix_length  INTEGER CHECK (prefix_length IS NULL
+    prefix_length  BIGINT CHECK (prefix_length IS NULL
                                   OR (prefix_length >= 0 AND prefix_length <= 128)),
-    address_family INTEGER NOT NULL CHECK (address_family IN (4, 6)),
-    first_seen_at  INTEGER NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
-    last_seen_at   INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
+    address_family BIGINT NOT NULL CHECK (address_family IN (4, 6)),
+    first_seen_at  BIGINT NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
+    last_seen_at   BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
     CHECK (last_seen_at >= first_seen_at),
     -- A gateway is an address with no prefix; an interface address carries one.
     CHECK ((source_field = 'gateways') = (prefix_length IS NULL))
 );
 
--- One row per holding: the key carries first_seen_at. It replaced an index on the
--- value alone, which made a re-acquired address reuse its first holding's row, and
--- the old one is dropped by name.
-DROP INDEX IF EXISTS uq_interface_address_value;
+-- One row per holding: the key carries first_seen_at, so a re-acquired address is a
+-- holding of its own rather than its first holding's row.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_interface_address_holding
-    ON interface_address (interface_id, source_field, address, ifnull(prefix_length, -1),
+    ON interface_address (interface_id, source_field, address, coalesce(prefix_length, -1),
                           first_seen_at);
 -- "This interface's current addresses" and "is this address one of the
 -- firewall's own" are index searches rather than scans of a growing table.
@@ -520,19 +574,19 @@ CREATE INDEX IF NOT EXISTS idx_interface_address_last_seen_at
 -- never purged, because an operator row is user input.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS interface_network (
-    id                INTEGER PRIMARY KEY,
-    interface_id      INTEGER NOT NULL REFERENCES interface (id),
+    id                BIGINT PRIMARY KEY,
+    interface_id      BIGINT NOT NULL REFERENCES interface (id),
     network_address   TEXT NOT NULL CHECK (length(network_address) > 0),
-    prefix_length     INTEGER NOT NULL CHECK (prefix_length >= 0 AND prefix_length <= 128),
-    address_family    INTEGER NOT NULL CHECK (address_family IN (4, 6)),
+    prefix_length     BIGINT NOT NULL CHECK (prefix_length >= 0 AND prefix_length <= 128),
+    address_family    BIGINT NOT NULL CHECK (address_family IN (4, 6)),
     origin            TEXT NOT NULL CHECK (origin IN ('detected', 'operator')),
-    first_detected_at INTEGER CHECK (first_detected_at IS NULL
+    first_detected_at BIGINT CHECK (first_detected_at IS NULL
                                      OR (first_detected_at >= 0 AND first_detected_at < 4102444800)),
-    last_detected_at  INTEGER CHECK (last_detected_at IS NULL
+    last_detected_at  BIGINT CHECK (last_detected_at IS NULL
                                      OR (last_detected_at >= 0 AND last_detected_at < 4102444800)),
-    removed_at        INTEGER CHECK (removed_at IS NULL
+    removed_at        BIGINT CHECK (removed_at IS NULL
                                      OR (removed_at >= 0 AND removed_at < 4102444800)),
-    updated_at        INTEGER NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800),
+    updated_at        BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800),
     CHECK ((first_detected_at IS NULL) = (last_detected_at IS NULL)),
     -- A network nobody detected was set by the operator.
     CHECK (origin = 'operator' OR first_detected_at IS NOT NULL),
@@ -564,10 +618,10 @@ CREATE TABLE IF NOT EXISTS interface_network (
 -- guarantee, written down and executed.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS owner (
-    id           INTEGER PRIMARY KEY,
+    id           BIGINT PRIMARY KEY,
     display_name TEXT NOT NULL UNIQUE,
-    created_at   INTEGER NOT NULL CHECK (created_at >= 0 AND created_at < 4102444800),
-    updated_at   INTEGER NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
+    created_at   BIGINT NOT NULL CHECK (created_at >= 0 AND created_at < 4102444800),
+    updated_at   BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------
@@ -580,8 +634,8 @@ CREATE TABLE IF NOT EXISTS owner (
 CREATE TABLE IF NOT EXISTS interface_map (
     device        TEXT PRIMARY KEY,
     description   TEXT NOT NULL,
-    interface_id  INTEGER REFERENCES interface (id),
-    discovered_at INTEGER NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800)
+    interface_id  BIGINT REFERENCES interface (id),
+    discovered_at BIGINT NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------
@@ -614,24 +668,32 @@ CREATE TABLE IF NOT EXISTS interface_map (
 -- per interface; docs/data-model.md, `rule`.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS rule (
-    id            INTEGER PRIMARY KEY,
+    id            BIGINT PRIMARY KEY,
     pf_label      TEXT NOT NULL UNIQUE,
     description   TEXT NOT NULL,
     action        TEXT NOT NULL
                   CHECK (action IN ('pass', 'block', 'reject', 'unknown')),
     direction     TEXT CHECK (direction IS NULL OR direction IN ('in', 'out', 'any')),
     interface     TEXT,
-    legacy        INTEGER CHECK (legacy IS NULL OR legacy IN (0, 1)),
-    logs_matches  INTEGER CHECK (logs_matches IS NULL OR logs_matches IN (0, 1)),
+    legacy        BIGINT CHECK (legacy IS NULL OR legacy IN (0, 1)),
+    logs_matches  BIGINT CHECK (logs_matches IS NULL OR logs_matches IN (0, 1)),
     -- enabled is the endpoint's `enabled` field: "1" or "0" on a model rule, which the
     -- endpoint returns disabled or not, and always "1" on a legacy or automatic row,
     -- which it returns only when enabled (opnsense/core 26.7.3, Firewall/Filter.xml and
     -- scripts/filter/list_non_mvc_rules.php). NULL is not reported. Stored as
     -- coverage of the field: a rule a screen lists can say it is switched off, and
     -- nothing in the derivation reads it.
-    enabled       INTEGER CHECK (enabled IS NULL OR enabled IN (0, 1)),
-    is_automatic  INTEGER NOT NULL DEFAULT 0 CHECK (is_automatic IN (0, 1)),
-    discovered_at INTEGER NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800)
+    enabled       BIGINT CHECK (enabled IS NULL OR enabled IN (0, 1)),
+    is_automatic  BIGINT NOT NULL DEFAULT 0 CHECK (is_automatic IN (0, 1)),
+    discovered_at BIGINT NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800),
+    -- destination_net is the endpoint's `destination_net` field, VERBATIM: an address,
+    -- a network, an alias name, `any`, whatever the rule says (B8a of
+    -- specs/SPEC-step-5b-widget-api.md, decision 12). It is stored so a table of rules
+    -- can show what a rule was written against, and IT IS NEVER EVALUATED: opnview
+    -- matches no flow against it and derives nothing from it. NULL is not reported.
+    -- The schema is edited in place (decision 12 of the step-5A live corrections), so
+    -- a database created before this column is rebuilt rather than migrated.
+    destination_net TEXT
 );
 
 -- ---------------------------------------------------------------------------
@@ -655,11 +717,11 @@ CREATE TABLE IF NOT EXISTS rule (
 -- total.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS client (
-    id                INTEGER PRIMARY KEY,
+    id                BIGINT PRIMARY KEY,
     identity_kind     TEXT NOT NULL
                       CHECK (identity_kind IN ('dhcp_client_id', 'mac', 'address_in_interface')),
     identity_key      TEXT NOT NULL,
-    interface_id      INTEGER REFERENCES interface (id),
+    interface_id      BIGINT REFERENCES interface (id),
     mac               TEXT CHECK (mac IS NULL OR (length(mac) = 17 AND mac = lower(mac))),
     hostname          TEXT,
     vendor_hint       TEXT,
@@ -668,22 +730,22 @@ CREATE TABLE IF NOT EXISTS client (
     -- client is unowned until somebody says otherwise; owner_assigned_at
     -- records when that happened, and the CHECK below keeps the two from
     -- disagreeing.
-    owner_id          INTEGER REFERENCES owner (id),
-    owner_assigned_at INTEGER CHECK (owner_assigned_at IS NULL
+    owner_id          BIGINT REFERENCES owner (id),
+    owner_assigned_at BIGINT CHECK (owner_assigned_at IS NULL
                                      OR (owner_assigned_at >= 0 AND owner_assigned_at < 4102444800)),
-    mac_is_randomised INTEGER GENERATED ALWAYS AS (
+    mac_is_randomised BIGINT GENERATED ALWAYS AS (
                           CASE
                               WHEN mac IS NULL THEN NULL
-                              WHEN instr('26ae', substr(mac, 2, 1)) > 0 THEN 1
+                              WHEN strpos('26ae', substr(mac, 2, 1)) > 0 THEN 1
                               ELSE 0
-                          END) VIRTUAL,
-    unstable_identity INTEGER GENERATED ALWAYS AS (
+                          END) STORED,
+    unstable_identity BIGINT GENERATED ALWAYS AS (
                           CASE
-                              WHEN mac IS NOT NULL AND instr('26ae', substr(mac, 2, 1)) > 0 THEN 1
+                              WHEN mac IS NOT NULL AND strpos('26ae', substr(mac, 2, 1)) > 0 THEN 1
                               ELSE 0
-                          END) VIRTUAL,
-    first_seen_at     INTEGER NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
-    last_seen_at      INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
+                          END) STORED,
+    first_seen_at     BIGINT NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
+    last_seen_at      BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
     UNIQUE (identity_kind, identity_key),
     CHECK ((owner_id IS NULL) = (owner_assigned_at IS NULL))
 );
@@ -694,10 +756,17 @@ CREATE INDEX IF NOT EXISTS idx_client_interface ON client (interface_id, id);
 -- every address a pass touches; an index search, never a scan of a growing table.
 CREATE INDEX IF NOT EXISTS idx_client_last_address ON client (last_address, last_seen_at);
 
--- An owner's machines. owner_id is NULL-bearing, and SQLite keeps the
--- unassigned clients at the head of this index rather than omitting them, so
--- the index serves the unassigned bucket as well as the assigned ones.
+-- An owner's machines. owner_id is NULL-bearing, and a B-tree index keeps the
+-- unassigned clients rather than omitting them, so the index serves the
+-- unassigned bucket as well as the assigned ones.
 CREATE INDEX IF NOT EXISTS idx_client_owner ON client (owner_id, id);
+
+-- A widget reference to a client by host name (docs/dashboard-format.md, "The reference
+-- object", `client` by `hostname`) is an exact match on this column, and the widget API's
+-- statements may not scan a growing table (specs/SPEC-step-5b-widget-api.md, A12). The
+-- write cost is one index entry per client row, which grows with the machines seen, not
+-- with the traffic.
+CREATE INDEX IF NOT EXISTS idx_client_hostname ON client (hostname);
 
 -- ---------------------------------------------------------------------------
 -- DHCP lease — one observed lease generation.
@@ -731,8 +800,8 @@ CREATE INDEX IF NOT EXISTS idx_client_owner ON client (owner_id, id);
 -- it, and it is opaque to every query.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS dhcp_lease (
-    id             INTEGER PRIMARY KEY,
-    client_id      INTEGER REFERENCES client (id),
+    id             BIGINT PRIMARY KEY,
+    client_id      BIGINT REFERENCES client (id),
     -- provider_id NAMES THE SERVER THAT ISSUED THIS LEASE, and it is a fact a
     -- reader is entitled to rather than a component of a de-duplication key.
     -- This kind admits several concurrently active providers -- one server on one
@@ -745,9 +814,9 @@ CREATE TABLE IF NOT EXISTS dhcp_lease (
     -- executed.
     --
     -- NOT NULL, because a lease is issued by a server: there is no provider-less
-    -- lease to model, which is also why the identity below needs no ifnull
+    -- lease to model, which is also why the identity below needs no coalesce
     -- wrapper where measurement_sample's does.
-    provider_id    INTEGER NOT NULL REFERENCES provider (id),
+    provider_id    BIGINT NOT NULL REFERENCES provider (id),
     -- backend is the normalised vocabulary of RESPONSE SHAPES, and it is kept
     -- beside provider_id rather than replaced by it: it is what says which
     -- field-name normalisation produced the row. It is NOT an identity for the
@@ -762,12 +831,12 @@ CREATE TABLE IF NOT EXISTS dhcp_lease (
     vendor_hint    TEXT,
     lease_state    TEXT NOT NULL
                    CHECK (lease_state IN ('active', 'expired', 'reserved', 'unknown')),
-    interface_id   INTEGER REFERENCES interface (id),
-    starts_at      INTEGER CHECK (starts_at IS NULL
+    interface_id   BIGINT REFERENCES interface (id),
+    starts_at      BIGINT CHECK (starts_at IS NULL
                                   OR (starts_at >= 0 AND starts_at < 4102444800)),
     generation_key TEXT NOT NULL CHECK (length(generation_key) > 0),
-    expires_at     INTEGER CHECK (expires_at IS NULL OR (expires_at >= 0 AND expires_at < 4102444800)),
-    observed_at    INTEGER NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
+    expires_at     BIGINT CHECK (expires_at IS NULL OR (expires_at >= 0 AND expires_at < 4102444800)),
+    observed_at    BIGINT NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
     -- hostname_label is the host name's FIRST LABEL, lower-cased, a trailing dot
     -- removed: what a host name the resolver logged as a lookup's client is matched
     -- on. The resolver logs the name a reverse lookup returned, which may be fully
@@ -778,11 +847,11 @@ CREATE TABLE IF NOT EXISTS dhcp_lease (
     -- disagree with hostname; nothing writes it.
     hostname_label TEXT GENERATED ALWAYS AS (
                        lower(CASE
-                                 WHEN instr(rtrim(hostname, '.'), '.') > 0
+                                 WHEN strpos(rtrim(hostname, '.'), '.') > 0
                                      THEN substr(rtrim(hostname, '.'), 1,
-                                                 instr(rtrim(hostname, '.'), '.') - 1)
+                                                 strpos(rtrim(hostname, '.'), '.') - 1)
                                  ELSE rtrim(hostname, '.')
-                             END)) VIRTUAL,
+                             END)) STORED,
     UNIQUE (address, generation_key, provider_id)
 );
 
@@ -793,9 +862,7 @@ CREATE INDEX IF NOT EXISTS idx_dhcp_lease_observed_at ON dhcp_lease (observed_at
 -- would order that backend's leases arbitrarily.
 CREATE INDEX IF NOT EXISTS idx_dhcp_lease_client ON dhcp_lease (client_id, observed_at);
 -- A host name the resolver logged as a lookup's client, resolved to the address
--- leased under it, by first label. It replaced an index on the whole host name,
--- dropped by name.
-DROP INDEX IF EXISTS idx_dhcp_lease_hostname;
+-- leased under it, by first label.
 CREATE INDEX IF NOT EXISTS idx_dhcp_lease_hostname_label ON dhcp_lease (hostname_label, address);
 
 -- ---------------------------------------------------------------------------
@@ -832,30 +899,30 @@ CREATE INDEX IF NOT EXISTS idx_dhcp_lease_hostname_label ON dhcp_lease (hostname
 -- other established value is a packet dropped for a reason no rule expresses.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS flow (
-    id                     INTEGER PRIMARY KEY,
+    id                     BIGINT PRIMARY KEY,
     log_digest             TEXT NOT NULL UNIQUE,
-    observed_at            INTEGER NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
-    ingested_at            INTEGER NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
+    observed_at            BIGINT NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
+    ingested_at            BIGINT NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
     interface_device       TEXT NOT NULL,
     interface_lookup_state TEXT NOT NULL
                            CHECK (interface_lookup_state IN ('resolved', 'not_found', 'pending')),
-    src_interface_id       INTEGER REFERENCES interface (id),
-    dst_interface_id       INTEGER REFERENCES interface (id),
-    src_client_id          INTEGER REFERENCES client (id),
-    dst_client_id          INTEGER REFERENCES client (id),
+    src_interface_id       BIGINT REFERENCES interface (id),
+    dst_interface_id       BIGINT REFERENCES interface (id),
+    src_client_id          BIGINT REFERENCES client (id),
+    dst_client_id          BIGINT REFERENCES client (id),
     src_address            TEXT NOT NULL,
     dst_address            TEXT NOT NULL,
-    src_port               INTEGER CHECK (src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)),
-    dst_port               INTEGER CHECK (dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)),
+    src_port               BIGINT CHECK (src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)),
+    dst_port               BIGINT CHECK (dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)),
     protocol               TEXT NOT NULL,
-    ip_version             INTEGER NOT NULL CHECK (ip_version IN (4, 6)),
+    ip_version             BIGINT NOT NULL CHECK (ip_version IN (4, 6)),
     action                 TEXT NOT NULL
                            CHECK (action IN ('pass', 'block', 'reject', 'unknown')),
     direction              TEXT NOT NULL CHECK (direction IN ('in', 'out', 'unknown')),
     log_reason             TEXT,
-    packet_bytes           INTEGER NOT NULL CHECK (packet_bytes >= 0),
+    packet_bytes           BIGINT NOT NULL CHECK (packet_bytes >= 0),
     rid                    TEXT,
-    rule_id                INTEGER REFERENCES rule (id),
+    rule_id                BIGINT REFERENCES rule (id),
     rule_lookup_state      TEXT NOT NULL
                            CHECK (rule_lookup_state IN ('resolved', 'not_found', 'pending')),
     -- src_is_this_firewall and dst_is_this_firewall say that an end is THIS
@@ -871,8 +938,8 @@ CREATE TABLE IF NOT EXISTS flow (
     -- (none for a loopback address) and never a client: the CHECKs below. It is
     -- never outside either. Classification sets both, docs/data-model.md,
     -- "Classification"; the collector stores every record with neither set.
-    src_is_this_firewall   INTEGER NOT NULL DEFAULT 0 CHECK (src_is_this_firewall IN (0, 1)),
-    dst_is_this_firewall   INTEGER NOT NULL DEFAULT 0 CHECK (dst_is_this_firewall IN (0, 1)),
+    src_is_this_firewall   BIGINT NOT NULL DEFAULT 0 CHECK (src_is_this_firewall IN (0, 1)),
+    dst_is_this_firewall   BIGINT NOT NULL DEFAULT 0 CHECK (dst_is_this_firewall IN (0, 1)),
     -- ip_id and tcp_seq are the filter log's `id` (IPv4 identification) and `seq`
     -- (TCP sequence number), the two logged fields verified to be carried
     -- unchanged by both legs of one connection under OPNsense's defaults (survey,
@@ -880,8 +947,8 @@ CREATE TABLE IF NOT EXISTS flow (
     -- are stored for one purpose: pairing the two records of one connection. NULL
     -- is a record that does not carry the field -- an IPv6 record has no `id`, a
     -- record that is not TCP no `seq`.
-    ip_id                  INTEGER CHECK (ip_id IS NULL OR (ip_id >= 0 AND ip_id <= 65535)),
-    tcp_seq                INTEGER CHECK (tcp_seq IS NULL OR (tcp_seq >= 0 AND tcp_seq <= 4294967295)),
+    ip_id                  BIGINT CHECK (ip_id IS NULL OR (ip_id >= 0 AND ip_id <= 65535)),
+    tcp_seq                BIGINT CHECK (tcp_seq IS NULL OR (tcp_seq >= 0 AND tcp_seq <= 4294967295)),
     -- pair_outcome and paired_flow_id record what the pairing of the two records of
     -- one connection decided (docs/data-model.md, "Two legs of one connection"):
     --   'first_leg'   the `in` record of a client connection whose second record
@@ -903,7 +970,7 @@ CREATE TABLE IF NOT EXISTS flow (
     -- pair and keep the other, and the survivor still says what it was.
     pair_outcome           TEXT CHECK (pair_outcome IS NULL
                                        OR pair_outcome IN ('first_leg', 'second_leg', 'not_paired')),
-    paired_flow_id         INTEGER,
+    paired_flow_id         BIGINT,
     -- traffic_scope is written by the collector and pinned by the CHECK below
     -- to exactly one expression over interface membership and this firewall's
     -- ends, so no row can carry a value that disagrees with them — the same
@@ -912,11 +979,11 @@ CREATE TABLE IF NOT EXISTS flow (
     -- corrections: a flow with an end that is this firewall is neither between two
     -- interfaces nor across the edge.
     --
-    -- It is a plain column rather than a generated one for a query-plan
-    -- reason, and for no other: SQLite never reports an index as covering for
-    -- a query that reads a generated column, virtual or stored, so making this
-    -- one generated would cost the Overview, Matrix and Interface queries their
-    -- covering plans — all three group by this value. The derivation is
+    -- It is a plain column rather than a generated one, a choice made under the
+    -- previous engine, which never reported an index as covering a query that
+    -- read a generated column; it is kept so the Overview, Matrix and Interface
+    -- queries, which all three group by this value, read it like any other
+    -- column of their covering indexes. The derivation is
     -- unchanged and is still interface membership alone: no address, no CIDR, no
     -- name, no assumed addressing plan.
     traffic_scope          TEXT NOT NULL,
@@ -932,11 +999,11 @@ CREATE TABLE IF NOT EXISTS flow (
     CHECK ((coalesce(pair_outcome, '') IN ('first_leg', 'second_leg')) = (paired_flow_id IS NOT NULL))
 );
 
--- Index shape. Column count is close to irrelevant to SQLite read speed; what
+-- Index shape. Column count is close to irrelevant to read speed; what
 -- matters is selectivity and whether the index answers the query without
 -- fetching the row. The two indexes serving an AGGREGATING screen query
 -- therefore carry the measures that query sums or counts, so its plan reads
--- the index alone — "USING COVERING INDEX" in EXPLAIN QUERY PLAN. The two
+-- the index alone -- an index-only scan in EXPLAIN. The two
 -- serving a DETAIL listing are left narrow: a listing returns most of the row
 -- anyway, so widening them would buy nothing and cost write throughput on
 -- every ingested record. docs/data-model.md names, per query, which index
@@ -945,19 +1012,23 @@ CREATE TABLE IF NOT EXISTS flow (
 -- There is exactly one index leading on observed_at alone, deliberately: it is
 -- the load-bearing index of the Overview and Matrix queries, and a second one
 -- with the same leading column would hide its loss.
+--
+-- pair_outcome and interface_device close both, since B8c of
+-- specs/SPEC-step-5b-widget-api.md: the screen queries read classified_flow and keep
+-- the rows whose exit_leg_device is NULL, and exit_leg_device is computed from those
+-- two columns, so without them every covered plan would fetch each row to tell a
+-- second leg from a first.
 CREATE INDEX IF NOT EXISTS idx_flow_observed_at ON flow
     (observed_at, traffic_scope, action, packet_bytes,
-     src_interface_id, dst_interface_id, src_client_id, rule_id, rule_lookup_state);
+     src_interface_id, dst_interface_id, src_client_id, rule_id, rule_lookup_state,
+     pair_outcome, interface_device);
 CREATE INDEX IF NOT EXISTS idx_flow_src_interface_observed_at ON flow
     (src_interface_id, observed_at, src_client_id, packet_bytes, action,
-     traffic_scope, dst_address);
+     traffic_scope, dst_address, pair_outcome, interface_device);
 CREATE INDEX IF NOT EXISTS idx_flow_src_client_observed_at ON flow (src_client_id, observed_at);
 -- The partial index of the blocked_event view, over the refusals: a 'block' and a
 -- 'reject' -- a reject is a refusal that answers. Its predicate is written exactly
--- as the view's, which is what lets the planner use it. It replaced
--- idx_flow_blocked_observed_at, which covered 'block' alone, and the old one is
--- dropped by name so a database it was created in loses it.
-DROP INDEX IF EXISTS idx_flow_blocked_observed_at;
+-- as the view's, which is what lets the planner use it.
 CREATE INDEX IF NOT EXISTS idx_flow_refused_observed_at ON flow (observed_at)
     WHERE action IN ('block', 'reject');
 
@@ -1009,11 +1080,10 @@ CREATE INDEX IF NOT EXISTS idx_flow_dst_client_observed_at ON flow (dst_client_i
 --
 -- A view rather than columns: they are pure functions of the row, and a view
 -- over one table is flattened by the planner, so every statement that reads it
--- keeps the flow indexes. It is dropped and created again on every apply, so an
--- edit to its text reaches a database the previous text was applied to.
+-- keeps the flow indexes. It is replaced on every apply, so an edit to its text
+-- reaches a database the previous text was applied to.
 -- ---------------------------------------------------------------------------
-DROP VIEW IF EXISTS classified_flow;
-CREATE VIEW classified_flow AS
+CREATE OR REPLACE VIEW classified_flow AS
 SELECT
     id,
     observed_at,
@@ -1039,6 +1109,11 @@ SELECT
     dst_is_this_firewall,
     pair_outcome,
     paired_flow_id,
+    -- rule_lookup_state and ip_version since B8c of specs/SPEC-step-5b-widget-api.md:
+    -- the Matrix screen query, which reads this view, counts the connections whose rid
+    -- matched no rule, and the checks count each address family.
+    rule_lookup_state,
+    ip_version,
     CASE
         WHEN src_is_this_firewall = 1 THEN 'from_this_firewall'
         WHEN dst_is_this_firewall = 1 THEN 'to_this_firewall'
@@ -1090,8 +1165,7 @@ FROM flow;
 -- sighting onward, so a record made after the last discovery is not orphaned by a
 -- discovery that has not run yet.
 -- ---------------------------------------------------------------------------
-DROP VIEW IF EXISTS this_firewall_address;
-CREATE VIEW this_firewall_address AS
+CREATE OR REPLACE VIEW this_firewall_address AS
 SELECT
     a.address                                              AS address,
     a.interface_id                                         AS interface_id,
@@ -1104,10 +1178,9 @@ WHERE a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6');
 
 -- blocked_event — every refused filter-log record: action 'block' or 'reject'. A
 -- record whose action could not be named ('unknown') is not a refusal and is not
--- here, and it is not counted as allowed anywhere either. Dropped and created
--- again on every apply, for the reason blocked_decision is.
-DROP VIEW IF EXISTS blocked_event;
-CREATE VIEW blocked_event AS
+-- here, and it is not counted as allowed anywhere either. Replaced on every apply,
+-- for the reason blocked_decision is.
+CREATE OR REPLACE VIEW blocked_event AS
 SELECT
     id AS flow_id,
     observed_at,
@@ -1167,14 +1240,14 @@ WHERE action IN ('block', 'reject');
 -- not discard the classification work behind it.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS blocklist (
-    id                  INTEGER PRIMARY KEY,
+    id                  BIGINT PRIMARY KEY,
     name                TEXT NOT NULL UNIQUE,
     purpose             TEXT CHECK (purpose IS NULL OR purpose IN
                         ('advertising', 'tracking', 'threat', 'parental', 'other')),
-    purpose_assigned_at INTEGER CHECK (purpose_assigned_at IS NULL
+    purpose_assigned_at BIGINT CHECK (purpose_assigned_at IS NULL
                         OR (purpose_assigned_at >= 0 AND purpose_assigned_at < 4102444800)),
-    first_seen_at       INTEGER NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
-    last_seen_at        INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
+    first_seen_at       BIGINT NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
+    last_seen_at        BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
     CHECK ((purpose IS NULL) = (purpose_assigned_at IS NULL))
 );
 
@@ -1270,10 +1343,29 @@ CREATE TABLE IF NOT EXISTS blocklist (
 --                         the name a reverse lookup of a loopback address returns.
 --                         It is a protocol constant (decision 11 of the step-5A
 --                         live corrections), not configuration.
--- In 'ambiguous_hostname', 'unknown_hostname' and 'this_firewall_hostname'
--- client_address holds the logged name verbatim, and in the first two of them the
--- lookup is placed nowhere and attributes nothing: a name
+--   'dual_stack_hostname' a host name no lease named, for which the local data held
+--                         exactly two addresses at the lookup's instant, one IPv4 and
+--                         one IPv6, under one name -- a host override with an A and an
+--                         AAAA record names one machine -- and the lookup's querying
+--                         family was not reported, so which of the two asked is not
+--                         known (group C of specs/SPEC-step-5b-widget-api.md, decision
+--                         15). With the family reported, the lookup resolves to the
+--                         address of that family as 'local_data_hostname'. The term
+--                         is opnview's own (docs/data-model.md, Vocabulary).
+-- In 'ambiguous_hostname', 'unknown_hostname', 'dual_stack_hostname' and
+-- 'this_firewall_hostname' client_address holds the logged name verbatim, and in the
+-- first three of them the lookup is placed nowhere and attributes nothing: a name
 -- that does not resolve to one address does not say which machine asked.
+--
+-- client_family is the family of the querying address, 4 or 6, as the resolver's
+-- query report gives it in the `family` field of each row: Unbound's own family of
+-- the reply's address, `ip4` or `ip6` (opnsense/core 26.7.3,
+-- scripts/unbound-dnsbl/lib/__init__.py, Query, from comm_reply.family, which
+-- Unbound's pythonmod/interface.i maps from the socket address's ss_family). It is
+-- the querying address's family even where the report replaced that address by a
+-- host name, which makes it the evidence the dual-stack rule reads, recorded per
+-- lookup. NULL when the row carried none: a Dnsmasq lookup, a `unix` socket, an
+-- absent field.
 --
 -- A host name matches a lease by its FIRST LABEL on both sides, without regard
 -- to case and with a trailing dot removed: dhcp_lease.hostname_label below.
@@ -1288,7 +1380,7 @@ CREATE TABLE IF NOT EXISTS blocklist (
 -- was held by the firewall at the lookup's instant, or it is a loopback address
 -- or `localhost` (see flow.src_is_this_firewall). Such a lookup has no client.
 CREATE TABLE IF NOT EXISTS dns_resolution (
-    id             INTEGER PRIMARY KEY,
+    id             BIGINT PRIMARY KEY,
     lookup_key     TEXT NOT NULL UNIQUE,
     client_address TEXT NOT NULL,
     client_hostname TEXT,
@@ -1296,10 +1388,12 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
                    CHECK (client_resolution IN ('logged_address', 'lease_hostname',
                                                 'ambiguous_hostname', 'unknown_hostname',
                                                 'this_firewall_hostname',
-                                                'local_data_hostname')),
-    client_id      INTEGER REFERENCES client (id),
-    client_is_this_firewall INTEGER NOT NULL DEFAULT 0 CHECK (client_is_this_firewall IN (0, 1)),
-    hostname_examined_at INTEGER CHECK (hostname_examined_at IS NULL
+                                                'local_data_hostname',
+                                                'dual_stack_hostname')),
+    client_family  BIGINT CHECK (client_family IS NULL OR client_family IN (4, 6)),
+    client_id      BIGINT REFERENCES client (id),
+    client_is_this_firewall BIGINT NOT NULL DEFAULT 0 CHECK (client_is_this_firewall IN (0, 1)),
+    hostname_examined_at BIGINT CHECK (hostname_examined_at IS NULL
                                         OR (hostname_examined_at >= 0 AND hostname_examined_at < 4102444800)),
     domain         TEXT NOT NULL,
     resolver       TEXT NOT NULL CHECK (resolver IN ('unbound', 'dnsmasq')),
@@ -1307,10 +1401,10 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
     answer_source  TEXT,
     rcode          TEXT,
     dnssec_status  TEXT,
-    blocklist_id   INTEGER REFERENCES blocklist (id),
-    looked_up_at   INTEGER NOT NULL CHECK (looked_up_at >= 0 AND looked_up_at < 4102444800),
-    ingested_at    INTEGER NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
-    interface_id   INTEGER REFERENCES interface (id),
+    blocklist_id   BIGINT REFERENCES blocklist (id),
+    looked_up_at   BIGINT NOT NULL CHECK (looked_up_at >= 0 AND looked_up_at < 4102444800),
+    ingested_at    BIGINT NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
+    interface_id   BIGINT REFERENCES interface (id),
     interface_lookup_state TEXT NOT NULL DEFAULT 'pending'
                    CHECK (interface_lookup_state IN ('resolved', 'not_found', 'pending')),
     CHECK ((interface_lookup_state = 'resolved') = (interface_id IS NOT NULL)),
@@ -1330,6 +1424,16 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_id ON dns_resolution (clien
 -- comparison, and a stored copy of the domain could disagree with the domain.
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_domain_name
     ON dns_resolution (lower(rtrim(domain, '.')), looked_up_at);
+-- The same comparison bounded by the lookup's client as well, one index per branch of
+-- the attribution's client predicate (statement attribution_name_lookups): by
+-- client_id, and by the address for a lookup or a flow with no client_id. Without
+-- them the search was bounded by name only and read every lookup of a popular name
+-- in the window before filtering by client. Each costs one more index entry per
+-- stored lookup on a growing table; docs/data-model.md, dns_resolution, records it.
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_name_client_id
+    ON dns_resolution (lower(rtrim(domain, '.')), client_id, looked_up_at);
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_name_client_address
+    ON dns_resolution (lower(rtrim(domain, '.')), client_address, looked_up_at);
 
 -- "Which list refused what, over this period" is an index search rather than a
 -- scan of a growing table. The NULL-bearing leading column keeps the
@@ -1340,13 +1444,16 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_blocklist ON dns_resolution (block
 -- lease pass has examined since they were ingested: what one lease pass resolves
 -- again. A partial index, so it holds exactly the lookups still waiting and
 -- shrinks as a pass examines them, rather than growing with every unresolved
--- lookup ever stored. It replaced an index on (client_resolution, looked_up_at)
--- and one on (client_resolution, ingested_at), both dropped by name.
-DROP INDEX IF EXISTS idx_dns_resolution_client_resolution;
-DROP INDEX IF EXISTS idx_dns_resolution_unresolved_hostname;
+-- lookup ever stored.
+--
+-- A 'dual_stack_hostname' lookup waits here too: a lease naming its host may be read
+-- after it, and a lease wins over the local data. Its querying family is stored with
+-- it (client_family), so the pass that examines it again decides it as ingest would
+-- have. As every schema change before step 8 is, the predicate is edited in place and
+-- reaches a database that is rebuilt (decision 12 of the step-5A live corrections).
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_hostname_unexamined
     ON dns_resolution (client_resolution, hostname_examined_at, ingested_at, id)
-    WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname')
+    WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname', 'dual_stack_hostname')
       AND hostname_examined_at IS NULL;
 
 -- ---------------------------------------------------------------------------
@@ -1421,8 +1528,8 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_hostname_unexamined
 -- says, because every search below starts from it.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS resource_record_observation (
-    id               INTEGER PRIMARY KEY,
-    provider_id      INTEGER NOT NULL REFERENCES provider (id),
+    id               BIGINT PRIMARY KEY,
+    provider_id      BIGINT NOT NULL REFERENCES provider (id),
     held_in          TEXT NOT NULL CHECK (held_in IN ('cache', 'local_data')),
     owner_name       TEXT NOT NULL CHECK (length(owner_name) > 0
                                           AND owner_name = lower(owner_name)
@@ -1431,10 +1538,10 @@ CREATE TABLE IF NOT EXISTS resource_record_observation (
     value            TEXT NOT NULL CHECK (length(value) > 0),
     address          TEXT,
     host_label       TEXT,
-    first_seen_at    INTEGER NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
-    last_seen_at     INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
-    covered_from_at  INTEGER NOT NULL CHECK (covered_from_at >= 0 AND covered_from_at < 4102444800),
-    covered_until_at INTEGER NOT NULL CHECK (covered_until_at >= 0 AND covered_until_at < 4102444800),
+    first_seen_at    BIGINT NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
+    last_seen_at     BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
+    covered_from_at  BIGINT NOT NULL CHECK (covered_from_at >= 0 AND covered_from_at < 4102444800),
+    covered_until_at BIGINT NOT NULL CHECK (covered_until_at >= 0 AND covered_until_at < 4102444800),
     CHECK ((held_in = 'cache' AND rrtype IN ('A', 'AAAA', 'CNAME'))
            OR (held_in = 'local_data' AND rrtype IN ('A', 'AAAA', 'PTR'))),
     CHECK ((address IS NULL) = (rrtype = 'CNAME')),
@@ -1468,8 +1575,8 @@ CREATE INDEX IF NOT EXISTS idx_resource_record_observation_covered_until
 -- and a restart: a record first seen by a poll starts covered from the instant this
 -- row held before that poll. Bounded: one row per provider of the two kinds.
 CREATE TABLE IF NOT EXISTS resource_record_read (
-    provider_id INTEGER PRIMARY KEY REFERENCES provider (id),
-    read_at     INTEGER NOT NULL CHECK (read_at >= 0 AND read_at < 4102444800)
+    provider_id BIGINT PRIMARY KEY REFERENCES provider (id),
+    read_at     BIGINT NOT NULL CHECK (read_at >= 0 AND read_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------
@@ -1508,18 +1615,18 @@ CREATE TABLE IF NOT EXISTS resource_record_read (
 -- -- and the referenced lookup is the latest of the matching ones.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS domain_attribution (
-    flow_id                   INTEGER PRIMARY KEY
+    flow_id                   BIGINT PRIMARY KEY
                               REFERENCES flow (id) ON DELETE CASCADE,
-    dns_resolution_id         INTEGER NOT NULL
+    dns_resolution_id         BIGINT NOT NULL
                               REFERENCES dns_resolution (id) ON DELETE CASCADE,
     site_name                 TEXT NOT NULL,
-    correlation_delay_seconds INTEGER NOT NULL CHECK (correlation_delay_seconds >= 0),
-    attributed_at             INTEGER NOT NULL CHECK (attributed_at >= 0 AND attributed_at < 4102444800),
+    correlation_delay_seconds BIGINT NOT NULL CHECK (correlation_delay_seconds >= 0),
+    attributed_at             BIGINT NOT NULL CHECK (attributed_at >= 0 AND attributed_at < 4102444800),
     method                    TEXT NOT NULL
                               CHECK (method IN ('resolver_cache_answer', 'lookup_timing')),
     -- No ON DELETE: the purge keeps an observation an attribution names, and the
     -- foreign key is what makes forgetting that an error rather than a dangling id.
-    address_observation_id    INTEGER REFERENCES resource_record_observation (id),
+    address_observation_id    BIGINT REFERENCES resource_record_observation (id),
     CHECK ((method = 'resolver_cache_answer') = (address_observation_id IS NOT NULL))
 );
 
@@ -1531,7 +1638,7 @@ CREATE INDEX IF NOT EXISTS idx_domain_attribution_address_observation
 -- ---------------------------------------------------------------------------
 -- Geo / ASN — the geo and ASN enrichment of one address.
 -- Keyed per address rather than per prefix: the dataset answers with a prefix
--- but SQLite has no natural longest-prefix join. dataset_build_at is the build
+-- but SQL has no natural longest-prefix join. dataset_build_at is the build
 -- date of the dataset that answered and provider_id names the provider that
 -- supplied it, so a stale enrichment is visible and attributable. A cache miss
 -- is a row whose lookup_state is 'miss', never an absent row; a 'pending' row
@@ -1542,18 +1649,18 @@ CREATE INDEX IF NOT EXISTS idx_domain_attribution_address_observation
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS geo_asn (
     address          TEXT PRIMARY KEY,
-    provider_id      INTEGER REFERENCES provider (id),
+    provider_id      BIGINT REFERENCES provider (id),
     lookup_state     TEXT NOT NULL CHECK (lookup_state IN ('resolved', 'miss', 'pending')),
     country_code     TEXT,
     country_name     TEXT,
-    latitude         REAL,
-    longitude        REAL,
-    asn              INTEGER,
+    latitude         DOUBLE PRECISION,
+    longitude        DOUBLE PRECISION,
+    asn              BIGINT,
     operator         TEXT,
-    dataset_build_at INTEGER
+    dataset_build_at BIGINT
                      CHECK (dataset_build_at IS NULL
                             OR (dataset_build_at >= 0 AND dataset_build_at < 4102444800)),
-    looked_up_at     INTEGER NOT NULL CHECK (looked_up_at >= 0 AND looked_up_at < 4102444800),
+    looked_up_at     BIGINT NOT NULL CHECK (looked_up_at >= 0 AND looked_up_at < 4102444800),
     CHECK (lookup_state <> 'resolved'
            OR (country_code IS NOT NULL
                AND dataset_build_at IS NOT NULL
@@ -1561,6 +1668,13 @@ CREATE TABLE IF NOT EXISTS geo_asn (
 );
 
 CREATE INDEX IF NOT EXISTS idx_geo_asn_looked_up_at ON geo_asn (looked_up_at);
+
+-- A widget reference to a country or to an operator (docs/dashboard-format.md, "The
+-- reference object": `country` by `iso_3166_1_alpha_2`, `operator` by `asn`) resolves
+-- against these columns by exact match, and the widget API may not scan a growing table
+-- (specs/SPEC-step-5b-widget-api.md, A12). One entry each per geolocated address.
+CREATE INDEX IF NOT EXISTS idx_geo_asn_country_code ON geo_asn (country_code);
+CREATE INDEX IF NOT EXISTS idx_geo_asn_asn ON geo_asn (asn);
 
 -- ---------------------------------------------------------------------------
 -- Rule-info cache — the normalised severity and category of one rule identity,
@@ -1583,7 +1697,7 @@ CREATE INDEX IF NOT EXISTS idx_geo_asn_looked_up_at ON geo_asn (looked_up_at);
 -- mapping from the Suricata numeric scale.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS provider_rule_info (
-    provider_id         INTEGER NOT NULL REFERENCES provider (id),
+    provider_id         BIGINT NOT NULL REFERENCES provider (id),
     rule_identity       TEXT NOT NULL,
     normalised_severity TEXT NOT NULL
                         CHECK (normalised_severity IN ('critical', 'high', 'medium',
@@ -1591,7 +1705,7 @@ CREATE TABLE IF NOT EXISTS provider_rule_info (
     provider_severity   TEXT,
     category            TEXT,
     rule_source         TEXT,
-    fetched_at          INTEGER NOT NULL CHECK (fetched_at >= 0 AND fetched_at < 4102444800),
+    fetched_at          BIGINT NOT NULL CHECK (fetched_at >= 0 AND fetched_at < 4102444800),
     PRIMARY KEY (provider_id, rule_identity)
 );
 
@@ -1616,11 +1730,11 @@ CREATE TABLE IF NOT EXISTS provider_rule_info (
 -- column exists for a provider that ships severity inside its event.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS security_event (
-    id                  INTEGER PRIMARY KEY,
-    provider_id         INTEGER NOT NULL REFERENCES provider (id),
+    id                  BIGINT PRIMARY KEY,
+    provider_id         BIGINT NOT NULL REFERENCES provider (id),
     provider_event_key  TEXT NOT NULL,
-    occurred_at         INTEGER NOT NULL CHECK (occurred_at >= 0 AND occurred_at < 4102444800),
-    ingested_at         INTEGER NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
+    occurred_at         BIGINT NOT NULL CHECK (occurred_at >= 0 AND occurred_at < 4102444800),
+    ingested_at         BIGINT NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
     rule_identity       TEXT NOT NULL,
     signature           TEXT NOT NULL,
     event_action        TEXT NOT NULL CHECK (event_action IN ('allowed', 'blocked', 'unknown')),
@@ -1629,17 +1743,17 @@ CREATE TABLE IF NOT EXISTS security_event (
                                OR normalised_severity IN ('critical', 'high', 'medium',
                                                           'low', 'informational')),
     src_address         TEXT NOT NULL,
-    src_port            INTEGER CHECK (src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)),
+    src_port            BIGINT CHECK (src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)),
     dst_address         TEXT NOT NULL,
-    dst_port            INTEGER CHECK (dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)),
+    dst_port            BIGINT CHECK (dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)),
     protocol            TEXT,
     in_interface_device TEXT,
-    src_client_id       INTEGER REFERENCES client (id),
-    src_interface_id    INTEGER REFERENCES interface (id),
+    src_client_id       BIGINT REFERENCES client (id),
+    src_interface_id    BIGINT REFERENCES interface (id),
     -- 1 when the event's source is this firewall, as flow.src_is_this_firewall
     -- decides it for a record's end; such a source has no client.
-    src_is_this_firewall INTEGER NOT NULL DEFAULT 0 CHECK (src_is_this_firewall IN (0, 1)),
-    flow_ref            INTEGER,
+    src_is_this_firewall BIGINT NOT NULL DEFAULT 0 CHECK (src_is_this_firewall IN (0, 1)),
+    flow_ref            BIGINT,
     UNIQUE (provider_id, provider_event_key),
     CHECK (src_is_this_firewall = 0 OR src_client_id IS NULL)
 );
@@ -1684,11 +1798,9 @@ CREATE INDEX IF NOT EXISTS idx_security_event_src_address
 -- address is one the firewall itself holds (interface_address, addr4 or addr6),
 -- which is how a feed says "-> this firewall".
 -- ---------------------------------------------------------------------------
--- The view is dropped and created again on every apply, so an edit to its text
--- reaches a database the previous text was applied to: CREATE VIEW IF NOT EXISTS
--- alone would keep the old one for ever.
-DROP VIEW IF EXISTS blocked_decision;
-CREATE VIEW blocked_decision AS
+-- The view is replaced on every apply, so an edit to its text reaches a database
+-- the previous text was applied to.
+CREATE OR REPLACE VIEW blocked_decision AS
 SELECT
     'flow'                                                  AS source_table,
     f.id                                                    AS source_id,
@@ -1706,8 +1818,8 @@ SELECT
     f.src_interface_id                                      AS interface_id,
     f.dst_address                                           AS target,
     'address'                                               AS target_kind,
-    EXISTS (SELECT 1 FROM interface_address AS a
-            WHERE a.address = f.dst_address AND a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6'))
+    CAST(CAST(EXISTS (SELECT 1 FROM interface_address AS a
+            WHERE a.address = f.dst_address AND a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6')) AS INTEGER) AS BIGINT)
                                                             AS target_is_this_firewall
 FROM flow AS f
 WHERE f.action IN ('block', 'reject')
@@ -1745,8 +1857,8 @@ SELECT
     e.src_interface_id,
     e.dst_address,
     'address',
-    EXISTS (SELECT 1 FROM interface_address AS a
-            WHERE a.address = e.dst_address AND a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6'))
+    CAST(CAST(EXISTS (SELECT 1 FROM interface_address AS a
+            WHERE a.address = e.dst_address AND a.source_field IN ('addr4', 'addr6', 'ipv4', 'ipv6')) AS INTEGER) AS BIGINT)
 FROM security_event AS e
 WHERE e.event_action = 'blocked';
 
@@ -1760,12 +1872,12 @@ WHERE e.event_action = 'blocked';
 -- unique, and a duplicate insert fails.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS eve_ingest_cursor (
-    id             INTEGER PRIMARY KEY,
+    id             BIGINT PRIMARY KEY,
     file_id        TEXT NOT NULL,
-    byte_offset    INTEGER NOT NULL CHECK (byte_offset >= 0),
-    file_sequence  INTEGER,
+    byte_offset    BIGINT NOT NULL CHECK (byte_offset >= 0),
+    file_sequence  BIGINT,
     rotation_state TEXT NOT NULL CHECK (rotation_state IN ('current', 'rotated', 'lost')),
-    observed_at    INTEGER NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
+    observed_at    BIGINT NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
     UNIQUE (file_id, byte_offset)
 );
 
@@ -1788,14 +1900,109 @@ CREATE TABLE IF NOT EXISTS eve_ingest_cursor (
 -- here: registering one is an INSERT into `provider` plus an INSERT here.
 -- Probe endpoints per kind are tabulated in docs/data-model.md, each cited in
 -- docs/opnsense-api-survey.md.
+--
+-- outcome NAMES WHAT THE LAST PROBE OR READ TURNED INTO, from a closed set, so
+-- that no reader ever parses `detail` (SPEC-step-5b-widget-api.md, D1). The
+-- state says whether the source can be read; the outcome says why, in a word a
+-- program reads and an interface translates; the detail stays as diagnostic
+-- text. The set is store.AvailabilityOutcomes, and docs/data-model.md states
+-- each code's meaning.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS source_availability (
-    provider_id INTEGER PRIMARY KEY REFERENCES provider (id),
+    provider_id BIGINT PRIMARY KEY REFERENCES provider (id),
     state       TEXT NOT NULL
                 CHECK (state IN ('reachable', 'present_but_disabled', 'unavailable')),
+    outcome     TEXT NOT NULL DEFAULT 'not_yet_probed'
+                CHECK (outcome IN ('not_yet_probed', 'healthy', 'healthy_empty',
+                                   'partial_readings', 'present_but_disabled',
+                                   'service_not_running', 'authentication_failed',
+                                   'denied', 'not_found', 'server_error', 'empty_body',
+                                   'result_failed', 'undecodable', 'status_not_ok',
+                                   'transport_failure', 'certificate_refused',
+                                   'request_not_made', 'plugin_not_installed',
+                                   'read_not_supported', 'no_cache_read',
+                                   'no_local_data_read', 'log_grammar_not_recorded',
+                                   'no_licence_key', 'licence_key_undecryptable',
+                                   'no_account_id', 'download_refused',
+                                   'download_limit_reached', 'download_failed',
+                                   'download_malformed', 'store_failure',
+                                   'script_failed', 'script_timeout',
+                                   'records_invalid', 'firewall_version_unsupported')),
     probe       TEXT NOT NULL,
     detail      TEXT,
-    checked_at  INTEGER NOT NULL CHECK (checked_at >= 0 AND checked_at < 4102444800)
+    checked_at  BIGINT NOT NULL CHECK (checked_at >= 0 AND checked_at < 4102444800),
+    -- WHEN THE CURRENT STATE BEGAN, AS opnview's OWN PROBES BOUND IT (coverage row
+    -- 39 of docs/widget-api.md: "the detection engine stopped at 06:12"). opnview
+    -- sees a provider only when it probes or reads it, so the instant a state began
+    -- is never known exactly: it lies after the last check that saw the previous
+    -- state and no later than the first check that saw this one. Those two checks
+    -- are the bounds, written by Store.SetAvailability when a check finds a state
+    -- other than the one recorded. Both stay NULL until a change has been
+    -- observed -- the first check after the row was created changes "not yet
+    -- probed" into a state and bounds nothing -- and a reader names that absence
+    -- rather than printing an instant.
+    state_since_after_at  BIGINT
+                          CHECK (state_since_after_at >= 0 AND state_since_after_at < 4102444800),
+    state_since_by_at     BIGINT
+                          CHECK (state_since_by_at >= 0 AND state_since_by_at < 4102444800),
+    CHECK ((state_since_after_at IS NULL) = (state_since_by_at IS NULL)),
+    CHECK (state_since_after_at IS NULL OR state_since_after_at <= state_since_by_at)
+);
+
+-- ---------------------------------------------------------------------------
+-- plugin_state — a plugin's durable values: a watermark, a cursor, the last
+-- thing it read. Bounded: a handful of rows per plugin.
+--
+-- "Plugin" here is opnview's own term for a directory of manifest, data schema
+-- and script that opnview loads (docs/plugins.md; docs/data-model.md,
+-- Vocabulary), and NOT an OPNsense plugin package such as os-ddclient, which
+-- OPNsense also calls a plugin. A plugin of a kind of its own writes these rows
+-- in the same transaction as the rows of its own tables
+-- (Store.WritePluginPass), so a restart neither loses nor repeats a record. The
+-- tables a plugin declares are created at load, beside this file rather than in
+-- it, as plugin_<plugin>__<table>.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS plugin_state (
+    plugin     TEXT NOT NULL CHECK (length(plugin) > 0),
+    key        TEXT NOT NULL CHECK (length(key) > 0),
+    value      TEXT NOT NULL,
+    updated_at BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800),
+    PRIMARY KEY (plugin, key)
+);
+
+-- ---------------------------------------------------------------------------
+-- plugin_table — the full declaration of every table a plugin owns, as it was
+-- when the table was created. Bounded: one row per plugin table.
+--
+-- It is what makes a plugin's schema change a REBUILD rather than a refusal or
+-- a silent loss (Store.EnsurePluginTable): a declaration that differs from the
+-- recorded one in its columns, types, nullability, primary key, indexes or time
+-- column sets the existing table aside, under a name in plugin_aside_table, and
+-- creates the new one empty. The retention is recorded too, so an aside table
+-- is purged by the retention its rows were written under.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS plugin_table (
+    plugin            TEXT NOT NULL CHECK (length(plugin) > 0),
+    table_name        TEXT NOT NULL CHECK (length(table_name) > 0),
+    declaration       TEXT NOT NULL,
+    time_column       TEXT,
+    retention_seconds BIGINT NOT NULL CHECK (retention_seconds >= 0),
+    declared_at       BIGINT NOT NULL CHECK (declared_at >= 0 AND declared_at < 4102444800),
+    PRIMARY KEY (plugin, table_name)
+);
+
+-- plugin_aside_table — a plugin table set aside by a schema change, kept under a
+-- name that can never be read as a live plugin table (it begins "aside_", not
+-- "plugin_"). Bounded: an aside table with a time column is purged by its
+-- recorded retention and dropped, with its row here, when it is empty; one with
+-- no time column is kept and listed until somebody removes it.
+CREATE TABLE IF NOT EXISTS plugin_aside_table (
+    name              TEXT PRIMARY KEY CHECK (left(name, 6) = 'aside_'),
+    plugin            TEXT NOT NULL CHECK (length(plugin) > 0),
+    table_name        TEXT NOT NULL CHECK (length(table_name) > 0),
+    time_column       TEXT,
+    retention_seconds BIGINT NOT NULL CHECK (retention_seconds >= 0),
+    set_aside_at      BIGINT NOT NULL CHECK (set_aside_at >= 0 AND set_aside_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------
@@ -1833,19 +2040,19 @@ CREATE TABLE IF NOT EXISTS source_availability (
 -- kept for provenance only.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS pair_volume_observation (
-    id                        INTEGER PRIMARY KEY,
-    day_start_at              INTEGER NOT NULL CHECK (day_start_at >= 0 AND day_start_at < 4102444800),
+    id                        BIGINT PRIMARY KEY,
+    day_start_at              BIGINT NOT NULL CHECK (day_start_at >= 0 AND day_start_at < 4102444800),
     endpoint_low              TEXT NOT NULL,
     endpoint_high             TEXT NOT NULL,
-    service_port              INTEGER NOT NULL
+    service_port              BIGINT NOT NULL
                               CHECK (service_port >= 0 AND service_port <= 65535),
     protocol                  TEXT NOT NULL,
-    octets                    REAL NOT NULL CHECK (octets >= 0),
-    packets                   REAL NOT NULL CHECK (packets >= 0),
+    octets                    DOUBLE PRECISION NOT NULL CHECK (octets >= 0),
+    packets                   DOUBLE PRECISION NOT NULL CHECK (packets >= 0),
     observed_direction        TEXT NOT NULL CHECK (observed_direction IN ('in', 'out', 'unknown')),
     observed_interface_device TEXT,
-    last_seen_at              INTEGER NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
-    ingested_at               INTEGER NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
+    last_seen_at              BIGINT NOT NULL CHECK (last_seen_at >= 0 AND last_seen_at < 4102444800),
+    ingested_at               BIGINT NOT NULL CHECK (ingested_at >= 0 AND ingested_at < 4102444800),
     CHECK (endpoint_low <= endpoint_high),
     UNIQUE (day_start_at, endpoint_low, endpoint_high, service_port, protocol)
 );
@@ -1888,8 +2095,8 @@ CREATE INDEX IF NOT EXISTS idx_pair_volume_day ON pair_volume_observation (day_s
 -- never reaches the firewall and is in none of these figures.
 --
 -- A slot is unique per period and key, through a unique index whose NULL-bearing
--- columns are wrapped in ifnull, because SQLite treats NULLs in a unique index
--- as distinct.
+-- columns are wrapped in coalesce, because PostgreSQL treats NULLs in a unique
+-- index as distinct.
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
@@ -1898,7 +2105,7 @@ CREATE INDEX IF NOT EXISTS idx_pair_volume_day ON pair_volume_observation (day_s
 -- on the firewall only daily, for 62 days).
 --
 -- src_interface_id IS NULLABLE: an inbound flow's source is outside and has no
--- interface, and the slot key wraps it in ifnull so that slot is unique too.
+-- interface, and the slot key wraps it in coalesce so that slot is unique too.
 -- peer_address is classified_flow.peer_address, the outside end, and
 -- traffic_direction the outbound / inbound / inter_interface classification, or
 -- to_this_firewall / from_this_firewall when an end is this firewall, which is
@@ -1911,11 +2118,11 @@ CREATE INDEX IF NOT EXISTS idx_pair_volume_day ON pair_volume_observation (day_s
 -- kept apart so they count on that interface's own figures and nowhere else.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS volume_aggregate_1h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    INTEGER REFERENCES interface (id),
-    dst_interface_id    INTEGER REFERENCES interface (id),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    src_interface_id    BIGINT REFERENCES interface (id),
+    dst_interface_id    BIGINT REFERENCES interface (id),
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL
                         CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
@@ -1923,14 +2130,14 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_1h (
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
                                                      'to_this_firewall', 'from_this_firewall')),
     exit_leg_device     TEXT,
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
     CHECK (traffic_scope = CASE
@@ -1953,16 +2160,16 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_1h (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_1h_slot
-    ON volume_aggregate_1h (period_start_at, ifnull(src_interface_id, -1),
-                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
-                            traffic_direction, ifnull(exit_leg_device, ''));
+    ON volume_aggregate_1h (period_start_at, coalesce(src_interface_id, -1),
+                            coalesce(dst_interface_id, -1), coalesce(peer_address, ''),
+                            traffic_direction, coalesce(exit_leg_device, ''));
 
 CREATE TABLE IF NOT EXISTS volume_aggregate_24h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    INTEGER REFERENCES interface (id),
-    dst_interface_id    INTEGER REFERENCES interface (id),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    src_interface_id    BIGINT REFERENCES interface (id),
+    dst_interface_id    BIGINT REFERENCES interface (id),
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL
                         CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
@@ -1970,14 +2177,14 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_24h (
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
                                                      'to_this_firewall', 'from_this_firewall')),
     exit_leg_device     TEXT,
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
     CHECK (traffic_scope = CASE
@@ -2000,16 +2207,16 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_24h (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_24h_slot
-    ON volume_aggregate_24h (period_start_at, ifnull(src_interface_id, -1),
-                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
-                            traffic_direction, ifnull(exit_leg_device, ''));
+    ON volume_aggregate_24h (period_start_at, coalesce(src_interface_id, -1),
+                            coalesce(dst_interface_id, -1), coalesce(peer_address, ''),
+                            traffic_direction, coalesce(exit_leg_device, ''));
 
 CREATE TABLE IF NOT EXISTS volume_aggregate_7d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    INTEGER REFERENCES interface (id),
-    dst_interface_id    INTEGER REFERENCES interface (id),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    src_interface_id    BIGINT REFERENCES interface (id),
+    dst_interface_id    BIGINT REFERENCES interface (id),
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL
                         CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
@@ -2017,14 +2224,14 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_7d (
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
                                                      'to_this_firewall', 'from_this_firewall')),
     exit_leg_device     TEXT,
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
     CHECK (traffic_scope = CASE
@@ -2047,16 +2254,16 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_7d (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_7d_slot
-    ON volume_aggregate_7d (period_start_at, ifnull(src_interface_id, -1),
-                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
-                            traffic_direction, ifnull(exit_leg_device, ''));
+    ON volume_aggregate_7d (period_start_at, coalesce(src_interface_id, -1),
+                            coalesce(dst_interface_id, -1), coalesce(peer_address, ''),
+                            traffic_direction, coalesce(exit_leg_device, ''));
 
 CREATE TABLE IF NOT EXISTS volume_aggregate_30d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    src_interface_id    INTEGER REFERENCES interface (id),
-    dst_interface_id    INTEGER REFERENCES interface (id),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    src_interface_id    BIGINT REFERENCES interface (id),
+    dst_interface_id    BIGINT REFERENCES interface (id),
     peer_address        TEXT,
     traffic_scope       TEXT NOT NULL
                         CHECK (traffic_scope IN ('east_west', 'north_south', 'this_firewall')),
@@ -2064,14 +2271,14 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_30d (
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
                                                      'to_this_firewall', 'from_this_firewall')),
     exit_leg_device     TEXT,
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes),
     CHECK (traffic_scope = CASE
@@ -2094,9 +2301,9 @@ CREATE TABLE IF NOT EXISTS volume_aggregate_30d (
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_30d_slot
-    ON volume_aggregate_30d (period_start_at, ifnull(src_interface_id, -1),
-                            ifnull(dst_interface_id, -1), ifnull(peer_address, ''),
-                            traffic_direction, ifnull(exit_leg_device, ''));
+    ON volume_aggregate_30d (period_start_at, coalesce(src_interface_id, -1),
+                            coalesce(dst_interface_id, -1), coalesce(peer_address, ''),
+                            traffic_direction, coalesce(exit_leg_device, ''));
 
 -- ---------------------------------------------------------------------------
 -- owner_volume_aggregate_* — the same four periods, keyed on the person rather
@@ -2121,92 +2328,92 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_30d_slot
 -- flows, because ownership is an attribute of the person and not of the flow.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS owner_volume_aggregate_1h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    owner_id            INTEGER REFERENCES owner (id),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    owner_id            BIGINT REFERENCES owner (id),
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    client_count        INTEGER NOT NULL CHECK (client_count >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    client_count        BIGINT NOT NULL CHECK (client_count >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_1h_slot
-    ON owner_volume_aggregate_1h (period_start_at, ifnull(owner_id, -1), traffic_scope);
+    ON owner_volume_aggregate_1h (period_start_at, coalesce(owner_id, -1), traffic_scope);
 
 CREATE TABLE IF NOT EXISTS owner_volume_aggregate_24h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    owner_id            INTEGER REFERENCES owner (id),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    owner_id            BIGINT REFERENCES owner (id),
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    client_count        INTEGER NOT NULL CHECK (client_count >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    client_count        BIGINT NOT NULL CHECK (client_count >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_24h_slot
-    ON owner_volume_aggregate_24h (period_start_at, ifnull(owner_id, -1), traffic_scope);
+    ON owner_volume_aggregate_24h (period_start_at, coalesce(owner_id, -1), traffic_scope);
 
 CREATE TABLE IF NOT EXISTS owner_volume_aggregate_7d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    owner_id            INTEGER REFERENCES owner (id),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    owner_id            BIGINT REFERENCES owner (id),
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    client_count        INTEGER NOT NULL CHECK (client_count >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    client_count        BIGINT NOT NULL CHECK (client_count >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_7d_slot
-    ON owner_volume_aggregate_7d (period_start_at, ifnull(owner_id, -1), traffic_scope);
+    ON owner_volume_aggregate_7d (period_start_at, coalesce(owner_id, -1), traffic_scope);
 
 CREATE TABLE IF NOT EXISTS owner_volume_aggregate_30d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    owner_id            INTEGER REFERENCES owner (id),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    owner_id            BIGINT REFERENCES owner (id),
     traffic_scope       TEXT NOT NULL CHECK (traffic_scope IN ('east_west', 'north_south')),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    client_count        INTEGER NOT NULL CHECK (client_count >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    client_count        BIGINT NOT NULL CHECK (client_count >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_30d_slot
-    ON owner_volume_aggregate_30d (period_start_at, ifnull(owner_id, -1), traffic_scope);
+    ON owner_volume_aggregate_30d (period_start_at, coalesce(owner_id, -1), traffic_scope);
 
 -- ---------------------------------------------------------------------------
 -- client_volume_aggregate_* — per machine. Closes G4.
@@ -2223,21 +2430,21 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_30d_slot
 -- after the refresh has already re-keyed every slot its flows moved out of.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS client_volume_aggregate_1h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    distinct_peers      INTEGER NOT NULL CHECK (distinct_peers >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    distinct_peers      BIGINT NOT NULL CHECK (distinct_peers >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
@@ -2248,21 +2455,21 @@ CREATE INDEX IF NOT EXISTS idx_client_volume_aggregate_1h_client
     ON client_volume_aggregate_1h (client_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS client_volume_aggregate_24h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    distinct_peers      INTEGER NOT NULL CHECK (distinct_peers >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    distinct_peers      BIGINT NOT NULL CHECK (distinct_peers >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
@@ -2273,21 +2480,21 @@ CREATE INDEX IF NOT EXISTS idx_client_volume_aggregate_24h_client
     ON client_volume_aggregate_24h (client_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS client_volume_aggregate_7d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    distinct_peers      INTEGER NOT NULL CHECK (distinct_peers >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    distinct_peers      BIGINT NOT NULL CHECK (distinct_peers >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
@@ -2298,21 +2505,21 @@ CREATE INDEX IF NOT EXISTS idx_client_volume_aggregate_7d_client
     ON client_volume_aggregate_7d (client_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS client_volume_aggregate_30d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    distinct_peers      INTEGER NOT NULL CHECK (distinct_peers >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    distinct_peers      BIGINT NOT NULL CHECK (distinct_peers >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
@@ -2347,21 +2554,21 @@ CREATE INDEX IF NOT EXISTS idx_client_volume_aggregate_30d_client
 -- ON DELETE CASCADE.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS peer_volume_aggregate_1h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
@@ -2372,21 +2579,21 @@ CREATE INDEX IF NOT EXISTS idx_peer_volume_aggregate_1h_client
     ON peer_volume_aggregate_1h (client_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS peer_volume_aggregate_24h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
@@ -2397,21 +2604,21 @@ CREATE INDEX IF NOT EXISTS idx_peer_volume_aggregate_24h_client
     ON peer_volume_aggregate_24h (client_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS peer_volume_aggregate_7d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
@@ -2422,21 +2629,21 @@ CREATE INDEX IF NOT EXISTS idx_peer_volume_aggregate_7d_client
     ON peer_volume_aggregate_7d (client_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS peer_volume_aggregate_30d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    client_id           INTEGER NOT NULL REFERENCES client (id) ON DELETE CASCADE,
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    client_id           BIGINT NOT NULL REFERENCES client (id) ON DELETE CASCADE,
     traffic_direction   TEXT NOT NULL
                         CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface')),
     peer_address        TEXT NOT NULL CHECK (length(peer_address) > 0),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
@@ -2454,7 +2661,7 @@ CREATE INDEX IF NOT EXISTS idx_peer_volume_aggregate_30d_client
 -- attributed name verbatim; grouping it into a registrable domain is done at read
 -- time from the Public Suffix List and never stored. client_id is the flow's
 -- source client, the machine that made the lookup; NULL when the flow named
--- none, keyed through ifnull.
+-- none, keyed through coalesce.
 --
 -- The flow count is allowed_connections + blocked_connections +
 -- unknown_connections. Distinct clients
@@ -2465,195 +2672,195 @@ CREATE INDEX IF NOT EXISTS idx_peer_volume_aggregate_30d_client
 -- withholds names at the API (step 5B), and what is stored is unchanged.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS domain_volume_aggregate_1h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
     site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
-    client_id           INTEGER REFERENCES client (id) ON DELETE CASCADE,
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    client_id           BIGINT REFERENCES client (id) ON DELETE CASCADE,
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_volume_aggregate_1h_slot
-    ON domain_volume_aggregate_1h (period_start_at, site_name, ifnull(client_id, -1));
+    ON domain_volume_aggregate_1h (period_start_at, site_name, coalesce(client_id, -1));
 
 CREATE TABLE IF NOT EXISTS domain_volume_aggregate_24h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
     site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
-    client_id           INTEGER REFERENCES client (id) ON DELETE CASCADE,
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    client_id           BIGINT REFERENCES client (id) ON DELETE CASCADE,
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_volume_aggregate_24h_slot
-    ON domain_volume_aggregate_24h (period_start_at, site_name, ifnull(client_id, -1));
+    ON domain_volume_aggregate_24h (period_start_at, site_name, coalesce(client_id, -1));
 
 CREATE TABLE IF NOT EXISTS domain_volume_aggregate_7d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
     site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
-    client_id           INTEGER REFERENCES client (id) ON DELETE CASCADE,
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    client_id           BIGINT REFERENCES client (id) ON DELETE CASCADE,
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_volume_aggregate_7d_slot
-    ON domain_volume_aggregate_7d (period_start_at, site_name, ifnull(client_id, -1));
+    ON domain_volume_aggregate_7d (period_start_at, site_name, coalesce(client_id, -1));
 
 CREATE TABLE IF NOT EXISTS domain_volume_aggregate_30d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
     site_name           TEXT NOT NULL CHECK (length(site_name) > 0),
-    client_id           INTEGER REFERENCES client (id) ON DELETE CASCADE,
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    client_id           BIGINT REFERENCES client (id) ON DELETE CASCADE,
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_domain_volume_aggregate_30d_slot
-    ON domain_volume_aggregate_30d (period_start_at, site_name, ifnull(client_id, -1));
+    ON domain_volume_aggregate_30d (period_start_at, site_name, coalesce(client_id, -1));
 
 -- ---------------------------------------------------------------------------
 -- rule_volume_aggregate_* — per rule and interface pair, so the matrix's rules
 -- and a rule's recent history are answerable beyond the flow horizon.
 --
 -- rule_id is the rule the flow's rid resolved to; NULL is every flow whose rid
--- resolved to nothing or named none, kept as its own slot through ifnull so the
+-- resolved to nothing or named none, kept as its own slot through coalesce so the
 -- family sums to every flow. A rule is never purged, so a rule deleted on the
 -- firewall after it was discovered keeps its slots and its description.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS rule_volume_aggregate_1h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    rule_id             INTEGER REFERENCES rule (id),
-    src_interface_id    INTEGER REFERENCES interface (id),
-    dst_interface_id    INTEGER REFERENCES interface (id),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    rule_id             BIGINT REFERENCES rule (id),
+    src_interface_id    BIGINT REFERENCES interface (id),
+    dst_interface_id    BIGINT REFERENCES interface (id),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_volume_aggregate_1h_slot
-    ON rule_volume_aggregate_1h (period_start_at, ifnull(rule_id, -1),
-                                 ifnull(src_interface_id, -1), ifnull(dst_interface_id, -1));
+    ON rule_volume_aggregate_1h (period_start_at, coalesce(rule_id, -1),
+                                 coalesce(src_interface_id, -1), coalesce(dst_interface_id, -1));
 CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_1h_rule
     ON rule_volume_aggregate_1h (rule_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS rule_volume_aggregate_24h (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    rule_id             INTEGER REFERENCES rule (id),
-    src_interface_id    INTEGER REFERENCES interface (id),
-    dst_interface_id    INTEGER REFERENCES interface (id),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    rule_id             BIGINT REFERENCES rule (id),
+    src_interface_id    BIGINT REFERENCES interface (id),
+    dst_interface_id    BIGINT REFERENCES interface (id),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_volume_aggregate_24h_slot
-    ON rule_volume_aggregate_24h (period_start_at, ifnull(rule_id, -1),
-                                 ifnull(src_interface_id, -1), ifnull(dst_interface_id, -1));
+    ON rule_volume_aggregate_24h (period_start_at, coalesce(rule_id, -1),
+                                 coalesce(src_interface_id, -1), coalesce(dst_interface_id, -1));
 CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_24h_rule
     ON rule_volume_aggregate_24h (rule_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS rule_volume_aggregate_7d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    rule_id             INTEGER REFERENCES rule (id),
-    src_interface_id    INTEGER REFERENCES interface (id),
-    dst_interface_id    INTEGER REFERENCES interface (id),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    rule_id             BIGINT REFERENCES rule (id),
+    src_interface_id    BIGINT REFERENCES interface (id),
+    dst_interface_id    BIGINT REFERENCES interface (id),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_volume_aggregate_7d_slot
-    ON rule_volume_aggregate_7d (period_start_at, ifnull(rule_id, -1),
-                                 ifnull(src_interface_id, -1), ifnull(dst_interface_id, -1));
+    ON rule_volume_aggregate_7d (period_start_at, coalesce(rule_id, -1),
+                                 coalesce(src_interface_id, -1), coalesce(dst_interface_id, -1));
 CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_7d_rule
     ON rule_volume_aggregate_7d (rule_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS rule_volume_aggregate_30d (
-    id                  INTEGER PRIMARY KEY,
-    period_start_at     INTEGER NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at       INTEGER NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    rule_id             INTEGER REFERENCES rule (id),
-    src_interface_id    INTEGER REFERENCES interface (id),
-    dst_interface_id    INTEGER REFERENCES interface (id),
-    bytes               INTEGER NOT NULL CHECK (bytes >= 0),
-    allowed_bytes       INTEGER NOT NULL CHECK (allowed_bytes >= 0),
-    blocked_bytes       INTEGER NOT NULL CHECK (blocked_bytes >= 0),
-    unknown_bytes       INTEGER NOT NULL CHECK (unknown_bytes >= 0),
-    allowed_connections INTEGER NOT NULL CHECK (allowed_connections >= 0),
-    blocked_connections INTEGER NOT NULL CHECK (blocked_connections >= 0),
-    unknown_connections INTEGER NOT NULL CHECK (unknown_connections >= 0),
-    computed_at         INTEGER NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    id                  BIGINT PRIMARY KEY,
+    period_start_at     BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at       BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    rule_id             BIGINT REFERENCES rule (id),
+    src_interface_id    BIGINT REFERENCES interface (id),
+    dst_interface_id    BIGINT REFERENCES interface (id),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    allowed_bytes       BIGINT NOT NULL CHECK (allowed_bytes >= 0),
+    blocked_bytes       BIGINT NOT NULL CHECK (blocked_bytes >= 0),
+    unknown_bytes       BIGINT NOT NULL CHECK (unknown_bytes >= 0),
+    allowed_connections BIGINT NOT NULL CHECK (allowed_connections >= 0),
+    blocked_connections BIGINT NOT NULL CHECK (blocked_connections >= 0),
+    unknown_connections BIGINT NOT NULL CHECK (unknown_connections >= 0),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK (period_end_at > period_start_at),
     CHECK (bytes = allowed_bytes + blocked_bytes + unknown_bytes)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_rule_volume_aggregate_30d_slot
-    ON rule_volume_aggregate_30d (period_start_at, ifnull(rule_id, -1),
-                                 ifnull(src_interface_id, -1), ifnull(dst_interface_id, -1));
+    ON rule_volume_aggregate_30d (period_start_at, coalesce(rule_id, -1),
+                                 coalesce(src_interface_id, -1), coalesce(dst_interface_id, -1));
 CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_30d_rule
     ON rule_volume_aggregate_30d (rule_id, period_start_at);
 
@@ -2716,13 +2923,13 @@ CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_30d_rule
 -- and its calendar month have all ended before the horizon.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS purged_flow_hour (
-    id                INTEGER PRIMARY KEY,
-    hour_start_at     INTEGER NOT NULL CHECK (hour_start_at >= 0 AND hour_start_at < 4102444800
+    id                BIGINT PRIMARY KEY,
+    hour_start_at     BIGINT NOT NULL CHECK (hour_start_at >= 0 AND hour_start_at < 4102444800
                                               AND hour_start_at % 3600 = 0),
-    src_interface_id  INTEGER REFERENCES interface (id),
-    dst_interface_id  INTEGER REFERENCES interface (id),
-    src_client_id     INTEGER REFERENCES client (id) ON DELETE SET NULL,
-    local_client_id   INTEGER REFERENCES client (id) ON DELETE SET NULL,
+    src_interface_id  BIGINT REFERENCES interface (id),
+    dst_interface_id  BIGINT REFERENCES interface (id),
+    src_client_id     BIGINT REFERENCES client (id) ON DELETE SET NULL,
+    local_client_id   BIGINT REFERENCES client (id) ON DELETE SET NULL,
     traffic_direction TEXT NOT NULL
                       CHECK (traffic_direction IN ('outbound', 'inbound', 'inter_interface',
                                                    'to_this_firewall', 'from_this_firewall')),
@@ -2732,12 +2939,12 @@ CREATE TABLE IF NOT EXISTS purged_flow_hour (
     peer_address      TEXT,
     -- classified_flow.exit_leg_device: the device a second leg was logged on.
     exit_leg_device   TEXT,
-    rule_id           INTEGER REFERENCES rule (id),
+    rule_id           BIGINT REFERENCES rule (id),
     site_name         TEXT CHECK (site_name IS NULL OR length(site_name) > 0),
     action            TEXT NOT NULL CHECK (action IN ('pass', 'block', 'reject', 'unknown')),
-    bytes             INTEGER NOT NULL CHECK (bytes >= 0),
-    connections       INTEGER NOT NULL CHECK (connections > 0),
-    purged_at         INTEGER NOT NULL CHECK (purged_at >= 0 AND purged_at < 4102444800),
+    bytes             BIGINT NOT NULL CHECK (bytes >= 0),
+    connections       BIGINT NOT NULL CHECK (connections > 0),
+    purged_at         BIGINT NOT NULL CHECK (purged_at >= 0 AND purged_at < 4102444800),
     CHECK (traffic_direction IN ('to_this_firewall', 'from_this_firewall')
            OR ((traffic_direction = 'inter_interface')
                = (src_interface_id IS NOT NULL AND dst_interface_id IS NOT NULL))),
@@ -2771,9 +2978,9 @@ CREATE INDEX IF NOT EXISTS idx_purged_flow_hour_local_client ON purged_flow_hour
 -- written by the purge, absent until the first purge with a finite retention.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS retention_purge (
-    id            INTEGER PRIMARY KEY CHECK (id = 1),
-    purged_before INTEGER NOT NULL CHECK (purged_before >= 0 AND purged_before < 4102444800),
-    purged_at     INTEGER NOT NULL CHECK (purged_at >= 0 AND purged_at < 4102444800)
+    id            BIGINT PRIMARY KEY CHECK (id = 1),
+    purged_before BIGINT NOT NULL CHECK (purged_before >= 0 AND purged_before < 4102444800),
+    purged_at     BIGINT NOT NULL CHECK (purged_at >= 0 AND purged_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------
@@ -2799,8 +3006,8 @@ CREATE TABLE IF NOT EXISTS retention_purge (
 CREATE TABLE IF NOT EXISTS address_classification (
     address       TEXT PRIMARY KEY CHECK (length(address) > 0),
     evidence      TEXT NOT NULL CHECK (length(evidence) > 0),
-    classified_at INTEGER NOT NULL CHECK (classified_at >= 0 AND classified_at < 4102444800)
-) WITHOUT ROWID;
+    classified_at BIGINT NOT NULL CHECK (classified_at >= 0 AND classified_at < 4102444800)
+);
 
 CREATE INDEX IF NOT EXISTS idx_address_classification_classified_at
     ON address_classification (classified_at);
@@ -2844,11 +3051,11 @@ CREATE INDEX IF NOT EXISTS idx_address_classification_classified_at
 -- describing a window whose data would itself have been purged says nothing.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS collection_gap (
-    id                INTEGER PRIMARY KEY,
-    provider_id       INTEGER NOT NULL REFERENCES provider (id),
-    interval_start_at INTEGER NOT NULL
+    id                BIGINT PRIMARY KEY,
+    provider_id       BIGINT NOT NULL REFERENCES provider (id),
+    interval_start_at BIGINT NOT NULL
                       CHECK (interval_start_at >= 0 AND interval_start_at < 4102444800),
-    interval_end_at   INTEGER NOT NULL
+    interval_end_at   BIGINT NOT NULL
                       CHECK (interval_end_at >= 0 AND interval_end_at < 4102444800),
     reason            TEXT NOT NULL
                       CHECK (reason IN ('digest_outside_returned_window',
@@ -2856,13 +3063,59 @@ CREATE TABLE IF NOT EXISTS collection_gap (
                                         'resolver_window_not_honoured',
                                         'download_failed')),
     detail            TEXT,
-    detected_at       INTEGER NOT NULL CHECK (detected_at >= 0 AND detected_at < 4102444800),
+    detected_at       BIGINT NOT NULL CHECK (detected_at >= 0 AND detected_at < 4102444800),
     CHECK (interval_end_at >= interval_start_at)
 );
 
 CREATE INDEX IF NOT EXISTS idx_collection_gap_detected_at ON collection_gap (detected_at);
 CREATE INDEX IF NOT EXISTS idx_collection_gap_interval
     ON collection_gap (provider_id, interval_start_at, interval_end_at);
+
+-- ---------------------------------------------------------------------------
+-- opnview's heartbeat, and the intervals during which opnview was not running
+-- (SPEC-step-5b-widget-api.md, D2).
+--
+-- Source: none. While opnview is stopped, every source goes unread at once, and
+-- nothing any endpoint returns says so: the next poll returns what the firewall
+-- still holds and is silent about what rotated out meanwhile. So the service
+-- records that it is alive, and on start it compares the last record with the
+-- clock.
+--
+-- opnview_heartbeat is ONE ROW: the last instant the service was known to run,
+-- and whether it stopped cleanly at that instant. A clean stop writes the stop
+-- instant and sets clean_stop; a crash leaves the last periodic beat, which is
+-- then the best bound opnview holds, at most one heartbeat interval early.
+--
+-- opnview_downtime IS A TABLE OF ITS OWN rather than a collection_gap reason.
+-- collection_gap is per provider (provider_id NOT NULL, the foreign key every
+-- "was this provider's window covered" search rests on), and opnview not running
+-- is not one provider's gap but all of them: written there it would be one row
+-- per provider per interval, or a NULL provider every reader of that table would
+-- have to learn to skip. Here it is one row per interval, purged with the
+-- retention by detected_at, as collection_gap is.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS opnview_heartbeat (
+    id         BIGINT PRIMARY KEY CHECK (id = 1),
+    beat_at    BIGINT NOT NULL CHECK (beat_at >= 0 AND beat_at < 4102444800),
+    clean_stop BIGINT NOT NULL DEFAULT 0 CHECK (clean_stop IN (0, 1))
+);
+
+CREATE TABLE IF NOT EXISTS opnview_downtime (
+    id                BIGINT PRIMARY KEY,
+    interval_start_at BIGINT NOT NULL
+                      CHECK (interval_start_at >= 0 AND interval_start_at < 4102444800),
+    interval_end_at   BIGINT NOT NULL
+                      CHECK (interval_end_at >= 0 AND interval_end_at < 4102444800),
+    -- 1 when the service recorded a clean stop at interval_start_at, 0 when the
+    -- start is the last heartbeat of a process that ended without one.
+    clean_stop        BIGINT NOT NULL CHECK (clean_stop IN (0, 1)),
+    detected_at       BIGINT NOT NULL CHECK (detected_at >= 0 AND detected_at < 4102444800),
+    CHECK (interval_end_at > interval_start_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_opnview_downtime_detected_at ON opnview_downtime (detected_at);
+CREATE INDEX IF NOT EXISTS idx_opnview_downtime_interval
+    ON opnview_downtime (interval_end_at, interval_start_at);
 
 -- ---------------------------------------------------------------------------
 -- Measurement sample — one numeric reading of one subject at one instant.
@@ -2953,33 +3206,33 @@ CREATE INDEX IF NOT EXISTS idx_collection_gap_interval
 -- inside one interval needs, and the provider is part of it because this kind
 -- admits several concurrently active providers — two of them reading one subject
 -- at one instant are two readings, not a collision. It is a unique INDEX over
--- ifnull(provider_id, -1) rather than a table constraint, because SQLite treats
--- NULLs in a UNIQUE constraint as distinct and the firewall's own gauges carry a
+-- coalesce(provider_id, -1) rather than a table constraint, because PostgreSQL
+-- treats NULLs in a UNIQUE constraint as distinct and the firewall's own gauges carry a
 -- null provider: a bare UNIQUE would have made every gauge non-idempotent. The
--- same ifnull wrapper the volume aggregates already use, for the same reason.
+-- same coalesce wrapper the volume aggregates already use, for the same reason.
 --
 -- Growing: one row per reading. Purged by sampled_at.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS measurement_sample (
-    id           INTEGER PRIMARY KEY,
-    provider_id  INTEGER REFERENCES provider (id),
+    id           BIGINT PRIMARY KEY,
+    provider_id  BIGINT REFERENCES provider (id),
     subject_kind TEXT NOT NULL CHECK (length(subject_kind) > 0
                                       AND subject_kind = lower(subject_kind)
-                                      AND instr(subject_kind, ' ') = 0),
+                                      AND strpos(subject_kind, ' ') = 0),
     subject_key  TEXT NOT NULL,
     measure      TEXT NOT NULL CHECK (length(measure) > 0
                                       AND measure = lower(measure)
-                                      AND instr(measure, ' ') = 0),
+                                      AND strpos(measure, ' ') = 0),
     unit         TEXT NOT NULL CHECK (length(unit) > 0
                                       AND unit = lower(unit)
-                                      AND instr(unit, ' ') = 0),
-    value        REAL NOT NULL,
-    sampled_at   INTEGER NOT NULL CHECK (sampled_at >= 0 AND sampled_at < 4102444800)
+                                      AND strpos(unit, ' ') = 0),
+    value        DOUBLE PRECISION NOT NULL,
+    sampled_at   BIGINT NOT NULL CHECK (sampled_at >= 0 AND sampled_at < 4102444800)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_measurement_sample_reading
     ON measurement_sample (subject_kind, subject_key, measure, sampled_at,
-                           ifnull(provider_id, -1));
+                           coalesce(provider_id, -1));
 
 -- "This subject's readings of this measure over this period" is an index
 -- search rather than a scan of a growing table.
@@ -3029,8 +3282,8 @@ CREATE INDEX IF NOT EXISTS idx_measurement_sample_sampled_at
 -- go with their snapshot through ON DELETE CASCADE.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS state_snapshot (
-    id          INTEGER PRIMARY KEY,
-    provider_id INTEGER NOT NULL REFERENCES provider (id),
+    id          BIGINT PRIMARY KEY,
+    provider_id BIGINT NOT NULL REFERENCES provider (id),
     -- set_key names WHICH set, because one provider commonly reports several:
     -- one surveyed engine reports decisions and alerts, and a tunnel reports
     -- its peers. It is a
@@ -3039,11 +3292,11 @@ CREATE TABLE IF NOT EXISTS state_snapshot (
     -- parses it or branches on its text.
     set_key     TEXT NOT NULL CHECK (length(set_key) > 0
                                      AND set_key = lower(set_key)
-                                     AND instr(set_key, ' ') = 0),
+                                     AND strpos(set_key, ' ') = 0),
     -- captured_at is the instant at which the set was COMPLETE. It is the
     -- load-bearing column: without it a set is a bag of rows and a departure is
     -- undetectable.
-    captured_at INTEGER NOT NULL CHECK (captured_at >= 0 AND captured_at < 4102444800),
+    captured_at BIGINT NOT NULL CHECK (captured_at >= 0 AND captured_at < 4102444800),
     UNIQUE (provider_id, set_key, captured_at)
 );
 
@@ -3055,8 +3308,8 @@ CREATE INDEX IF NOT EXISTS idx_state_snapshot_set
     ON state_snapshot (provider_id, set_key, captured_at, id);
 
 CREATE TABLE IF NOT EXISTS state_item (
-    id             INTEGER PRIMARY KEY,
-    snapshot_id    INTEGER NOT NULL REFERENCES state_snapshot (id) ON DELETE CASCADE,
+    id             BIGINT PRIMARY KEY,
+    snapshot_id    BIGINT NOT NULL REFERENCES state_snapshot (id) ON DELETE CASCADE,
     -- item_key is the identity WITHIN the set, supplied by the provider: the
     -- banned address, the peer's public key, the neighbour's chassis id. It is
     -- unique per snapshot, so one poll cannot report one thing twice, and it is
@@ -3069,14 +3322,14 @@ CREATE TABLE IF NOT EXISTS state_item (
     -- needs to aggregate or filter on earns a typed column, after that provider's
     -- shape has been surveyed rather than guessed. NULL is a thing with no
     -- attributes at all, which is a normal state.
-    attributes     TEXT CHECK (attributes IS NULL OR json_type(attributes) = 'object'),
+    attributes     TEXT CHECK (attributes IS NULL OR attributes IS JSON OBJECT),
     -- valid_until_at is the end of the thing's own validity when the provider
     -- states one — a surveyed ban decision carries a TTL and nothing else. It is NOT
     -- how a departure is detected: an item is gone when the next complete
     -- snapshot omits it, which is the only signal every one of these sources
     -- gives. An expiry that has passed while the item is still reported is the
     -- provider's business, and opnview reports both rather than choosing.
-    valid_until_at INTEGER CHECK (valid_until_at IS NULL
+    valid_until_at BIGINT CHECK (valid_until_at IS NULL
                                   OR (valid_until_at >= 0 AND valid_until_at < 4102444800)),
     UNIQUE (snapshot_id, item_key)
 );
@@ -3088,7 +3341,7 @@ CREATE TABLE IF NOT EXISTS state_item (
 -- is the question a screen asks, and a view over every consecutive pair would
 -- grow with the history for no reader. A set with only one snapshot yields no
 -- rows, which is correct — nothing can be said to have left a set observed once.
-CREATE VIEW IF NOT EXISTS state_item_departure AS
+CREATE OR REPLACE VIEW state_item_departure AS
 WITH latest AS (
     SELECT provider_id, set_key, max(captured_at) AS captured_at
     FROM state_snapshot
@@ -3173,13 +3426,73 @@ WHERE NOT EXISTS (
 -- logged as the client"). 3 is the default, a quarter of an hour at the default
 -- lease interval; it is a whole number of passes, 1 or more, and internal/config
 -- refuses anything else.
+--
+-- heartbeat_interval_seconds and downtime_threshold_seconds: how often the
+-- running service records that it is alive, and how long it must have been gone
+-- for the interval to be recorded in opnview_downtime (SPEC-step-5b-widget-
+-- api.md, D2). 60 and 300 are the defaults, justified in internal/config beside
+-- DefaultHeartbeatIntervalSeconds; both are positive whole numbers of seconds,
+-- the threshold longer than the interval, and internal/config refuses anything
+-- else.
+-- The row-id triggers, one per table numbered by id (see install_assign_id).
+SELECT install_assign_id(t::regclass) FROM unnest(ARRAY[
+    'account',
+    'provider',
+    'interface',
+    'interface_address',
+    'interface_network',
+    'owner',
+    'rule',
+    'client',
+    'dhcp_lease',
+    'flow',
+    'blocklist',
+    'dns_resolution',
+    'resource_record_observation',
+    'security_event',
+    'eve_ingest_cursor',
+    'pair_volume_observation',
+    'volume_aggregate_1h',
+    'volume_aggregate_24h',
+    'volume_aggregate_7d',
+    'volume_aggregate_30d',
+    'owner_volume_aggregate_1h',
+    'owner_volume_aggregate_24h',
+    'owner_volume_aggregate_7d',
+    'owner_volume_aggregate_30d',
+    'client_volume_aggregate_1h',
+    'client_volume_aggregate_24h',
+    'client_volume_aggregate_7d',
+    'client_volume_aggregate_30d',
+    'peer_volume_aggregate_1h',
+    'peer_volume_aggregate_24h',
+    'peer_volume_aggregate_7d',
+    'peer_volume_aggregate_30d',
+    'domain_volume_aggregate_1h',
+    'domain_volume_aggregate_24h',
+    'domain_volume_aggregate_7d',
+    'domain_volume_aggregate_30d',
+    'rule_volume_aggregate_1h',
+    'rule_volume_aggregate_24h',
+    'rule_volume_aggregate_7d',
+    'rule_volume_aggregate_30d',
+    'purged_flow_hour',
+    'collection_gap',
+    'opnview_downtime',
+    'measurement_sample',
+    'state_snapshot',
+    'state_item'
+]) AS t;
+
 INSERT INTO setting (key, value, updated_at) VALUES
-    ('retention_seconds', '7776000', CAST(strftime('%s', 'now') AS INTEGER)),
-    ('aggregate_mode', 'full', CAST(strftime('%s', 'now') AS INTEGER)),
-    ('attribution_max_delay_seconds', '5', CAST(strftime('%s', 'now') AS INTEGER)),
-    ('attribution_max_cache_answer_delay_seconds', '3600', CAST(strftime('%s', 'now') AS INTEGER)),
-    ('leg_pairing_window_seconds', '1', CAST(strftime('%s', 'now') AS INTEGER)),
-    ('lease_backend_failure_pass_limit', '3', CAST(strftime('%s', 'now') AS INTEGER))
+    ('retention_seconds', '7776000', CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('aggregate_mode', 'full', CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('attribution_max_delay_seconds', '5', CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('attribution_max_cache_answer_delay_seconds', '3600', CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('leg_pairing_window_seconds', '1', CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('lease_backend_failure_pass_limit', '3', CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('heartbeat_interval_seconds', '60', CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('downtime_threshold_seconds', '300', CAST(extract(epoch FROM now()) AS BIGINT))
 ON CONFLICT (key) DO NOTHING;
 
 -- The provider registry, seeded with the implementations that exist and have
@@ -3197,21 +3510,30 @@ ON CONFLICT (key) DO NOTHING;
 -- installed THERE, which is the 'unavailable' state working, not a reason to
 -- forget the implementation exists.
 --
+-- THIS SEED IS THE HISTORICAL SET AND NOT A LIST TO KEEP UP. Every row below is
+-- now also declared by a built-in plugin (plugins/<name>/plugin.json), under the
+-- same kind and key, so a store whose seed is ignored ends with the same rows. A
+-- plugin added later -- a directory dropped into <data-dir>/plugins/ -- declares
+-- its kind, key and display name in its manifest, and the collector registers its
+-- row (and the availability row below) at the first probe round with
+-- Store.EnsureProvider, so adding one edits nothing in this file, a new kind
+-- included.
+--
 -- No provider is active. Activeness says which implementation opnview reads,
 -- and it is decided by the probe round in internal/collect against a live
 -- firewall; this file has no way to know and must not pretend to. Every
 -- citation below is in docs/opnsense-api-survey.md, and docs/data-model.md
 -- tabulates them.
 INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) VALUES
-    ('firewall_log',   'pf',                'pf filter log',        0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('security_event', 'suricata',          'Suricata',             0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('flow_volume',    'insight',           'NetFlow / Insight',    0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('dhcp_lease',     'kea',               'Kea DHCP',             0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('dhcp_lease',     'dnsmasq',           'Dnsmasq DHCP',         0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('dhcp_lease',     'isc',               'ISC dhcpd',            0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('dns_lookup',     'unbound',           'Unbound',              0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('dns_lookup',     'dnsmasq',           'Dnsmasq resolver',     0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('geo_asn',        'maxmind_geolite2',  'MaxMind GeoLite2',     0, CAST(strftime('%s', 'now') AS INTEGER)),
+    ('firewall_log',   'pf',                'pf filter log',        0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('security_event', 'suricata',          'Suricata',             0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('flow_volume',    'insight',           'NetFlow / Insight',    0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('dhcp_lease',     'kea',               'Kea DHCP',             0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('dhcp_lease',     'dnsmasq',           'Dnsmasq DHCP',         0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('dhcp_lease',     'isc',               'ISC dhcpd',            0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('dns_lookup',     'unbound',           'Unbound',              0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('dns_lookup',     'dnsmasq',           'Dnsmasq resolver',     0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('ip_geolocation', 'maxmind_geolite2',  'MaxMind GeoLite2',     0, CAST(extract(epoch FROM now()) AS BIGINT)),
     -- The measurement_sample kind's first implementation is the sampler 4A
     -- already wrote: the live per-pair traffic snapshot and the firewall's own
     -- gauges. It was registered under flow_volume because the kind did not exist,
@@ -3220,19 +3542,18 @@ INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at
     -- implements no external contract; what this row accounts for is the sampled
     -- per-pair volume, which is a source's material.
     ('measurement_sample', 'insight',       'NetFlow / Insight sampling',
-                                                                    0, CAST(strftime('%s', 'now') AS INTEGER)),
-    -- The Public Suffix List, downloaded from publicsuffix.org by
-    -- internal/publicsuffix: the third of the three outbound calls the project
-    -- allows, and the one implementation of the public_suffix kind.
-    ('public_suffix',  'public_suffix_list', 'Public Suffix List',  0, CAST(strftime('%s', 'now') AS INTEGER)),
+                                                                    0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    -- The Public Suffix List, downloaded from publicsuffix.org by the built-in
+    -- publicsuffix plugin: the registrable_domain kind's built-in provider.
+    ('registrable_domain', 'public_suffix_list', 'Public Suffix List', 0, CAST(extract(epoch FROM now()) AS BIGINT)),
     -- The resolver's cache and its local data, one row per resolver for each: Unbound
     -- answers both reads; Dnsmasq is registered so that its state -- it offers no
     -- cache or local-data read through the API -- is probed and named rather than
     -- absent.
-    ('resolver_cache', 'unbound',           'Unbound cache',        0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('resolver_cache', 'dnsmasq',           'Dnsmasq cache',        0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('resolver_local_data', 'unbound',      'Unbound local data',   0, CAST(strftime('%s', 'now') AS INTEGER)),
-    ('resolver_local_data', 'dnsmasq',      'Dnsmasq local data',   0, CAST(strftime('%s', 'now') AS INTEGER))
+    ('resolver_cache', 'unbound',           'Unbound cache',        0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('resolver_cache', 'dnsmasq',           'Dnsmasq cache',        0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('resolver_local_data', 'unbound',      'Unbound local data',   0, CAST(extract(epoch FROM now()) AS BIGINT)),
+    ('resolver_local_data', 'dnsmasq',      'Dnsmasq local data',   0, CAST(extract(epoch FROM now()) AS BIGINT))
 ON CONFLICT (kind, provider_key) DO NOTHING;
 
 -- THE reconciled_state KIND HAS NO REGISTRY ROW, AND THAT IS NOT AN OMISSION.
@@ -3259,7 +3580,171 @@ ON CONFLICT (kind, provider_key) DO NOTHING;
 -- set is derived from the registry, so registering a provider and forgetting
 -- its availability row is not possible here, and the NOT EXISTS guard is what
 -- makes a second apply leave an already-probed row alone.
-INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
-SELECT p.id, 'unavailable', 'not_yet_probed', NULL, 0
+INSERT INTO source_availability (provider_id, state, outcome, probe, detail, checked_at)
+SELECT p.id, 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0
 FROM provider AS p
 WHERE NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);
+
+-- ---------------------------------------------------------------------------
+-- THE LEARNED MIRROR OF THE FIREWALL API (A9 and A10 of the broker amendment to
+-- specs/SPEC-backend-completion-plugins.md). The schema `opnsense` holds what the
+-- broker observed of the firewall's answers: the data tables, which the mirror
+-- creates and alters at run time from the fields its readers read, and the
+-- metadata below, which this file creates. No endpoint, field or installation
+-- value is written here: the tables are generic, and their rows are what the
+-- broker learned. The read role holds SELECT on the data tables only, granted as
+-- each is created; nothing below is readable by it.
+-- ---------------------------------------------------------------------------
+CREATE SCHEMA IF NOT EXISTS opnsense;
+
+-- One firewall endpoint the broker has called: its method and body encoding, its
+-- call cost, its streams and the broker's counters.
+CREATE TABLE IF NOT EXISTS opnsense.mirror_endpoint (
+    id                     BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    path                   TEXT NOT NULL CHECK (left(path, 5) = '/api/'),
+    method                 TEXT NOT NULL CHECK (method IN ('GET', 'POST')),
+    encoding               TEXT NOT NULL CHECK (encoding IN ('none', 'form', 'json')),
+    first_seen_at          BIGINT NOT NULL CHECK (first_seen_at >= 0 AND first_seen_at < 4102444800),
+    -- Whether the answer was seen to be an event stream, from its headers, and
+    -- whether a manifest declared it one: the catalogue reports a disagreement.
+    observed_stream        BOOLEAN NOT NULL DEFAULT false,
+    declared_stream        BOOLEAN NOT NULL DEFAULT false,
+    calls                  BIGINT NOT NULL DEFAULT 0 CHECK (calls >= 0),
+    mirror_hits            BIGINT NOT NULL DEFAULT 0 CHECK (mirror_hits >= 0),
+    write_refused          BIGINT NOT NULL DEFAULT 0 CHECK (write_refused >= 0),
+    -- The last calls' latencies in milliseconds and answer sizes in bytes, newest
+    -- last, at most 64 of each: the catalogue's median and 95th percentile.
+    latencies_ms           JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(latencies_ms) = 'array'),
+    sizes_bytes            JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(sizes_bytes) = 'array'),
+    -- A stream's observed shape: the median interval between events and the
+    -- longest a connection lasted before the server cut it.
+    event_interval_ms      DOUBLE PRECISION,
+    stream_cutoff_seconds  DOUBLE PRECISION,
+    UNIQUE (path, method)
+);
+
+-- One request parameter of an endpoint, its role, who corrected it, and whether a
+-- window parameter is honoured: NULL until a window was tried, false once a row
+-- came back outside it.
+CREATE TABLE IF NOT EXISTS opnsense.mirror_parameter (
+    endpoint_id   BIGINT NOT NULL REFERENCES opnsense.mirror_endpoint (id) ON DELETE CASCADE,
+    name          TEXT NOT NULL CHECK (length(name) > 0),
+    role          TEXT NOT NULL CHECK (role IN ('window_start', 'window_end', 'page', 'page_size',
+                                                'identifying', 'ignored')),
+    corrected_by  TEXT,
+    honoured      BOOLEAN,
+    PRIMARY KEY (endpoint_id, name)
+);
+
+-- One datum: one endpoint with one combination of identifying parameters, as
+-- answered by one firewall. `firewall` is a non-secret identity of the configured
+-- base URL (a digest, never the URL), so a changed firewall starts from nothing
+-- fresh and its predecessor's history is never mixed into its state.
+CREATE TABLE IF NOT EXISTS opnsense.mirror_datum (
+    id                 BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    endpoint_id        BIGINT NOT NULL REFERENCES opnsense.mirror_endpoint (id) ON DELETE CASCADE,
+    identity           JSONB NOT NULL,
+    identity_key       TEXT NOT NULL,
+    firewall           TEXT NOT NULL,
+    nature             TEXT CHECK (nature IS NULL OR nature IN ('snapshot', 'record_stream')),
+    row_set            TEXT,
+    key                JSONB,
+    cursor             JSONB,
+    cursor_type        TEXT,
+    cursor_descending  BOOLEAN NOT NULL DEFAULT false,
+    dedupe_on_content  BOOLEAN NOT NULL DEFAULT false,
+    generation         BIGINT NOT NULL DEFAULT 0,
+    -- The last call that answered OK, and the last call whatever it answered: an
+    -- unsuccessful outcome counts for freshness and never replaces rows.
+    fetched_at         BIGINT CHECK (fetched_at IS NULL OR (fetched_at >= 0 AND fetched_at < 4102444800)),
+    attempted_at       BIGINT CHECK (attempted_at IS NULL OR (attempted_at >= 0 AND attempted_at < 4102444800)),
+    outcome            TEXT,
+    status_code        BIGINT,
+    detail             TEXT,
+    -- The shape of the last answer's containers, and its page size.
+    root_shape         JSONB,
+    page_size          BIGINT,
+    -- The last answer's body, kept only while a reader reads the datum whole.
+    body               TEXT,
+    read_whole         BOOLEAN NOT NULL DEFAULT false,
+    -- Generations whose stored content changed: the observed change frequency.
+    changes            BIGINT NOT NULL DEFAULT 0,
+    UNIQUE (endpoint_id, identity_key, firewall)
+);
+
+-- The data tables the mirror created: one per endpoint and row set.
+CREATE TABLE IF NOT EXISTS opnsense.mirror_table (
+    name            TEXT PRIMARY KEY,
+    endpoint_id     BIGINT NOT NULL REFERENCES opnsense.mirror_endpoint (id) ON DELETE CASCADE,
+    row_set         TEXT NOT NULL,
+    parent_row_set  TEXT,
+    hypertable      BOOLEAN NOT NULL DEFAULT false,
+    created_at      BIGINT NOT NULL CHECK (created_at >= 0 AND created_at < 4102444800),
+    UNIQUE (endpoint_id, row_set)
+);
+
+-- The columns of the data tables: the field path each holds, its inferred or
+-- corrected type, and whether it carries a domain name.
+CREATE TABLE IF NOT EXISTS opnsense.mirror_column (
+    table_name      TEXT NOT NULL REFERENCES opnsense.mirror_table (name) ON DELETE CASCADE,
+    path            TEXT NOT NULL,
+    column_name     TEXT NOT NULL,
+    type            TEXT NOT NULL CHECK (type IN ('ip_address', 'mac_address', 'timestamp', 'number', 'text',
+                                                  'boolean', 'json')),
+    carries_domain  BOOLEAN NOT NULL DEFAULT false,
+    added_at        BIGINT NOT NULL CHECK (added_at >= 0 AND added_at < 4102444800),
+    PRIMARY KEY (table_name, path),
+    UNIQUE (table_name, column_name)
+);
+
+-- Every change of an endpoint's mirrored schema: its instant, its cause, and the
+-- firewall version that produced the shape.
+CREATE TABLE IF NOT EXISTS opnsense.mirror_schema_version (
+    endpoint_id       BIGINT NOT NULL REFERENCES opnsense.mirror_endpoint (id) ON DELETE CASCADE,
+    version           BIGINT NOT NULL CHECK (version >= 1),
+    changed_at        BIGINT NOT NULL CHECK (changed_at >= 0 AND changed_at < 4102444800),
+    cause             TEXT NOT NULL,
+    firewall_version  TEXT,
+    PRIMARY KEY (endpoint_id, version)
+);
+
+-- What each reader read of each datum: the field paths, per plugin and plugin
+-- version, with its max age. A path read whole marks everything below it.
+CREATE TABLE IF NOT EXISTS opnsense.mirror_read (
+    datum_id         BIGINT NOT NULL REFERENCES opnsense.mirror_datum (id) ON DELETE CASCADE,
+    reader           TEXT NOT NULL,
+    reader_version   TEXT NOT NULL,
+    path             TEXT NOT NULL,
+    whole            BOOLEAN NOT NULL,
+    max_age_seconds  DOUBLE PRECISION,
+    first_read_at    BIGINT NOT NULL CHECK (first_read_at >= 0 AND first_read_at < 4102444800),
+    last_read_at     BIGINT NOT NULL CHECK (last_read_at >= 0 AND last_read_at < 4102444800),
+    PRIMARY KEY (datum_id, reader, reader_version, path, whole)
+);
+
+-- The corrections a plugin's manifest applies to an endpoint, and whether they
+-- were applied or lost to another plugin's (mirror_correction_conflict).
+CREATE TABLE IF NOT EXISTS opnsense.mirror_correction (
+    endpoint_id  BIGINT NOT NULL REFERENCES opnsense.mirror_endpoint (id) ON DELETE CASCADE,
+    reader       TEXT NOT NULL,
+    corrections  JSONB NOT NULL,
+    applied      BOOLEAN NOT NULL,
+    recorded_at  BIGINT NOT NULL CHECK (recorded_at >= 0 AND recorded_at < 4102444800),
+    PRIMARY KEY (endpoint_id, reader)
+);
+
+-- An interval a datum or a stream is known not to cover: a record stream whose
+-- answer began after its newest stored row, a failed call, a stream cut. A gap is
+-- recorded, never bridged, and never read as zeros.
+CREATE TABLE IF NOT EXISTS opnsense.mirror_gap (
+    id           BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+    datum_id     BIGINT REFERENCES opnsense.mirror_datum (id) ON DELETE CASCADE,
+    stream       TEXT,
+    from_at      BIGINT NOT NULL CHECK (from_at >= 0 AND from_at < 4102444800),
+    to_at        BIGINT NOT NULL CHECK (to_at >= from_at AND to_at < 4102444800),
+    reason       TEXT NOT NULL CHECK (reason IN ('answer_newer_than_stored', 'call_failed', 'stream_cut')),
+    recorded_at  BIGINT NOT NULL CHECK (recorded_at >= 0 AND recorded_at < 4102444800),
+    CHECK ((datum_id IS NULL) <> (stream IS NULL))
+);
+CREATE INDEX IF NOT EXISTS idx_mirror_gap_datum ON opnsense.mirror_gap (datum_id, from_at);
+CREATE INDEX IF NOT EXISTS idx_mirror_gap_stream ON opnsense.mirror_gap (stream, from_at);

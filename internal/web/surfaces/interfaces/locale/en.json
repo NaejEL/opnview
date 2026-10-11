@@ -1,0 +1,42 @@
+{
+  "language": "en",
+  "strings": {
+    "interfaces.title": "Interfaces",
+
+    "interfaces.label.identifier": "Identifier",
+    "interfaces.label.device": "Device",
+    "interfaces.label.upstream": "Upstream",
+    "interfaces.heading.networks": "Networks",
+    "interfaces.heading.overlaps": "Overlapping networks on other interfaces",
+    "interfaces.column.network": "Network",
+    "interfaces.column.origin": "Origin",
+    "interfaces.column.removed": "Removed",
+    "interfaces.column.counts": "Counts now",
+    "interfaces.column.action": "Action",
+    "state.origin.detected": "Detected",
+    "state.origin.operator": "Set by the operator",
+    "state.interface.none": "No interface discovered yet",
+    "state.interface.no_network": "No network stored",
+    "field.network": "Network, address/prefix length",
+    "field.link_local": "Link-local addresses as evidence of membership (RFC 4291)",
+    "action.add": "Add",
+    "action.confirm": "Confirm",
+    "action.remove": "Remove",
+    "action.restore": "Restore",
+    "notice.interface_saved": "Saved for the next derivation",
+    "error.interface_unknown": "That interface does not exist.",
+    "error.interface_upstream": "An upstream interface carries no network.",
+    "error.interface_action_unknown": "That edit does not exist.",
+    "error.network_unknown": "That interface carries no such network.",
+    "error.network_malformed": "That is not an address and prefix length.",
+    "error.network_host_bits": "Bits are set beyond the prefix length.",
+    "error.network_ipv4_mapped": "An IPv4-mapped IPv6 range is refused.",
+    "error.network_link_local": "That range overlaps the IPv6 link-local prefix.",
+    "error.link_local_invalid": "The link-local rule is yes or no.",
+
+    "state.counts.removed": "Removed by the operator",
+    "state.counts.no_longer_detected": "No longer detected",
+    "interfaces.column.overlapping": "Overlapping network",
+    "interfaces.column.interface": "Interface"
+  }
+}

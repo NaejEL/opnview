@@ -46,12 +46,12 @@ the terms that are `opnview`'s own because OPNsense has none, are in
 ## Project
 
 `opnview` gives inter-interface visibility on a VLAN-segmented network behind an
-OPNsense firewall. **One service, installed and updated by a single command,
-with no external data store to provision; storage engines are embedded
-libraries, not servers** — the permitted and forbidden engines are listed in
-`ROADMAP.md` under *Rules that apply to every step*, and that bullet is the
-single place the rule is stated. Local SQLite, frontend embedded in the binary
-and served by it.
+OPNsense firewall. **One service and its database, installed and updated by a
+single command; the user provisions nothing by hand.** The store is PostgreSQL
+with TimescaleDB, run by the installation beside the service. The rule, its
+pinned versions, its licence and what it forbids are in `ROADMAP.md` under
+*Rules that apply to every step*, and that bullet is the single place the rule
+is stated. Frontend embedded in the binary and served by it.
 
 ## The user interface
 
@@ -125,7 +125,8 @@ docker compose run --rm pre-deployment
 ```
 
 Use `docker compose run --rm dev <command>` for anything else in the same
-environment. Never run `go`, `gofmt` or `sqlite3` on the host. Details, and the
+environment. Never run `go`, `gofmt`, `psql` or `pg_dump` on the host; the test
+database is a compose service the two commands start themselves. Details, and the
 list of what this environment does *not* prove, are in `ROADMAP.md` under
 *Development and test environment*.
 

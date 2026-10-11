@@ -1,0 +1,10 @@
+{
+  "api_version": 1,
+  "name": "custom_chart",
+  "version": "1.0.0",
+  "display_name": "Custom chart",
+  "description": "The time_series shape with no binding: the reader names the series -- traffic, a firewall metric, interface throughput, resolver lookups, security events or any dataset of the data catalogue with a time column -- each on the same UTC-aligned buckets and each degrading on its own.",
+  "widgets": [
+    "custom_chart"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "dataset.security_event": "Intrusion detection alerts"
+  }
+}

@@ -14,8 +14,8 @@ import (
 // lease names, is resolved through the local data held at the lookup's instant (scope D of
 // specs/SPEC-resolver-cache-attribution.md). A lookup answered from Local-data also takes
 // the local data's A and AAAA records as exact evidence of its answer (decision 6). Which
-// resolver and which endpoint are in resolverlocaldata_unbound.go and
-// resolverlocaldata_dnsmasq.go.
+// resolver and which endpoint are in resolverlocaldata/unbound and
+// resolverlocaldata/dnsmasq.
 
 // CollectResolverLocalData runs one pass of every active implementation of the
 // resolver_local_data kind.
@@ -25,11 +25,11 @@ func (c *Collector) CollectResolverLocalData(ctx context.Context) error {
 	defer c.storing()()
 	pass, request, passErr := c.readResourceRecords(ctx, KindResolverLocalData, store.HeldInLocalData,
 		func(providerKey string) (recordReader, bool) {
-			source, registered := localDataSources[providerKey]
+			source, registered := c.sources.ResolverLocalData.Lookup(providerKey)
 			if !registered {
 				return nil, false
 			}
-			return source.localData, true
+			return source.LocalData, true
 		})
 
 	// The local data names hosts no lease names, so the lookups whose logged host name is

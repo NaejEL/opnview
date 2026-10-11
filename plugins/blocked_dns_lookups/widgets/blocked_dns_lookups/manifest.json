@@ -1,0 +1,94 @@
+{
+  "manifest_version": 1,
+  "type": "blocked_dns_lookups",
+  "shape": "table",
+  "providers": [
+    "dns_lookup"
+  ],
+  "primary": "dns_lookup",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "purposes",
+      "kind": "enum_set",
+      "values": [
+        "advertising",
+        "tracking",
+        "threat",
+        "parental",
+        "other",
+        "unassigned",
+        "not_recorded"
+      ],
+      "default": [
+        "advertising",
+        "tracking",
+        "threat",
+        "parental",
+        "other",
+        "unassigned",
+        "not_recorded"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "blocklists",
+      "kind": "string_list",
+      "default": null,
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "clients",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "client",
+      "class": "data"
+    },
+    {
+      "key": "limit",
+      "kind": "integer",
+      "default": 20,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "min_count",
+      "kind": "integer",
+      "default": 1,
+      "min": 1,
+      "class": "data"
+    }
+  ],
+  "references": [
+    "client",
+    "interface"
+  ],
+  "queries": [
+    "blocked_dns_lookups.statements.sql"
+  ],
+  "script": "blocked_dns_lookups.js",
+  "renderer": {
+    "reserved": true
+  }
+}

@@ -2,6 +2,7 @@ package collect
 
 import (
 	"context"
+	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"strings"
 	"testing"
 
@@ -17,12 +18,12 @@ func arrangeLeaseCollection(t *testing.T) *probeHarness {
 	t.Helper()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.answerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
-	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
-	harness.fake.answerFixture(opnsense.DnsmasqLeases, "dnsmasq_leases.json")
-	harness.fake.answerFixture(opnsense.ARPTable, "get_arp.json")
-	harness.fake.answerFixture(opnsense.NDPTable, "get_ndp.json")
+	harness.fake.AnswerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqLeases, "dnsmasq_leases.json")
+	harness.fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
+	harness.fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
 	if err := harness.collector.probeDHCPLease(context.Background()); err != nil {
 		t.Fatalf("probing the lease backends: %v", err)
 	}
@@ -42,7 +43,7 @@ func TestALeasePassStoresEachGenerationAndResolvesTheIdentityCascade(t *testing.
 	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	harness.fake.assertEveryPathIsRegistered()
+	harness.fake.AssertEveryPathIsRegistered()
 
 	leases := len(fixtureRecords(t, "dnsmasq_leases.json"))
 	if stored := countRows(t, harness.store, "dhcp_lease"); stored != leases {
@@ -132,12 +133,12 @@ func TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsStoreNone(t
 	// Kea, where the figure is real.
 	keaHarness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, keaHarness.fake, keaHarness.collector)
-	keaHarness.fake.answerFixture(opnsense.KeaStatus, "kea_status_running.json")
-	keaHarness.fake.answerFixture(opnsense.KeaDHCPv4, "kea_dhcpv4_get.json")
-	keaHarness.fake.answerFixture(opnsense.KeaLeases, "kea_leases.json")
+	keaHarness.fake.AnswerFixture(opnsense.KeaStatus, "kea_status_running.json")
+	keaHarness.fake.AnswerFixture(opnsense.KeaDHCPv4, "kea_dhcpv4_get.json")
+	keaHarness.fake.AnswerFixture(opnsense.KeaLeases, "kea_leases.json")
 	// The neighbour tables are read on every lease pass, whichever backend is active.
-	keaHarness.fake.answerFixture(opnsense.ARPTable, "get_arp.json")
-	keaHarness.fake.answerFixture(opnsense.NDPTable, "get_ndp.json")
+	keaHarness.fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
+	keaHarness.fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
 	if err := keaHarness.collector.probeDHCPLease(ctx); err != nil {
 		t.Fatalf("probing: %v", err)
 	}
@@ -201,8 +202,8 @@ func TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs(t *testing.T) {
 	t.Parallel()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.answerFixture(opnsense.ARPTable, "get_arp.json")
-	harness.fake.answerFixture(opnsense.NDPTable, "get_ndp.json")
+	harness.fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
+	harness.fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
 	// No lease backend is arranged, so every lease probe answers 404 and no provider of the
 	// kind is active.
 	if err := harness.collector.probeDHCPLease(context.Background()); err != nil {
@@ -335,7 +336,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 
 			mac := "0a:11:22:33:44:aa"
 			expiry := referenceEpoch() + 3600
-			for index, lease := range []leaseObservation{
+			for index, lease := range []dhcplease.Observation{
 				{
 					Address: "example-address-on-the-first-vlan", MAC: &mac,
 					DHCPClientID: shape.clientID, LeaseState: "active",
@@ -384,7 +385,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 			// Re-polling both servers changes nothing: the generation key still carries the
 			// idempotence, per server.
 			for pass := 0; pass < 2; pass++ {
-				for index, lease := range []leaseObservation{
+				for index, lease := range []dhcplease.Observation{
 					{
 						Address: "example-address-on-the-first-vlan", MAC: &mac,
 						DHCPClientID: shape.clientID, LeaseState: "active",
@@ -430,10 +431,10 @@ func TestTwoDHCPServersBothServingAreBothActivated(t *testing.T) {
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
 
 	// Both servers running and serving a range.
-	harness.fake.answerFixture(opnsense.KeaStatus, "kea_status_running.json")
-	harness.fake.answerFixture(opnsense.KeaDHCPv4, "kea_dhcpv4_get.json")
-	harness.fake.answerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.answerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.fake.AnswerFixture(opnsense.KeaStatus, "kea_status_running.json")
+	harness.fake.AnswerFixture(opnsense.KeaDHCPv4, "kea_dhcpv4_get.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
 
 	if err := harness.collector.probeDHCPLease(ctx); err != nil {
 		t.Logf("the lease probe reported: %v", err)
@@ -501,16 +502,16 @@ func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 	// The asymmetry: the same machine, reported WITH its DHCP client identifier by one server
 	// and WITHOUT it by the other.
 	leases := []struct {
-		observation leaseObservation
+		observation dhcplease.Observation
 		providerID  int64
 		backend     string
 	}{
-		{leaseObservation{
+		{dhcplease.Observation{
 			Address: "example-address-from-the-reporting-server", MAC: &mac,
 			DHCPClientID: &identifier, LeaseState: "active",
 			InterfaceIdentifier: identifiers[0], ExpiresAt: &expiry,
 		}, first, "kea"},
-		{leaseObservation{
+		{dhcplease.Observation{
 			Address: "example-address-from-the-silent-server", MAC: &mac,
 			DHCPClientID: nil, LeaseState: "active",
 			InterfaceIdentifier: identifiers[1], ExpiresAt: &expiry,

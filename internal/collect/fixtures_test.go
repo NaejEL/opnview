@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/collect/providertest"
 )
 
 // TestEveryFixtureSaysInItsOwnFileThatItIsSynthesisedAndNotACapture is the honesty
@@ -20,14 +22,14 @@ import (
 // not a capture.
 func TestEveryFixtureSaysInItsOwnFileThatItIsSynthesisedAndNotACapture(t *testing.T) {
 	t.Parallel()
-	names := fixtureNames(t)
+	names := providertest.FixtureNames(t)
 	if len(names) < 20 {
 		t.Fatalf("only %d fixtures were found, so this check is not reaching them", len(names))
 	}
 
 	for _, name := range names {
 		t.Run(name, func(t *testing.T) {
-			fixture := readFixture(t, name)
+			fixture := providertest.ReadFixture(t, name)
 			provenance := fixture.Provenance
 
 			if provenance.SynthesisedFrom != "docs/opnsense-api-survey.md" {
@@ -75,8 +77,8 @@ func TestEveryFixtureSaysInItsOwnFileThatItIsSynthesisedAndNotACapture(t *testin
 func TestEveryFixtureNamesASurveySectionThatExists(t *testing.T) {
 	t.Parallel()
 	survey := readSurveyDocument(t)
-	for _, name := range fixtureNames(t) {
-		section := readFixture(t, name).Provenance.SurveySection
+	for _, name := range providertest.FixtureNames(t) {
+		section := providertest.ReadFixture(t, name).Provenance.SurveySection
 		// The section is written for a human — "Data source 4 - Degradation; Runtime
 		// discovery (iv)" — so the check is that its leading phrase exists, which is
 		// what a rename would break. The trailing roman numeral is dropped because the

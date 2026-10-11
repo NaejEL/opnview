@@ -22,9 +22,9 @@ func arrangeAlertCollection(t *testing.T) *probeHarness {
 	t.Helper()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.answerFixture(opnsense.IDSStatus, "ids_status_running.json")
-	harness.fake.answerFixture(opnsense.AlertLogs, "get_alert_logs.json")
-	harness.fake.answerFixture(opnsense.QueryAlerts, "query_alerts.json")
+	harness.fake.AnswerFixture(opnsense.IDSStatus, "ids_status_running.json")
+	harness.fake.AnswerFixture(opnsense.AlertLogs, "get_alert_logs.json")
+	harness.fake.AnswerFixture(opnsense.QueryAlerts, "query_alerts.json")
 	if err := harness.collector.probeSecurityEvent(context.Background()); err != nil {
 		t.Fatalf("probing the alert feed: %v", err)
 	}
@@ -44,7 +44,7 @@ func TestAnAlertPassStoresEveryEventAndComposesItsProviderKey(t *testing.T) {
 	if err := harness.collector.CollectSecurityEvent(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	harness.fake.assertEveryPathIsRegistered()
+	harness.fake.AssertEveryPathIsRegistered()
 
 	events := len(fixtureRecords(t, "query_alerts.json"))
 	if stored := countRows(t, harness.store, "security_event"); stored != events {
@@ -71,8 +71,7 @@ func TestAnAlertPassStoresEveryEventAndComposesItsProviderKey(t *testing.T) {
 	// A rule identity that is not a number is stored unchanged, so a provider whose rules
 	// are named rather than numbered fits without a schema change.
 	if named := scalarCount(t, harness.store,
-		"SELECT count(*) FROM security_event WHERE CAST(rule_identity AS INTEGER) = 0 "+
-			"AND rule_identity <> '0'"); named == 0 {
+		"SELECT count(*) FROM security_event WHERE rule_identity !~ '^[0-9]+$'"); named == 0 {
 		t.Error("no event carries a non-numeric rule identity, so the text column is untested")
 	}
 
@@ -130,7 +129,7 @@ func TestTheCursorResumesWithoutLossOrDoubleCountAcrossShiftingOffsets(t *testin
 	for _, record := range appended {
 		rows = append(rows, record)
 	}
-	harness.fake.answerJSON(opnsense.QueryAlerts, map[string]any{
+	harness.fake.AnswerJSON(opnsense.QueryAlerts, map[string]any{
 		"rows": rows, "total_rows": len(rows), "origin": "example-eve-current",
 	})
 
@@ -220,7 +219,7 @@ func TestAnUnreadableRotationListConcludesNoLoss(t *testing.T) {
 		t.Fatalf("seeding a watermark: %v", err)
 	}
 	// The rotation view answers 404 by removing its arranged reply.
-	harness.fake.answer(opnsense.AlertLogs, 404, []byte(`{"errorMessage":"Endpoint not found"}`))
+	harness.fake.Answer(opnsense.AlertLogs, 404, []byte(`{"errorMessage":"Endpoint not found"}`))
 
 	if err := harness.collector.CollectSecurityEvent(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
@@ -244,7 +243,7 @@ func TestAnUnreadableRotationListConcludesNoLoss(t *testing.T) {
 func TestAnEmptyAlertFeedFromARunningEngineStaysReachable(t *testing.T) {
 	t.Parallel()
 	harness := arrangeAlertCollection(t)
-	harness.fake.answerJSON(opnsense.QueryAlerts, map[string]any{
+	harness.fake.AnswerJSON(opnsense.QueryAlerts, map[string]any{
 		"rows": []any{}, "total_rows": 0, "origin": "example-eve-current",
 	})
 

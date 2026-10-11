@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "provider.registrable_domain.public_suffix_list": "publicsuffix.org"
+  }
+}

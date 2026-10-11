@@ -1,0 +1,77 @@
+{
+  "language": "en",
+  "strings": {
+    "field.firewall_url": "Firewall URL",
+    "field.certificate_fingerprint": "Certificate fingerprint (SHA-256)",
+    "action.fetch_certificate": "Fetch from the firewall",
+    "field.api_key": "API key",
+    "field.api_secret": "API secret",
+    "field.maxmind_licence_key": "MaxMind licence key",
+    "field.maxmind_account_id": "MaxMind account ID",
+    "field.theme": "Theme",
+
+    "settings.title": "Settings",
+    "settings.heading.firewall": "OPNsense",
+    "settings.heading.geolocation": "Geolocation",
+    "settings.heading.appearance": "Appearance",
+
+    "settings.label.credential_state": "Stored credentials",
+    "settings.label.verification": "Verification",
+    "settings.label.maxmind_licence_key_state": "Stored licence key",
+    "settings.label.geoip_state": "GeoLite2 databases",
+    "settings.label.geoip_build": "Database build",
+
+    "state.credential.absent": "Not configured",
+    "state.credential.ready": "Readable",
+    "state.credential.undecryptable": "Unreadable: the key file does not match",
+
+    "state.verification.not_attempted": "Not attempted",
+    "state.verification.verified": "The firewall answered",
+    "state.verification.credentials_rejected": "The credentials were rejected",
+    "state.verification.endpoint_not_found": "The endpoint was not found",
+    "state.verification.unreachable": "The host was not reached",
+    "state.verification.certificate_refused": "The firewall answered with a certificate that was refused",
+    "state.verification.unexpected_answer": "The answer could not be used",
+    "state.verification.no_url": "No firewall URL",
+
+    "state.licence_key.absent": "None",
+    "state.licence_key.stored": "Stored",
+    "state.licence_key.undecryptable": "Unreadable: the key file does not match",
+
+    "state.geoip.not_downloaded": "Not downloaded yet",
+    "state.geoip.current": "Current",
+    "state.geoip.no_licence_key": "Not downloaded: no licence key",
+    "state.geoip.licence_key_undecryptable": "Not downloaded: the licence key cannot be read",
+    "state.geoip.no_account_id": "Not downloaded: no account ID",
+    "state.geoip.download_refused": "MaxMind refused the account ID and licence key",
+    "state.geoip.download_limit_reached": "MaxMind's daily download limit is reached",
+    "state.geoip.download_failed": "The last download failed",
+
+    "notice.certificate_presented": "The firewall presented this certificate",
+
+    "error.maxmind_account_id_invalid": "The MaxMind account ID must be a positive whole number.",
+    "error.firewall_url_invalid": "The firewall URL must be an http or https address.",
+    "error.fingerprint_invalid": "The certificate fingerprint must be 64 hexadecimal characters",
+    "error.firewall_url_required": "Enter the firewall URL first",
+    "error.certificate_not_fetched": "No certificate could be read from that address",
+    "error.api_key_required": "An API key is required beside an API secret.",
+    "error.theme_unknown": "That theme does not exist.",
+
+    "settings.label.public_suffix_state": "Last refresh",
+    "settings.label.public_suffix_in_use": "Copy in use",
+    "settings.label.public_suffix_confirmed": "Last confirmed current",
+    "settings.label.public_suffix_version": "Version",
+    "settings.label.public_suffix_rules": "Rules",
+    "field.public_suffix_interval": "Refresh interval",
+    "state.public_suffix.downloaded": "A newer copy was downloaded",
+    "state.public_suffix.not_modified": "The copy held was current",
+    "state.public_suffix.failed": "The download failed",
+    "state.public_suffix.malformed": "The download was not the list",
+    "state.public_suffix.not_yet_refreshed": "Not refreshed yet",
+    "state.public_suffix.never_confirmed": "Never",
+    "state.public_suffix.version_not_stated": "Not stated",
+
+    "error.settings_card_unknown": "That settings card does not exist.",
+    "state.secret_not_kept": "Typed, not saved: type it again"
+  }
+}

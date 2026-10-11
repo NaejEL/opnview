@@ -1,0 +1,106 @@
+{
+  "manifest_version": 1,
+  "type": "traffic_sankey",
+  "shape": "sankey",
+  "providers": [
+    "firewall_log",
+    "ip_geolocation"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "left",
+      "kind": "enum",
+      "values": [
+        "interface",
+        "client"
+      ],
+      "default": "interface",
+      "class": "data"
+    },
+    {
+      "key": "right",
+      "kind": "enum",
+      "values": [
+        "interface",
+        "operator",
+        "country"
+      ],
+      "default": "operator",
+      "class": "data"
+    },
+    {
+      "key": "scope",
+      "kind": "enum",
+      "values": [
+        "all",
+        "east_west",
+        "north_south"
+      ],
+      "default": "all",
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "measure",
+      "kind": "enum",
+      "values": [
+        "bytes",
+        "connections"
+      ],
+      "default": "bytes",
+      "class": "data"
+    },
+    {
+      "key": "max_nodes",
+      "kind": "integer",
+      "default": 12,
+      "min": 1,
+      "class": "data"
+    },
+    {
+      "key": "min_share",
+      "kind": "number",
+      "default": 0,
+      "max": 1,
+      "class": "data"
+    },
+    {
+      "key": "show_blocked",
+      "kind": "boolean",
+      "default": true,
+      "class": "data"
+    }
+  ],
+  "references": [
+    "interface"
+  ],
+  "queries": [
+    "traffic_sankey.statements.sql"
+  ],
+  "script": "traffic_sankey.js",
+  "renderer": {
+    "reserved": true
+  }
+}

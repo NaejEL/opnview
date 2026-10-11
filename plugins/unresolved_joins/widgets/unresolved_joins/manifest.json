@@ -1,0 +1,68 @@
+{
+  "manifest_version": 1,
+  "type": "unresolved_joins",
+  "shape": "figure",
+  "providers": [
+    "firewall_log",
+    "ip_geolocation",
+    "dhcp_lease"
+  ],
+  "primary": "firewall_log",
+  "windowed": true,
+  "no_domains": "none",
+  "lower_bound": true,
+  "parameters": [
+    {
+      "key": "period",
+      "kind": "enum",
+      "values": [
+        "1h",
+        "24h",
+        "7d",
+        "30d"
+      ],
+      "default": "24h",
+      "class": "data"
+    },
+    {
+      "key": "counters",
+      "kind": "enum_set",
+      "values": [
+        "interface",
+        "rule",
+        "client_identity",
+        "geo"
+      ],
+      "default": [
+        "interface",
+        "rule",
+        "client_identity",
+        "geo"
+      ],
+      "class": "data"
+    },
+    {
+      "key": "interfaces",
+      "kind": "reference_list",
+      "default": null,
+      "reference": "interface",
+      "class": "data"
+    },
+    {
+      "key": "show_records",
+      "kind": "boolean",
+      "default": false,
+      "class": "data"
+    }
+  ],
+  "references": [
+    "interface"
+  ],
+  "queries": [
+    "unresolved_joins.statements.sql"
+  ],
+  "script": "unresolved_joins.js",
+  "renderer": {
+    "reserved": true
+  }
+}
