@@ -17,10 +17,11 @@ import (
 func (h *harness) storeCredentials(apiKey, apiSecret string) *http.Response {
 	h.t.Helper()
 	return h.post(PathSettings, url.Values{
-		"firewall_url": {h.fake.baseURL()},
-		"api_key":      {apiKey},
-		"api_secret":   {apiSecret},
-		"theme":        {string(ThemeSystem)},
+		fieldSettingsCard: {settingsCardFirewall},
+		"firewall_url":    {h.fake.baseURL()},
+		"api_key":         {apiKey},
+		"api_secret":      {apiSecret},
+		"theme":           {string(ThemeSystem)},
 	})
 }
 
@@ -37,7 +38,7 @@ func TestChangingACredentialTakesEffectWithoutARestart(t *testing.T) {
 	apiKey := randomHex(t, 12)
 	firstSecret := randomHex(t, 16)
 
-	assertStatus(t, harness.storeCredentials(apiKey, firstSecret), http.StatusOK)
+	assertStatus(t, harness.storeCredentials(apiKey, firstSecret), http.StatusSeeOther)
 
 	// The pass the verification made is a real pass: it carried the credentials.
 	first := harness.fake.last()
@@ -56,7 +57,7 @@ func TestChangingACredentialTakesEffectWithoutARestart(t *testing.T) {
 		t.Fatal("the two generated secrets collided, so this proves nothing")
 	}
 	generationBefore := harness.creds.Generation()
-	assertStatus(t, harness.storeCredentials(apiKey, secondSecret), http.StatusOK)
+	assertStatus(t, harness.storeCredentials(apiKey, secondSecret), http.StatusSeeOther)
 	if harness.creds.Generation() <= generationBefore {
 		t.Error("the settings surface stored a credential without writing it into the live holder")
 	}
@@ -163,8 +164,8 @@ func TestVerificationTellsTheThreeAnswersApart(t *testing.T) {
 func submitAndRead(t *testing.T, harness *harness, apiKey, apiSecret string) string {
 	t.Helper()
 	answer := harness.storeCredentials(apiKey, apiSecret)
-	status, body := statusAndBody(t, answer)
-	if status != http.StatusOK {
+	status, body := followed(t, harness, answer)
+	if status != http.StatusSeeOther {
 		t.Fatalf("the settings surface answered %d: %s", status, body)
 	}
 	return body
@@ -190,14 +191,16 @@ func TestNothingButTheFirewallIsContactedDuringTheThreeSurfaces(t *testing.T) {
 	_ = harness.get(PathSettings)
 
 	licenceKey := randomHex(t, 16)
-	answer := harness.post(PathSettings, url.Values{
-		"firewall_url":        {harness.fake.baseURL()},
-		"api_key":             {randomHex(t, 12)},
-		"api_secret":          {randomHex(t, 16)},
+	assertStatus(t, harness.post(PathSettings, url.Values{
+		fieldSettingsCard: {settingsCardFirewall},
+		"firewall_url":    {harness.fake.baseURL()},
+		"api_key":         {randomHex(t, 12)},
+		"api_secret":      {randomHex(t, 16)},
+	}), http.StatusSeeOther)
+	assertStatus(t, harness.post(PathSettings, url.Values{
+		fieldSettingsCard:     {settingsCardGeolocation},
 		"maxmind_licence_key": {licenceKey},
-		"theme":               {string(ThemeSystem)},
-	})
-	assertStatus(t, answer, http.StatusOK)
+	}), http.StatusSeeOther)
 
 	received := harness.fake.received()
 	if len(received) == 0 {
@@ -250,7 +253,7 @@ func TestAnUnreadableCredentialIsItsOwnStateAndNotAnAbsence(t *testing.T) {
 	harness := newHarness(t)
 	login, password := harness.completeSetup()
 	assertStatus(t, harness.storeCredentials(randomHex(t, 12), randomHex(t, 16)),
-		http.StatusOK)
+		http.StatusSeeOther)
 
 	absent := text(t, harness.server.renderer.catalogue, msgCredentialAbsent)
 	ready := text(t, harness.server.renderer.catalogue, msgCredentialReady)
@@ -299,7 +302,7 @@ func TestTheTwoStatesAreDistinguishableAtTheSource(t *testing.T) {
 	}
 
 	assertStatus(t, harness.storeCredentials(randomHex(t, 12), randomHex(t, 16)),
-		http.StatusOK)
+		http.StatusSeeOther)
 	_, ready, err := config.LoadFirewallCredentials(t.Context(), harness.store, harness.box)
 	if err != nil {
 		t.Fatalf("loading the stored credentials: %v", err)
@@ -328,15 +331,18 @@ func TestSavingTheThemeDoesNotDestroyTheCredentials(t *testing.T) {
 	harness := newHarness(t)
 	harness.completeSetup()
 	apiKey, apiSecret := randomHex(t, 12), randomHex(t, 16)
-	assertStatus(t, harness.storeCredentials(apiKey, apiSecret), http.StatusOK)
+	assertStatus(t, harness.storeCredentials(apiKey, apiSecret), http.StatusSeeOther)
 
+	// The page posts every card's fields with every save; the firewall's come back
+	// as they are stored, the secret field empty.
 	answer := harness.post(PathSettings, url.Values{
-		"firewall_url": {harness.fake.baseURL()},
-		"api_key":      {apiKey},
-		"api_secret":   {""},
-		"theme":        {string(ThemeDark)},
+		fieldSettingsCard: {settingsCardAppearance},
+		"firewall_url":    {harness.fake.baseURL()},
+		"api_key":         {apiKey},
+		"api_secret":      {""},
+		"theme":           {string(ThemeDark)},
 	})
-	assertStatus(t, answer, http.StatusOK)
+	assertStatus(t, answer, http.StatusSeeOther)
 
 	assertPassCarries(t, harness, apiKey, apiSecret)
 	if theme := harness.server.readTheme(t.Context()); theme != ThemeDark {
@@ -352,7 +358,11 @@ func TestASecretIsNeverRenderedBackIntoThePage(t *testing.T) {
 	apiKey, apiSecret := randomHex(t, 12), randomHex(t, 16)
 	licenceKey := randomHex(t, 16)
 
+	// The firewall card is saved with a licence key typed in the geolocation card and
+	// not saved: the page is drawn in place, the other card kept as it was typed --
+	// except the secret, which is never put back, and is reported as not kept.
 	answer := harness.post(PathSettings, url.Values{
+		fieldSettingsCard:     {settingsCardFirewall},
 		"firewall_url":        {harness.fake.baseURL()},
 		"api_key":             {apiKey},
 		"api_secret":          {apiSecret},
@@ -363,6 +373,23 @@ func TestASecretIsNeverRenderedBackIntoThePage(t *testing.T) {
 	if status != http.StatusOK {
 		t.Fatalf("the settings surface answered %d", status)
 	}
+	if !strings.Contains(submitted, `<p class="field-state" id="maxmind_licence_key_state">`+
+		catalogueText(t, msgSecretNotKept)+"</p>") {
+		t.Error("a licence key typed and not saved is not reported as not kept")
+	}
+	// The same page, as the geolocation card's save draws it, with an API secret typed
+	// in the firewall card and not saved.
+	answer = harness.post(PathSettings, url.Values{
+		fieldSettingsCard:     {settingsCardGeolocation},
+		"api_secret":          {apiSecret},
+		"maxmind_licence_key": {licenceKey},
+	})
+	status, typedElsewhere := statusAndBody(t, answer)
+	if status != http.StatusOK || !strings.Contains(typedElsewhere,
+		`<p class="field-state" id="api_secret_state">`+catalogueText(t, msgSecretNotKept)+"</p>") {
+		t.Errorf("an API secret typed and not saved answered %d and was not reported as not kept", status)
+	}
+	submitted += typedElsewhere
 
 	account, found, err := harness.store.AnyAccount(t.Context())
 	if err != nil || !found {

@@ -11,7 +11,7 @@
 // none.
 //
 // WHAT IT SERVES, AND NOTHING MORE. Setup, sign-in and sign-out, settings, the
-// collection surface and one stylesheet. There is no widget endpoint, no canvas, no
+// collection surface, the Interfaces and Sources surfaces and one stylesheet. There is no widget endpoint, no canvas, no
 // dashboard format and no language picker here: those are steps 5 and 7.
 //
 // NO CONTROL ON ANY PAGE CAN CHANGE A FIREWALL SETTING, and none suggests that it
@@ -59,6 +59,16 @@ const (
 	// settings surface is where credentials enter, and this one reads the database
 	// and writes configuration rows only.
 	PathCollection = "/collection"
+	// PathCollectionSettings is where a settings card of the collection surface is
+	// saved: a polled kind's interval and selections, or a group of settings. It is
+	// its own route so the sized kinds' handler stays the one it was.
+	PathCollectionSettings = "/collection/settings"
+	// PathInterfaces is where the operator sets an interface's networks and its
+	// link-local rule. It writes opnview's own rows and nothing on the firewall.
+	PathInterfaces = "/interfaces"
+	// PathSources is every source's availability and the recent collection gaps,
+	// read from the local database.
+	PathSources = "/sources"
 	// PathRecover is the password reset authorised by the key file.
 	PathRecover = "/recover"
 	// PathStylesheet is the one static asset.
@@ -158,6 +168,19 @@ type Options struct {
 	// saved, and asked which build is in use. Nil, as in a test that does not need it,
 	// wakes nothing and reports no build.
 	GeoIP GeoIP
+	// PublicSuffix is the Public Suffix List's copy in use, asked for its figures
+	// when the settings surface is drawn. Nil, as in a test that does not need it,
+	// reports no copy held.
+	PublicSuffix PublicSuffixList
+}
+
+// PublicSuffixList is what the settings surface needs of the Public Suffix List's
+// refresh: the copy this process holds, its version, its rule count and when a
+// refresh last confirmed it current. It is answered from memory and contacts
+// nothing, and it is an interface so this package does not import the refresher.
+// The figures never come from the availability row's free-text detail.
+type PublicSuffixList interface {
+	Held() (version string, rules int, confirmedAt int64, held bool)
 }
 
 // GeoIP is what the settings surface needs of the MaxMind refresh: to be told that
@@ -207,6 +230,8 @@ type Server struct {
 	collector Reconfigurable
 	// geoip is woken by a save of the MaxMind credentials; it may be nil.
 	geoip GeoIP
+	// publicSuffix answers for the Public Suffix List's copy in use; it may be nil.
+	publicSuffix PublicSuffixList
 
 	routes []Route
 	mux    *http.ServeMux
@@ -269,6 +294,7 @@ func New(options Options) (*Server, error) {
 		settings:      options.Settings,
 		collector:     options.Collector,
 		geoip:         options.GeoIP,
+		publicSuffix:  options.PublicSuffix,
 	}
 	server.register()
 	return server, nil
@@ -306,6 +332,17 @@ func (s *Server) register() {
 			handler: s.handleCollectionForm},
 		{Method: http.MethodPost, Pattern: PathCollection, Access: AccessAuthenticated,
 			handler: s.handleCollectionSubmit},
+		{Method: http.MethodPost, Pattern: PathCollectionSettings, Access: AccessAuthenticated,
+			handler: s.handleCollectionSettingsSubmit},
+		// The Interfaces surface writes opnview's own interface_network and
+		// interface rows, and nothing on the firewall.
+		{Method: http.MethodGet, Pattern: PathInterfaces, Access: AccessAuthenticated,
+			handler: s.handleInterfacesForm},
+		{Method: http.MethodPost, Pattern: PathInterfaces, Access: AccessAuthenticated,
+			handler: s.handleInterfacesSubmit},
+		// The Sources surface reads the local database only.
+		{Method: http.MethodGet, Pattern: PathSources, Access: AccessAuthenticated,
+			handler: s.handleSourcesForm},
 
 		// The reset form discloses nothing — it names no login and lists nothing —
 		// so it is reachable by somebody who has forgotten their password, which is

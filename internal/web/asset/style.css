@@ -48,6 +48,7 @@
   --header-height: 3.75rem;
   --column-width: 40rem;
   --column-width-narrow: 23rem;
+  --column-width-wide: 75rem;
 }
 
 /* THESE THREE TOKENS ARE OPNVIEW'S OWN, and saying so is the point of this note.
@@ -86,6 +87,7 @@
   --on-accent: #ffffff;
   --status-ok: #28a745;
   --status-error: #dc3545;
+  --status-warning: #fd7e14;
 }
 
 /* Industrial — low-light. Guarded so an explicit light override outranks it. */
@@ -108,6 +110,7 @@
     --on-accent: #ffffff;
     --status-ok: #30d158;
     --status-error: #ff453a;
+    --status-warning: #ff9f0a;
   }
 }
 
@@ -130,6 +133,7 @@
   --on-accent: #ffffff;
   --status-ok: #28a745;
   --status-error: #dc3545;
+  --status-warning: #fd7e14;
 }
 
 :root[data-theme="industrial-dark"] {
@@ -150,6 +154,7 @@
   --on-accent: #ffffff;
   --status-ok: #30d158;
   --status-error: #ff453a;
+  --status-warning: #ff9f0a;
 }
 
 *,
@@ -205,7 +210,43 @@ body {
   display: flex;
   gap: var(--spacing);
   margin-right: auto;
-  margin-left: var(--spacing-lg);
+  white-space: nowrap;
+}
+
+/* ON A NARROW SCREEN THE BAR TAKES TWO ROWS, AND EVERY LINK STAYS VISIBLE. Four
+ * links, the indicator and the sign-out control do not fit one 60-pixel row on a
+ * phone, and the first answer -- links scrolling sideways inside the bar -- left
+ * one clipped link visible and three that could not be seen at all, which is a
+ * menu in disguise (ROADMAP.md step 7: every surface is one visible link). Below
+ * the breakpoint the bar wraps: the product name, the indicator and sign-out on the
+ * first row, the links on a row of their own beneath, each link whole. The bar is
+ * then taller than the palette's 60 pixels, so it stops being fixed and becomes
+ * sticky -- it stays at the top while the page scrolls, and the column no longer
+ * reserves a fixed height for it. This departs from docs/ui-references.md's fixed
+ * 60-pixel bar at phone width only, and is declared here. */
+@media (max-width: 44rem) {
+  .top-bar {
+    position: sticky;
+    flex-wrap: wrap;
+    height: auto;
+    row-gap: var(--spacing-sm);
+  }
+
+  .bar-nav {
+    order: 3;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    gap: var(--spacing-sm) var(--spacing);
+    margin: 0;
+  }
+
+  .top-bar .outages {
+    margin-left: auto;
+  }
+
+  .top-bar + .column {
+    padding-top: var(--spacing-lg);
+  }
 }
 
 .bar-nav a {
@@ -604,6 +645,193 @@ a:hover {
   color: var(--link-hover);
 }
 
+/* THE SOURCES SURFACE IS A TABLE OF EIGHT COLUMNS, and the form column's 40rem
+ * would squeeze its detail column to a word a line. It takes --column-width-wide,
+ * which is docs/ui-references.md's own figure for the industrial layout's main
+ * column, "capped at 1200 pixels and centred" -- 75rem at the default root size --
+ * so this third width is the document's value rather than a new one. */
+.surface-sources {
+  max-width: var(--column-width-wide);
+}
+
+/* A TABLE NEVER WIDENS THE PAGE. On a narrow viewport the frame scrolls
+ * sideways inside its card, and nothing else on the page moves. */
+.table-frame {
+  overflow-x: auto;
+}
+
+table.data {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+table.data th,
+table.data td {
+  padding: var(--spacing-sm) var(--spacing) var(--spacing-sm) 0;
+  border-bottom: var(--border-width) solid var(--border-color);
+  vertical-align: top;
+}
+
+table.data th {
+  color: var(--text-secondary);
+  font-weight: var(--font-weight-bold);
+  white-space: nowrap;
+}
+
+/* AN INSTANT IS NEVER BROKEN INSIDE ITSELF. A timestamp cut after its month and
+ * before its day reads as two values; a figure in a table keeps to one line, and the
+ * frame scrolls if it must. */
+table.data .figure {
+  white-space: nowrap;
+}
+
+/* THE DETAIL IS THE ANSWER A READER CAME FOR, so it is never a column at the far
+ * right of a table wider than the page. It sits, with the probe, on a line of its
+ * own directly under its row, the full width of the table, and it wraps rather than
+ * truncating -- the step-3 mockup's rule for the same text. The row above it gives
+ * up its rule so the two read as one entry. */
+table.data tr:has(+ tr.diagnostic) > td {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+dl.diagnostic {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 0 var(--spacing);
+  margin: 0;
+}
+
+dl.diagnostic dt {
+  color: var(--text-secondary);
+}
+
+dl.diagnostic dd {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* DATA IS DRAWN AS DATA. An interface's description, identifier and device, a
+ * network, a probe and a collector's detail are values read from the database,
+ * not catalogue strings: they are set in the monospaced stack the figures use, so
+ * a reader can tell what opnview says from what it read. */
+.datum {
+  font-family: var(--font-mono);
+  overflow-wrap: break-word;
+}
+
+/* A STATUS HUE IS A MARK, NEVER THE TEXT. The availability word keeps the ordinary
+ * text colour, which is legible on every ground, and its condition is carried by a
+ * square mark before it -- the step-3 mockup's treatment, which measured the status
+ * colours as text and found them unreadable. Healthy takes --status-ok, unavailable
+ * --status-warning -- the industrial palette's own warning token, which the mockup
+ * gives an unavailable source: a source the firewall does not offer is not an
+ * error -- installed and not collecting the accent, and a condition nothing
+ * has determined -- not yet probed, state unknown -- the quiet border colour, so no
+ * colour claims anything about it. An OUTAGE, which the indicator counts, takes
+ * --status-error. Only tokens the palette documents are used. */
+.availability {
+  white-space: nowrap;
+}
+
+.availability::before {
+  content: "";
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-right: 0.4em;
+  border: var(--border-width) solid var(--border-strong);
+  background-color: var(--border-strong);
+}
+
+.availability.mark-ok::before {
+  border-color: var(--status-ok);
+  background-color: var(--status-ok);
+}
+
+.availability.mark-warn::before {
+  border-color: var(--status-warning);
+  background-color: var(--status-warning);
+}
+
+.availability.mark-bad::before {
+  border-color: var(--status-error);
+  background-color: var(--status-error);
+}
+
+.availability.mark-off::before {
+  border-color: var(--accent);
+  background-color: var(--accent);
+}
+
+.availability.mark-none::before {
+  background-color: transparent;
+}
+
+/* THE OUTAGE INDICATOR, in the bar beside the links, on every signed-in page. With
+ * outages it carries the error colour as its border, which is a mark and needs 3:1
+ * rather than 4.5:1; the words and the figure keep the bar's text colour. At nought
+ * it is the quiet border: a named state, not an alarm. */
+.outages {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: 0 var(--spacing-sm);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--border-radius);
+  color: var(--text-primary);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.outages.has-outages {
+  border-color: var(--status-error);
+  border-left-width: 0.25rem;
+  font-weight: var(--font-weight-bold);
+}
+
+.outages:hover {
+  color: var(--link-hover);
+}
+
+/* The link of the page being read. */
+.bar-nav a[aria-current="page"] {
+  text-decoration: underline;
+  text-underline-offset: 0.3em;
+}
+
+/* A state named in place of a list that has nothing in it. */
+.empty-state {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+/* A row's own controls, side by side: each is a form of one button. */
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm);
+}
+
+.row-actions form {
+  margin: 0;
+}
+
+.row-actions button {
+  padding: 0 var(--spacing-sm);
+}
+
+ul.overlaps {
+  margin: 0;
+  padding-left: var(--spacing);
+}
+
+.field.invalid select {
+  border-color: var(--status-error);
+}
+
 @media (max-width: 30rem) {
   .column {
     padding-left: var(--spacing-sm);
@@ -620,5 +848,226 @@ a:hover {
   .states {
     grid-template-columns: minmax(0, 1fr);
     gap: 0 0;
+  }
+}
+
+/* A CARD REACHED BY ITS ANCHOR IS NOT HIDDEN UNDER THE BAR. Every form posts to its
+ * own card's anchor and a saved edit returns to it, so the card's top has to land
+ * below the fixed bar rather than behind it. */
+.card {
+  scroll-margin-top: calc(var(--header-height) + var(--spacing));
+}
+
+/* A NETWORK IS NEVER CUT. A network broken inside its prefix length reads as another
+ * prefix length, so a cell holding networks keeps each on one line and the frame
+ * scrolls if it must. */
+table.data td.network {
+  white-space: nowrap;
+}
+
+/* THE PROBE WRAPS BETWEEN PATH COMPONENTS. The template offers a break after each
+ * slash, and a component is broken only when it is wider than the line itself. */
+dl.diagnostic dd.probe .datum {
+  overflow-wrap: anywhere;
+}
+
+/* WHY A NETWORK DOES NOT COUNT, under the "no" it explains: a second, quieter line. */
+.counts-reason {
+  display: block;
+  color: var(--text-secondary);
+  font-weight: var(--font-weight);
+}
+
+/* THE OUTAGES THE INDICATOR COUNTS, one per line, each marked in the error colour,
+ * and the column on the providers table saying which rows they are about. */
+ul.outage-list {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.outage-provider {
+  font-weight: var(--font-weight-bold);
+}
+
+.outage-state {
+  color: var(--text-secondary);
+}
+
+.outage-flag.counted {
+  padding-left: var(--spacing-sm);
+  border-left: 0.25rem solid var(--status-error);
+  font-weight: var(--font-weight-bold);
+}
+
+/* A DURATION, figure and unit, never split across lines. */
+.duration-part {
+  white-space: nowrap;
+}
+
+/* A DURATION FIELD is a figure and its unit side by side. */
+.duration-input {
+  display: flex;
+  gap: var(--spacing-sm);
+}
+
+.duration-input input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.duration-input select {
+  flex: 0 0 auto;
+  width: auto;
+}
+
+/* THE VALUE IN FORCE beneath a field, drawn only when the field shows another. */
+.in-force {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.in-force .in-force-value {
+  color: var(--text-primary);
+  font-weight: var(--font-weight-bold);
+}
+
+/* Text for assistive technology only: a heading or a label whose visible
+ * counterpart is the layout itself. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* THE COLLECTION SURFACE'S INDEX: one link per card, in page order, so a page many
+ * screens tall is one click from any card. */
+.page-index ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm) var(--spacing);
+}
+
+/* A LINK THAT CANCELS SITS AMONG BUTTONS AND IS SHAPED LIKE ONE, the secondary
+ * button's outline, so the two choices of a confirmation read as a pair. */
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  padding: var(--spacing-sm) var(--spacing);
+  color: var(--text-primary);
+  border: var(--border-width) solid var(--border-strong);
+  border-radius: var(--border-radius);
+  font-weight: var(--font-weight-bold);
+  text-decoration: none;
+}
+
+.button-link:hover {
+  color: var(--text-primary);
+  background-color: var(--accent-soft);
+  border-color: var(--accent);
+}
+
+/* A CONTROL THAT DELETES IS NOT DRAWN AS A SAVE. It keeps the ordinary text colour
+ * on no fill, and carries the error colour as a heavy left border -- a mark, which
+ * needs 3:1 rather than 4.5:1 -- the treatment the outage indicator already uses. */
+button.destructive {
+  background-color: transparent;
+  color: var(--text-primary);
+  border-color: var(--status-error);
+  border-left-width: 0.25rem;
+}
+
+button.destructive:hover {
+  background-color: var(--accent-soft);
+  border-color: var(--status-error);
+}
+
+/* THE RANGE A REFUSED VALUE MUST FALL IN, after the refusal, on its own line. */
+.accepted-range {
+  display: block;
+}
+
+/* A CHANGE A CONFIRMATION APPLIES: the value asked for, and under it the value in
+ * force. */
+.states dd .in-force {
+  display: block;
+  font-weight: var(--font-weight);
+}
+
+/* THE OPNSENSE PAGES THAT TURN A PROVIDER ON, one after another on the detail's
+ * line. */
+dd.opnsense-pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 var(--spacing);
+}
+
+/* A NARROW TABLE STACKS RATHER THAN SCROLLING. On a phone the interfaces' tables
+ * scrolled sideways inside their card, which hid whether a network counts, why not,
+ * and the controls that change it, and cut the other interface's name. Below the
+ * breakpoint each row becomes a block and each cell a line carrying its column's
+ * name, taken from the catalogue into the cell's data-label, so every value and
+ * every control is on screen. The header row stays in the document for assistive
+ * technology and is hidden from view. */
+@media (max-width: 44rem) {
+  table.data.stack,
+  table.data.stack tbody,
+  table.data.stack tr,
+  table.data.stack td {
+    display: block;
+    width: 100%;
+  }
+
+  table.data.stack thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  table.data.stack tr {
+    padding: var(--spacing-sm) 0;
+    border-bottom: var(--border-width) solid var(--border-color);
+  }
+
+  table.data.stack td {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0 var(--spacing);
+    padding: 0.125rem 0;
+    border-bottom: 0;
+  }
+
+  table.data.stack td::before {
+    content: attr(data-label);
+    flex: 0 0 7rem;
+    color: var(--text-secondary);
+    font-weight: var(--font-weight-bold);
+  }
+
+  table.data.stack td .datum {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  table.data.stack td.network .datum {
+    overflow-wrap: normal;
+  }
+
+  table.data.stack td .counts-reason {
+    flex: 1 0 100%;
+    padding-left: calc(7rem + var(--spacing));
   }
 }

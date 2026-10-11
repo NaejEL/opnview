@@ -91,6 +91,70 @@ type view struct {
 	// with no provider row produces no card. Every figure in them is read from the
 	// local database; drawing them contacts nothing.
 	CollectionCards []collectionCard
+	// CollectionEntries are every card of the collection surface in page order: the
+	// sized kinds' cards above, with the settings cards placed after the card each
+	// belongs beside (collection_settings.go). The template draws these.
+	CollectionEntries []collectionEntry
+	// CollectionSettingsPath is where a settings card's form is saved.
+	CollectionSettingsPath string
+
+	// InterfacesPath and SourcesPath are the two surfaces this cycle adds, linked
+	// from the top bar like the others.
+	InterfacesPath string
+	SourcesPath    string
+	// Interfaces are the Interfaces surface's cards, one per interface row, and the
+	// Field* names are its forms' field names.
+	Interfaces         []interfaceCard
+	FieldNetworkAction string
+	FieldInterfaceID   string
+	FieldNetwork       string
+	FieldLinkLocal     string
+	// Sources and RecentGaps are the Sources surface's two tables, and Outages the
+	// list of what the indicator counts, one line per unit of its figure.
+	Sources    []sourceRow
+	RecentGaps []recentGapRow
+	Outages    []outageRow
+
+	// OutageCount is the top bar's indicator, drawn on every signed-in page: the
+	// number of current outages by the rule in sources.go. HasOutages is false at
+	// nought, which is a named state of its own rather than a nought.
+	OutageCount string
+	HasOutages  bool
+	// OutageUnknown is an indicator whose read failed: a named state, never nought.
+	OutageUnknown bool
+
+	// CollectionIndex heads the collection surface: one link per card, in page order.
+	CollectionIndex []indexLink
+
+	// SettingsCard names the settings card a submission was about; its notice and
+	// its refusal are drawn in that card rather than at the head of the page.
+	SettingsCard string
+	// SettingsEdited marks, by card, the settings cards drawn with values a submission
+	// carried that are not stored: edited, and not saved. APISecretNotKept and
+	// LicenceKeyNotKept say a secret was typed and not stored, which a field never
+	// pre-filled cannot show any other way.
+	SettingsEdited    map[string]bool
+	APISecretNotKept  bool
+	LicenceKeyNotKept bool
+
+	// PublicSuffix is the settings surface's Public Suffix List card.
+	PublicSuffix publicSuffixCard
+}
+
+// hasUnsavedEdits says whether any card of the page is drawn with an edit that is not
+// saved: one a redirect would discard.
+func (built view) hasUnsavedEdits() bool {
+	for _, edited := range built.SettingsEdited {
+		if edited {
+			return true
+		}
+	}
+	for _, entry := range built.CollectionEntries {
+		if (entry.Sizing != nil && entry.Sizing.Edited) || (entry.Settings != nil && entry.Settings.Edited) {
+			return true
+		}
+	}
+	return false
 }
 
 // figureRow is one labelled figure on the collection surface: a measured or
@@ -100,7 +164,10 @@ type figureRow struct {
 	LabelKey messageKey
 	// Value is the figure, formatted, when there is one to show.
 	Value string
-	// StateKey replaces Value when there is none. Exactly one of the two is set.
+	// Duration replaces Value for a figure that is a length of time, spelled in days,
+	// hours, minutes and seconds.
+	Duration []durationPart
+	// StateKey replaces Value when there is none. Exactly one of the three is set.
 	StateKey messageKey
 }
 
@@ -110,8 +177,8 @@ type gapRow struct {
 	ReasonKey messageKey
 	// Count is how many gaps of that reason the window holds.
 	Count string
-	// MissedSeconds is the time they cover.
-	MissedSeconds string
+	// Missed is the time they cover, spelled in days, hours, minutes and seconds.
+	Missed []durationPart
 }
 
 // implementationRow is one implementation of a card's kind, with the operator's
@@ -123,6 +190,8 @@ type implementationRow struct {
 	Field string
 	// Options are the three selections, one of them selected.
 	Options []selectionOption
+	// RefusalKey refuses what was selected, against the select.
+	RefusalKey messageKey
 }
 
 // selectionOption is one of the three selections an implementation can have.
@@ -166,27 +235,24 @@ type collectionCard struct {
 	// changes what the product does.
 	SuggestionExists bool
 
-	// NoticeKey is a save or a fill confirmed in this card; RefusalKey a value
-	// refused in it, against InvalidField, which names the field that caused it.
-	// They are drawn inside the card they belong to: a banner at the top of a page
-	// four cards tall would name neither the kind saved nor the field refused.
-	NoticeKey    messageKey
-	RefusalKey   messageKey
-	InvalidField string
-	// PageSizeField and IntervalField are what the two fields show: the pair in
-	// force, or what was typed when a submission is refused, or the suggestion
-	// when the reader asked for it.
-	PageSizeField string
-	IntervalField string
+	// NoticeKey is a save or a fill confirmed in this card. A refused value is marked on
+	// its own field. Both are drawn inside the card they belong to: a banner at the top
+	// of a page four cards tall would name neither the kind saved nor the field refused.
+	NoticeKey messageKey
+	// Edited says the card is drawn with values a submission carried that are not
+	// stored: another card was saved, and this one was not.
+	Edited bool
+	// PageSize and Interval are the two fields: the pair in force, or what was typed
+	// and not stored, or the suggestion when the reader asked for it. The interval is a
+	// figure beside its unit, as every duration on the page is.
+	PageSize settingField
+	Interval settingField
 
-	// The form's field names, carried rather than spelled in the template, so the
-	// handler that reads them and the page that writes them cannot disagree. Each
-	// card is its own form, so a value refused on one kind leaves the others
-	// saveable.
-	FieldKind     string
-	FieldPageSize string
-	FieldInterval string
-	FieldFill     string
+	// The names of the two buttons a card carries, carried rather than spelled in the
+	// template, so the handler that reads them and the page that writes them cannot
+	// disagree. The whole page is one form; each button sends the card it belongs to.
+	FieldKind string
+	FieldFill string
 }
 
 // themeOption is one row of the theme selector.
@@ -219,6 +285,24 @@ func (s *Server) newView(writer http.ResponseWriter, request *http.Request,
 		SettingsPath:   PathSettings,
 		RecoverPath:    PathRecover,
 		CollectionPath: PathCollection,
+
+		CollectionSettingsPath: PathCollectionSettings,
+		InterfacesPath:         PathInterfaces,
+		SourcesPath:            PathSources,
+	}
+	// The outage indicator is in the bar of every signed-in page, and only there: a
+	// reader with no session is told nothing about the installation.
+	if session != nil {
+		// A FAILED READ IS A STATE OF THE INDICATOR, NOT OF THE PAGE. The bar is on
+		// every signed-in page, so an indicator that failed the page would take the
+		// whole interface down with one unreadable table; it names its own state
+		// instead -- never nought, which would claim nothing is wrong -- and the cause
+		// goes to the console.
+		if err := s.outageIndicator(request.Context(), &built); err != nil {
+			fmt.Fprintf(os.Stderr, "opnview: web: reading the outage indicator: %v\n", err)
+			built.OutageUnknown = true
+			built.HasOutages = false
+		}
 	}
 	if carried := takeFlash(writer, request); carried != "" {
 		if isNotice(carried) {
@@ -265,7 +349,17 @@ func (s *Server) renderRefusal(writer http.ResponseWriter, request *http.Request
 			return
 		}
 	case pageCollection:
-		if err := s.fillCollection(request.Context(), &built, nil, nil); err != nil {
+		if err := s.fillCollection(request.Context(), &built, nil); err != nil {
+			s.failInternal(writer, request, err)
+			return
+		}
+	case pageInterfaces:
+		if err := s.fillInterfaces(request.Context(), &built, nil); err != nil {
+			s.failInternal(writer, request, err)
+			return
+		}
+	case pageSources:
+		if err := s.fillSources(request.Context(), &built); err != nil {
 			s.failInternal(writer, request, err)
 			return
 		}
@@ -286,6 +380,10 @@ func titleKeyFor(page string) messageKey {
 		return msgTitleRecover
 	case pageCollection:
 		return msgTitleCollection
+	case pageInterfaces:
+		return msgTitleInterfaces
+	case pageSources:
+		return msgTitleSources
 	default:
 		return msgTitleSignIn
 	}

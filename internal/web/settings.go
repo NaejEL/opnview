@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/maxmind"
@@ -32,7 +33,27 @@ import (
 // is a STATE beside the field, which is the only thing about a secret this surface
 // may say.
 
-// handleSettingsForm draws the settings surface.
+// ONE FORM FOR THE WHOLE PAGE, ONE SAVE PER CARD. Every card's fields belong to one
+// form, and each card's Save button sends that card's name in fieldSettingsCard. A
+// submission therefore carries what is typed in EVERY card, and the handler stores
+// the named card's fields and nothing else: the other cards are drawn again with what
+// was posted in them, marked as edited and not saved, so saving one card never
+// silently discards what was typed in another. A secret typed in another card is the
+// one thing that cannot come back -- a secret field is never filled -- so the field
+// says that it was not kept.
+//
+// A SUBMISSION NAMING NO CARD STORES NOTHING. The form's default button, which the
+// Enter key presses, names none; such a submission is refused at 400 with every
+// typed value kept, rather than storing every card at once.
+//
+// A SAVE REDIRECTS when nothing typed elsewhere would be lost by it: 303 to the
+// surface, naming the card saved and, for the firewall, the outcome of the
+// verification, at the card's anchor -- so a reload does not post again. When another
+// card holds an unsaved edit, the save is answered in place instead, because a
+// redirect would discard that edit. A refusal is always answered in place, at 400.
+
+// handleSettingsForm draws the settings surface. A save lands here, with the card it
+// was made in named by the query, and that card says it was saved.
 func (s *Server) handleSettingsForm(writer http.ResponseWriter, request *http.Request) {
 	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageSettings))
 	if err != nil {
@@ -40,20 +61,137 @@ func (s *Server) handleSettingsForm(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	// NOT ATTEMPTED, not "verified": drawing the form makes no call to the firewall.
-	// Reporting a stale success here would be reporting a call that did not happen.
-	if err := s.fillSettings(request, &built, msgVerifyNotAttempted); err != nil {
+	// Reporting a stale success here would be reporting a call that did not happen; the
+	// one exception is the outcome of the verification the save just made, carried by
+	// the redirect and accepted only as one of the verification states.
+	query := request.URL.Query()
+	saved := settingsCardNamed(query.Get(querySaved))
+	verification := msgVerifyNotAttempted
+	if saved == settingsCardFirewall {
+		if carried, known := verificationNamed(query.Get(queryVerified)); known {
+			verification = carried
+		}
+	}
+	if err := s.fillSettings(request, &built, verification); err != nil {
 		s.failInternal(writer, request, err)
 		return
+	}
+	if saved != "" {
+		built.Notice = msgSettingsSaved
+		built.SettingsCard = saved
 	}
 	if err := s.renderer.render(writer, http.StatusOK, pageSettings, built); err != nil {
 		s.failInternal(writer, request, err)
 	}
 }
 
-// handleSettingsSubmit stores what was typed, makes it live, and verifies it.
+// The settings surface's cards. A submission names its card in fieldSettingsCard,
+// which is the name of each card's Save button, and only that card's fields are read
+// and stored.
+const (
+	fieldSettingsCard = "settings_card"
+
+	settingsCardFirewall     = "firewall"
+	settingsCardGeolocation  = "geolocation"
+	settingsCardPublicSuffix = "public_suffix"
+	settingsCardAppearance   = "appearance"
+)
+
+// queryVerified carries, in the redirect after a firewall save, the outcome of the
+// verification that save made.
+const queryVerified = "verified"
+
+// settingsCards are the cards a submission may name.
+func settingsCards() []string {
+	return []string{settingsCardFirewall, settingsCardGeolocation, settingsCardPublicSuffix,
+		settingsCardAppearance}
+}
+
+// settingsCardNamed is the card a value names, or the empty string for none.
+func settingsCardNamed(named string) string {
+	for _, card := range settingsCards() {
+		if card == named {
+			return card
+		}
+	}
+	return ""
+}
+
+// submittedSettingsCard is the card a submission names, or the empty string for none
+// or for a name that is not a card. The fetch control sits in the firewall card and
+// is about it.
+func submittedSettingsCard(request *http.Request) string {
+	if request.PostFormValue(fieldFetchCertificate) != "" {
+		return settingsCardFirewall
+	}
+	return settingsCardNamed(request.PostFormValue(fieldSettingsCard))
+}
+
+// fieldFetchCertificate is the fetch control's name.
+const fieldFetchCertificate = "fetch_certificate"
+
+// verificationNamed accepts a carried verification outcome only when it is one of the
+// verification states.
+func verificationNamed(value string) (messageKey, bool) {
+	for _, key := range []messageKey{msgVerifyNotAttempted, msgVerifyVerified,
+		msgVerifyCredentialsBad, msgVerifyEndpointNotFound, msgVerifyUnreachable,
+		msgVerifyCertificateRefused, msgVerifyUnexpectedAnswer, msgVerifyNoURL} {
+		if string(key) == value {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+// settingsSavedLocation is where a save sends the browser: the surface, naming the card
+// saved and, for the firewall, the verification's outcome, at the card's anchor.
+func settingsSavedLocation(card string, verification messageKey) string {
+	query := url.Values{querySaved: {card}}
+	if card == settingsCardFirewall {
+		query.Set(queryVerified, string(verification))
+	}
+	return PathSettings + "?" + query.Encode() + "#settings_" + card
+}
+
+// settingsOutcome is what one submission has to say, and to which card.
+type settingsOutcome struct {
+	// card is the card the submission named; saved says its fields were stored, and
+	// are therefore drawn as stored rather than as typed.
+	card  string
+	saved bool
+	// notice and refusal are said in that card, or at the head of the page when the
+	// submission named none.
+	notice  messageKey
+	refusal messageKey
+	// verification is the firewall verification's outcome.
+	verification messageKey
+	// suffixRefusal refuses the Public Suffix List's interval against its field.
+	suffixRefusal messageKey
+	// presented is the fingerprint the firewall presented, put in its field.
+	presented string
+}
+
+// handleSettingsSubmit stores what was typed on the card the submission names, makes
+// it live, and verifies the firewall's credentials when they were among it.
 func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.Request) {
 	ctx := request.Context()
 	now := s.now().UTC().Unix()
+
+	card := submittedSettingsCard(request)
+	if card == "" {
+		// The default button names no card, and a name that is not a card came from
+		// somewhere other than the page. Nothing is stored either way.
+		refusal := msgCardNotNamed
+		if request.PostFormValue(fieldSettingsCard) != "" {
+			refusal = msgSettingsCardUnknown
+		}
+		s.renderSettingsOutcome(writer, request, http.StatusBadRequest, settingsOutcome{refusal: refusal})
+		return
+	}
+	refuse := func(key messageKey) {
+		s.renderSettingsOutcome(writer, request, http.StatusBadRequest,
+			settingsOutcome{card: card, refusal: key})
+	}
 
 	firewallURL := strings.TrimRight(strings.TrimSpace(request.PostFormValue("firewall_url")), "/")
 	apiKey := strings.TrimSpace(request.PostFormValue("api_key"))
@@ -61,120 +199,146 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 	fingerprintTyped := request.PostFormValue("certificate_fingerprint")
 	licenceKey := strings.TrimSpace(request.PostFormValue("maxmind_licence_key"))
 	accountID := strings.TrimSpace(request.PostFormValue("maxmind_account_id"))
-	theme := request.PostFormValue("theme")
 
-	if firewallURL != "" {
-		if err := validateFirewallURL(firewallURL); err != nil {
-			s.renderSettingsRefusal(writer, request, msgFirewallURLInvalid)
+	verification := msgVerifyNotAttempted
+	switch card {
+	case settingsCardFirewall:
+		if firewallURL != "" {
+			if err := validateFirewallURL(firewallURL); err != nil {
+				refuse(msgFirewallURLInvalid)
+				return
+			}
+		}
+		// THE FETCH BUTTON STORES NOTHING. It connects, shows the fingerprint of the
+		// certificate the firewall presents, and redraws the form with it in the field;
+		// accepting it is the save that follows, which is a second deliberate act. It
+		// is handled before anything is parsed or stored, so pressing it with a
+		// half-typed form loses nothing and writes nothing. The URL it connects to is
+		// the one typed, already checked above.
+		if request.PostFormValue(fieldFetchCertificate) != "" {
+			s.showPresentedCertificate(writer, request, firewallURL)
+			return
+		}
+		// Normalised rather than refused for its punctuation: OPNsense displays a
+		// fingerprint colon-separated and upper-case, and that is what a reader pastes.
+		fingerprint, err := opnsense.ParseFingerprint(fingerprintTyped)
+		if err != nil {
+			refuse(msgFingerprintInvalid)
+			return
+		}
+		// A secret with no key beside it cannot authenticate anything, and storing one
+		// would leave the surface reporting a readable credential that cannot be used.
+		if apiSecret != "" && apiKey == "" {
+			refuse(msgAPIKeyRequired)
+			return
+		}
+		for _, write := range []struct{ key, value string }{
+			{config.KeyOPNsenseBaseURL, firewallURL},
+			{config.KeyOPNsenseAPIKey, apiKey},
+			{config.KeyOPNsenseCertificateFingerprint, fingerprint},
+		} {
+			if err := s.writeSetting(ctx, write.key, write.value, now); err != nil {
+				s.failInternal(writer, request, err)
+				return
+			}
+		}
+		if err := s.storeSecret(ctx, store.CredentialOPNsenseAPISecret, apiSecret, now); err != nil {
+			s.failInternal(writer, request, err)
+			return
+		}
+		// THE LIVE HOLDER, through the same path start-up uses. This is what makes
+		// the change reach the running collectors.
+		credentials, _, err := config.LoadFirewallCredentials(ctx, s.store, s.unsealer())
+		if err != nil {
+			s.failInternal(writer, request, err)
+			return
+		}
+		s.credentials.Set(credentials)
+		// The pooled connections were shaken hands over the PREVIOUS fingerprint, and
+		// the certificate is checked once per handshake. Without this, correcting a pin
+		// would leave a connection open that the new pin does not accept, and the
+		// verification below would report a firewall that answers on a trust decision
+		// that is no longer in force.
+		s.client.CloseIdleConnections()
+		// One call to the firewall, and the only one this package makes. It is the
+		// first of the permitted outbound calls and not another; see verify.go.
+		verification = s.verify(ctx)
+
+	case settingsCardGeolocation:
+		// MaxMind account IDs are numbers; anything else would only be refused by
+		// MaxMind, after spending a request.
+		if accountID != "" {
+			if number, err := strconv.ParseInt(accountID, 10, 64); err != nil || number <= 0 {
+				refuse(msgMaxMindAccountIDBad)
+				return
+			}
+		}
+		previousAccountID, _, err := s.store.Setting(ctx, config.KeyMaxMindAccountID)
+		if err != nil {
+			s.failInternal(writer, request, err)
+			return
+		}
+		if err := s.storeSecret(ctx, store.CredentialMaxMindLicenceKey, licenceKey, now); err != nil {
+			s.failInternal(writer, request, err)
+			return
+		}
+		if err := s.writeSetting(ctx, config.KeyMaxMindAccountID, accountID, now); err != nil {
+			s.failInternal(writer, request, err)
+			return
+		}
+		// A new licence key or a different account ID is fetched with now, not at the
+		// next daily check. The refresh runs in its own loop: nothing here waits for
+		// it, and this package makes no call to MaxMind.
+		if s.geoip != nil && (licenceKey != "" || accountID != previousAccountID) {
+			s.geoip.Wake()
+		}
+
+	case settingsCardPublicSuffix:
+		// Read and refused before anything is stored, against its own field.
+		seconds, changed, refusal := s.typedPublicSuffixInterval(request)
+		if refusal != "" {
+			s.renderSettingsOutcome(writer, request, http.StatusBadRequest,
+				settingsOutcome{card: card, suffixRefusal: refusal})
+			return
+		}
+		// The refresh interval reaches the running loop the way the collection
+		// surface's intervals do: the configuration is loaded again and handed to the
+		// live holder, which the loop asks before every wait.
+		if changed {
+			if err := s.store.SetSetting(ctx, config.KeyPublicSuffixRefreshInterval,
+				seconds, now); err != nil {
+				s.failInternal(writer, request, err)
+				return
+			}
+			if err := s.applyConfiguration(ctx); err != nil {
+				s.failInternal(writer, request, err)
+				return
+			}
+		}
+
+	case settingsCardAppearance:
+		parsedTheme, err := ParseTheme(request.PostFormValue("theme"))
+		if err != nil {
+			refuse(msgThemeUnknown)
+			return
+		}
+		if err := s.store.SetSetting(ctx, config.KeyTheme, string(parsedTheme), now); err != nil {
+			s.failInternal(writer, request, err)
 			return
 		}
 	}
 
-	// THE FETCH BUTTON STORES NOTHING. It connects, shows the fingerprint of the
-	// certificate the firewall presents, and redraws the form with it in the field;
-	// accepting it is the save that follows, which is a second deliberate act. It is
-	// handled before anything is parsed or stored, so pressing it with a half-typed
-	// form loses nothing and writes nothing. The URL it connects to is the one typed,
-	// already checked above.
-	if request.PostFormValue("fetch_certificate") != "" {
-		s.showPresentedCertificate(writer, request, firewallURL, apiKey)
-		return
-	}
-	// Normalised rather than refused for its punctuation: OPNsense displays a
-	// fingerprint colon-separated and upper-case, and that is what a reader pastes.
-	fingerprint, err := opnsense.ParseFingerprint(fingerprintTyped)
-	if err != nil {
-		s.renderSettingsRefusal(writer, request, msgFingerprintInvalid)
-		return
-	}
-	parsedTheme, err := ParseTheme(theme)
-	if err != nil {
-		s.renderSettingsRefusal(writer, request, msgThemeUnknown)
-		return
-	}
-	// A secret with no key beside it cannot authenticate anything, and storing one
-	// would leave the surface reporting a readable credential that cannot be used.
-	if apiSecret != "" && apiKey == "" {
-		s.renderSettingsRefusal(writer, request, msgAPIKeyRequired)
-		return
-	}
-	// MaxMind account IDs are numbers; anything else would only be refused by
-	// MaxMind, after spending a request.
-	if accountID != "" {
-		if number, err := strconv.ParseInt(accountID, 10, 64); err != nil || number <= 0 {
-			s.renderSettingsRefusal(writer, request, msgMaxMindAccountIDBad)
-			return
-		}
-	}
-	previousAccountID, _, err := s.store.Setting(ctx, config.KeyMaxMindAccountID)
+	outcome := settingsOutcome{card: card, saved: true, notice: msgSettingsSaved,
+		verification: verification}
+	built, err := s.settingsView(writer, request, outcome)
 	if err != nil {
 		s.failInternal(writer, request, err)
 		return
 	}
-
-	if err := s.writeSetting(ctx, config.KeyOPNsenseBaseURL, firewallURL, now); err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	if err := s.writeSetting(ctx, config.KeyOPNsenseAPIKey, apiKey, now); err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	if err := s.writeSetting(ctx, config.KeyOPNsenseCertificateFingerprint,
-		fingerprint, now); err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	if err := s.store.SetSetting(ctx, config.KeyTheme, string(parsedTheme), now); err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	if err := s.storeSecret(ctx, store.CredentialOPNsenseAPISecret, apiSecret, now); err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	if err := s.storeSecret(ctx, store.CredentialMaxMindLicenceKey, licenceKey, now); err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	if err := s.writeSetting(ctx, config.KeyMaxMindAccountID, accountID, now); err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	// A new licence key or a different account ID is fetched with now, not at the
-	// next daily check. The refresh runs in its own loop: nothing here waits for it,
-	// and this package makes no call to MaxMind.
-	if s.geoip != nil && (licenceKey != "" || accountID != previousAccountID) {
-		s.geoip.Wake()
-	}
-
-	// THE LIVE HOLDER, through the same path start-up uses. This is what makes the
-	// change reach the running collectors.
-	credentials, _, err := config.LoadFirewallCredentials(ctx, s.store, s.unsealer())
-	if err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	s.credentials.Set(credentials)
-	// The pooled connections were shaken hands over the PREVIOUS fingerprint, and
-	// the certificate is checked once per handshake. Without this, correcting a pin
-	// would leave a connection open that the new pin does not accept, and the
-	// verification below would report a firewall that answers on a trust decision
-	// that is no longer in force.
-	s.client.CloseIdleConnections()
-
-	// One call to the firewall, and the only one this package makes. It is the first
-	// of the two permitted outbound calls and not a third; see verify.go.
-	verification := s.verify(ctx)
-
-	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageSettings))
-	if err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	built.Notice = msgSettingsSaved
-	if err := s.fillSettings(request, &built, verification); err != nil {
-		s.failInternal(writer, request, err)
+	// Nothing typed elsewhere would be lost: the browser is sent back, so a reload
+	// does not post the save again.
+	if !built.hasUnsavedEdits() {
+		http.Redirect(writer, request, settingsSavedLocation(card, verification), http.StatusSeeOther)
 		return
 	}
 	if err := s.renderer.render(writer, http.StatusOK, pageSettings, built); err != nil {
@@ -184,13 +348,14 @@ func (s *Server) handleSettingsSubmit(writer http.ResponseWriter, request *http.
 
 // showPresentedCertificate connects to the firewall at the typed URL and redraws the
 // settings surface with the fingerprint of the certificate it presented in the field,
-// and the URL and API key as they were typed. It stores nothing and verifies nothing:
-// the connection reads one certificate and closes, and nothing it read is trusted
-// until the operator saves it. See opnsense.FetchCertificateFingerprint.
+// and everything else as it was typed. It stores nothing and verifies nothing: the
+// connection reads one certificate and closes, and nothing it read is trusted until
+// the operator saves it. See opnsense.FetchCertificateFingerprint.
 func (s *Server) showPresentedCertificate(writer http.ResponseWriter, request *http.Request,
-	firewallURL, apiKey string) {
+	firewallURL string) {
 	if firewallURL == "" {
-		s.renderSettingsRefusal(writer, request, msgFirewallURLRequired)
+		s.renderSettingsOutcome(writer, request, http.StatusBadRequest,
+			settingsOutcome{card: settingsCardFirewall, refusal: msgFirewallURLRequired})
 		return
 	}
 	// The one call this button makes, a TLS handshake and nothing after it.
@@ -198,36 +363,162 @@ func (s *Server) showPresentedCertificate(writer http.ResponseWriter, request *h
 	if err != nil {
 		// The detail names the address and why; it goes to the console, not the page.
 		fmt.Fprintf(os.Stderr, "opnview: web: fetching the firewall certificate: %v\n", err)
-		s.renderSettingsRefusal(writer, request, msgCertificateNotFetched)
+		s.renderSettingsOutcome(writer, request, http.StatusBadRequest,
+			settingsOutcome{card: settingsCardFirewall, refusal: msgCertificateNotFetched})
 		return
 	}
+	s.renderSettingsOutcome(writer, request, http.StatusOK, settingsOutcome{
+		card: settingsCardFirewall, notice: msgCertificatePresented, presented: presented})
+}
 
-	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageSettings))
+// renderSettingsOutcome draws the settings surface in answer to a submission, at a
+// status, with every value typed in it kept.
+func (s *Server) renderSettingsOutcome(writer http.ResponseWriter, request *http.Request,
+	status int, outcome settingsOutcome) {
+	built, err := s.settingsView(writer, request, outcome)
 	if err != nil {
 		s.failInternal(writer, request, err)
 		return
 	}
-	built.Notice = msgCertificatePresented
-	if err := s.fillSettings(request, &built, msgVerifyNotAttempted); err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	// What was typed stays typed: fillSettings put back what is stored, and nothing
-	// has been stored yet.
-	built.FirewallURL = firewallURL
-	built.APIKey = apiKey
-	built.CertificateFingerprint = presented
-
-	if err := s.renderer.render(writer, http.StatusOK, pageSettings, built); err != nil {
+	if err := s.renderer.render(writer, status, pageSettings, built); err != nil {
 		s.failInternal(writer, request, err)
 	}
 }
 
-// renderSettingsRefusal redraws the settings surface with a refusal and nothing
-// stored.
-func (s *Server) renderSettingsRefusal(writer http.ResponseWriter, request *http.Request,
-	key messageKey) {
-	s.renderRefusal(writer, request, http.StatusBadRequest, pageSettings, key)
+// settingsView builds the settings surface in answer to a submission: what is stored,
+// with what was typed put back in every card except one whose fields were just saved,
+// and the outcome said in the card it belongs to.
+func (s *Server) settingsView(writer http.ResponseWriter, request *http.Request,
+	outcome settingsOutcome) (view, error) {
+	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageSettings))
+	if err != nil {
+		return view{}, err
+	}
+	verification := outcome.verification
+	if verification == "" {
+		verification = msgVerifyNotAttempted
+	}
+	if err := s.fillSettings(request, &built, verification); err != nil {
+		return view{}, err
+	}
+	except := ""
+	if outcome.saved {
+		except = outcome.card
+	}
+	if err := s.applySettingsDraft(request, &built, except); err != nil {
+		return view{}, err
+	}
+	built.SettingsCard = outcome.card
+	built.Notice = outcome.notice
+	built.Error = outcome.refusal
+	if outcome.suffixRefusal != "" {
+		built.PublicSuffix.IntervalField.RefusalKey = outcome.suffixRefusal
+	}
+	if outcome.presented != "" {
+		built.CertificateFingerprint = outcome.presented
+	}
+	return built, nil
+}
+
+// applySettingsDraft puts what a submission carried back into every card but one, and
+// marks each card whose fields differ from what is stored as edited and not saved. A
+// field the submission did not carry keeps what is stored.
+//
+// A SECRET IS NEVER PUT BACK. A secret typed and not stored is reported by a state
+// beside its field instead, so a reader knows to type it again.
+func (s *Server) applySettingsDraft(request *http.Request, built *view, except string) error {
+	posted := func(name string) (string, bool) {
+		values, sent := request.PostForm[name]
+		if !sent || len(values) == 0 {
+			return "", false
+		}
+		return values[0], true
+	}
+	edited := map[string]bool{}
+
+	if except != settingsCardFirewall {
+		if typed, sent := posted("firewall_url"); sent {
+			if strings.TrimRight(strings.TrimSpace(typed), "/") != built.FirewallURL {
+				edited[settingsCardFirewall] = true
+			}
+			built.FirewallURL = typed
+		}
+		if typed, sent := posted("api_key"); sent {
+			if strings.TrimSpace(typed) != built.APIKey {
+				edited[settingsCardFirewall] = true
+			}
+			built.APIKey = typed
+		}
+		if typed, sent := posted("certificate_fingerprint"); sent {
+			normalised, err := opnsense.ParseFingerprint(typed)
+			if err != nil {
+				normalised = typed
+			}
+			if normalised != built.CertificateFingerprint {
+				edited[settingsCardFirewall] = true
+			}
+			built.CertificateFingerprint = typed
+		}
+		if typed, _ := posted("api_secret"); typed != "" {
+			edited[settingsCardFirewall] = true
+			built.APISecretNotKept = true
+		}
+	}
+	if except != settingsCardGeolocation {
+		if typed, sent := posted("maxmind_account_id"); sent {
+			if strings.TrimSpace(typed) != built.MaxMindAccountID {
+				edited[settingsCardGeolocation] = true
+			}
+			built.MaxMindAccountID = typed
+		}
+		if typed, _ := posted("maxmind_licence_key"); strings.TrimSpace(typed) != "" {
+			edited[settingsCardGeolocation] = true
+			built.LicenceKeyNotKept = true
+		}
+	}
+	if except != settingsCardPublicSuffix {
+		if figure, sent := posted(fieldPublicSuffixInterval); sent {
+			unit, _ := posted(unitFieldName(fieldPublicSuffixInterval))
+			settings, err := s.configuration(request.Context())
+			if err != nil {
+				return err
+			}
+			inForce := int64(settings.PublicSuffixRefreshInterval / time.Second)
+			field := durationField(fieldPublicSuffixInterval, built.PublicSuffix.IntervalField.ID,
+				msgFieldPublicSuffixInterval, inForce, map[string]string{
+					fieldPublicSuffixInterval: figure, unitFieldName(fieldPublicSuffixInterval): unit})
+			built.PublicSuffix.IntervalField = field
+			if durationDiffers(figure, unit, inForce) {
+				edited[settingsCardPublicSuffix] = true
+			}
+		}
+	}
+	if except != settingsCardAppearance {
+		if typed, sent := posted("theme"); sent {
+			if chosen, err := ParseTheme(typed); err == nil {
+				for index := range built.Themes {
+					option := &built.Themes[index]
+					if option.Selected && option.Value != chosen {
+						edited[settingsCardAppearance] = true
+					}
+					option.Selected = option.Value == chosen
+				}
+			}
+		}
+	}
+	built.SettingsEdited = edited
+	return nil
+}
+
+// durationDiffers says whether a typed figure and unit name a number of seconds other
+// than the one in force. A figure that does not read as a duration differs.
+func durationDiffers(figure, unit string, inForce int64) bool {
+	seconds, refusal := typedDuration(strings.TrimSpace(figure), unit)
+	if refusal != "" {
+		return true
+	}
+	parsed, err := strconv.ParseInt(seconds, 10, 64)
+	return err != nil || parsed != inForce
 }
 
 // fillSettings puts the current configuration and the three states into a view.
@@ -279,6 +570,9 @@ func (s *Server) fillSettings(request *http.Request, built *view,
 		if build, ready := s.geoip.Ready(); ready {
 			built.GeoIPBuild = instant(build)
 		}
+	}
+	if err := s.fillPublicSuffix(ctx, built); err != nil {
+		return err
 	}
 
 	current := s.readTheme(ctx)

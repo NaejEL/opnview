@@ -152,13 +152,14 @@ func (h *harness) setting(key string) string {
 // pairForm is what one card's save submits.
 func pairForm(kind, pageSize, intervalSeconds string) url.Values {
 	return url.Values{
-		fieldKind: {kind}, fieldPageSize: {pageSize}, fieldInterval: {intervalSeconds},
+		fieldKind: {kind}, cardFieldName(kind, fieldPageSize): {pageSize},
+		cardFieldName(kind, fieldInterval): {intervalSeconds},
 	}
 }
 
 // fillForm is what one card's fill control submits.
 func fillForm(kind string) url.Values {
-	return url.Values{fieldKind: {kind}, fieldFill: {"1"}}
+	return url.Values{fieldFill: {kind}}
 }
 
 // cardOf returns one kind's card out of a rendered page, failing when there is
@@ -304,7 +305,6 @@ func TestTheCollectionSurfaceReportsEveryFigureItMeasures(t *testing.T) {
 	}{
 		{msgLabelWindowStart, time.Unix(now-sizing.NominalWindowSeconds, 0).UTC().Format(time.RFC3339)},
 		{msgLabelWindowEnd, time.Unix(now, 0).UTC().Format(time.RFC3339)},
-		{msgLabelRetentionHorizon, strconv.FormatInt(config.DefaultRetentionSeconds, 10)},
 		{msgLabelCoveredFrom, time.Unix(now-3600, 0).UTC().Format(time.RFC3339)},
 		{msgLabelCoveredTo, time.Unix(now-60+7, 0).UTC().Format(time.RFC3339)},
 		{msgLabelRecordCount, "120"},
@@ -312,14 +312,26 @@ func TestTheCollectionSurfaceReportsEveryFigureItMeasures(t *testing.T) {
 		{msgLabelMeanRateIngested, rate(measured.IngestedMeanRate)},
 		{msgLabelPeakRate, rate(measured.PeakRate)},
 		{msgLabelGapCount, "2"},
-		{msgLabelMissedSeconds, "90"},
 	} {
 		if !figureShown(t, card, row.label, row.figure) {
 			t.Errorf("the card does not show %s as %s", row.label, row.figure)
 		}
 	}
+	// The two lengths of time are spelled in days, hours, minutes and seconds.
+	for _, row := range []struct {
+		label   messageKey
+		seconds int64
+	}{
+		{msgLabelRetentionHorizon, config.DefaultRetentionSeconds},
+		{msgLabelMissedSeconds, 90},
+	} {
+		if !strings.Contains(card, "<dt>"+catalogueText(t, row.label)+"</dt>\n<dd>"+
+			durationText(t, row.seconds)+"</dd>") {
+			t.Errorf("the card does not show %s as %d seconds spelled out", row.label, row.seconds)
+		}
+	}
 	gap := "<td>" + catalogueText(t, msgGapDigestOutsideWindow) + `</td><td><span class="figure">2</span></td>` +
-		`<td><span class="figure">90</span></td>`
+		"<td>" + durationText(t, 90) + "</td>"
 	if !strings.Contains(card, gap) {
 		t.Error("the card does not show the gaps of the window by reason")
 	}
@@ -329,8 +341,8 @@ func TestTheCollectionSurfaceReportsEveryFigureItMeasures(t *testing.T) {
 		}
 	}
 	if !figureShown(t, card, msgLabelPageSizeInForce, strconv.Itoa(config.DefaultFirewallLogPageSize)) ||
-		!figureShown(t, card, msgLabelIntervalInForce,
-			strconv.FormatInt(int64(config.DefaultFirewallLogInterval/time.Second), 10)) ||
+		!strings.Contains(card, "<dt>"+catalogueText(t, msgLabelIntervalInForce)+"</dt>\n<dd>"+
+			durationText(t, int64(config.DefaultFirewallLogInterval/time.Second))+"</dd>") ||
 		!figureShown(t, card, msgLabelPageCeiling, strconv.Itoa(sizing.PageCeilingFirewallLog)) ||
 		!stateShown(t, card, msgLabelPageState, msgPageWithinCeiling) {
 		t.Error("the card does not show the pair in force, the ceiling and the page state")
@@ -357,7 +369,7 @@ func TestASourceThatIsNotCollectedIsItsOwnStateAndGetsNoSuggestion(t *testing.T)
 	h.setAvailability("firewall_log", "pf", store.StateUnavailable)
 
 	card := cardOf(t, pageSource(t, h, PathCollection), "firewall_log")
-	if !stateShown(t, card, msgLabelSourceState, msgSourceUnavailable) ||
+	if !stateShown(t, card, msgLabelSourceState, msgAvailabilityUnavailable) ||
 		!stateShown(t, card, msgLabelSuggestionState, msgSuggestionSourceNotCollected) {
 		t.Error("an unreachable source is not reported as not collected")
 	}
@@ -370,7 +382,7 @@ func TestASourceThatIsNotCollectedIsItsOwnStateAndGetsNoSuggestion(t *testing.T)
 	h.setAvailability("firewall_log", "pf", store.StateReachable)
 	h.setSelection("firewall_log", "pf", config.SelectionOff)
 	card = cardOf(t, pageSource(t, h, PathCollection), "firewall_log")
-	if !stateShown(t, card, msgLabelSourceState, msgSourceReachable) ||
+	if !stateShown(t, card, msgLabelSourceState, msgAvailabilityHealthy) ||
 		!stateShown(t, card, msgLabelSelection, msgSelectionOff) ||
 		!stateShown(t, card, msgLabelSuggestionState, msgSuggestionSourceNotCollected) {
 		t.Error("a source turned off is not reported as reachable, off and not collected")
@@ -381,18 +393,21 @@ func TestASourceThatIsNotCollectedIsItsOwnStateAndGetsNoSuggestion(t *testing.T)
 // every card whose outcome carries no pair.
 func TestTheFillControlIsNotOfferedWithNothingToFillWith(t *testing.T) {
 	t.Parallel()
-	fillControl := `name="` + fieldFill + `" value="1" class="secondary"`
+	fillControl := func(kind string) string {
+		return `name="` + fieldFill + `" value="` + kind + `" formaction="` + PathCollection +
+			`#card_` + kind + `" class="secondary"`
+	}
 	h := signedInHarness(t)
 	page := pageSource(t, h, PathCollection)
 	for _, kind := range sizing.Kinds() {
-		if !strings.Contains(cardOf(t, page, kind.Kind), fillControl+" disabled>") {
+		if !strings.Contains(cardOf(t, page, kind.Kind), fillControl(kind.Kind)+" disabled>") {
 			t.Errorf("the %s card offers the fill control with no suggestion", kind.Kind)
 		}
 	}
 
 	h = suggestedHarness(t)
 	card := cardOf(t, pageSource(t, h, PathCollection), "firewall_log")
-	if !strings.Contains(card, fillControl+">") {
+	if !strings.Contains(card, fillControl("firewall_log")+">") {
 		t.Error("the fill control is not offered with a suggestion to fill the fields with")
 	}
 }
@@ -424,9 +439,13 @@ func TestTheFillControlWritesNothingAndFillsTheFields(t *testing.T) {
 	if got, want := fieldValue(card, "page_size_firewall_log"), strconv.Itoa(suggestion.Pair.PageSize); got != want {
 		t.Errorf("the page field holds %q after the fill, want %q", got, want)
 	}
-	if got, want := fieldValue(card, "interval_firewall_log"),
-		strconv.FormatInt(int64(suggestion.Pair.Interval/time.Second), 10); got != want {
-		t.Errorf("the interval field holds %q after the fill, want %q", got, want)
+	// The interval goes in as a figure beside its unit, the longest that holds it
+	// exactly, as every interval field shows one.
+	figure, unit := fieldDuration(int64(suggestion.Pair.Interval / time.Second))
+	if !durationFieldShows(t, card, "interval_firewall_log", figure, unit) {
+		t.Errorf("the interval field holds %q %q after the fill, want %s %s",
+			fieldValue(card, "interval_firewall_log"), selectedIn(t, card, "interval_firewall_log_unit"),
+			figure, unit)
 	}
 
 	if databaseBytesExcept(t, h, "session") != before {
@@ -449,7 +468,7 @@ func TestASavedPairIsStoredAndANonNumberIsRefused(t *testing.T) {
 	t.Parallel()
 	h := signedInHarness(t)
 	status, _ := statusAndBody(t, h.post(PathCollection, pairForm("firewall_log", "700", "20")))
-	if status != http.StatusOK {
+	if status != http.StatusSeeOther {
 		t.Fatalf("saving a pair answered %d", status)
 	}
 	if got := h.setting("page_size_firewall_log"); got != "700" {
@@ -517,7 +536,11 @@ func TestASavedPairReachesTheRunningServiceWithoutARestart(t *testing.T) {
 func TestASaveIsConfirmedInTheCardItWasSavedIn(t *testing.T) {
 	t.Parallel()
 	h := signedInHarness(t)
-	_, page := statusAndBody(t, h.post(PathCollection, pairForm("dhcp_lease", "600", "120")))
+	answer := h.post(PathCollection, pairForm("dhcp_lease", "600", "120"))
+	if location := answer.Header.Get("Location"); location != PathCollection+"?saved=dhcp_lease#card_dhcp_lease" {
+		t.Errorf("the save sent the browser to %q, not back to its card", location)
+	}
+	_, page := followed(t, h, answer)
 	saved := catalogueText(t, msgCollectionSaved)
 	if strings.Count(page, saved) != 1 {
 		t.Fatalf("the confirmation appears %d times rather than once", strings.Count(page, saved))
@@ -526,7 +549,8 @@ func TestASaveIsConfirmedInTheCardItWasSavedIn(t *testing.T) {
 	if !strings.Contains(card, saved) {
 		t.Error("the confirmation is not in the card that was saved")
 	}
-	if fieldValue(card, "page_size_dhcp_lease") != "600" || fieldValue(card, "interval_dhcp_lease") != "120" {
+	if fieldValue(card, "page_size_dhcp_lease") != "600" ||
+		!durationFieldShows(t, card, "interval_dhcp_lease", "2", unitMinutes) {
 		t.Error("the saved card does not show the pair now in force")
 	}
 }
@@ -553,7 +577,7 @@ func TestARefusedFigureIsReportedAgainstTheFieldThatCausedIt(t *testing.T) {
 		field := card[strings.Index(card, `id="`+refused.field+`"`):]
 		field = field[:strings.Index(field, ">")]
 		if !strings.Contains(field, `aria-invalid="true"`) ||
-			!strings.Contains(field, `aria-describedby="`+strings.Replace(refused.field, "_firewall_log", "_refusal_firewall_log", 1)+`"`) {
+			!strings.Contains(field, `aria-describedby="`+refused.field+`_refusal"`) {
 			t.Errorf("the %s field is not marked as the cause of the refusal", refused.field)
 		}
 		if fieldValue(card, refused.field) != refused.typed {
@@ -587,7 +611,7 @@ func TestAnIntervalNoDurationRepresentsIsRefused(t *testing.T) {
 
 	largest := strconv.FormatInt(config.MaxIntervalSeconds, 10)
 	status, _ = statusAndBody(t, h.post(PathCollection, pairForm("dns_lookup", "", largest)))
-	if status != http.StatusOK {
+	if status != http.StatusSeeOther {
 		t.Fatalf("the largest interval a duration holds answered %d", status)
 	}
 	if got := h.setting("poll_interval_dns_lookup_seconds"); got != largest {
@@ -601,8 +625,8 @@ func TestAPageSizeAboveTheCeilingIsStoredAndReported(t *testing.T) {
 	t.Parallel()
 	h := signedInHarness(t)
 	above := strconv.Itoa(sizing.PageCeilingSecurityEvent + 1)
-	status, page := statusAndBody(t, h.post(PathCollection, pairForm("security_event", above, "60")))
-	if status != http.StatusOK {
+	status, page := followed(t, h, h.post(PathCollection, pairForm("security_event", above, "60")))
+	if status != http.StatusSeeOther {
 		t.Fatalf("a page above the ceiling answered %d", status)
 	}
 	if got := h.setting("page_size_security_event"); got != above {
@@ -687,13 +711,15 @@ func TestTheLowerBoundCaveatIsDocumentedAndNeverPrinted(t *testing.T) {
 func collectionPages(t *testing.T) []renderedPage {
 	t.Helper()
 	var pages []renderedPage
+	h := signedInHarness(t)
+	// A save answers with a redirect back to the surface, which is followed: the page
+	// checked is the one the reader lands on.
 	add := func(name string, answer *http.Response) {
 		t.Helper()
-		_, body := statusAndBody(t, answer)
+		_, body := followed(t, h, answer)
 		pages = append(pages, renderedPage{name, body})
 	}
 
-	h := signedInHarness(t)
 	now := h.clock.Now().Unix()
 	// The filter log reachable and on auto; Suricata installed and switched off on
 	// the firewall; Kea turned on by the operator and never probed; both resolvers
@@ -779,7 +805,7 @@ func TestEachImplementationIsSelectableInItsCard(t *testing.T) {
 		{"isc", msgProviderISC, config.SelectionAuto},
 		{"kea", msgProviderKea, config.SelectionOn},
 	} {
-		id := fieldSelectionPrefix + implementation.key + "_dhcp_lease"
+		id := cardFieldName("dhcp_lease", fieldSelectionPrefix+implementation.key)
 		if !strings.Contains(card, `<label for="`+id+`">`+catalogueText(t, implementation.label)+"</label>") {
 			t.Errorf("the selection of %s is not labelled with its name", implementation.key)
 		}
@@ -787,7 +813,7 @@ func TestEachImplementationIsSelectableInItsCard(t *testing.T) {
 			t.Errorf("the selection of %s shows %q, want %q", implementation.key, got, implementation.want)
 		}
 	}
-	if strings.Contains(card, "provider.dns_lookup") || strings.Contains(card, `name="selection_unbound"`) {
+	if strings.Contains(card, "provider.dns_lookup") || strings.Contains(card, `name="dns_lookup.`) {
 		t.Error("the lease card offers an implementation of another kind")
 	}
 }
@@ -799,11 +825,11 @@ func TestASavedSelectionIsStoredAndAppliedAtOnce(t *testing.T) {
 	t.Parallel()
 	h := signedInHarness(t)
 	form := pairForm("dhcp_lease", "500", "300")
-	form.Set("selection_kea", "on")
-	form.Set("selection_isc", "off")
-	form.Set("selection_dnsmasq", "auto")
-	status, page := statusAndBody(t, h.post(PathCollection, form))
-	if status != http.StatusOK {
+	form.Set(cardFieldName("dhcp_lease", "selection_kea"), "on")
+	form.Set(cardFieldName("dhcp_lease", "selection_isc"), "off")
+	form.Set(cardFieldName("dhcp_lease", "selection_dnsmasq"), "auto")
+	status, page := followed(t, h, h.post(PathCollection, form))
+	if status != http.StatusSeeOther {
 		t.Fatalf("saving a selection answered %d", status)
 	}
 	for key, want := range map[string]string{"kea": "on", "isc": "off", "dnsmasq": "auto"} {
@@ -815,7 +841,7 @@ func TestASavedSelectionIsStoredAndAppliedAtOnce(t *testing.T) {
 		t.Errorf("the running collector applied the selections of %v, want [dhcp_lease]", got)
 	}
 	card := cardOf(t, page, "dhcp_lease")
-	if selectedIn(t, card, "selection_kea_dhcp_lease") != "on" ||
+	if selectedIn(t, card, cardFieldName("dhcp_lease", "selection_kea")) != "on" ||
 		!stateShown(t, card, msgLabelSelection, msgSelectionOn) {
 		t.Error("the saved card does not show the selection now in force")
 	}
@@ -832,16 +858,16 @@ func TestASelectionThatIsNotOneOfTheThreeIsRefusedAgainstItsField(t *testing.T) 
 	t.Parallel()
 	h := signedInHarness(t)
 	form := pairForm("dhcp_lease", "600", "120")
-	form.Set("selection_kea", "maybe")
+	form.Set(cardFieldName("dhcp_lease", "selection_kea"), "maybe")
 	status, page := statusAndBody(t, h.post(PathCollection, form))
 	if status != http.StatusBadRequest {
 		t.Fatalf("a selection that is not one of the three answered %d", status)
 	}
 	card := cardOf(t, page, "dhcp_lease")
-	field := card[strings.Index(card, `<select id="selection_kea_dhcp_lease"`):]
+	field := card[strings.Index(card, `<select id="dhcp_lease.selection_kea"`):]
 	field = field[:strings.Index(field, ">")]
 	if !strings.Contains(field, `aria-invalid="true"`) ||
-		!strings.Contains(field, `aria-describedby="selection_kea_refusal_dhcp_lease"`) {
+		!strings.Contains(field, `aria-describedby="dhcp_lease.selection_kea_refusal"`) {
 		t.Error("the refused selection is not marked as the cause of the refusal")
 	}
 	if !strings.Contains(card, catalogueText(t, msgCollectionValueInvalid)) {

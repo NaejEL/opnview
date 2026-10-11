@@ -183,8 +183,11 @@ func TestNoUserVisibleStringIsALiteral(t *testing.T) {
 		}
 		for _, page := range everyRenderedPage(t) {
 			// A measured figure is data, not a string: the one exception, and only for
-			// a figure in one of the three forms, inside the element that marks it.
-			for _, line := range visibleLines(withoutFigures(page.document)) {
+			// a figure in one of the three forms, inside the element that marks it. A
+			// datum read from the database -- a description, a network, a probe, a
+			// detail -- is the second, declared in withoutData, and only inside its own
+			// element.
+			for _, line := range visibleLines(withoutData(withoutFigures(page.document))) {
 				if !known[html.UnescapeString(line)] {
 					t.Errorf("%s shows %q, which is in no catalogue", page.name, line)
 				}
@@ -290,7 +293,13 @@ func TestNothingIsLoadedFromOffHost(t *testing.T) {
 	// what is scanned rather than the comments around them.
 	served["the stylesheet"] = stripCSSComments(string(stylesheet))
 	for _, page := range everyRenderedPage(t) {
-		served[page.name+" as served"] = page.document
+		// THE ONE ABSOLUTE LINK A PAGE CARRIES is to the operator's own firewall: the
+		// OPNsense page that turns an installed source on, which the Source availability
+		// preset requires (docs/widget-catalogue.md). It is a link the reader follows, never
+		// a resource the page loads, and it is built from the firewall URL the fixture
+		// configured; any other absolute href still fails below.
+		served[page.name+" as served"] = strings.ReplaceAll(page.document,
+			`<a class="opnsense-page" href="`+reviewFirewallURL+`/ui/`, `<a class="opnsense-page" href="`)
 	}
 
 	for where, content := range served {
@@ -353,8 +362,8 @@ func TestTheInterfaceFollowsTheOperatingSystemUntilItIsOverridden(t *testing.T) 
 	}
 
 	// The override, and it persists as a setting row.
-	assertStatus(t, harness.post(PathSettings, url.Values{"theme": {string(ThemeDark)}}),
-		http.StatusOK)
+	assertStatus(t, harness.post(PathSettings, url.Values{fieldSettingsCard: {settingsCardAppearance},
+		"theme": {string(ThemeDark)}}), http.StatusSeeOther)
 	overridden := pageSource(t, harness, PathSettings)
 	if !strings.Contains(overridden, `data-theme="industrial-dark"`) {
 		t.Error("the override was not applied to the document")
@@ -507,6 +516,13 @@ func renderEveryPage(t *testing.T) []renderedPage {
 		_, body := statusAndBody(t, answer)
 		pages = append(pages, renderedPage{name, body})
 	}
+	// A save answers with a redirect back to its surface; the page that renders its
+	// outcome is the one the reader lands on, fetched by the harness that saved.
+	addFollowed := func(name string, h *harness, answer *http.Response) {
+		t.Helper()
+		_, body := followed(t, h, answer)
+		pages = append(pages, renderedPage{name, body})
+	}
 	long := randomHex(t, 12)
 
 	// Before an account exists: the setup surface, the sign-in surface and the reset
@@ -569,26 +585,46 @@ func renderEveryPage(t *testing.T) []renderedPage {
 	}))
 
 	apiKey := randomHex(t, 12)
-	add("the settings surface after a save", configured.post(PathSettings, url.Values{
+	// The firewall card saved with a licence key typed in another card and not saved:
+	// the page is drawn in place, that card marked edited and the key reported as not
+	// kept.
+	add("the settings surface after a save, with an edit elsewhere", configured.post(PathSettings, url.Values{
+		fieldSettingsCard:     {settingsCardFirewall},
 		"firewall_url":        {configured.fake.baseURL()},
 		"api_key":             {apiKey},
 		"api_secret":          {randomHex(t, 16)},
 		"maxmind_licence_key": {randomHex(t, 16)},
 		"theme":               {string(ThemeSystem)},
 	}))
+	add("the settings surface with an API secret typed elsewhere", configured.post(PathSettings, url.Values{
+		fieldSettingsCard: {settingsCardAppearance},
+		"api_secret":      {randomHex(t, 16)},
+		"theme":           {string(ThemeSystem)},
+	}))
+	addFollowed("the settings surface after the licence key is saved", configured,
+		configured.post(PathSettings, url.Values{
+			fieldSettingsCard:     {settingsCardGeolocation},
+			"maxmind_licence_key": {randomHex(t, 16)},
+		}))
+	add("a settings submission naming no card", configured.post(PathSettings, url.Values{
+		"theme": {string(ThemeSystem)},
+	}))
 
 	// Every way the settings surface refuses a submission.
 	add("a refused settings submission", configured.post(PathSettings, url.Values{
-		"firewall_url": {"not-a-url"}, "theme": {string(ThemeSystem)},
+		fieldSettingsCard: {settingsCardFirewall}, "firewall_url": {"not-a-url"}, "theme": {string(ThemeSystem)},
 	}))
 	add("a settings submission with a secret and no key beside it",
 		configured.post(PathSettings, url.Values{
-			"api_secret": {randomHex(t, 16)}, "theme": {string(ThemeSystem)},
+			fieldSettingsCard: {settingsCardFirewall},
+			"api_secret":      {randomHex(t, 16)}, "theme": {string(ThemeSystem)},
 		}))
 	add("a settings submission naming a theme that does not exist",
-		configured.post(PathSettings, url.Values{"theme": {"no-such-theme"}}))
+		configured.post(PathSettings, url.Values{fieldSettingsCard: {settingsCardAppearance},
+			"theme": {"no-such-theme"}}))
 	add("a settings submission whose fingerprint is not a fingerprint",
 		configured.post(PathSettings, url.Values{
+			fieldSettingsCard:         {settingsCardFirewall},
 			"certificate_fingerprint": {"not-a-fingerprint"},
 			"theme":                   {string(ThemeSystem)},
 		}))
@@ -605,10 +641,10 @@ func renderEveryPage(t *testing.T) []renderedPage {
 		{"the settings surface after an answer it cannot use", http.StatusInternalServerError},
 	} {
 		configured.fake.answer(outcome.status, []byte(`{}`))
-		add(outcome.name, configured.storeCredentials(apiKey, randomHex(t, 16)))
+		addFollowed(outcome.name, configured, configured.storeCredentials(apiKey, randomHex(t, 16)))
 	}
 	configured.fake.goDown()
-	add("the settings surface with the firewall unreachable",
+	addFollowed("the settings surface with the firewall unreachable", configured,
 		configured.storeCredentials(apiKey, randomHex(t, 16)))
 
 	// THE CERTIFICATE REFUSED, WHICH IS NOT THE HOST UNREACHABLE. On its own harness
@@ -617,10 +653,10 @@ func renderEveryPage(t *testing.T) []renderedPage {
 	// used to report as the line above.
 	pinned := newTLSHarness(t)
 	pinned.completeSetup()
-	add("the settings surface with the firewall's certificate refused",
+	addFollowed("the settings surface with the firewall's certificate refused", pinned,
 		pinned.storeCredentials(randomHex(t, 12), randomHex(t, 16)))
-	add("the settings surface with no firewall URL",
-		configured.post(PathSettings, url.Values{"theme": {string(ThemeSystem)}}))
+	addFollowed("the settings surface with no firewall URL", configured,
+		configured.post(PathSettings, url.Values{fieldSettingsCard: {settingsCardFirewall}}))
 
 	// A refused sign-in.
 	anonymous := freshClient(t, configured)
@@ -686,6 +722,7 @@ func renderEveryPage(t *testing.T) []renderedPage {
 
 	pages = append(pages, collectionPages(t)...)
 	pages = append(pages, geoIPPages(t)...)
+	pages = append(pages, bundlePages(t)...)
 
 	if len(pages) == 0 {
 		t.Fatal("no page was rendered, so these assertions are vacuous")

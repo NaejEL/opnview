@@ -108,7 +108,7 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | the seconds a cached record has left | `ttl` (a string in the dump) | read into `resource_record_observation.covered_until_at` as the poll's instant plus it | same endpoint |
 | the firewall's own addresses, as a source or a destination | **This Firewall** — the rule editor's name for pf's `self` | `this_firewall`: `flow.src_is_this_firewall` / `dst_is_this_firewall`, `security_event.src_is_this_firewall`, `dns_resolution.client_is_this_firewall`, the `this_firewall_address` view, `traffic_scope = 'this_firewall'`, the directions `to_this_firewall` / `from_this_firewall`, the tree node `this_firewall`, and `blocked_decision.target_is_this_firewall` before them | <https://docs.opnsense.org/manual/how-tos/caddy.html>: "Create Firewall rules that allow `HTTP` and `HTTPS` to destination `This Firewall` on `WAN`"; `opnsense/core` 26.7.3, `src/opnsense/mvc/app/library/OPNsense/Firewall/FilterRule.php`, where the stored value `(self)` is rendered as `gettext("This Firewall")`, and `Firewall/Rule.php`, which passes `(self)` to pf unchanged; pf.conf(5), FreeBSD 15.1-RELEASE: "self Expands to all addresses assigned to all interfaces." The *manual/firewall.html* page does not carry the phrase |
 
-**Thirty-four terms are `opnview`'s own, because OPNsense has no word for them.**
+**Thirty-five terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -148,6 +148,7 @@ vocabulary read off an endpoint:
 | `resource_record_observation.held_in` (`cache`, `local_data`) | the two endpoints return the same shape and nothing says which part of the resolver a record lives in | the part of the resolver the record was held in, in Unbound's own words; it repeats the provider's kind because every search starts from it |
 | `resource_record_observation.host_label` | a local-data record carries a name and nothing more | **label** is DNS's word (RFC 1035, section 2.3.1), and the column is the first label of the host name the record names -- the owner of an A or AAAA record, the target of a PTR record -- exactly as `dhcp_lease.hostname_label` is for a lease |
 | `resource_record_read` | no endpoint says when it was last read successfully | the last successful **read** of one provider's records, kept so the start of a coverage interval survives a failed poll and a restart |
+| **outage**, the count the top bar's indicator shows | OPNsense reports the state of each of its own services and has no notion of a source `opnview` reads failing to answer it; `source_availability` records a state per provider, not whether the operator has to look | an outage is a kind none of whose providers selected for reading is reachable, or a provider the operator turned on that is not reachable; a provider not yet probed is never one (decision 4 of `specs/SPEC-deferred-interface-bundle.md`). It is computed when a page is drawn and never stored |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
@@ -698,8 +699,21 @@ that overlaps another interface's counting network is **reported**, not refused:
 the operator may be correcting a detection, and the operator's network wins. Every
 edit changes `store.OnLinkFingerprint`, which the collector compares before every
 derivation, so the next derivation places every stored address again, places in
-full each one whose evidence moved, and recomputes every slot its flows touch. The
-screen that edits them is a later interface cycle.
+full each one whose evidence moved, and recomputes every slot its flows touch.
+
+**Where they are set: the Interfaces surface** (`/interfaces`, a link on the top
+bar). One card per interface; an upstream interface's card carries no control. On
+every other card each stored network is listed with its origin, whether it is
+removed and whether it counts now; a detected network carries a confirm control
+(`ConfirmInterfaceNetwork`), any network in place a remove control, a removed one a
+restore control (`ConfirmInterfaceNetwork` again), and a field adds one
+(`AddInterfaceNetwork`), each refusal named against it. A network that does not count
+says why (removed, or no longer detected), and every counting network overlapping a
+counting network of another interface is listed on both cards for as long as the
+overlap exists.
+**The link-local rule is set on the same card** (`SetLinkLocalEvidence`),
+default no. The surface says an edit is saved for the next derivation, never that
+it has been applied.
 
 **Nothing is a default.** No range appears in code or in the schema: every row is
 read from the firewall or typed by the operator.
@@ -1776,7 +1790,14 @@ condition; it is never rendered as an absence of data:
 Availability is reachability. Which provider `opnview` reads is
 `provider.is_active`, and the diagnostic query
 `-- diagnostic: Source availability` in `sql/queries/diagnostics.sql` returns
-both, one row per registered provider.
+both, one row per registered provider. **The Sources surface** (`/sources`) draws
+that query row for row (`store.SourceAvailability`), beside the operator's selection
+of each provider and whether it counts towards an outage, with the conditions as the
+*Source availability* preset of
+`docs/widget-catalogue.md` names them and `detail` verbatim as data; below it, every
+`collection_gap` detected in the last 24 hours (`store.RecentCollectionGaps`, through
+`idx_collection_gap_detected_at`). The top bar of every signed-in page counts the
+current **outages** (see *Vocabulary*) and links there.
 
 **Retention:** never purged. **Indexes:** the primary key.
 
@@ -2326,6 +2347,24 @@ this firewall's address, so the two cannot disagree.
 **`source_selection_<kind>_<provider_key>` is the operator's selection** of one
 registry row — `auto`, `on` or `off`, exactly as written — described under
 `provider` above. No row is `auto`.
+
+**Where each setting is set.** Every one is validated by `internal/config`'s `Load`
+itself before it is stored, and reaches the running service without a restart; none
+is retroactive.
+
+| Setting | Surface | Card |
+|---|---|---|
+| `poll_interval_<kind>_seconds`, `page_size_<kind>`, `source_selection_<kind>_<provider_key>` of the four sized kinds | collection (`/collection`) | the kind's own card |
+| `poll_interval_resolver_cache_seconds`, `poll_interval_resolver_local_data_seconds`, and the selections of those two kinds | collection | the kind's own card, after the resolver lookups' card; drawn only when the `provider` table holds the kind |
+| `attribution_max_delay_seconds`, `attribution_max_cache_answer_delay_seconds` | collection | *Attribution*, after the resolver cards |
+| `leg_pairing_window_seconds` | collection | *Connection legs*, after the filter log's card |
+| `lease_backend_failure_pass_limit` | collection | *DHCP backends*, after the DHCP leases' card |
+| `retention_seconds`, `aggregate_mode` | collection | *Storage*, first on the page; a shorter retention horizon is stored only once confirmed, for the horizon the confirmation named |
+| `refresh_interval_public_suffix_list_seconds` | settings (`/settings`) | *Public Suffix List*, beside *Geolocation* |
+| the firewall URL, the API key and secret, the certificate fingerprint, the MaxMind account ID and licence key, the theme | settings | *OPNsense*, *Geolocation*, *Appearance* |
+
+The intervals of discovery, the purge, the sampled measurements and the MaxMind
+refresh and lookup have no surface yet; their rows are read as described above.
 
 **The firewall URL, the OPNsense API key and the theme are rows here.** They are
 configuration, `internal/config` already looks here for configuration, and a

@@ -40,10 +40,10 @@ func TestTheMaxMindAccountIDIsASettingAndASaveWakesTheRefresh(t *testing.T) {
 	h := newHarness(t)
 	h.completeSetup()
 
-	status, page := statusAndBody(t, h.post(PathSettings, url.Values{
-		"maxmind_account_id": {"123456"}, "theme": {string(ThemeSystem)},
+	status, page := followed(t, h, h.post(PathSettings, url.Values{
+		fieldSettingsCard: {settingsCardGeolocation}, "maxmind_account_id": {"123456"}, "theme": {string(ThemeSystem)},
 	}))
-	if status != http.StatusOK {
+	if status != http.StatusSeeOther {
 		t.Fatalf("saving an account ID answered %d", status)
 	}
 	if got, present, err := h.store.Setting(context.Background(), config.KeyMaxMindAccountID); err != nil ||
@@ -58,13 +58,13 @@ func TestTheMaxMindAccountIDIsASettingAndASaveWakesTheRefresh(t *testing.T) {
 	}
 
 	discard(t, h.post(PathSettings, url.Values{
-		"maxmind_account_id": {"123456"}, "theme": {string(ThemeSystem)},
+		fieldSettingsCard: {settingsCardGeolocation}, "maxmind_account_id": {"123456"}, "theme": {string(ThemeSystem)},
 	}))
 	if h.geoip.woken() != 1 {
 		t.Error("a save that changed no MaxMind credential woke the refresh")
 	}
 	discard(t, h.post(PathSettings, url.Values{
-		"maxmind_account_id": {"123456"}, "maxmind_licence_key": {randomHex(t, 16)},
+		fieldSettingsCard: {settingsCardGeolocation}, "maxmind_account_id": {"123456"}, "maxmind_licence_key": {randomHex(t, 16)},
 		"theme": {string(ThemeSystem)},
 	}))
 	if h.geoip.woken() != 2 {
@@ -73,7 +73,7 @@ func TestTheMaxMindAccountIDIsASettingAndASaveWakesTheRefresh(t *testing.T) {
 
 	for _, refused := range []string{"abc", "-4", "0", "12.5"} {
 		status, page := statusAndBody(t, h.post(PathSettings, url.Values{
-			"maxmind_account_id": {refused}, "theme": {string(ThemeSystem)},
+			fieldSettingsCard: {settingsCardGeolocation}, "maxmind_account_id": {refused}, "theme": {string(ThemeSystem)},
 		}))
 		if status != http.StatusBadRequest || !strings.Contains(page,
 			catalogueText(t, msgMaxMindAccountIDBad)) {
@@ -139,7 +139,7 @@ func geoIPPages(t *testing.T) []renderedPage {
 	pages = append(pages, renderedPage{"the settings surface with current MaxMind databases",
 		pageSource(t, h, PathSettings)})
 	_, refused := statusAndBody(t, h.post(PathSettings, url.Values{
-		"maxmind_account_id": {"not-a-number"}, "theme": {string(ThemeSystem)},
+		fieldSettingsCard: {settingsCardGeolocation}, "maxmind_account_id": {"not-a-number"}, "theme": {string(ThemeSystem)},
 	}))
 	pages = append(pages, renderedPage{"a refused MaxMind account ID", refused})
 	return pages

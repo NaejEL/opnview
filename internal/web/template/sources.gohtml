@@ -1,0 +1,131 @@
+{{- /*
+  The Sources surface: what the outage indicator counts, every registered provider
+  with its availability, and every collection gap opnview detected in the last day.
+
+  THE OUTAGES COME FIRST, because the indicator in the bar opens this page and the
+  reader who followed it came to see what it counted. One line per unit of the
+  indicator's figure -- a kind with no healthy implementation, or one implementation
+  the operator turned on that is not healthy -- and the named state at nought. The
+  providers table then marks, in a column of its own, exactly the rows those outages
+  are about: a row can be unavailable and count towards nothing (declined, or beside
+  a healthy implementation of its kind), and installed-not-collecting or state
+  unknown can count, so the availability mark alone could not say which rows the
+  figure is made of.
+
+  IT IS THE SERVER-RENDERED COUNTERPART OF THE SOURCE AVAILABILITY PRESET
+  (docs/widget-catalogue.md). One row per provider row. Availability and
+  activeness are two columns, because two implementations of one kind may both
+  answer and opnview reads one of them; the operator's selection is a third,
+  because a decision is not a probe result. The availability is a value of the
+  preset's, with a square mark in its status colour beside a word in the ordinary
+  text colour -- the step-3 mockup's treatment, where a status hue is a mark and
+  never the text.
+
+  THE DETAIL IS DATA, AND IT IS NEVER OFF SCREEN. It is a collector's own sentence,
+  rendered verbatim, escaped and marked untranslated, and it is what a reader who
+  followed a degraded widget here came for -- so it is not a column at the far
+  right of a table wider than the page, where it was cut at desktop width with the
+  scrollbar below the fold. Each provider's probe and detail sit on a line of their
+  own directly under its row, the full width of the table, labelled, wrapping
+  rather than truncating. The probe is data too: the endpoint that determined the
+  row, as the collector recorded it, offered a line break after each slash so a
+  path wraps between its components and never inside one. An instant is never
+  broken inside itself.
+
+  INSTALLED, NOT COLLECTING CARRIES THE OPNSENSE PAGE THAT TURNS IT ON, on the same
+  line as the detail, under a label saying the change is made in OPNsense and never
+  by opnview (docs/widget-catalogue.md, Source availability and Part 3). The link is
+  the configured firewall URL and a path cited in opnsense_pages.go.
+
+  THE GAPS ARE THE LAST 24 HOURS, newest first, and an empty list is a named state.
+  The time a gap missed is spelled in days, hours, minutes and seconds.
+*/ -}}
+{{define "body" -}}
+<h1>{{t "sources.title"}}</h1>
+
+<section class="card" id="sources_outages" aria-labelledby="sources_outages_name">
+<h2 id="sources_outages_name">{{t "sources.heading.outages"}}</h2>
+{{- if .Outages}}
+<ul class="outage-list">
+{{- range .Outages}}
+<li><span class="availability mark-bad">{{t .KindKey}}</span>{{with .ProviderKey}} <span class="outage-provider">{{t .}}</span>{{end}} <span class="outage-state">{{t .StateKey}}</span></li>
+{{- end}}
+</ul>
+{{- else}}
+<p class="empty-state">{{t "indicator.no_outage"}}</p>
+{{- end}}
+</section>
+
+<section class="card" aria-labelledby="sources_providers">
+<h2 id="sources_providers">{{t "sources.heading.providers"}}</h2>
+<div class="table-frame">
+<table class="data sources">
+<thead>
+<tr><th scope="col">{{t "sources.column.kind"}}</th><th scope="col">{{t "sources.column.provider"}}</th><th scope="col">{{t "sources.column.availability"}}</th><th scope="col">{{t "sources.column.outage"}}</th><th scope="col">{{t "sources.column.active"}}</th><th scope="col">{{t "collection.label.selection"}}</th><th scope="col">{{t "sources.column.checked"}}</th></tr>
+</thead>
+<tbody>
+{{- range .Sources}}
+<tr>
+<td>{{t .KindKey}}</td>
+<td>{{t .ProviderKey}}</td>
+<td><span class="availability {{.Mark}}">{{t .Availability}}</span></td>
+<td><span class="outage-flag{{if .InOutage}} counted{{end}}">{{t .OutageKey}}</span></td>
+<td>{{t .ActiveKey}}</td>
+<td>{{t .SelectionKey}}</td>
+<td>{{if .CheckedState}}{{t .CheckedState}}{{else}}<span class="figure">{{.Checked}}</span>{{end}}</td>
+</tr>
+<tr class="diagnostic">
+<td colspan="7">
+<dl class="diagnostic">
+<dt>{{t "sources.column.probe"}}</dt>
+<dd class="probe">{{range $index, $part := .ProbeParts}}{{if $index}}<wbr>{{end}}<span class="datum" translate="no">{{$part}}</span>{{end}}</dd>
+<dt>{{t "sources.column.detail"}}</dt>
+<dd class="detail">{{if .DetailState}}{{t .DetailState}}{{else}}<span class="datum" translate="no">{{.Detail}}</span>{{end}}</dd>
+{{- if .Pages}}
+<dt>{{t "sources.label.opnsense_page"}}</dt>
+<dd class="opnsense-pages">{{range $index, $page := .Pages}}{{if $index}} {{end}}<a class="opnsense-page" href="{{$page.URL}}" rel="noreferrer noopener">{{t $page.LabelKey}}</a>{{end}}</dd>
+{{- end}}
+</dl>
+</td>
+</tr>
+{{- end}}
+</tbody>
+</table>
+</div>
+</section>
+
+<section class="card" aria-labelledby="sources_gaps">
+<h2 id="sources_gaps">{{t "sources.heading.gaps"}}</h2>
+{{- if .RecentGaps}}
+<div class="table-frame">
+<table class="data">
+<thead>
+<tr><th scope="col">{{t "sources.column.kind"}}</th><th scope="col">{{t "sources.column.provider"}}</th><th scope="col">{{t "collection.label.gap_reason"}}</th><th scope="col">{{t "sources.column.start"}}</th><th scope="col">{{t "sources.column.end"}}</th><th scope="col">{{t "collection.label.missed_seconds"}}</th></tr>
+</thead>
+<tbody>
+{{- range .RecentGaps}}
+<tr>
+<td>{{t .KindKey}}</td>
+<td>{{t .ProviderKey}}</td>
+<td>{{t .ReasonKey}}</td>
+<td><span class="figure">{{.Start}}</span></td>
+<td><span class="figure">{{.End}}</span></td>
+<td>{{template "duration" .Missed}}</td>
+</tr>
+<tr class="diagnostic">
+<td colspan="6">
+<dl class="diagnostic">
+<dt>{{t "sources.column.detail"}}</dt>
+<dd class="detail">{{if .DetailState}}{{t .DetailState}}{{else}}<span class="datum" translate="no">{{.Detail}}</span>{{end}}</dd>
+</dl>
+</td>
+</tr>
+{{- end}}
+</tbody>
+</table>
+</div>
+{{- else}}
+<p class="empty-state">{{t "state.source.no_recent_gap"}}</p>
+{{- end}}
+</section>
+{{- end}}

@@ -23,7 +23,7 @@ func TestCollectionDoesNotWaitForASignIn(t *testing.T) {
 	harness := newHarness(t)
 	login, password := harness.completeSetup()
 	apiKey, apiSecret := randomHex(t, 12), randomHex(t, 16)
-	assertStatus(t, harness.storeCredentials(apiKey, apiSecret), http.StatusOK)
+	assertStatus(t, harness.storeCredentials(apiKey, apiSecret), http.StatusSeeOther)
 
 	// Sign out, and destroy every session there is, so nothing anywhere is signed in.
 	assertStatus(t, harness.post(PathSignOut, url.Values{}), http.StatusSeeOther)
@@ -167,13 +167,14 @@ func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
 	apiKey, apiSecret := randomHex(t, 12), randomHex(t, 16)
 	harness.fake.answer(http.StatusOK, mustJSON(t, map[string]any{"rows": []any{}, "total": 0}))
 	answer := browser.post(PathSettings, url.Values{
-		"firewall_url": {harness.fake.baseURL()},
-		"api_key":      {apiKey},
-		"api_secret":   {apiSecret},
-		"theme":        {string(ThemeSystem)},
+		fieldSettingsCard: {settingsCardFirewall},
+		"firewall_url":    {harness.fake.baseURL()},
+		"api_key":         {apiKey},
+		"api_secret":      {apiSecret},
+		"theme":           {string(ThemeSystem)},
 	})
-	status, body := statusAndBody(t, answer)
-	if status != http.StatusOK {
+	status, body := followed(t, browser, answer)
+	if status != http.StatusSeeOther {
 		t.Fatalf("the settings surface answered %d: %s", status, body)
 	}
 

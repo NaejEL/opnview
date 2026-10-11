@@ -127,9 +127,8 @@ const (
 // rate of nought would say "we looked and there was none" where the truth is "we
 // could not look".
 const (
-	msgSourceReachable   messageKey = "state.sizing.source_reachable"
-	msgSourceUnavailable messageKey = "state.sizing.source_unavailable"
-	msgSourceDisabled    messageKey = "state.sizing.source_disabled"
+	// The source's availability is named with the Sources surface's own values,
+	// msgAvailability* in messages_surfaces.go, so a kind reads the same on both.
 
 	// THE SELECTION IS NOT THE AVAILABILITY, and the two are reported as two rows
 	// because they are two facts: what the firewall says, and what the operator has
@@ -233,7 +232,7 @@ const (
 // A key declared above and left out of this list fails that test, which is the
 // point of keeping both in one file.
 func handlerMessageKeys() []messageKey {
-	return []messageKey{
+	return append(surfaceMessageKeys(), []messageKey{
 		msgSetupDone, msgSettingsSaved, msgPasswordReset, msgSignedOut,
 		msgCertificatePresented,
 
@@ -276,12 +275,11 @@ func handlerMessageKeys() []messageKey {
 		msgProviderPf, msgProviderSuricata, msgProviderKea, msgProviderDnsmasqDHCP,
 		msgProviderISC, msgProviderUnbound, msgProviderDnsmasqLookups, msgGroupImplementations,
 
-		msgSourceReachable, msgSourceUnavailable, msgSourceDisabled,
 		msgSelectionAuto, msgSelectionOn, msgSelectionOff,
 		msgLabelSelection, msgNoRecordsInWindow, msgNoIngestedClock,
 		msgRateNotMeasured, msgRetentionUnlimited, msgPageNotAdjustable,
 		msgNoPageCeiling, msgPageWithinCeiling, msgPageAboveCeiling,
 		msgSuggestionAvailable, msgSuggestionNotYetMeasured, msgSuggestionNotCoverable,
 		msgSuggestionSourceNotCollected,
-	}
+	}...)
 }

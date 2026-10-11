@@ -14,9 +14,9 @@
 // a defect.
 //
 // WHAT IT STILL CANNOT DO, STATED SO NOBODY LOOKS FOR IT. There is no canvas, no
-// widget and no dashboard: the interface is four surfaces — setup, sign-in,
-// settings and collection — and the widget endpoints are step 5, the canvases
-// step 7. The MaxMind GeoLite2 databases are downloaded with the account ID and the
+// widget and no dashboard: the interface is a handful of surfaces — setup, sign-in,
+// settings, collection, interfaces and sources — and the widget endpoints are step
+// 5, the canvases step 7. The MaxMind GeoLite2 databases are downloaded with the account ID and the
 // licence key entered on the settings surface, kept beside the database, and used to
 // place the addresses the flows carry; the map that shows them is step 7. The Public
 // Suffix List is downloaded from publicsuffix.org once a day, conditionally, to group
@@ -220,6 +220,9 @@ func run() (err error) {
 		Settings:    live,
 		Collector:   collector,
 		GeoIP:       refresher,
+		// The settings surface reads the copy in use from here, in memory: drawing
+		// it contacts nothing.
+		PublicSuffix: suffixes,
 	})
 	if err != nil {
 		return err

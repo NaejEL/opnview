@@ -11,9 +11,11 @@
 
   ONE CARD PER KIND AND ONE SAVE PER CARD, angular at the 0.25rem radius — the
   layout docs/ui-references.md's General layout row records, and the same card the
-  settings surface already uses. Each card is its own form, because a value refused
-  on one kind must leave the other three saveable; a single form over four kinds
-  could not manage that. The cards are the kinds the `provider` table actually
+  settings surface already uses. The page is ONE form and every field is named
+  after its card; each card's Save sends that card's name, only that card is stored,
+  and every other card comes back as it was typed, marked edited and not saved, so
+  saving one card never discards an edit made in another. The form's first button,
+  the one the Enter key presses, names no card and stores nothing. The cards are the kinds the `provider` table actually
   holds, read at runtime: a kind with no implementation on this installation
   produces no card at all.
 
@@ -43,7 +45,7 @@
   disabled, because a control that is offered changes what the product does.
 
   EACH IMPLEMENTATION HAS ITS OWN SELECTION, in its kind's card and saved with it:
-  left to the probe round, collected whatever the probe found, or declined. The
+  left to the probe round, turned on by the operator, or declined. The
   three choices are named by the states they put the implementation in, the same
   sentences the in-force group reports, so the choice and its effect read alike.
 
@@ -52,26 +54,116 @@
   ordinary case. A kind whose page opnview cannot set says so WHERE THE SECOND FIELD
   WOULD BE, which is the only place that answers why the form offers one.
 
+  THE SETTINGS CARDS SIT BESIDE WHAT THEY GOVERN, and the storage card heads the
+  page, because it governs everything stored. An index of every card comes first,
+  one link per card, since the page is many screens tall. The resolver cache and
+  local data, which are polled and not sized, carry their implementations'
+  availability, their selections and their interval, and no measurement, suggestion
+  or fill control. The other settings are grouped on cards placed after the kind each
+  belongs beside, and the reason for each placement is in collection_settings.go.
+
+  A SETTING IS SHOWN ONCE, IN ITS FIELD. A duration is a figure beside its unit, in
+  the longest unit that holds the value in force exactly; the value in force is drawn
+  again under the field only when the field shows something else, or when it is a
+  named state. Every interval on the page, a sized kind's included, is typed this
+  way. Each Save posts to its own card's anchor; a refused value is drawn against
+  its field.
+
+  A SHORTER RETENTION IS CONFIRMED FOR ONE VALUE. The card then shows the horizon in
+  force and the one asked for, every other change the same save applies, no field
+  to change any of them, a confirm control that carries the horizon it confirms, and
+  a cancel that returns the card to what is stored while every other card keeps
+  what was typed in it.
+
   NOTHING HERE WRITES TO THE FIREWALL, and nothing on this page makes any outbound
   call at all: every figure is read from the local database.
 */ -}}
 {{define "body" -}}
 <h1>{{t "collection.title"}}</h1>
-{{- range .CollectionCards}}
+{{- if .CollectionIndex}}
+<nav class="page-index" aria-labelledby="collection_index_name">
+<h2 class="visually-hidden" id="collection_index_name">{{t "collection.heading.index"}}</h2>
+<ul>
+{{- range .CollectionIndex}}
+<li><a href="#{{.Anchor}}">{{t .LabelKey}}</a></li>
+{{- end}}
+</ul>
+</nav>
+{{- end}}
+<form method="post" action="{{.CollectionSettingsPath}}" class="page-form">
+<input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+<button type="submit" class="visually-hidden" tabindex="-1" aria-hidden="true">{{t "action.save"}}</button>
+{{- range .CollectionEntries}}
+{{- with .Settings}}
+{{- $card := .}}
+<section class="card" id="card_{{.ID}}" aria-labelledby="card_name_{{.ID}}">
+<h2 id="card_name_{{.ID}}">{{t .LabelKey}}</h2>
+{{- with .Confirmation}}
+<p class="notice bad">{{t $card.NoticeKey}}</p>
+<input type="hidden" name="{{$card.FieldConfirm}}" value="{{.Value}}">
+{{- range .Pending}}
+<input type="hidden" name="{{.Name}}" value="{{.Value}}">
+{{- end}}
+<dl class="states">
+<dt>{{t "collection.label.retention_now"}}</dt>
+<dd>{{template "in-force-value" .Now}}</dd>
+<dt>{{t "collection.label.retention_requested"}}</dt>
+<dd>{{template "in-force-value" .Requested}}</dd>
+{{- range .Changes}}
+<dt>{{t .LabelKey}}</dt>
+<dd>{{template "in-force-value" .Requested}}<span class="in-force"><span class="label">{{t "collection.group.in_force"}}</span> <span class="in-force-value">{{template "in-force-value" .Now}}</span></span></dd>
+{{- end}}
+</dl>
+<div class="actions">
+<button type="submit" name="{{$card.FieldCancel}}" value="{{$card.ID}}" formaction="{{$.CollectionSettingsPath}}#card_{{$card.ID}}" class="secondary">{{t "action.cancel"}}</button>
+<button type="submit" name="{{$card.FieldCard}}" value="{{$card.ID}}" formaction="{{$.CollectionSettingsPath}}#card_{{$card.ID}}" class="destructive">{{t "action.confirm_retention"}}</button>
+</div>
+{{- else}}
+{{- if .NoticeKey}}
+<p class="notice ok">{{t .NoticeKey}}</p>
+{{- else if .Edited}}
+<p class="notice">{{t "notice.edited_not_saved"}}</p>
+{{- end}}
+{{- if .Availability}}
+
+<h3>{{t "sources.column.availability"}}</h3>
+<dl class="states">
+{{- range .Availability}}
+<dt>{{t .LabelKey}}</dt>
+<dd>{{template "figure-value" .}}</dd>
+{{- end}}
+</dl>
+{{- end}}
+{{- if .Implementations}}
+
+<h3>{{t "collection.group.implementations"}}</h3>
+{{- range .Implementations}}
+{{- template "selection-field" .}}
+{{- end}}
+{{- end}}
+{{- range .Fields}}
+{{- template "setting-field" .}}
+{{- end}}
+<div class="actions">
+<button type="submit" name="{{.FieldCard}}" value="{{.ID}}" formaction="{{$.CollectionSettingsPath}}#card_{{.ID}}">{{t "action.save"}}</button>
+</div>
+{{- end}}
+</section>
+{{- end}}
+{{- with .Sizing}}
 <section class="card" id="card_{{.Kind}}" aria-labelledby="card_name_{{.Kind}}">
 <h2 id="card_name_{{.Kind}}">{{t .LabelKey}}</h2>
-{{- with .NoticeKey}}
-<p class="notice ok">{{t .}}</p>
+{{- if .NoticeKey}}
+<p class="notice ok">{{t .NoticeKey}}</p>
+{{- else if .Edited}}
+<p class="notice">{{t "notice.edited_not_saved"}}</p>
 {{- end}}
-<form method="post" action="{{$.CollectionPath}}">
-<input type="hidden" name="csrf_token" value="{{$.CSRFToken}}">
-<input type="hidden" name="{{.FieldKind}}" value="{{.Kind}}">
 
 <h3>{{t "collection.group.in_force"}}</h3>
 <dl class="states">
 {{- range .InForce}}
 <dt>{{t .LabelKey}}</dt>
-<dd>{{if .StateKey}}{{t .StateKey}}{{else}}<span class="figure">{{.Value}}</span>{{end}}</dd>
+<dd>{{template "figure-value" .}}</dd>
 {{- end}}
 </dl>
 
@@ -79,7 +171,7 @@
 <dl class="states">
 {{- range .Measurement}}
 <dt>{{t .LabelKey}}</dt>
-<dd>{{if .StateKey}}{{t .StateKey}}{{else}}<span class="figure">{{.Value}}</span>{{end}}</dd>
+<dd>{{template "figure-value" .}}</dd>
 {{- end}}
 </dl>
 {{- if .Gaps}}
@@ -89,7 +181,7 @@
 </thead>
 <tbody>
 {{- range .Gaps}}
-<tr><td>{{t .ReasonKey}}</td><td><span class="figure">{{.Count}}</span></td><td><span class="figure">{{.MissedSeconds}}</span></td></tr>
+<tr><td>{{t .ReasonKey}}</td><td><span class="figure">{{.Count}}</span></td><td>{{template "duration" .Missed}}</td></tr>
 {{- end}}
 </tbody>
 </table>
@@ -99,71 +191,48 @@
 <dl class="states">
 {{- range .Suggestion}}
 <dt>{{t .LabelKey}}</dt>
-<dd>{{if .StateKey}}{{t .StateKey}}{{else}}<span class="figure">{{.Value}}</span>{{end}}</dd>
+<dd>{{template "figure-value" .}}</dd>
 {{- end}}
 </dl>
 
 <h3>{{t "collection.group.implementations"}}</h3>
-{{- $card := .}}
 {{- range .Implementations}}
-{{- if eq $card.InvalidField .Field}}
-<div class="field invalid">
-<label for="{{.Field}}_{{$card.Kind}}">{{t .LabelKey}}</label>
-<select id="{{.Field}}_{{$card.Kind}}" name="{{.Field}}" aria-invalid="true" aria-describedby="{{.Field}}_refusal_{{$card.Kind}}" autofocus>
-{{- range .Options}}
-<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{t .LabelKey}}</option>
+{{- template "selection-field" .}}
 {{- end}}
-</select>
-<p class="field-refusal" id="{{.Field}}_refusal_{{$card.Kind}}">{{t $card.RefusalKey}}</p>
-</div>
-{{- else}}
-<div class="field">
-<label for="{{.Field}}_{{$card.Kind}}">{{t .LabelKey}}</label>
-<select id="{{.Field}}_{{$card.Kind}}" name="{{.Field}}">
-{{- range .Options}}
-<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{t .LabelKey}}</option>
-{{- end}}
-</select>
-</div>
-{{- end}}
-{{- end}}
-
 {{- if .PageIsAdjustable}}
-{{- if eq .InvalidField .FieldPageSize}}
-<div class="field invalid">
-<label for="page_size_{{.Kind}}">{{t "field.page_size"}}</label>
-<input id="page_size_{{.Kind}}" name="{{.FieldPageSize}}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="{{.PageSizeField}}" aria-invalid="true" aria-describedby="page_size_refusal_{{.Kind}}" autofocus>
-<p class="field-refusal" id="page_size_refusal_{{.Kind}}">{{t .RefusalKey}}</p>
-</div>
-{{- else}}
-<div class="field">
-<label for="page_size_{{.Kind}}">{{t "field.page_size"}}</label>
-<input id="page_size_{{.Kind}}" name="{{.FieldPageSize}}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="{{.PageSizeField}}">
-</div>
-{{- end}}
+{{- template "setting-field" .PageSize}}
 {{- else}}
 <div class="field">
 <span class="label">{{t "field.page_size"}}</span>
 <span class="field-state">{{t "state.sizing.page_not_adjustable"}}</span>
 </div>
 {{- end}}
-{{- if eq .InvalidField .FieldInterval}}
-<div class="field invalid">
-<label for="interval_{{.Kind}}">{{t "field.interval_seconds"}}</label>
-<input id="interval_{{.Kind}}" name="{{.FieldInterval}}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="{{.IntervalField}}" aria-invalid="true" aria-describedby="interval_refusal_{{.Kind}}" autofocus>
-<p class="field-refusal" id="interval_refusal_{{.Kind}}">{{t .RefusalKey}}</p>
-</div>
-{{- else}}
-<div class="field">
-<label for="interval_{{.Kind}}">{{t "field.interval_seconds"}}</label>
-<input id="interval_{{.Kind}}" name="{{.FieldInterval}}" type="text" inputmode="numeric" autocomplete="off" spellcheck="false" value="{{.IntervalField}}">
-</div>
-{{- end}}
+{{- template "setting-field" .Interval}}
 <div class="actions">
-<button type="submit" name="{{.FieldFill}}" value="1" class="secondary"{{if not .SuggestionExists}} disabled{{end}}>{{t "action.fill_suggestion"}}</button>
-<button type="submit">{{t "action.save"}}</button>
+<button type="submit" name="{{.FieldFill}}" value="{{.Kind}}" formaction="{{$.CollectionPath}}#card_{{.Kind}}" class="secondary"{{if not .SuggestionExists}} disabled{{end}}>{{t "action.fill_suggestion"}}</button>
+<button type="submit" name="{{.FieldKind}}" value="{{.Kind}}" formaction="{{$.CollectionPath}}#card_{{.Kind}}">{{t "action.save"}}</button>
 </div>
-</form>
 </section>
 {{- end}}
+{{- end}}
+</form>
+{{- end}}
+
+{{- /*
+  "selection-field" is one implementation's selection: a select of the three
+  selections, marked invalid against its refusal when it was refused. Its element id
+  is the field's own name, which already names the card.
+*/ -}}
+{{define "selection-field"}}
+<div class="field{{if .RefusalKey}} invalid{{end}}">
+<label for="{{.Field}}">{{t .LabelKey}}</label>
+<select id="{{.Field}}" name="{{.Field}}"{{if .RefusalKey}} aria-invalid="true" aria-describedby="{{.Field}}_refusal" autofocus{{end}}>
+{{- range .Options}}
+<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{t .LabelKey}}</option>
+{{- end}}
+</select>
+{{- if .RefusalKey}}
+<p class="field-refusal" id="{{.Field}}_refusal">{{t .RefusalKey}}</p>
+{{- end}}
+</div>
 {{- end}}

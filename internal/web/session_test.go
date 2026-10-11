@@ -258,7 +258,8 @@ func TestEveryMutatingFormCarriesAFormToken(t *testing.T) {
 	login, password := harness.completeSetup()
 
 	t.Run("settings without a token", func(t *testing.T) {
-		answer := harness.postRaw(PathSettings, url.Values{"theme": {string(ThemeDark)}})
+		answer := harness.postRaw(PathSettings, url.Values{fieldSettingsCard: {settingsCardAppearance},
+			"theme": {string(ThemeDark)}})
 		assertStatus(t, answer, http.StatusForbidden)
 	})
 
@@ -275,8 +276,9 @@ func TestEveryMutatingFormCarriesAFormToken(t *testing.T) {
 		}
 
 		answer := harness.postRaw(PathSettings, url.Values{
-			"csrf_token": {otherToken},
-			"theme":      {string(ThemeDark)},
+			"csrf_token":      {otherToken},
+			fieldSettingsCard: {settingsCardAppearance},
+			"theme":           {string(ThemeDark)},
 		})
 		assertStatus(t, answer, http.StatusForbidden)
 
@@ -287,8 +289,9 @@ func TestEveryMutatingFormCarriesAFormToken(t *testing.T) {
 	})
 
 	t.Run("settings with its own token", func(t *testing.T) {
-		answer := harness.post(PathSettings, url.Values{"theme": {string(ThemeDark)}})
-		assertStatus(t, answer, http.StatusOK)
+		answer := harness.post(PathSettings, url.Values{fieldSettingsCard: {settingsCardAppearance},
+			"theme": {string(ThemeDark)}})
+		assertStatus(t, answer, http.StatusSeeOther)
 		if theme := harness.server.readTheme(t.Context()); theme != ThemeDark {
 			t.Errorf("an accepted submission stored the theme %q rather than dark", theme)
 		}

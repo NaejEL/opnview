@@ -27,12 +27,18 @@ const (
 	pageRecover  = "recover"
 	// pageCollection is the collection surface.
 	pageCollection = "collection"
+	// pageInterfaces is where the operator sets an interface's networks and its
+	// link-local rule; pageSources is where every source's availability and the
+	// recent collection gaps are read.
+	pageInterfaces = "interfaces"
+	pageSources    = "sources"
 )
 
 // pageNames is every page, so a test can render each one and assert what it does
 // and does not contain.
 func pageNames() []string {
-	return []string{pageSetup, pageSignIn, pageSettings, pageRecover, pageCollection}
+	return []string{pageSetup, pageSignIn, pageSettings, pageRecover, pageCollection,
+		pageInterfaces, pageSources}
 }
 
 // renderer holds one compiled template per page.

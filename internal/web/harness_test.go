@@ -101,6 +101,34 @@ type harness struct {
 	live      *config.Live
 	collector *recordingCollector
 	geoip     *recordingGeoIP
+	// suffix stands in for the Public Suffix List's refresher: the copy a test says
+	// is held, answered from memory, and a count of how often it was asked.
+	suffix *recordingPublicSuffix
+}
+
+// recordingPublicSuffix stands in for the Public Suffix List's refresher.
+type recordingPublicSuffix struct {
+	mutex       sync.Mutex
+	version     string
+	rules       int
+	confirmedAt int64
+	held        bool
+	asked       int
+}
+
+// Held answers the copy the test set.
+func (p *recordingPublicSuffix) Held() (string, int, int64, bool) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.asked++
+	return p.version, p.rules, p.confirmedAt, p.held
+}
+
+// hold makes a copy held, at a version, with a rule count, confirmed at an instant.
+func (p *recordingPublicSuffix) hold(version string, rules int, confirmedAt int64) {
+	p.mutex.Lock()
+	defer p.mutex.Unlock()
+	p.version, p.rules, p.confirmedAt, p.held = version, rules, confirmedAt, true
 }
 
 // recordingCollector stands in for the running collector and keeps every
@@ -273,6 +301,7 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 	live := config.NewLive(settings)
 	collector := &recordingCollector{}
 	geoip := &recordingGeoIP{}
+	suffix := &recordingPublicSuffix{}
 
 	server, err := New(Options{
 		Store:          database,
@@ -286,6 +315,7 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 		Settings:       live,
 		Collector:      collector,
 		GeoIP:          geoip,
+		PublicSuffix:   suffix,
 	})
 	if err != nil {
 		t.Fatalf("building the server: %v", err)
@@ -301,7 +331,7 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 	return &harness{
 		t: t, dataDir: dataDir, store: database, box: box, clock: clock,
 		setupToken: setupToken, creds: credentials, fake: fake, server: server,
-		http: front, live: live, collector: collector, geoip: geoip,
+		http: front, live: live, collector: collector, geoip: geoip, suffix: suffix,
 		client: &http.Client{
 			Jar: jar,
 			// A redirect is a fact a test asserts on, so it is never followed
@@ -372,9 +402,13 @@ func (h *harness) postRaw(path string, form url.Values) *http.Response {
 func (h *harness) formToken(path string) string {
 	h.t.Helper()
 	source := path
-	if path == PathSignOut {
+	switch path {
+	case PathSignOut:
 		// The sign-out control lives in the bar of whatever page is open.
 		source = PathSettings
+	case PathCollectionSettings:
+		// The settings cards' forms live on the collection surface.
+		source = PathCollection
 	}
 	answer := h.get(source)
 	defer func() { _ = answer.Body.Close() }()

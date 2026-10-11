@@ -3,7 +3,9 @@ package web
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/config"
@@ -29,59 +31,92 @@ import (
 // The form's field names. They are carried into each card rather than spelled in
 // the template, so the page that writes them and the handler that reads them
 // cannot disagree.
+//
+// THE WHOLE PAGE IS ONE FORM, so every field is named after its card: a card's id, a
+// dot, the field (cardFieldName). A submission carries what is typed in every card,
+// each Save names the card it belongs to, and only that card is stored: the others are
+// drawn again with what was posted in them, marked edited and not saved, so saving one
+// card never silently discards what was typed in another.
 const (
-	// fieldKind names the kind a card's form is about.
+	// fieldKind is a sized kind's Save button: its value names the kind.
 	fieldKind = "kind"
-	// fieldPageSize and fieldInterval carry the pair typed.
+	// fieldPageSize and fieldInterval, after the card's id, carry the pair typed; the
+	// interval is a figure beside its unit, unitFieldName of it.
 	fieldPageSize = "page_size"
 	fieldInterval = "interval_seconds"
-	// fieldFill is the fill control: present, it asks for the suggestion to be put
-	// into the fields, and nothing is stored. Only its presence is read, never its
-	// value.
+	// fieldFill is the fill control: its value names the kind whose suggestion is to
+	// be put into its fields, and nothing is stored.
 	fieldFill = "fill_suggestion"
-	// fieldSelectionPrefix, followed by a provider key, carries the operator's
-	// selection of one implementation of the card's kind.
+	// fieldSelectionPrefix, followed by a provider key and after the card's id,
+	// carries the operator's selection of one implementation of the card's kind.
 	fieldSelectionPrefix = "selection_"
 )
 
-// handleCollectionForm draws the collection surface. Drawing it measures each
-// kind from the database and contacts nothing.
+// cardFieldName is one card's field: the card's id, a dot, the field.
+func cardFieldName(card, field string) string { return card + "." + field }
+
+// collectionPage is what one draw of the collection surface has to say: what a
+// submission carried, the card drawn as stored rather than as typed, and the feedback
+// of the card the submission was about.
+type collectionPage struct {
+	// draft is the first value of every field the submission carried.
+	draft map[string]string
+	// except is the card whose fields were just stored, or whose edit was cancelled:
+	// it is drawn as stored.
+	except string
+	// sized and settings are the feedback of a sized kind's card or of a settings card.
+	sized    *cardFeedback
+	settings *settingsFeedback
+}
+
+// postedDraft is the first value of every field a submission carried.
+func postedDraft(request *http.Request) map[string]string {
+	draft := map[string]string{}
+	for name, values := range request.PostForm {
+		if len(values) > 0 {
+			draft[name] = values[0]
+		}
+	}
+	return draft
+}
+
+// typed is what a submission carried in one card's fields, by field name, for every
+// card but the one drawn as stored. It is nil when there is nothing.
+func (page *collectionPage) typed(card string, names ...string) map[string]string {
+	if page == nil || page.draft == nil || card == page.except {
+		return nil
+	}
+	found := map[string]string{}
+	for _, name := range names {
+		if value, present := page.draft[name]; present {
+			found[name] = value
+		}
+	}
+	return found
+}
+
+// handleCollectionForm draws the collection surface. Drawing it measures each kind
+// from the database and contacts nothing. A save lands here, with the card it was
+// made in named by the query, and that card says it was saved.
 func (s *Server) handleCollectionForm(writer http.ResponseWriter, request *http.Request) {
-	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageCollection))
-	if err != nil {
-		s.failInternal(writer, request, err)
-		return
+	page := &collectionPage{}
+	if saved := request.URL.Query().Get(querySaved); saved != "" {
+		switch {
+		case isSizedKind(saved):
+			page.sized = &cardFeedback{kind: saved, notice: msgCollectionSaved}
+		case isPolledKind(saved):
+			page.settings = &settingsFeedback{card: saved, notice: msgCollectionSaved}
+		case isSettingCard(saved):
+			page.settings = &settingsFeedback{card: saved, notice: msgSettingsSaved}
+		}
 	}
-	if err := s.fillCollection(request.Context(), &built, nil, nil); err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	if err := s.renderer.render(writer, http.StatusOK, pageCollection, built); err != nil {
-		s.failInternal(writer, request, err)
-	}
+	s.renderCollectionPage(writer, request, http.StatusOK, page, "")
 }
 
-// typedPair is what was typed into one card, put back into that card's fields
-// when a submission is refused, or the suggestion when the reader asked for it, so
-// that nobody has to type a figure twice.
-type typedPair struct {
-	// kind is the card the pair belongs to.
-	kind string
-	// pageSize is what the page field shows, as text: what was typed is shown as
-	// typed, even when it is not a number, because that is the thing to correct.
-	pageSize string
-	// intervalSecs is what the interval field shows, as text, in seconds.
-	intervalSecs string
-	// selections is what each implementation's selection field shows, by provider
-	// key; an implementation absent from it shows its stored selection.
-	selections map[string]string
-}
-
-// cardFeedback is what one card has to say after a submission: a save or a fill
-// confirmed, or a figure refused against the field that caused it. It is drawn in
-// the card it belongs to and nowhere else: a page with several cards says
-// nothing at the top that a reader would have to match to a card, and the other
-// cards show what is in force as if nothing had been submitted.
+// cardFeedback is what one sized kind's card has to say after a submission: a save or
+// a fill confirmed, or a figure refused against the field that caused it. It is drawn
+// in the card it belongs to and nowhere else: a page with several cards says nothing at
+// the top that a reader would have to match to a card.
 type cardFeedback struct {
 	// kind is the card it belongs to.
 	kind string
@@ -93,35 +128,48 @@ type cardFeedback struct {
 	field   string
 }
 
-// handleCollectionSubmit stores one card's pair, makes it live, and redraws the
-// surface with the save confirmed in that card. With the fill control, it stores
-// nothing and puts the suggestion into the fields instead. A refused figure is
-// reported in the card, against its field, with what was typed still in it.
+// handleCollectionSubmit stores one sized kind's pair and selections, makes them live,
+// and sends the browser back to the card. With the fill control, it stores nothing and
+// puts the suggestion into the fields instead. A refused figure is reported in the
+// card, against its field, with what was typed still in it.
 func (s *Server) handleCollectionSubmit(writer http.ResponseWriter, request *http.Request) {
 	ctx := request.Context()
+	draft := postedDraft(request)
 
-	kind, known := kindNamed(request.PostFormValue(fieldKind))
+	named := request.PostFormValue(fieldKind)
+	fill := request.PostFormValue(fieldFill)
+	if fill != "" {
+		named = fill
+	}
+	kind, known := kindNamed(named)
 	if !known {
-		// The kind is the form's own hidden field; a value that names no kind came
-		// from somewhere other than a card, and there is no card to say it in.
-		s.renderCollectionRefusal(writer, request, msgCollectionKindUnknown, "", nil)
+		// The kind is the name a card's own button sends. None is the Enter key's
+		// default button; a name that is no kind came from somewhere other than a card.
+		// Nothing is stored either way, and everything typed is kept.
+		refusal := msgCollectionKindUnknown
+		if named == "" {
+			refusal = msgCardNotNamed
+		}
+		s.renderCollectionPage(writer, request, http.StatusBadRequest,
+			&collectionPage{draft: draft}, refusal)
 		return
 	}
 
-	// THE FILL CONTROL WRITES NOTHING. It is handled before either field is read,
-	// so a half-typed card loses nothing by asking for the suggestion, and nothing
-	// typed into it is stored by asking.
-	if request.PostFormValue(fieldFill) != "" {
-		s.fillSuggestedFields(writer, request, kind)
+	// THE FILL CONTROL WRITES NOTHING. It is handled before any field is read, so a
+	// half-typed card loses nothing by asking for the suggestion, and nothing typed
+	// into it is stored by asking.
+	if fill != "" {
+		s.fillSuggestedFields(writer, request, kind, draft)
 		return
 	}
 
-	typed := typedPair{
-		kind:         kind.Kind,
-		pageSize:     request.PostFormValue(fieldPageSize),
-		intervalSecs: request.PostFormValue(fieldInterval),
-		selections:   map[string]string{},
+	pageName := cardFieldName(kind.Kind, fieldPageSize)
+	intervalName := cardFieldName(kind.Kind, fieldInterval)
+	refuse := func(refusal messageKey, field string) {
+		s.renderCollectionPage(writer, request, http.StatusBadRequest, &collectionPage{draft: draft,
+			sized: &cardFeedback{kind: kind.Kind, refusal: refusal, field: field}}, "")
 	}
+
 	// The selection of each implementation of the kind. A field the form did not
 	// carry leaves the stored selection as it is.
 	providers, err := s.store.ProvidersOfKind(ctx, kind.Kind)
@@ -129,36 +177,35 @@ func (s *Server) handleCollectionSubmit(writer http.ResponseWriter, request *htt
 		s.failInternal(writer, request, err)
 		return
 	}
-	for _, provider := range providers {
-		if values, sent := request.PostForm[fieldSelectionPrefix+provider.ProviderKey]; sent && len(values) > 0 {
-			typed.selections[provider.ProviderKey] = values[0]
-		}
-	}
 
 	// Every figure and every selection is checked before anything is stored.
-	seconds, refusal := typedIntervalSeconds(typed.intervalSecs)
+	secondsText, refusal := typedDuration(draft[intervalName], draft[unitFieldName(intervalName)])
+	var seconds int64
+	if refusal == "" {
+		seconds, refusal = typedIntervalSeconds(secondsText)
+	}
 	if refusal != "" {
-		s.renderCollectionRefusal(writer, request, refusal, fieldInterval, &typed)
+		refuse(refusal, intervalName)
 		return
 	}
 	var pageSize int
 	if kind.PageIsAdjustable() {
-		pageSize, refusal = typedPageSize(typed.pageSize)
+		pageSize, refusal = typedPageSize(draft[pageName])
 		if refusal != "" {
-			s.renderCollectionRefusal(writer, request, refusal, fieldPageSize, &typed)
+			refuse(refusal, pageName)
 			return
 		}
 	}
-	selections := make(map[string]config.Selection, len(typed.selections))
+	selections := make(map[string]config.Selection, len(providers))
 	for _, provider := range providers {
-		value, sent := typed.selections[provider.ProviderKey]
+		field := cardFieldName(kind.Kind, fieldSelectionPrefix+provider.ProviderKey)
+		value, sent := draft[field]
 		if !sent {
 			continue
 		}
 		selection, err := config.ParseSelection(value)
 		if err != nil {
-			s.renderCollectionRefusal(writer, request, msgCollectionValueInvalid,
-				fieldSelectionPrefix+provider.ProviderKey, &typed)
+			refuse(msgCollectionValueInvalid, field)
 			return
 		}
 		selections[provider.ProviderKey] = selection
@@ -209,23 +256,36 @@ func (s *Server) handleCollectionSubmit(writer http.ResponseWriter, request *htt
 			return
 		}
 	}
+	// The saved card shows what is now in force, read back from the rows just written
+	// rather than echoed from the form; every other card keeps what was typed in it.
+	s.finishCollectionSave(writer, request, &collectionPage{draft: draft, except: kind.Kind,
+		sized: &cardFeedback{kind: kind.Kind, notice: msgCollectionSaved}}, kind.Kind)
+}
 
-	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageCollection))
+// finishCollectionSave answers a save. When no other card holds an unsaved edit, the
+// browser is sent back to the surface at the saved card's anchor, so a reload does not
+// post again; when one does, the page is drawn in place, because a redirect would
+// discard that edit.
+func (s *Server) finishCollectionSave(writer http.ResponseWriter, request *http.Request,
+	page *collectionPage, card string) {
+	built, err := s.collectionView(writer, request, page, "")
 	if err != nil {
 		s.failInternal(writer, request, err)
 		return
 	}
-	// The save is confirmed in the card it was saved in, and the fields show what
-	// is now in force, read back from the rows just written rather than echoed from
-	// the form.
-	feedback := cardFeedback{kind: kind.Kind, notice: msgCollectionSaved}
-	if err := s.fillCollection(ctx, &built, nil, &feedback); err != nil {
-		s.failInternal(writer, request, err)
+	if !built.hasUnsavedEdits() {
+		http.Redirect(writer, request, collectionSavedLocation(card), http.StatusSeeOther)
 		return
 	}
 	if err := s.renderer.render(writer, http.StatusOK, pageCollection, built); err != nil {
 		s.failInternal(writer, request, err)
 	}
+}
+
+// collectionSavedLocation is where a save sends the browser: the surface, naming the
+// card saved, at that card's anchor.
+func collectionSavedLocation(card string) string {
+	return PathCollection + "?" + url.Values{querySaved: {card}}.Encode() + "#card_" + card
 }
 
 // applyConfiguration loads the configuration again and hands it to whatever is
@@ -250,15 +310,11 @@ func (s *Server) applyConfiguration(ctx context.Context) error {
 }
 
 // fillSuggestedFields redraws the surface with one kind's suggestion in its fields,
-// and STORES NOTHING: the save beside the fields is the second deliberate act.
+// and STORES NOTHING: the save beside the fields is the second deliberate act. Every
+// other card keeps what was typed in it.
 func (s *Server) fillSuggestedFields(writer http.ResponseWriter, request *http.Request,
-	kind sizing.Kind) {
+	kind sizing.Kind, draft map[string]string) {
 	ctx := request.Context()
-	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageCollection))
-	if err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
 	// Measured again: the suggestion shown is the one the database supports now.
 	_, suggestion, _, err := s.measureKind(ctx, kind)
 	if err != nil {
@@ -271,60 +327,54 @@ func (s *Server) fillSuggestedFields(writer http.ResponseWriter, request *http.R
 	// fields as they are and say so in the card. The fill control is disabled in
 	// those states, so this is a request that did not come from the page as drawn,
 	// or a state that changed between drawing and pressing. For a read whose page
-	// is not a setting, only the interval is filled.
-	var typed *typedPair
+	// is not a setting, only the interval is filled, in the longest unit that holds
+	// it exactly, as the field shows every interval.
 	feedback := &cardFeedback{kind: kind.Kind, notice: msgSuggestionNotFilled}
 	if suggestion.Outcome == sizing.OutcomeSuggested {
-		typed = &typedPair{
-			kind:         kind.Kind,
-			intervalSecs: strconv.FormatInt(int64(suggestion.Pair.Interval/time.Second), 10),
-		}
+		intervalName := cardFieldName(kind.Kind, fieldInterval)
+		figure, unit := fieldDuration(int64(suggestion.Pair.Interval / time.Second))
+		draft[intervalName] = figure
+		draft[unitFieldName(intervalName)] = unit
 		if kind.PageIsAdjustable() {
-			typed.pageSize = strconv.Itoa(suggestion.Pair.PageSize)
+			draft[cardFieldName(kind.Kind, fieldPageSize)] = strconv.Itoa(suggestion.Pair.PageSize)
 		}
 		// A reader may still change either figure before saving.
 		feedback.notice = msgSuggestionFilled
 	}
-
-	if err := s.fillCollection(ctx, &built, typed, feedback); err != nil {
-		s.failInternal(writer, request, err)
-		return
-	}
-	if err := s.renderer.render(writer, http.StatusOK, pageCollection, built); err != nil {
-		s.failInternal(writer, request, err)
-	}
+	s.renderCollectionPage(writer, request, http.StatusOK,
+		&collectionPage{draft: draft, sized: feedback}, "")
 }
 
-// renderCollectionRefusal redraws the surface with a refusal and nothing stored.
-//
-// A REFUSAL IS DRAWN AGAINST THE FIELD THAT CAUSED IT, in the card it belongs to,
-// and what was typed is put back so the figure can be corrected rather than typed
-// again. A refusal that belongs to no field of any card — a kind the form does not
-// know — is the page's own.
-//
-// The status is 400: the request was refused, and a refusal is not an HTTP 200
-// with a sad sentence on it.
-func (s *Server) renderCollectionRefusal(writer http.ResponseWriter, request *http.Request,
-	key messageKey, field string, typed *typedPair) {
-	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageCollection))
+// renderCollectionPage draws the collection surface at a status, with one card's
+// feedback, or a refusal that belongs to no card at the head of the page. A refusal
+// answers 400: the request was refused, and a refusal is not an HTTP 200 with a sad
+// sentence on it.
+func (s *Server) renderCollectionPage(writer http.ResponseWriter, request *http.Request, status int,
+	page *collectionPage, pageRefusal messageKey) {
+	built, err := s.collectionView(writer, request, page, pageRefusal)
 	if err != nil {
 		s.failInternal(writer, request, err)
 		return
 	}
+	if err := s.renderer.render(writer, status, pageCollection, built); err != nil {
+		s.failInternal(writer, request, err)
+	}
+}
 
-	var feedback *cardFeedback
-	if field != "" && typed != nil {
-		feedback = &cardFeedback{kind: typed.kind, refusal: key, field: field}
-	} else {
-		built.Error = key
+// collectionView builds the collection surface for one draw.
+func (s *Server) collectionView(writer http.ResponseWriter, request *http.Request,
+	page *collectionPage, pageRefusal messageKey) (view, error) {
+	built, err := s.newView(writer, request, sessionFrom(request), titleKeyFor(pageCollection))
+	if err != nil {
+		return view{}, err
 	}
-	if err := s.fillCollection(request.Context(), &built, typed, feedback); err != nil {
-		s.failInternal(writer, request, err)
-		return
+	if pageRefusal != "" {
+		built.Error = pageRefusal
 	}
-	if err := s.renderer.render(writer, http.StatusBadRequest, pageCollection, built); err != nil {
-		s.failInternal(writer, request, err)
+	if err := s.fillCollection(request.Context(), &built, page); err != nil {
+		return view{}, err
 	}
+	return built, nil
 }
 
 // kindNamed returns the registry entry of the kind a form names.
@@ -335,6 +385,12 @@ func kindNamed(name string) (sizing.Kind, bool) {
 		}
 	}
 	return sizing.Kind{}, false
+}
+
+// isSizedKind says whether a card id is a sized kind's.
+func isSizedKind(card string) bool {
+	_, known := kindNamed(card)
+	return known
 }
 
 // typedPageSize reads a typed page size. A page is a positive count of records;
@@ -348,7 +404,7 @@ func kindNamed(name string) (sizing.Kind, bool) {
 // The returned key is empty when the figure is accepted, and names the refusal
 // otherwise.
 func typedPageSize(typed string) (int, messageKey) {
-	pageSize, err := strconv.Atoi(typed)
+	pageSize, err := strconv.Atoi(strings.TrimSpace(typed))
 	if err != nil || pageSize <= 0 {
 		return 0, msgCollectionValueInvalid
 	}
@@ -366,7 +422,7 @@ func typedPageSize(typed string) (int, messageKey) {
 // applies to a stored row, so a figure accepted here is one Load will read
 // back.
 func typedIntervalSeconds(typed string) (int64, messageKey) {
-	seconds, err := strconv.ParseInt(typed, 10, 64)
+	seconds, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
 	if err != nil || seconds <= 0 {
 		return 0, msgCollectionValueInvalid
 	}
@@ -377,29 +433,30 @@ func typedIntervalSeconds(typed string) (int64, messageKey) {
 }
 
 // fillCollection puts one card per kind into a view: every kind internal/sizing
-// sizes that the provider table holds a row for, in the registry's order. A kind
-// with no provider row produces no card at all.
-//
-// typed and feedback are for the card they name and are ignored by every other.
-func (s *Server) fillCollection(ctx context.Context, built *view, typed *typedPair,
-	feedback *cardFeedback) error {
+// sizes that the provider table holds a row for, in the registry's order, and the
+// settings cards placed among them. A kind with no provider row produces no card at
+// all. page is what the draw has to say, nil for none.
+func (s *Server) fillCollection(ctx context.Context, built *view, page *collectionPage) error {
 	registered, err := s.store.KindsInProviderTable(ctx)
 	if err != nil {
 		return err
 	}
 	built.CollectionPath = PathCollection
+	built.CollectionCards = nil
 
 	for _, kind := range sizing.Kinds() {
 		if _, present := registered[kind.Kind]; !present {
 			continue
 		}
-		card, err := s.buildCollectionCard(ctx, kind, typed, feedback)
+		card, err := s.buildCollectionCard(ctx, kind, page)
 		if err != nil {
 			return err
 		}
 		built.CollectionCards = append(built.CollectionCards, card)
 	}
-	return nil
+	// The settings cards, each after the card it belongs beside; see
+	// collection_settings.go.
+	return s.fillCollectionEntries(ctx, built, page)
 }
 
 // measureKind measures one kind over the window the retention horizon allows,
@@ -475,8 +532,8 @@ type kindState struct {
 // facts, and a surface that collapsed them would hide an operator's own decision
 // behind a probe result.
 //
-// The kind is reachable when any implementation is; failing that, disabled when
-// any is installed and switched off; failing that, unavailable. Its selection is
+// The kind's availability is kindAvailability's, in the Sources surface's values.
+// Its selection is
 // off when every implementation is turned off, on when any is turned on, and auto
 // otherwise. A selection that cannot be read is an error, as everywhere.
 func (s *Server) sourceState(ctx context.Context, kind string) (kindState, error) {
@@ -484,17 +541,14 @@ func (s *Server) sourceState(ctx context.Context, kind string) (kindState, error
 	if err != nil {
 		return kindState{}, err
 	}
-	var reachable, disabled, anyOn, anyNotOff bool
+	var reachable, anyOn, anyNotOff bool
 	for _, provider := range providers {
 		selection, err := config.LoadSourceSelection(ctx, s.store, kind, provider.ProviderKey)
 		if err != nil {
 			return kindState{}, err
 		}
-		switch provider.State {
-		case store.StateReachable:
+		if provider.State == store.StateReachable {
 			reachable = true
-		case store.StatePresentButDisabled:
-			disabled = true
 		}
 		if selection == config.SelectionOff {
 			continue
@@ -512,22 +566,46 @@ func (s *Server) sourceState(ctx context.Context, kind string) (kindState, error
 	case anyOn:
 		state.selection = msgSelectionOn
 	}
-	switch {
-	case reachable:
-		state.availability = msgSourceReachable
-	case disabled:
-		state.availability = msgSourceDisabled
-	default:
-		state.availability = msgSourceUnavailable
+	// THE AVAILABILITY IS NAMED WITH THE SOURCES SURFACE'S OWN VALUES, so a kind reads
+	// the same here as its providers read there: see kindAvailability.
+	rows, err := s.store.SourceAvailability(ctx)
+	if err != nil {
+		return kindState{}, err
 	}
+	state.availability = kindAvailability(kind, rows)
 	state.collected = anyNotOff && reachable
 	return state, nil
 }
 
+// kindAvailability names a kind's condition from its providers' rows, with the
+// values of the Source availability preset: healthy when any provider is reachable;
+// failing that, installed and not collecting when any is; failing that, unavailable
+// when any was checked and found so; failing that, not yet probed; and state unknown
+// when no provider of the kind carries an availability row at all. Nothing but a
+// reachable provider reads as healthy.
+func kindAvailability(kind string, rows []store.SourceRow) messageKey {
+	found := map[messageKey]bool{}
+	for _, row := range rows {
+		if row.Kind != kind {
+			continue
+		}
+		availability, _ := availabilityOf(row)
+		found[availability] = true
+	}
+	for _, availability := range []messageKey{msgAvailabilityHealthy, msgAvailabilityNotCollecting,
+		msgAvailabilityUnavailable, msgAvailabilityNotYetProbed} {
+		if found[availability] {
+			return availability
+		}
+	}
+	return msgAvailabilityUnknown
+}
+
 // buildCollectionCard builds one kind's card: the pair in force, the measurement,
-// the gaps of the measured window, and the suggestion, each as a value or a state.
-func (s *Server) buildCollectionCard(ctx context.Context, kind sizing.Kind, typed *typedPair,
-	feedback *cardFeedback) (collectionCard, error) {
+// the gaps of the measured window, and the suggestion, each as a value or a state;
+// and its fields, showing what is in force or what a submission carried in them.
+func (s *Server) buildCollectionCard(ctx context.Context, kind sizing.Kind,
+	page *collectionPage) (collectionCard, error) {
 	settings, err := s.configuration(ctx)
 	if err != nil {
 		return collectionCard{}, err
@@ -538,39 +616,48 @@ func (s *Server) buildCollectionCard(ctx context.Context, kind sizing.Kind, type
 	}
 	inForce := pairInForce(kind, settings)
 
+	pageName := cardFieldName(kind.Kind, fieldPageSize)
+	intervalName := cardFieldName(kind.Kind, fieldInterval)
+	selectionNames := []string{}
+	providers, err := s.store.ProvidersOfKind(ctx, kind.Kind)
+	if err != nil {
+		return collectionCard{}, err
+	}
+	for _, provider := range providers {
+		selectionNames = append(selectionNames,
+			cardFieldName(kind.Kind, fieldSelectionPrefix+provider.ProviderKey))
+	}
+	typed := page.typed(kind.Kind,
+		append([]string{pageName, intervalName, unitFieldName(intervalName)}, selectionNames...)...)
+
+	inForceSeconds := int64(inForce.Interval / time.Second)
 	card := collectionCard{
 		Kind:             kind.Kind,
 		LabelKey:         messageKey(kind.LabelKey),
 		PageIsAdjustable: kind.PageIsAdjustable(),
-		PageSizeField:    strconv.Itoa(inForce.PageSize),
-		IntervalField:    wholeSeconds(inForce.Interval),
+		Interval: durationField(intervalName, "interval_"+kind.Kind, msgFieldPollInterval,
+			inForceSeconds, typed),
 
 		// The outcome of the derivation, as a state, whatever it is; the fill
 		// control beside the fields is offered only when the outcome carries a
 		// pair to fill them with.
 		SuggestionStateKey: suggestionStateKey(suggestion.Outcome),
 		FieldKind:          fieldKind,
-		FieldPageSize:      fieldPageSize,
-		FieldInterval:      fieldInterval,
 		FieldFill:          fieldFill,
 		SuggestionExists:   suggestion.Outcome == sizing.OutcomeSuggested,
 	}
-	// What this card has to say, if the submission was about it, and nothing
-	// otherwise: feedback is drawn in the card it belongs to.
-	if feedback != nil && feedback.kind == kind.Kind {
-		card.NoticeKey = feedback.notice
-		card.RefusalKey = feedback.refusal
-		card.InvalidField = feedback.field
+	if _, present := typed[intervalName]; present &&
+		durationDiffers(typed[intervalName], typed[unitFieldName(intervalName)], inForceSeconds) {
+		card.Edited = true
 	}
-	if !kind.PageIsAdjustable() {
-		card.PageSizeField = ""
-	}
-	// What was typed, or filled, in this card replaces what is in force, so a
-	// refused figure can be corrected rather than typed again.
-	if typed != nil && typed.kind == kind.Kind {
-		card.IntervalField = typed.intervalSecs
-		if kind.PageIsAdjustable() {
-			card.PageSizeField = typed.pageSize
+	if kind.PageIsAdjustable() {
+		value := strconv.Itoa(inForce.PageSize)
+		card.PageSize = settingField{Name: pageName, ID: "page_size_" + kind.Kind,
+			LabelKey: msgFieldPageSize, Value: value, InForce: inForceValue{Value: value}}
+		if shown, present := typed[pageName]; present {
+			card.PageSize.Value = shown
+			card.PageSize.ShowInForce = shown != value
+			card.Edited = card.Edited || strings.TrimSpace(shown) != value
 		}
 	}
 
@@ -595,7 +682,7 @@ func (s *Server) buildCollectionCard(ctx context.Context, kind sizing.Kind, type
 			Value:    strconv.Itoa(inForce.PageSize)})
 	}
 	card.InForce = append(card.InForce, figureRow{
-		LabelKey: msgLabelIntervalInForce, Value: wholeSeconds(inForce.Interval)})
+		LabelKey: msgLabelIntervalInForce, Duration: spelledDuration(inForceSeconds)})
 	if kind.PageIsAdjustable() {
 		card.InForce = append(card.InForce, ceilingFigure(kind))
 		if kind.HasPageCeiling() {
@@ -616,38 +703,52 @@ func (s *Server) buildCollectionCard(ctx context.Context, kind sizing.Kind, type
 		rateFigure(msgLabelMeanRateIngested, measured.IngestedMeanRate, measured.HasIngestedClock),
 		rateFigure(msgLabelPeakRate, measured.PeakRate, true),
 		{LabelKey: msgLabelGapCount, Value: strconv.FormatInt(measured.GapCount, 10)},
-		{LabelKey: msgLabelMissedSeconds, Value: strconv.FormatInt(measured.MissedSeconds, 10)},
+		{LabelKey: msgLabelMissedSeconds, Duration: spelledDuration(measured.MissedSeconds)},
 	}
 	for _, gap := range measured.Gaps {
 		card.Gaps = append(card.Gaps, gapRow{
-			ReasonKey:     messageKey("gap_reason." + gap.Reason),
-			Count:         strconv.FormatInt(gap.Count, 10),
-			MissedSeconds: strconv.FormatInt(gap.MissedSeconds, 10),
+			ReasonKey: messageKey("gap_reason." + gap.Reason),
+			Count:     strconv.FormatInt(gap.Count, 10),
+			Missed:    spelledDuration(gap.MissedSeconds),
 		})
 	}
 
-	// THE OPERATOR'S SELECTION of each implementation, as stored, or as typed into
-	// a refused form for this card.
-	providers, err := s.store.ProvidersOfKind(ctx, kind.Kind)
-	if err != nil {
-		return collectionCard{}, err
-	}
-	for _, provider := range providers {
+	// THE OPERATOR'S SELECTION of each implementation, as stored, or as typed and
+	// not stored.
+	for index, provider := range providers {
 		selection, err := config.LoadSourceSelection(ctx, s.store, kind.Kind, provider.ProviderKey)
 		if err != nil {
 			return collectionCard{}, err
 		}
 		shown := string(selection)
-		if typed != nil && typed.kind == kind.Kind {
-			if value, present := typed.selections[provider.ProviderKey]; present {
-				shown = value
-			}
+		if value, present := typed[selectionNames[index]]; present {
+			shown = value
+			card.Edited = card.Edited || value != string(selection)
 		}
 		card.Implementations = append(card.Implementations, implementationRow{
-			LabelKey: messageKey("provider." + kind.Kind + "." + provider.ProviderKey),
-			Field:    fieldSelectionPrefix + provider.ProviderKey,
+			LabelKey: providerLabelKey(kind.Kind, provider.ProviderKey),
+			Field:    selectionNames[index],
 			Options:  selectionOptions(shown),
 		})
+	}
+
+	// What this card has to say, if the submission was about it, and nothing
+	// otherwise: feedback is drawn in the card it belongs to. A card that speaks for
+	// itself is not also marked edited.
+	if page != nil && page.sized != nil && page.sized.kind == kind.Kind {
+		card.NoticeKey = page.sized.notice
+		switch page.sized.field {
+		case intervalName:
+			card.Interval.RefusalKey = page.sized.refusal
+		case pageName:
+			card.PageSize.RefusalKey = page.sized.refusal
+		default:
+			for index := range card.Implementations {
+				if card.Implementations[index].Field == page.sized.field {
+					card.Implementations[index].RefusalKey = page.sized.refusal
+				}
+			}
+		}
 	}
 
 	// THE SUGGESTION, under its own heading. The pair is shown only when there is
@@ -667,7 +768,7 @@ func (s *Server) buildCollectionCard(ctx context.Context, kind sizing.Kind, type
 		}
 		card.Suggestion = append(card.Suggestion, figureRow{
 			LabelKey: msgLabelSuggestedInterval,
-			Value:    wholeSeconds(suggestion.Pair.Interval)})
+			Duration: spelledDuration(int64(suggestion.Pair.Interval / time.Second))})
 	}
 	card.Suggestion = append(card.Suggestion, figureRow{
 		LabelKey: msgLabelSuggestionState,
@@ -691,7 +792,7 @@ func retentionFigure(retentionSeconds int64) figureRow {
 		return figureRow{LabelKey: msgLabelRetentionHorizon, StateKey: msgRetentionUnlimited}
 	}
 	return figureRow{LabelKey: msgLabelRetentionHorizon,
-		Value: strconv.FormatInt(retentionSeconds, 10)}
+		Duration: spelledDuration(retentionSeconds)}
 }
 
 // coveredFigure is one end of the span the records cover, as an instant, or the
