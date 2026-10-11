@@ -68,11 +68,11 @@ func (unboundLookups) requestedSpanSeconds() int64 { return dnsRequestedSpan }
 func (unboundLookups) probe(ctx context.Context, host session) (probeResult, error) {
 	result := probeResult{probe: opnsense.UnboundStatus}
 
-	running, state, detail, err := host.serviceState(ctx, opnsense.UnboundStatus)
+	running, state, outcome, detail, err := host.serviceState(ctx, opnsense.UnboundStatus)
 	if err != nil {
 		return result, err
 	}
-	result.state, result.detail = state, detail
+	result.state, result.outcome, result.detail = state, outcome, detail
 	if !running {
 		return result, nil
 	}
@@ -83,7 +83,7 @@ func (unboundLookups) probe(ctx context.Context, host session) (probeResult, err
 	}
 	configured := ok && decode.FlagOrFalse(decode.NestedFlag(settings, "unbound", "general", "enabled"))
 	if !configured {
-		result.state = store.StatePresentButDisabled
+		result.state, result.outcome = store.StatePresentButDisabled, store.OutcomePresentButDisabled
 		result.detail = "the service runs and unbound.general.enabled is not set"
 		return result, nil
 	}
@@ -93,7 +93,7 @@ func (unboundLookups) probe(ctx context.Context, host session) (probeResult, err
 		return result, err
 	}
 	if !overviewOK || !decode.FlagOrFalse(decode.Flag(overview, "enabled")) {
-		result.state = store.StatePresentButDisabled
+		result.state, result.outcome = store.StatePresentButDisabled, store.OutcomePresentButDisabled
 		result.detail = "query reporting is off, which is a setting to turn on and not an " +
 			"absence of lookups"
 		return result, nil
@@ -105,7 +105,8 @@ func (unboundLookups) probe(ctx context.Context, host session) (probeResult, err
 // lookups reads one page of the ring buffer.
 func (unboundLookups) lookups(ctx context.Context, host session, page int) (
 	[]lookupRecord, probeResult, error) {
-	result := probeResult{probe: opnsense.SearchQueries, state: store.StateUnavailable}
+	result := probeResult{probe: opnsense.SearchQueries, state: store.StateUnavailable,
+		outcome: store.OutcomeRequestNotMade}
 
 	now := host.now()
 	response, err := host.call(ctx, opnsense.SearchQueries, opnsense.RequestOptions{
@@ -123,6 +124,7 @@ func (unboundLookups) lookups(ctx context.Context, host session, page int) (
 		return nil, result, err
 	}
 	if !response.OK() {
+		result.outcome = responseOutcome(response)
 		result.detail = response.Detail
 		return nil, result, fmt.Errorf("collect: the resolver query report answered %s",
 			response.Outcome)
@@ -130,10 +132,11 @@ func (unboundLookups) lookups(ctx context.Context, host session, page int) (
 
 	rows, err := decode.Rows(response.Body)
 	if err != nil {
+		result.outcome = store.OutcomeUndecodable
 		result.detail = "the query report body could not be read"
 		return nil, result, fmt.Errorf("collect: reading the resolver query report: %w", err)
 	}
-	result.state = store.StateReachable
+	result.state, result.outcome = store.StateReachable, store.OutcomeHealthy
 	result.separable = true
 
 	records := make([]lookupRecord, 0, len(rows))

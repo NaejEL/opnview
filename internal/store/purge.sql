@@ -332,6 +332,16 @@ WHERE detected_at < (
     WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
 );
 
+-- An interval during which opnview was not running is purged by the same rule as
+-- a collection gap, and for the same reason: once the observations of its window
+-- are gone, it describes nothing a screen still reads.
+DELETE FROM opnview_downtime
+WHERE detected_at < (
+    SELECT :now - CAST(value AS INTEGER)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS INTEGER) > 0
+);
+
 DELETE FROM measurement_sample
 WHERE sampled_at < (
     SELECT :now - CAST(value AS INTEGER)

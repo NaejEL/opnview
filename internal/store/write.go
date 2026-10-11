@@ -141,16 +141,22 @@ func (s *Store) SetActiveProviders(ctx context.Context, kind string, providerKey
 	return nil
 }
 
-// SetAvailability records the state of one provider, the probe that determined
-// it and when. Exactly one row exists per registry row for the life of the
-// database, so this is an update and never an insert.
+// SetAvailability records the state of one provider, the outcome code of the probe
+// or read that determined it, the probe, and when. Exactly one row exists per
+// registry row for the life of the database, so this is an update and never an
+// insert. An outcome outside AvailabilityOutcomes is refused here, before the
+// schema's CHECK would refuse it.
 func (s *Store) SetAvailability(ctx context.Context, providerID int64,
-	state AvailabilityState, probe string, detail *string, checkedAt int64) error {
+	state AvailabilityState, outcome AvailabilityOutcome, probe string, detail *string,
+	checkedAt int64) error {
+	if !outcome.Valid() {
+		return fmt.Errorf("store: %q is not an availability outcome (provider %d)", outcome, providerID)
+	}
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE source_availability
-		 SET state = ?, probe = ?, detail = ?, checked_at = ?
+		 SET state = ?, outcome = ?, probe = ?, detail = ?, checked_at = ?
 		 WHERE provider_id = ?`,
-		string(state), probe, detail, checkedAt, providerID)
+		string(state), string(outcome), probe, detail, checkedAt, providerID)
 	if err != nil {
 		return fmt.Errorf("store: recording availability for provider %d: %w", providerID, err)
 	}

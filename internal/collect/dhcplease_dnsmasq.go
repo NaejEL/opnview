@@ -30,11 +30,11 @@ func (dnsmasqLeases) providerKey() string { return ProviderDnsmasq }
 func (dnsmasqLeases) probe(ctx context.Context, host session) (probeResult, error) {
 	result := probeResult{probe: opnsense.DnsmasqStatus}
 
-	running, state, detail, err := host.serviceState(ctx, opnsense.DnsmasqStatus)
+	running, state, outcome, detail, err := host.serviceState(ctx, opnsense.DnsmasqStatus)
 	if err != nil {
 		return result, err
 	}
-	result.state, result.detail = state, detail
+	result.state, result.outcome, result.detail = state, outcome, detail
 	if !running {
 		return result, nil
 	}
@@ -52,7 +52,7 @@ func (dnsmasqLeases) probe(ctx context.Context, host session) (probeResult, erro
 		}
 	}
 	if !ranges {
-		result.state = store.StatePresentButDisabled
+		result.state, result.outcome = store.StatePresentButDisabled, store.OutcomePresentButDisabled
 		result.detail = "the service runs and dnsmasq.dhcp_ranges is empty, so it serves no lease"
 		return result, nil
 	}
@@ -66,6 +66,7 @@ func (dnsmasqLeases) leases(ctx context.Context, host session, pageSize int) (
 	rows, result, err := readLeaseRows(ctx, host, opnsense.DnsmasqLeases, pageSize)
 	if err != nil || rows == nil {
 		if result.state == store.StateReachable && len(rows) == 0 {
+			result.outcome = store.OutcomeHealthyEmpty
 			result.detail = "the backend is running and reported no active lease, which is not " +
 				"an absence of machines"
 		}

@@ -130,6 +130,30 @@ func probeFor(err error) string {
 	}
 }
 
+// outcomeOf names a refresh's probe in the closed outcome set. The probe already is a
+// code, chosen here, so the mapping is one to one; a current dataset that is not on disk
+// is not healthy, whatever the last request said.
+func outcomeOf(probe string, ready bool) store.AvailabilityOutcome {
+	switch probe {
+	case ProbeCurrent:
+		if ready {
+			return store.OutcomeHealthy
+		}
+		return store.OutcomeDownloadFailed
+	case ProbeNoLicenceKey:
+		return store.OutcomeNoLicenceKey
+	case ProbeLicenceKeyUndecryptable:
+		return store.OutcomeLicenceKeyUndecryptable
+	case ProbeNoAccountID:
+		return store.OutcomeNoAccountID
+	case ProbeRefused:
+		return store.OutcomeDownloadRefused
+	case ProbeLimited:
+		return store.OutcomeDownloadLimitReached
+	}
+	return store.OutcomeDownloadFailed
+}
+
 // record writes the availability row and the activation.
 func (r *Refresher) record(ctx context.Context, probe string) error {
 	providerID, err := r.store.ProviderID(ctx, Kind, ProviderKey)
@@ -144,7 +168,7 @@ func (r *Refresher) record(ctx context.Context, probe string) error {
 		built := time.Unix(build, 0).UTC().Format(time.RFC3339)
 		detail = &built
 	}
-	if err := r.store.SetAvailability(ctx, providerID, state, probe, detail,
+	if err := r.store.SetAvailability(ctx, providerID, state, outcomeOf(probe, ready), probe, detail,
 		r.now().UTC().Unix()); err != nil {
 		return err
 	}

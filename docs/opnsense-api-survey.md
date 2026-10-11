@@ -1061,6 +1061,17 @@ is not `ok`. The Dnsmasq module exposes no read of either at this tag — its AP
 `SettingsController` and its configd actions start, stop, restart, report status and list leases and DHCP options — so the Dnsmasq row of
 each kind reports "this resolver offers no cache read through the API" or "no local-data read".
 
+**Records whose value is not valid for their type** (`specs/SPEC-step-5b-widget-api.md`, B6). The live detail of the cache read reported
+about ten such records on 9 October 2026, as one undifferentiated count. Read from source, no parsing defect explains them: the dump's
+`value` is the regular expression's `(.*)$`, the whole record data as Unbound prints it, which for A and AAAA is one address and for CNAME
+one name, and the local data's `value` is the record data's first field, which for A, AAAA and PTR is the whole of it. Unbound's printer
+(`sldns_wire2str_rr`) falls back to the RFC 3597 generic form `\# <length> <hex>` for record data it cannot render in the type's own form,
+which reads as an A or AAAA record whose value is not an address. `UNVERIFIED:` that this is what the live records are; nothing is built on
+it. The count is now split by category in the availability detail, each a rule of DNS restated per type: an A record whose value is not an
+address, an A record whose value is an IPv6 address, the same two for AAAA, a CNAME with an empty target, a PTR record with an empty
+target, a PTR record whose owner name encodes no address, and a local-data record whose host name has an empty first label. Which of them
+the live records are is the next live read's to say; only categories and proportions are recorded here.
+
 **This corrects data source 5.** That section says the query report carries no answer address, and it still does not. The resolver as a
 whole now has an answer-address source: the cache dump, joined to a lookup by the looked-up name and to a flow by the destination address
 (`docs/data-model.md`, `domain_attribution`).

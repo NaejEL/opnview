@@ -2290,12 +2290,12 @@ GROUP BY address;
 -- modelled state, not an absent row.
 -- ---------------------------------------------------------------------------
 UPDATE source_availability
-SET state = 'reachable', probe = 'GET /api/diagnostics/firewall/log',
+SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/diagnostics/firewall/log',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'firewall_log' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'present_but_disabled', probe = 'GET /api/ids/service/status',
+SET state = 'present_but_disabled', outcome = 'service_not_running', probe = 'GET /api/ids/service/status',
     detail = 'status reported stopped', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1);
 
@@ -2304,12 +2304,12 @@ WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'security_event' AND 
 -- the probe moved here from the flow_volume row with the sampler, because this is
 -- the row whose material it governs.
 UPDATE source_availability
-SET state = 'reachable', probe = 'GET /api/diagnostics/netflow/is_enabled',
+SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/diagnostics/netflow/is_enabled',
     detail = 'local collection enabled', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'reachable', probe = 'example state source probe',
+SET state = 'reachable', outcome = 'healthy', probe = 'example state source probe',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'reconciled_state' AND is_active = 1);
 
@@ -2318,37 +2318,38 @@ WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'reconciled_state' AN
 -- and a single statement covering both active rows would have written the first
 -- server's probe onto the second server's row.
 UPDATE source_availability
-SET state = 'reachable', probe = 'GET /api/kea/service/status',
+SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/kea/service/status',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider
                       WHERE kind = 'dhcp_lease' AND provider_key = 'kea' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'reachable', probe = 'GET /api/dnsmasq/service/status',
+SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/dnsmasq/service/status',
     detail = 'serving a range on its own interface', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider
                       WHERE kind = 'dhcp_lease' AND provider_key = 'dnsmasq' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'unavailable', probe = 'GET /api/unbound/overview/is_enabled',
+SET state = 'unavailable', outcome = 'present_but_disabled',
+    probe = 'GET /api/unbound/overview/is_enabled',
     detail = 'query reporting is off', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'dns_lookup' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'reachable', probe = 'local dataset file stat',
+SET state = 'reachable', outcome = 'healthy', probe = 'local dataset file stat',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'geo_asn' AND is_active = 1);
 
 -- The Public Suffix List: a list is held, so the grouping is available. Its probe
 -- is the outcome of the conditional download the refresher makes.
 UPDATE source_availability
-SET state = 'reachable', probe = 'list_not_modified',
+SET state = 'reachable', outcome = 'healthy', probe = 'list_not_modified',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'public_suffix' AND is_active = 1);
 
 -- Every implementation this installation does not run: probed, not running.
 UPDATE source_availability
-SET state = 'unavailable', probe = 'service status endpoint',
+SET state = 'unavailable', outcome = 'not_found', probe = 'service status endpoint',
     detail = 'not installed on this firewall', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE is_active = 0);
 

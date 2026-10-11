@@ -203,6 +203,7 @@ func purgeableTables() map[string]string {
 		"client":             "last_seen_at",
 		"geo_asn":            "looked_up_at",
 		"collection_gap":     "detected_at",
+		"opnview_downtime":   "detected_at",
 		"measurement_sample": "sampled_at",
 		"state_snapshot":     "captured_at",
 	}
@@ -296,6 +297,13 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 			Reason: GapDigestOutsideWindow, DetectedAt: instant,
 		}); err != nil {
 			t.Fatalf("seeding a gap: %v", err)
+		}
+
+		// An interval opnview was not running, detected at the restart.
+		if _, err := database.DB().ExecContext(ctx,
+			`INSERT INTO opnview_downtime (interval_start_at, interval_end_at, clean_stop, detected_at)
+			 VALUES (?, ?, 0, ?)`, instant-600, instant, instant); err != nil {
+			t.Fatalf("seeding an interval opnview was not running: %v", err)
 		}
 
 		if err := database.InsertMeasurementSample(ctx, MeasurementSample{

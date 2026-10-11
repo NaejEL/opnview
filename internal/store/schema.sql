@@ -1788,11 +1788,32 @@ CREATE TABLE IF NOT EXISTS eve_ingest_cursor (
 -- here: registering one is an INSERT into `provider` plus an INSERT here.
 -- Probe endpoints per kind are tabulated in docs/data-model.md, each cited in
 -- docs/opnsense-api-survey.md.
+--
+-- outcome NAMES WHAT THE LAST PROBE OR READ TURNED INTO, from a closed set, so
+-- that no reader ever parses `detail` (SPEC-step-5b-widget-api.md, D1). The
+-- state says whether the source can be read; the outcome says why, in a word a
+-- program reads and an interface translates; the detail stays as diagnostic
+-- text. The set is store.AvailabilityOutcomes, and docs/data-model.md states
+-- each code's meaning.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS source_availability (
     provider_id INTEGER PRIMARY KEY REFERENCES provider (id),
     state       TEXT NOT NULL
                 CHECK (state IN ('reachable', 'present_but_disabled', 'unavailable')),
+    outcome     TEXT NOT NULL DEFAULT 'not_yet_probed'
+                CHECK (outcome IN ('not_yet_probed', 'healthy', 'healthy_empty',
+                                   'partial_readings', 'present_but_disabled',
+                                   'service_not_running', 'authentication_failed',
+                                   'denied', 'not_found', 'server_error', 'empty_body',
+                                   'result_failed', 'undecodable', 'status_not_ok',
+                                   'transport_failure', 'certificate_refused',
+                                   'request_not_made', 'plugin_not_installed',
+                                   'read_not_supported', 'no_cache_read',
+                                   'no_local_data_read', 'log_grammar_not_recorded',
+                                   'no_licence_key', 'licence_key_undecryptable',
+                                   'no_account_id', 'download_refused',
+                                   'download_limit_reached', 'download_failed',
+                                   'download_malformed', 'store_failure')),
     probe       TEXT NOT NULL,
     detail      TEXT,
     checked_at  INTEGER NOT NULL CHECK (checked_at >= 0 AND checked_at < 4102444800)
@@ -2865,6 +2886,52 @@ CREATE INDEX IF NOT EXISTS idx_collection_gap_interval
     ON collection_gap (provider_id, interval_start_at, interval_end_at);
 
 -- ---------------------------------------------------------------------------
+-- opnview's heartbeat, and the intervals during which opnview was not running
+-- (SPEC-step-5b-widget-api.md, D2).
+--
+-- Source: none. While opnview is stopped, every source goes unread at once, and
+-- nothing any endpoint returns says so: the next poll returns what the firewall
+-- still holds and is silent about what rotated out meanwhile. So the service
+-- records that it is alive, and on start it compares the last record with the
+-- clock.
+--
+-- opnview_heartbeat is ONE ROW: the last instant the service was known to run,
+-- and whether it stopped cleanly at that instant. A clean stop writes the stop
+-- instant and sets clean_stop; a crash leaves the last periodic beat, which is
+-- then the best bound opnview holds, at most one heartbeat interval early.
+--
+-- opnview_downtime IS A TABLE OF ITS OWN rather than a collection_gap reason.
+-- collection_gap is per provider (provider_id NOT NULL, the foreign key every
+-- "was this provider's window covered" search rests on), and opnview not running
+-- is not one provider's gap but all of them: written there it would be one row
+-- per provider per interval, or a NULL provider every reader of that table would
+-- have to learn to skip. Here it is one row per interval, purged with the
+-- retention by detected_at, as collection_gap is.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS opnview_heartbeat (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    beat_at    INTEGER NOT NULL CHECK (beat_at >= 0 AND beat_at < 4102444800),
+    clean_stop INTEGER NOT NULL DEFAULT 0 CHECK (clean_stop IN (0, 1))
+);
+
+CREATE TABLE IF NOT EXISTS opnview_downtime (
+    id                INTEGER PRIMARY KEY,
+    interval_start_at INTEGER NOT NULL
+                      CHECK (interval_start_at >= 0 AND interval_start_at < 4102444800),
+    interval_end_at   INTEGER NOT NULL
+                      CHECK (interval_end_at >= 0 AND interval_end_at < 4102444800),
+    -- 1 when the service recorded a clean stop at interval_start_at, 0 when the
+    -- start is the last heartbeat of a process that ended without one.
+    clean_stop        INTEGER NOT NULL CHECK (clean_stop IN (0, 1)),
+    detected_at       INTEGER NOT NULL CHECK (detected_at >= 0 AND detected_at < 4102444800),
+    CHECK (interval_end_at > interval_start_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_opnview_downtime_detected_at ON opnview_downtime (detected_at);
+CREATE INDEX IF NOT EXISTS idx_opnview_downtime_interval
+    ON opnview_downtime (interval_end_at, interval_start_at);
+
+-- ---------------------------------------------------------------------------
 -- Measurement sample — one numeric reading of one subject at one instant.
 --
 -- IT IS A PROVIDER KIND, and it is the kind most of the ecosystem fits. Of the
@@ -3173,13 +3240,23 @@ WHERE NOT EXISTS (
 -- logged as the client"). 3 is the default, a quarter of an hour at the default
 -- lease interval; it is a whole number of passes, 1 or more, and internal/config
 -- refuses anything else.
+--
+-- heartbeat_interval_seconds and downtime_threshold_seconds: how often the
+-- running service records that it is alive, and how long it must have been gone
+-- for the interval to be recorded in opnview_downtime (SPEC-step-5b-widget-
+-- api.md, D2). 60 and 300 are the defaults, justified in internal/config beside
+-- DefaultHeartbeatIntervalSeconds; both are positive whole numbers of seconds,
+-- the threshold longer than the interval, and internal/config refuses anything
+-- else.
 INSERT INTO setting (key, value, updated_at) VALUES
     ('retention_seconds', '7776000', CAST(strftime('%s', 'now') AS INTEGER)),
     ('aggregate_mode', 'full', CAST(strftime('%s', 'now') AS INTEGER)),
     ('attribution_max_delay_seconds', '5', CAST(strftime('%s', 'now') AS INTEGER)),
     ('attribution_max_cache_answer_delay_seconds', '3600', CAST(strftime('%s', 'now') AS INTEGER)),
     ('leg_pairing_window_seconds', '1', CAST(strftime('%s', 'now') AS INTEGER)),
-    ('lease_backend_failure_pass_limit', '3', CAST(strftime('%s', 'now') AS INTEGER))
+    ('lease_backend_failure_pass_limit', '3', CAST(strftime('%s', 'now') AS INTEGER)),
+    ('heartbeat_interval_seconds', '60', CAST(strftime('%s', 'now') AS INTEGER)),
+    ('downtime_threshold_seconds', '300', CAST(strftime('%s', 'now') AS INTEGER))
 ON CONFLICT (key) DO NOTHING;
 
 -- The provider registry, seeded with the implementations that exist and have
@@ -3259,7 +3336,7 @@ ON CONFLICT (kind, provider_key) DO NOTHING;
 -- set is derived from the registry, so registering a provider and forgetting
 -- its availability row is not possible here, and the NOT EXISTS guard is what
 -- makes a second apply leave an already-probed row alone.
-INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
-SELECT p.id, 'unavailable', 'not_yet_probed', NULL, 0
+INSERT INTO source_availability (provider_id, state, outcome, probe, detail, checked_at)
+SELECT p.id, 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0
 FROM provider AS p
 WHERE NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);

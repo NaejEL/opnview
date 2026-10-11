@@ -230,7 +230,7 @@ func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource, 
 		// recorded with its reason, and not a failed pass: nothing was attempted.
 		c.clearLeaseFailures(providerID)
 		return leaseBackendUnsupported, c.writeAvailability(ctx, providerID, result.state,
-			result.probe, readErr.Error())
+			result.outcome, result.probe, readErr.Error())
 	}
 	if readErr != nil {
 		failed, limit := c.noteLeaseFailure(providerID)
@@ -239,24 +239,39 @@ func (c *Collector) collectLeasesFrom(ctx context.Context, active activeSource, 
 			detail = result.detail + "; " + detail
 		}
 		if writeErr := c.writeAvailability(ctx, providerID, result.state,
-			result.probe, detail); writeErr != nil {
+			result.outcome, result.probe, detail); writeErr != nil {
 			return failedOutcome(failed, limit), writeErr
 		}
 		return failedOutcome(failed, limit), readErr
 	}
-	c.clearLeaseFailures(providerID)
-	if writeErr := c.writeAvailability(ctx, providerID, result.state,
-		result.probe, result.detail); writeErr != nil {
-		return leaseBackendFailed, writeErr
-	}
 
+	// THE AVAILABILITY IS WRITTEN AFTER THE LEASES ARE STORED, not before (SPEC-step-5b-
+	// widget-api.md, B8g). Written first, a store failure in ingestLease left the backend
+	// reading `reachable` with the read's detail, which said the opposite of what had
+	// happened: the firewall answered, and opnview kept nothing of it.
 	snapshot := c.Discovery()
 	now := c.now()
 	for _, observation := range observations {
 		if err := c.ingestLease(ctx, observation, snapshot, providerID, providerKey, now); err != nil {
-			return leaseBackendFailed, err
+			// A failed pass for the host-name retry, exactly as a read failure is: the
+			// leases this pass would have contributed are not in the store.
+			failed, limit := c.noteLeaseFailure(providerID)
+			detail := fmt.Sprintf("the backend answered and its leases could not be stored: %v; %s",
+				err, leaseFailureDetail(failed, limit))
+			// Unavailable, because nothing of this backend's answer reached the store a
+			// widget reads; the outcome says the fault is opnview's, not the firewall's.
+			if writeErr := c.writeAvailability(ctx, providerID, store.StateUnavailable,
+				store.OutcomeStoreFailure, result.probe, detail); writeErr != nil {
+				return failedOutcome(failed, limit), joinErrors([]error{err, writeErr})
+			}
+			return failedOutcome(failed, limit), err
 		}
 		*seen = append(*seen, observation.Address)
+	}
+	c.clearLeaseFailures(providerID)
+	if writeErr := c.writeAvailability(ctx, providerID, result.state,
+		result.outcome, result.probe, result.detail); writeErr != nil {
+		return leaseBackendFailed, writeErr
 	}
 	return leaseBackendRead, nil
 }
@@ -457,7 +472,8 @@ func (c *Collector) ingestNeighbour(ctx context.Context, row decode.Object,
 // implement.
 func readLeaseRows(ctx context.Context, host session, endpoint opnsense.Endpoint, pageSize int) (
 	[]decode.Object, probeResult, error) {
-	result := probeResult{probe: endpoint, state: store.StateUnavailable}
+	result := probeResult{probe: endpoint, state: store.StateUnavailable,
+		outcome: store.OutcomeRequestNotMade}
 
 	response, err := host.call(ctx, endpoint, opnsense.RequestOptions{
 		Form: opnsense.Pagination(1, pageSize),
@@ -466,18 +482,21 @@ func readLeaseRows(ctx context.Context, host session, endpoint opnsense.Endpoint
 		return nil, result, err
 	}
 	if !response.OK() {
+		result.outcome = responseOutcome(response)
 		result.detail = response.Detail
 		return nil, result, fmt.Errorf("collect: %s answered %s", endpoint.Path, response.Outcome)
 	}
 
 	rows, err := decode.Rows(response.Body)
 	if err != nil {
+		result.outcome = store.OutcomeUndecodable
 		result.detail = "the lease table could not be read"
 		return nil, result, fmt.Errorf("collect: reading %s: %w", endpoint.Path, err)
 	}
-	result.state = store.StateReachable
+	result.state, result.outcome = store.StateReachable, store.OutcomeHealthy
 	result.separable = true
 	if len(rows) == 0 {
+		result.outcome = store.OutcomeHealthyEmpty
 		// Returned as an empty, non-nil slice so a caller can tell "read nothing" from "did
 		// not read".
 		return []decode.Object{}, result, nil

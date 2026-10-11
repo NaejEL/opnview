@@ -108,7 +108,7 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | the seconds a cached record has left | `ttl` (a string in the dump) | read into `resource_record_observation.covered_until_at` as the poll's instant plus it | same endpoint |
 | the firewall's own addresses, as a source or a destination | **This Firewall** — the rule editor's name for pf's `self` | `this_firewall`: `flow.src_is_this_firewall` / `dst_is_this_firewall`, `security_event.src_is_this_firewall`, `dns_resolution.client_is_this_firewall`, the `this_firewall_address` view, `traffic_scope = 'this_firewall'`, the directions `to_this_firewall` / `from_this_firewall`, the tree node `this_firewall`, and `blocked_decision.target_is_this_firewall` before them | <https://docs.opnsense.org/manual/how-tos/caddy.html>: "Create Firewall rules that allow `HTTP` and `HTTPS` to destination `This Firewall` on `WAN`"; `opnsense/core` 26.7.3, `src/opnsense/mvc/app/library/OPNsense/Firewall/FilterRule.php`, where the stored value `(self)` is rendered as `gettext("This Firewall")`, and `Firewall/Rule.php`, which passes `(self)` to pf unchanged; pf.conf(5), FreeBSD 15.1-RELEASE: "self Expands to all addresses assigned to all interfaces." The *manual/firewall.html* page does not carry the phrase |
 
-**Thirty-four terms are `opnview`'s own, because OPNsense has no word for them.**
+**Thirty-seven terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -148,6 +148,9 @@ vocabulary read off an endpoint:
 | `resource_record_observation.held_in` (`cache`, `local_data`) | the two endpoints return the same shape and nothing says which part of the resolver a record lives in | the part of the resolver the record was held in, in Unbound's own words; it repeats the provider's kind because every search starts from it |
 | `resource_record_observation.host_label` | a local-data record carries a name and nothing more | **label** is DNS's word (RFC 1035, section 2.3.1), and the column is the first label of the host name the record names -- the owner of an A or AAAA record, the target of a PTR record -- exactly as `dhcp_lease.hostname_label` is for a lease |
 | `resource_record_read` | no endpoint says when it was last read successfully | the last successful **read** of one provider's records, kept so the start of a coverage interval survives a failed poll and a restart |
+| `source_availability.outcome` and its codes | OPNsense answers with an HTTP status and a body, and names no outcome of a probe as a whole: a 401 and a 403 are two statuses, "the service reported stopped" and "this resolver offers no cache read" are not statuses at all | **outcome** is the word the client already used for what one call turned into (`opnsense.Outcome`); the column carries it to the whole probe or read, from a closed set of codes listed under *`source_availability`*. Each code is the collector's own distinction made machine-readable, HTTP's where one applies (`not_found`, `denied` for 403, `authentication_failed` for 401), so no reader parses `detail` (SPEC-step-5b-widget-api.md, D1) |
+| `opnview_downtime`, an interval during which **opnview was not running** | no product `opnview` reads knows that its reader was absent: the firewall keeps serving, and the next poll is silent about what rotated out meanwhile | named for the fact recorded -- opnview not running -- rather than for any one source, because every source went unread at once; prefixed `opnview_` so it cannot be read as the firewall's own downtime, which no table here records |
+| `opnview_heartbeat` | the same: nothing upstream records that `opnview` was alive | **heartbeat** is the ordinary word for a periodic proof of life; the one row holds the last instant the service was known to run and whether it stopped cleanly there |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
@@ -232,6 +235,8 @@ interface_address
 interface_map
 interface_network
 measurement_sample
+opnview_downtime
+opnview_heartbeat
 owner
 owner_volume_aggregate_1h
 owner_volume_aggregate_24h
@@ -312,6 +317,7 @@ flow
 geo_asn
 interface_address
 measurement_sample
+opnview_downtime
 owner_volume_aggregate_1h
 owner_volume_aggregate_24h
 owner_volume_aggregate_30d
@@ -346,6 +352,7 @@ eve_ingest_cursor
 interface
 interface_map
 interface_network
+opnview_heartbeat
 owner
 provider
 provider_rule_info
@@ -367,6 +374,7 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `blocklist` | one row per distinct list name the resolver has reported; a resolver subscribes to tens of lists, not millions |
 | `interface_map` | one row per raw device name the firewall reports |
 | `retention_purge` | exactly one row, the furthest horizon the purge has applied |
+| `opnview_heartbeat` | exactly one row, the last instant the service was known to run |
 | `interface_network` | one row per network an interface has carried, detected by discovery or set by the operator; a firewall has a few per interface |
 | `rule` | one row per rule in the running ruleset |
 | `provider` | one row per implementation the project knows of; fifteen today, and a new one is an `INSERT`, not a stream |
@@ -1778,6 +1786,51 @@ Availability is reachability. Which provider `opnview` reads is
 `-- diagnostic: Source availability` in `sql/queries/diagnostics.sql` returns
 both, one row per registered provider.
 
+**The outcome code** (`SPEC-step-5b-widget-api.md`, D1). Beside the state, each
+row carries `outcome`: what the last probe or read turned into, from a closed set
+a `CHECK` holds (`store.AvailabilityOutcomes` is the same set, and a test compares
+the two). **Every collector writes the code with the detail, and no code reads
+`detail` to decide anything** — a test walks every Go and SQL file and fails on a
+comparison or match against it. `detail` stays, verbatim, as diagnostic text; the
+code is what an interface translates and what the widget API carries. The state
+and the code are independent facts: a MaxMind refresh that failed over databases
+still in use is `reachable` with `download_failed`. A probe round that finds a
+source healthy keeps the code of the last read or sampling pass it restates in the
+detail, so a row's code never contradicts its words.
+
+| Code | Meaning |
+|---|---|
+| `not_yet_probed` | the row the schema creates; nothing has asked yet |
+| `healthy` | the probe or read answered and was read |
+| `healthy_empty` | the read answered and returned no record: reachable and silent, which is not an absence of activity |
+| `partial_readings` | a sampling pass answered and some of its readings did not; the detail names them |
+| `present_but_disabled` | the component runs and the setting this source needs is off — a configuration state the user can change |
+| `service_not_running` | the service's status endpoint reported something other than running |
+| `authentication_failed` | HTTP 401: the API key and secret were refused; no privilege cures it |
+| `denied` | HTTP 403: the key's user lacks the privilege for the path |
+| `not_found` | HTTP 404: the firewall does not answer the path |
+| `server_error` | any other unsuccessful HTTP status |
+| `empty_body` | HTTP 200 with an empty body, a backend failure |
+| `result_failed` | HTTP 200 with OPNsense's `{"result": "failed"}` envelope |
+| `undecodable` | an answer whose body is not the shape the endpoint returns, or lacks the field it exists to carry |
+| `status_not_ok` | an envelope whose `status` is not `ok` — the Unbound diagnostics controller's `failed` when Unbound is not running |
+| `transport_failure` | no answer at all: the firewall was not reached |
+| `certificate_refused` | the firewall answered with a certificate `opnview` does not accept |
+| `request_not_made` | the probe or read ended before any request reached the firewall: no firewall URL configured, or a request `opnview`'s own guards refused |
+| `plugin_not_installed` | the end-of-life ISC DHCP plugin answered 404 |
+| `read_not_supported` | an implementation that answers and whose material `opnview` does not read, its field contract unverified (the ISC plugin) |
+| `no_cache_read` | a resolver that offers no cache read through the API (Dnsmasq) |
+| `no_local_data_read` | a resolver that offers no local-data read through the API (Dnsmasq) |
+| `log_grammar_not_recorded` | a resolver whose lookups are exposed only as free text under a grammar nobody has recorded (Dnsmasq) |
+| `no_licence_key` | the MaxMind refresh with no licence key stored |
+| `licence_key_undecryptable` | a stored licence key the key file beside the database cannot open |
+| `no_account_id` | the MaxMind refresh with no account ID stored |
+| `download_refused` | a download the server refused, its credentials not accepted |
+| `download_limit_reached` | a download refused because the account's daily limit is spent |
+| `download_failed` | a download that could not be completed |
+| `download_malformed` | a download that fetched something that is not the Public Suffix List |
+| `store_failure` | the source answered and `opnview` could not store what it returned: the fault is `opnview`'s database, not the source (a lease pass, `SPEC-step-5b-widget-api.md`, B8g) |
+
 **Retention:** never purged. **Indexes:** the primary key.
 
 ### `pair_volume_observation` — daily per-pair volume, derived from `flow`
@@ -2319,6 +2372,16 @@ of five minutes: longer than the one or two failed passes a restart of the backe
 service or of the firewall costs, and short enough that a backend that is gone for good
 holds nothing back for long. It is a whole number of passes, 1 or more, validated by
 `internal/config`; the schema writes its default row.
+**`heartbeat_interval_seconds`** (default 60) **and `downtime_threshold_seconds`**
+(default 300) govern `opnview_downtime`: how often the running service records
+that it is alive, and how long it must have been gone for the interval to be
+recorded. After a crash the last beat is the only bound held, so a minute keeps the
+recorded start within a minute of the real one for one single-row write a minute;
+five minutes is five beats, so a delayed beat never reads as downtime, and is the
+default lease and local-data interval, so a restart for an update records nothing
+while an absence long enough to leave a source unread for a whole poll is recorded.
+Both are positive whole numbers of seconds, the threshold longer than the interval,
+validated by `internal/config`; the schema writes their default rows.
 **`refresh_interval_discovery_seconds`** is read by the store as well as by the
 scheduler: it is the margin "held at an instant" allows either side of a sighting of
 this firewall's address, so the two cannot disagree.
@@ -2480,6 +2543,47 @@ keeping it would make the oldest edge of the history read as permanently broken.
 **Indexes:** the primary key, `idx_collection_gap_detected_at` for the purge,
 and `idx_collection_gap_interval` so "was this window covered" is an index
 search per provider.
+
+### `opnview_downtime` — an interval during which opnview was not running
+
+**Source: none**, like `collection_gap`, and for a stronger reason: while
+`opnview` is stopped every source goes unread at once, the firewall keeps
+serving, and the next poll returns what the firewall still holds and is silent
+about what rotated out meanwhile (`SPEC-step-5b-widget-api.md`, D2). The terms are
+`opnview`'s own; see *Vocabulary*.
+
+**How it is recorded.** `opnview_heartbeat` is one row: the last instant the
+service was known to run, and whether it stopped cleanly at that instant. The
+service writes it on start, every `heartbeat_interval_seconds` while it runs, and
+once more at a clean stop with `clean_stop` set. On start, before anything
+collects, it compares that row with the clock: a gap longer than
+`downtime_threshold_seconds` is written here as **one row**, from the last beat to
+the restart, with `clean_stop` saying whether the start of the interval is an exact
+stop instant or the last periodic beat of a process that ended without one — a
+crash, a kill, a power loss — after which the service may have run for up to one
+more heartbeat interval. A restart within the threshold writes nothing; a first
+start ever writes nothing, because no instant before it is known. A beat that
+finds its predecessor older than the threshold — a suspended host, a stopped and
+continued process — records that interval too, since every source experienced it
+as a stop and a start.
+
+**Its meaning.** Every provider went unread over the interval, so a widget reads
+it as a gap of every provider it binds, beside that provider's own
+`collection_gap` rows; `store.ReadNotRunning` returns the intervals overlapping a
+window. A figure over a window containing one is a lower bound because `opnview`
+was not running, which is a third sentence beside the observation-point limit and
+a source's own gap.
+
+**Why a table of its own, and not a `collection_gap` reason.** `collection_gap` is
+per provider: `provider_id` is `NOT NULL` and is the foreign key every "was this
+provider's window covered" search rests on. Written there, one interval would be
+one row per provider, or a `NULL` provider every reader of that table would have
+to learn to skip. Here it is one row per interval.
+
+**Retention:** purged by `detected_at`, as `collection_gap` is. **Indexes:** the
+primary key, `idx_opnview_downtime_detected_at` for the purge, and
+`idx_opnview_downtime_interval` for the overlap search. `opnview_heartbeat` is
+bounded at one row by a `CHECK (id = 1)`.
 
 ### `measurement_sample` — one numeric reading of one subject at one instant
 

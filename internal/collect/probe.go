@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 
 	"github.com/NaejEL/opnview/internal/config"
@@ -251,11 +252,25 @@ func (c *Collector) resolveKind(ctx context.Context, kind string, probeables []p
 				detail += "; " + read
 			}
 		}
-		state := entry.result.state
-		if state == "" {
-			state = store.StateUnavailable
+		state, outcome := entry.result.state, entry.result.outcome
+		// A probe that found the source healthy restates what the last read or sampling
+		// pass recorded, in its code as well as in its words, so the row's code never
+		// contradicts its detail.
+		if outcome == store.OutcomeHealthy {
+			if read := c.readOutcome(entry.providerID); read != "" && read != store.OutcomeHealthy {
+				outcome = read
+			} else if c.sampleAbsence(entry.providerID) != "" {
+				outcome = store.OutcomePartialReadings
+			}
 		}
-		if err := c.writeAvailability(ctx, entry.providerID, state,
+		if state == "" {
+			// The probe ended on an error before any answer was classified.
+			state = store.StateUnavailable
+			if outcome == "" {
+				outcome = store.OutcomeRequestNotMade
+			}
+		}
+		if err := c.writeAvailability(ctx, entry.providerID, state, outcome,
 			entry.result.probe, detail); err != nil {
 			return err
 		}
@@ -418,27 +433,59 @@ func (c *Collector) activeSourceKey(ctx context.Context, kind string) (string, i
 // the availability state and detail its answer implies. Every implementation whose product
 // exposes an OPNsense service uses it, which is why it lives here rather than in one of them.
 func (c *Collector) serviceState(ctx context.Context, endpoint opnsense.Endpoint) (
-	bool, store.AvailabilityState, string, error) {
+	bool, store.AvailabilityState, store.AvailabilityOutcome, string, error) {
 	response, err := c.client.Call(ctx, endpoint, opnsense.RequestOptions{})
 	if err != nil && response.Outcome == "" {
-		return false, store.StateUnavailable, "", err
+		return false, store.StateUnavailable, store.OutcomeRequestNotMade, "", err
 	}
 	if !response.OK() {
-		return false, store.StateUnavailable, response.Detail, nil
+		return false, store.StateUnavailable, responseOutcome(response), response.Detail, nil
 	}
 	var body decode.Object
 	if err := json.Unmarshal(response.Body, &body); err != nil {
-		return false, store.StateUnavailable, "the status body could not be read", nil
+		return false, store.StateUnavailable, store.OutcomeUndecodable,
+			"the status body could not be read", nil
 	}
 	status, present := decode.String(body, "status")
 	if !present {
-		return false, store.StateUnavailable, "the status body reported no status", nil
+		return false, store.StateUnavailable, store.OutcomeUndecodable,
+			"the status body reported no status", nil
 	}
 	if decode.LowerASCII(status) == "running" {
-		return true, store.StateReachable, "", nil
+		return true, store.StateReachable, store.OutcomeHealthy, "", nil
 	}
-	return false, store.StatePresentButDisabled,
+	return false, store.StatePresentButDisabled, store.OutcomeServiceNotRunning,
 		"the service reported " + quoteForDetail(status), nil
+}
+
+// responseOutcome names what one answer from the firewall turned into, from the closed
+// set. It reads the outcome and the status code the client classified, never the
+// detail: 401 and 403 are one opnsense outcome and two availability outcomes, because
+// the first is a key that was refused and the second a key whose user lacks a privilege,
+// and the user acts on them in two different places.
+func responseOutcome(response opnsense.Response) store.AvailabilityOutcome {
+	switch response.Outcome {
+	case opnsense.OutcomeOK:
+		return store.OutcomeHealthy
+	case opnsense.OutcomeNotFound:
+		return store.OutcomeNotFound
+	case opnsense.OutcomeForbidden:
+		if response.StatusCode == http.StatusUnauthorized {
+			return store.OutcomeAuthenticationFailed
+		}
+		return store.OutcomeDenied
+	case opnsense.OutcomeEmptyBody:
+		return store.OutcomeEmptyBody
+	case opnsense.OutcomeResultFailed:
+		return store.OutcomeResultFailed
+	case opnsense.OutcomeServerError:
+		return store.OutcomeServerError
+	case opnsense.OutcomeTransportFailure:
+		return store.OutcomeTransportFailure
+	case opnsense.OutcomeCertificateRefused:
+		return store.OutcomeCertificateRefused
+	}
+	return store.OutcomeRequestNotMade
 }
 
 // readObject calls an endpoint and decodes its body as a JSON object, reporting whether that

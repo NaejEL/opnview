@@ -72,12 +72,13 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 		lastResult = result
 		if errors.Is(readErr, ErrUnsupportedRead) {
 			// Registered, probed, and not readable. A state with its reason, not a failed pass.
-			return c.writeAvailability(ctx, providerID, result.state, result.probe, readErr.Error())
+			return c.writeAvailability(ctx, providerID, result.state, result.outcome, result.probe,
+				readErr.Error())
 		}
 		if readErr != nil {
 			// The pages read before this one are stored, and are derived all the same.
 			if writeErr := c.writeAvailability(ctx, providerID, result.state,
-				result.probe, result.detail); writeErr != nil {
+				result.outcome, result.probe, result.detail); writeErr != nil {
 				return c.deriveAfter(ctx, stored, joinErrors([]error{readErr, writeErr}))
 			}
 			return c.deriveAfter(ctx, stored, readErr)
@@ -139,7 +140,11 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 		detail = "reachable and the query report returned no lookup, which is not an absence of " +
 			"lookups"
 	}
-	if err := c.writeAvailability(ctx, providerID, store.StateReachable,
+	outcome := store.OutcomeHealthy
+	if totalRows == 0 {
+		outcome = store.OutcomeHealthyEmpty
+	}
+	if err := c.writeAvailability(ctx, providerID, store.StateReachable, outcome,
 		lastResult.probe, detail); err != nil {
 		return c.deriveAfter(ctx, stored, err)
 	}

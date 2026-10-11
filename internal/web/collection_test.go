@@ -111,7 +111,7 @@ func (h *harness) providerID(kind, providerKey string) int64 {
 func (h *harness) setAvailability(kind, providerKey string, state store.AvailabilityState) {
 	h.t.Helper()
 	if err := h.store.SetAvailability(context.Background(), h.providerID(kind, providerKey),
-		state, "test-probe", nil, h.clock.Now().Unix()); err != nil {
+		state, store.OutcomeHealthy, "test-probe", nil, h.clock.Now().Unix()); err != nil {
 		h.t.Fatalf("recording %s for %s/%s: %v", state, kind, providerKey, err)
 	}
 }

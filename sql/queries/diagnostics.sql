@@ -73,11 +73,16 @@ FROM volume_aggregate_30d;
 --
 -- Availability and activeness are two different facts. Two implementations of
 -- one kind may both be 'reachable'; at most one of them is active.
+--
+-- outcome is the closed code naming why the state is what it is
+-- (SPEC-step-5b-widget-api.md, D1); it is what an interface translates, and
+-- detail is diagnostic text that nothing reads to decide anything.
 SELECT
     p.kind        AS kind,
     p.provider_key AS provider_key,
     p.display_name AS display_name,
     a.state       AS state,
+    a.outcome     AS outcome,
     a.probe       AS probe,
     a.detail      AS detail,
     a.checked_at  AS checked_at,

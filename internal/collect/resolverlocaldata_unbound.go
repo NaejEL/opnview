@@ -37,5 +37,5 @@ func (unboundLocalData) probe(ctx context.Context, host session) (probeResult, e
 
 // localData reads the local data. The owner is named `name` here, not `host`.
 func (unboundLocalData) localData(ctx context.Context, host session) (recordDump, probeResult, error) {
-	return readUnboundRecords(ctx, host, opnsense.UnboundListLocalData, "name")
+	return readUnboundRecords(ctx, host, opnsense.UnboundListLocalData, "name", false)
 }

@@ -208,7 +208,14 @@ func (r *Refresher) record(ctx context.Context, providerID int64, probe string, 
 		}
 		detail = &version
 	}
-	if err := r.store.SetAvailability(ctx, providerID, state, probe, detail, now); err != nil {
+	outcome := store.OutcomeDownloadFailed
+	switch {
+	case probe == ProbeMalformed:
+		outcome = store.OutcomeDownloadMalformed
+	case (probe == ProbeDownloaded || probe == ProbeNotModified) && list != nil:
+		outcome = store.OutcomeHealthy
+	}
+	if err := r.store.SetAvailability(ctx, providerID, state, outcome, probe, detail, now); err != nil {
 		return err
 	}
 	if list != nil {

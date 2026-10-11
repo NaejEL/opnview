@@ -233,6 +233,8 @@ type Collector struct {
 	// probe round's rewrite of the availability row restates it rather than erasing it.
 	// The mutex guards it.
 	readDetails map[int64]string
+	// readOutcomes holds the outcome code of the same reads, beside their words.
+	readOutcomes map[int64]store.AvailabilityOutcome
 	// leaseReadAt and localDataReadAt are the instants the last complete lease pass and
 	// the last successful local-data pass of this run began, zero before either; and
 	// localDataFailed whether the last local-data pass failed. The unresolved host-name
@@ -347,13 +349,20 @@ func (c *Collector) setSampleAbsence(providerID int64, absent string) {
 }
 
 // setReadDetail records what one resolver-record provider's last read said.
-func (c *Collector) setReadDetail(providerID int64, detail string) {
+//
+// The outcome is kept beside the words for the same reason: a probe round restating a
+// read's refusal in the detail must not stamp the row `healthy` beside it.
+func (c *Collector) setReadDetail(providerID int64, outcome store.AvailabilityOutcome, detail string) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	if c.readDetails == nil {
 		c.readDetails = map[int64]string{}
 	}
+	if c.readOutcomes == nil {
+		c.readOutcomes = map[int64]store.AvailabilityOutcome{}
+	}
 	c.readDetails[providerID] = detail
+	c.readOutcomes[providerID] = outcome
 }
 
 // readDetail is what one resolver-record provider's last read said, or empty.
@@ -361,6 +370,13 @@ func (c *Collector) readDetail(providerID int64) string {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 	return c.readDetails[providerID]
+}
+
+// readOutcome is the outcome of one resolver-record provider's last read, or empty.
+func (c *Collector) readOutcome(providerID int64) store.AvailabilityOutcome {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	return c.readOutcomes[providerID]
 }
 
 // sampleAbsence is what one provider's last sampling pass could not read, or empty.
@@ -477,18 +493,26 @@ func (c *Collector) recordOutcome(ctx context.Context, providerID int64,
 			detail += "; " + extra
 		}
 	}
-	return c.writeAvailability(ctx, providerID, state, response.Endpoint, detail)
+	return c.writeAvailability(ctx, providerID, state, responseOutcome(response), response.Endpoint, detail)
 }
 
-// writeAvailability records a state determined by one probe endpoint.
+// writeAvailability records a state determined by one probe endpoint, with the outcome
+// code that names why. An empty outcome is refused rather than defaulted: a code nobody
+// chose is a code that would have to be guessed back from the detail.
 func (c *Collector) writeAvailability(ctx context.Context, providerID int64,
-	state store.AvailabilityState, probe opnsense.Endpoint, detail string) error {
+	state store.AvailabilityState, outcome store.AvailabilityOutcome, probe opnsense.Endpoint,
+	detail string) error {
+	if outcome == "" {
+		return fmt.Errorf("collect: the availability of provider %d (%s %s) was written with no "+
+			"outcome code", providerID, probe.Method, probe.Path)
+	}
 	var detailValue *string
 	if detail != "" {
 		detailValue = &detail
 	}
 	probeName := probe.Method + " " + probe.Path
-	if err := c.store.SetAvailability(ctx, providerID, state, probeName, detailValue, c.now()); err != nil {
+	if err := c.store.SetAvailability(ctx, providerID, state, outcome, probeName, detailValue,
+		c.now()); err != nil {
 		return fmt.Errorf("collect: recording availability: %w", err)
 	}
 	return nil

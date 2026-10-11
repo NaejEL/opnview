@@ -945,7 +945,7 @@ done
 # GAP-AC5: the two tables this cycle added are classified growing and are purged,
 # because each accumulates one row per pass and would otherwise grow without
 # bound from the first day.
-for t in collection_gap measurement_sample purged_flow_hour address_classification \
+for t in collection_gap opnview_downtime measurement_sample purged_flow_hour address_classification \
          peer_volume_aggregate_1h peer_volume_aggregate_24h peer_volume_aggregate_7d \
          peer_volume_aggregate_30d; do
     if grep -qx "$t" "$WORK/growing.txt"; then
@@ -2194,6 +2194,30 @@ expect_sql_failure 'PN-AC10 an availability row for a provider that does not exi
     "INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
      VALUES (999999999, 'reachable', 'pn-ac10', NULL, $NOW);"
 
+# AD1 (SPEC-step-5b-widget-api.md, D1): the outcome code is a closed set held by a
+# CHECK, and a fresh row carries the not-yet-probed code beside the state.
+check 'AD1 every fresh availability row carries the not_yet_probed outcome' "$FRESH_PROVIDERS" \
+    "$(q "$FRESH_DB" "SELECT count(*) FROM source_availability WHERE outcome = 'not_yet_probed';")"
+expect_sql_failure 'AD1 an outcome outside the closed set is rejected' "$FRESH_DB" \
+    "UPDATE source_availability SET outcome = 'probably_fine'
+     WHERE provider_id = (SELECT min(id) FROM provider);"
+expect_sql_success 'AD1 an outcome inside the closed set is accepted' "$FRESH_DB" \
+    "UPDATE source_availability SET outcome = 'authentication_failed'
+     WHERE provider_id = (SELECT min(id) FROM provider);"
+
+# AD3 (D2): the heartbeat is one row, and an interval opnview was not running is
+# a positive span.
+expect_sql_success 'AD3 the heartbeat row is written' "$FRESH_DB" \
+    "INSERT INTO opnview_heartbeat (id, beat_at, clean_stop) VALUES (1, $NOW, 0);"
+expect_sql_failure 'AD3 a second heartbeat row is rejected' "$FRESH_DB" \
+    "INSERT INTO opnview_heartbeat (id, beat_at, clean_stop) VALUES (2, $NOW, 0);"
+expect_sql_failure 'AD3 an interval opnview was not running that does not move forward is rejected' "$FRESH_DB" \
+    "INSERT INTO opnview_downtime (interval_start_at, interval_end_at, clean_stop, detected_at)
+     VALUES ($NOW, $NOW, 0, $NOW);"
+expect_sql_success 'AD3 an interval opnview was not running is recorded' "$FRESH_DB" \
+    "INSERT INTO opnview_downtime (interval_start_at, interval_end_at, clean_stop, detected_at)
+     VALUES ($((NOW - 600)), $NOW, 1, $NOW);"
+
 check 'VOC-AC4 a freshly migrated database attributes nothing to anybody' '0' \
     "$(q "$FRESH_DB" 'SELECT count(*) FROM owner;')"
 check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
@@ -2302,12 +2326,15 @@ printf -- '  provider availability diagnostic:\n'
 sed 's/^/    /' "$WORK/availability.txt"
 check 'PN-AC13 the diagnostic returns one row per registry row' "$PROVIDER_COUNT" \
     "$(wc -l < "$WORK/availability.txt" | tr -d ' ')"
-check 'PN-AC13 every diagnostic row carries a kind, a key, a state, a probe and an active flag' '0' \
-    "$(awk -F'|' 'NF < 8 || $1 == "" || $2 == "" || $4 == "" || $5 == "" || $8 == "" { n++ }
+# Restated for the outcome column (SPEC-step-5b-widget-api.md, D1), which the
+# diagnostic returns fifth: kind, key, name, state, outcome, probe, detail,
+# checked_at, active.
+check 'PN-AC13 every diagnostic row carries a kind, a key, a state, an outcome, a probe and an active flag' '0' \
+    "$(awk -F'|' 'NF < 9 || $1 == "" || $2 == "" || $4 == "" || $5 == "" || $6 == "" || $9 == "" { n++ }
                   END { print n + 0 }' "$WORK/availability.txt")"
 check 'PN-AC13 the diagnostic names every active provider, two DHCP servers included' \
     "$ACTIVE_PROVIDER_COUNT" \
-    "$(awk -F'|' '$8 == 1 { n++ } END { print n + 0 }' "$WORK/availability.txt")"
+    "$(awk -F'|' '$9 == 1 { n++ } END { print n + 0 }' "$WORK/availability.txt")"
 # And each of the two DHCP servers carries ITS OWN probe: one service-status
 # endpoint informing two registry rows would be the smear the seam exists to
 # prevent, and with two servers active it would now be invisible in a total.

@@ -32,8 +32,11 @@ import (
 //     with its optional TTL group taking no part: re.split yields None for the group,
 //     json.dumps writes it as null, and `value` is the flags, typically "0". So a null
 //     ttl marks a message-cache reference, whose rrset the dump's rrset section already
-//     holds; the kind counts it under its own wording and stores nothing from it
-//     (resourcerecord.go);
+//     holds. THIS FILE DECIDES IT, because it is a fact about Unbound's dump_cache and
+//     OPNsense's wrapper, not about DNS: the reader takes such a row out of the records,
+//     counts it under messageCacheReferenceWording, and the kind (resourcerecord.go)
+//     reports the count and stores nothing from it. The local data's ttl is the configured
+//     one and is not read, so the rule applies to the cache dump alone;
 //   - the controller answers {"status": "ok", "data": [...]}, or {"status": "failed"} with
 //     no data when the script printed nothing, which is what it does when Unbound is not
 //     running;
@@ -59,18 +62,18 @@ func (unboundCache) probe(ctx context.Context, host session) (probeResult, error
 
 // cache reads the dump.
 func (unboundCache) cache(ctx context.Context, host session) (recordDump, probeResult, error) {
-	return readUnboundRecords(ctx, host, opnsense.UnboundDumpCache, "host")
+	return readUnboundRecords(ctx, host, opnsense.UnboundDumpCache, "host", true)
 }
 
 // unboundResolverProbe is the probe both of Unbound's record reads share: the service runs
 // and unbound.general.enabled is set.
 func unboundResolverProbe(ctx context.Context, host session) (probeResult, error) {
 	result := probeResult{probe: opnsense.UnboundStatus}
-	running, state, detail, err := host.serviceState(ctx, opnsense.UnboundStatus)
+	running, state, outcome, detail, err := host.serviceState(ctx, opnsense.UnboundStatus)
 	if err != nil {
 		return result, err
 	}
-	result.state, result.detail = state, detail
+	result.state, result.outcome, result.detail = state, outcome, detail
 	if !running {
 		return result, nil
 	}
@@ -79,7 +82,7 @@ func unboundResolverProbe(ctx context.Context, host session) (probeResult, error
 		return result, err
 	}
 	if !ok || !decode.FlagOrFalse(decode.NestedFlag(settings, "unbound", "general", "enabled")) {
-		result.state = store.StatePresentButDisabled
+		result.state, result.outcome = store.StatePresentButDisabled, store.OutcomePresentButDisabled
 		result.detail = "the service runs and unbound.general.enabled is not set"
 		return result, nil
 	}
@@ -93,18 +96,21 @@ const unboundPrivilege = `"Services: Unbound" (page-services-unbound)`
 
 // readUnboundRecords reads one of the diagnostics controller's record lists: the cache
 // dump or the local data. ownerField is the field the list names the owner under --
-// `host` in the dump, `name` in the local data.
+// `host` in the dump, `name` in the local data. messageCacheReferences says whether a
+// row whose ttl is JSON null is a message-cache reference, which is true of the dump only.
 //
 // Each absence is named on its own, and none stores anything: a failed authentication
 // (401), which names no privilege; a refusal (403), naming the privilege; a 404; an answer that is not the {status, data} envelope; and a status that
 // is not "ok".
 func readUnboundRecords(ctx context.Context, host session, endpoint opnsense.Endpoint,
-	ownerField string) (recordDump, probeResult, error) {
-	result := probeResult{probe: endpoint, state: store.StateUnavailable}
+	ownerField string, messageCacheReferences bool) (recordDump, probeResult, error) {
+	result := probeResult{probe: endpoint, state: store.StateUnavailable,
+		outcome: store.OutcomeRequestNotMade}
 	response, err := host.call(ctx, endpoint, opnsense.RequestOptions{})
 	if err != nil && response.Outcome == "" {
 		return recordDump{}, result, err
 	}
+	result.outcome = responseOutcome(response)
 	switch response.Outcome {
 	case opnsense.OutcomeOK:
 	case opnsense.OutcomeForbidden:
@@ -131,13 +137,14 @@ func readUnboundRecords(ctx context.Context, host session, endpoint opnsense.End
 		Data   *[]map[string]any `json:"data"`
 	}
 	if err := json.Unmarshal(response.Body, &envelope); err != nil || envelope.Status == nil {
+		result.outcome = store.OutcomeUndecodable
 		result.detail = fmt.Sprintf("undecodable: the answer of %s is not the {status, data} envelope "+
 			"the controller returns; nothing was stored", endpoint.Path)
 		return recordDump{}, result, fmt.Errorf("collect: reading %s: the envelope is not {status, data}",
 			endpoint.Path)
 	}
 	if *envelope.Status != "ok" {
-		result.state = store.StateUnavailable
+		result.state, result.outcome = store.StateUnavailable, store.OutcomeStatusNotOK
 		result.detail = fmt.Sprintf("the resolver answered status %q: the controller answers \"failed\" "+
 			"when the script printed nothing, which it does when Unbound is not running; nothing was "+
 			"stored", *envelope.Status)
@@ -145,16 +152,25 @@ func readUnboundRecords(ctx context.Context, host session, endpoint opnsense.End
 			*envelope.Status)
 	}
 	if envelope.Data == nil {
+		result.outcome = store.OutcomeUndecodable
 		result.detail = fmt.Sprintf("undecodable: %s answered status \"ok\" with no data list; nothing "+
 			"was stored", endpoint.Path)
 		return recordDump{}, result, fmt.Errorf("collect: %s answered no data list", endpoint.Path)
 	}
 
 	dump := recordDump{ResponseBytes: len(response.Body), Records: make([]rawRecord, 0, len(*envelope.Data))}
+	references := 0
 	for _, row := range *envelope.Data {
 		// `type` is the record's class and is never read: the type is `rrtype`. The ttl is
-		// read with its shape, because a null one is a message-cache reference.
+		// read with its shape, because in the cache dump a null one is a message-cache
+		// reference: it names an rrset the dump's rrset section already holds, and carries
+		// no TTL and no record data. Not a record, so not handed to the kind as one, and
+		// not an anomaly.
 		ttl, ttlShape := decode.TextField(row, "ttl")
+		if messageCacheReferences && ttlShape == decode.ShapeNull {
+			references++
+			continue
+		}
 		dump.Records = append(dump.Records, rawRecord{
 			OwnerName: decode.RawString(row, ownerField),
 			TTL:       ttl,
@@ -163,7 +179,17 @@ func readUnboundRecords(ctx context.Context, host session, endpoint opnsense.End
 			Value:     decode.RawString(row, "value"),
 		})
 	}
-	result.state = store.StateReachable
+	if references > 0 {
+		dump.NotRecords = append(dump.NotRecords,
+			notRecordCount{Count: references, Wording: messageCacheReferenceWording})
+	}
+	result.state, result.outcome = store.StateReachable, store.OutcomeHealthy
 	result.separable = true
 	return dump, result, nil
 }
+
+// messageCacheReferenceWording is how the availability detail names the cache dump's
+// message-cache references, after "skipped <count> ".
+const messageCacheReferenceWording = "message-cache references: lines of the dump's message-cache " +
+	"section naming an rrset of a cached answer, with no ttl and no record data, so not records " +
+	"and not counted among them"

@@ -34,11 +34,11 @@ func (keaLeases) providerKey() string { return ProviderKea }
 func (keaLeases) probe(ctx context.Context, host session) (probeResult, error) {
 	result := probeResult{probe: opnsense.KeaStatus}
 
-	running, state, detail, err := host.serviceState(ctx, opnsense.KeaStatus)
+	running, state, outcome, detail, err := host.serviceState(ctx, opnsense.KeaStatus)
 	if err != nil {
 		return result, err
 	}
-	result.state, result.detail = state, detail
+	result.state, result.outcome, result.detail = state, outcome, detail
 	if !running {
 		return result, nil
 	}
@@ -49,7 +49,7 @@ func (keaLeases) probe(ctx context.Context, host session) (probeResult, error) {
 	}
 	configured := ok && decode.FlagOrFalse(decode.NestedFlag(settings, "dhcpv4", "general", "enabled"))
 	if !configured {
-		result.state = store.StatePresentButDisabled
+		result.state, result.outcome = store.StatePresentButDisabled, store.OutcomePresentButDisabled
 		result.detail = "the service runs and dhcpv4.general.enabled is not set"
 		return result, nil
 	}
@@ -63,6 +63,7 @@ func (keaLeases) leases(ctx context.Context, host session, pageSize int) (
 	rows, result, err := readLeaseRows(ctx, host, opnsense.KeaLeases, pageSize)
 	if err != nil || rows == nil {
 		if result.state == store.StateReachable && len(rows) == 0 {
+			result.outcome = store.OutcomeHealthyEmpty
 			// The survey names the likely cause, so the detail names it too rather than
 			// leaving the user to guess: the leases are read live from the daemon, and if its
 			// control agent is off the list is empty although DHCP is working.

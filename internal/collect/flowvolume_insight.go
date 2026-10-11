@@ -130,19 +130,22 @@ const (
 // netflow 1, local 0 and keeps nothing here. That is a configuration state, recorded as
 // present-but-disabled, never as a flat zero line.
 func (insightVolume) probe(ctx context.Context, host session) (probeResult, error) {
-	result := probeResult{probe: opnsense.NetflowIsEnabled, state: store.StateUnavailable}
+	result := probeResult{probe: opnsense.NetflowIsEnabled, state: store.StateUnavailable,
+		outcome: store.OutcomeRequestNotMade}
 
 	response, err := host.call(ctx, opnsense.NetflowIsEnabled, opnsense.RequestOptions{})
 	if err != nil && response.Outcome == "" {
 		return result, err
 	}
 	if !response.OK() {
+		result.outcome = responseOutcome(response)
 		result.detail = response.Detail
 		return result, nil
 	}
 
 	var body decode.Object
 	if err := json.Unmarshal(response.Body, &body); err != nil {
+		result.outcome = store.OutcomeUndecodable
 		result.detail = "the is_enabled body could not be read"
 		return result, nil
 	}
@@ -151,14 +154,15 @@ func (insightVolume) probe(ctx context.Context, host session) (probeResult, erro
 	result.separable = true
 	switch {
 	case !hasLocal:
-		result.state = store.StatePresentButDisabled
+		// The answer lacks the one field it exists to carry.
+		result.state, result.outcome = store.StatePresentButDisabled, store.OutcomeUndecodable
 		result.detail = "is_enabled did not report whether local collection is on"
 	case local == 0:
-		result.state = store.StatePresentButDisabled
+		result.state, result.outcome = store.StatePresentButDisabled, store.OutcomePresentButDisabled
 		result.detail = "local collection is off, so the firewall exports elsewhere and keeps " +
 			"nothing here"
 	default:
-		result.state = store.StateReachable
+		result.state, result.outcome = store.StateReachable, store.OutcomeHealthy
 	}
 	return result, nil
 }
@@ -168,8 +172,8 @@ func (insightVolume) sample(ctx context.Context, host session, snapshot Discover
 	providerID, now int64) ([]store.MeasurementSample, []string, probeResult, error) {
 	result := probeResult{probe: opnsense.TrafficTop, state: store.StateReachable}
 
-	readings, pairDetail, pairErr := samplePairVolume(ctx, host, snapshot, providerID, now)
-	result.detail = pairDetail
+	readings, pairDetail, pairOutcome, pairErr := samplePairVolume(ctx, host, snapshot, providerID, now)
+	result.detail, result.outcome = pairDetail, pairOutcome
 	if pairErr != nil {
 		// The volume half could not be read, so the volume source reads as unavailable. The
 		// gauges are read anyway: they come from different endpoints and a refusal over the
@@ -212,15 +216,16 @@ func guardInterfaceNames(snapshot Discovery) ([]opnsense.InterfaceName, error) {
 
 // samplePairVolume reads /api/diagnostics/traffic/top and returns the pair readings.
 func samplePairVolume(ctx context.Context, host session, snapshot Discovery,
-	providerID, now int64) ([]store.MeasurementSample, string, error) {
+	providerID, now int64) ([]store.MeasurementSample, string, store.AvailabilityOutcome, error) {
 	names, err := guardInterfaceNames(snapshot)
 	if err != nil {
-		return nil, err.Error(), err
+		return nil, err.Error(), store.OutcomeRequestNotMade, err
 	}
 	if len(names) == 0 {
 		// Discovery has not run, or the firewall reported no interface. Calling with no
 		// argument would reach a different command on the router.
-		return nil, "no interface has been discovered yet, so nothing was sampled", nil
+		return nil, "no interface has been discovered yet, so nothing was sampled",
+			store.OutcomeHealthyEmpty, nil
 	}
 
 	argument := make([]string, 0, len(names))
@@ -237,16 +242,16 @@ func samplePairVolume(ctx context.Context, host session, snapshot Discovery,
 		Arguments: []string{strings.Join(argument, ",")},
 	})
 	if err != nil && response.Outcome == "" {
-		return nil, "", err
+		return nil, "", store.OutcomeRequestNotMade, err
 	}
 	if !response.OK() {
-		return nil, response.Detail, fmt.Errorf("collect: the traffic snapshot answered %s",
-			response.Outcome)
+		return nil, response.Detail, responseOutcome(response),
+			fmt.Errorf("collect: the traffic snapshot answered %s", response.Outcome)
 	}
 
 	var body any
 	if err := json.Unmarshal(response.Body, &body); err != nil {
-		return nil, "the traffic snapshot body could not be read",
+		return nil, "the traffic snapshot body could not be read", store.OutcomeUndecodable,
 			fmt.Errorf("collect: reading the traffic snapshot: %w", err)
 	}
 	var readings []store.MeasurementSample
@@ -347,11 +352,12 @@ func samplePairVolume(ctx context.Context, host session, snapshot Discovery,
 
 	if pairs == 0 {
 		return readings, "the traffic snapshot named no endpoint pair, which is not an absence " +
-			"of traffic; a wrong interface argument answers exactly this way", nil
+				"of traffic; a wrong interface argument answers exactly this way",
+			store.OutcomeHealthyEmpty, nil
 	}
 	return readings, fmt.Sprintf("sampled %d endpoint pairs from a live snapshot of %d seconds; no "+
 		"endpoint exposes a per-pair aggregate over a past window, so this history is opnview's own",
-		pairs, store.SampleSeconds), nil
+		pairs, store.SampleSeconds), store.OutcomeHealthy, nil
 }
 
 // pairReading is one figure of one interface endpoint pair: which object it is read from,

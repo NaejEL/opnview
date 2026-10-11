@@ -31,16 +31,25 @@ func (iscLeases) providerKey() string { return ProviderISC }
 
 // probe checks only for presence.
 func (iscLeases) probe(ctx context.Context, host session) (probeResult, error) {
-	result := probeResult{probe: opnsense.ISCStatus, state: store.StateUnavailable}
+	result := probeResult{probe: opnsense.ISCStatus, state: store.StateUnavailable,
+		outcome: store.OutcomeRequestNotMade}
 
 	response, err := host.call(ctx, opnsense.ISCStatus, opnsense.RequestOptions{})
 	if err != nil && response.Outcome == "" {
 		return result, err
 	}
 	result.detail = "the end-of-life plugin is not installed"
-	if response.OK() {
+	switch {
+	case response.OK():
+		result.outcome = store.OutcomeReadNotSupported
 		result.detail = "the plugin answers, but its lease endpoint answered 404 on the surveyed " +
 			"firmware and its field contract is unverified, so opnview does not read it"
+	case response.Outcome == opnsense.OutcomeNotFound:
+		result.outcome = store.OutcomePluginNotInstalled
+	default:
+		// A refusal or a failure says nothing about whether the plugin is there; the
+		// outcome names what the firewall answered.
+		result.outcome = responseOutcome(response)
 	}
 	// Never separable: even a present plugin is not read, so it can never be the
 	// implementation opnview reads for this kind.
@@ -49,7 +58,8 @@ func (iscLeases) probe(ctx context.Context, host session) (probeResult, error) {
 
 // leases refuses, with the reason.
 func (iscLeases) leases(context.Context, session, int) ([]leaseObservation, probeResult, error) {
-	return nil, probeResult{probe: opnsense.ISCStatus, state: store.StateUnavailable},
+	return nil, probeResult{probe: opnsense.ISCStatus, state: store.StateUnavailable,
+			outcome: store.OutcomeReadNotSupported},
 		fmt.Errorf("%w: the ISC lease endpoint answered 404 on the surveyed firmware and its "+
 			"field contract is unverified", ErrUnsupportedRead)
 }

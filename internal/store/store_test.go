@@ -99,7 +99,7 @@ func TestAProbedAvailabilityRowSurvivesTheSchemaBeingAppliedAgain(t *testing.T) 
 		t.Fatalf("looking up the filter-log provider: %v", err)
 	}
 	detail := "probed by this test"
-	if err := database.SetAvailability(ctx, providerID, StateReachable,
+	if err := database.SetAvailability(ctx, providerID, StateReachable, OutcomeHealthy,
 		"GET /api/diagnostics/firewall/log", &detail, 1750000000); err != nil {
 		t.Fatalf("recording availability: %v", err)
 	}

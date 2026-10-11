@@ -31,12 +31,13 @@ func (dnsmasqCache) providerKey() string { return ProviderDnsmasq }
 // probe reports whether the service runs, and never makes the implementation separable:
 // there is nothing to read.
 func (dnsmasqCache) probe(ctx context.Context, host session) (probeResult, error) {
-	return dnsmasqNoReadProbe(ctx, host, noCacheRead)
+	return dnsmasqNoReadProbe(ctx, host, noCacheRead, store.OutcomeNoCacheRead)
 }
 
 // cache refuses, with the reason.
 func (dnsmasqCache) cache(context.Context, session) (recordDump, probeResult, error) {
-	return recordDump{}, probeResult{probe: opnsense.DnsmasqStatus, state: store.StateUnavailable},
+	return recordDump{}, probeResult{probe: opnsense.DnsmasqStatus, state: store.StateUnavailable,
+			outcome: store.OutcomeNoCacheRead},
 		fmt.Errorf("%w: %s", ErrUnsupportedRead, noCacheRead)
 }
 
@@ -46,15 +47,16 @@ func (dnsmasqCache) cache(context.Context, session) (recordDump, probeResult, er
 // A running Dnsmasq is UNAVAILABLE for these kinds, not present-but-disabled: that state
 // names a setting the user can turn on, and no setting makes the API read this material.
 // The material is absent from the API, which is what unavailable says.
-func dnsmasqNoReadProbe(ctx context.Context, host session, state string) (probeResult, error) {
+func dnsmasqNoReadProbe(ctx context.Context, host session, state string,
+	absence store.AvailabilityOutcome) (probeResult, error) {
 	result := probeResult{probe: opnsense.DnsmasqStatus}
-	running, availability, detail, err := host.serviceState(ctx, opnsense.DnsmasqStatus)
+	running, availability, outcome, detail, err := host.serviceState(ctx, opnsense.DnsmasqStatus)
 	if err != nil {
 		return result, err
 	}
-	result.state, result.detail = availability, detail
+	result.state, result.outcome, result.detail = availability, outcome, detail
 	if running {
-		result.state = store.StateUnavailable
+		result.state, result.outcome = store.StateUnavailable, absence
 		result.detail = "the service runs, and " + state
 	}
 	return result, nil
