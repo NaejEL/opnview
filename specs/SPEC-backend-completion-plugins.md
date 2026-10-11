@@ -3971,3 +3971,12 @@ Every test runs on the PostgreSQL test instance with a fake clock and small reco
 - The broker data race (`internal/broker/broker.go` `fromMirror` reading `datum.AttemptedAt` against `mirror/write.go` `Store`) is fixed in this cycle.
 - The join-throughput row at the 1 000 000-row seed (PS-AC45, PS15) is not added in this cycle.
 - The builder's choices are kept: the reverse direction of a refused connection ends `missing`; a leg stored after the read-through has passed a record's start plus the tolerance does not reopen that record's decision; TCP continuity before any acknowledgement uses pf's `tcp.first` (120 s).
+
+**Decided (maintainer, 11 October 2026), after the PS22 build:**
+- A state's detail (`captured_interfaces: N` for `observation_point_not_exported`, the interval states met for `netflow_not_covering_window`) goes in a new envelope member `state_details`, keyed by state name, present only when such a state is present. `states` stays a list of strings. It is a third admitted difference under B5 / X3, only when the state is present.
+- The builder's interpretations are kept: `aggregate_freshness` is not a volume type; an explicit `netflow` with partial coverage answers the netflow figures with `netflow_not_covering_window`; `netflow_not_served_by_type` is `opnview`'s own term, documented. "Covered" is judged exactly once the finer coverage classes below exist.
+- Built in this cycle:
+  - **Shared fragment.** The per-leg counting over `connection_measured_volume` is one SQL view or function in `schema.sql`, used by the aggregate refresh and every `_netflow` twin.
+  - **Twin validation at load.** A widget whose `<name>_netflow` twin binds different parameters than `<name>` is refused at load with a named code.
+  - **Finer coverage classes.** Aggregates store connection counts per direction state, so `best_available` judges "covered" exactly as PS22 states (`in_progress`, `awaiting_export`, `missing` covered; `not_captured` not).
+  - **Coverage per action.** The allowed / blocked / unknown netflow parts carry their own packets and coverage counts, so the map widgets serve a coverage object.
