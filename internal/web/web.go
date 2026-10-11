@@ -11,8 +11,9 @@
 // none.
 //
 // WHAT IT SERVES, AND NOTHING MORE. Setup, sign-in and sign-out, settings, the
-// collection surface and one stylesheet. There is no widget endpoint, no canvas, no
-// dashboard format and no language picker here: those are steps 5 and 7.
+// collection surface, one stylesheet, and the widget API of step 5B (widget.go, built
+// from internal/widget's registry), which answers JSON only. There is no canvas, no
+// dashboard format and no language picker here: those are step 7.
 //
 // NO CONTROL ON ANY PAGE CAN CHANGE A FIREWALL SETTING, and none suggests that it
 // can. The only call this package makes to the firewall is the credential
@@ -35,6 +36,7 @@ import (
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/widget"
 )
 
 // The paths. They are constants because a template links to them and a test
@@ -114,6 +116,8 @@ type Route struct {
 	// into the GET handler only leaves the POST open. Both of those are the classic
 	// first-run hole, and this cycle's stated top risk is exactly that hole.
 	RequiresNoAccount bool
+	// JSON marks a route of the widget API: refused in JSON, never redirected to a page.
+	JSON bool
 
 	handler http.HandlerFunc
 }
@@ -158,6 +162,9 @@ type Options struct {
 	// saved, and asked which build is in use. Nil, as in a test that does not need it,
 	// wakes nothing and reports no build.
 	GeoIP GeoIP
+	// SuffixLists is the Public Suffix List in use, which the widget API groups site names
+	// by. Nil reports the grouping unavailable.
+	SuffixLists widget.SuffixLists
 }
 
 // GeoIP is what the settings surface needs of the MaxMind refresh: to be told that
@@ -207,6 +214,8 @@ type Server struct {
 	collector Reconfigurable
 	// geoip is woken by a save of the MaxMind credentials; it may be nil.
 	geoip GeoIP
+	// widgets is the widget API.
+	widgets *widget.Service
 
 	routes []Route
 	mux    *http.ServeMux
@@ -270,6 +279,10 @@ func New(options Options) (*Server, error) {
 		collector:     options.Collector,
 		geoip:         options.GeoIP,
 	}
+	server.widgets, err = widget.New(options.Store, widget.Options{Now: clock, SuffixLists: options.SuffixLists})
+	if err != nil {
+		return nil, err
+	}
 	server.register()
 	return server, nil
 }
@@ -318,6 +331,7 @@ func (s *Server) register() {
 		{Method: http.MethodGet, Pattern: PathStylesheet, Access: AccessPublic,
 			handler: s.handleStylesheet},
 	}
+	s.routes = append(s.routes, s.widgetRoutes()...)
 
 	s.mux = http.NewServeMux()
 	for _, route := range s.routes {

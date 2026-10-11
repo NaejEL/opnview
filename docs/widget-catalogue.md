@@ -1709,7 +1709,12 @@ a reader of a binding needs it.
    operator or country right-hand side, require a `LEFT JOIN` with a null
    right-hand side counted as `pending` and a `lookup_state` of `miss` counted as
    unplaced — which is what makes mapped plus unplaced equal the total. *This is a
-   defect in the query, not a preference of the widget.*
+   defect in the query, not a preference of the widget.* **Fixed in step 5B:**
+   `screen: Map` now reads `geo_asn` through a `LEFT JOIN`, as the widget API does,
+   and returns a peer with no cache row under the lookup state `no_row` — never
+   looked up, which the API reports apart from `pending` — so its volume stays in
+   the total; `sql/schema-checks.sh` asserts it by removing one peer's cache row
+   inside a transaction it rolls back.
 3. **`owner_volume_aggregate_*.client_count` is the distinct machines that
    contributed to one slot and must not be summed across slots.** A card covering
    several slots counts its machines from `client`.

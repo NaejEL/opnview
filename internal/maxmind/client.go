@@ -45,9 +45,17 @@ type Client struct {
 // NewClient returns the client for MaxMind's own hosts. timeout bounds one whole
 // request, download included.
 func NewClient(timeout time.Duration) *Client {
-	return newClient(downloadBase, downloadHost, []string{downloadHost, redirectHost},
-		&http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 10 * time.Second},
+	return NewClientOver(&http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 10 * time.Second},
 		timeout)
+}
+
+// NewClientOver is NewClient with the transport under the host guard supplied. The
+// guard -- MaxMind's two hosts and nothing else -- stays in front of it; the product
+// passes an http.Transport, and a test of another package passes a transport that
+// counts what reached it, which is how AC16 of specs/SPEC-step-5b-widget-api.md shows
+// that serving the widget API makes no request here.
+func NewClientOver(inner http.RoundTripper, timeout time.Duration) *Client {
+	return newClient(downloadBase, downloadHost, []string{downloadHost, redirectHost}, inner, timeout)
 }
 
 // newClient is NewClient with the hosts and the transport supplied, which is what a

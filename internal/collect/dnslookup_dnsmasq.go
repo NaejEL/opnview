@@ -47,11 +47,11 @@ func (dnsmasqLookups) requestedSpanSeconds() int64 { return 0 }
 func (dnsmasqLookups) probe(ctx context.Context, host session) (probeResult, error) {
 	result := probeResult{probe: opnsense.DnsmasqStatus}
 
-	running, state, detail, err := host.serviceState(ctx, opnsense.DnsmasqStatus)
+	running, state, outcome, detail, err := host.serviceState(ctx, opnsense.DnsmasqStatus)
 	if err != nil {
 		return result, err
 	}
-	result.state, result.detail = state, detail
+	result.state, result.outcome, result.detail = state, outcome, detail
 	if !running {
 		return result, nil
 	}
@@ -62,7 +62,9 @@ func (dnsmasqLookups) probe(ctx context.Context, host session) (probeResult, err
 	}
 	logging := ok && decode.FlagOrFalse(decode.NestedFlag(settings, "dnsmasq", "log_queries"))
 
-	result.state = store.StatePresentButDisabled
+	// Whether logging is on or off, nothing here can be read: the grammar is the named
+	// absence either way, and logging off is said in the detail.
+	result.state, result.outcome = store.StatePresentButDisabled, store.OutcomeLogGrammarNotRecorded
 	if logging {
 		result.detail = "query logging is on, but its log grammar is dnsmasq's own and is not " +
 			"recorded, so opnview does not parse it"
@@ -76,7 +78,8 @@ func (dnsmasqLookups) probe(ctx context.Context, host session) (probeResult, err
 // lookups refuses, with the reason.
 func (dnsmasqLookups) lookups(context.Context, session, int) (
 	[]lookupRecord, probeResult, error) {
-	return nil, probeResult{probe: opnsense.DnsmasqSettings, state: store.StatePresentButDisabled},
+	return nil, probeResult{probe: opnsense.DnsmasqSettings, state: store.StatePresentButDisabled,
+			outcome: store.OutcomeLogGrammarNotRecorded},
 		fmt.Errorf("%w: this resolver exposes its lookups only as free text under a grammar "+
 			"nobody has recorded", ErrUnsupportedRead)
 }

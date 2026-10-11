@@ -104,7 +104,8 @@ type session interface {
 	// product is an OPNsense service asks the same question of the same shape of answer, so
 	// the host answers it once.
 	serviceState(ctx context.Context, endpoint opnsense.Endpoint) (
-		running bool, state store.AvailabilityState, detail string, err error)
+		running bool, state store.AvailabilityState, outcome store.AvailabilityOutcome, detail string,
+		err error)
 
 	// readObject calls an endpoint and decodes a JSON object, reporting whether that
 	// worked. An unreadable answer is not an error: it is an availability state, and the
@@ -153,6 +154,10 @@ var ErrUnsupportedRead = errors.New("collect: this implementation is registered 
 type probeResult struct {
 	// state is the availability state the survey names for what the firewall answered.
 	state store.AvailabilityState
+	// outcome names what the probe or read turned into, from the closed set the schema
+	// holds (store.AvailabilityOutcomes). It is written beside the detail, so no reader
+	// ever has to parse the detail to tell one absence from another.
+	outcome store.AvailabilityOutcome
 	// probe is the endpoint that determined it, recorded so a screen can say how the
 	// conclusion was reached.
 	probe opnsense.Endpoint
@@ -290,11 +295,16 @@ type lookupRecord struct {
 	// firewall returns, so its key is composed from the row's content.
 	DeduplicationKey string
 	ClientAddress    string
-	Domain           string
-	Action           string
-	AnswerSource     *string
-	Rcode            *string
-	DNSSECStatus     *string
+	// ClientFamily is the family of the querying address, 4 or 6, where the source reports
+	// one -- even when ClientAddress is the host name its reverse lookup returned; nil
+	// otherwise. It is what decides a host name the local data holds under one IPv4 and
+	// one IPv6 address (store.ResolveLoggedHostname).
+	ClientFamily *int64
+	Domain       string
+	Action       string
+	AnswerSource *string
+	Rcode        *string
+	DNSSECStatus *string
 	// BlocklistName is empty when the source named no list, which for a blocked lookup is
 	// its own state rather than an absence.
 	BlocklistName string
@@ -323,8 +333,8 @@ type lookupSource interface {
 // the type.
 //
 // TTLShape keeps what TTL's text alone cannot: whether the endpoint wrote the ttl as a
-// string, as JSON null, as something else, or not at all. In Unbound's cache dump a null
-// ttl is a message-cache reference rather than a record (resolvercache_unbound.go).
+// string, as JSON null, as something else, or not at all. A row an implementation knows
+// is not a record at all never becomes a rawRecord: it counts it under notRecords.
 type rawRecord struct {
 	OwnerName string
 	TTL       string
@@ -341,6 +351,18 @@ type recordDump struct {
 	// ResponseBytes is the size of the answer, which the availability detail reports:
 	// the dump's cost on the firewall grows with the size of what it dumps.
 	ResponseBytes int
+	// NotRecords are the rows the endpoint returned that its implementation recognised as
+	// not being records at all, counted per kind under the implementation's own wording.
+	// What makes a row one is a fact about that product's output, so it is decided in the
+	// product's file; the kind only reports the counts, in the order given.
+	NotRecords []notRecordCount
+}
+
+// notRecordCount is a number of rows that are not records, and what they are, worded so
+// that "skipped <Count> <Wording>" reads as a sentence of the availability detail.
+type notRecordCount struct {
+	Count   int
+	Wording string
 }
 
 // resolverCacheSource is one implementation of the resolver_cache kind: a source of the

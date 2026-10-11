@@ -11,7 +11,8 @@ citation is not repeated here. The authority on the schema is
 `sql/queries/screens.sql`.
 
 **There are no migrations, and that is a decision rather than an omission.**
-Nothing is deployed and nobody has data, so numbered files, a `schema_version`
+The one deployment is the maintainer's live validation installation, whose
+history is re-collectable from the firewall, so numbered files, a `schema_version`
 table and a runner would be machinery for a problem that does not exist. The
 schema is one file, edited in place, embedded into the binary by
 `internal/store` and applied on every start; every statement in it is
@@ -28,6 +29,17 @@ second truth. This document explains them; it does not restate
 them, so the two cannot drift. `docs/architecture.md` names the eight provider
 kinds and the seam a provider plugs into; this document is where each entity
 is written down.
+
+**Idempotent is not the same as upgradable, and step 5B is where that shows.**
+`CREATE TABLE IF NOT EXISTS` leaves a table that already exists as it is, so a
+column added in place never reaches a database an earlier build wrote. Step 5B
+added `source_availability.outcome`, `rule.destination_net`,
+`dns_resolution.client_family` and the tables `opnview_heartbeat` and
+`opnview_downtime`; a database from `a1e2707` or earlier therefore does not open
+under it, and `store.Open` refuses it with `ErrSchemaOutdated` rather than
+leaving SQLite's "no column named outcome" to be decoded. The deployed database
+is rebuilt, never migrated, and `ROADMAP.md`, step 5, *Rebuilding the database
+after step 5B*, says how.
 
 Everything is verified by one command, from the repository root:
 
@@ -108,7 +120,7 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | the seconds a cached record has left | `ttl` (a string in the dump) | read into `resource_record_observation.covered_until_at` as the poll's instant plus it | same endpoint |
 | the firewall's own addresses, as a source or a destination | **This Firewall** — the rule editor's name for pf's `self` | `this_firewall`: `flow.src_is_this_firewall` / `dst_is_this_firewall`, `security_event.src_is_this_firewall`, `dns_resolution.client_is_this_firewall`, the `this_firewall_address` view, `traffic_scope = 'this_firewall'`, the directions `to_this_firewall` / `from_this_firewall`, the tree node `this_firewall`, and `blocked_decision.target_is_this_firewall` before them | <https://docs.opnsense.org/manual/how-tos/caddy.html>: "Create Firewall rules that allow `HTTP` and `HTTPS` to destination `This Firewall` on `WAN`"; `opnsense/core` 26.7.3, `src/opnsense/mvc/app/library/OPNsense/Firewall/FilterRule.php`, where the stored value `(self)` is rendered as `gettext("This Firewall")`, and `Firewall/Rule.php`, which passes `(self)` to pf unchanged; pf.conf(5), FreeBSD 15.1-RELEASE: "self Expands to all addresses assigned to all interfaces." The *manual/firewall.html* page does not carry the phrase |
 
-**Thirty-four terms are `opnview`'s own, because OPNsense has no word for them.**
+**Thirty-eight terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -144,10 +156,14 @@ vocabulary read off an endpoint:
 | `domain_attribution.method` (`resolver_cache_answer`, `lookup_timing`) | neither OPNsense nor Unbound infers a site name, so neither has a word for how one was inferred | the maintainer's decision 5 of the resolver-cache cycle: `resolver_cache_answer` says the evidence is the resolver cache's **answer** to the name looked up, and `lookup_timing` says the evidence is only the **timing** of the lookup before the flow. The column reverses 5A decision D3, which had refused a column with one possible value |
 | `domain_attribution.address_observation_id` | nothing upstream names the record an inference rests on | the A or AAAA observation whose address is the flow's destination: the **address observation** a `resolver_cache_answer` matched, named so the evidence can be checked |
 | `dns_resolution.client_resolution = 'local_data_hostname'` | the query report says nothing about having replaced an address by a name, and nothing about where else the name could be resolved | decision 5 again: the host name was resolved through the resolver's **local data**, Unbound's word, after no lease named it; it sits beside `lease_hostname`, which names the leases the same way |
+| `dns_resolution.client_resolution = 'dual_stack_hostname'` | none: neither OPNsense nor Unbound names a host held under one address of each family | decision 15 of `specs/SPEC-step-5b-widget-api.md`: *dual stack* is the RFC 4213 term for a host with both an IPv4 and an IPv6 address, which is exactly what the local data says the name is; `_hostname` keeps it beside the other states of a logged host name |
 | the **coverage interval**, `resource_record_observation.covered_from_at` and `covered_until_at` | the dump gives what the cache holds at one instant and the seconds each record has left; nothing says since when a record was held | the interval over which the polls allow the resolver to have held the record: from the last successful poll before the first poll that saw it, to the latest poll plus its `ttl` (the latest poll, for local data). It is a derivation of the polls, and "covered" says that rather than claiming the record was held throughout |
 | `resource_record_observation.held_in` (`cache`, `local_data`) | the two endpoints return the same shape and nothing says which part of the resolver a record lives in | the part of the resolver the record was held in, in Unbound's own words; it repeats the provider's kind because every search starts from it |
 | `resource_record_observation.host_label` | a local-data record carries a name and nothing more | **label** is DNS's word (RFC 1035, section 2.3.1), and the column is the first label of the host name the record names -- the owner of an A or AAAA record, the target of a PTR record -- exactly as `dhcp_lease.hostname_label` is for a lease |
 | `resource_record_read` | no endpoint says when it was last read successfully | the last successful **read** of one provider's records, kept so the start of a coverage interval survives a failed poll and a restart |
+| `source_availability.outcome` and its codes | OPNsense answers with an HTTP status and a body, and names no outcome of a probe as a whole: a 401 and a 403 are two statuses, "the service reported stopped" and "this resolver offers no cache read" are not statuses at all | **outcome** is the word the client already used for what one call turned into (`opnsense.Outcome`); the column carries it to the whole probe or read, from a closed set of codes listed under *`source_availability`*. Each code is the collector's own distinction made machine-readable, HTTP's where one applies (`not_found`, `denied` for 403, `authentication_failed` for 401), so no reader parses `detail` (SPEC-step-5b-widget-api.md, D1) |
+| `opnview_downtime`, an interval during which **opnview was not running** | no product `opnview` reads knows that its reader was absent: the firewall keeps serving, and the next poll is silent about what rotated out meanwhile | named for the fact recorded -- opnview not running -- rather than for any one source, because every source went unread at once; prefixed `opnview_` so it cannot be read as the firewall's own downtime, which no table here records |
+| `opnview_heartbeat` | the same: nothing upstream records that `opnview` was alive | **heartbeat** is the ordinary word for a periodic proof of life; the one row holds the last instant the service was known to run and whether it stopped cleanly there |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
@@ -232,6 +248,8 @@ interface_address
 interface_map
 interface_network
 measurement_sample
+opnview_downtime
+opnview_heartbeat
 owner
 owner_volume_aggregate_1h
 owner_volume_aggregate_24h
@@ -312,6 +330,7 @@ flow
 geo_asn
 interface_address
 measurement_sample
+opnview_downtime
 owner_volume_aggregate_1h
 owner_volume_aggregate_24h
 owner_volume_aggregate_30d
@@ -346,6 +365,7 @@ eve_ingest_cursor
 interface
 interface_map
 interface_network
+opnview_heartbeat
 owner
 provider
 provider_rule_info
@@ -367,6 +387,7 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `blocklist` | one row per distinct list name the resolver has reported; a resolver subscribes to tens of lists, not millions |
 | `interface_map` | one row per raw device name the firewall reports |
 | `retention_purge` | exactly one row, the furthest horizon the purge has applied |
+| `opnview_heartbeat` | exactly one row, the last instant the service was known to run |
 | `interface_network` | one row per network an interface has carried, detected by discovery or set by the operator; a firewall has a few per interface |
 | `rule` | one row per rule in the running ruleset |
 | `provider` | one row per implementation the project knows of; fifteen today, and a new one is an `INSERT`, not a stream |
@@ -763,6 +784,14 @@ the two it is reading. Nothing resolves the field to an `interface` row at
 ingest: a description is not an identity, and `store.ReadRuleLogging` counts a
 rule whose `interface` names nothing it can resolve as **unresolved** rather
 than placing it under a guess.
+
+**What a rule was written against is stored verbatim, since step 5B, and never
+evaluated.** `destination_net` holds the endpoint's field unchanged — an address, a
+network, an alias name or `any` — or `NULL` when the row does not report it (B8a of
+`specs/SPEC-step-5b-widget-api.md`, decision 12: the reason is the rule table, which
+shows it beside the rule). `opnview` matches no flow against it, resolves no alias in
+it and derives nothing from it: which rule a record matched is the `rid` the filter log
+names, never a criterion `opnview` re-evaluates.
 
 **Retention:** never purged. **Indexes:** the primary key and the uniqueness
 constraint on `pf_label`.
@@ -1224,6 +1253,15 @@ when somebody decided, and a `CHECK` keeps the two columns from disagreeing.
 **Identity:** `name`, unique. Two rows with the same observed name would be the
 same list.
 
+**`first_seen_at` and `last_seen_at` are the lookups' instants, and never move
+backwards** (decision 14 of `specs/SPEC-step-5b-widget-api.md`). `first_seen_at` is
+the earliest and `last_seen_at` the latest `looked_up_at` of a lookup naming the
+list. The resolver's ring buffer offers the same lookups again on every pass, and a
+pass may meet an older lookup after a newer one, so `store.UpsertBlocklist` only
+ever widens the two instants (`min` and `max`). Until step 5B both were the
+ingestion instant and the last was overwritten unconditionally, which made it the
+time `opnview` read the buffer rather than the time the list last refused anything.
+
 **The query that answers the question** is
 `-- diagnostic: Blocked lookups by list` in `sql/queries/diagnostics.sql`. It
 drives from `dns_resolution` with a `LEFT JOIN` to `blocklist`, so an
@@ -1269,19 +1307,43 @@ of `resource_record_observation` held in `local_data` whose owner name, and the
 PTR records whose target, has the logged name's first label — the same rule as the
 leases, through `host_label` — and that the local data held at the lookup's instant
 (`store.ResolveLoggedHostname`). Exactly one address answering gives
-`local_data_hostname`; two give `ambiguous_hostname`. Two leases naming the host
-are ambiguous whatever the local data holds: they already say two machines carried
-the name.
+`local_data_hostname`; two addresses of one family, or any three, give
+`ambiguous_hostname`. Two leases naming the host are ambiguous whatever the local
+data holds: they already say two machines carried the name.
+**The dual-stack case** (group C of `specs/SPEC-step-5b-widget-api.md`, decision
+15). A host override with an A and an AAAA record names one machine, and used to
+make every lookup logged under its name `ambiguous_hostname`. When the local data
+held **exactly one IPv4 and one IPv6 address under one name** at the lookup's
+instant — the owner of an A or AAAA record, or the target of a PTR record, compared
+without regard to case and with a trailing dot removed — the lookup's **querying
+family** decides: `client_family`, 4 or 6, read from the `family` field the query
+report carries on every row (`docs/opnsense-api-survey.md`, *The querying family
+behind a logged host name, read from source for step 5B*). With it, the lookup
+resolves to the address of that family as `local_data_hostname`. Without it — a row
+that reported no family, or `unix` — the lookup is **`dual_stack_hostname`**, its
+own state rather than a merge into `ambiguous_hostname`, because it is a different
+fact: one machine, two addresses, and no evidence which one asked. Nothing is
+guessed. The evidence is recorded **per lookup**, in `client_family`, so the retry
+below decides a waiting lookup from the same evidence ingest had. Two addresses of
+one family stay ambiguous, two addresses that share a first label but no name are two
+hosts and stay ambiguous, and a lease still wins.
 `client_resolution` records the outcome: `logged_address` (`client` was an
 address), `lease_hostname` (exactly one address answered through the leases;
 `client_address` is it and `client_hostname` the logged name), `local_data_hostname`
-(no lease named it and exactly one address answered through the local data; the
-same two columns), `ambiguous_hostname` (several did), `unknown_hostname` (neither
-a lease nor the local data named it) or `this_firewall_hostname` (`localhost`). In
-the last three cases `client_address` keeps the logged name verbatim, and the
-attribution reads no lookup that is not `logged_address`, `lease_hostname` or
-`local_data_hostname`: a name that does not resolve to one address does not say
-which machine asked.
+(no lease named it and exactly one address answered through the local data, or one
+of each family did and the querying family chose; the same two columns),
+`ambiguous_hostname` (several did), `dual_stack_hostname` (one of each family did,
+under one name, and the querying family was not reported), `unknown_hostname`
+(neither a lease nor the local data named it) or `this_firewall_hostname`
+(`localhost`). In the last four cases `client_address` keeps the logged name
+verbatim, and the attribution reads no lookup that is not `logged_address`,
+`lease_hostname` or `local_data_hostname`: a name that does not resolve to one
+address does not say which machine asked.
+**`client_family`** is the querying address's family, 4 or 6, as the query report's
+`family` field gives it (`ip4`, `ip6`), on every lookup whose row carries one, the
+address-logged ones included; NULL for a Dnsmasq lookup, a `unix` socket or an
+absent field. A `CHECK` holds it to 4 and 6. It is not part of `lookup_key`, so a
+lookup stored before the field was read keeps its key.
 
 **`client_is_this_firewall`** is 1 when the querier is this firewall — its address
 was held by the firewall at the lookup's instant, or it is a loopback address or
@@ -1291,8 +1353,9 @@ interface the address belonged to, or none for the loopback, in which case its
 
 **The retry, and the restart (cause H6).** A lookup can be read before the lease
 that names its host — every loop runs at start — so **every lease pass resolves
-again the `ambiguous_hostname` and `unknown_hostname` lookups no lease pass has
-examined since they were ingested**, each as of its own instant
+again the `ambiguous_hostname`, `dual_stack_hostname` and `unknown_hostname` lookups
+no lease pass has examined since they were ingested**, each as of its own instant
+and with its own stored querying family
 (`store.ResolveLoggedHostnames`), and stamps `hostname_examined_at`. The stamp is
 stored, so the first lease pass after a restart examines what the run before it
 left: 5A kept the point to resume from in memory, starting at the collector's
@@ -1344,7 +1407,11 @@ two:
 names by cause` in `sql/queries/diagnostics.sql` sorts every `unknown_hostname`
 lookup into the cause that left it so, and every `local_data_hostname` lookup into
 its own bin, *resolved by local data*; its last bin is now *neither a lease nor
-local data names the host*.
+local data names the host*. Since group C of `specs/SPEC-step-5b-widget-api.md` every
+`dual_stack_hostname` lookup has a bin of its own too, `dual_stack`: the local data
+named one machine under one address of each family and the lookup reported no
+querying family. A `local_data_hostname` lookup the querying family resolved stays in
+the `local_data` bin, since it is resolved.
 
 **Identity: `lookup_key`, unique — and `opnview` composes it, because the
 endpoint's own identifier does not exist.** `search_queries` returns a `uuid`
@@ -1426,6 +1493,21 @@ recorded* rows too. `idx_dns_resolution_domain_name`, on
 `(lower(rtrim(domain, '.')), looked_up_at)`, is the resolver-cache attribution's
 search from the names an address was held under to the lookups of those names; it
 indexes the comparison itself, so no second copy of the domain is stored.
+`idx_dns_resolution_name_client_id`, on `(lower(rtrim(domain, '.')), client_id,
+looked_up_at)`, and `idx_dns_resolution_name_client_address`, on
+`(lower(rtrim(domain, '.')), client_address, looked_up_at)`, bound that search by the
+lookup's client as well (B2 of `specs/SPEC-step-5b-widget-api.md`): the statement
+`attribution_name_lookups` is two disjoint branches joined by `UNION ALL`, one per
+side of its client predicate — by `client_id`, and by the address when either side
+has no `client_id` — and each is an index search on name and client, so a popular
+name looked up by many clients is no longer read whole before the client filter.
+The address branch has an index of its own rather than a rewrite onto
+`idx_dns_resolution_client`, because that index is bounded by client and not by name
+and would read every lookup the client made in the window. `sql/schema-checks.sh`
+asserts both branches' plans at both seed sizes. **Write cost:** `dns_resolution` is
+a growing table, and each of the two indexes adds one entry per stored lookup —
+about the size of the domain name plus two integers — and one B-tree insertion per
+ingest, on top of the six indexes the table already carried.
 
 ### `domain_attribution` — the site name a flow was given
 
@@ -1473,6 +1555,25 @@ falls back on timing:
   distinct domain**; two or more — a shared content-network address the client
   reached under two names it looked up — give no row. The window is the evidence's
   own validity, and the setting only caps it (decision 2);
+
+  **No CNAME is followed into the local data** (`specs/SPEC-resolver-cache-follow-ups.md`,
+  scope 1). A local-data A or AAAA record is evidence for one lookup only: a lookup
+  answered from `Local-data`, of the record's **own** owner name. A cached CNAME chain
+  whose last name is a local-data owner gives no local-data evidence for the name the
+  chain starts from. **The reason is how Unbound answers**: local data answers a query
+  that matches it for the query's own name (`unbound.conf(5)`, local-zone types
+  `static`, `transparent` and `typetransparent`), and the one CNAME local data may
+  carry, at the apex of a `redirect` zone, proceeds with upstream resolution "that
+  does not include the lookup in local zones" (`unbound.conf(5)`, local-zone type
+  `redirect`); a CNAME the iterator follows is resolved by recursion, not from local
+  data, so treating its target's local data as the answer would name a flow from
+  evidence Unbound never used. **Three places read the rule**, and all three stop at the
+  looked-up name: `exactCandidates` (`internal/store/attribute.go`), which builds the
+  exact candidates above; `answerAddresses` (`internal/store/records.go`), which counts
+  the local data of the name itself and never of a name a CNAME reached; and the
+  diagnostic `live_timing_fallback_other_family_cached`
+  (`sql/queries/diagnostics.sql`). The code states it once, beside `MaxCNAMELinks` in
+  `internal/store/records.go`;
 - **timing, `lookup_timing`, the fallback.** With no exact candidate, the 5A rule
   unchanged: a flow gets an attribution **exactly when** the eligible lookups by the
   same client in `[observed_at − max delay, observed_at]` name **exactly one
@@ -1777,6 +1878,51 @@ Availability is reachability. Which provider `opnview` reads is
 `provider.is_active`, and the diagnostic query
 `-- diagnostic: Source availability` in `sql/queries/diagnostics.sql` returns
 both, one row per registered provider.
+
+**The outcome code** (`SPEC-step-5b-widget-api.md`, D1). Beside the state, each
+row carries `outcome`: what the last probe or read turned into, from a closed set
+a `CHECK` holds (`store.AvailabilityOutcomes` is the same set, and a test compares
+the two). **Every collector writes the code with the detail, and no code reads
+`detail` to decide anything** — a test walks every Go and SQL file and fails on a
+comparison or match against it. `detail` stays, verbatim, as diagnostic text; the
+code is what an interface translates and what the widget API carries. The state
+and the code are independent facts: a MaxMind refresh that failed over databases
+still in use is `reachable` with `download_failed`. A probe round that finds a
+source healthy keeps the code of the last read or sampling pass it restates in the
+detail, so a row's code never contradicts its words.
+
+| Code | Meaning |
+|---|---|
+| `not_yet_probed` | the row the schema creates; nothing has asked yet |
+| `healthy` | the probe or read answered and was read |
+| `healthy_empty` | the read answered and returned no record: reachable and silent, which is not an absence of activity |
+| `partial_readings` | a sampling pass answered and some of its readings did not; the detail names them |
+| `present_but_disabled` | the component runs and the setting this source needs is off — a configuration state the user can change |
+| `service_not_running` | the service's status endpoint reported something other than running |
+| `authentication_failed` | HTTP 401: the API key and secret were refused; no privilege cures it |
+| `denied` | HTTP 403: the key's user lacks the privilege for the path |
+| `not_found` | HTTP 404: the firewall does not answer the path |
+| `server_error` | any other unsuccessful HTTP status |
+| `empty_body` | HTTP 200 with an empty body, a backend failure |
+| `result_failed` | HTTP 200 with OPNsense's `{"result": "failed"}` envelope |
+| `undecodable` | an answer whose body is not the shape the endpoint returns, or lacks the field it exists to carry |
+| `status_not_ok` | an envelope whose `status` is not `ok` — the Unbound diagnostics controller's `failed` when Unbound is not running |
+| `transport_failure` | no answer at all: the firewall was not reached |
+| `certificate_refused` | the firewall answered with a certificate `opnview` does not accept |
+| `request_not_made` | the probe or read ended before any request reached the firewall: no firewall URL configured, or a request `opnview`'s own guards refused |
+| `plugin_not_installed` | the end-of-life ISC DHCP plugin answered 404 |
+| `read_not_supported` | an implementation that answers and whose material `opnview` does not read, its field contract unverified (the ISC plugin) |
+| `no_cache_read` | a resolver that offers no cache read through the API (Dnsmasq) |
+| `no_local_data_read` | a resolver that offers no local-data read through the API (Dnsmasq) |
+| `log_grammar_not_recorded` | a resolver whose lookups are exposed only as free text under a grammar nobody has recorded (Dnsmasq) |
+| `no_licence_key` | the MaxMind refresh with no licence key stored |
+| `licence_key_undecryptable` | a stored licence key the key file beside the database cannot open |
+| `no_account_id` | the MaxMind refresh with no account ID stored |
+| `download_refused` | a download the server refused, its credentials not accepted |
+| `download_limit_reached` | a download refused because the account's daily limit is spent |
+| `download_failed` | a download that could not be completed |
+| `download_malformed` | a download that fetched something that is not the Public Suffix List |
+| `store_failure` | the source answered and `opnview` could not store what it returned: the fault is `opnview`'s database, not the source (the lease pass, `SPEC-step-5b-widget-api.md`, B8g, and since the 5B correction round the DNS-lookup pass and the resolver-cache and local-data record passes) |
 
 **Retention:** never purged. **Indexes:** the primary key.
 
@@ -2223,6 +2369,37 @@ one.
 **Counting** is decision 2, under `flow` and *The aggregate families*: a paired
 connection counts once, on its first leg.
 
+**A long span is paired in chunks, with the same result** (B8b of
+`specs/SPEC-step-5b-widget-api.md`). A reclassification of everything can move records
+across the whole retained history, and the pairing they call for used to read every
+`out` record of that span into memory inside one transaction, holding the single
+connection — and every collector's write — for as long as the history is long.
+`store.Pair` now cuts a span longer than `store.PairingChunkSeconds` (one hour, the
+finest aggregate slot) into chunks that tile it without overlap, decides every chunk's
+records first into one decision for the whole span, then writes each chunk against
+that decision in a transaction of its own. The decision for one record reads logged
+fields only, never the pairing columns, and the one step that needs more than a record
+— clearing a partner a record no longer has, unless another record now pairs with it —
+reads the whole span's decision, so the outcome is exactly that of one transaction over
+the span; a test asserts it on a fixture spanning several chunks with stale partners
+handed across them. A span within one chunk, the collectors' everyday case, is decided
+and written in one transaction as before.
+
+**The cost of a reclassification of everything — measured, with no budget** (B8h,
+decision 17). `sql/schema-checks.sh`, which the pre-deployment command runs, times
+`ReclassifyEverything` twice on the copy of its million-row seed it has just timed the widget
+response budgets on, rather than building a second million rows in Go (which took 4 min
+39 s): the second run moves nothing and measures the floor. Re-measured on 10 October 2026
+in the development container on 16 CPUs, over 1 000 202 flows, in the two pre-deployment
+runs of the 5B correction round: **2 min 4 s and 1 min 32 s** for the first run, which
+re-places every address and re-pairs and refreshes what moved, and **9.5 s and 5.6 s** for
+the second, which moves nothing. The spread between two runs of the same command on the
+same seed is that wide, so these are figures of an order, not a budget. The first
+measurement, 1 min 43 s and 7.4 s, was taken on a seed built in Go from the same file with
+the same parameters. Of the first run, the
+part a pass holds the single connection for is now one chunk of pairing or one slot of
+refresh at a time, not the whole.
+
 ### What step 5B reads — the store's contracts
 
 Step 5B serves widgets over HTTP and computes nothing the store already answers.
@@ -2250,6 +2427,27 @@ seconds, and treats a window as half-open, `[from, to)`.
 | `ReadInterfaceThroughput(ctx, device, measure, from, to)` | throughput between consecutive counter samples; a counter that went down is a `Reset` with no rate |
 | `IsFirewallAddress(ctx, address)` | whether an address is one the firewall holds, under any of `addr4`, `addr6`, `ipv4` and `ipv6` |
 | `InterfaceNetworks(ctx)` | every interface network, detected or the operator's, removed or not, and whether it counts now under decision D1 — what the screen that edits them reads. Its write path is `AddInterfaceNetwork`, `RemoveInterfaceNetwork`, `ConfirmInterfaceNetwork` and `SetLinkLocalEvidence`, each validated as *`interface_network`* says |
+| `WidgetRows(ctx, name, period, parameters, scan)` and `WidgetRow` | the widget API's reads (step 5B, `docs/widget-api.md`): one named statement of `internal/store/widget.sql` -- only a `widget_*` statement -- run on the read-only connections with the parameters it names, each row handed to the caller. Every statement is planned by `sql/schema-checks.sh` at both seed sizes like every other, and none scans a growing table. The shapes they serve are the API's; their contracts are the statements' comments and `docs/widget-api.md` |
+| `ReadPreparedStatementCount()` | how many statements the read connections have prepared: every read function's statement is prepared once and reused (B8d), which a test observes |
+| `ReadNotRunning(ctx, from, to)` | the intervals `opnview` was not running that meet a window (Group D): every widget reads them as gaps of every provider it binds. Its statement is `read_not_running` of `read.sql`, planned by `schema-checks` like every other; `ReadStatementsOutsideTheFiles` lists any statement the read connections ran that no statement file holds, and a test serving every widget type asserts the list is empty |
+
+**Where the read functions run (decision 10 and B8d of `specs/SPEC-step-5b-widget-api.md`).**
+Every read function above, and every widget statement, runs on a small pool of read-only
+connections (`internal/store/readpool.go`): four connections opened with
+`PRAGMA query_only`, after the schema is applied, beside the single read-write connection
+every write and derivation uses. Under WAL a reader sees the last committed transaction and
+neither side blocks the other, so a widget read no longer queues behind
+`ReclassifyEverything` and a long read no longer delays collection. Each statement text is
+prepared once on the pool and reused across calls; `database/sql` re-prepares it on each
+pool connection the first time that connection runs it, which is what makes one cache
+compatible with several connections. `Close` closes the pool first, so the writer's
+checkpoint is the last connection to close and the `-wal` and `-shm` companions are removed.
+
+**Three indexes the widget API's references need** (A12: no statement may scan a growing
+table): `idx_client_hostname` on `client (hostname)` for a `client` reference by host name,
+and `idx_geo_asn_country_code` and `idx_geo_asn_asn` on `geo_asn` for a `country` or an
+`operator` reference. Each costs one index entry per row of a table that grows with the
+machines and the addresses seen, not with the traffic.
 
 ### `setting` — configuration
 
@@ -2308,8 +2506,13 @@ Public Suffix List is checked for a newer copy.
 **`leg_pairing_window_seconds` is the pairing window** (default 1, decision 4 of the
 step-5A live corrections): how far apart, in seconds, the two records of one
 connection may have been logged and still be paired. It is a whole number of
-seconds, 0 or more, validated by `internal/config`; the schema writes its default
-row. **`lease_backend_failure_pass_limit` is how long a failing DHCP backend holds the
+seconds, 0 or more and **at most 60** (decision 13 of
+`specs/SPEC-step-5b-widget-api.md`), validated by `internal/config`, which refuses a
+larger value at load with a message naming the setting; the schema writes its default
+row. The bound exists because the two records of one connection are one packet logged
+on two interfaces within the same instant, and a window of minutes would pair records
+of different connections that merely share their ends and port, dropping a real
+connection from every total. **`lease_backend_failure_pass_limit` is how long a failing DHCP backend holds the
 host-name retry back** (default 3, defect L1 of
 `specs/SPEC-test-budget-and-two-live-defects.md`): how many lease passes in a row one
 backend may fail before a pass that read every other backend counts as complete, so the
@@ -2319,6 +2522,16 @@ of five minutes: longer than the one or two failed passes a restart of the backe
 service or of the firewall costs, and short enough that a backend that is gone for good
 holds nothing back for long. It is a whole number of passes, 1 or more, validated by
 `internal/config`; the schema writes its default row.
+**`heartbeat_interval_seconds`** (default 60) **and `downtime_threshold_seconds`**
+(default 300) govern `opnview_downtime`: how often the running service records
+that it is alive, and how long it must have been gone for the interval to be
+recorded. After a crash the last beat is the only bound held, so a minute keeps the
+recorded start within a minute of the real one for one single-row write a minute;
+five minutes is five beats, so a delayed beat never reads as downtime, and is the
+default lease and local-data interval, so a restart for an update records nothing
+while an absence long enough to leave a source unread for a whole poll is recorded.
+Both are positive whole numbers of seconds, the threshold longer than the interval,
+validated by `internal/config`; the schema writes their default rows.
 **`refresh_interval_discovery_seconds`** is read by the store as well as by the
 scheduler: it is the margin "held at an instant" allows either side of a sighting of
 this firewall's address, so the two cannot disagree.
@@ -2480,6 +2693,47 @@ keeping it would make the oldest edge of the history read as permanently broken.
 **Indexes:** the primary key, `idx_collection_gap_detected_at` for the purge,
 and `idx_collection_gap_interval` so "was this window covered" is an index
 search per provider.
+
+### `opnview_downtime` — an interval during which opnview was not running
+
+**Source: none**, like `collection_gap`, and for a stronger reason: while
+`opnview` is stopped every source goes unread at once, the firewall keeps
+serving, and the next poll returns what the firewall still holds and is silent
+about what rotated out meanwhile (`SPEC-step-5b-widget-api.md`, D2). The terms are
+`opnview`'s own; see *Vocabulary*.
+
+**How it is recorded.** `opnview_heartbeat` is one row: the last instant the
+service was known to run, and whether it stopped cleanly at that instant. The
+service writes it on start, every `heartbeat_interval_seconds` while it runs, and
+once more at a clean stop with `clean_stop` set. On start, before anything
+collects, it compares that row with the clock: a gap longer than
+`downtime_threshold_seconds` is written here as **one row**, from the last beat to
+the restart, with `clean_stop` saying whether the start of the interval is an exact
+stop instant or the last periodic beat of a process that ended without one — a
+crash, a kill, a power loss — after which the service may have run for up to one
+more heartbeat interval. A restart within the threshold writes nothing; a first
+start ever writes nothing, because no instant before it is known. A beat that
+finds its predecessor older than the threshold — a suspended host, a stopped and
+continued process — records that interval too, since every source experienced it
+as a stop and a start.
+
+**Its meaning.** Every provider went unread over the interval, so a widget reads
+it as a gap of every provider it binds, beside that provider's own
+`collection_gap` rows; `store.ReadNotRunning` returns the intervals overlapping a
+window. A figure over a window containing one is a lower bound because `opnview`
+was not running, which is a third sentence beside the observation-point limit and
+a source's own gap.
+
+**Why a table of its own, and not a `collection_gap` reason.** `collection_gap` is
+per provider: `provider_id` is `NOT NULL` and is the foreign key every "was this
+provider's window covered" search rests on. Written there, one interval would be
+one row per provider, or a `NULL` provider every reader of that table would have
+to learn to skip. Here it is one row per interval.
+
+**Retention:** purged by `detected_at`, as `collection_gap` is. **Indexes:** the
+primary key, `idx_opnview_downtime_detected_at` for the purge, and
+`idx_opnview_downtime_interval` for the overlap search. `opnview_heartbeat` is
+bounded at one row by a `CHECK (id = 1)`.
 
 ### `measurement_sample` — one numeric reading of one subject at one instant
 
@@ -2984,7 +3238,8 @@ Survey *Runtime discovery* (i) to (v).
 | `enabled` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.enabled`, since the step-5A live corrections, which reversed the earlier *not stored*: as coverage of the field, so a screen listing rules can say one is switched off. Nothing in the derivation reads it, and `rule` still names the `rid` of historical records whatever the rule's state now |
 | `interface` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.interface`, verbatim, since step 5A: configuration keys on a model rule, a description on a legacy row, empty on a floating rule. Which rules bear on a pair of interfaces is still derived from the flows actually observed; this column answers which rules do not log, per interface |
 | `protocol`, `ipprotocol`, `%protocol`, `%ipprotocol` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — a rule's protocol criterion. `flow.protocol` carries the protocol actually observed, and `opnview` never evaluates a criterion |
-| `source_net`, `source_port`, `destination_net`, `destination_port` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — the rule's match criteria, for the same reason: `opnview` joins an observed record to a rule identity and evaluates nothing |
+| `destination_net` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.destination_net`, verbatim, since step 5B, which reversed the earlier *not stored* (B8a of `specs/SPEC-step-5b-widget-api.md`, decision 12). The reason is the rule table: a reader looking at which rules fire is entitled to see what each rule was written against, and the field is the one criterion that says where a rule's traffic was going. It is **stored and never evaluated**: `opnview` matches no flow against it and derives nothing from it, for the reason below. A rule that does not report it stores `NULL`, not reported |
+| `source_net`, `source_port`, `destination_port` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — the rule's match criteria, for the same reason: `opnview` joins an observed record to a rule identity and evaluates nothing |
 | `categories` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — no entry in `docs/widget-catalogue.md` groups rules by category, and a category is a name, which nothing in this schema is allowed to classify by |
 | `sort_order` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **not stored** — the ordinal position of the rule in the ruleset, which changes on any edit and means nothing to a record written before the edit |
 | `legacy` | `/api/firewall/filter/search_rule` | Runtime discovery (ii) | **stored** — `rule.legacy`, since step 5A, because it says whether `rule.interface` holds keys or descriptions |
@@ -3152,9 +3407,22 @@ Interface idx_flow_src_interface_observed_at
 
 | Query | Index | Measures added for coverage |
 |---|---|---|
-| Overview | `idx_flow_observed_at` | `traffic_scope`, `action`, `packet_bytes`, `src_interface_id`, `dst_interface_id`, `src_client_id` |
+| Overview | `idx_flow_observed_at` | `traffic_scope`, `action`, `packet_bytes`, `src_interface_id`, `dst_interface_id`, `src_client_id`, `pair_outcome`, `interface_device` |
 | Matrix | `idx_flow_observed_at` | the same, plus `rule_id` and `rule_lookup_state` |
-| Interface | `idx_flow_src_interface_observed_at` | `src_client_id`, `packet_bytes`, `action`, `traffic_scope`, `dst_address` |
+| Interface | `idx_flow_src_interface_observed_at` | `src_client_id`, `packet_bytes`, `action`, `traffic_scope`, `dst_address`, `pair_outcome`, `interface_device` |
+
+**A paired connection counts once in the screen queries, since step 5B** (B8c of
+`specs/SPEC-step-5b-widget-api.md`). Overview, Matrix and Interface read
+`classified_flow` and keep the rows whose `exit_leg_device` is `NULL`, and the Map
+keeps the 24 h aggregate's rows whose `exit_leg_device` is `NULL`, so the second record
+of a connection logged on two interfaces is left out, as `store.ReadVolumeWindow`'s
+`Total` leaves it out. `exit_leg_device` is computed from `pair_outcome` and
+`interface_device`, which is why both were added to the two covering indexes: without
+them each covered plan would fetch every row to tell a second leg from a first. The
+Matrix no longer drops the flows with no source interface, so what came from outside
+or from this firewall has its row and the Matrix sums to the window's total;
+`sql/schema-checks.sh` asserts that the Overview and Matrix totals equal the
+volume-window total on a seed holding paired connections.
 
 The other four are **not** covered, and are not claimed to be:
 

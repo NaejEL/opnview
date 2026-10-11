@@ -37,6 +37,15 @@ set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DATA_DIR="${OPNVIEW_DATA_DIR:-/data}"
+# Refused before anything is created when it is relative or shows Git-Bash path
+# conversion (decision 16 of specs/SPEC-step-5b-widget-api.md); ci/data-dir-guard.sh
+# says why.
+# shellcheck source=ci/data-dir-guard.sh
+. "$REPO_ROOT/ci/data-dir-guard.sh"
+if ! check_data_dir "$DATA_DIR"; then
+  printf -- 'schema-checks: FAILED before any check\n' >&2
+  exit 1
+fi
 
 # The schema and the purge live beside the code that applies them, in
 # internal/store, and they are embedded into the binary from there. Go's embed
@@ -548,6 +557,9 @@ resolve_scans() {
         if [ -z "$table" ]; then
             table="$token"
         fi
+        # classified_flow is a view over flow alone, which the screen queries read
+        # since B8c of specs/SPEC-step-5b-widget-api.md: a scan of it IS a scan of flow.
+        [ "$table" = 'classified_flow' ] && table='flow'
         printf -- '%s\n' "$table"
     done
 }
@@ -609,18 +621,70 @@ demo_index_drop "$WORK/screens/07_Map.sql" 'Map' 'uq_volume_aggregate_24h_slot' 
 check_ge 'C5A-AC9 the seed holds rejects and unknown decisions to tell the rule apart' 2 \
     "$(q "$MAIN_DB" "SELECT (SELECT count(*) > 0 FROM flow WHERE action = 'reject')
         + (SELECT count(*) > 0 FROM flow WHERE action = 'unknown');")"
+# Restated by B8c of specs/SPEC-step-5b-widget-api.md: the direct counts leave out the
+# second legs, as the screen queries now do, and the Matrix keeps the row of what came
+# from outside or from this firewall.
 check 'C5A-AC9 the Overview counts every reject as blocked and every pass, and only those, as allowed' \
     "$(q "$MAIN_DB" "SELECT sum(CASE WHEN action IN ('block', 'reject') THEN 1 ELSE 0 END) || '|' ||
-        sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) FROM flow
-        WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END;")" \
+        sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) FROM classified_flow
+        WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND exit_leg_device IS NULL;")" \
     "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
         "SELECT sum(blocked_count) || '|' || sum(allowed_count) FROM (" ');')")"
 check 'C5A-AC9 the Matrix counts every reject as blocked and no unknown as allowed' \
     "$(q "$MAIN_DB" "SELECT sum(CASE WHEN action IN ('block', 'reject') THEN 1 ELSE 0 END) || '|' ||
-        sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) FROM flow
-        WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND src_interface_id IS NOT NULL;")" \
+        sum(CASE WHEN action = 'pass' THEN 1 ELSE 0 END) FROM classified_flow
+        WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND exit_leg_device IS NULL;")" \
     "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/02_Matrix.sql" \
         "SELECT sum(blocked_connections) || '|' || sum(allowed_connections) FROM (" ');')")"
+
+# S5B-AC30 (B8c of specs/SPEC-step-5b-widget-api.md): a paired connection counts once
+# in the screen queries. The Overview and Matrix byte totals and connection counts equal
+# what store.ReadVolumeWindow's Total sums over the same window -- every classified_flow
+# row whose exit_leg_device is NULL -- on a seed that holds paired connections in the
+# window, so a query that still counted a second leg would differ by its bytes.
+check_ge 'S5B-AC30 the screen window holds second legs, so the totals below have teeth' 1 \
+    "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE pair_outcome = 'second_leg'
+        AND observed_at >= $WINDOW_START AND observed_at < $WINDOW_END;")"
+SCREEN_TOTAL="$(q "$MAIN_DB" "SELECT sum(packet_bytes) || '|' || count(*) FROM classified_flow
+    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND exit_leg_device IS NULL;")"
+check 'S5B-AC30 the Overview total equals the volume-window total, second legs counted once' \
+    "$SCREEN_TOTAL" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
+        "SELECT sum(observed_bytes) || '|' || sum(flow_count) FROM (" ');')")"
+check 'S5B-AC30 the Matrix total equals the volume-window total, second legs counted once' \
+    "$SCREEN_TOTAL" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/02_Matrix.sql" \
+        "SELECT sum(observed_bytes) || '|' ||
+                (sum(allowed_connections) + sum(blocked_connections)
+                 + (SELECT count(*) FROM classified_flow WHERE action = 'unknown'
+                    AND observed_at >= $WINDOW_START AND observed_at < $WINDOW_END
+                    AND exit_leg_device IS NULL)) FROM (" ');')")"
+check 'S5B-AC30 the Map reads no second leg of the 24 h aggregate' \
+    "$(q "$MAIN_DB" "SELECT sum(v.bytes) FROM volume_aggregate_24h AS v
+        WHERE v.peer_address IS NOT NULL
+          AND v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END
+          AND v.exit_leg_device IS NULL;")" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/07_Map.sql" \
+        'SELECT sum(observed_bytes) FROM (' ');')")"
+# Item D of the 5B correction round (docs/widget-catalogue.md, Part 4, item 2): the Map
+# reads geo_asn through a LEFT JOIN, so a peer the cache holds no row for keeps its
+# volume, under 'no_row', instead of vanishing from the total as the inner JOIN made it.
+# Inside a transaction that is rolled back, the cache row of one peer in the window is
+# removed: the total does not move and a no_row group appears.
+MAP_TOTAL="$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/07_Map.sql" \
+    'SELECT sum(observed_bytes) FROM (' ');')")"
+check 'D-MAP the Map keeps the volume of a peer with no geo_asn row, under no_row' \
+    "$MAP_TOTAL|1" \
+    "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/07_Map.sql" \
+        "BEGIN;
+         DELETE FROM geo_asn WHERE address = (SELECT peer_address FROM volume_aggregate_24h
+             WHERE peer_address IS NOT NULL AND exit_leg_device IS NULL
+               AND period_start_at >= $WINDOW_START AND period_start_at < $WINDOW_END
+             ORDER BY bytes DESC LIMIT 1);
+         SELECT sum(observed_bytes) || '|' || max(geo_lookup_state = 'no_row') FROM (" \
+        '); ROLLBACK;')")"
+# And live_paired_counted_twice stays 0: asserted on both seeds below, under LC-AC11,
+# where the diagnostic queries are split.
 check 'C5A-AC9 blocked_event holds every block and every reject, and nothing else' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM flow WHERE action IN ('block', 'reject');")|0" \
     "$(q "$MAIN_DB" "SELECT count(*) FROM blocked_event;")|$(q "$MAIN_DB" \
@@ -945,7 +1009,7 @@ done
 # GAP-AC5: the two tables this cycle added are classified growing and are purged,
 # because each accumulates one row per pass and would otherwise grow without
 # bound from the first day.
-for t in collection_gap measurement_sample purged_flow_hour address_classification \
+for t in collection_gap opnview_downtime measurement_sample purged_flow_hour address_classification \
          peer_volume_aggregate_1h peer_volume_aggregate_24h peer_volume_aggregate_7d \
          peer_volume_aggregate_30d; do
     if grep -qx "$t" "$WORK/growing.txt"; then
@@ -1213,22 +1277,25 @@ family_both 'Client' "$WORK/screens/04_Client.sql" 'dst_address'
 family_both 'Blocked' "$WORK/screens/05_Blocked.sql" 'src_address'
 family_both 'Alerts' "$WORK/screens/06_Alerts.sql" 'src_address'
 
-WINDOW_FLOWS="$(q "$MAIN_DB" "SELECT count(*) FROM flow
-    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END;")"
-WINDOW_FLOWS_V6="$(q "$MAIN_DB" "SELECT count(*) FROM flow
-    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND ip_version = 6;")"
+# Restated by B8c of specs/SPEC-step-5b-widget-api.md: every connection once -- the
+# second legs left out -- and, for the Matrix, every source, the outside one included.
+WINDOW_FLOWS="$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
+    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND exit_leg_device IS NULL;")"
+WINDOW_FLOWS_V6="$(q "$MAIN_DB" "SELECT count(*) FROM classified_flow
+    WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END AND exit_leg_device IS NULL
+      AND ip_version = 6;")"
 check_ge 'V6-AC3 the Overview window holds flows of both families to count' 1 "$WINDOW_FLOWS_V6"
-check 'V6-AC3 the Overview query counts every flow in the window, both families included' \
+check 'V6-AC3 the Overview query counts every connection in the window once, both families included' \
     "$WINDOW_FLOWS" \
     "$(run_query "$MAIN_DB" "$(wrap_query "$WORK/screens/01_Overview.sql" \
         'SELECT sum(flow_count) FROM (' ');')")"
 
-WINDOW_BYTES="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM flow
+WINDOW_BYTES="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM classified_flow
     WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END
-      AND src_interface_id IS NOT NULL;")"
-WINDOW_BYTES_V6="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM flow
+      AND exit_leg_device IS NULL;")"
+WINDOW_BYTES_V6="$(q "$MAIN_DB" "SELECT sum(packet_bytes) FROM classified_flow
     WHERE observed_at >= $WINDOW_START AND observed_at < $WINDOW_END
-      AND src_interface_id IS NOT NULL AND ip_version = 6;")"
+      AND exit_leg_device IS NULL AND ip_version = 6;")"
 check_ge 'V6-AC3 the Matrix window holds IPv6 bytes to sum' 1 "$WINDOW_BYTES_V6"
 check 'V6-AC3 the Matrix query sums every byte in the window, both families included' \
     "$WINDOW_BYTES" \
@@ -1236,12 +1303,13 @@ check 'V6-AC3 the Matrix query sums every byte in the window, both families incl
         'SELECT sum(observed_bytes) FROM (' ');')")"
 
 MAP_BYTES="$(q "$MAIN_DB" "SELECT sum(v.bytes) FROM volume_aggregate_24h AS v
-    JOIN geo_asn AS g ON g.address = v.peer_address
-    WHERE v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END;")"
+    WHERE v.peer_address IS NOT NULL
+      AND v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END
+      AND v.exit_leg_device IS NULL;")"
 MAP_BYTES_V6="$(q "$MAIN_DB" "SELECT sum(v.bytes) FROM volume_aggregate_24h AS v
-    JOIN geo_asn AS g ON g.address = v.peer_address
-    WHERE v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END
-      AND v.peer_address LIKE '%:%';")"
+    WHERE v.peer_address IS NOT NULL
+      AND v.period_start_at >= $WINDOW_START AND v.period_start_at < $WINDOW_END
+      AND v.exit_leg_device IS NULL AND v.peer_address LIKE '%:%';")"
 check_ge 'V6-AC3 the Map window reaches IPv6 destinations' 1 "$MAP_BYTES_V6"
 check 'V6-AC3 the Map query sums every enriched destination, both families included' \
     "$MAP_BYTES" \
@@ -1930,6 +1998,8 @@ $REPO_ROOT/docs/data-model.md
 $REPO_ROOT/docs/architecture.md
 $REPO_ROOT/internal/store/derive.sql
 $REPO_ROOT/internal/store/read.sql
+$REPO_ROOT/internal/store/widget.sql
+$REPO_ROOT/docs/widget-api.md
 $REPO_ROOT/internal/store/aggregate.go
 $REPO_ROOT/internal/store/attribute.go
 $REPO_ROOT/internal/store/classify.go
@@ -2194,6 +2264,30 @@ expect_sql_failure 'PN-AC10 an availability row for a provider that does not exi
     "INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
      VALUES (999999999, 'reachable', 'pn-ac10', NULL, $NOW);"
 
+# AD1 (SPEC-step-5b-widget-api.md, D1): the outcome code is a closed set held by a
+# CHECK, and a fresh row carries the not-yet-probed code beside the state.
+check 'AD1 every fresh availability row carries the not_yet_probed outcome' "$FRESH_PROVIDERS" \
+    "$(q "$FRESH_DB" "SELECT count(*) FROM source_availability WHERE outcome = 'not_yet_probed';")"
+expect_sql_failure 'AD1 an outcome outside the closed set is rejected' "$FRESH_DB" \
+    "UPDATE source_availability SET outcome = 'probably_fine'
+     WHERE provider_id = (SELECT min(id) FROM provider);"
+expect_sql_success 'AD1 an outcome inside the closed set is accepted' "$FRESH_DB" \
+    "UPDATE source_availability SET outcome = 'authentication_failed'
+     WHERE provider_id = (SELECT min(id) FROM provider);"
+
+# AD3 (D2): the heartbeat is one row, and an interval opnview was not running is
+# a positive span.
+expect_sql_success 'AD3 the heartbeat row is written' "$FRESH_DB" \
+    "INSERT INTO opnview_heartbeat (id, beat_at, clean_stop) VALUES (1, $NOW, 0);"
+expect_sql_failure 'AD3 a second heartbeat row is rejected' "$FRESH_DB" \
+    "INSERT INTO opnview_heartbeat (id, beat_at, clean_stop) VALUES (2, $NOW, 0);"
+expect_sql_failure 'AD3 an interval opnview was not running that does not move forward is rejected' "$FRESH_DB" \
+    "INSERT INTO opnview_downtime (interval_start_at, interval_end_at, clean_stop, detected_at)
+     VALUES ($NOW, $NOW, 0, $NOW);"
+expect_sql_success 'AD3 an interval opnview was not running is recorded' "$FRESH_DB" \
+    "INSERT INTO opnview_downtime (interval_start_at, interval_end_at, clean_stop, detected_at)
+     VALUES ($((NOW - 600)), $NOW, 1, $NOW);"
+
 check 'VOC-AC4 a freshly migrated database attributes nothing to anybody' '0' \
     "$(q "$FRESH_DB" 'SELECT count(*) FROM owner;')"
 check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
@@ -2302,12 +2396,15 @@ printf -- '  provider availability diagnostic:\n'
 sed 's/^/    /' "$WORK/availability.txt"
 check 'PN-AC13 the diagnostic returns one row per registry row' "$PROVIDER_COUNT" \
     "$(wc -l < "$WORK/availability.txt" | tr -d ' ')"
-check 'PN-AC13 every diagnostic row carries a kind, a key, a state, a probe and an active flag' '0' \
-    "$(awk -F'|' 'NF < 8 || $1 == "" || $2 == "" || $4 == "" || $5 == "" || $8 == "" { n++ }
+# Restated for the outcome column (SPEC-step-5b-widget-api.md, D1), which the
+# diagnostic returns fifth: kind, key, name, state, outcome, probe, detail,
+# checked_at, active.
+check 'PN-AC13 every diagnostic row carries a kind, a key, a state, an outcome, a probe and an active flag' '0' \
+    "$(awk -F'|' 'NF < 9 || $1 == "" || $2 == "" || $4 == "" || $5 == "" || $6 == "" || $9 == "" { n++ }
                   END { print n + 0 }' "$WORK/availability.txt")"
 check 'PN-AC13 the diagnostic names every active provider, two DHCP servers included' \
     "$ACTIVE_PROVIDER_COUNT" \
-    "$(awk -F'|' '$8 == 1 { n++ } END { print n + 0 }' "$WORK/availability.txt")"
+    "$(awk -F'|' '$9 == 1 { n++ } END { print n + 0 }' "$WORK/availability.txt")"
 # And each of the two DHCP servers carries ITS OWN probe: one service-status
 # endpoint informing two registry rows would be the smear the seam exists to
 # prevent, and with two servers active it would now be invisible in a total.
@@ -3139,6 +3236,7 @@ section 'S5A-AC35 — no derivation or read statement plans a scan of a growing 
 # statement's scan.
 DERIVE_FILE="$REPO_ROOT/internal/store/derive.sql"
 READ_FILE="$REPO_ROOT/internal/store/read.sql"
+WIDGET_FILE="$REPO_ROOT/internal/store/widget.sql"
 split_statements() {
     local src="$1" outdir="$2"
     mkdir -p "$outdir"
@@ -3156,6 +3254,7 @@ split_statements() {
 rm -rf "$WORK/statements"
 split_statements "$DERIVE_FILE" "$WORK/statements"
 split_statements "$READ_FILE" "$WORK/statements"
+split_statements "$WIDGET_FILE" "$WORK/statements"
 STATEMENT_COUNT="$(find "$WORK/statements" -name '*.sql' | wc -l | tr -d ' ')"
 check_ge 'S5A-AC35 the statement files hold the derivation and read statements' 40 "$STATEMENT_COUNT"
 
@@ -3234,6 +3333,30 @@ check_ge 'S5A-AC35 every statement and every period of every template was planne
 check 'S5A-AC35 every statement plans against the schema' '' "$UNPLANNABLE"
 check 'S5A-AC35 no derivation or read statement scans a growing table, at either seed size' \
     '' "$SCANNING"
+# B2 of specs/SPEC-step-5b-widget-api.md (AC22): the exact attribution's search for
+# the lookups of one name by one client is bounded by name AND client on both
+# branches of its client predicate -- by client_id, and by the address -- at both
+# seed sizes, and not by the name alone.
+for db in "$MAIN_DB" "$SCALE_DB"; do
+    tag="$(basename "$db" .db)"
+    plan_statement "$db" "$WORK/statements/attribution_name_lookups.sql" > "$WORK/stmt_plan.txt" 2>&1
+    check "S5B-AC22 $tag: the client_id branch searches by name and client_id" 1 \
+        "$(grep -cE 'SEARCH r USING INDEX idx_dns_resolution_name_client_id \(<expr>=\? AND client_id=\? AND looked_up_at>\? AND looked_up_at<\?\)' \
+            "$WORK/stmt_plan.txt")"
+    check "S5B-AC22 $tag: the address branch searches by name and client_address" 1 \
+        "$(grep -cE 'SEARCH a USING INDEX idx_dns_resolution_name_client_address \(<expr>=\? AND client_address=\? AND looked_up_at>\? AND looked_up_at<\?\)' \
+            "$WORK/stmt_plan.txt")"
+done
+# B8a (AC28): the seed fills rule.destination_net at every size, and leaves it NULL --
+# not reported -- on some rules, as the endpoint may.
+for db in "$MAIN_DB" "$ALT_DB" "$SCALE_DB"; do
+    tag="$(basename "$db" .db)"
+    check_ge "S5B-AC28 $tag: the seed stores destination_net on rules" 1 \
+        "$(q "$db" "SELECT count(*) FROM rule WHERE destination_net IS NOT NULL;")"
+    check_ge "S5B-AC28 $tag: the seed leaves destination_net unreported on some rules" 1 \
+        "$(q "$db" "SELECT count(*) FROM rule WHERE destination_net IS NULL;")"
+done
+
 # And the check has teeth: a statement that does scan flow is caught, through an
 # alias and through the view.
 printf -- 'SELECT count(*) FROM classified_flow AS z WHERE z.packet_bytes > 0;\n' \
@@ -3241,6 +3364,51 @@ printf -- 'SELECT count(*) FROM classified_flow AS z WHERE z.packet_bytes > 0;\n
 plan_statement "$MAIN_DB" "$WORK/statements/teeth.sql.txt" > "$WORK/stmt_plan.txt" 2>&1
 check 'S5A-AC35 the scan check catches a scan of flow hidden behind the view and an alias' 'flow' \
     "$(scanned_growing_tables "$WORK/statements/teeth.sql.txt" "$WORK/stmt_plan.txt" | tr -d '\n')"
+
+# ===========================================================================
+section 'S5B-AC18 — every served widget type answers within its response budget'
+# ===========================================================================
+# A14 and decision 9 of specs/SPEC-step-5b-widget-api.md: every served type, at its
+# defaults, for 24h and 30d, is timed on a copy of the 100 000-row seed (250 ms and 500 ms)
+# and of the 1 000 000-row one (1 s and 2 s), at the seed's own instant; the median of three
+# is reported, and a figure over its budget fails the run. The copies are taken before any
+# check below writes to the seeds, and live in this run's own mktemp directory, removed with
+# it; ci/widgetbudget opens a directory holding an opnview.db, as the product does.
+budget_seed() {
+    local db="$1" label="$2" day="$3" month="$4" dir="$WORK/budget-$2"
+    mkdir -p "$dir"
+    sqlite3 "$db" "PRAGMA wal_checkpoint(TRUNCATE);" > /dev/null
+    cp -- "$db" "$dir/opnview.db"
+    if (cd "$REPO_ROOT" && go run ./ci/widgetbudget -data-dir "$dir" -now "$NOW" -label "$label" \
+        -budget-24h "$day" -budget-30d "$month"); then
+        pass "S5B-AC18 every served type answers within its budget on the $label seed"
+    else
+        fail "S5B-AC18 a served type is over its response budget on the $label seed"
+    fi
+}
+budget_seed "$MAIN_DB" 100k 250ms 500ms
+budget_seed "$SCALE_DB" 1m 1s 2s
+
+# ===========================================================================
+section 'S5B-AC35 — the wall time of ReclassifyEverything at the 1 000 000-row seed'
+# ===========================================================================
+# B8h and decision 17 of specs/SPEC-step-5b-widget-api.md: measured and printed, with no
+# budget, so this fails only when the reclassification itself fails. It runs on the copy
+# of the million-row seed the response budgets above were just timed on, which nothing
+# reads after this, rather than on a second million rows seeded in Go: the seed is the
+# same file with the same parameters, and building it again cost four and a half minutes.
+# Its own build tag rather than `predeployment`, and no -race, because a race-instrumented
+# run would measure the race detector.
+if (cd "$REPO_ROOT" && OPNVIEW_RECLASSIFY_SEED_DIR="$WORK/budget-1m" OPNVIEW_RECLASSIFY_SEED_NOW="$NOW" \
+        go test -count=1 -timeout 60m -tags reclassifycost -v \
+        -run '^TestReclassifyEverythingWallTimeAtTheMillionRowSeed$' ./internal/collect/) \
+        > "$WORK/reclassify_cost.txt" 2>&1; then
+    grep -E '^reclassify-cost:' "$WORK/reclassify_cost.txt" | sed 's/^/  /'
+    pass 'S5B-AC35 ReclassifyEverything ran twice on the million-row seed, the second run moving nothing'
+else
+    sed 's/^/  /' "$WORK/reclassify_cost.txt" | tail -n 20
+    fail 'S5B-AC35 ReclassifyEverything failed on the million-row seed'
+fi
 
 # ===========================================================================
 section 'S5A-AC35 — the seed fills every new table and column, in both families'
@@ -3271,9 +3439,10 @@ for db in "$MAIN_DB" "$ALT_DB"; do
     check "C5A-AC6 $tag: the link-local rule carries both values" '0,1' \
         "$(q "$db" "SELECT group_concat(link_local_evidence, ',') FROM
             (SELECT DISTINCT link_local_evidence FROM interface ORDER BY 1);")"
-    # Amended by the resolver-cache cycle: local_data_hostname is the sixth resolution.
+    # Amended by the resolver-cache cycle: local_data_hostname is the sixth resolution; and by
+    # group C of specs/SPEC-step-5b-widget-api.md: dual_stack_hostname is the seventh.
     check "C5A-AC8 $tag: dns_resolution carries every client resolution" \
-        'ambiguous_hostname,lease_hostname,local_data_hostname,logged_address,this_firewall_hostname,unknown_hostname' \
+        'ambiguous_hostname,dual_stack_hostname,lease_hostname,local_data_hostname,logged_address,this_firewall_hostname,unknown_hostname' \
         "$(q "$db" "SELECT group_concat(client_resolution, ',') FROM
             (SELECT DISTINCT client_resolution FROM dns_resolution ORDER BY 1);")"
     check "C5A-AC4 $tag: every client slot's distinct_peers is its peer rows, in every period" '0' \
@@ -3511,15 +3680,30 @@ for db in "$MAIN_DB" "$ALT_DB"; do
     check_ge "LC-AC13 $tag: the unresolved host-name diagnostic executes and sorts every lookup" 1 \
         "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | wc -l | tr -d ' ')"
     # Amended by the resolver-cache cycle (scope D3): the diagnostic sorts the lookups the
-    # local data resolved as well, into their own bin.
+    # local data resolved as well, into their own bin. Amended again by group C of
+    # specs/SPEC-step-5b-widget-api.md: the dual-stack lookups have a bin of their own too.
     check "LC-AC13 $tag: every unresolved lookup lands in exactly one cause" \
         "$(q "$db" "SELECT count(*) FROM dns_resolution
-            WHERE client_resolution IN ('unknown_hostname', 'local_data_hostname')
+            WHERE client_resolution IN ('unknown_hostname', 'local_data_hostname', 'dual_stack_hostname')
             AND looked_up_at >= $WINDOW_START AND looked_up_at < $WINDOW_END;")" \
         "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | awk -F'|' '{ s += $2 } END { print s + 0 }')"
+    # AC38 of specs/SPEC-step-5b-widget-api.md: the dual-stack bin, executed on the seed, holds
+    # exactly the dual-stack lookups of the window.
+    check "5B-AC38 $tag: the unresolved host-name diagnostic has its dual-stack bin" \
+        "dual_stack|$(q "$db" "SELECT count(*) FROM dns_resolution
+            WHERE client_resolution = 'dual_stack_hostname'
+            AND looked_up_at >= $WINDOW_START AND looked_up_at < $WINDOW_END;")" \
+        "$(run_query "$db" "$(diag_file 'Unresolved host names by cause')" | awk -F'|' '$1 == "dual_stack" { print $1 "|" $2 }')"
+    check "5B-AC38 $tag: the seed carries a lookup the local data resolved by its querying family" '1' \
+        "$(q "$db" "SELECT count(*) FROM dns_resolution WHERE client_family = 6
+            AND client_resolution = 'local_data_hostname';")"
     check_ge "LC-AC2 $tag: the anonymous north-south diagnostic executes" 1 \
         "$(run_query "$db" "$(diag_file live_anonymous_north_south)" | wc -l | tr -d ' ')"
 done
+expect_sql_failure '5B-AC38 a querying family other than 4 or 6 is rejected' "$MAIN_DB" \
+    "UPDATE dns_resolution SET client_family = 5 WHERE id = 1300000200;"
+expect_sql_failure '5B-AC38 a resolution outside the seven is rejected' "$MAIN_DB" \
+    "UPDATE dns_resolution SET client_resolution = 'dual_stack' WHERE id = 1300000200;"
 expect_sql_failure 'LC-AC9 a paired leg must name its partner' "$MAIN_DB" \
     "UPDATE flow SET paired_flow_id = NULL WHERE pair_outcome = 'second_leg';"
 expect_sql_failure 'LC-AC10 an outcome outside the three is rejected, the removed one included' "$MAIN_DB" \
@@ -4062,18 +4246,24 @@ check 'RR-AC6 the model document states that the record rate is a lower bound' '
 # ===========================================================================
 section 'PN-AC28 — shellcheck'
 # ===========================================================================
-# The static analyser is not part of the development image, which carries the
-# Go toolchain and sqlite3 and nothing else. When it is present it is run here;
-# otherwise it is run on the host. A missing tool is never counted as a pass.
+# The static analyser is part of the development image (the Dockerfile pins and
+# verifies it like the Go toolchain), so it runs here, over every shell script of the
+# repository the containers run: this harness and the scripts under ci/. A missing
+# tool is a failure, never a pass: the image promises it.
 if command -v shellcheck > /dev/null 2>&1; then
-    if shellcheck -S error "$REPO_ROOT/sql/schema-checks.sh"; then
-        pass 'PN-AC28 shellcheck reports no error-level finding on the harness'
-    else
-        fail 'PN-AC28 shellcheck reported an error-level finding on the harness'
-    fi
+    printf -- '  %s\n' "$(shellcheck --version | grep '^version:')"
+    for script in "$REPO_ROOT/sql/schema-checks.sh" "$REPO_ROOT/ci/checks.sh" \
+                  "$REPO_ROOT/ci/pre-deployment.sh" "$REPO_ROOT/ci/data-dir-guard.sh" \
+                  "$REPO_ROOT/ci/budget-self-test.sh"; do
+        name="${script#"$REPO_ROOT"/}"
+        if shellcheck -S error -x -P "$REPO_ROOT" "$script"; then
+            pass "PN-AC28 shellcheck reports no error-level finding on $name"
+        else
+            fail "PN-AC28 shellcheck reported an error-level finding on $name"
+        fi
+    done
 else
-    printf -- '  shellcheck is absent from this image; run it on the host:\n'
-    printf -- '    shellcheck sql/schema-checks.sh\n'
+    fail 'PN-AC28 shellcheck is absent from the development image, which pins it'
 fi
 
 # ===========================================================================

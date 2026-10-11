@@ -425,10 +425,10 @@ var (
 	// the dump's message-cache section, which Unbound's dump_msg_ref (daemon/cachedump.c)
 	// prints as `name class type flags`, with no TTL and no record data. The regular
 	// expression matches it with its optional TTL group absent, re.split yields None, and
-	// json.dumps writes null; `value` is then the flags, typically "0". The answer is {status: "ok", data: [...]}, or {status:
-	// "failed"} with no data when the script printed nothing -- which it does when Unbound
-	// is not running. Admitted by the ACL page "Services: Unbound" (page-services-unbound,
-	// pattern api/unbound/*).
+	// json.dumps writes null; `value` is then the flags, typically "0". The answer is
+	// {status: "ok", data: [...]}, or {status: "failed"} with no data when the script
+	// printed nothing -- which it does when Unbound is not running. Admitted by the ACL
+	// page "Services: Unbound" (page-services-unbound, pattern api/unbound/*).
 	UnboundDumpCache = Endpoint{
 		Path: "/api/unbound/diagnostics/dumpcache", Method: http.MethodGet,
 		SurveySection: sectionCache, UpstreamURL: srcUnboundDiag,

@@ -413,7 +413,7 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 		t.Errorf("the rate counts %d eligible flows, not the %d a client sent outside", rate.EligibleFlows, sent)
 	}
 	unbound, _ := network.db.ProviderID(ctx, "dns_lookup", "unbound")
-	if err := network.db.SetAvailability(ctx, unbound, StateReachable, "example probe", nil, network.now); err != nil {
+	if err := network.db.SetAvailability(ctx, unbound, StateReachable, OutcomeHealthy, "example probe", nil, network.now); err != nil {
 		t.Fatalf("recording the resolver reachable: %v", err)
 	}
 	rate, err = network.db.ReadAttributionRate(ctx, network.now-86400, network.now+1, nil)
@@ -448,7 +448,7 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("writing a past lookup: %v", err)
 	}
-	if err := network.db.SetAvailability(ctx, unbound, StateUnavailable, "example probe", nil, network.now); err != nil {
+	if err := network.db.SetAvailability(ctx, unbound, StateUnavailable, OutcomeTransportFailure, "example probe", nil, network.now); err != nil {
 		t.Fatalf("recording the resolver unavailable: %v", err)
 	}
 	rate, err = network.db.ReadAttributionRate(ctx, past, past+86400, nil)

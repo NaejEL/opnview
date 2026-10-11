@@ -26,11 +26,12 @@ func (dnsmasqLocalData) providerKey() string { return ProviderDnsmasq }
 
 // probe reports whether the service runs, and never makes the implementation separable.
 func (dnsmasqLocalData) probe(ctx context.Context, host session) (probeResult, error) {
-	return dnsmasqNoReadProbe(ctx, host, noLocalDataRead)
+	return dnsmasqNoReadProbe(ctx, host, noLocalDataRead, store.OutcomeNoLocalDataRead)
 }
 
 // localData refuses, with the reason.
 func (dnsmasqLocalData) localData(context.Context, session) (recordDump, probeResult, error) {
-	return recordDump{}, probeResult{probe: opnsense.DnsmasqStatus, state: store.StateUnavailable},
+	return recordDump{}, probeResult{probe: opnsense.DnsmasqStatus, state: store.StateUnavailable,
+			outcome: store.OutcomeNoLocalDataRead},
 		fmt.Errorf("%w: %s", ErrUnsupportedRead, noLocalDataRead)
 }

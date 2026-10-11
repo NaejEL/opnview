@@ -400,30 +400,15 @@ func answerAddresses(ctx context.Context, q querier, name string, at int64, with
 // at an instant: the A and AAAA records whose owner name, and the PTR records whose
 // target, has the host name's first label -- compared without regard to case and with a
 // trailing dot removed, the rule the leases are matched by. It returns the address when
-// exactly one answers, and how many did otherwise (0, or 2 for two or more).
+// exactly one answers, and how many did otherwise (0, or 2 or 3 for two or more). The
+// dual-stack rule, which reads the same records, is in ResolveLoggedHostname.
 func (s *Store) ResolveLocalDataHostname(ctx context.Context, hostname string, at int64) (string, int, error) {
-	text, err := Statement("local_data_addresses_for_hostname")
+	candidates, err := s.localDataCandidates(ctx, hostname, at)
 	if err != nil {
 		return "", 0, err
 	}
-	rows, err := s.db.QueryContext(ctx, text, sql.Named("label", HostnameLabel(hostname)), sql.Named("at", at))
-	if err != nil {
-		return "", 0, fmt.Errorf("store: local_data_addresses_for_hostname: %w", err)
+	if len(candidates) == 1 {
+		return candidates[0].address, 1, nil
 	}
-	defer func() { _ = rows.Close() }()
-	var addresses []string
-	for rows.Next() {
-		var address string
-		if err := rows.Scan(&address); err != nil {
-			return "", 0, fmt.Errorf("store: local_data_addresses_for_hostname: %w", err)
-		}
-		addresses = append(addresses, address)
-	}
-	if err := rows.Err(); err != nil {
-		return "", 0, fmt.Errorf("store: local_data_addresses_for_hostname: %w", err)
-	}
-	if len(addresses) == 1 {
-		return addresses[0], 1, nil
-	}
-	return "", len(addresses), nil
+	return "", len(candidates), nil
 }

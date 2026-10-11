@@ -14,7 +14,7 @@ import (
 // same files and records the query plan of every statement at both seed sizes, so
 // the text that runs is the text that is checked and there is no second copy.
 //
-//go:embed derive.sql read.sql
+//go:embed derive.sql read.sql widget.sql
 var statementFiles embed.FS
 
 // statementMarker begins each statement in the two files.
@@ -79,7 +79,7 @@ func IsPeriodTemplate(name string) bool {
 // loadStatements parses both files once.
 func loadStatements() {
 	statementsByID = map[string]string{}
-	for _, file := range []string{"derive.sql", "read.sql"} {
+	for _, file := range []string{"derive.sql", "read.sql", "widget.sql"} {
 		raw, err := statementFiles.ReadFile(file)
 		if err != nil {
 			statementsErr = fmt.Errorf("store: reading the embedded %s: %w", file, err)

@@ -97,9 +97,17 @@ func (c *Collector) collectMeasurementFrom(ctx context.Context, active activeSou
 	// nothing about the readings; what the last pass could not read is kept so the
 	// probe round restates it rather than erasing it.
 	c.setSampleAbsence(providerID, absent)
-	state := result.state
+	state, outcome := result.state, result.outcome
 	if state == "" {
 		state = store.StateReachable
 	}
-	return c.writeAvailability(ctx, providerID, state, result.probe, detail)
+	if outcome == "" {
+		outcome = store.OutcomeHealthy
+	}
+	// The volume half answered and some readings did not: the outcome says so, so a
+	// reader tells a partial pass from a whole one without reading the detail.
+	if len(missing) > 0 && (outcome == store.OutcomeHealthy || outcome == store.OutcomeHealthyEmpty) {
+		outcome = store.OutcomePartialReadings
+	}
+	return c.writeAvailability(ctx, providerID, state, outcome, result.probe, detail)
 }

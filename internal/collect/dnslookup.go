@@ -72,12 +72,13 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 		lastResult = result
 		if errors.Is(readErr, ErrUnsupportedRead) {
 			// Registered, probed, and not readable. A state with its reason, not a failed pass.
-			return c.writeAvailability(ctx, providerID, result.state, result.probe, readErr.Error())
+			return c.writeAvailability(ctx, providerID, result.state, result.outcome, result.probe,
+				readErr.Error())
 		}
 		if readErr != nil {
 			// The pages read before this one are stored, and are derived all the same.
 			if writeErr := c.writeAvailability(ctx, providerID, result.state,
-				result.probe, result.detail); writeErr != nil {
+				result.outcome, result.probe, result.detail); writeErr != nil {
 				return c.deriveAfter(ctx, stored, joinErrors([]error{readErr, writeErr}))
 			}
 			return c.deriveAfter(ctx, stored, readErr)
@@ -103,11 +104,11 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 			// without inserting it, and lost such a lookup (step-5A live corrections, F6).
 			lookup, err := c.buildDNSResolution(ctx, record, providerKey, now)
 			if err != nil {
-				return c.deriveAfter(ctx, stored, err)
+				return c.deriveAfter(ctx, stored, c.lookupStoreFailure(ctx, providerID, result, err))
 			}
 			inserted, err := c.store.StoreDNSResolution(ctx, lookup)
 			if err != nil {
-				return c.deriveAfter(ctx, stored, err)
+				return c.deriveAfter(ctx, stored, c.lookupStoreFailure(ctx, providerID, result, err))
 			}
 			if !inserted {
 				continue
@@ -139,7 +140,11 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 		detail = "reachable and the query report returned no lookup, which is not an absence of " +
 			"lookups"
 	}
-	if err := c.writeAvailability(ctx, providerID, store.StateReachable,
+	outcome := store.OutcomeHealthy
+	if totalRows == 0 {
+		outcome = store.OutcomeHealthyEmpty
+	}
+	if err := c.writeAvailability(ctx, providerID, store.StateReachable, outcome,
 		lastResult.probe, detail); err != nil {
 		return c.deriveAfter(ctx, stored, err)
 	}
@@ -169,6 +174,22 @@ func (c *Collector) CollectDNSLookup(ctx context.Context) error {
 	return c.derive(ctx, stored)
 }
 
+// lookupStoreFailure records that the resolver's query report answered and its lookups
+// could not be stored, and returns the store's error with any failure to record it. The
+// provider is unavailable, because what a widget reads did not receive the answer, and the
+// outcome names the fault as opnview's rather than the firewall's, as the lease pass does
+// (SPEC-step-5b-widget-api.md, B8g). The pages stored before the failure stay stored.
+func (c *Collector) lookupStoreFailure(ctx context.Context, providerID int64, result probeResult,
+	storeErr error) error {
+	detail := fmt.Sprintf("the resolver's query report answered and its lookups could not be stored: %v",
+		storeErr)
+	if writeErr := c.writeAvailability(ctx, providerID, store.StateUnavailable, store.OutcomeStoreFailure,
+		result.probe, detail); writeErr != nil {
+		return joinErrors([]error{storeErr, writeErr})
+	}
+	return storeErr
+}
+
 // buildDNSResolution turns one record into a row, resolving the querying machine.
 func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 	resolver string, now int64) (store.DNSResolution, error) {
@@ -187,7 +208,8 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 		if _, err := netip.ParseAddr(clientAddress); err != nil {
 			logged := clientAddress
 			clientHostname = &logged
-			clientAddress, resolution, err = c.store.ResolveLoggedHostname(ctx, logged, record.LookedUpAt)
+			clientAddress, resolution, err = c.store.ResolveLoggedHostname(ctx, logged, record.ClientFamily,
+				record.LookedUpAt)
 			if err != nil {
 				return store.DNSResolution{}, err
 			}
@@ -216,6 +238,7 @@ func (c *Collector) buildDNSResolution(ctx context.Context, record lookupRecord,
 		ClientAddress:    clientAddress,
 		ClientHostname:   clientHostname,
 		ClientResolution: resolution,
+		ClientFamily:     record.ClientFamily,
 		ClientID:         clientID,
 		Domain:           record.Domain,
 		Resolver:         resolver,

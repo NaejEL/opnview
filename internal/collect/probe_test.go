@@ -431,6 +431,7 @@ func TestTwoProvidersOfAnExclusiveKindTheFirewallDoesNotSeparateActivateNeitherA
 		return probeable{providerKey: key, run: func(context.Context, session) (probeResult, error) {
 			return probeResult{
 				state:     store.StateReachable,
+				outcome:   store.OutcomeHealthy,
 				probe:     opnsense.UnboundIsEnabled,
 				separable: true,
 			}, nil
@@ -472,6 +473,7 @@ func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *te
 		return probeable{providerKey: key, run: func(context.Context, session) (probeResult, error) {
 			return probeResult{
 				state:     store.StateReachable,
+				outcome:   store.OutcomeHealthy,
 				probe:     opnsense.KeaStatus,
 				separable: true,
 			}, nil
@@ -623,7 +625,8 @@ func (h *probeHarness) selectSource(t *testing.T, kind, providerKey, value strin
 // reachableAndSeparable is a probeable of an exclusive kind the firewall marks as serving.
 func reachableAndSeparable(key string) probeable {
 	return probeable{providerKey: key, run: func(context.Context, session) (probeResult, error) {
-		return probeResult{state: store.StateReachable, probe: opnsense.UnboundIsEnabled, separable: true}, nil
+		return probeResult{state: store.StateReachable, outcome: store.OutcomeHealthy,
+			probe: opnsense.UnboundIsEnabled, separable: true}, nil
 	}}
 }
 

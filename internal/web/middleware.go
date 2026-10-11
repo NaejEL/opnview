@@ -66,6 +66,10 @@ func (s *Server) guard(route Route) http.HandlerFunc {
 		// 2. The session.
 		session, err := s.resolveSession(request)
 		if route.Access == AccessAuthenticated && session == nil {
+			if route.JSON {
+				refuseUnauthenticatedJSON(writer, err)
+				return
+			}
 			s.refuseUnauthenticated(writer, request, err)
 			return
 		}

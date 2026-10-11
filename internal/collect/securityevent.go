@@ -71,7 +71,7 @@ func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeS
 		// The rotation view is unavailable, so a lost file cannot be told from a present one.
 		// The state is recorded and nothing is concluded.
 		if writeErr := c.writeAvailability(ctx, providerID, rotationResult.state,
-			rotationResult.probe, rotationResult.detail); writeErr != nil {
+			rotationResult.outcome, rotationResult.probe, rotationResult.detail); writeErr != nil {
 			return writeErr
 		}
 	}
@@ -90,7 +90,7 @@ func (c *Collector) collectSecurityEventFrom(ctx context.Context, active activeS
 
 	records, result, readErr := source.alerts(ctx, c, c.pages().SecurityEvent)
 	if writeErr := c.writeAvailability(ctx, providerID, result.state,
-		result.probe, result.detail); writeErr != nil {
+		result.outcome, result.probe, result.detail); writeErr != nil {
 		return writeErr
 	}
 	if readErr != nil {

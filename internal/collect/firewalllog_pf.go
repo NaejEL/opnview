@@ -46,7 +46,7 @@ func firewallLogQuery(limit int) url.Values {
 // reachable but silent. The second is a warning state and not an absence of traffic, which
 // is why the body's SHAPE is checked and not only its length.
 func (pfFilterLog) probe(ctx context.Context, host session) (probeResult, error) {
-	result := probeResult{probe: opnsense.FirewallLog}
+	result := probeResult{probe: opnsense.FirewallLog, outcome: store.OutcomeRequestNotMade}
 
 	response, err := host.call(ctx, opnsense.FirewallLog, opnsense.RequestOptions{
 		Query: firewallLogQuery(1),
@@ -55,6 +55,7 @@ func (pfFilterLog) probe(ctx context.Context, host session) (probeResult, error)
 		return result, err
 	}
 	if !response.OK() {
+		result.outcome = responseOutcome(response)
 		result.state = store.StateUnavailable
 		result.detail = response.Detail
 		return result, nil
@@ -63,14 +64,16 @@ func (pfFilterLog) probe(ctx context.Context, host session) (probeResult, error)
 	var records []json.RawMessage
 	if json.Unmarshal(response.Body, &records) != nil {
 		result.state = store.StateUnavailable
+		result.outcome = store.OutcomeUndecodable
 		result.detail = "HTTP 200 with a body that is not an array, which the survey names as a " +
 			"backend failure rather than an absence of traffic"
 		return result, nil
 	}
 
-	result.state = store.StateReachable
+	result.state, result.outcome = store.StateReachable, store.OutcomeHealthy
 	result.separable = true
 	if len(records) == 0 {
+		result.outcome = store.OutcomeHealthyEmpty
 		result.detail = "reachable but silent: the log returned no record, which is not an " +
 			"absence of traffic"
 	}
@@ -79,7 +82,8 @@ func (pfFilterLog) probe(ctx context.Context, host session) (probeResult, error)
 
 // records reads one page, newest first.
 func (pfFilterLog) records(ctx context.Context, host session, pageSize int) ([]logRecord, probeResult, error) {
-	result := probeResult{probe: opnsense.FirewallLog, state: store.StateUnavailable}
+	result := probeResult{probe: opnsense.FirewallLog, state: store.StateUnavailable,
+		outcome: store.OutcomeRequestNotMade}
 
 	response, err := host.call(ctx, opnsense.FirewallLog, opnsense.RequestOptions{
 		Query: firewallLogQuery(pageSize),
@@ -88,6 +92,7 @@ func (pfFilterLog) records(ctx context.Context, host session, pageSize int) ([]l
 		return nil, result, err
 	}
 	if !response.OK() {
+		result.outcome = responseOutcome(response)
 		result.detail = response.Detail
 		return nil, result, fmt.Errorf("collect: the filter log answered %s", response.Outcome)
 	}
@@ -95,13 +100,15 @@ func (pfFilterLog) records(ctx context.Context, host session, pageSize int) ([]l
 	// A JSON array, newest record first, not a paginated envelope.
 	var rows []decode.Object
 	if err := json.Unmarshal(response.Body, &rows); err != nil {
+		result.outcome = store.OutcomeUndecodable
 		result.detail = "HTTP 200 with a body that is not an array of records"
 		return nil, result, fmt.Errorf("collect: reading the filter log: %w", err)
 	}
 
-	result.state = store.StateReachable
+	result.state, result.outcome = store.StateReachable, store.OutcomeHealthy
 	result.separable = true
 	if len(rows) == 0 {
+		result.outcome = store.OutcomeHealthyEmpty
 		result.detail = "reachable but silent: the log returned no record, which is not an " +
 			"absence of traffic"
 		return nil, result, nil

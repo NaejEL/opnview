@@ -129,7 +129,9 @@ from `/api/unbound/diagnostics/*` and need no setting turned on.
 No line of this project is built or tested on the host OS, and **no Go
 toolchain is installed on the host**. The toolchain lives in a Debian
 `trixie-slim` container defined by `Dockerfile` and `docker-compose.yml`, with
-the Go version pinned and checksum-verified. The production target is an
+the Go version pinned and checksum-verified, and ShellCheck pinned and verified the
+same way, so the shell scripts are checked in the container by `sql/schema-checks.sh`
+rather than on the host. The production target is an
 unprivileged Debian LXC, and a Windows host masks exactly the bug classes
 `opnview` will hit: file mode and umask on the SQLite file and its `-wal` /
 `-shm` companions, filesystem case sensitivity, `SIGTERM` handling for the
@@ -180,6 +182,19 @@ maintainer's test budget of 7 October 2026,
   derivation, running the tests in parallel, rendering the web pages once per
   package and putting `/tmp` on a tmpfs, so nothing had to leave it.
 
+**`OPNVIEW_DATA_DIR` and Git Bash.** `sql/schema-checks.sh`, which the
+pre-deployment command runs, creates every database it uses under
+`OPNVIEW_DATA_DIR`, **`/data` by default** — the `data` volume, mounted outside the
+bind-mounted working tree so that no SQLite file or WAL companion lands in the
+repository. The value is a path **inside the container**: a relative one resolves
+against `/workspace`, the repository itself. From Git Bash, MSYS path conversion
+rewrites a POSIX-looking path into a Windows one before docker sees it — `/data`
+arrives as `C:/Program Files/Git/data` — so a docker command passing a container
+path from Git Bash is prefixed with `MSYS_NO_PATHCONV=1`. Both scripts refuse, before
+any step runs and naming the variable, a value that is not absolute or that carries a
+drive letter, a `:` or a `\` (`ci/data-dir-guard.sh`, decision 16 of
+`specs/SPEC-step-5b-widget-api.md`); leaving the variable unset is always right.
+
 `docker compose run --rm dev
 bash` opens an interactive shell in the same environment, and
 `.devcontainer/devcontainer.json` reuses the same `dev` service so VS Code
@@ -209,7 +224,7 @@ container run says nothing about deployment.
 |2|Data model and SQLite schema|Schema + model document|Done|
 |3|Static HTML mockup — overview|HTML file for a representative canvas, fake data|Done|
 |4|Backend: collection and storage|Collectors + persistence + tests|Done — validated against a live OPNsense 26.7 on 3 October 2026|
-|5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|In progress — 5A (correlation, classification, aggregation) implemented, **not yet validated live**: its first live run, on 5 October 2026, measured the defects `specs/SPEC-step-5a-live-corrections.md` corrects; the resolver-cache cycle (`specs/SPEC-resolver-cache-attribution.md`) attributes site names from the resolver cache first and by timing as the fallback, records the method on each attribution, resolves host names through local data and reads the processor from its stream, **implemented, not yet validated live**; 5B (HTTP API) to do|
+|5|Backend: correlation, classification, matrix|Aggregations + HTTP API + tests|In progress — 5A (correlation, classification, aggregation) implemented, **not yet validated live**: its first live run, on 5 October 2026, measured the defects `specs/SPEC-step-5a-live-corrections.md` corrects; the resolver-cache cycle (`specs/SPEC-resolver-cache-attribution.md`) attributes site names from the resolver cache first and by timing as the fallback, records the method on each attribution, resolves host names through local data and reads the processor from its stream, **implemented, not yet validated live**; 5B (the widget HTTP API, `docs/widget-api.md`; `specs/SPEC-step-5b-widget-api.md`) implemented, **not yet validated live**|
 |6|Backend: alerts and client correlation|Alert model + API + tests|To do|
 |7|Full frontend|Canvases, widgets, dashboard import/export|To do|
 |8|Install, packaging, documentation|`ct/install.sh`, compose, README|To do|
@@ -390,7 +405,10 @@ every step** above. Prerequisite: the containerised toolchain described under
 - Continuous incremental ingestion of `eve.json` with a durable cursor.
 - SQLite persistence, own history independent of the firewall's retention.
 - **The schema is one file, applied idempotently on every start, and there are
-  no migrations.** Nothing is deployed and nobody has data, so numbered files, a
+  no migrations.** The one deployment is the maintainer's live validation
+  installation, whose history is re-collectable from the firewall (a schema change
+  means rebuilding its database: step 5, *Rebuilding the database after step 5B*),
+  so numbered files, a
   `schema_version` table and a runner are machinery for a problem that does not
   exist. **Migrations begin the day the product runs somewhere with data worth
   keeping**: that file becomes the baseline and the first real migration is the
@@ -442,7 +460,28 @@ every step** above. Prerequisite: the containerised toolchain described under
   canvas will legitimately show different periods. A multi-series endpoint
   accepts a list of series and returns a list of series, each carrying its own
   availability state, so one missing source degrades one line rather than the
-  whole chart.
+  whole chart. *Implemented by 5B* (`specs/SPEC-step-5b-widget-api.md`): 26 of the
+  29 presets are served at `GET /api/widget/{type}`, the three alert presets wait for
+  step 6, and the contract is `docs/widget-api.md`.
+
+**Rebuilding the database after step 5B.** Step 5B edits `schema.sql` in place, as
+every step before step 8 does: it adds `source_availability.outcome`,
+`rule.destination_net`, `dns_resolution.client_family`, and the tables
+`opnview_heartbeat` and `opnview_downtime`. `CREATE TABLE IF NOT EXISTS` does not add
+a column to a table that already exists, so **a database written by any build before
+step 5B (`a1e2707` and earlier) does not open under it**: the service refuses to start
+with `ErrSchemaOutdated` (`internal/store/store.go`), which names this paragraph,
+rather than run on a half-applied schema. The one installation this concerns is the
+maintainer's live validation deployment, and its history is re-collectable: before
+the 5B build first starts there, the service is stopped and `opnview.db` — with its
+`-wal` and `-shm` companions, if a crash left them — is moved aside by exact path,
+never deleted, then the service starts on an empty database and collects again. The
+setup wizard runs again, because the accounts and settings live in the same file;
+the key file beside it is kept. What is lost is the history older than the firewall's
+own retention, and the live-validation baseline of
+`specs/SPEC-step-5b-widget-api.md` is therefore taken on the old build's database
+before the move. Migrations still begin with step 8, when an installation holds data
+somebody other than the maintainer cannot re-collect.
 
 **Validation**: the numbers are correct, and the heuristic's attribution rate
 is honest.

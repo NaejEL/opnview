@@ -24,6 +24,13 @@
 -- refusal that answers -- and a record whose action could not be named
 -- ('unknown') is counted as neither.
 --
+-- A paired connection counts once (decision 2 of the step-5A live corrections; B8c of
+-- specs/SPEC-step-5b-widget-api.md): every query below that sums volume or counts
+-- connections reads classified_flow and keeps the rows whose exit_leg_device is NULL,
+-- so the second record of a connection logged on two interfaces is left out, as
+-- store.ReadVolumeWindow's Total leaves it out. The Map reads the 24 h aggregate, whose
+-- second legs are rows of their own under exit_leg_device, and keeps the NULL ones too.
+--
 -- Observation-point limit: every byte figure below counts only traffic that
 -- crossed the firewall. Traffic between two clients behind one interface is
 -- invisible to all five sources, so every volume is a lower bound and the
@@ -41,16 +48,20 @@ SELECT
     sum(f.packet_bytes)                                     AS observed_bytes,
     count(DISTINCT f.src_interface_id)                        AS source_interface_count,
     count(DISTINCT f.src_client_id)                         AS source_client_count
-FROM flow AS f
+FROM classified_flow AS f
 WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end
+  AND f.exit_leg_device IS NULL
 GROUP BY f.traffic_scope
 ORDER BY observed_bytes DESC;
 
 -- screen: Matrix
 -- Source interface by destination interface: volume, allowed connections, blocked
 -- connections and the rules that matched. A destination interface of NULL is the
--- north-south column.
+-- north-south column, and a source interface of NULL is the row of what came from
+-- outside or from this firewall (traffic_scope says which): every connection has a
+-- cell, so the matrix sums to the window's total (B8c of
+-- specs/SPEC-step-5b-widget-api.md, which removed the filter that dropped that row).
 SELECT
     f.src_interface_id                                                AS src_interface_id,
     coalesce(ssrc.user_label, ssrc.description)          AS src_interface_label,
@@ -62,13 +73,13 @@ SELECT
     sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
     group_concat(DISTINCT r.description)                            AS matching_rules,
     sum(CASE WHEN f.rule_lookup_state = 'not_found' THEN 1 ELSE 0 END) AS unknown_rule_connections
-FROM flow AS f
+FROM classified_flow AS f
 LEFT JOIN rule AS r ON r.id = f.rule_id
 LEFT JOIN interface AS ssrc ON ssrc.id = f.src_interface_id
 LEFT JOIN interface AS sdst ON sdst.id = f.dst_interface_id
 WHERE f.observed_at >= :window_start
   AND f.observed_at < :window_end
-  AND f.src_interface_id IS NOT NULL
+  AND f.exit_leg_device IS NULL
 GROUP BY f.src_interface_id, src_interface_label, f.dst_interface_id, dst_interface_label, f.traffic_scope
 ORDER BY observed_bytes DESC;
 
@@ -86,11 +97,12 @@ SELECT
     count(DISTINCT f.dst_address)                           AS distinct_destinations,
     sum(CASE WHEN f.traffic_scope = 'east_west' THEN 1 ELSE 0 END) AS east_west_count,
     max(f.observed_at)                                      AS last_seen_at
-FROM flow AS f
+FROM classified_flow AS f
 LEFT JOIN client AS d ON d.id = f.src_client_id
 WHERE f.src_interface_id = :interface_id
   AND f.observed_at >= :window_start
   AND f.observed_at < :window_end
+  AND f.exit_leg_device IS NULL
 GROUP BY f.src_client_id, d.hostname, d.last_address, d.identity_kind, d.unstable_identity
 ORDER BY observed_bytes DESC;
 
@@ -197,10 +209,15 @@ ORDER BY se.occurred_at DESC;
 -- Destinations by country and by operator, per source interface, read from the
 -- 24 h aggregate. This is also the aggregate-mode query the roadmap asks for:
 -- volumes, interfaces, countries and operators, reading no table that holds a
--- domain name. A geo cache miss is a modelled row and is returned with its
--- lookup_state rather than silently dropping the volume.
+-- domain name. Every outside destination is returned: geo_asn is read through a
+-- LEFT JOIN, as the widget API reads it, so a peer the cache holds no row for
+-- comes back with the lookup state 'no_row' and a cache miss with 'miss', each
+-- carrying its volume, and placed plus unplaced is the outside total
+-- (docs/widget-catalogue.md, Part 4, item 2). Inter-interface traffic has no
+-- outside end and so no place on a map; it is left out by its NULL peer_address.
 SELECT
-    g.lookup_state                                          AS geo_lookup_state,
+    CASE WHEN g.address IS NULL THEN 'no_row' ELSE g.lookup_state END
+                                                            AS geo_lookup_state,
     g.country_code                                          AS country_code,
     g.country_name                                          AS country_name,
     g.asn                                                   AS asn,
@@ -214,10 +231,12 @@ SELECT
     max(v.computed_at)                                      AS aggregate_computed_at,
     max(g.dataset_build_at)                                 AS dataset_build_at
 FROM volume_aggregate_24h AS v
-JOIN geo_asn AS g ON g.address = v.peer_address
+LEFT JOIN geo_asn AS g ON g.address = v.peer_address
 LEFT JOIN interface AS s ON s.id = v.src_interface_id
 WHERE v.period_start_at >= :window_start
   AND v.period_start_at < :window_end
-GROUP BY g.lookup_state, g.country_code, g.country_name, g.asn, g.operator,
+  AND v.exit_leg_device IS NULL
+  AND v.peer_address IS NOT NULL
+GROUP BY geo_lookup_state, g.country_code, g.country_name, g.asn, g.operator,
          v.src_interface_id, interface_label
 ORDER BY observed_bytes DESC;

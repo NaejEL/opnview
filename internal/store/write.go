@@ -141,16 +141,22 @@ func (s *Store) SetActiveProviders(ctx context.Context, kind string, providerKey
 	return nil
 }
 
-// SetAvailability records the state of one provider, the probe that determined
-// it and when. Exactly one row exists per registry row for the life of the
-// database, so this is an update and never an insert.
+// SetAvailability records the state of one provider, the outcome code of the probe
+// or read that determined it, the probe, and when. Exactly one row exists per
+// registry row for the life of the database, so this is an update and never an
+// insert. An outcome outside AvailabilityOutcomes is refused here, before the
+// schema's CHECK would refuse it.
 func (s *Store) SetAvailability(ctx context.Context, providerID int64,
-	state AvailabilityState, probe string, detail *string, checkedAt int64) error {
+	state AvailabilityState, outcome AvailabilityOutcome, probe string, detail *string,
+	checkedAt int64) error {
+	if !outcome.Valid() {
+		return fmt.Errorf("store: %q is not an availability outcome (provider %d)", outcome, providerID)
+	}
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE source_availability
-		 SET state = ?, probe = ?, detail = ?, checked_at = ?
+		 SET state = ?, outcome = ?, probe = ?, detail = ?, checked_at = ?
 		 WHERE provider_id = ?`,
-		string(state), probe, detail, checkedAt, providerID)
+		string(state), string(outcome), probe, detail, checkedAt, providerID)
 	if err != nil {
 		return fmt.Errorf("store: recording availability for provider %d: %w", providerID, err)
 	}
@@ -295,21 +301,22 @@ func (s *Store) UpsertInterfaceMapEntry(ctx context.Context, device, description
 func (s *Store) UpsertRule(ctx context.Context, rule Rule, now int64) (int64, error) {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO rule (pf_label, description, action, direction, interface, legacy,
-		                   logs_matches, enabled, is_automatic, discovered_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		                   logs_matches, enabled, is_automatic, discovered_at, destination_net)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT (pf_label) DO UPDATE SET
-		     description   = excluded.description,
-		     action        = excluded.action,
-		     direction     = excluded.direction,
-		     interface     = excluded.interface,
-		     legacy        = excluded.legacy,
-		     logs_matches  = excluded.logs_matches,
-		     enabled       = excluded.enabled,
-		     is_automatic  = excluded.is_automatic,
-		     discovered_at = excluded.discovered_at`,
+		     description     = excluded.description,
+		     action          = excluded.action,
+		     direction       = excluded.direction,
+		     interface       = excluded.interface,
+		     legacy          = excluded.legacy,
+		     logs_matches    = excluded.logs_matches,
+		     enabled         = excluded.enabled,
+		     is_automatic    = excluded.is_automatic,
+		     discovered_at   = excluded.discovered_at,
+		     destination_net = excluded.destination_net`,
 		rule.PfLabel, rule.Description, rule.Action, rule.Direction, rule.Interface,
 		boolToNullableInt(rule.Legacy), boolToNullableInt(rule.LogsMatches), boolToNullableInt(rule.Enabled),
-		boolToInt(rule.IsAutomatic), now)
+		boolToInt(rule.IsAutomatic), now, rule.DestinationNet)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing rule %s: %w", rule.PfLabel, err)
 	}
@@ -493,11 +500,24 @@ func (s *Store) HasFlowDigest(ctx context.Context, digest string) (bool, error) 
 // UpsertBlocklist writes one observed list name and returns its id. The NAME is
 // observed; the PURPOSE is user input and is absent from this statement, exactly
 // as owner_id and user_label are absent from theirs.
-func (s *Store) UpsertBlocklist(ctx context.Context, name string, now int64) (int64, error) {
+//
+// lookedUpAt is the instant of the lookup that named the list, and the two instants
+// are the lookups', not the ingestion's (decision 14 of
+// specs/SPEC-step-5b-widget-api.md): first_seen_at is the earliest looked_up_at of a
+// lookup naming the list and last_seen_at the latest, so "when did this list last
+// refuse something" is answered by the resolver's own clock. NEITHER EVER MOVES
+// BACKWARDS. The resolver's ring buffer offers the same lookups again on every pass
+// and a pass may meet an older lookup after a newer one, so each instant only ever
+// widens: min() for the first, max() for the last. Writing the ingestion instant, as
+// this did until step 5B, made last_seen_at the time opnview read the buffer, which
+// is later than any lookup and says nothing about the list.
+func (s *Store) UpsertBlocklist(ctx context.Context, name string, lookedUpAt int64) (int64, error) {
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO blocklist (name, first_seen_at, last_seen_at) VALUES (?, ?, ?)
-		 ON CONFLICT (name) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
-		name, now, now)
+		 ON CONFLICT (name) DO UPDATE SET
+		     first_seen_at = min(first_seen_at, excluded.first_seen_at),
+		     last_seen_at  = max(last_seen_at, excluded.last_seen_at)`,
+		name, lookedUpAt, lookedUpAt)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing blocklist %s: %w", name, err)
 	}
@@ -525,7 +545,7 @@ func (s *Store) InsertDNSResolution(ctx context.Context, lookup DNSResolution) e
 func (s *Store) StoreDNSResolution(ctx context.Context, lookup DNSResolution) (bool, error) {
 	var blocklistID *int64
 	if lookup.BlocklistName != "" {
-		id, err := s.UpsertBlocklist(ctx, lookup.BlocklistName, lookup.IngestedAt)
+		id, err := s.UpsertBlocklist(ctx, lookup.BlocklistName, lookup.LookedUpAt)
 		if err != nil {
 			return false, err
 		}
@@ -537,14 +557,14 @@ func (s *Store) StoreDNSResolution(ctx context.Context, lookup DNSResolution) (b
 	}
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO dns_resolution (lookup_key, client_address, client_hostname,
-		                             client_resolution, client_id, domain, resolver,
+		                             client_resolution, client_family, client_id, domain, resolver,
 		                             action, answer_source, rcode, dnssec_status, blocklist_id,
 		                             looked_up_at, ingested_at)
-		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+		 SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
 		 WHERE NOT EXISTS (SELECT 1 FROM retention_purge WHERE purged_before > ?)
 		 ON CONFLICT (lookup_key) DO NOTHING`,
 		lookup.LookupKey, lookup.ClientAddress, lookup.ClientHostname, resolution,
-		lookup.ClientID, lookup.Domain, lookup.Resolver,
+		lookup.ClientFamily, lookup.ClientID, lookup.Domain, lookup.Resolver,
 		lookup.Action, lookup.AnswerSource, lookup.Rcode, lookup.DNSSECStatus, blocklistID,
 		lookup.LookedUpAt, lookup.IngestedAt, lookup.LookedUpAt)
 	if err != nil {

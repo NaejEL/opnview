@@ -201,6 +201,26 @@ The rule for provider-specific data that does not fit the core is in
 anything a screen aggregates or filters on; a JSON column, displayed only, for
 anything merely shown; never an entity-attribute-value table.
 
+## The widget registry — the second seam
+
+The widget API of step 5B (`docs/widget-api.md`) is a seam of the same kind, on the read
+side. A served preset of `docs/widget-catalogue.md` is **one file** in `internal/widget`
+holding one `Preset` value -- its type, its shape, the provider kinds its binding names,
+its declared parameters with their defaults and their data or rendering class, and the
+function that answers it -- and **one row** of the `registry` slice in
+`internal/widget/registry.go`. Everything else follows from the row: `internal/web` builds
+one authenticated route per registered type from `Service.Types()`, the parameters are
+parsed and defaulted from the declaration, references are resolved and availability, gaps,
+coverage and freshness are assembled for every type alike. Adding a preset's endpoint is
+adding the file and the row and touching nothing else; a test does exactly that from a
+test-only file (`internal/widget/fake_test.go`) and reaches the new type over HTTP.
+
+A preset reads the database only through named statements of
+`internal/store/widget.sql`, run by `Store.WidgetRows` on the store's read-only
+connections (`internal/store/readpool.go`), so `sql/schema-checks.sh` plans every statement
+the API runs and no widget can write. The three alert presets have no row until step 6, and
+answer `unknown_widget_type` like any type with none.
+
 ## What this is not
 
 `opnview` is one Go binary. There is **no plugin system**: no dynamic loading,

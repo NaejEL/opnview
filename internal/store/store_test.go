@@ -28,9 +28,9 @@ func openTestStore(t *testing.T) (*Store, string) {
 // TestApplyingTheSchemaTwiceChangesNothing is what makes a schema with no migration
 // runner safe to apply on every start.
 //
-// There is no schema_version table and no runner, by decision: nothing is deployed and
-// nobody has data. What replaces them is idempotence, and this is that property under
-// test — the object count, the registry, the availability rows and the settings are all
+// There is no schema_version table and no runner, by decision: the one deployment's
+// history is re-collectable (ROADMAP.md, step 5). What replaces them is idempotence,
+// and this is that property under test — the object count, the registry, the availability rows and the settings are all
 // unchanged by a second apply, so a restart cannot reset a probed state or undo a
 // setting the user changed.
 func TestApplyingTheSchemaTwiceChangesNothing(t *testing.T) {
@@ -99,7 +99,7 @@ func TestAProbedAvailabilityRowSurvivesTheSchemaBeingAppliedAgain(t *testing.T) 
 		t.Fatalf("looking up the filter-log provider: %v", err)
 	}
 	detail := "probed by this test"
-	if err := database.SetAvailability(ctx, providerID, StateReachable,
+	if err := database.SetAvailability(ctx, providerID, StateReachable, OutcomeHealthy,
 		"GET /api/diagnostics/firewall/log", &detail, 1750000000); err != nil {
 		t.Fatalf("recording availability: %v", err)
 	}

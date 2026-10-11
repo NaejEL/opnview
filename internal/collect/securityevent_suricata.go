@@ -36,19 +36,22 @@ func (suricataAlerts) providerKey() string { return ProviderSuricata }
 // exactly that on the maintainer's own firewall — and distinguishing it from stopped and
 // from "we could not ask" is the whole point of the availability table.
 func (suricataAlerts) probe(ctx context.Context, host session) (probeResult, error) {
-	result := probeResult{probe: opnsense.IDSStatus, state: store.StateUnavailable}
+	result := probeResult{probe: opnsense.IDSStatus, state: store.StateUnavailable,
+		outcome: store.OutcomeRequestNotMade}
 
 	response, err := host.call(ctx, opnsense.IDSStatus, opnsense.RequestOptions{})
 	if err != nil && response.Outcome == "" {
 		return result, err
 	}
 	if !response.OK() {
+		result.outcome = responseOutcome(response)
 		result.detail = response.Detail
 		return result, nil
 	}
 
 	var body decode.Object
 	if err := json.Unmarshal(response.Body, &body); err != nil {
+		result.outcome = store.OutcomeUndecodable
 		result.detail = "the status body could not be read"
 		return result, nil
 	}
@@ -59,10 +62,10 @@ func (suricataAlerts) probe(ctx context.Context, host session) (probeResult, err
 	// activation's.
 	result.separable = true
 	if decode.LowerASCII(status) == "running" {
-		result.state = store.StateReachable
+		result.state, result.outcome = store.StateReachable, store.OutcomeHealthy
 		return result, nil
 	}
-	result.state = store.StatePresentButDisabled
+	result.state, result.outcome = store.StatePresentButDisabled, store.OutcomeServiceNotRunning
 	result.detail = "the service reported " + quoteForDetail(status)
 	return result, nil
 }
@@ -75,13 +78,15 @@ func (suricataAlerts) probe(ctx context.Context, host session) (probeResult, err
 func (suricataAlerts) rotation(ctx context.Context, host session) (
 	rotationView, probeResult, error) {
 	view := rotationView{present: map[string]struct{}{}}
-	result := probeResult{probe: opnsense.AlertLogs, state: store.StateUnavailable}
+	result := probeResult{probe: opnsense.AlertLogs, state: store.StateUnavailable,
+		outcome: store.OutcomeRequestNotMade}
 
 	response, err := host.call(ctx, opnsense.AlertLogs, opnsense.RequestOptions{})
 	if err != nil && response.Outcome == "" {
 		return view, result, err
 	}
 	if !response.OK() {
+		result.outcome = responseOutcome(response)
 		// The rotation view is unavailable, so a lost file cannot be told from a present one.
 		// known stays false, and the kind declares nothing lost: concluding otherwise would
 		// invent a permanent gap out of a failed call.
@@ -92,6 +97,7 @@ func (suricataAlerts) rotation(ctx context.Context, host session) (
 
 	rows, err := decode.Rows(response.Body)
 	if err != nil {
+		result.outcome = store.OutcomeUndecodable
 		result.detail = "the rotated-file list could not be read"
 		return view, result, nil
 	}
@@ -107,7 +113,7 @@ func (suricataAlerts) rotation(ctx context.Context, host session) (
 		}
 	}
 	view.known = true
-	result.state = store.StateReachable
+	result.state, result.outcome = store.StateReachable, store.OutcomeHealthy
 	result.separable = true
 	return view, result, nil
 }
@@ -121,7 +127,8 @@ func (suricataAlerts) rotation(ctx context.Context, host session) (
 // from nowhere else.
 func (suricataAlerts) alerts(ctx context.Context, host session, pageSize int) (
 	[]alertRecord, probeResult, error) {
-	result := probeResult{probe: opnsense.QueryAlerts, state: store.StateUnavailable}
+	result := probeResult{probe: opnsense.QueryAlerts, state: store.StateUnavailable,
+		outcome: store.OutcomeRequestNotMade}
 
 	response, err := host.call(ctx, opnsense.QueryAlerts, opnsense.RequestOptions{
 		Form: opnsense.Pagination(1, pageSize),
@@ -130,19 +137,22 @@ func (suricataAlerts) alerts(ctx context.Context, host session, pageSize int) (
 		return nil, result, err
 	}
 	if !response.OK() {
+		result.outcome = responseOutcome(response)
 		result.detail = response.Detail
 		return nil, result, fmt.Errorf("collect: the alert feed answered %s", response.Outcome)
 	}
 
 	rows, err := decode.Rows(response.Body)
 	if err != nil {
+		result.outcome = store.OutcomeUndecodable
 		result.detail = "the alert feed body could not be read"
 		return nil, result, fmt.Errorf("collect: reading the alert feed: %w", err)
 	}
 
-	result.state = store.StateReachable
+	result.state, result.outcome = store.StateReachable, store.OutcomeHealthy
 	result.separable = true
 	if len(rows) == 0 {
+		result.outcome = store.OutcomeHealthyEmpty
 		result.detail = "reachable with nothing to report, which for a narrow ruleset is a true " +
 			"reading and not a fault"
 		return nil, result, nil

@@ -349,6 +349,23 @@ func TestTheLegPairingWindowIsAValidatedSettingWhoseDefaultIsOne(t *testing.T) {
 	}
 }
 
+// TestTheLegPairingWindowAboveSixtySecondsIsRefusedNamingTheSetting is AC32 of
+// specs/SPEC-step-5b-widget-api.md: the bound of decision 13 is accepted, and one
+// second above it is refused with a message naming the setting.
+func TestTheLegPairingWindowAboveSixtySecondsIsRefusedNamingTheSetting(t *testing.T) {
+	ctx := context.Background()
+	loaded, err := Load(ctx, settingTable{rows: map[string]string{KeyLegPairingWindow: "60"}})
+	if err != nil || loaded.LegPairingWindowSeconds != 60 {
+		t.Errorf("the bound itself, 60, gave %d (%v)", loaded.LegPairingWindowSeconds, err)
+	}
+	for _, value := range []string{"61", "3600", "9223372036854775807"} {
+		_, err := Load(ctx, settingTable{rows: map[string]string{KeyLegPairingWindow: value}})
+		if err == nil || !strings.Contains(err.Error(), KeyLegPairingWindow) {
+			t.Errorf("the window %s was accepted, or refused without naming the key: %v", value, err)
+		}
+	}
+}
+
 // TestThePublicSuffixListIsCheckedOnceADayByDefault is the refresh interval of the third
 // outbound call: publicsuffix.org asks for no more than one download a day.
 func TestThePublicSuffixListIsCheckedOnceADayByDefault(t *testing.T) {

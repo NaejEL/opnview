@@ -207,6 +207,15 @@ func newTLSHarness(t *testing.T) *harness {
 // newHarnessOver builds a server whose fake firewall speaks TLS or does not.
 func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS bool) *harness {
 	t.Helper()
+	return newHarnessAdjusted(t, dataDir, withKeyFile, firewallOverTLS, nil)
+}
+
+// newHarnessAdjusted is newHarnessOver with a last say over the server's options, given
+// the opened store: a test that needs the real MaxMind or Public Suffix List refresher
+// in place of the recording one builds it there.
+func newHarnessAdjusted(t *testing.T, dataDir string, withKeyFile, firewallOverTLS bool,
+	adjust func(*Options)) *harness {
+	t.Helper()
 
 	database, err := store.Open(context.Background(), dataDir)
 	if err != nil {
@@ -274,7 +283,7 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 	collector := &recordingCollector{}
 	geoip := &recordingGeoIP{}
 
-	server, err := New(Options{
+	options := Options{
 		Store:          database,
 		DataDir:        dataDir,
 		Box:            box,
@@ -286,7 +295,11 @@ func newHarnessOver(t *testing.T, dataDir string, withKeyFile, firewallOverTLS b
 		Settings:       live,
 		Collector:      collector,
 		GeoIP:          geoip,
-	})
+	}
+	if adjust != nil {
+		adjust(&options)
+	}
+	server, err := New(options)
 	if err != nil {
 		t.Fatalf("building the server: %v", err)
 	}

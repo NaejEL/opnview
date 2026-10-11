@@ -73,11 +73,16 @@ FROM volume_aggregate_30d;
 --
 -- Availability and activeness are two different facts. Two implementations of
 -- one kind may both be 'reachable'; at most one of them is active.
+--
+-- outcome is the closed code naming why the state is what it is
+-- (SPEC-step-5b-widget-api.md, D1); it is what an interface translates, and
+-- detail is diagnostic text that nothing reads to decide anything.
 SELECT
     p.kind        AS kind,
     p.provider_key AS provider_key,
     p.display_name AS display_name,
     a.state       AS state,
+    a.outcome     AS outcome,
     a.probe       AS probe,
     a.detail      AS detail,
     a.checked_at  AS checked_at,
@@ -370,13 +375,21 @@ GROUP BY k.kind, g.reason;
 
 -- diagnostic: Unresolved host names by cause
 -- Every lookup whose logged host name named no machine through the leases --
--- client_resolution 'unknown_hostname', and 'local_data_hostname', which the
--- resolver's local data resolved where no lease did -- in the window, sorted into the
+-- client_resolution 'unknown_hostname', 'local_data_hostname', which the
+-- resolver's local data resolved where no lease did, and 'dual_stack_hostname',
+-- which it held under two families -- in the window, sorted into the
 -- first cause that applies, in this order (step-5A live corrections, item 3.1, and
 -- scope D of specs/SPEC-resolver-cache-attribution.md). The leases are compared as of
 -- the lookup's instant where the cause says so:
 --   local_data       resolved by local data: exactly one address answered for the
---                    name in the resolver's local data held at the lookup's instant
+--                    name in the resolver's local data held at the lookup's instant,
+--                    or one IPv4 and one IPv6 address of one name did and the lookup
+--                    reported its querying family (group C of
+--                    specs/SPEC-step-5b-widget-api.md)
+--   dual_stack       the local data held one IPv4 and one IPv6 address of one name
+--                    at the lookup's instant, and the lookup reported no querying
+--                    family, so which of the two asked is not known
+--                    (dual_stack_hostname)
 --   this_firewall    the name is `localhost`, which names this firewall
 --   exact_match      a lease carries the logged name exactly, case aside, at the
 --                    lookup's instant
@@ -401,6 +414,7 @@ FROM (
     SELECT
         CASE
             WHEN r.client_resolution = 'local_data_hostname' THEN 'local_data'
+            WHEN r.client_resolution = 'dual_stack_hostname' THEN 'dual_stack'
             WHEN lower(rtrim(r.client_hostname, '.')) = 'localhost' THEN 'this_firewall'
             WHEN EXISTS (SELECT 1 FROM dhcp_lease AS l
                          WHERE lower(l.hostname) = lower(r.client_hostname)
@@ -446,7 +460,7 @@ FROM (
             ELSE 'neither_lease_nor_local_data'
         END AS cause
     FROM dns_resolution AS r
-    WHERE r.client_resolution IN ('unknown_hostname', 'local_data_hostname')
+    WHERE r.client_resolution IN ('unknown_hostname', 'local_data_hostname', 'dual_stack_hostname')
       AND r.looked_up_at >= :window_start
       AND r.looked_up_at < :window_end
 )
@@ -812,10 +826,11 @@ WHERE t.observation_id IS NULL
 -- flow's instant -- local-data records counting for a lookup answered from Local-data,
 -- and only those of the looked-up name itself (decision 6): no CNAME is followed into
 -- the local data (specs/SPEC-resolver-cache-follow-ups.md, scope 1, stated at
--- MaxCNAMELinks in internal/store/records.go). A flow counted here had none of the destination's family and at least
--- one of the other: the resolver held the name, in the family the client did not use,
--- so the exact method could not name the flow and timing did. A large count says the
--- clients reach names over the family the cache read sees less of.
+-- MaxCNAMELinks in internal/store/records.go). A flow counted here had none of the
+-- destination's family and at least one of the other: the resolver held the name, in
+-- the family the client did not use, so the exact method could not name the flow and
+-- timing did. A large count says the clients reach names over the family the cache
+-- read sees less of.
 WITH RECURSIVE
 timed AS (
     SELECT a.flow_id, f.observed_at, f.dst_address, lower(rtrim(r.domain, '.')) AS name,

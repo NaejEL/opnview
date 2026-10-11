@@ -39,9 +39,17 @@ type Client struct {
 // NewClient returns the client for publicsuffix.org. timeout bounds one whole
 // request, download included.
 func NewClient(timeout time.Duration) *Client {
-	return newClient(listURL, []string{listHost},
-		&http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 10 * time.Second},
+	return NewClientOver(&http.Transport{Proxy: http.ProxyFromEnvironment, TLSHandshakeTimeout: 10 * time.Second},
 		timeout)
+}
+
+// NewClientOver is NewClient with the transport under the host guard supplied. The
+// guard -- the list host and nothing else -- stays in front of it; the product passes an
+// http.Transport, and a test of another package passes a transport that counts what
+// reached it, which is how AC16 of specs/SPEC-step-5b-widget-api.md shows that serving
+// the widget API makes no request here.
+func NewClientOver(inner http.RoundTripper, timeout time.Duration) *Client {
+	return newClient(listURL, []string{listHost}, inner, timeout)
 }
 
 // newClient is NewClient with the location, the permitted hosts and the transport

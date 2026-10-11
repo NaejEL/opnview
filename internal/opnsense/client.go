@@ -97,28 +97,101 @@ var (
 // stats, dumpcache, dumpinfra, listlocaldata, listlocalzones and listinsecure read,
 // and testBlocklist only matches a name against the lists. The cache is flushed by the
 // configd action `unbound cache`, which no API action reaches.
+//
+// `setconfig` and `apply` were added by step 5B (B1 of
+// specs/SPEC-step-5b-widget-api.md), which read every action of every controller the
+// registry reaches at 26.7.3 — the list, controller by controller and with the URL
+// of each source, is internal/opnsense/mutating_test.go. Netflow's setconfigAction
+// writes the netflow configuration, and its name carries no separator after `set`,
+// so the verb prefixes below do not reach it; Firewall/Api/FilterBaseController's
+// applyAction reloads the filter.
+//
+// `carp_status` was added by the 5B correction round, which re-read every controller of
+// that audit against its source and found the one action the first reading missed:
+// Diagnostics/Api/InterfaceController's carpStatusAction, which on a POST runs the configd
+// action `interface carp_set_status` and so changes the CARP status of the firewall. Its
+// name begins with no verb -- `carp` is a protocol, and `status` reads everywhere else --
+// so only its exact name can refuse it, in either spelling (snakeCase below).
 var mutatingCommands = []string{
 	"set", "add", "del", "toggle", "reconfigure",
 	"start", "stop", "restart", "clear", "drop_alert_log", "del_lease",
-	"dnsbl", "reconfigure_general",
+	"dnsbl", "reconfigure_general", "reset", "setconfig", "apply", "carp_status",
+}
+
+// mutatingVerbs are the verbs a command name BEGINS with when it changes something.
+//
+// OPNsense names its model actions verb-first — addItem, setRule, delHostOverride,
+// toggleRuleLog, updateBlocklist — and the router reaches each under its camelCase
+// name and under its snake_case one (add_item, set_rule, ...). A list of exact names
+// could therefore never be complete: every model controller adds its own. A command
+// whose name is one of these verbs followed by `_` or by an upper-case letter is
+// refused, whichever spelling it uses.
+//
+// The first six are B1's: add, set, del, toggle, update and reset. The rest were
+// found mutating in the 26.7.3 controllers the registry reaches, each under a verb
+// the first six do not cover: Diagnostics/Api/FirewallController's killStates,
+// flushStates and flushSources, Diagnostics/Api/InterfaceController's flushArp,
+// Firewall/Api/FilterController's flushInspectCache, moveRuleBefore and uploadRules,
+// Dnsmasq/Api/SettingsController's uploadHosts, Kea/Api/Dhcpv4Controller's
+// uploadReservations, IDS/Api/ServiceController's reloadRules and dropAlertLog,
+// Interfaces/Api/OverviewController's reloadInterface and
+// Unbound/Api/ServiceController's reconfigureGeneral.
+//
+// THE RULE NEEDS THE SEPARATOR, and that is what spares the read-only names that
+// merely share letters: `settings`, `address…`, `delay…`, `updated` and `resetting`
+// carry no separator after the verb, and `search…`, `get…`, `status`, `dumpcache`
+// and `listlocaldata` begin with no verb at all. The per-controller tests are the
+// guard against a read-only action whose name begins with one of these verbs: there
+// is none in the controllers the registry reaches today, and one found later would
+// fail its controller's test rather than become unreachable unnoticed.
+var mutatingVerbs = []string{
+	"add", "set", "del", "toggle", "update", "reset",
+	"reconfigure", "flush", "kill", "upload", "move", "reload", "drop",
 }
 
 // MutatingCommand returns the mutating command a path names, or the empty
 // string. The OPNsense router maps {base}/api/<module>/<controller>/<command>,
 // so the command is the fourth path element; path elements after it are positional
 // parameters and are caller data rather than a command.
+//
+// The command is compared in its snake_case spelling, so `reconfigureGeneral` is
+// refused as `reconfigure_general` is: the router reaches the same action under both.
 func MutatingCommand(path string) string {
 	elements := strings.Split(strings.Trim(path, "/"), "/")
 	if len(elements) < 4 {
 		return ""
 	}
 	command := elements[3]
+	snake := snakeCase(command)
 	for _, forbidden := range mutatingCommands {
-		if command == forbidden {
+		if snake == forbidden {
+			return command
+		}
+	}
+	for _, verb := range mutatingVerbs {
+		if strings.HasPrefix(snake, verb+"_") {
 			return command
 		}
 	}
 	return ""
+}
+
+// snakeCase turns a camelCase command into the snake_case spelling the router also
+// accepts: an underscore before every upper-case letter but a leading one, and the
+// letter lowered. A name already in snake_case is returned unchanged.
+func snakeCase(command string) string {
+	var out strings.Builder
+	for index, character := range command {
+		if character >= 'A' && character <= 'Z' {
+			if index > 0 {
+				out.WriteByte('_')
+			}
+			out.WriteRune(character + ('a' - 'A'))
+			continue
+		}
+		out.WriteRune(character)
+	}
+	return out.String()
 }
 
 // Outcome is what a call to the firewall turned into.

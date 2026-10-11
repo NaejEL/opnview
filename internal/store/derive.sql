@@ -634,32 +634,64 @@ WHERE o.owner_name = :name
   AND o.covered_from_at <= :at;
 
 -- The eligible lookups of one name by one client inside a window: what an answer's
--- name is matched against. The name is compared through the expression
--- idx_dns_resolution_domain_name indexes.
+-- name is matched against. The name is compared through the expression the indexes
+-- below index.
+--
+-- TWO BRANCHES, EACH AN INDEX SEARCH BOUNDED BY NAME AND CLIENT (B2 of
+-- specs/SPEC-step-5b-widget-api.md). The client is the lookup's client_id when the flow
+-- has one, and its address when either side has no client_id. Written as one OR, the
+-- planner could bound only the name and filtered every lookup of a popular name by
+-- client afterwards; split into two branches, the first searches
+-- idx_dns_resolution_name_client_id on (name, client_id, looked_up_at) and the second
+-- idx_dns_resolution_name_client_address on (name, client_address, looked_up_at). The
+-- address branch got an index of its own rather than a rewrite on the existing
+-- (client_address, looked_up_at) index, because that one is bounded by client and not
+-- by name: a client's every lookup in the window would be read to find one name. The
+-- branches are disjoint -- the first needs r.client_id = :client_id, so a non-NULL
+-- client_id on both sides, and the second needs one of them NULL -- so UNION ALL
+-- returns each lookup once.
 -- statement: attribution_name_lookups
 SELECT r.id, r.domain, r.looked_up_at, r.lookup_key, r.answer_source
 FROM dns_resolution AS r
 WHERE lower(rtrim(r.domain, '.')) = :name
+  AND r.client_id = :client_id
   AND r.looked_up_at >= :start
   AND r.looked_up_at <= :end
   AND r.action = 'pass'
   AND r.answer_source IN ('Recursion', 'Cache', 'Local-data')
   AND r.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname')
-  AND ((:client_id IS NOT NULL AND r.client_id = :client_id)
-       OR (r.client_address = :address AND (r.client_id IS NULL OR :client_id IS NULL)));
+UNION ALL
+SELECT a.id, a.domain, a.looked_up_at, a.lookup_key, a.answer_source
+FROM dns_resolution AS a
+WHERE lower(rtrim(a.domain, '.')) = :name
+  AND a.client_address = :address
+  AND a.looked_up_at >= :start
+  AND a.looked_up_at <= :end
+  AND (a.client_id IS NULL OR :client_id IS NULL)
+  AND a.action = 'pass'
+  AND a.answer_source IN ('Recursion', 'Cache', 'Local-data')
+  AND a.client_resolution IN ('logged_address', 'lease_hostname', 'local_data_hostname');
 
 -- The local data naming a host at an instant: the addresses of the A and AAAA records
--- whose owner, and of the PTR records whose target, has the host name's first label.
--- The caller takes the address only when there is exactly one.
+-- whose owner, and of the PTR records whose target, has the host name's first label,
+-- each with the full names it was held under -- the owner of an A or AAAA record, the
+-- target of a PTR record -- compared as DNS names are, without regard to case and with
+-- a trailing dot removed. The caller takes the address when there is exactly one, and,
+-- when there are one IPv4 and one IPv6 address under one name, the address of the
+-- lookup's querying family (the dual-stack rule). Three rows are enough to tell those
+-- cases from every other.
 -- statement: local_data_addresses_for_hostname
-SELECT DISTINCT o.address
+SELECT o.address,
+       json_group_array(DISTINCT lower(rtrim(CASE WHEN o.rrtype = 'PTR' THEN o.value
+                                                  ELSE o.owner_name END, '.'))) AS names
 FROM resource_record_observation AS o
 WHERE o.held_in = 'local_data'
   AND o.host_label = :label
   AND o.covered_until_at >= :at
   AND o.covered_from_at <= :at
+GROUP BY o.address
 ORDER BY o.address
-LIMIT 2;
+LIMIT 3;
 
 -- The last successful poll of one provider's records.
 -- statement: resource_record_read_at
@@ -720,9 +752,9 @@ ON CONFLICT (provider_id) DO UPDATE SET read_at = max(resource_record_read.read_
 -- nothing else. Only those ingested before :ingested_before -- the instant the lease
 -- read began -- are examined: one ingested since may postdate the leases read.
 -- statement: unresolved_hostname_lookups
-SELECT id, client_hostname, looked_up_at
+SELECT id, client_hostname, looked_up_at, client_family
 FROM dns_resolution
-WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname')
+WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname', 'dual_stack_hostname')
   AND hostname_examined_at IS NULL
   AND ingested_at < :ingested_before
 ORDER BY id;

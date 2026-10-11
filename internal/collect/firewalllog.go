@@ -41,7 +41,7 @@ func (c *Collector) CollectFirewallLog(ctx context.Context) error {
 
 	records, result, readErr := source.records(ctx, c, c.pages().FirewallLog)
 	if writeErr := c.writeAvailability(ctx, providerID, result.state,
-		result.probe, result.detail); writeErr != nil {
+		result.outcome, result.probe, result.detail); writeErr != nil {
 		return writeErr
 	}
 	if readErr != nil {

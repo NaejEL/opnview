@@ -308,7 +308,7 @@ WITH RECURSIVE counter (n) AS (
     SELECT n + 1 FROM counter WHERE n < :rules
 )
 INSERT INTO rule (id, pf_label, description, action, direction, interface, legacy,
-                  logs_matches, is_automatic, discovered_at)
+                  logs_matches, is_automatic, discovered_at, destination_net)
 SELECT
     n,
     printf('rule-label-%d', n),
@@ -331,7 +331,15 @@ SELECT
     -- source that did not report the flag at all.
     CASE WHEN n % 7 = 0 THEN 0 WHEN n % 11 = 0 THEN NULL ELSE 1 END,
     CASE WHEN n % 9 = 0 THEN 1 ELSE 0 END,
-    :now - 8640000
+    :now - 8640000,
+    -- The endpoint's `destination_net`, verbatim and never evaluated (B8a of
+    -- specs/SPEC-step-5b-widget-api.md): `any`, an IPv4 and an IPv6 network from the
+    -- synthesised pool, or not reported at all.
+    CASE n % 4
+        WHEN 0 THEN 'any'
+        WHEN 1 THEN (SELECT a.address_v4 || '/32' FROM synth_address AS a WHERE a.slot = 1000000 + 500 + n)
+        WHEN 2 THEN (SELECT a.address_v6 || '/128' FROM synth_address AS a WHERE a.slot = 1000000 + 500 + n)
+    END
 FROM counter;
 
 -- ---------------------------------------------------------------------------
@@ -1388,6 +1396,26 @@ UPDATE dns_resolution
 SET hostname_examined_at = ingested_at + 60
 WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname') AND id % 2 = 0;
 
+-- Two lookups logged under a host name the local data held under one IPv4 and one IPv6
+-- address (group C of specs/SPEC-step-5b-widget-api.md): one whose row reported no
+-- querying family, which stays dual_stack_hostname and waits for a lease pass, and one
+-- whose row reported the IPv6 family, resolved to the AAAA address. The names are
+-- synthesised and match no lease.
+INSERT INTO dns_resolution (id, lookup_key, client_address, client_hostname, client_resolution,
+                            client_family, client_id, domain, resolver, action, answer_source,
+                            rcode, dnssec_status, looked_up_at, ingested_at, interface_id,
+                            interface_lookup_state)
+SELECT 1300000200, 'dual-stack-lookup-uuid-1', 'dual-stack-host.example-zone.invalid',
+       'dual-stack-host.example-zone.invalid', 'dual_stack_hostname', NULL, NULL,
+       'dual-stack-name-1.example-zone.invalid', 'unbound', 'pass', 'Recursion', 'NOERROR', NULL,
+       :now - 444, :now - 442, NULL, 'not_found'
+UNION ALL
+SELECT 1300000201, 'dual-stack-lookup-uuid-2', a.address_v6,
+       'dual-stack-host.example-zone.invalid', 'local_data_hostname', 6, NULL,
+       'dual-stack-name-2.example-zone.invalid', 'unbound', 'pass', 'Recursion', 'NOERROR', NULL,
+       :now - 555, :now - 553, NULL, 'not_found'
+FROM synth_address AS a WHERE a.slot = :clients + 2;
+
 -- ---------------------------------------------------------------------------
 -- The resolver's records: its cache and its local data
 -- (specs/SPEC-resolver-cache-attribution.md).
@@ -2290,12 +2318,12 @@ GROUP BY address;
 -- modelled state, not an absent row.
 -- ---------------------------------------------------------------------------
 UPDATE source_availability
-SET state = 'reachable', probe = 'GET /api/diagnostics/firewall/log',
+SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/diagnostics/firewall/log',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'firewall_log' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'present_but_disabled', probe = 'GET /api/ids/service/status',
+SET state = 'present_but_disabled', outcome = 'service_not_running', probe = 'GET /api/ids/service/status',
     detail = 'status reported stopped', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'security_event' AND is_active = 1);
 
@@ -2304,12 +2332,12 @@ WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'security_event' AND 
 -- the probe moved here from the flow_volume row with the sampler, because this is
 -- the row whose material it governs.
 UPDATE source_availability
-SET state = 'reachable', probe = 'GET /api/diagnostics/netflow/is_enabled',
+SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/diagnostics/netflow/is_enabled',
     detail = 'local collection enabled', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'measurement_sample' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'reachable', probe = 'example state source probe',
+SET state = 'reachable', outcome = 'healthy', probe = 'example state source probe',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'reconciled_state' AND is_active = 1);
 
@@ -2318,37 +2346,38 @@ WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'reconciled_state' AN
 -- and a single statement covering both active rows would have written the first
 -- server's probe onto the second server's row.
 UPDATE source_availability
-SET state = 'reachable', probe = 'GET /api/kea/service/status',
+SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/kea/service/status',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider
                       WHERE kind = 'dhcp_lease' AND provider_key = 'kea' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'reachable', probe = 'GET /api/dnsmasq/service/status',
+SET state = 'reachable', outcome = 'healthy', probe = 'GET /api/dnsmasq/service/status',
     detail = 'serving a range on its own interface', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider
                       WHERE kind = 'dhcp_lease' AND provider_key = 'dnsmasq' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'unavailable', probe = 'GET /api/unbound/overview/is_enabled',
+SET state = 'unavailable', outcome = 'present_but_disabled',
+    probe = 'GET /api/unbound/overview/is_enabled',
     detail = 'query reporting is off', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'dns_lookup' AND is_active = 1);
 
 UPDATE source_availability
-SET state = 'reachable', probe = 'local dataset file stat',
+SET state = 'reachable', outcome = 'healthy', probe = 'local dataset file stat',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'geo_asn' AND is_active = 1);
 
 -- The Public Suffix List: a list is held, so the grouping is available. Its probe
 -- is the outcome of the conditional download the refresher makes.
 UPDATE source_availability
-SET state = 'reachable', probe = 'list_not_modified',
+SET state = 'reachable', outcome = 'healthy', probe = 'list_not_modified',
     detail = NULL, checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE kind = 'public_suffix' AND is_active = 1);
 
 -- Every implementation this installation does not run: probed, not running.
 UPDATE source_availability
-SET state = 'unavailable', probe = 'service status endpoint',
+SET state = 'unavailable', outcome = 'not_found', probe = 'service status endpoint',
     detail = 'not installed on this firewall', checked_at = :now
 WHERE provider_id IN (SELECT id FROM provider WHERE is_active = 0);
 
@@ -2424,7 +2453,19 @@ SELECT NULL, 'firewall', printf('sensor-%d', s % 3), 'temperature_celsius', 'cel
        30.0 + (s % 20), :now - (s * 300) - ((s % 6) * 8640000)
 FROM counter
 UNION ALL
-SELECT NULL, 'interface', i.device, 'bytes_in', 'byte', 1000.0 * s,
+-- An interface's byte counters are cumulative, so each value grows with its
+-- instant: the value is the instant's distance from a fixed origin before every
+-- seeded instant. A counter seeded the other way round reads as a reset at every
+-- sample, and the Interface throughput response timed on it would measure an
+-- empty answer rather than a query.
+SELECT NULL, 'interface', i.device, 'bytes_in', 'byte',
+       1000.0 * (100000000 - (s * 300) - ((s % 6) * 8640000)),
+       :now - (s * 300) - ((s % 6) * 8640000)
+FROM counter
+JOIN interface AS i ON i.id = ((s - 1) % :interfaces) + 1
+UNION ALL
+SELECT NULL, 'interface', i.device, 'bytes_out', 'byte',
+       400.0 * (100000000 - (s * 300) - ((s % 6) * 8640000)),
        :now - (s * 300) - ((s % 6) * 8640000)
 FROM counter
 JOIN interface AS i ON i.id = ((s - 1) % :interfaces) + 1

@@ -331,6 +331,11 @@ func (c *Collector) pairingWindow() int64 {
 // ReclassifyEverything places every address any stored row carries and refreshes
 // every slot that moved. It is what clears the remote-address clients an earlier
 // classification created, and running it again changes nothing.
+//
+// The records it moves can span the whole retained history, and the pairing they call
+// for is decided and written in chunks of store.PairingChunkSeconds rather than in one
+// transaction over that span (B8b of specs/SPEC-step-5b-widget-api.md), with the same
+// result.
 func (c *Collector) ReclassifyEverything(ctx context.Context) error {
 	return c.derive(ctx, derivation{everything: true})
 }

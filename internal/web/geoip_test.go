@@ -26,7 +26,7 @@ func (h *harness) setGeoIPProbe(state store.AvailabilityState, probe string) {
 	if err != nil {
 		h.t.Fatalf("looking up the MaxMind provider: %v", err)
 	}
-	if err := h.store.SetAvailability(ctx, id, state, probe, nil, h.clock.Now().Unix()); err != nil {
+	if err := h.store.SetAvailability(ctx, id, state, store.OutcomeHealthy, probe, nil, h.clock.Now().Unix()); err != nil {
 		h.t.Fatalf("recording the MaxMind availability: %v", err)
 	}
 }

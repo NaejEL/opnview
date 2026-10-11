@@ -134,6 +134,26 @@ func run() (err error) {
 		return err
 	}
 
+	// THE INTERVAL OPNVIEW WAS NOT RUNNING is recorded before anything collects, so the
+	// first pass of every source already sits after it (SPEC-step-5b-widget-api.md, D2).
+	// The clean stop is recorded once the loops have stopped, by this defer, which runs
+	// before the database's own close above it.
+	if absence, err := collect.RecordStart(ctx, database, settings, collect.SystemClock{}); err != nil {
+		return err
+	} else if absence != nil {
+		fmt.Printf("%s was not running from %s to %s; that interval is recorded as a gap of every "+
+			"source\n", buildinfo.AppName, time.Unix(absence.From, 0).UTC().Format(time.RFC3339),
+			time.Unix(absence.To, 0).UTC().Format(time.RFC3339))
+	}
+	defer func() {
+		// The start context is cancelled by the stop signal, so the record gets its own.
+		stopping, cancel := context.WithTimeout(context.Background(), shutdownDeadline)
+		defer cancel()
+		if stopErr := collect.RecordCleanStop(stopping, database, collect.SystemClock{}); stopErr != nil {
+			fmt.Fprintf(os.Stderr, "%s: recording the clean stop: %v\n", buildinfo.AppName, stopErr)
+		}
+	}()
+
 	// The key file beside the database, created on first start with permissions
 	// denying group and other.
 	//
@@ -220,6 +240,8 @@ func run() (err error) {
 		Settings:    live,
 		Collector:   collector,
 		GeoIP:       refresher,
+		// The widget API reads the list the refresh holds; reading it makes no request.
+		SuffixLists: suffixes,
 	})
 	if err != nil {
 		return err
@@ -265,8 +287,9 @@ func run() (err error) {
 	fmt.Printf("%s: the interface is listening on %s\n", buildinfo.AppName, *listen)
 
 	collectErr := collect.Run(ctx, collect.SystemClock{},
-		append(append(collector.Tasks(live), maxmind.Tasks(live, refresher, locator)...),
-			publicsuffix.Tasks(live, suffixes)...), report)
+		append(append(append(collector.Tasks(live), maxmind.Tasks(live, refresher, locator)...),
+			publicsuffix.Tasks(live, suffixes)...),
+			collect.HeartbeatTask(live, database, collect.SystemClock{})), report)
 	running.Wait()
 
 	switch {

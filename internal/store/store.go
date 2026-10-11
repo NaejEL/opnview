@@ -2,8 +2,9 @@
 // holds the typed write paths the collectors use.
 //
 // The schema is one file, applied in place and applied on every start. There is
-// no migration runner and no schema_version table: nothing is deployed and
-// nobody has data, so numbered files would be machinery for a problem that does
+// no migration runner and no schema_version table: the one deployment is the
+// maintainer's live validation installation, whose history is re-collectable from the
+// firewall, so numbered files would be machinery for a problem that does
 // not exist. Every statement in schema.sql is idempotent, which is what makes
 // applying it on every start safe. Migrations begin the day the product runs
 // somewhere with data worth keeping — schema.sql becomes the baseline and the
@@ -39,9 +40,22 @@ var sqlFiles embed.FS
 // DatabaseFilename is the name of the database inside the data directory.
 const DatabaseFilename = "opnview.db"
 
+// ErrSchemaOutdated is returned by Open when the database was created by an earlier build
+// whose schema differs from this one in a way the in-place schema cannot absorb: a table
+// that exists without a column this build's schema reads. schema.sql is edited in place
+// until migrations exist (ROADMAP.md, step 8), so such a database is not upgraded; it is
+// moved aside and the history is collected anew. ROADMAP.md, step 5, *Rebuilding the
+// database after step 5B*, says how and why.
+var ErrSchemaOutdated = errors.New("store: the database was created by an earlier build whose " +
+	"schema differs from this one; move " + DatabaseFilename + " aside and start again, as ROADMAP.md, " +
+	"step 5, \"Rebuilding the database after step 5B\", describes")
+
 // Store is an open database.
 type Store struct {
 	db *sql.DB
+	// reader is the read-only connections every read function runs on, with their
+	// statement cache (readpool.go). It is nil only on a Store that failed to open.
+	reader *readPool
 }
 
 // Open opens, or creates, the database in dataDir and applies the schema.
@@ -131,6 +145,14 @@ func Open(ctx context.Context, dataDir string) (*Store, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	// The read connections are opened after the schema is applied, so none of them
+	// ever holds a schema older than the one the writer just committed.
+	reader, err := openReadPool(ctx, filepath.ToSlash(path))
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	store.reader = reader
 	return store, nil
 }
 
@@ -148,12 +170,22 @@ func (s *Store) Close() error {
 	if s.db == nil {
 		return nil
 	}
+	// The read connections close first: SQLite removes the -wal and -shm companions only
+	// when the LAST connection to the database closes, and that must be the writer's,
+	// after its checkpoint.
+	var readerErr error
+	if s.reader != nil {
+		readerErr = s.reader.close()
+		s.reader = nil
+	}
 	// A failed checkpoint must not stop the close, or a stuck reader would keep
 	// the database open for ever; it is reported alongside instead.
 	_, checkpointErr := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 	closeErr := s.db.Close()
 	s.db = nil
 	switch {
+	case readerErr != nil:
+		return fmt.Errorf("store: closing the read connections: %w", readerErr)
 	case closeErr != nil:
 		return fmt.Errorf("store: closing the database: %w", closeErr)
 	case checkpointErr != nil:
@@ -180,9 +212,23 @@ func (s *Store) applySchema(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("store: beginning the schema transaction: %w", err)
 	}
+	// A database that already holds tables was written by some build. If the schema then
+	// fails to apply, the likeliest cause is that build's schema, which the in-place file
+	// does not upgrade, and the error says so rather than leaving SQLite's "no column
+	// named" to be decoded.
+	var existingTables int
+	if err := tx.QueryRowContext(ctx,
+		"SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").
+		Scan(&existingTables); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("store: reading the existing schema: %w", err)
+	}
 	for _, statement := range SplitStatements(string(schema)) {
 		if _, err := tx.ExecContext(ctx, statement); err != nil {
 			_ = tx.Rollback()
+			if existingTables > 0 {
+				return fmt.Errorf("%w: %w\nstatement: %s", ErrSchemaOutdated, err, firstLine(statement))
+			}
 			return fmt.Errorf("store: applying the schema: %w\nstatement: %s", err, firstLine(statement))
 		}
 	}

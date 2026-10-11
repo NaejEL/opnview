@@ -68,11 +68,11 @@ func (unboundLookups) requestedSpanSeconds() int64 { return dnsRequestedSpan }
 func (unboundLookups) probe(ctx context.Context, host session) (probeResult, error) {
 	result := probeResult{probe: opnsense.UnboundStatus}
 
-	running, state, detail, err := host.serviceState(ctx, opnsense.UnboundStatus)
+	running, state, outcome, detail, err := host.serviceState(ctx, opnsense.UnboundStatus)
 	if err != nil {
 		return result, err
 	}
-	result.state, result.detail = state, detail
+	result.state, result.outcome, result.detail = state, outcome, detail
 	if !running {
 		return result, nil
 	}
@@ -83,7 +83,7 @@ func (unboundLookups) probe(ctx context.Context, host session) (probeResult, err
 	}
 	configured := ok && decode.FlagOrFalse(decode.NestedFlag(settings, "unbound", "general", "enabled"))
 	if !configured {
-		result.state = store.StatePresentButDisabled
+		result.state, result.outcome = store.StatePresentButDisabled, store.OutcomePresentButDisabled
 		result.detail = "the service runs and unbound.general.enabled is not set"
 		return result, nil
 	}
@@ -93,7 +93,7 @@ func (unboundLookups) probe(ctx context.Context, host session) (probeResult, err
 		return result, err
 	}
 	if !overviewOK || !decode.FlagOrFalse(decode.Flag(overview, "enabled")) {
-		result.state = store.StatePresentButDisabled
+		result.state, result.outcome = store.StatePresentButDisabled, store.OutcomePresentButDisabled
 		result.detail = "query reporting is off, which is a setting to turn on and not an " +
 			"absence of lookups"
 		return result, nil
@@ -105,7 +105,8 @@ func (unboundLookups) probe(ctx context.Context, host session) (probeResult, err
 // lookups reads one page of the ring buffer.
 func (unboundLookups) lookups(ctx context.Context, host session, page int) (
 	[]lookupRecord, probeResult, error) {
-	result := probeResult{probe: opnsense.SearchQueries, state: store.StateUnavailable}
+	result := probeResult{probe: opnsense.SearchQueries, state: store.StateUnavailable,
+		outcome: store.OutcomeRequestNotMade}
 
 	now := host.now()
 	response, err := host.call(ctx, opnsense.SearchQueries, opnsense.RequestOptions{
@@ -123,6 +124,7 @@ func (unboundLookups) lookups(ctx context.Context, host session, page int) (
 		return nil, result, err
 	}
 	if !response.OK() {
+		result.outcome = responseOutcome(response)
 		result.detail = response.Detail
 		return nil, result, fmt.Errorf("collect: the resolver query report answered %s",
 			response.Outcome)
@@ -130,10 +132,11 @@ func (unboundLookups) lookups(ctx context.Context, host session, page int) (
 
 	rows, err := decode.Rows(response.Body)
 	if err != nil {
+		result.outcome = store.OutcomeUndecodable
 		result.detail = "the query report body could not be read"
 		return nil, result, fmt.Errorf("collect: reading the resolver query report: %w", err)
 	}
-	result.state = store.StateReachable
+	result.state, result.outcome = store.StateReachable, store.OutcomeHealthy
 	result.separable = true
 
 	records := make([]lookupRecord, 0, len(rows))
@@ -157,6 +160,7 @@ func (unboundLookups) lookups(ctx context.Context, host session, page int) (
 		records = append(records, lookupRecord{
 			DeduplicationKey: unboundLookupKey(row, lookedUpAt),
 			ClientAddress:    decode.RawString(row, "client"),
+			ClientFamily:     unboundQueryFamily(decode.RawString(row, "family")),
 			Domain:           domain,
 			Action:           action,
 			AnswerSource:     decode.StringPointer(row, "source"),
@@ -202,4 +206,30 @@ func unboundLookupKey(row decode.Object, lookedUpAt int64) string {
 	}
 	sum := sha256.Sum256([]byte(strings.Join(parts, unitSeparator)))
 	return "content:" + hex.EncodeToString(sum[:])
+}
+
+// unboundQueryFamily turns a query-report row's `family` into the family stored on the
+// lookup: `ip4` is 4 and `ip6` is 6; anything else -- `unix`, an empty or absent field --
+// is nil, which is no evidence. It is not part of the de-duplication key above, so a row
+// stored before the field was read keeps its key.
+//
+// THE FIELD IS THE QUERYING ADDRESS'S FAMILY, AND IT SURVIVES THE HOST NAME. The report
+// row is the `query` table's row (opnsense/core 26.7.3, scripts/unbound/stats.py, the
+// `details` query, SELECT * over `query`), whose `family`
+// scripts/unbound-dnsbl/lib/__init__.py fills from the reply's comm_reply.family;
+// Unbound's pythonmod/interface.i maps that from the socket address's ss_family to "ip4",
+// "ip6" or "unix". stats.py replaces only `client` by the reverse-resolved host name, so
+// `family` still says which family asked. docs/opnsense-api-survey.md, "The querying
+// family behind a logged host name, read from source for step 5B".
+func unboundQueryFamily(value string) *int64 {
+	var family int64
+	switch value {
+	case "ip4":
+		family = 4
+	case "ip6":
+		family = 6
+	default:
+		return nil
+	}
+	return &family
 }

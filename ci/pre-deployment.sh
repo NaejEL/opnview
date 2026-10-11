@@ -7,13 +7,15 @@
 #
 # What it runs, every step even after one fails, each exit code reported:
 #
-#   1. go vet with the `predeployment` build tag, so the tests moved out of the
-#      everyday suite are vetted too;
-#   2. go test -race -count=1 over the whole suite, with the same tag: every
-#      package under the race detector, and every moved test;
+#   1. go vet with the `predeployment` and `reclassifycost` build tags, so the
+#      tests moved out of the everyday suite are vetted too;
+#   2. go test -race -count=1 over the whole suite, with the `predeployment` tag:
+#      every package under the race detector, and every moved test;
 #   3. ci/budget-self-test.sh, the test budget's own check;
 #   4. sql/schema-checks.sh: the schema, the seeds at 100 000 and 1 000 000 flow
-#      rows, the screen queries and their query plans.
+#      rows, the screen queries and their query plans, the widget response
+#      budgets, and the wall time of ReclassifyEverything on the 1 000 000-row
+#      seed, printed there and recorded in docs/data-model.md.
 #
 # The everyday suite is `docker compose run --rm checks`. A test moved out of it
 # carries the `predeployment` build tag and says why in a comment beside it; the
@@ -27,6 +29,17 @@ set -uo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT" || exit 1
 
+# The data directory the schema checks write under is refused before any step runs
+# when it is relative or shows Git-Bash path conversion; ci/data-dir-guard.sh says
+# why. A refusal here costs nothing, where the same mistake found after the race run
+# costs the whole command.
+# shellcheck source=ci/data-dir-guard.sh
+. "$REPO_ROOT/ci/data-dir-guard.sh"
+if ! check_data_dir "${OPNVIEW_DATA_DIR:-/data}"; then
+  printf -- 'pre-deployment: FAILED before any step\n' >&2
+  exit 1
+fi
+
 failed=0
 started="$(date +%s)"
 
@@ -37,9 +50,9 @@ report() {
   fi
 }
 
-printf -- '== go vet -tags predeployment ./...\n'
-go vet -tags predeployment ./...
-report 'go vet -tags predeployment ./...' "$?"
+printf -- '== go vet -tags predeployment,reclassifycost ./...\n'
+go vet -tags predeployment,reclassifycost ./...
+report 'go vet -tags predeployment,reclassifycost ./...' "$?"
 
 printf -- '== go test -race -count=1 -tags predeployment ./...\n'
 go test -race -count=1 -timeout 60m -tags predeployment ./...

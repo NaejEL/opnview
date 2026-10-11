@@ -533,6 +533,24 @@ client counts as parameters and carry both IP versions.
   - a lower-bound flag on volume figures;
   - `custom_chart` bucket alignment.
 
+**Amended by `specs/SPEC-step-5b-widget-api.md` (step 5B), item by item:**
+
+- *One authenticated route per widget type* — **done**: `GET /api/widget/{type}`, one
+  route per served preset built from `internal/widget`'s registry (A1). Parameter parsing
+  against the catalogue (A3, A4), reference resolution with an unresolved state (A4.4),
+  unknown-key reporting (A4.1), availability, coverage, gaps and freshness in each response
+  (A5–A7), explicit remainders on truncation and map, tree and Sankey reconciliation (A8)
+  are all **done**; the contract is `docs/widget-api.md`.
+- *`no_domains` withheld at the API* — **done** (A10, decision 6).
+- *The per-record attribution method* — **done**: every site-name record carries
+  `method` and its delay (A9).
+- *The questions* — **answered** by the decisions of that spec: 26 presets get an endpoint
+  and the three alert presets **move to step 6** (decision 1); GET, with the parameters
+  object as JSON in one query parameter, so no CSRF applies (decision 2); one defaults table
+  in `docs/widget-api.md` (decision 5); no bare-shape endpoint (decision 11); each volume
+  figure carries its measure and `lower_bound: true` (decision 7); buckets are UTC-aligned,
+  sub-hour for the short periods (decision 8).
+
 ## Out of scope
 
 - Every route, template and renderer (5B, step 7).

@@ -37,24 +37,72 @@ type recordReader func(ctx context.Context, host session) (recordDump, probeResu
 
 // recordTally is what one read returned, counted.
 type recordTally struct {
-	// total is every record the endpoint returned, the message-cache references aside.
+	// total is every record the endpoint returned. Rows its implementation recognised as
+	// not being records are not among them.
 	total int
-	// messageCacheRefs counts the cache rows whose `ttl` is JSON null: references from
-	// the dump's message-cache section, which are not records (resolvercache_unbound.go).
-	messageCacheRefs int
+	// notRecords are those rows, counted and worded by the implementation that read them.
+	notRecords []notRecordCount
 	// byType counts every record by its `rrtype`, verbatim, stored or not.
 	byType map[string]int
 	// stored is how many records passed normalisation and were handed to the store.
 	stored int
 	// badTTL counts the cache records whose `ttl` is not a string of digits: a string
-	// holding anything else, a number, an absent field. A null ttl is not counted here.
+	// holding anything else, a number, an absent field.
 	badTTL int
-	// badValue counts the records whose `value` is not valid for their type -- an A
-	// record that is not an IPv4 address, a CNAME with no target -- and the PTR records
-	// whose owner name encodes no address.
-	badValue int
+	// badValues counts the records whose `value` is not valid for their type, per named
+	// category (SPEC-step-5b-widget-api.md, B6): a single undifferentiated count told
+	// nobody whether it was a defect of the reading or something the resolver holds.
+	badValues map[badValue]int
 	// badName counts the records with no owner name.
 	badName int
+}
+
+// badValue is one named way a record's value is not valid for its type. The categories
+// are DNS's rules restated per type (RFC 1035, sections 3.3.1, 3.4.1 and 3.5; RFC 3596,
+// sections 2.2 and 2.5), not a product's.
+type badValue string
+
+// The categories, in the order the detail lists them.
+const (
+	badValueANotAddress    badValue = "A whose value is not an address"
+	badValueAIsIPv6        badValue = "A whose value is an IPv6 address"
+	badValueAAAANotAddress badValue = "AAAA whose value is not an address"
+	badValueAAAAIsIPv4     badValue = "AAAA whose value is an IPv4 address"
+	badValueCNAMEEmpty     badValue = "CNAME with an empty target"
+	badValuePTREmpty       badValue = "PTR with an empty target"
+	badValuePTRNoAddress   badValue = "PTR whose owner name encodes no address"
+	badValueNoHostLabel    badValue = "local data whose host name has an empty first label"
+)
+
+// badValueOrder is the order the categories are listed in.
+var badValueOrder = []badValue{badValueANotAddress, badValueAIsIPv6, badValueAAAANotAddress,
+	badValueAAAAIsIPv4, badValueCNAMEEmpty, badValuePTREmpty, badValuePTRNoAddress,
+	badValueNoHostLabel}
+
+// badValueTotal is every record skipped for its value.
+func (t recordTally) badValueTotal() int {
+	total := 0
+	for _, n := range t.badValues {
+		total += n
+	}
+	return total
+}
+
+// addressValue classifies an A or AAAA record's value: the address, or the category it
+// fails under.
+func addressValue(rrtype, value string) (netip.Addr, badValue) {
+	address, ok := store.CanonicalAddress(value)
+	switch {
+	case !ok && rrtype == store.RRTypeA:
+		return netip.Addr{}, badValueANotAddress
+	case !ok:
+		return netip.Addr{}, badValueAAAANotAddress
+	case rrtype == store.RRTypeA && !address.Is4():
+		return netip.Addr{}, badValueAIsIPv6
+	case rrtype == store.RRTypeAAAA && address.Is4():
+		return netip.Addr{}, badValueAAAAIsIPv4
+	}
+	return address, ""
 }
 
 // storedTypes are the record types each part of the resolver contributes: the cache's
@@ -70,20 +118,13 @@ func storedTypes(heldIn string) []string {
 // normaliseRecords turns what an endpoint returned into the records the store keeps, and
 // counts what it did not keep and why.
 func normaliseRecords(raw []rawRecord, heldIn string) ([]store.ResourceRecord, recordTally) {
-	tally := recordTally{byType: map[string]int{}}
+	tally := recordTally{byType: map[string]int{}, badValues: map[badValue]int{}}
 	kept := map[string]bool{}
 	for _, rrtype := range storedTypes(heldIn) {
 		kept[rrtype] = true
 	}
 	records := make([]store.ResourceRecord, 0, len(raw))
 	for _, record := range raw {
-		if heldIn == store.HeldInCache && record.TTLShape == decode.ShapeNull {
-			// A message-cache reference: it names an rrset the dump's rrset section
-			// already holds, and carries no TTL and no record data. Not a record, so not
-			// counted among them, and not an anomaly.
-			tally.messageCacheRefs++
-			continue
-		}
 		tally.total++
 		rrtype := strings.TrimSpace(record.RRType)
 		tally.byType[rrtype]++
@@ -110,9 +151,9 @@ func normaliseRecords(raw []rawRecord, heldIn string) ([]store.ResourceRecord, r
 		}
 		switch rrtype {
 		case store.RRTypeA, store.RRTypeAAAA:
-			address, ok := store.CanonicalAddress(record.Value)
-			if !ok || (rrtype == store.RRTypeA) != address.Is4() {
-				tally.badValue++
+			address, bad := addressValue(rrtype, record.Value)
+			if bad != "" {
+				tally.badValues[bad]++
 				continue
 			}
 			normalised.Value = address.String()
@@ -123,15 +164,19 @@ func normaliseRecords(raw []rawRecord, heldIn string) ([]store.ResourceRecord, r
 		case store.RRTypeCNAME:
 			target := store.DNSName(record.Value)
 			if target == "" {
-				tally.badValue++
+				tally.badValues[badValueCNAMEEmpty]++
 				continue
 			}
 			normalised.Value = target
 		case store.RRTypePTR:
 			target := store.DNSName(record.Value)
 			address, ok := reverseNameAddress(owner)
-			if target == "" || !ok {
-				tally.badValue++
+			if !ok {
+				tally.badValues[badValuePTRNoAddress]++
+				continue
+			}
+			if target == "" {
+				tally.badValues[badValuePTREmpty]++
 				continue
 			}
 			normalised.Value = target
@@ -139,7 +184,7 @@ func normaliseRecords(raw []rawRecord, heldIn string) ([]store.ResourceRecord, r
 			normalised.HostLabel = store.HostnameLabel(target)
 		}
 		if normalised.HostLabel == "" && heldIn == store.HeldInLocalData {
-			tally.badValue++
+			tally.badValues[badValueNoHostLabel]++
 			continue
 		}
 		records = append(records, normalised)
@@ -254,16 +299,23 @@ func (t recordTally) detail(heldIn string, responseBytes int, elapsed time.Durat
 	detail += fmt.Sprintf("; kept %d of the %s records (%d observations started, %d extended); "+
 		"every other type is counted and not stored", t.stored,
 		strings.Join(storedTypes(heldIn), ", "), storage.Inserted, storage.Extended)
-	if t.messageCacheRefs > 0 {
-		detail += fmt.Sprintf("; skipped %d message-cache references: lines of the dump's message-cache "+
-			"section naming an rrset of a cached answer, with no ttl and no record data, so not records "+
-			"and not counted among them", t.messageCacheRefs)
+	for _, rows := range t.notRecords {
+		if rows.Count > 0 {
+			detail += fmt.Sprintf("; skipped %d %s", rows.Count, rows.Wording)
+		}
 	}
 	if t.badTTL > 0 {
 		detail += fmt.Sprintf("; skipped %d whose ttl is not a whole number of seconds", t.badTTL)
 	}
-	if t.badValue > 0 {
-		detail += fmt.Sprintf("; skipped %d whose value is not valid for their type", t.badValue)
+	if total := t.badValueTotal(); total > 0 {
+		categories := make([]string, 0, len(t.badValues))
+		for _, category := range badValueOrder {
+			if n := t.badValues[category]; n > 0 {
+				categories = append(categories, fmt.Sprintf("%s: %d", category, n))
+			}
+		}
+		detail += fmt.Sprintf("; skipped %d whose value is not valid for their type (%s)", total,
+			strings.Join(categories, ", "))
 	}
 	if t.badName > 0 {
 		detail += fmt.Sprintf("; skipped %d with no owner name", t.badName)
@@ -318,9 +370,9 @@ func (c *Collector) readResourceRecords(ctx context.Context, kind, heldIn string
 			// Registered, probed, and not readable through the API: a state with its
 			// reason, not a failed pass. Nothing is stored.
 			pass.failed = true
-			c.setReadDetail(active.providerID, readErr.Error())
-			if err := c.writeAvailability(ctx, active.providerID, result.state, result.probe,
-				readErr.Error()); err != nil {
+			c.setReadDetail(active.providerID, result.outcome, readErr.Error())
+			if err := c.writeAvailability(ctx, active.providerID, result.state, result.outcome,
+				result.probe, readErr.Error()); err != nil {
 				failures = append(failures, err)
 			}
 			continue
@@ -330,12 +382,12 @@ func (c *Collector) readResourceRecords(ctx context.Context, kind, heldIn string
 			// undecodable, a failed status. Nothing is stored, and the provider's last
 			// successful poll does not move.
 			pass.failed = true
-			state := result.state
+			state, outcome := result.state, result.outcome
 			if state == "" {
 				state = store.StateUnavailable
 			}
-			c.setReadDetail(active.providerID, result.detail)
-			if err := c.writeAvailability(ctx, active.providerID, state, result.probe,
+			c.setReadDetail(active.providerID, outcome, result.detail)
+			if err := c.writeAvailability(ctx, active.providerID, state, outcome, result.probe,
 				result.detail); err != nil {
 				failures = append(failures, err)
 			}
@@ -344,11 +396,24 @@ func (c *Collector) readResourceRecords(ctx context.Context, kind, heldIn string
 		}
 
 		records, tally := normaliseRecords(dump.Records, heldIn)
+		tally.notRecords = dump.NotRecords
 		storage, err := c.store.StoreResourceRecords(ctx, store.ResourceRecordRead{
 			ProviderID: active.providerID, HeldIn: heldIn, PolledAt: polledAt, Records: records,
 		})
 		if err != nil {
+			// The resolver answered and opnview kept nothing of it: unavailable, because
+			// nothing of this read reached the store a widget reads, with the outcome saying
+			// the fault is opnview's rather than the firewall's -- as the lease pass records
+			// it (SPEC-step-5b-widget-api.md, B8g). The provider's last successful poll does
+			// not move, so no lookup is vouched for by a read that was not kept.
 			pass.failed = true
+			detail := fmt.Sprintf("the resolver answered and its %d records could not be stored: %v",
+				len(records), err)
+			c.setReadDetail(active.providerID, store.OutcomeStoreFailure, detail)
+			if writeErr := c.writeAvailability(ctx, active.providerID, store.StateUnavailable,
+				store.OutcomeStoreFailure, result.probe, detail); writeErr != nil {
+				failures = append(failures, writeErr)
+			}
 			failures = append(failures, err)
 			continue
 		}
@@ -358,9 +423,13 @@ func (c *Collector) readResourceRecords(ctx context.Context, kind, heldIn string
 		pass.read = true
 		pass.followsAPoll = pass.followsAPoll || storage.HadPrevious
 		detail := tally.detail(heldIn, dump.ResponseBytes, elapsed, storage)
-		c.setReadDetail(active.providerID, detail)
-		if err := c.writeAvailability(ctx, active.providerID, store.StateReachable, result.probe,
-			detail); err != nil {
+		outcome := store.OutcomeHealthy
+		if tally.total == 0 {
+			outcome = store.OutcomeHealthyEmpty
+		}
+		c.setReadDetail(active.providerID, outcome, detail)
+		if err := c.writeAvailability(ctx, active.providerID, store.StateReachable, outcome,
+			result.probe, detail); err != nil {
 			failures = append(failures, err)
 		}
 		if storage.Changed {

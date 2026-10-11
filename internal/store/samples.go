@@ -175,7 +175,7 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 	if err != nil {
 		return result, err
 	}
-	rows, err := s.db.QueryContext(ctx, text, sql.Named("since", now-bound), sql.Named("now", now))
+	rows, err := s.reader.QueryContext(ctx, text, sql.Named("since", now-bound), sql.Named("now", now))
 	if err != nil {
 		return result, fmt.Errorf("store: read_pair_rates: %w", err)
 	}
@@ -236,7 +236,7 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 		}
 	}
 
-	prefixes, err := loadPrefixes(ctx, s.db)
+	prefixes, err := loadPrefixes(ctx, s.reader)
 	if err != nil {
 		return result, err
 	}
@@ -245,7 +245,7 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 		if known, present := insideCache[address]; present {
 			return known, nil
 		}
-		interfaceID, err := membership(ctx, s.db, address, prefixes)
+		interfaceID, err := membership(ctx, s.reader, address, prefixes)
 		if err != nil {
 			return false, err
 		}
@@ -311,7 +311,7 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 			result.ByDirection[outDirection] = rate
 		}
 
-		clientID, found, err := queryOptionalInt(ctx, s.db, "client_identity_at_address",
+		clientID, found, err := queryOptionalInt(ctx, s.reader, "client_identity_at_address",
 			map[string]any{"address": endpoint.local})
 		if err != nil {
 			return result, err
@@ -326,7 +326,7 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 			continue
 		}
 		addRate(result.ByClient, clientID, in, endpoint.out, endpoint.sampledAt)
-		ownerKey, _, err := queryOptionalInt(ctx, s.db, "read_client_owner",
+		ownerKey, _, err := queryOptionalInt(ctx, s.reader, "read_client_owner",
 			map[string]any{"client_id": clientID})
 		if err != nil {
 			return result, err
@@ -338,7 +338,7 @@ func (s *Store) ReadCurrentRates(ctx context.Context, now int64) (CurrentRates, 
 
 // addressLevelClient returns the most recent address-level client at an address.
 func (s *Store) addressLevelClient(ctx context.Context, address string) (int64, bool, error) {
-	return queryOptionalInt(ctx, s.db, "read_address_level_client", map[string]any{"address": address})
+	return queryOptionalInt(ctx, s.reader, "read_address_level_client", map[string]any{"address": address})
 }
 
 func addRate[K comparable](rates map[K]CurrentRate, key K, in float64, out *float64, sampledAt int64) {
@@ -403,7 +403,7 @@ func (s *Store) ReadSampledBytes(ctx context.Context, from, to int64) ([]Sampled
 	if err != nil {
 		return nil, "", err
 	}
-	rows, err := s.db.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
+	rows, err := s.reader.QueryContext(ctx, text, sql.Named("from", from), sql.Named("to", to))
 	if err != nil {
 		return nil, "", fmt.Errorf("store: read_sampled_pair_bytes: %w", err)
 	}
@@ -467,7 +467,7 @@ func (s *Store) ReadInterfaceThroughput(ctx context.Context, device string, meas
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.db.QueryContext(ctx, text, sql.Named("device", device),
+	rows, err := s.reader.QueryContext(ctx, text, sql.Named("device", device),
 		sql.Named("measure", string(measure)), sql.Named("from", from), sql.Named("to", to))
 	if err != nil {
 		return nil, fmt.Errorf("store: read_interface_counter: %w", err)
@@ -508,7 +508,7 @@ func (s *Store) IsFirewallAddress(ctx context.Context, address string) (bool, er
 	if _, err := netip.ParseAddr(address); err != nil {
 		return false, nil
 	}
-	_, found, err := queryOptionalInt(ctx, s.db, "read_is_firewall_address",
+	_, found, err := queryOptionalInt(ctx, s.reader, "read_is_firewall_address",
 		map[string]any{"address": address})
 	return found, err
 }

@@ -1,7 +1,9 @@
 -- opnview — the schema. One file, applied in place.
 --
 -- THERE ARE NO MIGRATIONS, AND THAT IS A DECISION RATHER THAN AN OMISSION.
--- Nothing is deployed and nobody has data, so numbered files, a
+-- The one deployment is the maintainer's live validation installation, whose
+-- history is re-collectable from the firewall (ROADMAP.md, step 5, "Rebuilding
+-- the database after step 5B"), so numbered files, a
 -- `schema_version` table and a runner would be machinery for a problem that
 -- does not exist. This file is edited in place, and it is applied on every
 -- start: every statement below is idempotent, so applying it to a database
@@ -631,7 +633,15 @@ CREATE TABLE IF NOT EXISTS rule (
     -- nothing in the derivation reads it.
     enabled       INTEGER CHECK (enabled IS NULL OR enabled IN (0, 1)),
     is_automatic  INTEGER NOT NULL DEFAULT 0 CHECK (is_automatic IN (0, 1)),
-    discovered_at INTEGER NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800)
+    discovered_at INTEGER NOT NULL CHECK (discovered_at >= 0 AND discovered_at < 4102444800),
+    -- destination_net is the endpoint's `destination_net` field, VERBATIM: an address,
+    -- a network, an alias name, `any`, whatever the rule says (B8a of
+    -- specs/SPEC-step-5b-widget-api.md, decision 12). It is stored so a table of rules
+    -- can show what a rule was written against, and IT IS NEVER EVALUATED: opnview
+    -- matches no flow against it and derives nothing from it. NULL is not reported.
+    -- The schema is edited in place (decision 12 of the step-5A live corrections), so
+    -- a database created before this column is rebuilt rather than migrated.
+    destination_net TEXT
 );
 
 -- ---------------------------------------------------------------------------
@@ -698,6 +708,13 @@ CREATE INDEX IF NOT EXISTS idx_client_last_address ON client (last_address, last
 -- unassigned clients at the head of this index rather than omitting them, so
 -- the index serves the unassigned bucket as well as the assigned ones.
 CREATE INDEX IF NOT EXISTS idx_client_owner ON client (owner_id, id);
+
+-- A widget reference to a client by host name (docs/dashboard-format.md, "The reference
+-- object", `client` by `hostname`) is an exact match on this column, and the widget API's
+-- statements may not scan a growing table (specs/SPEC-step-5b-widget-api.md, A12). The
+-- write cost is one index entry per client row, which grows with the machines seen, not
+-- with the traffic.
+CREATE INDEX IF NOT EXISTS idx_client_hostname ON client (hostname);
 
 -- ---------------------------------------------------------------------------
 -- DHCP lease — one observed lease generation.
@@ -945,12 +962,19 @@ CREATE TABLE IF NOT EXISTS flow (
 -- There is exactly one index leading on observed_at alone, deliberately: it is
 -- the load-bearing index of the Overview and Matrix queries, and a second one
 -- with the same leading column would hide its loss.
+--
+-- pair_outcome and interface_device close both, since B8c of
+-- specs/SPEC-step-5b-widget-api.md: the screen queries read classified_flow and keep
+-- the rows whose exit_leg_device is NULL, and exit_leg_device is computed from those
+-- two columns, so without them every covered plan would fetch each row to tell a
+-- second leg from a first.
 CREATE INDEX IF NOT EXISTS idx_flow_observed_at ON flow
     (observed_at, traffic_scope, action, packet_bytes,
-     src_interface_id, dst_interface_id, src_client_id, rule_id, rule_lookup_state);
+     src_interface_id, dst_interface_id, src_client_id, rule_id, rule_lookup_state,
+     pair_outcome, interface_device);
 CREATE INDEX IF NOT EXISTS idx_flow_src_interface_observed_at ON flow
     (src_interface_id, observed_at, src_client_id, packet_bytes, action,
-     traffic_scope, dst_address);
+     traffic_scope, dst_address, pair_outcome, interface_device);
 CREATE INDEX IF NOT EXISTS idx_flow_src_client_observed_at ON flow (src_client_id, observed_at);
 -- The partial index of the blocked_event view, over the refusals: a 'block' and a
 -- 'reject' -- a reject is a refusal that answers. Its predicate is written exactly
@@ -1039,6 +1063,11 @@ SELECT
     dst_is_this_firewall,
     pair_outcome,
     paired_flow_id,
+    -- rule_lookup_state and ip_version since B8c of specs/SPEC-step-5b-widget-api.md:
+    -- the Matrix screen query, which reads this view, counts the connections whose rid
+    -- matched no rule, and the checks count each address family.
+    rule_lookup_state,
+    ip_version,
     CASE
         WHEN src_is_this_firewall = 1 THEN 'from_this_firewall'
         WHEN dst_is_this_firewall = 1 THEN 'to_this_firewall'
@@ -1270,10 +1299,29 @@ CREATE TABLE IF NOT EXISTS blocklist (
 --                         the name a reverse lookup of a loopback address returns.
 --                         It is a protocol constant (decision 11 of the step-5A
 --                         live corrections), not configuration.
--- In 'ambiguous_hostname', 'unknown_hostname' and 'this_firewall_hostname'
--- client_address holds the logged name verbatim, and in the first two of them the
--- lookup is placed nowhere and attributes nothing: a name
+--   'dual_stack_hostname' a host name no lease named, for which the local data held
+--                         exactly two addresses at the lookup's instant, one IPv4 and
+--                         one IPv6, under one name -- a host override with an A and an
+--                         AAAA record names one machine -- and the lookup's querying
+--                         family was not reported, so which of the two asked is not
+--                         known (group C of specs/SPEC-step-5b-widget-api.md, decision
+--                         15). With the family reported, the lookup resolves to the
+--                         address of that family as 'local_data_hostname'. The term
+--                         is opnview's own (docs/data-model.md, Vocabulary).
+-- In 'ambiguous_hostname', 'unknown_hostname', 'dual_stack_hostname' and
+-- 'this_firewall_hostname' client_address holds the logged name verbatim, and in the
+-- first three of them the lookup is placed nowhere and attributes nothing: a name
 -- that does not resolve to one address does not say which machine asked.
+--
+-- client_family is the family of the querying address, 4 or 6, as the resolver's
+-- query report gives it in the `family` field of each row: Unbound's own family of
+-- the reply's address, `ip4` or `ip6` (opnsense/core 26.7.3,
+-- scripts/unbound-dnsbl/lib/__init__.py, Query, from comm_reply.family, which
+-- Unbound's pythonmod/interface.i maps from the socket address's ss_family). It is
+-- the querying address's family even where the report replaced that address by a
+-- host name, which makes it the evidence the dual-stack rule reads, recorded per
+-- lookup. NULL when the row carried none: a Dnsmasq lookup, a `unix` socket, an
+-- absent field.
 --
 -- A host name matches a lease by its FIRST LABEL on both sides, without regard
 -- to case and with a trailing dot removed: dhcp_lease.hostname_label below.
@@ -1296,7 +1344,9 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
                    CHECK (client_resolution IN ('logged_address', 'lease_hostname',
                                                 'ambiguous_hostname', 'unknown_hostname',
                                                 'this_firewall_hostname',
-                                                'local_data_hostname')),
+                                                'local_data_hostname',
+                                                'dual_stack_hostname')),
+    client_family  INTEGER CHECK (client_family IS NULL OR client_family IN (4, 6)),
     client_id      INTEGER REFERENCES client (id),
     client_is_this_firewall INTEGER NOT NULL DEFAULT 0 CHECK (client_is_this_firewall IN (0, 1)),
     hostname_examined_at INTEGER CHECK (hostname_examined_at IS NULL
@@ -1330,6 +1380,16 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_client_id ON dns_resolution (clien
 -- comparison, and a stored copy of the domain could disagree with the domain.
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_domain_name
     ON dns_resolution (lower(rtrim(domain, '.')), looked_up_at);
+-- The same comparison bounded by the lookup's client as well, one index per branch of
+-- the attribution's client predicate (statement attribution_name_lookups): by
+-- client_id, and by the address for a lookup or a flow with no client_id. Without
+-- them the search was bounded by name only and read every lookup of a popular name
+-- in the window before filtering by client. Each costs one more index entry per
+-- stored lookup on a growing table; docs/data-model.md, dns_resolution, records it.
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_name_client_id
+    ON dns_resolution (lower(rtrim(domain, '.')), client_id, looked_up_at);
+CREATE INDEX IF NOT EXISTS idx_dns_resolution_name_client_address
+    ON dns_resolution (lower(rtrim(domain, '.')), client_address, looked_up_at);
 
 -- "Which list refused what, over this period" is an index search rather than a
 -- scan of a growing table. The NULL-bearing leading column keeps the
@@ -1342,11 +1402,17 @@ CREATE INDEX IF NOT EXISTS idx_dns_resolution_blocklist ON dns_resolution (block
 -- shrinks as a pass examines them, rather than growing with every unresolved
 -- lookup ever stored. It replaced an index on (client_resolution, looked_up_at)
 -- and one on (client_resolution, ingested_at), both dropped by name.
+--
+-- A 'dual_stack_hostname' lookup waits here too: a lease naming its host may be read
+-- after it, and a lease wins over the local data. Its querying family is stored with
+-- it (client_family), so the pass that examines it again decides it as ingest would
+-- have. As every schema change before step 8 is, the predicate is edited in place and
+-- reaches a database that is rebuilt (decision 12 of the step-5A live corrections).
 DROP INDEX IF EXISTS idx_dns_resolution_client_resolution;
 DROP INDEX IF EXISTS idx_dns_resolution_unresolved_hostname;
 CREATE INDEX IF NOT EXISTS idx_dns_resolution_hostname_unexamined
     ON dns_resolution (client_resolution, hostname_examined_at, ingested_at, id)
-    WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname')
+    WHERE client_resolution IN ('ambiguous_hostname', 'unknown_hostname', 'dual_stack_hostname')
       AND hostname_examined_at IS NULL;
 
 -- ---------------------------------------------------------------------------
@@ -1561,6 +1627,13 @@ CREATE TABLE IF NOT EXISTS geo_asn (
 );
 
 CREATE INDEX IF NOT EXISTS idx_geo_asn_looked_up_at ON geo_asn (looked_up_at);
+
+-- A widget reference to a country or to an operator (docs/dashboard-format.md, "The
+-- reference object": `country` by `iso_3166_1_alpha_2`, `operator` by `asn`) resolves
+-- against these columns by exact match, and the widget API may not scan a growing table
+-- (specs/SPEC-step-5b-widget-api.md, A12). One entry each per geolocated address.
+CREATE INDEX IF NOT EXISTS idx_geo_asn_country_code ON geo_asn (country_code);
+CREATE INDEX IF NOT EXISTS idx_geo_asn_asn ON geo_asn (asn);
 
 -- ---------------------------------------------------------------------------
 -- Rule-info cache — the normalised severity and category of one rule identity,
@@ -1788,11 +1861,32 @@ CREATE TABLE IF NOT EXISTS eve_ingest_cursor (
 -- here: registering one is an INSERT into `provider` plus an INSERT here.
 -- Probe endpoints per kind are tabulated in docs/data-model.md, each cited in
 -- docs/opnsense-api-survey.md.
+--
+-- outcome NAMES WHAT THE LAST PROBE OR READ TURNED INTO, from a closed set, so
+-- that no reader ever parses `detail` (SPEC-step-5b-widget-api.md, D1). The
+-- state says whether the source can be read; the outcome says why, in a word a
+-- program reads and an interface translates; the detail stays as diagnostic
+-- text. The set is store.AvailabilityOutcomes, and docs/data-model.md states
+-- each code's meaning.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS source_availability (
     provider_id INTEGER PRIMARY KEY REFERENCES provider (id),
     state       TEXT NOT NULL
                 CHECK (state IN ('reachable', 'present_but_disabled', 'unavailable')),
+    outcome     TEXT NOT NULL DEFAULT 'not_yet_probed'
+                CHECK (outcome IN ('not_yet_probed', 'healthy', 'healthy_empty',
+                                   'partial_readings', 'present_but_disabled',
+                                   'service_not_running', 'authentication_failed',
+                                   'denied', 'not_found', 'server_error', 'empty_body',
+                                   'result_failed', 'undecodable', 'status_not_ok',
+                                   'transport_failure', 'certificate_refused',
+                                   'request_not_made', 'plugin_not_installed',
+                                   'read_not_supported', 'no_cache_read',
+                                   'no_local_data_read', 'log_grammar_not_recorded',
+                                   'no_licence_key', 'licence_key_undecryptable',
+                                   'no_account_id', 'download_refused',
+                                   'download_limit_reached', 'download_failed',
+                                   'download_malformed', 'store_failure')),
     probe       TEXT NOT NULL,
     detail      TEXT,
     checked_at  INTEGER NOT NULL CHECK (checked_at >= 0 AND checked_at < 4102444800)
@@ -2865,6 +2959,52 @@ CREATE INDEX IF NOT EXISTS idx_collection_gap_interval
     ON collection_gap (provider_id, interval_start_at, interval_end_at);
 
 -- ---------------------------------------------------------------------------
+-- opnview's heartbeat, and the intervals during which opnview was not running
+-- (SPEC-step-5b-widget-api.md, D2).
+--
+-- Source: none. While opnview is stopped, every source goes unread at once, and
+-- nothing any endpoint returns says so: the next poll returns what the firewall
+-- still holds and is silent about what rotated out meanwhile. So the service
+-- records that it is alive, and on start it compares the last record with the
+-- clock.
+--
+-- opnview_heartbeat is ONE ROW: the last instant the service was known to run,
+-- and whether it stopped cleanly at that instant. A clean stop writes the stop
+-- instant and sets clean_stop; a crash leaves the last periodic beat, which is
+-- then the best bound opnview holds, at most one heartbeat interval early.
+--
+-- opnview_downtime IS A TABLE OF ITS OWN rather than a collection_gap reason.
+-- collection_gap is per provider (provider_id NOT NULL, the foreign key every
+-- "was this provider's window covered" search rests on), and opnview not running
+-- is not one provider's gap but all of them: written there it would be one row
+-- per provider per interval, or a NULL provider every reader of that table would
+-- have to learn to skip. Here it is one row per interval, purged with the
+-- retention by detected_at, as collection_gap is.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS opnview_heartbeat (
+    id         INTEGER PRIMARY KEY CHECK (id = 1),
+    beat_at    INTEGER NOT NULL CHECK (beat_at >= 0 AND beat_at < 4102444800),
+    clean_stop INTEGER NOT NULL DEFAULT 0 CHECK (clean_stop IN (0, 1))
+);
+
+CREATE TABLE IF NOT EXISTS opnview_downtime (
+    id                INTEGER PRIMARY KEY,
+    interval_start_at INTEGER NOT NULL
+                      CHECK (interval_start_at >= 0 AND interval_start_at < 4102444800),
+    interval_end_at   INTEGER NOT NULL
+                      CHECK (interval_end_at >= 0 AND interval_end_at < 4102444800),
+    -- 1 when the service recorded a clean stop at interval_start_at, 0 when the
+    -- start is the last heartbeat of a process that ended without one.
+    clean_stop        INTEGER NOT NULL CHECK (clean_stop IN (0, 1)),
+    detected_at       INTEGER NOT NULL CHECK (detected_at >= 0 AND detected_at < 4102444800),
+    CHECK (interval_end_at > interval_start_at)
+);
+
+CREATE INDEX IF NOT EXISTS idx_opnview_downtime_detected_at ON opnview_downtime (detected_at);
+CREATE INDEX IF NOT EXISTS idx_opnview_downtime_interval
+    ON opnview_downtime (interval_end_at, interval_start_at);
+
+-- ---------------------------------------------------------------------------
 -- Measurement sample — one numeric reading of one subject at one instant.
 --
 -- IT IS A PROVIDER KIND, and it is the kind most of the ecosystem fits. Of the
@@ -3173,13 +3313,23 @@ WHERE NOT EXISTS (
 -- logged as the client"). 3 is the default, a quarter of an hour at the default
 -- lease interval; it is a whole number of passes, 1 or more, and internal/config
 -- refuses anything else.
+--
+-- heartbeat_interval_seconds and downtime_threshold_seconds: how often the
+-- running service records that it is alive, and how long it must have been gone
+-- for the interval to be recorded in opnview_downtime (SPEC-step-5b-widget-
+-- api.md, D2). 60 and 300 are the defaults, justified in internal/config beside
+-- DefaultHeartbeatIntervalSeconds; both are positive whole numbers of seconds,
+-- the threshold longer than the interval, and internal/config refuses anything
+-- else.
 INSERT INTO setting (key, value, updated_at) VALUES
     ('retention_seconds', '7776000', CAST(strftime('%s', 'now') AS INTEGER)),
     ('aggregate_mode', 'full', CAST(strftime('%s', 'now') AS INTEGER)),
     ('attribution_max_delay_seconds', '5', CAST(strftime('%s', 'now') AS INTEGER)),
     ('attribution_max_cache_answer_delay_seconds', '3600', CAST(strftime('%s', 'now') AS INTEGER)),
     ('leg_pairing_window_seconds', '1', CAST(strftime('%s', 'now') AS INTEGER)),
-    ('lease_backend_failure_pass_limit', '3', CAST(strftime('%s', 'now') AS INTEGER))
+    ('lease_backend_failure_pass_limit', '3', CAST(strftime('%s', 'now') AS INTEGER)),
+    ('heartbeat_interval_seconds', '60', CAST(strftime('%s', 'now') AS INTEGER)),
+    ('downtime_threshold_seconds', '300', CAST(strftime('%s', 'now') AS INTEGER))
 ON CONFLICT (key) DO NOTHING;
 
 -- The provider registry, seeded with the implementations that exist and have
@@ -3259,7 +3409,7 @@ ON CONFLICT (kind, provider_key) DO NOTHING;
 -- set is derived from the registry, so registering a provider and forgetting
 -- its availability row is not possible here, and the NOT EXISTS guard is what
 -- makes a second apply leave an already-probed row alone.
-INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
-SELECT p.id, 'unavailable', 'not_yet_probed', NULL, 0
+INSERT INTO source_availability (provider_id, state, outcome, probe, detail, checked_at)
+SELECT p.id, 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0
 FROM provider AS p
 WHERE NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);

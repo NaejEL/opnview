@@ -1239,32 +1239,36 @@ func TestThePurgeRemovesEndedObservationsAndKeepsReferencedOnes(t *testing.T) {
 	}
 }
 
-// TestALoggedHostNameNoLeaseNamesResolvesThroughTheLocalData is AC16's store half: one
-// address answering gives local_data_hostname, two give ambiguous_hostname, and the local
-// data valid at the lookup's instant is what is read.
+// TestALoggedHostNameNoLeaseNamesResolvesThroughTheLocalData is AC16's store half, as
+// amended by group C of specs/SPEC-step-5b-widget-api.md: one address answering gives
+// local_data_hostname; two addresses of one family give ambiguous_hostname; one A and one
+// AAAA of one name with no querying family reported give dual_stack_hostname; and the
+// local data valid at the lookup's instant is what is read.
 func TestALoggedHostNameNoLeaseNamesResolvesThroughTheLocalData(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
-	pollLocalData(t, database, referenceNow,
+	records := []ResourceRecord{
 		localAddressRecord("single.example.test", outside(11, true)),
 		localAddressRecord("double.example.test", outside(12, false)),
-		localAddressRecord("double.example.test", outside(13, true)))
-	pollLocalData(t, database, referenceNow+300,
-		localAddressRecord("single.example.test", outside(11, true)),
-		localAddressRecord("double.example.test", outside(12, false)),
-		localAddressRecord("double.example.test", outside(13, true)))
+		localAddressRecord("double.example.test", outside(13, true)),
+		localAddressRecord("twofour.example.test", outside(14, false)),
+		localAddressRecord("twofour.example.test", outside(15, false)),
+	}
+	pollLocalData(t, database, referenceNow, records...)
+	pollLocalData(t, database, referenceNow+300, records...)
 	for _, testCase := range []struct {
 		logged, wantResolution, wantAddress string
 		at                                  int64
 	}{
 		{"SINGLE.example.test.", ClientResolutionLocalData, outside(11, true), referenceNow + 100},
 		{"single", ClientResolutionLocalData, outside(11, true), referenceNow + 300},
-		{"double.example.test", ClientResolutionAmbiguous, "double.example.test", referenceNow + 100},
+		{"double.example.test", ClientResolutionDualStack, "double.example.test", referenceNow + 100},
+		{"twofour.example.test", ClientResolutionAmbiguous, "twofour.example.test", referenceNow + 100},
 		{"single.example.test", ClientResolutionUnknown, "single.example.test", referenceNow + 301},
 		{"absent.example.test", ClientResolutionUnknown, "absent.example.test", referenceNow + 100},
 	} {
-		address, resolution, err := database.ResolveLoggedHostname(ctx, testCase.logged, testCase.at)
+		address, resolution, err := database.ResolveLoggedHostname(ctx, testCase.logged, nil, testCase.at)
 		if err != nil {
 			t.Fatal(err)
 		}
