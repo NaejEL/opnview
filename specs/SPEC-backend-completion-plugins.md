@@ -3996,3 +3996,8 @@ Every test runs on the PostgreSQL test instance with a fake clock and small reco
 - `internal/collect/scheduler_test.go` derives the plugin loops from the loaded built-ins; the hand list keeps the core loops only.
 - A new host function `host.datasets.latest(name, filter)` lets a widget read another plugin's dataset by its catalogue name, without SQL. `traffic_composition` uses it to fill `current_rates.by_member` for the protocol and service-port groupings from `pf_states.rate` when that dataset is present, and keeps the named absence otherwise.
 - The `pf_states` mirror reduction is decided after LV-C.
+
+**Decided (maintainer, 15 October 2026), after the dataset-reads build:**
+- The rate of a protocol or service-port member uses the **same shape as the client and interface chips** (`in_*` / `out_*`, `out_measured`, `cadence_seconds`), not a separate forward/reverse shape. The mapping from pf's state directions to that shape is stated in `docs/plugins.md` and `docs/widget-api.md`; a field that cannot be filled is null with `out_measured` false, and the docs say so.
+- `host.datasets.latest`'s absence state is renamed `unknown_dataset`, aligned with the data catalogue API's refusal code.
+- The plugin JS test world keeps the core catalogue only (no built-in datasets).
