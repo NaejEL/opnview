@@ -1,27 +1,10 @@
-// Package sizing turns a measured record rate into a suggested pair — a page
-// size and a poll interval — for each paged read.
-//
-// A PAGE AND AN INTERVAL ARE ONE DECISION. A poll loses records when its source
-// writes more between two polls than one page holds, and the API offers no way
-// to recover them. So the question this package answers is not "how often" or
-// "how much" but the two together: given the busiest minute this installation
-// has actually produced, which pair keeps a page ahead of it with room to spare.
-//
-// The input is a store.RecordRateMeasurement, taken on this installation's own
-// rows; nothing here is a figure from somebody else's network. The output is a
-// suggestion the operator may apply or ignore on the collection surface: the
-// package writes nothing and decides nothing.
-//
-// Rebuilt after the loss of 2 October 2026 from the compiled package of that
-// evening: the declarations, the registry and the derivation are the compiled
-// ones; the comments are rewritten.
 package sizing
 
 import (
 	"math"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/attribution"
 )
 
 // HeadroomFactor is how many times the measured peak a page must hold. A page
@@ -100,7 +83,7 @@ type Kind struct {
 	// Kind is the registry kind, as in provider.kind.
 	Kind string
 	// Spec says where the kind's records are measured.
-	Spec store.RecordRateSpec
+	Spec attribution.RecordRateSpec
 	// PageSizeKey is the setting key of the page size, empty when the read
 	// takes no page size.
 	PageSizeKey string
@@ -138,7 +121,7 @@ func Kinds() []Kind {
 	return []Kind{
 		{
 			Kind: "firewall_log",
-			Spec: store.RecordRateSpec{
+			Spec: attribution.RecordRateSpec{
 				Kind: "firewall_log", Table: "flow",
 				SourceColumn: "observed_at", IngestedColumn: "ingested_at",
 			},
@@ -150,7 +133,7 @@ func Kinds() []Kind {
 		},
 		{
 			Kind: "security_event",
-			Spec: store.RecordRateSpec{
+			Spec: attribution.RecordRateSpec{
 				Kind: "security_event", Table: "security_event",
 				SourceColumn: "occurred_at", IngestedColumn: "ingested_at",
 			},
@@ -164,7 +147,7 @@ func Kinds() []Kind {
 			// A lease row records when opnview saw it and no other instant of its
 			// own, so the lease table is measured on one clock.
 			Kind: "dhcp_lease",
-			Spec: store.RecordRateSpec{
+			Spec: attribution.RecordRateSpec{
 				Kind: "dhcp_lease", Table: "dhcp_lease",
 				SourceColumn: "observed_at", IngestedColumn: "",
 			},
@@ -178,7 +161,7 @@ func Kinds() []Kind {
 			// The resolver's page is its ring buffer, not a setting, so this
 			// kind has no PageSizeKey and only its interval is suggested.
 			Kind: "dns_lookup",
-			Spec: store.RecordRateSpec{
+			Spec: attribution.RecordRateSpec{
 				Kind: "dns_lookup", Table: "dns_resolution",
 				SourceColumn: "looked_up_at", IngestedColumn: "ingested_at",
 			},
@@ -200,13 +183,13 @@ func Kinds() []Kind {
 // week. The window ends now and excludes it, as every window in the store
 // does, so a record written during the measurement is left for the next one.
 // The clock is the caller's, so a test can place the window anywhere.
-func Window(now time.Time, retentionSeconds int64) store.RecordRateWindow {
+func Window(now time.Time, retentionSeconds int64) attribution.RecordRateWindow {
 	end := now.UTC().Unix()
 	length := NominalWindowSeconds
 	if retentionSeconds > 0 && retentionSeconds < length {
 		length = retentionSeconds
 	}
-	return store.RecordRateWindow{StartAt: end - length, EndAt: end}
+	return attribution.RecordRateWindow{StartAt: end - length, EndAt: end}
 }
 
 // NominalWindowSeconds is the length of the measurement window, 24 hours.
@@ -284,7 +267,7 @@ type Suggestion struct {
 // force are taken by the caller, which is what lets a test drive it over every
 // measured peak, and what keeps the collection surface's figures and its
 // suggestion from coming from two different readings.
-func Suggest(kind Kind, measured store.RecordRateMeasurement, inForce Pair, collected bool) Suggestion {
+func Suggest(kind Kind, measured attribution.RecordRateMeasurement, inForce Pair, collected bool) Suggestion {
 	// The read's page is either a setting, or fixed at the ceiling.
 	intervalOnly := !kind.PageIsAdjustable()
 	if !collected {
@@ -451,7 +434,7 @@ func requiredRecordsPerPage(peakBucketRecords, bucketSeconds int64, interval tim
 // It starts from the closed form — the page over the peak rate and the
 // headroom, rounded down — and steps down a second at a time while the
 // requirement, rounded as requiredRecordsPerPage rounds it, does not fit.
-func longestIntervalThatFits(pageSize int, measured store.RecordRateMeasurement) (time.Duration, bool) {
+func longestIntervalThatFits(pageSize int, measured attribution.RecordRateMeasurement) (time.Duration, bool) {
 	// Nothing fits a page of nothing, and nothing needs to fit a peak of none.
 	if measured.PeakBucketRecords <= 0 || pageSize <= 0 {
 		return 0, false

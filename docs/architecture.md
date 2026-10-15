@@ -353,6 +353,132 @@ pgx's own `go.mod` names (`testify` and its dependencies) are not linked into `o
 every start. The core's objects live in the schema `opnview`; each plugin's tables in its own
 schema `plugin_<plugin>`; tables set aside by a changed plugin declaration in `opnview_aside`.
 
+## Map of the tree
+
+Every Go package directory of `cmd/` and `internal/`, with what it is for. A package directory
+holds at most fifteen non-test source files, Go and SQL counted together, and a `doc.go` whose
+package comment says the same thing at more length; `internal/layout` holds the tests that keep
+this list, the limit and the comments true. Where a package is composed of parts (the store, the
+collector), the parts are the directories below it and the package itself composes them.
+
+- `cmd/opnview` — the single entry point: flags, wiring, signals, exit codes, and the `plugin test` and `measure` subcommands.
+- `internal/auth` — password hashing and verification, account creation, sessions and the one-time setup token.
+- `internal/broker` — the only path from opnview to the firewall API: every call, from the mirror or the firewall.
+- `internal/broker/answer` — a firewall answer as the firewall wrote it, and which of its fields were read.
+- `internal/broker/infer` — what a firewall answer is, learned from the answers themselves.
+- `internal/broker/mirror` — the learned mirror of the firewall API.
+- `internal/broker/schedule` — when each mirrored datum is refreshed, and in what order calls leave.
+- `internal/buildinfo` — the few facts the program knows about itself.
+- `internal/collect` — the collector: composes its parts, runs the probe round, orders the purge and lists the scheduler's tasks.
+- `internal/collect/core` — the state every part of the collector shares, and what every part uses.
+- `internal/collect/derive` — the derivation every pass ends with, the NetFlow join and the measured volumes included.
+- `internal/collect/dhcplease` — the dhcp_lease kind's contract.
+- `internal/collect/discovery` — runtime discovery of the firewall's interfaces, rules, version and clock.
+- `internal/collect/dnslookup` — the dns_lookup kind's contract.
+- `internal/collect/firewalllog` — the firewall_log kind's contract.
+- `internal/collect/flowrecord` — the flow_record kind's contract.
+- `internal/collect/identity` — the arithmetic of the client identity cascade.
+- `internal/collect/ipgeolocation` — the ip_geolocation kind's contract.
+- `internal/collect/kinds/declared` — the coordinator of the kinds plugins declare, and of the reconciled state.
+- `internal/collect/kinds/filterlog` — the coordinator of the firewall_log kind, pulled and pushed.
+- `internal/collect/kinds/flowrecords` — the coordinator of the flow_record kind.
+- `internal/collect/kinds/leases` — the coordinator of the dhcp_lease kind, and of the neighbour table.
+- `internal/collect/kinds/lookups` — the coordinator of the dns_lookup kind.
+- `internal/collect/kinds/measurements` — the coordinator of the measurement_sample kind, baseline and live.
+- `internal/collect/kinds/resolverrecords` — the coordinators of the resolver_cache and resolver_local_data kinds.
+- `internal/collect/kinds/securityevents` — the coordinator of the security_event kind.
+- `internal/collect/measurement` — the measurement_sample kind's contract.
+- `internal/collect/pluginkind` — every kind a plugin declares for itself.
+- `internal/collect/provider` — the contract every provider implementation is written against.
+- `internal/collect/providertest` — the fake firewall every provider test runs against.
+- `internal/collect/reconciledstate` — the reconciled_state kind's contract.
+- `internal/collect/recorddump` — what one read of a resolver's DNS records returns.
+- `internal/collect/registrabledomain` — the registrable_domain kind's contract.
+- `internal/collect/resolvercache` — the resolver_cache kind's contract.
+- `internal/collect/resolverlocaldata` — the resolver_local_data kind's contract.
+- `internal/collect/securityevent` — the security_event kind's contract.
+- `internal/collect/services` — the service kinds, geolocation and the registrable-domain list, as their providers last answered.
+- `internal/collect/sources` — a set of provider implementations, every kind's, by key.
+- `internal/config` — the only reader of configuration.
+- `internal/dataset` — the data catalogue: every dataset, its columns, its filters and its queries.
+- `internal/decode` — what an OPNsense endpoint actually said, turned into the shapes opnview reads.
+- `internal/discover` — the generator, and the check, of the one file linking a family of directories into the binary.
+- `internal/ianaprotocol` — the keywords of IANA's Assigned Internet Protocol Numbers.
+- `internal/layout` — the tests that keep this map, the fifteen-file limit and the package comments true.
+- `internal/live` — the live-interest lease.
+- `internal/live/strip` — the rolling strip.
+- `internal/measurecost` — the LV-C measuring tool.
+- `internal/modularity` — the tests that keep the modular rule true: an implementation is a directory, never a hand-kept list.
+- `internal/opnsense` — the only package that constructs an HTTP request: the client and the endpoints it may call.
+- `internal/plugin` — the plugin host: discovery, loading and validation, the kinds' adapters, settings, and a plugin's own tests.
+- `internal/plugin/contract` — the plugin manifest and the refusal codes.
+- `internal/plugin/fetch` — the plugin host's facility for fetching over HTTP(S), and a plugin's files.
+- `internal/plugin/listing` — what the API surfaces read of the loaded plugins.
+- `internal/plugin/mmdbwrite` — small MaxMind DB files and their archives, for a plugin's tests.
+- `internal/plugin/plugintest` — what the built-in plugins' own tests share.
+- `internal/plugin/runtime` — the bindings of a plugin's JavaScript to the host.
+- `internal/push` — what the firewall sends to opnview: the listeners, the routing and the batching.
+- `internal/push/ipfixregistry` — the IANA IPFIX Information Elements registry.
+- `internal/push/protocols` — the generated link of every push protocol into the binary.
+- `internal/push/protocols/netflow` — the NetFlow push protocol, version 9 and IPFIX.
+- `internal/push/protocols/syslog` — the syslog push protocol.
+- `internal/secret` — the key file beside the database, and the authenticated encryption of the credentials.
+- `internal/sizing` — a suggested page size and poll interval for each paged read, from a measured record rate.
+- `internal/specialpurpose` — the IANA special-purpose address registries.
+- `internal/store` — the store: opens the database, applies the schema and composes the parts below.
+- `internal/store/accounts` — accounts, sessions, encrypted credentials and setting rows.
+- `internal/store/aggregates` — the aggregate families and their refresh, and the service's downtime.
+- `internal/store/attribution` — DNS resource records, the attribution of flows to names, hostnames and the record rate.
+- `internal/store/flows` — the typed writes, classification, networks, this firewall's addresses and the pairing of legs.
+- `internal/store/geo` — geolocation and autonomous-system rows.
+- `internal/store/netflow` — NetFlow records, the capture configuration, the join and the measured volumes.
+- `internal/store/owners` — owners and their assignments, interface labels and blocklists.
+- `internal/store/plugindecl` — the declaration of a table a plugin owns.
+- `internal/store/plugintables` — the tables plugins own: ensured, written, read and purged.
+- `internal/store/purge` — the retention purge.
+- `internal/store/push` — the push sources' gaps, listeners and source periods.
+- `internal/store/reads` — the read paths, on the read-only connections.
+- `internal/store/samples` — measurement samples and the current rates read from them.
+- `internal/store/sqldb` — the handle every part of the store runs on: pools, driver, statement registry, query check.
+- `internal/store/storetest` — a database of its own for each test.
+- `internal/store/vocab` — the store's closed vocabularies and row types.
+- `internal/suffixlist` — the Public Suffix List format, and a name's registrable domain.
+- `internal/web` — the HTTP core: the server, the route table, sessions and CSRF, the layout, the themes, the string catalogue and the surfaces' seam.
+- `internal/web/settingfields` — the fields of the settings forms.
+- `internal/web/surfaces` — the generated link of every surface into the binary.
+- `internal/web/surfaces/account` — the surface that creates the first account and signs readers in and out.
+- `internal/web/surfaces/collection` — the collection surface.
+- `internal/web/surfaces/datasets` — the data catalogue's API.
+- `internal/web/surfaces/firewallcatalogue` — the learned API catalogue's API.
+- `internal/web/surfaces/interfaces` — the interfaces surface.
+- `internal/web/surfaces/labels` — the JSON API of the labels interfaces are given and the purposes blocklists are given.
+- `internal/web/surfaces/live` — the live figures that are not a widget's.
+- `internal/web/surfaces/netflow` — the NetFlow join's settings.
+- `internal/web/surfaces/people` — the API of the people the user creates and their machines.
+- `internal/web/surfaces/plugins` — the plugin listing and the plugin settings.
+- `internal/web/surfaces/settings` — the settings surface, where credentials enter the product.
+- `internal/web/surfaces/sources` — the sources surface.
+- `internal/web/surfaces/widgetapi` — the widget API.
+- `internal/web/webtest` — what the web surfaces' tests share: the harness, sessions, pages and paths.
+- `internal/web/webtest/accounttest` — the account surface's test helpers.
+- `internal/web/webtest/collectiontest` — the collection surface's test helpers.
+- `internal/web/webtest/examples/hello` — the worked example of adding a surface.
+- `internal/web/webtest/interfacestest` — the interfaces surface's test helpers.
+- `internal/web/webtest/settingstest` — the settings surface's test helpers.
+- `internal/web/webtest/sourcestest` — the sources surface's test helpers.
+- `internal/widget` — the widget API: one read-only endpoint per served preset, the loaders of widget directories, and the answer.
+- `internal/widget/datasets` — the data catalogue served to widgets.
+- `internal/widget/envelope` — the response every widget answers with.
+- `internal/widget/figures` — the figures several widgets share: sites, attribution, rates, samples, peers.
+- `internal/widget/hostareas/readers` — the script host's areas that read the installation's data.
+- `internal/widget/hostareas/values` — the script host's areas that work on values a script holds.
+- `internal/widget/params` — a widget's manifest and parameters.
+- `internal/widget/request` — one widget request being served.
+- `internal/widget/script` — the running of a widget's JavaScript.
+- `internal/widget/shapes` — what a shape draws from declared rows.
+- `internal/widget/traffic` — the logged traffic widgets read.
+- `internal/widget/widgets` — the link of the built-in widgets, and their tests.
+
 ## What this is not
 
 `opnview` is one Go binary. A kind is implemented by a **plugin**: a directory holding a

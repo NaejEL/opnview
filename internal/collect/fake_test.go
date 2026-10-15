@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/broker/schedule"
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -156,7 +157,7 @@ func referenceEpoch() int64 { return referenceInstant().Unix() }
 // newTestCollector is a collector for a test: its broker's ceilings raised past anything a test
 // reaches -- a test's clock does not move, so a calls-per-second ceiling would hold its calls for
 // ever -- and its broker closed when the test ends, so no subscription holds the fake firewall.
-func newTestCollector(t *testing.T, client *opnsense.Client, database *store.Store, clock Clock) *Collector {
+func newTestCollector(t *testing.T, client *opnsense.Client, database *store.Store, clock core.Clock) *Collector {
 	t.Helper()
 	collector := New(client, database, clock)
 	collector.Broker().Scheduler().SetSettings(schedule.Settings{MaxInFlight: 64, MaxPerSecond: 1e6})

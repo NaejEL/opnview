@@ -221,7 +221,7 @@ ORDER BY l.observed_at DESC, p.provider_key;
 -- ingested clock, the busiest 60-second bucket, and the collection gaps
 -- detected in the window, one row per gap reason. It is the measurement the
 -- collection surface sizes a page and an interval on, character for
--- character: internal/store/recordrate.go builds each branch, and
+-- character: internal/store/attribution/recordrate.go builds each branch, and
 -- internal/sizing holds this file to it, so a suggested pair can be checked by
 -- running this query against the same database.
 --
@@ -563,7 +563,7 @@ SELECT (SELECT count(*) FROM classified_flow AS f
 
 -- ---------------------------------------------------------------------------
 -- The live validation of specs/SPEC-resolver-cache-attribution.md. Each one restates
--- the rule of internal/store/attribute.go in SQL, independently of the code, so a
+-- the rule of internal/store/attribution/attribute.go in SQL, independently of the code, so a
 -- disagreement between the two shows up as a count:
 --   * an eligible flow is the attribution's candidate: an outside destination that is
 --     not this firewall, and not the second leg of a counted connection;
@@ -826,7 +826,7 @@ WHERE t.observation_id IS NULL
 -- flow's instant -- local-data records counting for a lookup answered from Local-data,
 -- and only those of the looked-up name itself (decision 6): no CNAME is followed into
 -- the local data (specs/SPEC-resolver-cache-follow-ups.md, scope 1, stated at
--- MaxCNAMELinks in internal/store/records.go). A flow counted here had none of the
+-- MaxCNAMELinks in internal/store/attribution/records.go). A flow counted here had none of the
 -- destination's family and at least one of the other: the resolver held the name, in
 -- the family the client did not use, so the exact method could not name the flow and
 -- timing did. A large count says the clients reach names over the family the cache

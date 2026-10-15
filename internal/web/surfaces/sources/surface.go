@@ -1,6 +1,3 @@
-// Package sources is the Sources surface: one row per registered provider with its
-// availability, the recent collection gaps, and the outage indicator the top bar of every
-// signed-in page carries.
 package sources
 
 import (
@@ -10,6 +7,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -82,7 +80,7 @@ type view struct {
 
 // newView returns a view with everything common to every page filled in.
 func (s *surface) newView(writer http.ResponseWriter, request *http.Request,
-	session *store.Session, title messageKey) (view, error) {
+	session *accounts.Session, title messageKey) (view, error) {
 	base, err := s.NewBase(writer, request, session, title)
 	if err != nil {
 		return view{}, err

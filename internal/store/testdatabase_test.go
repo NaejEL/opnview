@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // testDatabase creates a database of the test's own, cloned from the schema's template, and drops
@@ -26,19 +28,19 @@ func testDatabase(t testing.TB) string {
 // explainStatement plans a statement on the database with every parameter bound to NULL, which is
 // how a test asks PostgreSQL whether a statement is valid against the schema without running it.
 func explainStatement(ctx context.Context, s *Store, text string) error {
-	rewritten, err := rewriteParameters(text)
+	rewritten, err := sqldb.RewriteParameters(text)
 	if err != nil {
 		return err
 	}
-	arguments := make([]any, 0, len(rewritten.names))
-	for _, name := range rewritten.names {
+	arguments := make([]any, 0, len(rewritten.Names))
+	for _, name := range rewritten.Names {
 		if name == "" {
 			arguments = append(arguments, nil)
 			continue
 		}
 		arguments = append(arguments, sql.Named(name, nil))
 	}
-	rows, err := s.db.QueryContext(ctx, "EXPLAIN "+text, arguments...)
+	rows, err := s.SQL.QueryContext(ctx, "EXPLAIN "+text, arguments...)
 	if err != nil {
 		return err
 	}
@@ -59,7 +61,7 @@ type planNode struct {
 func planOf(t testing.TB, s *Store, text string, arguments ...any) []planNode {
 	t.Helper()
 	ctx := context.Background()
-	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	tx, err := s.SQL.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		t.Fatal(err)
 	}

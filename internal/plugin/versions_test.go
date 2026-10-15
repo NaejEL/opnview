@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
 )
 
 // The tests of A19 (BR24 of the broker amendment): one plugin, several OPNsense versions. The
@@ -179,7 +181,7 @@ func TestVersionRangesThatOverlapOrNameAPackageAreRefused(t *testing.T) {
 			t.Fatalf("%s: the manifest was not changed", name)
 		}
 		_, err := RunTests(context.Background(), writeVersionedPlugin(t, manifest))
-		var refusal *Refusal
+		var refusal *contract.Refusal
 		if !errors.As(err, &refusal) || refusal.Code != change.code {
 			t.Errorf("%s was answered %v, not %s", name, err, change.code)
 		}
@@ -191,13 +193,13 @@ func TestVersionRangesThatOverlapOrNameAPackageAreRefused(t *testing.T) {
 // their own tests run with no version at all.
 func TestAPluginWithNoRangeIsUnaffectedByTheVersion(t *testing.T) {
 	t.Parallel()
-	compiled, err := compile("example", "example.js", `exports.example = { pass: function (host) {
+	compiled, err := runtime.Compile("example", "example.js", `exports.example = { pass: function (host) {
 			return { version: host.firewall.version, rows: host.call("rows", {}).value.rows.length };
 		} };`, map[string]opnsense.Endpoint{"rows": {Path: "/api/example/rows/search", Method: "GET"}}, time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	answer, _, failed := compiled.call(context.Background(), stubSession{body: []byte(`{"rows": [{"a": 1}]}`),
+	answer, _, failed := compiled.Call(context.Background(), stubSession{body: []byte(`{"rows": [{"a": 1}]}`),
 		now: 1750000000}, "example", "pass")
 	if failed != nil {
 		t.Fatalf("a plugin with no range failed on an unknown version: %+v", failed)

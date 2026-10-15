@@ -2,12 +2,16 @@ package widgets
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/widget"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/request"
+
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/storetest"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // AC7 and AC8: the four conditions, state unknown, and per-series degradation.
@@ -19,19 +23,19 @@ type conditionCase struct {
 }
 
 var conditionCases = []conditionCase{
-	{widget.ConditionNotYetProbed, func(t *testing.T, f *fixture, kind, key string) {
-		f.setAvailability(t, kind, key, store.StateUnavailable, store.OutcomeNotYetProbed, widget.ProbeNotYetRun)
+	{envelope.ConditionNotYetProbed, func(t *testing.T, f *fixture, kind, key string) {
+		f.setAvailability(t, kind, key, vocab.StateUnavailable, vocab.OutcomeNotYetProbed, request.ProbeNotYetRun)
 	}},
-	{widget.ConditionUnavailable, func(t *testing.T, f *fixture, kind, key string) {
-		f.setAvailability(t, kind, key, store.StateUnavailable, store.OutcomeAuthenticationFailed, "example probe")
+	{envelope.ConditionUnavailable, func(t *testing.T, f *fixture, kind, key string) {
+		f.setAvailability(t, kind, key, vocab.StateUnavailable, vocab.OutcomeAuthenticationFailed, "example probe")
 	}},
-	{widget.ConditionPresentButDisabled, func(t *testing.T, f *fixture, kind, key string) {
-		f.setAvailability(t, kind, key, store.StatePresentButDisabled, store.OutcomePresentButDisabled, "example probe")
+	{envelope.ConditionPresentButDisabled, func(t *testing.T, f *fixture, kind, key string) {
+		f.setAvailability(t, kind, key, vocab.StatePresentButDisabled, vocab.OutcomePresentButDisabled, "example probe")
 	}},
-	{widget.ConditionReachable, func(t *testing.T, f *fixture, kind, key string) {
-		f.setAvailability(t, kind, key, store.StateReachable, store.OutcomeHealthy, "example probe")
+	{envelope.ConditionReachable, func(t *testing.T, f *fixture, kind, key string) {
+		f.setAvailability(t, kind, key, vocab.StateReachable, vocab.OutcomeHealthy, "example probe")
 	}},
-	{widget.ConditionStateUnknown, func(t *testing.T, f *fixture, kind, key string) {
+	{envelope.ConditionStateUnknown, func(t *testing.T, f *fixture, kind, key string) {
 		id, err := f.db.ProviderID(context.Background(), kind, key)
 		check(t, err)
 		f.exec(t, "DELETE FROM source_availability WHERE provider_id = ?", id)
@@ -64,7 +68,7 @@ func emptyFixture(t *testing.T) *fixture {
 func TestEachConditionOfEachBoundKindYieldsItsOwnCodeAndNoZero(t *testing.T) {
 	t.Parallel()
 	f := emptyFixture(t)
-	registered, err := widget.ReadProviders(context.Background(), f.db)
+	registered, err := request.ReadProviders(context.Background(), f.db)
 	check(t, err)
 	for _, widgetType := range f.service.Types() {
 		preset, _ := f.service.Preset(widgetType)
@@ -86,16 +90,16 @@ func TestEachConditionOfEachBoundKindYieldsItsOwnCodeAndNoZero(t *testing.T) {
 					continue
 				}
 				expected := item.condition
-				if expected == widget.ConditionReachable {
-					expected = widget.ConditionReachableNoRows
+				if expected == envelope.ConditionReachable {
+					expected = envelope.ConditionReachableNoRows
 				}
 				if response.Condition != expected {
 					t.Errorf("%s with %s %s: the widget reads %q", widgetType, kind, item.condition, response.Condition)
 				}
 				switch {
-				case expected == widget.ConditionReachableNoRows && response.Data == nil:
+				case expected == envelope.ConditionReachableNoRows && response.Data == nil:
 					t.Errorf("%s: reachable with no rows drew no measured zeros", widgetType)
-				case expected != widget.ConditionReachableNoRows && response.Data != nil:
+				case expected != envelope.ConditionReachableNoRows && response.Data != nil:
 					t.Errorf("%s with %s %s: a degraded source with nothing stored returned data", widgetType, kind,
 						item.condition)
 				}
@@ -112,7 +116,7 @@ func TestNobodyCreatedYetIsPerPersonActivitysOwnCondition(t *testing.T) {
 	f := emptyFixture(t)
 	f.exec(t, "DELETE FROM owner")
 	response := f.respond(t, "owner_activity", nil)
-	if response.Condition != widget.ConditionNoOwnerExists || response.Data != nil {
+	if response.Condition != envelope.ConditionNoOwnerExists || response.Data != nil {
 		t.Errorf("with nobody created the widget reads %q with data %v", response.Condition, response.Data)
 	}
 }
@@ -124,18 +128,18 @@ func TestNobodyCreatedYetIsPerPersonActivitysOwnCondition(t *testing.T) {
 func TestOneUnavailableSeriesDegradesItsOwnLineOnly(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, defaultSpec)
-	f.setAvailability(t, "dns_lookup", "unbound", store.StateUnavailable, store.OutcomeTransportFailure, "example probe")
-	f.setAvailability(t, "dns_lookup", "dnsmasq", store.StateUnavailable, store.OutcomeTransportFailure, "example probe")
+	f.setAvailability(t, "dns_lookup", "unbound", vocab.StateUnavailable, vocab.OutcomeTransportFailure, "example probe")
+	f.setAvailability(t, "dns_lookup", "dnsmasq", vocab.StateUnavailable, vocab.OutcomeTransportFailure, "example probe")
 	f.exec(t, "DELETE FROM dns_resolution")
 	response := f.respond(t, "custom_chart", map[string]any{"series": []any{
 		map[string]any{"source": "traffic", "measure": "bytes"},
 		map[string]any{"source": "dns", "measure": "lookups"},
 	}})
 	chart := decodeData[customChartData](t, response)
-	if chart.Series[0].Condition != widget.ConditionReachable || chart.Series[0].Buckets == nil {
+	if chart.Series[0].Condition != envelope.ConditionReachable || chart.Series[0].Buckets == nil {
 		t.Errorf("the traffic series reads %q", chart.Series[0].Condition)
 	}
-	if chart.Series[1].Condition != widget.ConditionUnavailable || chart.Series[1].Buckets != nil {
+	if chart.Series[1].Condition != envelope.ConditionUnavailable || chart.Series[1].Buckets != nil {
 		t.Errorf("the DNS series reads %q with buckets %v", chart.Series[1].Condition, chart.Series[1].Buckets != nil)
 	}
 	for _, series := range chart.Series {

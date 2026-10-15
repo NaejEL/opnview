@@ -38,6 +38,9 @@ import (
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/datasets"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/traffic"
 	_ "github.com/NaejEL/opnview/internal/widget/widgets"
 )
 
@@ -153,7 +156,7 @@ func timeWidgets(ctx context.Context, database *store.Store, service *widget.Ser
 				}
 			}
 			encoded, _ := json.Marshal(parameters)
-			var response widget.Response
+			var response envelope.Response
 			median, err := medianOfThree(func() error {
 				var respondErr error
 				response, respondErr = service.Respond(ctx, timed.widgetType, string(encoded))
@@ -193,7 +196,7 @@ func timeDatasets(ctx context.Context, service *widget.Service, label string, bu
 				parameters = `{"period": "` + period + `"}`
 			}
 			var (
-				response widget.DatasetResponse
+				response datasets.DatasetResponse
 				refusal  *dataset.Refusal
 			)
 			median, err := medianOfThree(func() error {
@@ -247,17 +250,17 @@ func judge(median, budget time.Duration, counts *tally) string {
 // data, or its condition is reachable_no_rows, or, for a chart of series, one of its series
 // carries no buckets or reached no rows. A degraded condition WITH stored rows is not
 // empty: the source's availability is a state, and the rows were read all the same.
-func emptiness(response widget.Response) string {
+func emptiness(response envelope.Response) string {
 	switch {
 	case response.Data == nil:
 		return "no data, condition " + response.Condition
-	case response.Condition == widget.ConditionReachableNoRows:
+	case response.Condition == envelope.ConditionReachableNoRows:
 		return "condition " + response.Condition
 	}
 	// A chart of series is read through its JSON, as a client reads it: a widget plugin's script
 	// answers it as JSON.
 	var chart struct {
-		Series []widget.Series `json:"series"`
+		Series []traffic.Series `json:"series"`
 	}
 	if encoded, err := json.Marshal(response.Data); response.Type == "custom_chart" && err == nil &&
 		json.Unmarshal(encoded, &chart) == nil {
@@ -265,7 +268,7 @@ func emptiness(response widget.Response) string {
 			return "no series"
 		}
 		for _, series := range chart.Series {
-			if series.Buckets == nil || series.Condition == widget.ConditionReachableNoRows {
+			if series.Buckets == nil || series.Condition == envelope.ConditionReachableNoRows {
 				return fmt.Sprintf("series %s condition %s", series.Key, series.Condition)
 			}
 		}
@@ -274,11 +277,11 @@ func emptiness(response widget.Response) string {
 }
 
 // datasetEmptiness is emptiness for a dataset's answer: no data, or no row reached.
-func datasetEmptiness(response widget.DatasetResponse) string {
+func datasetEmptiness(response datasets.DatasetResponse) string {
 	switch {
 	case response.Data == nil:
 		return "no data, condition " + response.Condition
-	case response.Condition == widget.ConditionReachableNoRows:
+	case response.Condition == envelope.ConditionReachableNoRows:
 		return "condition " + response.Condition
 	}
 	return ""

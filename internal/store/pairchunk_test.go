@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/flows"
 )
 
 // TestChunkedAndUnchunkedPairingAreIdentical is AC29 of
@@ -28,7 +30,7 @@ func TestChunkedAndUnchunkedPairingAreIdentical(t *testing.T) {
 				// Every fifth connection is moved to the last second of a chunk, so its
 				// second leg falls in the next one.
 				if index%5 == 0 {
-					at = start - DefaultPairingWindowSeconds + ((at-start)/chunk+1)*chunk - 1
+					at = start - flows.DefaultPairingWindowSeconds + ((at-start)/chunk+1)*chunk - 1
 				}
 				first, second := network.legs(connection{client: client, peer: outside(index, client.v6),
 					at: at, ipID: int64(5000 + index), seq: int64(90000 + index), lag: 1}, "")
@@ -37,7 +39,7 @@ func TestChunkedAndUnchunkedPairingAreIdentical(t *testing.T) {
 			// Two connections that look alike at a chunk boundary: neither out record has
 			// one candidate, so neither pairs, whichever chunk reads it.
 			v4 := clientsOfFamily(network, false)
-			boundary := start - DefaultPairingWindowSeconds + 6*chunk - 1
+			boundary := start - flows.DefaultPairingWindowSeconds + 6*chunk - 1
 			a, b := network.legs(connection{client: v4[0], peer: outside(200, false), at: boundary,
 				ipID: 7777, seq: 31000, lag: 1}, "")
 			c, d := network.legs(connection{client: v4[len(v4)-1], peer: outside(200, false), at: boundary,
@@ -50,7 +52,7 @@ func TestChunkedAndUnchunkedPairingAreIdentical(t *testing.T) {
 
 			from, to := start, network.now
 			whole := int64(1 << 40)
-			if _, err := network.db.pairInChunks(ctx, from, to, DefaultPairingWindowSeconds, whole); err != nil {
+			if _, err := network.db.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, whole); err != nil {
 				t.Fatalf("pairing in one transaction: %v", err)
 			}
 			correct := pairState(t, network.db)
@@ -66,16 +68,16 @@ func TestChunkedAndUnchunkedPairingAreIdentical(t *testing.T) {
 				t.Fatal("the perturbation changed nothing, so the comparison is vacuous")
 			}
 
-			if _, err := network.db.pairInChunks(ctx, from, to, DefaultPairingWindowSeconds, whole); err != nil {
+			if _, err := network.db.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, whole); err != nil {
 				t.Fatalf("pairing in one transaction: %v", err)
 			}
 			unchunked := pairState(t, network.db)
 			restore(t, network.db)
-			chunks := len(pairChunks(from-DefaultPairingWindowSeconds, to+DefaultPairingWindowSeconds, chunk))
+			chunks := len(flows.PairChunks(from-flows.DefaultPairingWindowSeconds, to+flows.DefaultPairingWindowSeconds, chunk))
 			if chunks < 10 {
 				t.Fatalf("the span is cut into %d chunks, too few to test the cut", chunks)
 			}
-			if _, err := network.db.pairInChunks(ctx, from, to, DefaultPairingWindowSeconds, chunk); err != nil {
+			if _, err := network.db.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, chunk); err != nil {
 				t.Fatalf("pairing in chunks: %v", err)
 			}
 			chunked := pairState(t, network.db)
@@ -86,14 +88,14 @@ func TestChunkedAndUnchunkedPairingAreIdentical(t *testing.T) {
 			if unchunked != correct {
 				t.Error("the pairing of the perturbed records is not the pairing of the clean ones")
 			}
-			again, err := network.db.pairInChunks(ctx, from, to, DefaultPairingWindowSeconds, chunk)
+			again, err := network.db.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, chunk)
 			if err != nil {
 				t.Fatalf("pairing in chunks again: %v", err)
 			}
 			if len(again.FlowInstants) != 0 {
 				t.Errorf("a second chunked run changed %d records", len(again.FlowInstants))
 			}
-			if outcome, _ := outcomeOf(t, network.db, b.device, b.src, b.dst); outcome == PairSecondLeg {
+			if outcome, _ := outcomeOf(t, network.db, b.device, b.src, b.dst); outcome == flows.PairSecondLeg {
 				t.Error("an out record with two candidates at a chunk boundary was paired")
 			}
 		})

@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // TestAttributionNameLookupsSearchByNameAndClientOnBothBranches is AC22's Go half
@@ -13,7 +15,7 @@ import (
 func TestAttributionNameLookupsSearchByNameAndClientOnBothBranches(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
-	text, err := Statement("attribution_name_lookups")
+	text, err := sqldb.Statement("attribution_name_lookups")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +66,7 @@ func TestAttributionNameLookupsKeepBothClientBranches(t *testing.T) {
 	insert(2, nil, "192.0.2.10")      // the flow's address, no client_id
 	insert(3, int64(2), "192.0.2.10") // another client at the same address
 	insert(4, nil, "2001:db8::10")    // another address
-	text, err := Statement("attribution_name_lookups")
+	text, err := sqldb.Statement("attribution_name_lookups")
 	if err != nil {
 		t.Fatal(err)
 	}

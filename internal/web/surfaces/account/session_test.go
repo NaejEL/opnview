@@ -1,14 +1,16 @@
 package account_test
 
 import (
-	"github.com/NaejEL/opnview/internal/auth"
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/surfaces/account"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/auth"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/surfaces/account"
+	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
 )
 
 // TestSignInSucceedsAndItsFailuresAreIndistinguishable is AC8.
@@ -20,7 +22,7 @@ func TestSignInSucceedsAndItsFailuresAreIndistinguishable(t *testing.T) {
 	// Setup signed this reader in. Sign out so the sign-in path is exercised from
 	// nothing.
 	signOut := harness.Post(web.PathSignOut, url.Values{})
-	webtest.AssertStatus(t, signOut, http.StatusSeeOther)
+	accounttest.AssertStatus(t, signOut, http.StatusSeeOther)
 
 	t.Run("the right password yields a session", func(t *testing.T) {
 		harness.SignIn(login, password)
@@ -28,7 +30,7 @@ func TestSignInSucceedsAndItsFailuresAreIndistinguishable(t *testing.T) {
 			t.Fatal("signing in set no session cookie")
 		}
 		answer := harness.Get(web.PathSettings)
-		webtest.AssertStatus(t, answer, http.StatusOK)
+		accounttest.AssertStatus(t, answer, http.StatusOK)
 	})
 
 	t.Run("the two failures disclose the same thing", func(t *testing.T) {
@@ -62,7 +64,7 @@ func TestSignInSucceedsAndItsFailuresAreIndistinguishable(t *testing.T) {
 			t.Fatal("signing in set no session cookie")
 		}
 		answer := harness.Post(web.PathSignOut, url.Values{})
-		webtest.AssertStatus(t, answer, http.StatusSeeOther)
+		accounttest.AssertStatus(t, answer, http.StatusSeeOther)
 
 		// The replay presents the exact token the browser was given, which is what an
 		// attacker who copied a cookie has.
@@ -99,7 +101,7 @@ func TestASessionExpiresOnBothBoundsAndIsNeverRenewed(t *testing.T) {
 		// well past one window's worth of wall-clock time.
 		for range 4 {
 			harness.Clock.Advance(lifetimes.Idle - lifetimes.Idle/4)
-			webtest.AssertStatus(t, harness.Get(web.PathSettings), http.StatusOK)
+			accounttest.AssertStatus(t, harness.Get(web.PathSettings), http.StatusOK)
 		}
 
 		// Past it: refused, and refused as EXPIRED rather than as never having existed.
@@ -130,7 +132,7 @@ func TestASessionExpiresOnBothBoundsAndIsNeverRenewed(t *testing.T) {
 		step := lifetimes.Idle / 2
 		for elapsed := step; elapsed < lifetimes.Absolute; elapsed += step {
 			harness.Clock.Advance(step)
-			webtest.AssertStatus(t, harness.Get(web.PathSettings), http.StatusOK)
+			accounttest.AssertStatus(t, harness.Get(web.PathSettings), http.StatusOK)
 		}
 
 		harness.Clock.Advance(step)
@@ -210,7 +212,7 @@ func TestEveryRouteIsPublicByDecisionOrRefusesAnUnauthenticatedRequest(t *testin
 	answer := anonymous.Post(web.PathRecover, url.Values{
 		"login": {"operator"}, "password": {password}, "password_again": {password},
 	})
-	webtest.AssertStatus(t, answer, http.StatusForbidden)
+	accounttest.AssertStatus(t, answer, http.StatusForbidden)
 }
 
 // TestEveryMutatingFormCarriesAFormToken is AC11.
@@ -227,8 +229,8 @@ func TestEveryMutatingFormCarriesAFormToken(t *testing.T) {
 			"setup_token": {harness.SetupToken.Token()},
 			"login":       {"operator"}, "password": {password}, "password_again": {password},
 		})
-		webtest.AssertStatus(t, answer, http.StatusForbidden)
-		webtest.AssertNoAccount(t, harness)
+		accounttest.AssertStatus(t, answer, http.StatusForbidden)
+		accounttest.AssertNoAccount(t, harness)
 		if harness.SetupToken.Spent() {
 			t.Error("a submission refused for its form token still spent the setup token")
 		}
@@ -239,7 +241,7 @@ func TestEveryMutatingFormCarriesAFormToken(t *testing.T) {
 	t.Run("settings without a token", func(t *testing.T) {
 		answer := harness.PostRaw(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
 			"theme": {string(web.ThemeDark)}})
-		webtest.AssertStatus(t, answer, http.StatusForbidden)
+		accounttest.AssertStatus(t, answer, http.StatusForbidden)
 	})
 
 	t.Run("settings with another session's token", func(t *testing.T) {
@@ -259,7 +261,7 @@ func TestEveryMutatingFormCarriesAFormToken(t *testing.T) {
 			webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
 			"theme":                   {string(web.ThemeDark)},
 		})
-		webtest.AssertStatus(t, answer, http.StatusForbidden)
+		accounttest.AssertStatus(t, answer, http.StatusForbidden)
 
 		// And nothing was stored: the refusal happened before the handler ran.
 		if theme := harness.Server.ReadTheme(t.Context()); theme != web.ThemeSystem {
@@ -270,7 +272,7 @@ func TestEveryMutatingFormCarriesAFormToken(t *testing.T) {
 	t.Run("settings with its own token", func(t *testing.T) {
 		answer := harness.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
 			"theme": {string(web.ThemeDark)}})
-		webtest.AssertStatus(t, answer, http.StatusSeeOther)
+		accounttest.AssertStatus(t, answer, http.StatusSeeOther)
 		if theme := harness.Server.ReadTheme(t.Context()); theme != web.ThemeDark {
 			t.Errorf("an accepted submission stored the theme %q rather than dark", theme)
 		}

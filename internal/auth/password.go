@@ -1,17 +1,3 @@
-// Package auth holds password hashing and verification, account creation,
-// session issue / validate / revoke, and the one-time setup token.
-//
-// NONE OF THIS IS A SEAM, and that is a decision rather than an omission.
-// ROADMAP.md's modularity rule is a rule about KINDS THAT HAVE SEVERAL
-// IMPLEMENTATIONS in a real installation — a lease source, a resolver, a theme, a
-// widget. There is one mandated password algorithm, one session store, and the
-// storage rule forbids provisioning a second one. A registry here would be
-// machinery for a problem nobody has. What ROADMAP.md actually asks for is
-// PARAMETER AGILITY — the parameters stored beside the hash so they can be raised
-// later — and that is a column layout, which internal/store carries.
-//
-// NO STRING IN THIS PACKAGE IS USER-VISIBLE. Every failure is a typed error, and
-// internal/web maps it to a catalogue key.
 package auth
 
 import (
@@ -22,7 +8,7 @@ import (
 
 	"golang.org/x/crypto/argon2"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 )
 
 // AlgorithmArgon2id is the label written into every password record this package
@@ -91,18 +77,18 @@ var (
 //
 // The salt is per account and generated here. The password is never stored,
 // never logged and never returned.
-func HashPassword(password string, params Params) (store.PasswordHash, error) {
+func HashPassword(password string, params Params) (accounts.PasswordHash, error) {
 	if password == "" {
-		return store.PasswordHash{}, ErrEmptyPassword
+		return accounts.PasswordHash{}, ErrEmptyPassword
 	}
 	if err := params.validate(); err != nil {
-		return store.PasswordHash{}, err
+		return accounts.PasswordHash{}, err
 	}
 	salt := make([]byte, params.SaltLength)
 	if _, err := rand.Read(salt); err != nil {
-		return store.PasswordHash{}, fmt.Errorf("auth: generating a salt: %w", err)
+		return accounts.PasswordHash{}, fmt.Errorf("auth: generating a salt: %w", err)
 	}
-	return store.PasswordHash{
+	return accounts.PasswordHash{
 		Algorithm:   AlgorithmArgon2id,
 		MemoryKiB:   params.MemoryKiB,
 		Iterations:  params.Iterations,
@@ -120,7 +106,7 @@ func HashPassword(password string, params Params) (store.PasswordHash, error) {
 // directly.
 //
 // The comparison is constant-time.
-func VerifyPassword(stored store.PasswordHash, password string) error {
+func VerifyPassword(stored accounts.PasswordHash, password string) error {
 	if stored.Algorithm != AlgorithmArgon2id {
 		return fmt.Errorf("%w: %q", ErrUnknownPasswordAlgorithm, stored.Algorithm)
 	}

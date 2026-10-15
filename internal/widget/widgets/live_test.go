@@ -5,8 +5,9 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/live"
-	"github.com/NaejEL/opnview/internal/store"
-	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/store/samples"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
 )
 
 // The live figures of the widget answers (C3 of the backend-completion cycle, C-AC13): every one
@@ -20,7 +21,7 @@ import (
 func rateObjects(node any, found *[]map[string]any) {
 	switch typed := node.(type) {
 	case map[string]any:
-		if typed["measure"] == widget.MeasureSampled {
+		if typed["measure"] == envelope.MeasureSampled {
 			if _, hasState := typed["state"]; hasState {
 				*found = append(*found, typed)
 			}
@@ -43,10 +44,10 @@ func TestLiveFieldsEveryLiveFigureCarriesItsMeasureSpanCadenceAndBound(t *testin
 	client := f.clients[0]
 	cadence := int64(10)
 	// A fine sample 25 s old at a 10 s cadence: older than its cadence allows.
-	for _, measure := range []store.Measure{store.MeasureRateBitsIn, store.MeasureRateBitsOut} {
-		if err := f.db.InsertMeasurementSample(t.Context(), store.MeasurementSample{
-			SubjectKind: store.SubjectInterfaceEndpoint,
-			SubjectKey:  store.InterfaceEndpointKey(client.iface.device, client.address), Measure: measure,
+	for _, measure := range []vocab.Measure{vocab.MeasureRateBitsIn, vocab.MeasureRateBitsOut} {
+		if err := f.db.InsertMeasurementSample(t.Context(), vocab.MeasurementSample{
+			SubjectKind: vocab.SubjectInterfaceEndpoint,
+			SubjectKey:  vocab.InterfaceEndpointKey(client.iface.device, client.address), Measure: measure,
 			Unit: "bit_per_second", Value: 4000, SampledAt: f.now - 25, LiveCadenceSeconds: &cadence}); err != nil {
 			t.Fatal(err)
 		}
@@ -86,17 +87,17 @@ func TestLiveFieldsEveryLiveFigureCarriesItsMeasureSpanCadenceAndBound(t *testin
 				t.Errorf("%s: a live figure is not a lower bound: %v", request.widgetType, rate)
 			}
 			switch rate["state"] {
-			case string(store.RateNoCurrentSample):
+			case string(samples.RateNoCurrentSample):
 				if rate["in_bits_per_second"] != nil || rate["cadence_seconds"] != nil {
 					t.Errorf("%s: a figure with no current sample carries a value: %v", request.widgetType, rate)
 				}
-			case string(store.RateStaleSample):
+			case string(samples.RateStaleSample):
 				staleSeen = true
-				if rate["cadence_seconds"] != float64(10) || rate["span_seconds"] != float64(store.SampleSeconds) ||
+				if rate["cadence_seconds"] != float64(10) || rate["span_seconds"] != float64(vocab.SampleSeconds) ||
 					rate["in_bits_per_second"] == nil {
 					t.Errorf("%s: a stale figure reads %v", request.widgetType, rate)
 				}
-			case string(store.RateCurrent):
+			case string(samples.RateCurrent):
 				if rate["cadence_seconds"] == nil || rate["span_seconds"] == nil || rate["sampled_at"] == nil {
 					t.Errorf("%s: a current figure lacks its cadence, span or instant: %v", request.widgetType, rate)
 				}

@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The measurement-sample tests that belong to the promotion rather than to 4A's sampler.
@@ -30,7 +32,7 @@ func TestAProviderCanIntroduceASubjectMeasureAndUnitTheSchemaDidNotShipWith(t *t
 	if err != nil {
 		t.Fatalf("looking up the measurement provider: %v", err)
 	}
-	newTerms := MeasurementSample{
+	newTerms := vocab.MeasurementSample{
 		ProviderID:  &providerID,
 		SubjectKind: "example-power-supply",
 		SubjectKey:  "example-unit-one",
@@ -76,20 +78,20 @@ func TestAMeasurementTermThatIsNotAWellFormedTokenIsRejected(t *testing.T) {
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
-	base := MeasurementSample{
-		SubjectKind: SubjectFirewall, SubjectKey: "", Measure: MeasureUptimeSeconds,
-		Unit: UnitSecond, Value: 1, SampledAt: 1750000000,
+	base := vocab.MeasurementSample{
+		SubjectKind: vocab.SubjectFirewall, SubjectKey: "", Measure: vocab.MeasureUptimeSeconds,
+		Unit: vocab.UnitSecond, Value: 1, SampledAt: 1750000000,
 	}
-	for name, mutate := range map[string]func(sample *MeasurementSample){
-		"a subject kind that is empty":     func(s *MeasurementSample) { s.SubjectKind = "" },
-		"a subject kind carrying a space":  func(s *MeasurementSample) { s.SubjectKind = "example subject" },
-		"a subject kind that is not lower": func(s *MeasurementSample) { s.SubjectKind = "Firewall" },
-		"a measure that is empty":          func(s *MeasurementSample) { s.Measure = "" },
-		"a measure carrying a space":       func(s *MeasurementSample) { s.Measure = "uptime seconds" },
-		"a measure that is not lower":      func(s *MeasurementSample) { s.Measure = "Uptime_Seconds" },
-		"a unit that is empty":             func(s *MeasurementSample) { s.Unit = "" },
-		"a unit carrying a space":          func(s *MeasurementSample) { s.Unit = "bit per second" },
-		"a unit that is not lower":         func(s *MeasurementSample) { s.Unit = "Celsius" },
+	for name, mutate := range map[string]func(sample *vocab.MeasurementSample){
+		"a subject kind that is empty":     func(s *vocab.MeasurementSample) { s.SubjectKind = "" },
+		"a subject kind carrying a space":  func(s *vocab.MeasurementSample) { s.SubjectKind = "example subject" },
+		"a subject kind that is not lower": func(s *vocab.MeasurementSample) { s.SubjectKind = "Firewall" },
+		"a measure that is empty":          func(s *vocab.MeasurementSample) { s.Measure = "" },
+		"a measure carrying a space":       func(s *vocab.MeasurementSample) { s.Measure = "uptime seconds" },
+		"a measure that is not lower":      func(s *vocab.MeasurementSample) { s.Measure = "Uptime_Seconds" },
+		"a unit that is empty":             func(s *vocab.MeasurementSample) { s.Unit = "" },
+		"a unit carrying a space":          func(s *vocab.MeasurementSample) { s.Unit = "bit per second" },
+		"a unit that is not lower":         func(s *vocab.MeasurementSample) { s.Unit = "Celsius" },
 	} {
 		sample := base
 		mutate(&sample)
@@ -114,16 +116,16 @@ func TestAFirewallGaugeNamesNoProviderAndASampledReadingNamesItsOwn(t *testing.T
 	if err != nil {
 		t.Fatalf("looking up the measurement provider: %v", err)
 	}
-	if err := database.InsertMeasurementSample(ctx, MeasurementSample{
-		SubjectKind: SubjectFirewall, SubjectKey: "", Measure: MeasureUptimeSeconds,
-		Unit: UnitSecond, Value: 3600, SampledAt: 1750000000,
+	if err := database.InsertMeasurementSample(ctx, vocab.MeasurementSample{
+		SubjectKind: vocab.SubjectFirewall, SubjectKey: "", Measure: vocab.MeasureUptimeSeconds,
+		Unit: vocab.UnitSecond, Value: 3600, SampledAt: 1750000000,
 	}); err != nil {
 		t.Fatalf("writing a firewall gauge: %v", err)
 	}
-	if err := database.InsertMeasurementSample(ctx, MeasurementSample{
-		ProviderID: &providerID, SubjectKind: SubjectInterfaceEndpointPair,
+	if err := database.InsertMeasurementSample(ctx, vocab.MeasurementSample{
+		ProviderID: &providerID, SubjectKind: vocab.SubjectInterfaceEndpointPair,
 		SubjectKey: "example-endpoint-a example-endpoint-b",
-		Measure:    MeasureCumulativeBytesIn, Unit: UnitByte, Value: 1000, SampledAt: 1750000000,
+		Measure:    vocab.MeasureCumulativeBytesIn, Unit: vocab.UnitByte, Value: 1000, SampledAt: 1750000000,
 	}); err != nil {
 		t.Fatalf("writing a sampled pair volume: %v", err)
 	}
@@ -177,9 +179,9 @@ func TestTwoProvidersReadingOneSubjectAtOneInstantAreTwoReadingsAndOneGaugeIsSti
 		t.Fatalf("looking up the second measurement provider: %v", err)
 	}
 
-	reading := MeasurementSample{
-		SubjectKind: SubjectInterface, SubjectKey: "exdev0", Measure: MeasureBytesIn,
-		Unit: UnitByte, Value: 1000, SampledAt: 1750000000,
+	reading := vocab.MeasurementSample{
+		SubjectKind: vocab.SubjectInterface, SubjectKey: "exdev0", Measure: vocab.MeasureBytesIn,
+		Unit: vocab.UnitByte, Value: 1000, SampledAt: 1750000000,
 	}
 	for _, provider := range []*int64{&first, &second} {
 		attributed := reading
@@ -193,9 +195,9 @@ func TestTwoProvidersReadingOneSubjectAtOneInstantAreTwoReadingsAndOneGaugeIsSti
 	}
 
 	// And the gauge nobody reported, offered three times, is one row.
-	gauge := MeasurementSample{
-		SubjectKind: SubjectFirewall, SubjectKey: "", Measure: MeasureUptimeSeconds,
-		Unit: UnitSecond, Value: 3600, SampledAt: 1750000000,
+	gauge := vocab.MeasurementSample{
+		SubjectKind: vocab.SubjectFirewall, SubjectKey: "", Measure: vocab.MeasureUptimeSeconds,
+		Unit: vocab.UnitSecond, Value: 3600, SampledAt: 1750000000,
 	}
 	for pass := 0; pass < 3; pass++ {
 		if err := database.InsertMeasurementSample(ctx, gauge); err != nil {

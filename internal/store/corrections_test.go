@@ -9,13 +9,17 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The step-5A corrections: AC1 to AC6 and AC8 of specs/SPEC-step-5a-corrections.md, on
 // the store's side.
 
 // familyTables names the table of each family of one period.
-func familyTable(family string, period Period) string {
+func familyTable(family string, period vocab.Period) string {
 	if family == "volume" {
 		return "volume_aggregate_" + period.Name
 	}
@@ -25,7 +29,7 @@ func familyTable(family string, period Period) string {
 var allFamilies = []string{"volume", "owner", "client", "domain", "rule", "peer"}
 
 // slotBytes sums one family's bytes in the slot of period holding instant.
-func slotBytes(t *testing.T, database *Store, family string, period Period, instant int64) int64 {
+func slotBytes(t *testing.T, database *Store, family string, period vocab.Period, instant int64) int64 {
 	t.Helper()
 	return queryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM "+familyTable(family, period)+
 		" WHERE period_start_at = ?", period.SlotStart(instant))
@@ -43,7 +47,7 @@ func outboundFlow(client testClient, at, bytes int64, peer int, ingested int64) 
 // carries a site name and the domain family has a row.
 func lookupBefore(t *testing.T, network *testNetwork, key string, address string, at int64) {
 	t.Helper()
-	if err := network.db.InsertDNSResolution(context.Background(), DNSResolution{
+	if err := network.db.InsertDNSResolution(context.Background(), vocab.DNSResolution{
 		LookupKey: key, ClientAddress: address, Domain: "example-site.example.invalid",
 		Resolver: "unbound", Action: "pass", AnswerSource: ptr("Recursion"),
 		LookedUpAt: at - 2, IngestedAt: at,
@@ -59,7 +63,7 @@ func TestARetentionShorterThanAnHourStillFillsTheCurrentSlots(t *testing.T) {
 	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
-	if offset := network.now - PeriodHour.SlotStart(network.now); offset != 800 {
+	if offset := network.now - vocab.PeriodHour.SlotStart(network.now); offset != 800 {
 		t.Fatalf("the reference instant is %d s into its hour, not 800", offset)
 	}
 	if err := network.db.SetSetting(ctx, "retention_seconds", "600", network.now); err != nil {
@@ -81,7 +85,7 @@ func TestARetentionShorterThanAnHourStillFillsTheCurrentSlots(t *testing.T) {
 	if _, err := network.db.RefreshAggregates(ctx, 0, network.now, nil); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
-	for _, period := range Periods() {
+	for _, period := range vocab.Periods() {
 		for _, family := range allFamilies {
 			if got := slotBytes(t, network.db, family, period, network.now); got != 77 {
 				t.Errorf("the current %s slot of the %s family holds %d bytes, not the 77 of the flow",
@@ -118,7 +122,7 @@ func TestTheCurrentSlotsEqualTheSumsOverFlowWhateverTheRetention(t *testing.T) {
 			if _, err := network.db.RefreshAggregates(ctx, 0, network.now, nil); err != nil {
 				t.Fatalf("refreshing: %v", err)
 			}
-			for _, period := range Periods() {
+			for _, period := range vocab.Periods() {
 				current := period.SlotStart(network.now)
 				prefix := fmt.Sprintf("%d|", current)
 				for _, family := range allFamilies {
@@ -155,7 +159,7 @@ func TestAnHourHoldingTheHorizonTakesALateFlowAndAReclassification(t *testing.T)
 	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
-	hour := PeriodHour.SlotStart(network.now)
+	hour := vocab.PeriodHour.SlotStart(network.now)
 	client := network.clients[0]
 	if client.v6 {
 		t.Fatal("the first client is expected to be IPv4")
@@ -187,7 +191,7 @@ func TestAnHourHoldingTheHorizonTakesALateFlowAndAReclassification(t *testing.T)
 		t.Fatalf("refreshing: %v", err)
 	}
 	for _, family := range []string{"volume", "rule", "client", "owner", "peer"} {
-		if got := slotBytes(t, network.db, family, PeriodHour, hour); got != 350 {
+		if got := slotBytes(t, network.db, family, vocab.PeriodHour, hour); got != 350 {
 			t.Errorf("the %s family holds %d bytes in the hour, not its purged 100 plus the 250 present",
 				family, got)
 		}
@@ -238,13 +242,13 @@ func TestTheRolledUpWeekAndMonthEqualADirectComputation(t *testing.T) {
 	if err := network.db.SetSetting(ctx, "retention_seconds", "3600", network.now); err != nil {
 		t.Fatalf("setting the retention: %v", err)
 	}
-	month := PeriodMonth.SlotStart(network.now)
+	month := vocab.PeriodMonth.SlotStart(network.now)
 	addresses := network.insert(t, network.flowsFor(300, network.now-month))
 	network.classifyAndRefresh(t, addresses)
 	attributeNetwork(t, network)
 
 	flows := readFlows(t, network.db)
-	for _, period := range []Period{PeriodWeek, PeriodMonth} {
+	for _, period := range []vocab.Period{vocab.PeriodWeek, vocab.PeriodMonth} {
 		current := fmt.Sprintf("%d|", period.SlotStart(network.now))
 		for _, family := range allFamilies {
 			expected := expectedFamily(flows, period, family)
@@ -266,7 +270,7 @@ func TestTheRolledUpWeekAndMonthEqualADirectComputation(t *testing.T) {
 			table := familyTable(family, period)
 			rolled := queryInt(t, network.db, "SELECT coalesce(sum(bytes), 0) FROM "+table+
 				" WHERE period_start_at = ?", period.SlotStart(network.now))
-			days := queryInt(t, network.db, "SELECT coalesce(sum(bytes), 0) FROM "+familyTable(family, PeriodDay)+
+			days := queryInt(t, network.db, "SELECT coalesce(sum(bytes), 0) FROM "+familyTable(family, vocab.PeriodDay)+
 				" WHERE period_start_at >= ? AND period_start_at < ?", period.SlotStart(network.now),
 				period.SlotEnd(period.SlotStart(network.now)))
 			if rolled != days {
@@ -285,9 +289,9 @@ func TestDistinctPeersIsExactInAComposedAndARolledUpSlot(t *testing.T) {
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	client := network.clients[0]
-	day := PeriodDay.SlotStart(network.now)
+	day := vocab.PeriodDay.SlotStart(network.now)
 	yesterday := day - 86400
-	if PeriodMonth.SlotStart(yesterday) != PeriodMonth.SlotStart(day) {
+	if vocab.PeriodMonth.SlotStart(yesterday) != vocab.PeriodMonth.SlotStart(day) {
 		t.Fatal("the reference day is the first of its month")
 	}
 	// Hour one: peers 1 and 2. Hour two: peers 1 and 3. Yesterday: peers 1 and 4. And
@@ -304,20 +308,20 @@ func TestDistinctPeersIsExactInAComposedAndARolledUpSlot(t *testing.T) {
 		return queryInt(t, network.db, `SELECT count(DISTINCT dst_address) FROM flow
 			WHERE src_address = ? AND observed_at >= ? AND observed_at < ?`, client.address, from, to)
 	}
-	wantDay, wantMonth := direct(day, day+86400), direct(PeriodMonth.SlotStart(day), network.now+1)
+	wantDay, wantMonth := direct(day, day+86400), direct(vocab.PeriodMonth.SlotStart(day), network.now+1)
 	if wantDay != 3 || wantMonth != 4 {
 		t.Fatalf("the direct counts are %d and %d, not 3 and 4", wantDay, wantMonth)
 	}
-	peers := func(period Period) int64 {
+	peers := func(period vocab.Period) int64 {
 		return queryInt(t, network.db, "SELECT coalesce(max(distinct_peers), 0) FROM client_volume_aggregate_"+
 			period.Name+" WHERE period_start_at = ? AND traffic_direction = 'outbound'", period.SlotStart(day))
 	}
 	check := func(when string) {
 		t.Helper()
-		if got := peers(PeriodDay); got != wantDay {
+		if got := peers(vocab.PeriodDay); got != wantDay {
 			t.Errorf("%s, the composed day counts %d distinct peers, not %d", when, got, wantDay)
 		}
-		if got := peers(PeriodMonth); got != wantMonth {
+		if got := peers(vocab.PeriodMonth); got != wantMonth {
 			t.Errorf("%s, the rolled-up month counts %d distinct peers, not %d", when, got, wantMonth)
 		}
 	}
@@ -362,7 +366,7 @@ func rowVersions(t *testing.T, database *Store) string {
 	t.Helper()
 	ctx := context.Background()
 	rows, err := database.DB().QueryContext(ctx,
-		"SELECT tablename FROM pg_tables WHERE schemaname = ? ORDER BY tablename", CoreSchema)
+		"SELECT tablename FROM pg_tables WHERE schemaname = ? ORDER BY tablename", sqldb.CoreSchema)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -398,7 +402,7 @@ func TestASecondClassificationPassWithNothingChangedWritesNoRow(t *testing.T) {
 	}
 	var addresses []string
 	for index, client := range network.clients {
-		if err := network.db.InsertSecurityEvent(ctx, provider, SecurityEvent{
+		if err := network.db.InsertSecurityEvent(ctx, provider, vocab.SecurityEvent{
 			ProviderEventKey: fmt.Sprintf("example-event-%d", index), OccurredAt: network.now - 60,
 			IngestedAt: network.now - 60, RuleIdentity: "1", Signature: "example", EventAction: "allowed",
 			SrcAddress: client.address, DstAddress: outside(index, client.v6),
@@ -475,8 +479,8 @@ func TestALeaseNamingOneAddressReclassifiesThatAddressAlone(t *testing.T) {
 	before := flowEnds(t, network.db)
 
 	mac := "00:00:00:00:fe:02"
-	leased, err := network.db.UpsertClient(ctx, Client{
-		Identity: ClientIdentity{Kind: IdentityMAC, Key: mac}, InterfaceID: &target.interfaceID,
+	leased, err := network.db.UpsertClient(ctx, vocab.Client{
+		Identity: vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: mac}, InterfaceID: &target.interfaceID,
 		MAC: &mac, LastAddress: &target.address,
 	}, network.now)
 	if err != nil {
@@ -484,9 +488,9 @@ func TestALeaseNamingOneAddressReclassifiesThatAddressAlone(t *testing.T) {
 	}
 	provider, _ := network.db.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 	expiry := network.now + 3600
-	if err := network.db.InsertDHCPLease(ctx, provider, DHCPLease{
+	if err := network.db.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		ClientID: &leased, Backend: "dnsmasq", Address: target.address, MAC: &mac, LeaseState: "active",
-		InterfaceID: &target.interfaceID, GenerationKey: GenerationKeyOf(nil, &expiry, 0),
+		InterfaceID: &target.interfaceID, GenerationKey: vocab.GenerationKeyOf(nil, &expiry, 0),
 		ExpiresAt: &expiry, ObservedAt: network.now,
 	}); err != nil {
 		t.Fatalf("writing the lease: %v", err)
@@ -531,9 +535,9 @@ func TestNetworksAreDetectedWithoutTheLinkLocalPrefix(t *testing.T) {
 	found := map[string]bool{}
 	for _, stored := range networks {
 		if stored.InterfaceID == network.inside[0].id {
-			found[stored.Network.String()] = stored.Origin == NetworkOriginDetected
+			found[stored.Network.String()] = stored.Origin == flows.NetworkOriginDetected
 		}
-		if overlapsLinkLocal(stored.Network) {
+		if flows.OverlapsLinkLocal(stored.Network) {
 			t.Errorf("the link-local network %s was stored", stored.Network)
 		}
 	}
@@ -647,7 +651,7 @@ func TestOperatorNetworksFollowDecisionD1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("confirming: %v", err)
 	}
-	if edit.Network.Origin != NetworkOriginOperator || !edit.Network.Counts {
+	if edit.Network.Origin != flows.NetworkOriginOperator || !edit.Network.Counts {
 		t.Errorf("the confirmed network is %+v", edit.Network)
 	}
 	derive(network.now + 60)
@@ -693,7 +697,7 @@ func TestALinkLocalAddressIsEvidenceOnlyWhereTheRuleSaysSo(t *testing.T) {
 			t.Errorf("with the rule on interface %d only, the address is placed on %d", step.on.id, got)
 		}
 	}
-	if err := network.db.SetLinkLocalEvidence(ctx, 99999, true); !errors.Is(err, ErrUnknownInterface) {
+	if err := network.db.SetLinkLocalEvidence(ctx, 99999, true); !errors.Is(err, flows.ErrUnknownInterface) {
 		t.Errorf("setting the rule on no interface returned %v", err)
 	}
 }
@@ -705,22 +709,22 @@ func TestTheOperatorsWritePathRefusesAMalformedNetwork(t *testing.T) {
 	ctx := context.Background()
 	for _, text := range []string{"", "not a network", "10.9.0.1/24", "10.9.0.0/33", "10.9.0.0",
 		"2001:db8::1/64", "::ffff:10.9.0.0/120"} {
-		if _, err := network.db.AddInterfaceNetwork(ctx, network.inside[0].id, text, network.now); !errors.Is(err, ErrMalformedNetwork) {
+		if _, err := network.db.AddInterfaceNetwork(ctx, network.inside[0].id, text, network.now); !errors.Is(err, flows.ErrMalformedNetwork) {
 			t.Errorf("the range %q was not refused as malformed: %v", text, err)
 		}
 	}
 	for _, text := range []string{"fe80::/64", "fe00::/7", "::/0"} {
-		if _, err := network.db.AddInterfaceNetwork(ctx, network.inside[0].id, text, network.now); !errors.Is(err, ErrLinkLocalNetwork) {
+		if _, err := network.db.AddInterfaceNetwork(ctx, network.inside[0].id, text, network.now); !errors.Is(err, flows.ErrLinkLocalNetwork) {
 			t.Errorf("the range %q, over the link-local prefix, was not refused: %v", text, err)
 		}
 	}
-	if _, err := network.db.AddInterfaceNetwork(ctx, network.upstream.id, "10.9.0.0/24", network.now); !errors.Is(err, ErrUpstreamInterface) {
+	if _, err := network.db.AddInterfaceNetwork(ctx, network.upstream.id, "10.9.0.0/24", network.now); !errors.Is(err, flows.ErrUpstreamInterface) {
 		t.Errorf("a network on the upstream interface was not refused: %v", err)
 	}
-	if _, err := network.db.AddInterfaceNetwork(ctx, 99999, "10.9.0.0/24", network.now); !errors.Is(err, ErrUnknownInterface) {
+	if _, err := network.db.AddInterfaceNetwork(ctx, 99999, "10.9.0.0/24", network.now); !errors.Is(err, flows.ErrUnknownInterface) {
 		t.Errorf("a network on no interface was not refused: %v", err)
 	}
-	if _, err := network.db.RemoveInterfaceNetwork(ctx, network.inside[0].id, "10.9.0.0/24", network.now); !errors.Is(err, ErrUnknownNetwork) {
+	if _, err := network.db.RemoveInterfaceNetwork(ctx, network.inside[0].id, "10.9.0.0/24", network.now); !errors.Is(err, flows.ErrUnknownNetwork) {
 		t.Errorf("removing a network the interface does not carry returned %v", err)
 	}
 	edit, err := network.db.AddInterfaceNetwork(ctx, network.inside[1].id, "10.1.0.128/25", network.now)
@@ -743,9 +747,9 @@ func TestAHostNameLoggedAsTheClientIsResolvedThroughTheLeases(t *testing.T) {
 	provider, _ := network.db.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 	lease := func(address, hostname string, expires int64) {
 		t.Helper()
-		if err := network.db.InsertDHCPLease(ctx, provider, DHCPLease{
+		if err := network.db.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 			Backend: "dnsmasq", Address: address, Hostname: &hostname, LeaseState: "active",
-			GenerationKey: GenerationKeyOf(nil, &expires, 0), ExpiresAt: &expires, ObservedAt: network.now,
+			GenerationKey: vocab.GenerationKeyOf(nil, &expires, 0), ExpiresAt: &expires, ObservedAt: network.now,
 		}); err != nil {
 			t.Fatalf("writing a lease: %v", err)
 		}
@@ -761,11 +765,11 @@ func TestAHostNameLoggedAsTheClientIsResolvedThroughTheLeases(t *testing.T) {
 	for _, step := range []struct {
 		logged, address, resolution string
 	}{
-		{"example-host.example.invalid", client.address, ClientResolutionLeased},
-		{"EXAMPLE-HOST", client.address, ClientResolutionLeased},
-		{"example-twin.example.invalid", "example-twin.example.invalid", ClientResolutionAmbiguous},
-		{"example-gone", "example-gone", ClientResolutionUnknown},
-		{"example-nobody", "example-nobody", ClientResolutionUnknown},
+		{"example-host.example.invalid", client.address, vocab.ClientResolutionLeased},
+		{"EXAMPLE-HOST", client.address, vocab.ClientResolutionLeased},
+		{"example-twin.example.invalid", "example-twin.example.invalid", vocab.ClientResolutionAmbiguous},
+		{"example-gone", "example-gone", vocab.ClientResolutionUnknown},
+		{"example-nobody", "example-nobody", vocab.ClientResolutionUnknown},
 	} {
 		address, resolution, err := network.db.ResolveLeaseHostname(ctx, step.logged, network.now-60)
 		if err != nil {

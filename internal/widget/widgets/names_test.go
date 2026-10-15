@@ -3,12 +3,16 @@ package widgets
 import (
 	"context"
 	"encoding/json"
-	"github.com/NaejEL/opnview/internal/widget"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/figures"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 
 	"github.com/NaejEL/opnview/internal/config"
 )
@@ -50,7 +54,7 @@ func TestEverySiteNameCarriesItsMethodAndTheRatesAgreeWithTheStore(t *testing.T)
 	sites := decodeData[topSitesData](t, f.respond(t, "top_sites", map[string]any{"period": "30d"}))
 	cacheNamed := int64(0)
 	for _, row := range sites.Rows {
-		if row.Kind == widget.DestinationKindAddress {
+		if row.Kind == figures.DestinationKindAddress {
 			// An address row is a destination no name was inferred for: it carries no method.
 			continue
 		}
@@ -89,7 +93,7 @@ func TestEverySiteNameCarriesItsMethodAndTheRatesAgreeWithTheStore(t *testing.T)
 	f.setAvailability(t, "dns_lookup", "unbound", "unavailable", "transport_failure", "example probe")
 	bare := decodeData[attributionData](t, f.respond(t, "attribution_rate_per_client", map[string]any{"period": "30d"}))
 	for _, row := range bare.Rows {
-		if row.Rate != nil || row.RateState != widget.RateUndefinedNoResolver {
+		if row.Rate != nil || row.RateState != figures.RateUndefinedNoResolver {
 			t.Errorf("client %d: with no resolver coverage the rate reads %v (%s)", row.Client.ID, row.Rate, row.RateState)
 		}
 	}
@@ -99,7 +103,7 @@ func TestEverySiteNameCarriesItsMethodAndTheRatesAgreeWithTheStore(t *testing.T)
 }
 
 // diagnosticRows runs the diagnostic "Attribution rate per client" over a window.
-func diagnosticRows(t *testing.T, f *fixture, window widget.Interval) map[int64][4]int64 {
+func diagnosticRows(t *testing.T, f *fixture, window envelope.Interval) map[int64][4]int64 {
 	t.Helper()
 	text, err := os.ReadFile("../../../sql/queries/diagnostics.sql")
 	check(t, err)
@@ -141,7 +145,7 @@ func TestNoDomainsWithholdsEveryDomainNameAndKeepsEveryCount(t *testing.T) {
 			full[widgetType+period] = f.serialised(t, widgetType, period)
 		}
 	}
-	check(t, f.db.SetSetting(ctx, config.KeyAggregateMode, widget.AggregateModeNoDomains, f.now))
+	check(t, f.db.SetSetting(ctx, config.KeyAggregateMode, request.AggregateModeNoDomains, f.now))
 	names := append([]string{}, f.sites...)
 	names = append(names, "example.com", "example.net", "example.org", "blocked0.example", "blocked1.example",
 		"blocked2.example")
@@ -159,7 +163,7 @@ func TestNoDomainsWithholdsEveryDomainNameAndKeepsEveryCount(t *testing.T) {
 			}
 			preset, _ := f.service.Preset(widgetType)
 			if preset.WithheldWholeUnderNoDomains {
-				if response.Condition != widget.ConditionWithheldByAggregateMode || response.Data != nil {
+				if response.Condition != envelope.ConditionWithheldByAggregateMode || response.Data != nil {
 					t.Errorf("%s is not withheld whole", widgetType)
 				}
 				continue
@@ -195,7 +199,7 @@ func withPeriod(f *fixture, widgetType, period string) map[string]any {
 	if parameters == nil {
 		parameters = map[string]any{}
 	}
-	if widget.Contains(paramKeys(f.service, widgetType), "period") {
+	if params.Contains(paramKeys(f.service, widgetType), "period") {
 		parameters["period"] = period
 	}
 	return parameters
@@ -279,7 +283,7 @@ func equalNumbers(a, b []float64) bool {
 func TestEveryByteFigureNamesItsMeasureAndItsBound(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, defaultSpec)
-	allowed := map[string]bool{widget.MeasureLogged: true, widget.MeasureSampled: true, widget.MeasureInterfaceCounter: true,
+	allowed := map[string]bool{envelope.MeasureLogged: true, envelope.MeasureSampled: true, envelope.MeasureInterfaceCounter: true,
 		"refusals": true, "dns_lookups": true, "security_events": true, "clients": true, "addresses": true,
 		"sampled_gauge": true, "dns": true, "security_event": true}
 	for _, widgetType := range f.service.Types() {

@@ -9,8 +9,10 @@ import (
 
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+
 	// The worked example of docs/extending.md. Importing it for its effect is the whole
 	// procedure for linking a surface; nothing shipped is edited.
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 	_ "github.com/NaejEL/opnview/internal/web/webtest/examples/hello"
 )
 
@@ -24,7 +26,7 @@ import (
 // directory, registered through the public contract, and the server mounts it.
 func TestASurfaceAddedByADirectoryIsServedInsideTheLayout(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 
 	if refused := h.Server.RefusedSurfaces(); len(refused) != 0 {
 		t.Fatalf("a server over the shipped surfaces and the example refused %v", refused)

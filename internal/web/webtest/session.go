@@ -1,11 +1,13 @@
 package webtest
 
 import (
-	"github.com/NaejEL/opnview/internal/web"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
+	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/web"
 )
 
 // assertRefusesUnauthenticated fails unless the route turns away a request carrying
@@ -88,4 +90,34 @@ func AssertSameSet(t *testing.T, what string, expected, seen map[string]bool) {
 			t.Errorf("%s gained %s, which nobody decided on", what, name)
 		}
 	}
+}
+
+// pageSource fetches one page's HTML.
+func PageSource(t *testing.T, harness *Harness, path string) string {
+	t.Helper()
+	answer := harness.Get(path)
+	body := ReadBody(t, answer)
+	_ = answer.Body.Close()
+	if answer.StatusCode != http.StatusOK {
+		t.Fatalf("%s answered %d", path, answer.StatusCode)
+	}
+	return body
+}
+
+// followed reads the answer to a submission: a 303 back to a surface is followed, and
+// the page it lands on returned with the 303; any other answer is read as it is.
+func Followed(t *testing.T, h *Harness, answer *http.Response) (int, string) {
+	t.Helper()
+	status, body := StatusAndBody(t, answer)
+	if status != http.StatusSeeOther {
+		return status, body
+	}
+	location := answer.Header.Get("Location")
+	if cut := strings.Index(location, "#"); cut >= 0 {
+		location = location[:cut]
+	}
+	if !strings.HasPrefix(location, "/") {
+		t.Fatalf("a save redirected off the surface, to %q", location)
+	}
+	return status, PageSource(t, h, location)
 }

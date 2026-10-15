@@ -11,9 +11,12 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/plugin"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // The widget measure (PS22 and PS-AC37 of the NetFlow join amendment to
@@ -120,7 +123,7 @@ func measureParameters(service *widget.Service, widgetType, measure string) map[
 	if widgetType == "client_traffic_detail" {
 		parameters["client"] = map[string]any{"kind": "client", "by": "mac", "value": measureClientMAC}
 	}
-	if widget.Contains(paramKeys(service, widgetType), "period") {
+	if params.Contains(paramKeys(service, widgetType), "period") {
 		parameters["period"] = "1h"
 	}
 	if measure != "" {
@@ -130,7 +133,7 @@ func measureParameters(service *widget.Service, widgetType, measure string) map[
 }
 
 // encoded is a response as JSON.
-func encoded(t *testing.T, response widget.Response) []byte {
+func encoded(t *testing.T, response envelope.Response) []byte {
 	t.Helper()
 	raw, err := json.Marshal(response)
 	check(t, err)
@@ -141,10 +144,10 @@ func encoded(t *testing.T, response widget.Response) []byte {
 // decision of 11 October 2026 admit removed: the echoed volume_measure key, one named state, and that
 // state's detail in state_details -- admitted only when the state itself is present, so a detail
 // without its state, or a detail of another state, still differs.
-func withoutMeasureDifferences(t *testing.T, response widget.Response, state string) []byte {
+func withoutMeasureDifferences(t *testing.T, response envelope.Response, state string) []byte {
 	t.Helper()
-	if widget.Contains(response.States, state) && response.StateDetails != nil {
-		details := map[string]widget.StateDetail{}
+	if params.Contains(response.States, state) && response.StateDetails != nil {
+		details := map[string]envelope.StateDetail{}
 		for name, detail := range response.StateDetails {
 			if name != state {
 				details[name] = detail
@@ -157,7 +160,7 @@ func withoutMeasureDifferences(t *testing.T, response widget.Response, state str
 	}
 	parameters := map[string]any{}
 	for key, value := range response.Parameters {
-		if key != widget.VolumeMeasureKey {
+		if key != params.VolumeMeasureKey {
 			parameters[key] = value
 		}
 	}
@@ -174,7 +177,7 @@ func withoutMeasureDifferences(t *testing.T, response widget.Response, state str
 
 // measuresIn collects the volume measures (logged, netflow) the figures of an answer's data carry, and
 // the netflow figures whose lower_bound is false, by path.
-func measuresIn(t *testing.T, response widget.Response) (map[string]bool, []string) {
+func measuresIn(t *testing.T, response envelope.Response) (map[string]bool, []string) {
 	t.Helper()
 	var tree any
 	check(t, json.Unmarshal(encoded(t, response), &tree))
@@ -185,9 +188,9 @@ func measuresIn(t *testing.T, response widget.Response) (map[string]bool, []stri
 		switch typed := node.(type) {
 		case map[string]any:
 			if measure, isText := typed["measure"].(string); isText &&
-				(measure == widget.MeasureLogged || measure == widget.MeasureNetflow) {
+				(measure == envelope.MeasureLogged || measure == envelope.MeasureNetflow) {
 				measures[measure] = true
-				if bound, isBool := typed["lower_bound"].(bool); isBool && !bound && measure == widget.MeasureNetflow {
+				if bound, isBool := typed["lower_bound"].(bool); isBool && !bound && measure == envelope.MeasureNetflow {
 					exact = append(exact, path)
 				}
 			}
@@ -218,8 +221,8 @@ func TestEveryVolumeTypeAcceptsTheThreeMeasures(t *testing.T) {
 			len(volumeMeasureTypes))
 	}
 	for _, widgetType := range types {
-		answers := map[string]widget.Response{}
-		for _, measure := range append([]string{""}, widget.VolumeMeasures...) {
+		answers := map[string]envelope.Response{}
+		for _, measure := range append([]string{""}, request.VolumeMeasures...) {
 			parameters := measureParameters(f.service, widgetType, measure)
 			for key, value := range defaultParameters(f, widgetType) {
 				parameters[key] = value
@@ -228,26 +231,26 @@ func TestEveryVolumeTypeAcceptsTheThreeMeasures(t *testing.T) {
 			if len(response.InvalidParameters) != 0 {
 				t.Errorf("%s %q: invalid parameters %+v", widgetType, measure, response.InvalidParameters)
 			}
-			echoed := response.Parameters[widget.VolumeMeasureKey]
-			if (measure == "" && echoed != widget.VolumeMeasureBestAvailable) || (measure != "" && echoed != measure) {
+			echoed := response.Parameters[params.VolumeMeasureKey]
+			if (measure == "" && echoed != params.VolumeMeasureBestAvailable) || (measure != "" && echoed != measure) {
 				t.Errorf("%s %q: volume_measure is echoed as %v", widgetType, measure, echoed)
 			}
 			answers[measure] = response
 		}
-		logged := encoded(t, answers[widget.MeasureLogged])
-		for _, measure := range []string{"", widget.VolumeMeasureBestAvailable} {
+		logged := encoded(t, answers[envelope.MeasureLogged])
+		for _, measure := range []string{"", params.VolumeMeasureBestAvailable} {
 			got := answers[measure]
-			if !widget.Contains(got.States, widget.StateNetflowNotConfigured) {
+			if !params.Contains(got.States, request.StateNetflowNotConfigured) {
 				t.Errorf("%s %q: the states are %v, without netflow_not_configured", widgetType, measure, got.States)
 			}
-			if string(withoutMeasureDifferences(t, got, widget.StateNetflowNotConfigured)) !=
-				string(withoutMeasureDifferences(t, answers[widget.MeasureLogged], widget.StateNetflowNotConfigured)) {
+			if string(withoutMeasureDifferences(t, got, request.StateNetflowNotConfigured)) !=
+				string(withoutMeasureDifferences(t, answers[envelope.MeasureLogged], request.StateNetflowNotConfigured)) {
 				t.Errorf("%s %q: best_available is not logged's answer\nlogged: %s\ngot:    %s", widgetType, measure,
 					logged, encoded(t, got))
 			}
 		}
-		explicit := answers[widget.MeasureNetflow]
-		if explicit.Data != nil || !widget.Contains(explicit.States, widget.StateNetflowNotConfigured) {
+		explicit := answers[envelope.MeasureNetflow]
+		if explicit.Data != nil || !params.Contains(explicit.States, request.StateNetflowNotConfigured) {
 			t.Errorf("%s: an explicit netflow that cannot be answered carries %s", widgetType, encoded(t, explicit))
 		}
 	}
@@ -265,7 +268,7 @@ func TestBestAvailableAnswersNetflowWhenEveryConnectionIsMeasured(t *testing.T) 
 	response := f.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"})
 	total, _ := data(t, response)["total"].(map[string]any)
 	coverage, _ := total["coverage"].(map[string]any)
-	if total["measure"] != widget.MeasureNetflow || total["bytes"] != float64(17000) || total["connections"] != float64(2) ||
+	if total["measure"] != envelope.MeasureNetflow || total["bytes"] != float64(17000) || total["connections"] != float64(2) ||
 		total["packets"] != float64(29) || total["lower_bound"] != true || coverage["measured"] != float64(2) ||
 		coverage["partial"] != float64(0) || coverage["not_joinable"] != float64(0) {
 		t.Errorf("the total is %v", total)
@@ -274,7 +277,7 @@ func TestBestAvailableAnswersNetflowWhenEveryConnectionIsMeasured(t *testing.T) 
 		t.Errorf("a netflow answer carries the states %v", response.States)
 	}
 	logged := f.respond(t, "interface_volume_ranking", map[string]any{"period": "1h", "volume_measure": "logged"})
-	if loggedTotal, _ := data(t, logged)["total"].(map[string]any); loggedTotal["measure"] != widget.MeasureLogged ||
+	if loggedTotal, _ := data(t, logged)["total"].(map[string]any); loggedTotal["measure"] != envelope.MeasureLogged ||
 		loggedTotal["bytes"] != float64(measureLoggedBytes) || loggedTotal["coverage"] != nil {
 		t.Errorf("the logged total is %v", loggedTotal)
 	}
@@ -282,7 +285,7 @@ func TestBestAvailableAnswersNetflowWhenEveryConnectionIsMeasured(t *testing.T) 
 	for _, widgetType := range volumeTypes(t, f.service) {
 		answer := f.respond(t, widgetType, measureParameters(f.service, widgetType, ""))
 		measures, _ := measuresIn(t, answer)
-		if measures[widget.MeasureLogged] {
+		if measures[envelope.MeasureLogged] {
 			t.Errorf("%s: best_available under full coverage carries a logged figure (states %v): %s", widgetType,
 				answer.States, encoded(t, answer))
 		}
@@ -305,14 +308,14 @@ func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T
 	best := f.respond(t, "interface_volume_ranking", parameters)
 	parameters["volume_measure"] = "logged"
 	logged := f.respond(t, "interface_volume_ranking", parameters)
-	if !widget.Contains(best.States, widget.StateNetflowNotCoveringWindow) ||
-		string(withoutMeasureDifferences(t, best, widget.StateNetflowNotCoveringWindow)) !=
-			string(withoutMeasureDifferences(t, logged, widget.StateNetflowNotCoveringWindow)) {
+	if !params.Contains(best.States, request.StateNetflowNotCoveringWindow) ||
+		string(withoutMeasureDifferences(t, best, request.StateNetflowNotCoveringWindow)) !=
+			string(withoutMeasureDifferences(t, logged, request.StateNetflowNotCoveringWindow)) {
 		t.Errorf("best_available under partial coverage is not logged's answer with the state\nlogged: %s\ngot:    %s",
 			encoded(t, logged), encoded(t, best))
 	}
-	if detail := best.StateDetails[widget.StateNetflowNotCoveringWindow]; len(detail.IntervalStates) != 1 ||
-		detail.IntervalStates[0] != store.CaptureObservationPoint || detail.CapturedInterfaces != nil {
+	if detail := best.StateDetails[request.StateNetflowNotCoveringWindow]; len(detail.IntervalStates) != 1 ||
+		detail.IntervalStates[0] != netflow.CaptureObservationPoint || detail.CapturedInterfaces != nil {
 		t.Errorf("the detail of netflow_not_covering_window is %+v, not the one interval state observation_point",
 			best.StateDetails)
 	}
@@ -320,8 +323,8 @@ func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T
 	explicit := f.respond(t, "interface_volume_ranking", parameters)
 	total, _ := data(t, explicit)["total"].(map[string]any)
 	coverage, _ := total["coverage"].(map[string]any)
-	if total["measure"] != widget.MeasureNetflow || total["bytes"] != float64(14500) || coverage["measured"] != float64(1) ||
-		coverage["partial"] != float64(1) || !widget.Contains(explicit.States, widget.StateNetflowNotCoveringWindow) {
+	if total["measure"] != envelope.MeasureNetflow || total["bytes"] != float64(14500) || coverage["measured"] != float64(1) ||
+		coverage["partial"] != float64(1) || !params.Contains(explicit.States, request.StateNetflowNotCoveringWindow) {
 		t.Errorf("the explicit netflow total is %v, states %v", total, explicit.States)
 	}
 }
@@ -338,18 +341,18 @@ func TestUnderTwoCapturedInterfacesBestAvailableIsLoggedAndNetflowCarriesNoFigur
 	f.measureEverything(t)
 	for _, widgetType := range volumeTypes(t, f.service) {
 		best := f.respond(t, widgetType, measureParameters(f.service, widgetType, ""))
-		logged := f.respond(t, widgetType, measureParameters(f.service, widgetType, widget.MeasureLogged))
-		if !widget.Contains(best.States, widget.StateObservationPointNotExported) ||
-			string(withoutMeasureDifferences(t, best, widget.StateObservationPointNotExported)) !=
-				string(withoutMeasureDifferences(t, logged, widget.StateObservationPointNotExported)) {
+		logged := f.respond(t, widgetType, measureParameters(f.service, widgetType, envelope.MeasureLogged))
+		if !params.Contains(best.States, request.StateObservationPointNotExported) ||
+			string(withoutMeasureDifferences(t, best, request.StateObservationPointNotExported)) !=
+				string(withoutMeasureDifferences(t, logged, request.StateObservationPointNotExported)) {
 			t.Errorf("%s: best_available under two interfaces\nlogged: %s\ngot:    %s", widgetType, encoded(t, logged),
 				encoded(t, best))
 		}
-		explicit := f.respond(t, widgetType, measureParameters(f.service, widgetType, widget.MeasureNetflow))
-		if explicit.Data != nil || !widget.Contains(explicit.States, widget.StateObservationPointNotExported) {
+		explicit := f.respond(t, widgetType, measureParameters(f.service, widgetType, envelope.MeasureNetflow))
+		if explicit.Data != nil || !params.Contains(explicit.States, request.StateObservationPointNotExported) {
 			t.Errorf("%s: an explicit netflow under two interfaces carries %s", widgetType, encoded(t, explicit))
 		}
-		for name, answer := range map[string]widget.Response{"best_available": best, "netflow": explicit} {
+		for name, answer := range map[string]envelope.Response{"best_available": best, "netflow": explicit} {
 			if !capturedInterfacesAre(answer, 2) {
 				t.Errorf("%s %s: the state details are %+v, not captured_interfaces 2", widgetType, name,
 					answer.StateDetails)
@@ -363,8 +366,8 @@ func TestUnderTwoCapturedInterfacesBestAvailableIsLoggedAndNetflowCarriesNoFigur
 
 // capturedInterfacesAre reports whether an answer's only state detail is observation_point_not_exported
 // with that many captured interfaces.
-func capturedInterfacesAre(answer widget.Response, captured int64) bool {
-	detail, present := answer.StateDetails[widget.StateObservationPointNotExported]
+func capturedInterfacesAre(answer envelope.Response, captured int64) bool {
+	detail, present := answer.StateDetails[request.StateObservationPointNotExported]
 	return present && len(answer.StateDetails) == 1 && detail.CapturedInterfaces != nil &&
 		*detail.CapturedInterfaces == captured && detail.IntervalStates == nil
 }
@@ -385,14 +388,14 @@ func TestEveryFigureOfAnAnswerCarriesOneMeasure(t *testing.T) {
 		f := newMeasureWorld(t)
 		prepare(t, f)
 		for _, widgetType := range volumeTypes(t, f.service) {
-			for _, measure := range widget.VolumeMeasures {
+			for _, measure := range request.VolumeMeasures {
 				answer := f.respond(t, widgetType, measureParameters(f.service, widgetType, measure))
 				measures, _ := measuresIn(t, answer)
 				if len(measures) > 1 {
 					t.Errorf("%s: %s %s mixes the measures %v: %s", name, widgetType, measure, measures,
 						encoded(t, answer))
 				}
-				if measure == widget.MeasureLogged && measures[widget.MeasureNetflow] && widgetType != "custom_chart" {
+				if measure == envelope.MeasureLogged && measures[envelope.MeasureNetflow] && widgetType != "custom_chart" {
 					t.Errorf("%s: %s answers a netflow figure under logged", name, widgetType)
 				}
 			}
@@ -413,7 +416,7 @@ func TestLowerBoundIsFalseOnlyOnAFullyMeasuredRecord(t *testing.T) {
 	f.measured(t, measureFlowB, "forward", "measured", 1500, 3)
 	f.measured(t, measureFlowB, "reverse", "in_progress", 700, 2)
 	detail := f.respond(t, "client_traffic_detail", measureParameters(f.service, "client_traffic_detail",
-		widget.MeasureNetflow))
+		envelope.MeasureNetflow))
 	records, _ := data(t, detail)["records"].([]any)
 	if len(records) != 2 {
 		t.Fatalf("the records are %v", data(t, detail))
@@ -426,7 +429,7 @@ func TestLowerBoundIsFalseOnlyOnAFullyMeasuredRecord(t *testing.T) {
 	full, partial := byFlow[float64(measureFlowA)], byFlow[float64(measureFlowB)]
 	fullBytes, _ := full["bytes"].(map[string]any)
 	partialBytes, _ := partial["bytes"].(map[string]any)
-	if fullBytes["measure"] != widget.MeasureNetflow || fullBytes["value"] != float64(13000) || fullBytes["lower_bound"] != false {
+	if fullBytes["measure"] != envelope.MeasureNetflow || fullBytes["value"] != float64(13000) || fullBytes["lower_bound"] != false {
 		t.Errorf("the fully measured record's bytes are %v", fullBytes)
 	}
 	if partialBytes["value"] != float64(2200) || partialBytes["lower_bound"] != true {
@@ -439,7 +442,7 @@ func TestLowerBoundIsFalseOnlyOnAFullyMeasuredRecord(t *testing.T) {
 		t.Errorf("the record's reverse direction is %v", reverse)
 	}
 	for _, widgetType := range volumeTypes(t, f.service) {
-		answer := f.respond(t, widgetType, measureParameters(f.service, widgetType, widget.MeasureNetflow))
+		answer := f.respond(t, widgetType, measureParameters(f.service, widgetType, envelope.MeasureNetflow))
 		_, exact := measuresIn(t, answer)
 		for _, path := range exact {
 			if widgetType != "client_traffic_detail" || path != "data.records[].bytes" {
@@ -448,7 +451,7 @@ func TestLowerBoundIsFalseOnlyOnAFullyMeasuredRecord(t *testing.T) {
 		}
 	}
 	logged := f.respond(t, "client_traffic_detail", measureParameters(f.service, "client_traffic_detail",
-		widget.MeasureLogged))
+		envelope.MeasureLogged))
 	for _, record := range data(t, logged)["records"].([]any) {
 		row := record.(map[string]any)
 		if _, present := row["directions"]; present || row["bytes"].(map[string]any)["lower_bound"] != true {
@@ -522,12 +525,12 @@ func TestAThirdPartyWidgetGetsTheMeasureFromItsManifestAlone(t *testing.T) {
 	}
 	best := f.respond(t, "example_volume_total", map[string]any{"period": "1h"})
 	total, _ := data(t, best)["total"].(map[string]any)
-	if best.Parameters[widget.VolumeMeasureKey] != widget.VolumeMeasureBestAvailable ||
-		total["measure"] != widget.MeasureNetflow || total["bytes"] != float64(17000) {
+	if best.Parameters[params.VolumeMeasureKey] != params.VolumeMeasureBestAvailable ||
+		total["measure"] != envelope.MeasureNetflow || total["bytes"] != float64(17000) {
 		t.Errorf("best_available answered %s", encoded(t, best))
 	}
 	logged := f.respond(t, "example_volume_total", map[string]any{"period": "1h", "volume_measure": "logged"})
-	if loggedTotal, _ := data(t, logged)["total"].(map[string]any); loggedTotal["measure"] != widget.MeasureLogged ||
+	if loggedTotal, _ := data(t, logged)["total"].(map[string]any); loggedTotal["measure"] != envelope.MeasureLogged ||
 		loggedTotal["bytes"] != float64(measureLoggedBytes) {
 		t.Errorf("logged answered %s", encoded(t, logged))
 	}
@@ -544,7 +547,7 @@ func TestAThirdPartyWidgetGetsTheMeasureFromItsManifestAlone(t *testing.T) {
 	hidden.measureEverything(t)
 	hidden.service = pluginService(t, hidden, dataDir)
 	answer := hidden.respond(t, "example_volume_total", map[string]any{"period": "1h"})
-	if !widget.Contains(answer.States, widget.StateObservationPointNotExported) || !capturedInterfacesAre(answer, 2) {
+	if !params.Contains(answer.States, request.StateObservationPointNotExported) || !capturedInterfacesAre(answer, 2) {
 		t.Errorf("under two interfaces the third party's widget answered %s", encoded(t, answer))
 	}
 	uncovered := newMeasureWorld(t)
@@ -553,9 +556,9 @@ func TestAThirdPartyWidgetGetsTheMeasureFromItsManifestAlone(t *testing.T) {
 	uncovered.measured(t, measureFlowA, "reverse", "not_captured", 0, 0)
 	uncovered.service = pluginService(t, uncovered, dataDir)
 	answer = uncovered.respond(t, "example_volume_total", map[string]any{"period": "1h"})
-	detail := answer.StateDetails[widget.StateNetflowNotCoveringWindow]
-	if !widget.Contains(answer.States, widget.StateNetflowNotCoveringWindow) ||
-		strings.Join(detail.IntervalStates, ",") != store.CaptureObservationPoint {
+	detail := answer.StateDetails[request.StateNetflowNotCoveringWindow]
+	if !params.Contains(answer.States, request.StateNetflowNotCoveringWindow) ||
+		strings.Join(detail.IntervalStates, ",") != netflow.CaptureObservationPoint {
 		t.Errorf("under partial coverage the third party's widget answered %s", encoded(t, answer))
 	}
 }
@@ -601,12 +604,12 @@ func TestNoVolumeIsServedBuiltFromTwoMeasures(t *testing.T) {
 	f.service = pluginService(t, f, dataDir)
 	best := f.respond(t, "example_mixing_total", map[string]any{"period": "1h"})
 	total, _ := data(t, best)["total"].(map[string]any)
-	if total["measure"] != widget.MeasureLogged || total["bytes"] != float64(2*measureLoggedBytes) ||
-		!widget.Contains(best.States, widget.StateNetflowNotServedByType) {
+	if total["measure"] != envelope.MeasureLogged || total["bytes"] != float64(2*measureLoggedBytes) ||
+		!params.Contains(best.States, request.StateNetflowNotServedByType) {
 		t.Errorf("best_available answered %s", encoded(t, best))
 	}
 	explicit := f.respond(t, "example_mixing_total", map[string]any{"period": "1h", "volume_measure": "netflow"})
-	if explicit.Data != nil || !widget.Contains(explicit.States, widget.StateNetflowNotServedByType) {
+	if explicit.Data != nil || !params.Contains(explicit.States, request.StateNetflowNotServedByType) {
 		t.Errorf("an explicit netflow answered %s", encoded(t, explicit))
 	}
 }
@@ -623,15 +626,15 @@ func TestTheWindowStateNamesWhyNetflowCannotAnswer(t *testing.T) {
 		"unreadable": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
 			f.exec(t, `UPDATE capture_configuration SET fingerprint = NULL, outcome = 'unavailable', enabled = NULL`)
-		}, widget.StateCaptureConfigurationUnknown},
+		}, request.StateCaptureConfigurationUnknown},
 		"disabled": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
 			f.exec(t, `UPDATE capture_configuration SET enabled = 0`)
-		}, widget.StateNetflowNotConfigured},
+		}, request.StateNetflowNotConfigured},
 		"read_inside_the_window": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
 			f.exec(t, `UPDATE capture_configuration SET first_read_at = ?`, f.now-1800)
-		}, widget.StateNetflowNotCoveringWindow},
+		}, request.StateNetflowNotCoveringWindow},
 		"unmapped": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
 			f.exec(t, `INSERT INTO flow_record (provider_id, identity, start_at, start_millisecond, end_at,
@@ -641,26 +644,26 @@ func TestTheWindowStateNamesWhyNetflowCannotAnswer(t *testing.T) {
 				VALUES (900, ?, ?, 0, ?, 0, ?, '192.0.2.1', 0, 4, 6, '192.0.2.10', '203.0.113.7', 10, 1,
 				'interface_index_unmapped', 1, 'example_if_a', 1, 'example', 'not_joinable')`,
 				"0000000000000000000000000000000000000000000000000000000000000001", f.now-600, f.now-600, f.now-600)
-		}, widget.StateInterfaceIndexUnmapped},
+		}, request.StateInterfaceIndexUnmapped},
 	} {
 		f := newMeasureWorld(t)
 		test.prepare(t, f)
 		answer := f.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"})
-		if !widget.Contains(answer.States, test.state) {
+		if !params.Contains(answer.States, test.state) {
 			t.Errorf("%s: the states are %v, not %s", name, answer.States, test.state)
 		}
 		// Only netflow_not_covering_window, of these, carries a detail: the interval states the window
 		// meets -- here no configuration read before first_read_at, then one Observation Point.
-		if test.state == widget.StateNetflowNotCoveringWindow {
+		if test.state == request.StateNetflowNotCoveringWindow {
 			detail := answer.StateDetails[test.state]
 			if len(answer.StateDetails) != 1 || strings.Join(detail.IntervalStates, ",") !=
-				store.CaptureUnknown+","+store.CaptureObservationPoint {
+				netflow.CaptureUnknown+","+netflow.CaptureObservationPoint {
 				t.Errorf("%s: the state details are %+v", name, answer.StateDetails)
 			}
 		} else if answer.StateDetails != nil {
 			t.Errorf("%s: the state %s carries the details %+v", name, test.state, answer.StateDetails)
 		}
-		if total, _ := data(t, answer)["total"].(map[string]any); total["measure"] != widget.MeasureLogged {
+		if total, _ := data(t, answer)["total"].(map[string]any); total["measure"] != envelope.MeasureLogged {
 			t.Errorf("%s: the total is %v", name, total)
 		}
 	}
@@ -670,32 +673,32 @@ func TestTheWindowStateNamesWhyNetflowCannotAnswer(t *testing.T) {
 // which the collector's join and the widget measure both read.
 func TestCaptureStatesAreReadFromTheStoredConfiguration(t *testing.T) {
 	t.Parallel()
-	one := store.CaptureConfiguration{FirstReadAt: 100, LastReadAt: 200, Readable: true, Enabled: true,
-		Interfaces: []store.CaptureInterface{{Identifier: "example_if_a", Ingress: true, Egress: true}}}
+	one := netflow.CaptureConfiguration{FirstReadAt: 100, LastReadAt: 200, Readable: true, Enabled: true,
+		Interfaces: []netflow.CaptureInterface{{Identifier: "example_if_a", Ingress: true, Egress: true}}}
 	two := one
 	two.FirstReadAt, two.LastReadAt = 300, 400
-	two.Interfaces = append(two.Interfaces, store.CaptureInterface{Identifier: "example_if_b", Egress: true})
-	configurations := []store.CaptureConfiguration{one, two}
+	two.Interfaces = append(two.Interfaces, netflow.CaptureInterface{Identifier: "example_if_b", Egress: true})
+	configurations := []netflow.CaptureConfiguration{one, two}
 	resolved := int64(150)
-	conditions := []store.FlowRecordCondition{{ObservedAt: 120, ResolvedAt: &resolved}}
+	conditions := []netflow.FlowRecordCondition{{ObservedAt: 120, ResolvedAt: &resolved}}
 	for _, check := range []struct {
 		at       int64
 		state    string
 		captured int64
 	}{
-		{50, store.CaptureUnknown, -1},
-		{110, store.CaptureObservationPoint, 1},
-		{130, store.CaptureUnknown, 1},
-		{250, store.CaptureUnknown, -1},
-		{350, store.CaptureObservationPointHidden, 2},
-		{900, store.CaptureObservationPointHidden, 2},
+		{50, netflow.CaptureUnknown, -1},
+		{110, netflow.CaptureObservationPoint, 1},
+		{130, netflow.CaptureUnknown, 1},
+		{250, netflow.CaptureUnknown, -1},
+		{350, netflow.CaptureObservationPointHidden, 2},
+		{900, netflow.CaptureObservationPointHidden, 2},
 	} {
-		state, captured, _ := store.CaptureStateAt(configurations, conditions, check.at)
+		state, captured, _ := netflow.CaptureStateAt(configurations, conditions, check.at)
 		if state != check.state || captured != check.captured {
 			t.Errorf("at %d: %s with %d captured, not %s with %d", check.at, state, captured, check.state, check.captured)
 		}
 	}
-	points := store.CaptureChangePoints(configurations, conditions, 0, 1000)
+	points := netflow.CaptureChangePoints(configurations, conditions, 0, 1000)
 	want := []int64{0, 100, 120, 150, 201, 300, 401}
 	if len(points) != len(want) {
 		t.Fatalf("the change points are %v, not %v", points, want)
@@ -729,7 +732,7 @@ func TestACustomChartSeriesOfTheNetflowMeasures(t *testing.T) {
 	for index, want := range []struct {
 		measure string
 		total   float64
-	}{{widget.MeasureNetflow, 17000}, {widget.MeasureNetflow, 29}, {widget.MeasureLogged, float64(measureLoggedBytes)}} {
+	}{{envelope.MeasureNetflow, 17000}, {envelope.MeasureNetflow, 29}, {envelope.MeasureLogged, float64(measureLoggedBytes)}} {
 		line := lines[index].(map[string]any)
 		if line["measure"] != want.measure || line["total"] != want.total {
 			t.Errorf("series %d is %s with total %v, not %s with %v", index, line["measure"], line["total"],
@@ -742,7 +745,7 @@ func TestACustomChartSeriesOfTheNetflowMeasures(t *testing.T) {
 	hidden.measureEverything(t)
 	answer := hidden.respond(t, "custom_chart", parameters)
 	lines, _ = data(t, answer)["series"].([]any)
-	if len(lines) != 3 || !widget.Contains(answer.States, widget.StateObservationPointNotExported) ||
+	if len(lines) != 3 || !params.Contains(answer.States, request.StateObservationPointNotExported) ||
 		!capturedInterfacesAre(answer, 2) {
 		t.Fatalf("under two interfaces the chart answered %s", encoded(t, answer))
 	}

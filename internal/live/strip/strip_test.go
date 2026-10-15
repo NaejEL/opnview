@@ -8,6 +8,7 @@ import (
 	"github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/storetest"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The rolling strip (C3 of the backend-completion cycle, C-AC12 and C-AC13): every live figure
@@ -55,7 +56,7 @@ func (w *world) healthy(t *testing.T, kind, key string, checkedAt int64) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := w.database.SetAvailability(w.ctx, id, store.StateReachable, store.OutcomeHealthy, "GET /", nil,
+	if err := w.database.SetAvailability(w.ctx, id, vocab.StateReachable, vocab.OutcomeHealthy, "GET /", nil,
 		checkedAt); err != nil {
 		t.Fatal(err)
 	}
@@ -85,14 +86,14 @@ func (w *world) sample(t *testing.T, sampledAt int64, cadence *int64, in float64
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, reading := range []store.MeasurementSample{
-		{SubjectKind: store.SubjectInterfaceEndpoint, SubjectKey: store.InterfaceEndpointKey("vlan0.10", "192.0.2.10"),
-			Measure: store.MeasureRateBitsIn, Value: in},
-		{SubjectKind: store.SubjectInterfaceEndpoint, SubjectKey: store.InterfaceEndpointKey("vlan0.10", "192.0.2.10"),
-			Measure: store.MeasureRateBitsOut, Value: 2 * in},
-		{SubjectKind: store.SubjectInterfaceEndpointPair,
-			SubjectKey: store.InterfaceEndpointPairKey("vlan0.10", "192.0.2.10", "203.0.113.7"),
-			Measure:    store.MeasureRateBitsIn, Value: in},
+	for _, reading := range []vocab.MeasurementSample{
+		{SubjectKind: vocab.SubjectInterfaceEndpoint, SubjectKey: vocab.InterfaceEndpointKey("vlan0.10", "192.0.2.10"),
+			Measure: vocab.MeasureRateBitsIn, Value: in},
+		{SubjectKind: vocab.SubjectInterfaceEndpoint, SubjectKey: vocab.InterfaceEndpointKey("vlan0.10", "192.0.2.10"),
+			Measure: vocab.MeasureRateBitsOut, Value: 2 * in},
+		{SubjectKind: vocab.SubjectInterfaceEndpointPair,
+			SubjectKey: vocab.InterfaceEndpointPairKey("vlan0.10", "192.0.2.10", "203.0.113.7"),
+			Measure:    vocab.MeasureRateBitsIn, Value: in},
 	} {
 		reading.ProviderID, reading.Unit, reading.SampledAt, reading.LiveCadenceSeconds = &providerID,
 			"bit_per_second", sampledAt, cadence
@@ -210,7 +211,7 @@ func TestLiveFieldsAndStripThroughputIsSampledPerBucketAndAGapWithoutASample(t *
 		t.Fatalf("%d throughput series", len(strip.Throughput))
 	}
 	for _, series := range strip.Throughput {
-		if series.Measure != "sampled" || series.SpanSeconds != store.SampleSeconds || series.CadenceSeconds != 10 ||
+		if series.Measure != "sampled" || series.SpanSeconds != vocab.SampleSeconds || series.CadenceSeconds != 10 ||
 			!series.LowerBound {
 			t.Errorf("%s: carries measure %q, span %d, cadence %d, bound %v", series.Key, series.Measure,
 				series.SpanSeconds, series.CadenceSeconds, series.LowerBound)

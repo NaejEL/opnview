@@ -5,6 +5,9 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The host names the resolver logs as a lookup's client: AC14 of
@@ -20,9 +23,9 @@ func leaseUnder(t *testing.T, network *testNetwork, address, hostname string, ex
 		t.Fatalf("looking up a lease provider: %v", err)
 	}
 	name := hostname
-	if err := network.db.InsertDHCPLease(ctx, provider, DHCPLease{
+	if err := network.db.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		Backend: "dnsmasq", Address: address, Hostname: &name, LeaseState: "active",
-		GenerationKey: GenerationKeyOf(nil, expires, network.now), ExpiresAt: expires,
+		GenerationKey: vocab.GenerationKeyOf(nil, expires, network.now), ExpiresAt: expires,
 		ObservedAt: network.now,
 	}); err != nil {
 		t.Fatalf("writing a lease: %v", err)
@@ -57,7 +60,7 @@ func TestALoggedHostNameMatchesALeaseByFirstLabelOnBothSides(t *testing.T) {
 				if err != nil {
 					t.Fatalf("resolving %s: %v", one.logged, err)
 				}
-				if resolution != ClientResolutionLeased || address != client.address {
+				if resolution != vocab.ClientResolutionLeased || address != client.address {
 					t.Errorf("%q against a lease under %q resolved to %q as %s, not %s", one.logged, one.lease,
 						address, resolution, client.address)
 				}
@@ -67,7 +70,7 @@ func TestALoggedHostNameMatchesALeaseByFirstLabelOnBothSides(t *testing.T) {
 			leaseUnder(t, network, network.clients[0].address, "example-twin.one.invalid", &twinOne)
 			leaseUnder(t, network, network.clients[1].address, "example-twin.two.invalid", &twinTwo)
 			if _, resolution, err := network.db.ResolveLeaseHostname(ctx, "example-twin", network.now); err != nil ||
-				resolution != ClientResolutionAmbiguous {
+				resolution != vocab.ClientResolutionAmbiguous {
 				t.Errorf("a label two addresses lease under resolved as %s, %v", resolution, err)
 			}
 		})
@@ -85,7 +88,7 @@ func TestLocalhostIsThisFirewallAndNotAnUnknownHost(t *testing.T) {
 		if err != nil {
 			t.Fatalf("resolving %s: %v", logged, err)
 		}
-		if resolution != ClientResolutionThisFirewall || address != logged {
+		if resolution != vocab.ClientResolutionThisFirewall || address != logged {
 			t.Errorf("%q resolved to %q as %s; it names this firewall", logged, address, resolution)
 		}
 	}
@@ -102,7 +105,7 @@ func TestALeaseWithNoExpiryCoversEveryInstant(t *testing.T) {
 	leaseUnder(t, network, network.clients[0].address, "example-forever", nil)
 	for _, at := range []int64{network.now - 30*86400, network.now, network.now + 30*86400} {
 		address, resolution, err := network.db.ResolveLeaseHostname(ctx, "example-forever.example.invalid", at)
-		if err != nil || resolution != ClientResolutionLeased || address != network.clients[0].address {
+		if err != nil || resolution != vocab.ClientResolutionLeased || address != network.clients[0].address {
 			t.Errorf("at %d a lease with no expiry resolved to %q as %s, %v", at-network.now, address, resolution, err)
 		}
 	}
@@ -116,9 +119,9 @@ func TestALookupIngestedBeforeAnyLeasePassIsExaminedByTheFirstOne(t *testing.T) 
 	network := newTestNetwork(t, 2, 3)
 	ctx := context.Background()
 	logged := "example-restart.example.invalid"
-	if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey: "example-restart", ClientAddress: logged, ClientHostname: &logged,
-		ClientResolution: ClientResolutionUnknown, Domain: "example.invalid", Resolver: "unbound",
+		ClientResolution: vocab.ClientResolutionUnknown, Domain: "example.invalid", Resolver: "unbound",
 		Action: "pass", LookedUpAt: network.now - 600, IngestedAt: network.now - 590,
 	}); err != nil {
 		t.Fatalf("writing the lookup: %v", err)
@@ -146,7 +149,7 @@ func TestALookupIngestedBeforeAnyLeasePassIsExaminedByTheFirstOne(t *testing.T) 
 func TestTheHostNameRetryReadsAnIndexAndNoGrowingTable(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
-	text, err := Statement("unresolved_hostname_lookups")
+	text, err := sqldb.Statement("unresolved_hostname_lookups")
 	if err != nil {
 		t.Fatal(err)
 	}

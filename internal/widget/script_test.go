@@ -10,6 +10,11 @@ import (
 	"testing"
 
 	"github.com/dop251/goja"
+
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
+	"github.com/NaejEL/opnview/internal/widget/script"
 )
 
 // The widget script host's own tests: what the data writer writes, what the loader refuses, and
@@ -18,12 +23,12 @@ import (
 
 // scriptCallFor runs a script's top level in a fresh runtime with a host over an empty request,
 // and returns the call and the value of the global `value`.
-func scriptCallFor(t *testing.T, source string) (*scriptCall, goja.Value) {
+func scriptCallFor(t *testing.T, source string) (*script.ScriptCall, goja.Value) {
 	t.Helper()
-	vm, _ := newWidgetRuntime("example")
-	request := &Request{Preset: Preset{Type: "example_widget"}, Response: &Response{}, Refs: map[string][]Resolved{}}
-	call := newScriptCall(request, vm, &scriptWidget{plugin: "example", statements: map[string]widgetStatement{}})
-	if err := vm.Set("host", call.host()); err != nil {
+	vm, _ := script.NewWidgetRuntime("example")
+	request := &request.Request{Preset: request.Preset{Type: "example_widget"}, Response: &envelope.Response{}, Refs: map[string][]params.Resolved{}}
+	call := script.NewScriptCall(request, vm, &script.ScriptWidget{Plugin: "example", Statements: map[string]script.WidgetStatement{}})
+	if err := vm.Set("host", call.Host()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := vm.RunString(source); err != nil {
@@ -80,14 +85,14 @@ func TestTheDataWriterWritesWhatGoWrites(t *testing.T) {
 			absent: undefined,
 			null: null
 		};`)
-	got, err := call.encode(value)
+	got, err := call.Encode(value)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(got) != string(want) {
 		t.Errorf("the script's data is written\n%s\nand Go writes\n%s", got, want)
 	}
-	text, err := call.vm.RunString(`host.json.encode(value)`)
+	text, err := call.VM.RunString(`host.json.encode(value)`)
 	if err != nil || text.String() != string(want) {
 		t.Errorf("host.json.encode answers %v (%v)", text, err)
 	}
@@ -107,7 +112,7 @@ func TestTheDataWriterRefusesWhatIsNotData(t *testing.T) {
 		"a symbol":            `var value = { s: Symbol("x") };`,
 	} {
 		call, value := scriptCallFor(t, source)
-		if encoded, err := call.encode(value); err == nil {
+		if encoded, err := call.Encode(value); err == nil {
 			t.Errorf("%s was written as %s", name, encoded)
 		}
 	}
@@ -124,11 +129,11 @@ func TestAScriptThatCannotServeIsRefusedAtLoad(t *testing.T) {
 		"serve not a fn":   `exports.widget = { serve: 1 };`,
 		"no widget at all": `exports.helpers = {};`,
 	} {
-		if _, err := compileWidgetScript("example.js", source); err == nil {
+		if _, err := script.CompileWidgetScript("example.js", source); err == nil {
 			t.Errorf("%s compiled", name)
 		}
 	}
-	if _, err := compileWidgetScript("example.js",
+	if _, err := script.CompileWidgetScript("example.js",
 		`exports.widget = { serve: function (host) { return { data: null, has_rows: false }; } };`); err != nil {
 		t.Errorf("a valid script was refused: %v", err)
 	}
@@ -144,11 +149,11 @@ func TestAScriptManifestIsValidatedLikeEveryOther(t *testing.T) {
 		base + `"script": "../example.js"}`: false,
 		base + `"script": "example.ts"}`:    false,
 	} {
-		manifest, err := decodeManifest([]byte(text))
+		manifest, err := params.DecodeManifest([]byte(text))
 		if err != nil {
 			t.Fatalf("%s: %v", text, err)
 		}
-		refusal := ValidateManifest(manifest)
+		refusal := params.ValidateManifest(manifest)
 		if (refusal == nil) != accepted {
 			t.Errorf("%s: accepted %v, refusal %v", text, refusal == nil, refusal)
 		}
@@ -167,7 +172,7 @@ func TestEveryHostAreaIsDocumented(t *testing.T) {
 	for _, match := range regexp.MustCompile("(?m)^#### `host\\.([a-z_]+)`$").FindAllStringSubmatch(string(raw), -1) {
 		documented[match[1]] = true
 	}
-	areas := HostAreas()
+	areas := script.HostAreas()
 	if len(areas) == 0 {
 		t.Fatal("the host has no area")
 	}

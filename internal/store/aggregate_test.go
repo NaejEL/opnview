@@ -7,6 +7,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/aggregates"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The aggregate families: AC19, AC20, AC21 and AC34, as amended by decisions 2 and 6 of
@@ -178,7 +182,7 @@ func nullable(value sql.NullInt64) string {
 }
 
 // expectedFamily recomputes one family of one period from the flows.
-func expectedFamily(flows []storedFlow, period Period, family string) map[string]figures {
+func expectedFamily(flows []storedFlow, period vocab.Period, family string) map[string]figures {
 	sums := map[string]figures{}
 	for _, flow := range flows {
 		slot := period.SlotStart(flow.observedAt)
@@ -221,7 +225,7 @@ func expectedFamily(flows []storedFlow, period Period, family string) map[string
 }
 
 // storedFamily reads one family of one period back, keyed as expectedFamily keys it.
-func storedFamily(t *testing.T, database *Store, period Period, family string) map[string]figures {
+func storedFamily(t *testing.T, database *Store, period vocab.Period, family string) map[string]figures {
 	t.Helper()
 	var query string
 	switch family {
@@ -283,7 +287,7 @@ func attributeNetwork(t *testing.T, network *testNetwork) {
 		if flow.srcClient.Valid {
 			clientID = &flow.srcClient.Int64
 		}
-		if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+		if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-lookup-%d", flow.id), ClientAddress: flow.srcAddress,
 			ClientID: clientID, Domain: fmt.Sprintf("site-%d.example.invalid", flow.id%7),
 			Resolver: "unbound", Action: "pass", AnswerSource: ptr("Recursion"),
@@ -333,7 +337,7 @@ func TestEverySlotOfEveryFamilyEqualsTheSameSumsOverFlow(t *testing.T) {
 			if inbound == 0 {
 				t.Fatal("no flow has an outside source, so the nullable source slot is not exercised")
 			}
-			for _, period := range Periods() {
+			for _, period := range vocab.Periods() {
 				for _, family := range []string{"volume", "owner", "client", "domain", "rule", "peer"} {
 					expected := expectedFamily(flows, period, family)
 					stored := storedFamily(t, network.db, period, family)
@@ -369,7 +373,7 @@ func TestEverySlotOfEveryFamilyEqualsTheSameSumsOverFlow(t *testing.T) {
 }
 
 // rewritten renders a refresh's slots as a sorted list.
-func rewritten(refresh Refresh) []string {
+func rewritten(refresh aggregates.Refresh) []string {
 	var slots []string
 	for _, slot := range refresh.Rewritten {
 		slots = append(slots, fmt.Sprintf("%s@%d", slot.Period, slot.Start))
@@ -381,7 +385,7 @@ func rewritten(refresh Refresh) []string {
 func currentSlots(now int64, extra ...int64) []string {
 	var slots []string
 	seen := map[string]bool{}
-	for _, period := range Periods() {
+	for _, period := range vocab.Periods() {
 		for _, instant := range append([]int64{now}, extra...) {
 			slot := fmt.Sprintf("%s@%d", period.Name, period.SlotStart(instant))
 			if !seen[slot] {
@@ -446,7 +450,7 @@ func TestTheRefreshRewritesExactlyTheSlotsTheContractNames(t *testing.T) {
 	for key, computed := range before {
 		slot := key[strings.Index(key, "@")+1:]
 		touched := false
-		for _, period := range Periods() {
+		for _, period := range vocab.Periods() {
 			if slot == fmt.Sprint(period.SlotStart(closed)) || slot == fmt.Sprint(period.SlotStart(later)) {
 				touched = true
 			}
@@ -488,7 +492,7 @@ func TestADistinctCountIsNeverSummedAcrossSlots(t *testing.T) {
 		t.Fatalf("writing an owner: %v", err)
 	}
 	owned, unowned := network.clients[0], network.clients[1]
-	dayStart := PeriodDay.SlotStart(network.now)
+	dayStart := vocab.PeriodDay.SlotStart(network.now)
 	port := int64(443)
 	var specs []networkFlow
 	// Each client is active in three different hours of the same day.
@@ -509,7 +513,7 @@ func TestADistinctCountIsNeverSummedAcrossSlots(t *testing.T) {
 	}
 	recomputeEverything(t, network)
 
-	totals, err := network.db.ReadOwnerTotals(ctx, PeriodHour, dayStart, PeriodDay.SlotEnd(dayStart))
+	totals, err := network.db.ReadOwnerTotals(ctx, vocab.PeriodHour, dayStart, vocab.PeriodDay.SlotEnd(dayStart))
 	if err != nil {
 		t.Fatalf("reading the owner totals: %v", err)
 	}
@@ -536,7 +540,7 @@ func TestADistinctCountIsNeverSummedAcrossSlots(t *testing.T) {
 	if !found["owned"] || !found["unassigned"] {
 		t.Errorf("the owner totals hold %v, not both buckets", found)
 	}
-	for _, period := range Periods() {
+	for _, period := range vocab.Periods() {
 		if rows := queryInt(t, network.db, "SELECT count(*) FROM owner_volume_aggregate_"+period.Name+
 			" WHERE owner_id IS NULL"); rows == 0 {
 			t.Errorf("the %s owner family holds no unassigned slot", period.Name)
@@ -544,7 +548,7 @@ func TestADistinctCountIsNeverSummedAcrossSlots(t *testing.T) {
 	}
 	// And no read statement anywhere sums a per-slot distinct count.
 	for _, name := range mustStatementNames(t) {
-		text, _ := Statement(name)
+		text, _ := sqldb.Statement(name)
 		lowered := strings.ToLower(strings.Join(strings.Fields(text), " "))
 		for _, column := range []string{"client_count", "distinct_peers"} {
 			if strings.Contains(lowered, "sum("+column) || strings.Contains(lowered, "sum(v."+column) {
@@ -556,7 +560,7 @@ func TestADistinctCountIsNeverSummedAcrossSlots(t *testing.T) {
 
 func mustStatementNames(t *testing.T) []string {
 	t.Helper()
-	names, err := StatementNames()
+	names, err := sqldb.StatementNames()
 	if err != nil {
 		t.Fatalf("reading the statements: %v", err)
 	}
@@ -573,7 +577,7 @@ func TestThePairVolumeIsDerivedFromFlowOnTheRealDestinationPort(t *testing.T) {
 	if a.v6 != b.v6 {
 		t.Fatal("the two clients are of different families")
 	}
-	day := PeriodDay.SlotStart(network.now)
+	day := vocab.PeriodDay.SlotStart(network.now)
 	port := int64(8443)
 	addresses := network.insert(t, []networkFlow{
 		{observedAt: day + 100, device: a.device, direction: "in", src: a.address, dst: b.address,
@@ -619,10 +623,10 @@ func TestAMonthStraddlingTheHorizonKeepsWhatThePurgeRemoved(t *testing.T) {
 	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
-	month := PeriodMonth.SlotStart(network.now)
+	month := vocab.PeriodMonth.SlotStart(network.now)
 	early := month + 2*86400 + 1800
 	late := network.now - 600
-	if PeriodWeek.SlotStart(early) == PeriodWeek.SlotStart(network.now) || network.now-month < 10*86400 {
+	if vocab.PeriodWeek.SlotStart(early) == vocab.PeriodWeek.SlotStart(network.now) || network.now-month < 10*86400 {
 		t.Fatalf("the reference instant does not leave room for a month straddling the horizon")
 	}
 	client := network.clients[0]
@@ -655,7 +659,7 @@ func TestAMonthStraddlingTheHorizonKeepsWhatThePurgeRemoved(t *testing.T) {
 		t.Fatalf("%d flows survived the purge, not the late one alone", flows)
 	}
 	if days := queryInt(t, network.db, "SELECT count(*) FROM volume_aggregate_24h WHERE period_start_at = ?",
-		PeriodDay.SlotStart(early)); days == 0 {
+		vocab.PeriodDay.SlotStart(early)); days == 0 {
 		t.Fatal("the purge removed the early day, which the straddling month is composed from")
 	}
 

@@ -7,6 +7,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/live/strip"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/samples"
 )
 
 // timeLive times the live part of a response (C-AC14 of specs/SPEC-backend-completion-plugins.md:
@@ -27,7 +28,7 @@ func timeLive(ctx context.Context, database *store.Store, now int64, label strin
 	if newest != nil {
 		now = *newest
 	}
-	var rates store.CurrentRates
+	var rates samples.CurrentRates
 	median, err := medianOfThree(func() error {
 		var err error
 		rates, err = database.ReadCurrentRates(ctx, now)

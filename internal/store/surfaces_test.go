@@ -8,6 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The read paths of the Interfaces and Sources surfaces.
@@ -22,7 +26,7 @@ import (
 func TestTheRecentGapsAreReadThroughTheirIndex(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
-	plan := planOf(t, database, recentGapsStatement, int64(0))
+	plan := planOf(t, database, reads.RecentGapsStatement, int64(0))
 	if !usesIndex(plan, "idx_collection_gap_detected_at", "") {
 		t.Errorf("the read does not search the detected_at index: %+v", plan)
 	}
@@ -43,8 +47,8 @@ func TestRecentGapsAreTheWindowNewestFirst(t *testing.T) {
 	}
 	detail := "example detail"
 	for _, detected := range []int64{referenceNow - 7200, referenceNow - 60, referenceNow - 90000} {
-		if err := database.RecordCollectionGap(ctx, CollectionGap{ProviderID: providerID,
-			IntervalStartAt: detected - 30, IntervalEndAt: detected, Reason: GapDigestOutsideWindow,
+		if err := database.RecordCollectionGap(ctx, vocab.CollectionGap{ProviderID: providerID,
+			IntervalStartAt: detected - 30, IntervalEndAt: detected, Reason: vocab.GapDigestOutsideWindow,
 			Detail: &detail, DetectedAt: detected}); err != nil {
 			t.Fatalf("recording a gap: %v", err)
 		}
@@ -74,7 +78,7 @@ func TestSourceAvailabilityIsTheDiagnosticQuery(t *testing.T) {
 		t.Fatalf("looking up the provider: %v", err)
 	}
 	detail := "HTTP 403 from the example endpoint"
-	if err := database.SetAvailability(ctx, providerID, StateUnavailable, OutcomeDenied, "GET /example", &detail,
+	if err := database.SetAvailability(ctx, providerID, vocab.StateUnavailable, vocab.OutcomeDenied, "GET /example", &detail,
 		referenceNow); err != nil {
 		t.Fatalf("recording availability: %v", err)
 	}
@@ -116,7 +120,7 @@ func TestSourceAvailabilityIsTheDiagnosticQuery(t *testing.T) {
 	for _, row := range read {
 		got = append(got, fmt.Sprintf("%s|%s|%s|%t|%s|%s|%s|%t|%s|%d|%d", row.Kind, row.ProviderKey,
 			row.DisplayName, row.HasAvailability, row.State, row.Outcome, row.Probe, row.HasDetail, row.Detail,
-			row.CheckedAt, boolToInt(row.IsActive)))
+			row.CheckedAt, flows.BoolToInt(row.IsActive)))
 	}
 	if strings.Join(got, "\n") != strings.Join(expected, "\n") || len(got) == 0 {
 		t.Errorf("the read differs from the diagnostic:\nread:\n%s\ndiagnostic:\n%s",
@@ -152,7 +156,7 @@ func TestInterfacesAreReadInTheOrderTheyWereStored(t *testing.T) {
 		var ids []int64
 		// Written in an order no name would sort them into.
 		for index := count - 1; index >= 0; index-- {
-			id, err := database.UpsertInterface(ctx, Interface{
+			id, err := database.UpsertInterface(ctx, vocab.Interface{
 				Identifier: fmt.Sprintf("example_if_%d", index), Device: fmt.Sprintf("exdev%d", index),
 				Description: fmt.Sprintf("inside-%d.example", index), LinkType: "example-link",
 				LinkKind: "other", IsUpstream: index == 0,

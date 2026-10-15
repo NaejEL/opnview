@@ -12,6 +12,8 @@ import (
 	"sync"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // Databases for the tests (P9 of specs/SPEC-backend-completion-plugins.md).
@@ -103,7 +105,7 @@ func (d *TestDatabase) Name() string { return d.name }
 
 // Drop drops the database and its read role, by their exact names.
 func (d *TestDatabase) Drop(ctx context.Context) error {
-	db, err := openPool(d.admin)
+	db, err := sqldb.OpenPool(d.admin)
 	if err != nil {
 		return err
 	}
@@ -112,7 +114,7 @@ func (d *TestDatabase) Drop(ctx context.Context) error {
 		" WITH (FORCE)"); err != nil {
 		return fmt.Errorf("store: dropping the test database %s: %w", d.name, err)
 	}
-	if _, err := db.ExecContext(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{readRoleName(d.name)}.Sanitize()); err != nil {
+	if _, err := db.ExecContext(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{sqldb.ReadRoleName(d.name)}.Sanitize()); err != nil {
 		return fmt.Errorf("store: dropping the read role of %s: %w", d.name, err)
 	}
 	return nil
@@ -126,7 +128,7 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 	}
 	digest := sha256.Sum256(append(schema, []byte(testTemplateRevision)...))
 	name := "opnview_template_" + hex.EncodeToString(digest[:])[:16]
-	db, err := openPool(admin)
+	db, err := sqldb.OpenPool(admin)
 	if err != nil {
 		return "", err
 	}
@@ -162,7 +164,7 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 	if _, err := db.ExecContext(ctx, "ALTER DATABASE "+pgx.Identifier{building}.Sanitize()+" RENAME TO "+
 		pgx.Identifier{name}.Sanitize()); err != nil {
 		_, _ = db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{building}.Sanitize()+" WITH (FORCE)")
-		_, _ = db.ExecContext(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{readRoleName(building)}.Sanitize())
+		_, _ = db.ExecContext(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{sqldb.ReadRoleName(building)}.Sanitize())
 		var nowExists bool
 		if checkErr := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = ?)",
 			name).Scan(&nowExists); checkErr == nil && nowExists {
@@ -176,7 +178,7 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 // createDatabase creates a database, from a template or from template1 (which carries the
 // TimescaleDB extension), with byte-order text.
 func createDatabase(ctx context.Context, admin, name, template string) error {
-	db, err := openPool(admin)
+	db, err := sqldb.OpenPool(admin)
 	if err != nil {
 		return err
 	}
@@ -210,7 +212,7 @@ func installExtension(ctx context.Context, admin, name string) error {
 	if err != nil {
 		return err
 	}
-	db, err := openPool(dsn)
+	db, err := sqldb.OpenPool(dsn)
 	if err != nil {
 		return err
 	}

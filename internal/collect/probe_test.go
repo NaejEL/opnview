@@ -2,11 +2,14 @@ package collect
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/collect/provider"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/config"
@@ -49,7 +52,7 @@ func newProbeHarness(t *testing.T) *probeHarness {
 
 // availabilityOf reads one provider's recorded state.
 func (h *probeHarness) availabilityOf(t *testing.T, kind, providerKey string) (
-	store.AvailabilityState, string, int64) {
+	vocab.AvailabilityState, string, int64) {
 	t.Helper()
 	providerID, err := h.store.ProviderID(context.Background(), kind, providerKey)
 	if err != nil {
@@ -91,7 +94,7 @@ func (h *probeHarness) detailOf(t *testing.T, kind, providerKey string) string {
 // still be wrong. Scoping to (state, probe) is what makes "exactly one row moved to the
 // state the survey names" a thing that can fail.
 func (h *probeHarness) movedRows(t *testing.T,
-	state store.AvailabilityState, probePath string) []string {
+	state vocab.AvailabilityState, probePath string) []string {
 	t.Helper()
 	rows, err := h.store.DB().QueryContext(context.Background(),
 		`SELECT p.kind, p.provider_key FROM source_availability a
@@ -119,7 +122,7 @@ func (h *probeHarness) movedRows(t *testing.T,
 }
 
 // rowsInState counts the registry rows holding one state, whatever probe determined it.
-func (h *probeHarness) rowsInState(t *testing.T, state store.AvailabilityState) int {
+func (h *probeHarness) rowsInState(t *testing.T, state vocab.AvailabilityState) int {
 	t.Helper()
 	var count int
 	if err := h.store.DB().QueryRowContext(context.Background(),
@@ -180,7 +183,7 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		kind    string
 		key     string
 		// wantState is the state the survey names for that condition.
-		wantState store.AvailabilityState
+		wantState vocab.AvailabilityState
 		// wantProbe is the path the survey says determines it.
 		wantProbe string
 		// wantDetailContains is the phrase the recorded detail has to carry, so the
@@ -203,8 +206,8 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 			arrange: func(fake *providertest.Firewall) {
 				fake.AnswerFixture(opnsense.IDSStatus, "ids_status_stopped.json")
 			},
-			kind: KindSecurityEvent, key: ProviderSuricata,
-			wantState: store.StatePresentButDisabled,
+			kind: core.KindSecurityEvent, key: ProviderSuricata,
+			wantState: vocab.StatePresentButDisabled,
 			wantProbe: opnsense.IDSStatus.Path,
 			// The survey's own words: 404, 401 or 403 is absent; a status of stopped,
 			// disabled or unknown is present but disabled.
@@ -217,8 +220,8 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 			arrange: func(fake *providertest.Firewall) {
 				fake.AnswerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_export_only.json")
 			},
-			kind: KindMeasurementSample, key: ProviderInsight,
-			wantState:          store.StatePresentButDisabled,
+			kind: core.KindMeasurementSample, key: ProviderInsight,
+			wantState:          vocab.StatePresentButDisabled,
 			wantProbe:          opnsense.NetflowIsEnabled.Path,
 			wantDetailContains: "local collection is off",
 			wantMoved:          []string{"measurement_sample/insight"},
@@ -230,8 +233,8 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 				fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
 				fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings_no_ranges.json")
 			},
-			kind: KindDHCPLease, key: ProviderDnsmasq,
-			wantState:          store.StatePresentButDisabled,
+			kind: core.KindDHCPLease, key: ProviderDnsmasq,
+			wantState:          vocab.StatePresentButDisabled,
 			wantProbe:          opnsense.DnsmasqStatus.Path,
 			wantDetailContains: "dhcp_ranges is empty",
 			// TWO rows, and that is correct rather than a smear: one service status
@@ -248,8 +251,8 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 				fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
 				fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_off.json")
 			},
-			kind: KindDNSLookup, key: ProviderUnbound,
-			wantState: store.StatePresentButDisabled,
+			kind: core.KindDNSLookup, key: ProviderUnbound,
+			wantState: vocab.StatePresentButDisabled,
 			wantProbe: opnsense.UnboundStatus.Path,
 			// The survey is explicit that this is a setting to turn on and never an
 			// absence of lookups, and the detail has to say so.
@@ -265,8 +268,8 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 				// silent log.
 				fake.Answer(opnsense.FirewallLog, http.StatusOK, []byte(`{"result":"failed"}`))
 			},
-			kind: KindFirewallLog, key: ProviderPf,
-			wantState:          store.StateUnavailable,
+			kind: core.KindFirewallLog, key: ProviderPf,
+			wantState:          vocab.StateUnavailable,
 			wantProbe:          opnsense.FirewallLog.Path,
 			wantDetailContains: "failed result",
 			wantMoved:          []string{"firewall_log/pf"},
@@ -284,7 +287,7 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 			// that ends the pass in wantState by way of wantProbe moved during it.
 			for _, provider := range everyProvider(t, harness.store) {
 				state, probe, checkedAt := harness.availabilityOf(t, provider.kind, provider.key)
-				if state != store.StateUnavailable || probe != "not_yet_probed" || checkedAt != 0 {
+				if state != vocab.StateUnavailable || probe != "not_yet_probed" || checkedAt != 0 {
 					t.Fatalf("%s/%s did not start not-yet-probed (%q, %q, %d), so nothing below "+
 						"can say that it moved", provider.kind, provider.key, state, probe, checkedAt)
 				}
@@ -352,19 +355,19 @@ func TestASourceThatAnswers404IsUnavailableAndNotActivated(t *testing.T) {
 	harness.fake.AssertEveryPathIsRegistered()
 
 	for _, provider := range everyProvider(t, harness.store) {
-		if provider.kind == KindIPGeolocation {
+		if provider.kind == core.KindIPGeolocation {
 			// Not probed here: internal/maxmind records the dataset's availability, and
 			// this package makes no call outside the firewall.
 			continue
 		}
 		state, _, _ := harness.availabilityOf(t, provider.kind, provider.key)
-		if state != store.StateUnavailable {
+		if state != vocab.StateUnavailable {
 			t.Errorf("%s/%s reads %q against a firewall that answers 404 everywhere",
 				provider.kind, provider.key, state)
 		}
 	}
-	for _, kind := range []string{KindFirewallLog, KindSecurityEvent, KindMeasurementSample,
-		KindDHCPLease, KindDNSLookup} {
+	for _, kind := range []string{core.KindFirewallLog, core.KindSecurityEvent, core.KindMeasurementSample,
+		core.KindDHCPLease, core.KindDNSLookup} {
 		if key := harness.activeKeyOf(t, kind); key != "" {
 			t.Errorf("the %s kind activated %q against a firewall that answers 404", kind, key)
 		}
@@ -389,15 +392,15 @@ func TestAReachableSourceWithNothingToSayStaysReachable(t *testing.T) {
 		t.Logf("the probe round reported: %v", err)
 	}
 
-	state, _, _ := harness.availabilityOf(t, KindSecurityEvent, ProviderSuricata)
-	if state != store.StateReachable {
+	state, _, _ := harness.availabilityOf(t, core.KindSecurityEvent, ProviderSuricata)
+	if state != vocab.StateReachable {
 		t.Errorf("a running engine reads %q", state)
 	}
-	logState, _, _ := harness.availabilityOf(t, KindFirewallLog, ProviderPf)
-	if logState != store.StateReachable {
+	logState, _, _ := harness.availabilityOf(t, core.KindFirewallLog, ProviderPf)
+	if logState != vocab.StateReachable {
 		t.Errorf("a log that returned an empty array reads %q, not reachable", logState)
 	}
-	detail := harness.detailOf(t, KindFirewallLog, ProviderPf)
+	detail := harness.detailOf(t, core.KindFirewallLog, ProviderPf)
 	if !strings.Contains(detail, "not an absence of traffic") {
 		t.Errorf("the detail is %q, which does not say that silence is not an absence of traffic",
 			detail)
@@ -429,31 +432,31 @@ func TestTwoProvidersOfAnExclusiveKindTheFirewallDoesNotSeparateActivateNeitherA
 	// dns_lookup is exclusive, and for a reason about the rows rather than the deployment:
 	// dns_resolution.lookup_key carries no provider, so a lookup that transited two resolvers
 	// would be two records nothing could tell apart from two lookups.
-	separable := func(key string) probeable {
-		return probeable{providerKey: key, run: func(context.Context, provider.Session) (provider.Result, error) {
+	separable := func(key string) core.Probeable {
+		return core.Probeable{ProviderKey: key, Run: func(context.Context, provider.Session) (provider.Result, error) {
 			return provider.Result{
-				State:     store.StateReachable,
-				Outcome:   store.OutcomeHealthy,
+				State:     vocab.StateReachable,
+				Outcome:   vocab.OutcomeHealthy,
 				Probe:     opnsense.UnboundIsEnabled,
 				Separable: true,
 			}, nil
 		}}
 	}
-	if err := harness.collector.resolveKind(ctx, KindDNSLookup,
-		[]probeable{separable(ProviderUnbound), separable(ProviderDnsmasq)}); err != nil {
+	if err := harness.collector.ResolveKind(ctx, core.KindDNSLookup,
+		[]core.Probeable{separable(ProviderUnbound), separable(ProviderDnsmasq)}); err != nil {
 		t.Fatalf("resolving an ambiguous exclusive kind: %v", err)
 	}
 
-	if key := harness.activeKeyOf(t, KindDNSLookup); key != "" {
+	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != "" {
 		t.Fatalf("an exclusive kind activated %q although the firewall separates neither provider",
 			key)
 	}
 	for _, key := range []string{ProviderUnbound, ProviderDnsmasq} {
-		state, _, _ := harness.availabilityOf(t, KindDNSLookup, key)
-		if state != store.StateReachable {
+		state, _, _ := harness.availabilityOf(t, core.KindDNSLookup, key)
+		if state != vocab.StateReachable {
 			t.Errorf("%s reads %q, and both are running", key, state)
 		}
-		detail := harness.detailOf(t, KindDNSLookup, key)
+		detail := harness.detailOf(t, core.KindDNSLookup, key)
 		if !strings.Contains(detail, "does not say") {
 			t.Errorf("the detail for %s is %q, which does not record the ambiguity", key, detail)
 		}
@@ -471,27 +474,27 @@ func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *te
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 
-	separable := func(key string) probeable {
-		return probeable{providerKey: key, run: func(context.Context, provider.Session) (provider.Result, error) {
+	separable := func(key string) core.Probeable {
+		return core.Probeable{ProviderKey: key, Run: func(context.Context, provider.Session) (provider.Result, error) {
 			return provider.Result{
-				State:     store.StateReachable,
-				Outcome:   store.OutcomeHealthy,
+				State:     vocab.StateReachable,
+				Outcome:   vocab.OutcomeHealthy,
 				Probe:     opnsense.KeaStatus,
 				Separable: true,
 			}, nil
 		}}
 	}
-	if err := harness.collector.resolveKind(ctx, KindDHCPLease,
-		[]probeable{separable(ProviderKea), separable(ProviderDnsmasq)}); err != nil {
+	if err := harness.collector.ResolveKind(ctx, core.KindDHCPLease,
+		[]core.Probeable{separable(ProviderKea), separable(ProviderDnsmasq)}); err != nil {
 		t.Fatalf("resolving a concurrent kind: %v", err)
 	}
 
-	keys := harness.activeKeysOf(t, KindDHCPLease)
+	keys := harness.activeKeysOf(t, core.KindDHCPLease)
 	if len(keys) != 2 {
 		t.Fatalf("a concurrent kind with two qualifying providers activated %d: %v", len(keys), keys)
 	}
 	for _, key := range keys {
-		if detail := harness.detailOf(t, KindDHCPLease, key); strings.Contains(detail, "reads neither") {
+		if detail := harness.detailOf(t, core.KindDHCPLease, key); strings.Contains(detail, "reads neither") {
 			t.Errorf("%s records an ambiguity that does not apply to a concurrent kind: %q",
 				key, detail)
 		}
@@ -511,11 +514,11 @@ func TestOneBackendTheFirewallSeparatesIsActivated(t *testing.T) {
 		t.Logf("the probe round reported: %v", err)
 	}
 
-	if key := harness.activeKeyOf(t, KindDHCPLease); key != ProviderDnsmasq {
+	if key := harness.activeKeyOf(t, core.KindDHCPLease); key != ProviderDnsmasq {
 		t.Fatalf("the DHCP kind activated %q, want the one backend the firewall separates", key)
 	}
-	state, _, _ := harness.availabilityOf(t, KindDHCPLease, ProviderKea)
-	if state != store.StatePresentButDisabled {
+	state, _, _ := harness.availabilityOf(t, core.KindDHCPLease, ProviderKea)
+	if state != vocab.StatePresentButDisabled {
 		t.Errorf("the disabled backend reads %q", state)
 	}
 }
@@ -541,14 +544,14 @@ func TestTheDnsmasqResolverIsDetectedAndReportedAndNeverActivated(t *testing.T) 
 		t.Logf("the probe round reported: %v", err)
 	}
 
-	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderUnbound {
+	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != ProviderUnbound {
 		t.Fatalf("the resolver kind activated %q, want the one with a structured query API", key)
 	}
-	state, _, _ := harness.availabilityOf(t, KindDNSLookup, ProviderDnsmasq)
-	if state != store.StatePresentButDisabled {
+	state, _, _ := harness.availabilityOf(t, core.KindDNSLookup, ProviderDnsmasq)
+	if state != vocab.StatePresentButDisabled {
 		t.Errorf("the Dnsmasq resolver reads %q", state)
 	}
-	detail := harness.detailOf(t, KindDNSLookup, ProviderDnsmasq)
+	detail := harness.detailOf(t, core.KindDNSLookup, ProviderDnsmasq)
 	if !strings.Contains(detail, "not recorded") || !strings.Contains(detail, "does not parse") {
 		t.Errorf("the detail is %q, which does not say that the grammar is unrecorded and "+
 			"therefore unparsed", detail)
@@ -565,14 +568,14 @@ func TestTheEndOfLifeISCPluginIsRecordedAsAbsentRatherThanRead(t *testing.T) {
 		t.Logf("the probe round reported: %v", err)
 	}
 
-	state, probe, _ := harness.availabilityOf(t, KindDHCPLease, ProviderISC)
-	if state != store.StateUnavailable {
+	state, probe, _ := harness.availabilityOf(t, core.KindDHCPLease, ProviderISC)
+	if state != vocab.StateUnavailable {
 		t.Errorf("the end-of-life plugin reads %q", state)
 	}
 	if !strings.Contains(probe, opnsense.ISCStatus.Path) {
 		t.Errorf("the probe is %q, which does not name the presence check", probe)
 	}
-	if detail := harness.detailOf(t, KindDHCPLease, ProviderISC); !strings.Contains(
+	if detail := harness.detailOf(t, core.KindDHCPLease, ProviderISC); !strings.Contains(
 		detail, "not installed") {
 		t.Errorf("the detail is %q", detail)
 	}
@@ -625,9 +628,9 @@ func (h *probeHarness) selectSource(t *testing.T, kind, providerKey, value strin
 }
 
 // reachableAndSeparable is a probeable of an exclusive kind the firewall marks as serving.
-func reachableAndSeparable(key string) probeable {
-	return probeable{providerKey: key, run: func(context.Context, provider.Session) (provider.Result, error) {
-		return provider.Result{State: store.StateReachable, Outcome: store.OutcomeHealthy,
+func reachableAndSeparable(key string) core.Probeable {
+	return core.Probeable{ProviderKey: key, Run: func(context.Context, provider.Session) (provider.Result, error) {
+		return provider.Result{State: vocab.StateReachable, Outcome: vocab.OutcomeHealthy,
 			Probe: opnsense.UnboundIsEnabled, Separable: true}, nil
 	}}
 }
@@ -640,15 +643,15 @@ func TestASourceTheOperatorTurnedOffIsNotCollectedAlthoughItIsReachable(t *testi
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
-	harness.selectSource(t, KindFirewallLog, ProviderPf, string(config.SelectionOff))
+	harness.selectSource(t, core.KindFirewallLog, ProviderPf, string(config.SelectionOff))
 
 	if err := harness.collector.probeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindFirewallLog); key != "" {
+	if key := harness.activeKeyOf(t, core.KindFirewallLog); key != "" {
 		t.Fatalf("a source turned off was activated: %q", key)
 	}
-	if state, _, _ := harness.availabilityOf(t, KindFirewallLog, ProviderPf); state != store.StateReachable {
+	if state, _, _ := harness.availabilityOf(t, core.KindFirewallLog, ProviderPf); state != vocab.StateReachable {
 		t.Errorf("the reachable filter log reads %q; the selection must not change what was reported", state)
 	}
 
@@ -672,15 +675,15 @@ func TestASourceTheOperatorTurnedOnIsCollectedAlthoughTheProbeWouldHaveDroppedIt
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	harness.fake.Answer(opnsense.FirewallLog, http.StatusInternalServerError, []byte(`{}`))
-	harness.selectSource(t, KindFirewallLog, ProviderPf, string(config.SelectionOn))
+	harness.selectSource(t, core.KindFirewallLog, ProviderPf, string(config.SelectionOn))
 
 	if err := harness.collector.probeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindFirewallLog); key != ProviderPf {
+	if key := harness.activeKeyOf(t, core.KindFirewallLog); key != ProviderPf {
 		t.Fatalf("the source turned on is not active (active: %q)", key)
 	}
-	if state, _, _ := harness.availabilityOf(t, KindFirewallLog, ProviderPf); state != store.StateUnavailable {
+	if state, _, _ := harness.availabilityOf(t, core.KindFirewallLog, ProviderPf); state != vocab.StateUnavailable {
 		t.Errorf("a probe answered 500 reads %q; it must be recorded as unavailable", state)
 	}
 
@@ -712,17 +715,17 @@ func TestASelectionThatCannotBeReadIsReportedRatherThanTreatedAsAuto(t *testing.
 	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
-	harness.selectSource(t, KindDNSLookup, ProviderUnbound, "yes")
+	harness.selectSource(t, core.KindDNSLookup, ProviderUnbound, "yes")
 
-	err := harness.collector.resolveKind(ctx, KindDNSLookup, []probeable{reachableAndSeparable(ProviderUnbound)})
+	err := harness.collector.ResolveKind(ctx, core.KindDNSLookup, []core.Probeable{reachableAndSeparable(ProviderUnbound)})
 	if err == nil {
 		t.Fatal("an unreadable selection was not reported")
 	}
-	key := config.KeySourceSelection(KindDNSLookup, ProviderUnbound)
+	key := config.KeySourceSelection(core.KindDNSLookup, ProviderUnbound)
 	if !strings.Contains(err.Error(), key) {
 		t.Errorf("the report %q does not name the setting %s", err, key)
 	}
-	if state, _, _ := harness.availabilityOf(t, KindDNSLookup, ProviderUnbound); state != store.StateReachable {
+	if state, _, _ := harness.availabilityOf(t, core.KindDNSLookup, ProviderUnbound); state != vocab.StateReachable {
 		t.Errorf("the availability reads %q; an unreadable selection must not stop it being recorded", state)
 	}
 }
@@ -735,31 +738,31 @@ func TestTurningOneOnBreaksTheTieThatUsedToReadNeither(t *testing.T) {
 	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
-	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
+	harness.selectSource(t, core.KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
 
-	if err := harness.collector.resolveKind(ctx, KindDNSLookup,
-		[]probeable{reachableAndSeparable(ProviderUnbound), reachableAndSeparable(ProviderDnsmasq)}); err != nil {
+	if err := harness.collector.ResolveKind(ctx, core.KindDNSLookup,
+		[]core.Probeable{reachableAndSeparable(ProviderUnbound), reachableAndSeparable(ProviderDnsmasq)}); err != nil {
 		t.Fatalf("resolving the kind: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderUnbound {
+	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != ProviderUnbound {
 		t.Fatalf("the active resolver is %q, want the one turned on", key)
 	}
 	for _, provider := range []string{ProviderUnbound, ProviderDnsmasq} {
-		if state, _, _ := harness.availabilityOf(t, KindDNSLookup, provider); state != store.StateReachable {
+		if state, _, _ := harness.availabilityOf(t, core.KindDNSLookup, provider); state != vocab.StateReachable {
 			t.Errorf("%s reads %q, and both answered", provider, state)
 		}
-		if detail := harness.detailOf(t, KindDNSLookup, provider); strings.Contains(detail, "reads neither") {
+		if detail := harness.detailOf(t, core.KindDNSLookup, provider); strings.Contains(detail, "reads neither") {
 			t.Errorf("%s records the ambiguity although it was settled: %q", provider, detail)
 		}
 	}
 }
 
 // countingProbeable is reachableAndSeparable, counting how often its probe runs.
-func countingProbeable(key string, runs *int) probeable {
+func countingProbeable(key string, runs *int) core.Probeable {
 	inner := reachableAndSeparable(key)
-	return probeable{providerKey: key, run: func(ctx context.Context, host provider.Session) (provider.Result, error) {
+	return core.Probeable{ProviderKey: key, Run: func(ctx context.Context, host provider.Session) (provider.Result, error) {
 		*runs++
-		return inner.run(ctx, host)
+		return inner.Run(ctx, host)
 	}}
 }
 
@@ -771,32 +774,32 @@ func TestASavedSelectionIsAppliedWithoutProbingTheFirewallAgain(t *testing.T) {
 	harness := newProbeHarness(t)
 	ctx := context.Background()
 	runs := 0
-	candidates := []probeable{
+	candidates := []core.Probeable{
 		countingProbeable(ProviderDnsmasq, &runs), countingProbeable(ProviderUnbound, &runs),
 	}
-	if err := harness.collector.resolveKind(ctx, KindDNSLookup, candidates); err != nil {
+	if err := harness.collector.ResolveKind(ctx, core.KindDNSLookup, candidates); err != nil {
 		t.Fatalf("resolving the kind: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindDNSLookup); key != "" {
+	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != "" {
 		t.Fatalf("two resolvers the firewall does not separate activated %q", key)
 	}
-	_, _, checkedBefore := harness.availabilityOf(t, KindDNSLookup, ProviderUnbound)
+	_, _, checkedBefore := harness.availabilityOf(t, core.KindDNSLookup, ProviderUnbound)
 	runsBefore := runs
 
-	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
-	if err := harness.collector.Reselect(ctx, KindDNSLookup); err != nil {
+	harness.selectSource(t, core.KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
+	if err := harness.collector.Reselect(ctx, core.KindDNSLookup); err != nil {
 		t.Fatalf("applying the selection: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderUnbound {
+	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != ProviderUnbound {
 		t.Errorf("the active resolver is %q after turning Unbound on, want it", key)
 	}
 
-	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOff))
-	harness.selectSource(t, KindDNSLookup, ProviderDnsmasq, string(config.SelectionOn))
-	if err := harness.collector.Reselect(ctx, KindDNSLookup); err != nil {
+	harness.selectSource(t, core.KindDNSLookup, ProviderUnbound, string(config.SelectionOff))
+	harness.selectSource(t, core.KindDNSLookup, ProviderDnsmasq, string(config.SelectionOn))
+	if err := harness.collector.Reselect(ctx, core.KindDNSLookup); err != nil {
 		t.Fatalf("applying the second selection: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderDnsmasq {
+	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != ProviderDnsmasq {
 		t.Errorf("the active resolver is %q after switching, want dnsmasq", key)
 	}
 
@@ -804,10 +807,10 @@ func TestASavedSelectionIsAppliedWithoutProbingTheFirewallAgain(t *testing.T) {
 		t.Errorf("applying a selection ran %d probes; it must run none", runs-runsBefore)
 	}
 	harness.clock.advance(time.Hour)
-	if err := harness.collector.Reselect(ctx, KindDNSLookup); err != nil {
+	if err := harness.collector.Reselect(ctx, core.KindDNSLookup); err != nil {
 		t.Fatalf("applying the selection again: %v", err)
 	}
-	if _, _, checked := harness.availabilityOf(t, KindDNSLookup, ProviderUnbound); checked != checkedBefore {
+	if _, _, checked := harness.availabilityOf(t, core.KindDNSLookup, ProviderUnbound); checked != checkedBefore {
 		t.Error("applying a selection rewrote an availability row, which records a check that did not happen")
 	}
 }
@@ -818,18 +821,18 @@ func TestASelectionSavedBeforeAnyProbeRoundWaitsForTheFirst(t *testing.T) {
 	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
-	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
-	if err := harness.collector.Reselect(ctx, KindDNSLookup); err != nil {
+	harness.selectSource(t, core.KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
+	if err := harness.collector.Reselect(ctx, core.KindDNSLookup); err != nil {
 		t.Fatalf("applying a selection before any round: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindDNSLookup); key != "" {
+	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != "" {
 		t.Errorf("a selection activated %q with nothing probed", key)
 	}
-	if err := harness.collector.resolveKind(ctx, KindDNSLookup,
-		[]probeable{reachableAndSeparable(ProviderDnsmasq), reachableAndSeparable(ProviderUnbound)}); err != nil {
+	if err := harness.collector.ResolveKind(ctx, core.KindDNSLookup,
+		[]core.Probeable{reachableAndSeparable(ProviderDnsmasq), reachableAndSeparable(ProviderUnbound)}); err != nil {
 		t.Fatalf("resolving the kind: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderUnbound {
+	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != ProviderUnbound {
 		t.Errorf("the first round activated %q, want the resolver turned on", key)
 	}
 }
@@ -840,16 +843,16 @@ func TestASelectionThatCannotBeReadLeavesTheActiveSourcesAsTheyWere(t *testing.T
 	t.Parallel()
 	harness := newProbeHarness(t)
 	ctx := context.Background()
-	harness.selectSource(t, KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
-	if err := harness.collector.resolveKind(ctx, KindDNSLookup,
-		[]probeable{reachableAndSeparable(ProviderDnsmasq), reachableAndSeparable(ProviderUnbound)}); err != nil {
+	harness.selectSource(t, core.KindDNSLookup, ProviderUnbound, string(config.SelectionOn))
+	if err := harness.collector.ResolveKind(ctx, core.KindDNSLookup,
+		[]core.Probeable{reachableAndSeparable(ProviderDnsmasq), reachableAndSeparable(ProviderUnbound)}); err != nil {
 		t.Fatalf("resolving the kind: %v", err)
 	}
-	harness.selectSource(t, KindDNSLookup, ProviderUnbound, "maybe")
-	if err := harness.collector.Reselect(ctx, KindDNSLookup); err == nil {
+	harness.selectSource(t, core.KindDNSLookup, ProviderUnbound, "maybe")
+	if err := harness.collector.Reselect(ctx, core.KindDNSLookup); err == nil {
 		t.Error("a selection that cannot be read was applied without an error")
 	}
-	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderUnbound {
+	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != ProviderUnbound {
 		t.Errorf("the active resolver is %q after a failed application, want it unchanged", key)
 	}
 }

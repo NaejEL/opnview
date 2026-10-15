@@ -4,14 +4,18 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"sort"
 	"testing"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/plugindecl"
 	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/datasets"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
 )
 
 // host.datasets.latest: a widget reads another plugin's dataset by its data-catalogue name, without
@@ -68,7 +72,7 @@ type pfStateRow struct {
 func insertPfStates(t *testing.T, f *fixture, rows ...pfStateRow) {
 	t.Helper()
 	for _, row := range rows {
-		f.exec(t, "INSERT INTO "+store.PluginTableSQLName("pf_states", "rate")+" (sampled_at, span_seconds, "+
+		f.exec(t, "INSERT INTO "+plugindecl.PluginTableSQLName("pf_states", "rate")+" (sampled_at, span_seconds, "+
 			"interface_device, direction, protocol, port, forward_bits_per_second, reverse_bits_per_second, "+
 			"bits_per_second, states) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", row.at, row.span, row.device,
 			row.direction, row.protocol, row.port, row.forward, row.reverse, row.total, row.states)
@@ -85,7 +89,8 @@ func currentRatesOf(t *testing.T, answer map[string]any) map[string]any {
 	return rates
 }
 
-// memberFigures reads by_member as key -> [forward, reverse, bits, states, sampled_at, span, state].
+// memberFigures reads by_member as key -> [in, out, out_measured, cadence, sampled_at, span, state,
+// measure, lower_bound].
 func memberFigures(t *testing.T, rates map[string]any) (keys []string, figures map[string][]any) {
 	t.Helper()
 	figures = map[string][]any{}
@@ -95,8 +100,8 @@ func memberFigures(t *testing.T, rates map[string]any) (keys []string, figures m
 		rate := entry["rate"].(map[string]any)
 		key := entry["key"].(string)
 		keys = append(keys, key)
-		figures[key] = []any{rate["forward_bits_per_second"], rate["reverse_bits_per_second"],
-			rate["bits_per_second"], rate["states"], rate["sampled_at"], rate["span_seconds"], rate["state"],
+		figures[key] = []any{rate["in_bits_per_second"], rate["out_bits_per_second"],
+			rate["out_measured"], rate["cadence_seconds"], rate["sampled_at"], rate["span_seconds"], rate["state"],
 			rate["measure"], rate["lower_bound"]}
 	}
 	return keys, figures
@@ -127,16 +132,16 @@ func TestTrafficCompositionReadsTheRateByProtocolAndServiceFromPfStatesWhenPrese
 		t.Fatalf("the protocol members are %v", keys)
 	}
 	for key, want := range map[string][]any{
-		"protocol:tcp":  {150.0, 450.0, 600.0, 3.0, at, 60.0, "current", "sampled", true},
-		"protocol:udp":  {10.0, 20.0, 30.0, 1.0, at, 60.0, "current", "sampled", true},
-		"protocol:icmp": {1.0, 1.0, 2.0, 1.0, at, 60.0, "current", "sampled", true},
+		"protocol:tcp":  {450.0, 150.0, true, 60.0, at, 60.0, "current", "sampled", true},
+		"protocol:udp":  {20.0, 10.0, true, 60.0, at, 60.0, "current", "sampled", true},
+		"protocol:icmp": {1.0, 1.0, true, 60.0, at, 60.0, "current", "sampled", true},
 	} {
 		if !reflect.DeepEqual(figures[key], want) {
 			t.Errorf("%s: %v, want %v", key, figures[key], want)
 		}
 	}
 	source, _ := byProtocol["by_member_source"].(map[string]any)
-	if source["dataset"] != "pf_states.rate" || source["state"] != widget.LatestCurrent || source["at"] != at {
+	if source["dataset"] != "pf_states.rate" || source["state"] != datasets.LatestCurrent || source["at"] != at {
 		t.Errorf("the source is %v", source)
 	}
 
@@ -146,7 +151,7 @@ func TestTrafficCompositionReadsTheRateByProtocolAndServiceFromPfStatesWhenPrese
 	if !reflect.DeepEqual(keys, []string{"port:443/tcp", "port:53/udp", "port:not_recorded"}) {
 		t.Fatalf("the service members are %v", keys)
 	}
-	if want := []any{150.0, 450.0, 600.0, 3.0, at, 60.0, "current", "sampled", true}; !reflect.DeepEqual(
+	if want := []any{450.0, 150.0, true, 60.0, at, 60.0, "current", "sampled", true}; !reflect.DeepEqual(
 		figures["port:443/tcp"], want) {
 		t.Errorf("port:443/tcp: %v, want %v", figures["port:443/tcp"], want)
 	}
@@ -158,9 +163,44 @@ func TestTrafficCompositionReadsTheRateByProtocolAndServiceFromPfStatesWhenPrese
 	}
 }
 
+// TestTrafficCompositionPfStateMemberRateIsAChipRate: the rate of a protocol or service member has
+// exactly the fields of the client and interface chips (host.rates), and pf's direction-in counters
+// map onto them from the initiator's side: out is the forward counter, in the reverse one, both
+// measured.
+func TestTrafficCompositionPfStateMemberRateIsAChipRate(t *testing.T) {
+	t.Parallel()
+	f, service := latestWorld(t, "")
+	insertPfStates(t, f, pfStateRow{f.now - 30, 60, "example0", "in", "tcp", 443, 100, 400, 500, 1})
+	for _, groupBy := range []string{"protocol", "service_port"} {
+		rates := currentRatesOf(t, answerOf(t, service, "traffic_composition", map[string]any{"group_by": groupBy}))
+		chip := rates["by_direction"].([]any)[0].(map[string]any)["rate"].(map[string]any)
+		members := rates["by_member"].([]any)
+		if len(members) != 1 {
+			t.Fatalf("%s: members %v", groupBy, members)
+		}
+		rate := members[0].(map[string]any)["rate"].(map[string]any)
+		if !reflect.DeepEqual(sortedKeys(rate), sortedKeys(chip)) {
+			t.Errorf("%s: the member rate's fields are %v, a chip's %v", groupBy, sortedKeys(rate), sortedKeys(chip))
+		}
+		if rate["in_bits_per_second"] != 400.0 || rate["out_bits_per_second"] != 100.0 || rate["out_measured"] != true {
+			t.Errorf("%s: forward 100 and reverse 400 read as %v", groupBy, rate)
+		}
+	}
+}
+
+// sortedKeys is a decoded object's keys in order.
+func sortedKeys(object map[string]any) []string {
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
 // TestTrafficCompositionKeepsTheNamedAbsenceWithoutPfStatesRows: a pass older than twice its span is
 // stale_sample, figures beside it; a dataset with no row within its horizon is no_rows; an
-// installation without the pf_states dataset is dataset_absent; and in the last two by_member is
+// installation without the pf_states dataset is unknown_dataset; and in the last two by_member is
 // empty, never a rate of 0.
 func TestTrafficCompositionKeepsTheNamedAbsenceWithoutPfStatesRows(t *testing.T) {
 	t.Parallel()
@@ -169,7 +209,7 @@ func TestTrafficCompositionKeepsTheNamedAbsenceWithoutPfStatesRows(t *testing.T)
 	if members, _ := empty["by_member"].([]any); len(members) != 0 {
 		t.Errorf("an empty dataset gives members %v", members)
 	}
-	if source, _ := empty["by_member_source"].(map[string]any); source["state"] != widget.LatestNoRows ||
+	if source, _ := empty["by_member_source"].(map[string]any); source["state"] != datasets.LatestNoRows ||
 		source["at"] != nil {
 		t.Errorf("an empty dataset's source is %v", source)
 	}
@@ -177,15 +217,15 @@ func TestTrafficCompositionKeepsTheNamedAbsenceWithoutPfStatesRows(t *testing.T)
 	insertPfStates(t, f, pfStateRow{f.now - 1000, 60, "example0", "in", "tcp", 443, 100, 400, 500, 1})
 	stale := currentRatesOf(t, answerOf(t, service, "traffic_composition", map[string]any{"group_by": "protocol"}))
 	_, figures := memberFigures(t, stale)
-	if state := figures["protocol:tcp"]; len(state) == 0 || state[6] != "stale_sample" || state[2] != 500.0 {
+	if state := figures["protocol:tcp"]; len(state) == 0 || state[6] != "stale_sample" || state[0] != 400.0 {
 		t.Errorf("a pass older than twice its span reads %v", state)
 	}
 
 	// Beyond the dataset's own retention (pf_states.rate keeps a week), nothing is the latest.
 	insertPfStates(t, f, pfStateRow{f.now - 8*86400, 60, "example0", "in", "udp", 53, 1, 1, 2, 1})
-	f.exec(t, "DELETE FROM "+store.PluginTableSQLName("pf_states", "rate")+" WHERE sampled_at = ?", f.now-1000)
+	f.exec(t, "DELETE FROM "+plugindecl.PluginTableSQLName("pf_states", "rate")+" WHERE sampled_at = ?", f.now-1000)
 	horizon := currentRatesOf(t, answerOf(t, service, "traffic_composition", map[string]any{"group_by": "protocol"}))
-	if source, _ := horizon["by_member_source"].(map[string]any); source["state"] != widget.LatestNoRows {
+	if source, _ := horizon["by_member_source"].(map[string]any); source["state"] != datasets.LatestNoRows {
 		t.Errorf("a row past the retention horizon was read: %v", horizon)
 	}
 
@@ -195,7 +235,7 @@ func TestTrafficCompositionKeepsTheNamedAbsenceWithoutPfStatesRows(t *testing.T)
 	if members, _ := absent["by_member"].([]any); len(members) != 0 {
 		t.Errorf("without pf_states the members are %v", members)
 	}
-	if source, _ := absent["by_member_source"].(map[string]any); source["state"] != widget.LatestDatasetAbsent ||
+	if source, _ := absent["by_member_source"].(map[string]any); source["state"] != datasets.LatestUnknownDataset ||
 		source["condition"] != nil {
 		t.Errorf("without pf_states the source is %v", source)
 	}
@@ -252,7 +292,7 @@ exports.widget = {
 // dropped as a folder in a data directory reads, through host.datasets.latest, the dataset another
 // dropped plugin declares, editing no file of the product. The latest rows are those of the most
 // recent instant the filter keeps; a filter the catalogue refuses is a TypeError the script catches;
-// an absent dataset is dataset_absent; under no_domains a domain column is withheld from every row,
+// an absent dataset is unknown_dataset; under no_domains a domain column is withheld from every row,
 // and a filter on one reads nothing.
 func TestAThirdPartyWidgetReadsAThirdPartyPluginsDatasetByName(t *testing.T) {
 	t.Parallel()
@@ -260,7 +300,7 @@ func TestAThirdPartyWidgetReadsAThirdPartyPluginsDatasetByName(t *testing.T) {
 	writePlugin(t, dataDir, "example_meter", exampleMeterPlugin)
 	writePlugin(t, dataDir, "example_gauge", exampleGaugePlugin)
 	f, service := latestWorld(t, dataDir)
-	table := store.PluginTableSQLName("example_meter", "reading")
+	table := plugindecl.PluginTableSQLName("example_meter", "reading")
 	insert := func(at int64, meter, site string, watts float64) {
 		f.exec(t, "INSERT INTO "+table+" (read_at, meter, site, watts) VALUES (?, ?, ?, ?)", at, meter, site, watts)
 	}
@@ -276,7 +316,7 @@ func TestAThirdPartyWidgetReadsAThirdPartyPluginsDatasetByName(t *testing.T) {
 		map[string]any{"meter": "a", "read_at": float64(f.now - 300), "site": "example.org", "watts": 20.0},
 		map[string]any{"meter": "b", "read_at": float64(f.now - 300), "site": "example.net", "watts": 30.0},
 	}
-	if meters["state"] != widget.LatestCurrent || meters["at"] != float64(f.now-300) ||
+	if meters["state"] != datasets.LatestCurrent || meters["at"] != float64(f.now-300) ||
 		!reflect.DeepEqual(meters["rows"], wantRows) || meters["truncated"] != false {
 		t.Errorf("the latest rows of meters a and b are %v", meters)
 	}
@@ -284,7 +324,7 @@ func TestAThirdPartyWidgetReadsAThirdPartyPluginsDatasetByName(t *testing.T) {
 		len(everything["rows"].([]any)) != 1 {
 		t.Errorf("with no filter the latest rows are %v", everything)
 	}
-	if missing := answer["missing"].(map[string]any); missing["state"] != widget.LatestDatasetAbsent ||
+	if missing := answer["missing"].(map[string]any); missing["state"] != datasets.LatestUnknownDataset ||
 		len(missing["rows"].([]any)) != 0 || missing["at"] != nil || missing["dataset"] != "example_absent.reading" {
 		t.Errorf("an absent dataset reads %v", missing)
 	}
@@ -303,7 +343,7 @@ func TestAThirdPartyWidgetReadsAThirdPartyPluginsDatasetByName(t *testing.T) {
 	if !reflect.DeepEqual(meters["withheld"], []any{"site"}) {
 		t.Errorf("under no_domains the withheld columns are %v", meters["withheld"])
 	}
-	if bySite := withheld["by_site"].(map[string]any); bySite["state"] != widget.ConditionWithheldByAggregateMode ||
+	if bySite := withheld["by_site"].(map[string]any); bySite["state"] != envelope.ConditionWithheldByAggregateMode ||
 		len(bySite["rows"].([]any)) != 0 {
 		t.Errorf("under no_domains a filter on a domain column read %v", bySite)
 	}

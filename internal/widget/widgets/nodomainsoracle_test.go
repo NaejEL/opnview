@@ -3,9 +3,12 @@ package widgets
 import (
 	"context"
 	"encoding/json"
-	"github.com/NaejEL/opnview/internal/widget"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 
 	"github.com/NaejEL/opnview/internal/config"
 )
@@ -44,28 +47,28 @@ func siteProbes(f *fixture) []siteProbe {
 				if parameters == nil {
 					parameters = map[string]any{}
 				}
-				if widget.Contains(paramKeys(f.service, widgetType), "period") {
+				if params.Contains(paramKeys(f.service, widgetType), "period") {
 					parameters["period"] = "30d"
 				}
 				return parameters
 			}
 			switch param.Kind {
-			case widget.KindReference:
+			case params.KindReference:
 				probes = append(probes, siteProbe{widgetType: widgetType, place: param.Key,
 					build: func(name, by string) map[string]any {
 						parameters := base()
 						parameters[param.Key] = reference(name, by)
 						return parameters
 					}})
-			case widget.KindReferenceList:
+			case params.KindReferenceList:
 				probes = append(probes, siteProbe{widgetType: widgetType, place: param.Key + "[0]",
 					build: func(name, by string) map[string]any {
 						parameters := base()
 						parameters[param.Key] = []any{reference(name, by)}
 						return parameters
 					}})
-			case widget.KindSeries:
-				for _, source := range widget.SeriesSources {
+			case params.KindSeries:
+				for _, source := range params.SeriesSources {
 					source := source
 					probes = append(probes, siteProbe{widgetType: widgetType,
 						place: param.Key + "[1].site (" + source + ")",
@@ -74,7 +77,7 @@ func siteProbes(f *fixture) []siteProbe {
 							// An unscoped series beside the probed one, so the probe also shows
 							// that withholding one series leaves the other intact.
 							parameters[param.Key] = []any{
-								map[string]any{"source": widget.SourceTraffic, "measure": "bytes"},
+								map[string]any{"source": params.SourceTraffic, "measure": "bytes"},
 								map[string]any{"source": source, "site": reference(name, by)},
 							}
 							return parameters
@@ -91,7 +94,7 @@ func siteProbes(f *fixture) []siteProbe {
 func TestNoDomainsLetsNoSiteReferenceSelectOrProbeData(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, defaultSpec)
-	check(t, f.db.SetSetting(context.Background(), config.KeyAggregateMode, widget.AggregateModeNoDomains, f.now))
+	check(t, f.db.SetSetting(context.Background(), config.KeyAggregateMode, request.AggregateModeNoDomains, f.now))
 	visited := f.sites[0]
 	probes := siteProbes(f)
 	if len(probes) == 0 {
@@ -99,7 +102,7 @@ func TestNoDomainsLetsNoSiteReferenceSelectOrProbeData(t *testing.T) {
 	}
 	seriesProbed := false
 	for _, probe := range probes {
-		for _, by := range append(append([]string{}, widget.ReferenceByKind["site"]...), "label") {
+		for _, by := range append(append([]string{}, params.ReferenceByKind["site"]...), "label") {
 			seenRaw, seen := f.serialisedWhole(t, probe.widgetType, probe.build(visited, by))
 			unseenRaw, unseen := f.serialisedWhole(t, probe.widgetType, probe.build(neverVisited, by))
 			if strings.Contains(seenRaw, visited) {
@@ -122,16 +125,16 @@ func TestNoDomainsLetsNoSiteReferenceSelectOrProbeData(t *testing.T) {
 			if len(chart.Series) != 2 {
 				t.Fatalf("%s %s: %d series came back, not 2", probe.widgetType, probe.place, len(chart.Series))
 			}
-			if probed := chart.Series[1]; probed.Condition != widget.ConditionWithheldByAggregateMode ||
+			if probed := chart.Series[1]; probed.Condition != envelope.ConditionWithheldByAggregateMode ||
 				probed.Buckets != nil || probed.Total != nil {
 				t.Errorf("%s %s: the site-scoped series is %s with data, not withheld", probe.widgetType,
 					probe.place, probed.Condition)
 			}
-			if other := chart.Series[0]; other.Condition != widget.ConditionReachable || other.Total == nil {
+			if other := chart.Series[0]; other.Condition != envelope.ConditionReachable || other.Total == nil {
 				t.Errorf("%s %s: the unscoped series beside it lost its data (%s)", probe.widgetType, probe.place,
 					other.Condition)
 			}
-			if !widget.Contains(response.Withheld, "series[1].site.value") {
+			if !params.Contains(response.Withheld, "series[1].site.value") {
 				t.Errorf("%s %s: the withheld value is not listed: %v", probe.widgetType, probe.place,
 					response.Withheld)
 			}
@@ -150,15 +153,15 @@ func TestUnderFullASiteReferenceStillScopesTheChart(t *testing.T) {
 	f := newFixture(t, defaultSpec)
 	visited := f.sites[0]
 	build := func(name string) map[string]any {
-		return map[string]any{"period": "30d", "series": []any{map[string]any{"source": widget.SourceTraffic,
+		return map[string]any{"period": "30d", "series": []any{map[string]any{"source": params.SourceTraffic,
 			"site": map[string]any{"kind": "site", "by": "domain", "value": name}}}}
 	}
 	seen := decodeData[customChartData](t, f.respond(t, "custom_chart", build(visited))).Series[0]
 	unseen := decodeData[customChartData](t, f.respond(t, "custom_chart", build(neverVisited))).Series[0]
-	if seen.Condition != widget.ConditionReachable || seen.Total == nil || *seen.Total == 0 {
+	if seen.Condition != envelope.ConditionReachable || seen.Total == nil || *seen.Total == 0 {
 		t.Errorf("under full, a visited site's series is %s with total %v", seen.Condition, seen.Total)
 	}
-	if unseen.Condition != widget.ConditionUnresolvedReference {
+	if unseen.Condition != envelope.ConditionUnresolvedReference {
 		t.Errorf("under full, a never-seen site's series is %s, not unresolved", unseen.Condition)
 	}
 }

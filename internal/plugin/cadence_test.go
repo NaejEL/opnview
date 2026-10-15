@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
@@ -76,20 +78,20 @@ func TestACadenceOverrideIsASettingNeverBelowItsBound(t *testing.T) {
 // subject (P7).
 func TestATriggerNamesAPublishedChannelOnAProviderWithItsOwnCadence(t *testing.T) {
 	t.Parallel()
-	declaration := ProviderDeclaration{Kind: "example_kind", CadenceSeconds: 600, MinCadenceSeconds: 60,
-		TriggeredBy: []string{store.ChannelCollectionPass + ":dhcp_lease", store.ChannelAggregateRefresh}}
+	declaration := contract.ProviderDeclaration{Kind: "example_kind", CadenceSeconds: 600, MinCadenceSeconds: 60,
+		TriggeredBy: []string{sqldb.ChannelCollectionPass + ":dhcp_lease", sqldb.ChannelAggregateRefresh}}
 	if refusal := checkTriggers("example", declaration, false); refusal != nil {
 		t.Errorf("published channels were refused: %v", refusal)
 	}
-	for _, name := range []string{"opnview_unknown", store.ChannelPluginPass + ":Not A Name", ""} {
+	for _, name := range []string{"opnview_unknown", sqldb.ChannelPluginPass + ":Not A Name", ""} {
 		declaration.TriggeredBy = []string{name}
 		if refusal := checkTriggers("example", declaration, false); refusal == nil ||
-			refusal.Code != RefusalTriggerInvalid {
+			refusal.Code != contract.RefusalTriggerInvalid {
 			t.Errorf("triggered_by %q gave %v", name, refusal)
 		}
 	}
-	declaration.TriggeredBy = []string{store.ChannelAggregateRefresh}
-	if refusal := checkTriggers("example", declaration, true); refusal == nil || refusal.Code != RefusalTriggerInvalid {
+	declaration.TriggeredBy = []string{sqldb.ChannelAggregateRefresh}
+	if refusal := checkTriggers("example", declaration, true); refusal == nil || refusal.Code != contract.RefusalTriggerInvalid {
 		t.Errorf("a provider of a surveyed kind named a trigger: %v", refusal)
 	}
 }

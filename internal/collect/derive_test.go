@@ -4,12 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/NaejEL/opnview/internal/plugin"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/plugin"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -372,7 +375,7 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight)
+	detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
 	if !strings.Contains(detail, "gateway latency and loss (not found, HTTP 404") {
 		t.Errorf("the availability detail is %q, which does not record the gateway endpoint", detail)
 	}
@@ -385,7 +388,7 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	if detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
+	if detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
 		"gateway latency and loss (the endpoint answered \"status\": \"failed\"") {
 		t.Errorf("an answer reporting a failure left the detail %q", detail)
 	}
@@ -403,7 +406,7 @@ func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight)
+	detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
 	if !strings.Contains(detail, "swap (the endpoint did not answer)") {
 		t.Errorf("the availability detail is %q, which does not record the swap endpoint", detail)
 	}
@@ -418,7 +421,7 @@ func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	if detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
+	if detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
 		"swap (this firewall reports no swap device)") {
 		t.Errorf("an answer with no swap device left the detail %q", detail)
 	}
@@ -436,7 +439,7 @@ func TestTheRefreshRunsAfterEachFilterLogPass(t *testing.T) {
 		t.Fatalf("collecting: %v", err)
 	}
 	now := harness.clock.Now().UTC().Unix()
-	for _, period := range store.Periods() {
+	for _, period := range vocab.Periods() {
 		table := "volume_aggregate_" + period.Name
 		if rows := scalarCount(t, harness.store, "SELECT count(*) FROM "+table+" WHERE computed_at = ?", now); rows == 0 {
 			t.Errorf("%s holds no slot computed by the pass", table)
@@ -452,7 +455,7 @@ func TestTheRefreshRunsAfterEachFilterLogPass(t *testing.T) {
 		t.Fatalf("collecting an empty page: %v", err)
 	}
 	later := harness.clock.Now().UTC().Unix()
-	current := store.PeriodMonth.SlotStart(later)
+	current := vocab.PeriodMonth.SlotStart(later)
 	if rows := scalarCount(t, harness.store, `SELECT count(*) FROM volume_aggregate_30d
 		WHERE period_start_at = ? AND computed_at = ?`, current, later); rows == 0 {
 		t.Error("an empty pass did not rewrite the current month")
@@ -475,7 +478,7 @@ func TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot(t *testing.T) {
 		t.Fatalf("the first refresh: %v", err)
 	}
 
-	stamped, token := harness.collector.beginIngest()
+	stamped, token := harness.collector.BeginIngest()
 	harness.clock.advance(5 * time.Second)
 	// Another pass finishes meanwhile, and its derivation refreshes.
 	if err := harness.collector.RefreshAggregates(ctx); err != nil {
@@ -483,16 +486,16 @@ func TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot(t *testing.T) {
 	}
 
 	// The stamped row commits only now, in an hour that closed long ago.
-	closedHour := store.PeriodHour.SlotStart(stamped) - 3*3600
-	if err := harness.store.InsertFlow(ctx, store.Flow{
+	closedHour := vocab.PeriodHour.SlotStart(stamped) - 3*3600
+	if err := harness.store.InsertFlow(ctx, vocab.Flow{
 		LogDigest: "refresh-race-probe", ObservedAt: closedHour + 60, IngestedAt: stamped,
-		InterfaceDevice: "example-unmapped-device", InterfaceLookupState: store.LookupNotFound,
+		InterfaceDevice: "example-unmapped-device", InterfaceLookupState: vocab.LookupNotFound,
 		SrcAddress: "203.0.113.7", DstAddress: "203.0.113.8", Protocol: "tcp", IPVersion: 4,
-		Action: "block", Direction: "in", PacketBytes: 60, RuleLookupState: store.LookupNotFound,
+		Action: "block", Direction: "in", PacketBytes: 60, RuleLookupState: vocab.LookupNotFound,
 	}); err != nil {
 		t.Fatalf("inserting the stamped flow: %v", err)
 	}
-	harness.collector.endIngest(token)
+	harness.collector.EndIngest(token)
 
 	harness.clock.advance(5 * time.Second)
 	if err := harness.collector.RefreshAggregates(ctx); err != nil {
@@ -504,7 +507,7 @@ func TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot(t *testing.T) {
 			"committed during the concurrent refresh", bytes)
 	}
 	// And the watermark is free again once nothing is in flight.
-	if _, watermark := harness.collector.refreshInstant(); watermark != harness.clock.Now().UTC().Unix() {
+	if _, watermark := harness.collector.RefreshInstant(); watermark != harness.clock.Now().UTC().Unix() {
 		t.Errorf("the watermark is held at %d with nothing in flight", watermark)
 	}
 }
@@ -527,15 +530,15 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 		t.Fatalf("the first refresh: %v", err)
 	}
 
-	stamped, token := harness.collector.beginIngest()
-	closedHour := store.PeriodHour.SlotStart(stamped) - 3*3600
+	stamped, token := harness.collector.BeginIngest()
+	closedHour := vocab.PeriodHour.SlotStart(stamped) - 3*3600
 	insert := func(digest string) {
 		t.Helper()
-		if err := harness.store.InsertFlow(ctx, store.Flow{
+		if err := harness.store.InsertFlow(ctx, vocab.Flow{
 			LogDigest: digest, ObservedAt: closedHour + 60, IngestedAt: stamped,
-			InterfaceDevice: "example-unmapped-device", InterfaceLookupState: store.LookupNotFound,
+			InterfaceDevice: "example-unmapped-device", InterfaceLookupState: vocab.LookupNotFound,
 			SrcAddress: "203.0.113.7", DstAddress: "203.0.113.8", Protocol: "tcp", IPVersion: 4,
-			Action: "block", Direction: "in", PacketBytes: 60, RuleLookupState: store.LookupNotFound,
+			Action: "block", Direction: "in", PacketBytes: 60, RuleLookupState: vocab.LookupNotFound,
 		}); err != nil {
 			t.Fatalf("inserting %s: %v", digest, err)
 		}
@@ -552,7 +555,7 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 			"slot did not hold rows when it ran", bytes)
 	}
 	insert("refresh-race-second")
-	harness.collector.endIngest(token)
+	harness.collector.EndIngest(token)
 
 	harness.clock.advance(5 * time.Second)
 	if err := harness.collector.RefreshAggregates(ctx); err != nil {

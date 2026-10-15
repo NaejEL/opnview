@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/netflow"
 )
 
 // The join's rules, one criterion per test (PS-AC31 to PS-AC34 of the NetFlow join amendment).
@@ -75,27 +75,27 @@ func TestSplitRecordsSumExactlyAndContinuityBoundsAConnection(t *testing.T) {
 	tcpLeg, udpLeg := h.flowID(t, "tcp"), h.flowID(t, "udp")
 	records := byOctets(t, h)
 	for _, octets := range []int64{100, 200, 300, 1000, 2000} {
-		if record := records[octets]; record.joinState != store.JoinJoined || *record.joinedFlowID != tcpLeg {
+		if record := records[octets]; record.joinState != netflow.JoinJoined || *record.joinedFlowID != tcpLeg {
 			t.Errorf("the TCP record of %d octets is %s (%s)", octets, record.joinState, orNull(record.reason))
 		}
 	}
-	if record := records[50]; record.joinState != store.JoinUnmatched ||
-		orNull(record.reason) != store.UnmatchedNoLoggedLeg {
+	if record := records[50]; record.joinState != netflow.JoinUnmatched ||
+		orNull(record.reason) != netflow.UnmatchedNoLoggedLeg {
 		t.Errorf("the later SYN record is %s (%s), want no_logged_leg", record.joinState, orNull(record.reason))
 	}
-	if record := records[70]; record.joinState != store.JoinJoined || *record.joinedFlowID != udpLeg {
+	if record := records[70]; record.joinState != netflow.JoinJoined || *record.joinedFlowID != udpLeg {
 		t.Errorf("the UDP record within the timeout is %s", record.joinState)
 	}
-	if record := records[80]; record.joinState != store.JoinUnmatched ||
-		orNull(record.reason) != store.UnmatchedNoLoggedLeg {
+	if record := records[80]; record.joinState != netflow.JoinUnmatched ||
+		orNull(record.reason) != netflow.UnmatchedNoLoggedLeg {
 		t.Errorf("the UDP record after the timeout is %s (%s), want no_logged_leg", record.joinState,
 			orNull(record.reason))
 	}
-	if volume := volumeOf(t, h, tcpLeg, store.OrientationForward); volume.bytes != 600 || volume.records != 3 ||
-		volume.state != store.VolumeMeasured {
+	if volume := volumeOf(t, h, tcpLeg, netflow.OrientationForward); volume.bytes != 600 || volume.records != 3 ||
+		volume.state != netflow.VolumeMeasured {
 		t.Errorf("the forward figure is %+v, want 600 bytes in 3 records, measured", volume)
 	}
-	if volume := volumeOf(t, h, tcpLeg, store.OrientationReverse); volume.bytes != 3000 || volume.records != 2 {
+	if volume := volumeOf(t, h, tcpLeg, netflow.OrientationReverse); volume.bytes != 3000 || volume.records != 2 {
 		t.Errorf("the reverse figure is %+v, want 3000 bytes in 2 records", volume)
 	}
 
@@ -135,10 +135,10 @@ func TestAnUnmatchedRecordIsCountedInNoFigure(t *testing.T) {
 	twin.digest = "dupb"
 	h.logged(t, duplicate, twin, singleLeg("other", at, "tcp", 6, 40009, 443, "pass"))
 	records := byOctets(t, h)
-	want := map[int64]string{11: store.UnmatchedNoLoggedLeg, 22: store.UnmatchedAmbiguous,
-		33: store.UnmatchedBeyondFlowHorizon}
+	want := map[int64]string{11: netflow.UnmatchedNoLoggedLeg, 22: netflow.UnmatchedAmbiguous,
+		33: netflow.UnmatchedBeyondFlowHorizon}
 	for octets, reason := range want {
-		if record := records[octets]; record.joinState != store.JoinUnmatched || orNull(record.reason) != reason {
+		if record := records[octets]; record.joinState != netflow.JoinUnmatched || orNull(record.reason) != reason {
 			t.Errorf("the record of %d octets is %s (%s), want unmatched for %s", octets, record.joinState,
 				orNull(record.reason), reason)
 		}
@@ -169,7 +169,7 @@ func TestAnUnmatchedRecordIsCountedInNoFigure(t *testing.T) {
 	two.deliver(t, at+60, forward(6, 40003, 443, 0x10, 44, at, at+1))
 	two.logged(t, singleLeg("two", at, "tcp", 6, 40003, 443, "pass"))
 	stored := two.records(t)
-	if len(stored) != 1 || stored[0].joinState != store.JoinNotJoinable || stored[0].reason != nil {
+	if len(stored) != 1 || stored[0].joinState != netflow.JoinNotJoinable || stored[0].reason != nil {
 		t.Errorf("under two captured interfaces the record is %+v, want not joinable with no reason", stored)
 	}
 	if volumes := two.volumes(t); len(volumes) != 0 {
@@ -210,7 +210,7 @@ func TestAnIPv6ConnectionAndICMPJoinOnTheirAddresses(t *testing.T) {
 	if record := records[84]; record.joinedFlowID == nil || *record.joinedFlowID != h.flowID(t, "icmp") {
 		t.Errorf("the ICMP record is %s (%s), not joined to its echo leg", record.joinState, orNull(record.reason))
 	}
-	if record := records[85]; orNull(record.reason) != store.UnmatchedAmbiguous {
+	if record := records[85]; orNull(record.reason) != netflow.UnmatchedAmbiguous {
 		t.Errorf("the ICMP record meeting two legs is %s (%s), want ambiguous", record.joinState,
 			orNull(record.reason))
 	}
@@ -278,7 +278,7 @@ func TestTheJoinDoesNotDependOnArrivalOrder(t *testing.T) {
 		h.at(netflowReadSecond)
 		ingest(t, h)
 		fingerprints[name] = joinFingerprint(t, h, "nat1", "nat2")
-		changed, err := h.collector.joinFlowRecords(context.Background())
+		changed, err := h.collector.JoinFlowRecords(context.Background())
 		if err != nil || changed != 0 {
 			t.Errorf("%s: a second join changed %d rows (%v)", name, changed, err)
 		}
@@ -307,7 +307,7 @@ func TestTheJoinDoesNotDependOnArrivalOrder(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, record := range early.records(t) {
-		if record.joinState != store.JoinPending {
+		if record.joinState != netflow.JoinPending {
 			t.Errorf("a record was decided %s before the filter log was read past its start plus the tolerance",
 				record.joinState)
 		}

@@ -1,6 +1,3 @@
-// Package interfaces is the Interfaces surface: per interface, its networks and the
-// link-local rule. It writes opnview's own interface_network and interface rows, and
-// nothing on the firewall.
 package interfaces
 
 import (
@@ -9,6 +6,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -75,7 +73,7 @@ type view struct {
 
 // newView returns a view with everything common to every page filled in.
 func (s *surface) newView(writer http.ResponseWriter, request *http.Request,
-	session *store.Session, title messageKey) (view, error) {
+	session *accounts.Session, title messageKey) (view, error) {
 	base, err := s.NewBase(writer, request, session, title)
 	if err != nil {
 		return view{}, err

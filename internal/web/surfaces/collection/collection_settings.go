@@ -2,12 +2,14 @@ package collection
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/web"
 	"math"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
 
 	"github.com/NaejEL/opnview/internal/config"
 )
@@ -188,7 +190,7 @@ type settingsCard struct {
 	Availability []figureRow
 	// Implementations are a polled kind's selections; Fields the card's own fields.
 	Implementations []implementationRow
-	Fields          []web.SettingField
+	Fields          []settingfields.SettingField
 	// NoticeKey confirms a save in this card; Edited says it is drawn with values a
 	// submission carried that are not stored.
 	NoticeKey messageKey
@@ -206,8 +208,8 @@ type settingsCard struct {
 // retentionConfirmation is a shorter retention horizon waiting to be confirmed.
 type retentionConfirmation struct {
 	// Now is the horizon in force and Requested the one asked for.
-	Now       web.InForceValue
-	Requested web.InForceValue
+	Now       settingfields.InForceValue
+	Requested settingfields.InForceValue
 	// Changes are the card's other settings whose value the save changes, each shown
 	// with its value in force and the one asked for, so the confirmation shows
 	// everything it applies.
@@ -221,8 +223,8 @@ type retentionConfirmation struct {
 // pendingChange is one setting a confirmation applies beside the retention horizon.
 type pendingChange struct {
 	LabelKey  messageKey
-	Now       web.InForceValue
-	Requested web.InForceValue
+	Now       settingfields.InForceValue
+	Requested settingfields.InForceValue
 }
 
 // hiddenValue is one value a form carries without showing a field for it.
@@ -372,7 +374,7 @@ func (s *surface) polledKindCard(ctx context.Context, kind polledKind, settings 
 		return nil, err
 	}
 	intervalName := cardFieldName(kind.Kind, fieldInterval)
-	names := []string{intervalName, web.UnitFieldName(intervalName)}
+	names := []string{intervalName, settingfields.UnitFieldName(intervalName)}
 	for _, row := range rows {
 		if row.Kind == kind.Kind {
 			names = append(names, cardFieldName(kind.Kind, fieldSelectionPrefix+row.ProviderKey))
@@ -404,10 +406,10 @@ func (s *surface) polledKindCard(ctx context.Context, kind polledKind, settings 
 		})
 	}
 	inForce := int64(kind.interval(settings) / time.Second)
-	card.Fields = []web.SettingField{web.DurationField(intervalName, fieldInterval+"_"+kind.Kind,
+	card.Fields = []settingfields.SettingField{settingfields.DurationField(intervalName, fieldInterval+"_"+kind.Kind,
 		msgFieldPollInterval, inForce, typed)}
 	if figure, present := typed[intervalName]; present &&
-		web.DurationDiffers(figure, typed[web.UnitFieldName(intervalName)], inForce) {
+		settingfields.DurationDiffers(figure, typed[settingfields.UnitFieldName(intervalName)], inForce) {
 		card.Edited = true
 	}
 	if page != nil && page.settings != nil && page.settings.card == kind.Kind {
@@ -434,26 +436,26 @@ func markRefused(card *settingsCard, field string, refusal messageKey) {
 }
 
 // retentionValue is a retention horizon as a value: a duration, or unlimited.
-func retentionValue(seconds int64) web.InForceValue {
+func retentionValue(seconds int64) settingfields.InForceValue {
 	if seconds == 0 {
-		return web.InForceValue{StateKey: msgRetentionUnlimited}
+		return settingfields.InForceValue{StateKey: msgRetentionUnlimited}
 	}
-	return web.InForceValue{Parts: web.SpelledDuration(seconds)}
+	return settingfields.InForceValue{Parts: settingfields.SpelledDuration(seconds)}
 }
 
 // settingValue is one setting's value, in seconds or as the mode, as a value to show.
-func settingValue(setting settingSpec, value string) web.InForceValue {
+func settingValue(setting settingSpec, value string) settingfields.InForceValue {
 	switch {
 	case setting.Rule == ruleAggregateMode:
-		return web.InForceValue{StateKey: aggregateModeKey(value)}
+		return settingfields.InForceValue{StateKey: aggregateModeKey(value)}
 	case setting.Key == config.KeyRetentionSeconds:
 		seconds, _ := strconv.ParseInt(value, 10, 64)
 		return retentionValue(seconds)
 	case setting.Duration:
 		seconds, _ := strconv.ParseInt(value, 10, 64)
-		return web.InForceValue{Parts: web.SpelledDuration(seconds)}
+		return settingfields.InForceValue{Parts: settingfields.SpelledDuration(seconds)}
 	default:
-		return web.InForceValue{Value: value}
+		return settingfields.InForceValue{Value: value}
 	}
 }
 
@@ -474,7 +476,7 @@ func settingCardOf(spec settingCardSpec, settings config.Config, page *collectio
 	for _, setting := range spec.Settings {
 		names = append(names, setting.Key)
 		if setting.Duration {
-			names = append(names, web.UnitFieldName(setting.Key))
+			names = append(names, settingfields.UnitFieldName(setting.Key))
 		}
 	}
 	typed := page.typed(spec.ID, names...)
@@ -510,23 +512,23 @@ func settingCardOf(spec settingCardSpec, settings config.Config, page *collectio
 		card.Confirmation = confirmation
 	}
 	for _, setting := range spec.Settings {
-		var field web.SettingField
+		var field settingfields.SettingField
 		switch {
 		case setting.Rule == ruleAggregateMode:
 			mode := settings.AggregateMode
 			if value, present := typed[setting.Key]; present {
 				mode = value
 			}
-			field = web.SettingField{Name: setting.Key, ID: setting.Key, LabelKey: setting.LabelKey,
+			field = settingfields.SettingField{Name: setting.Key, ID: setting.Key, LabelKey: setting.LabelKey,
 				Options: aggregateModeOptions(mode),
-				InForce: web.InForceValue{StateKey: aggregateModeKey(settings.AggregateMode)}}
+				InForce: settingfields.InForceValue{StateKey: aggregateModeKey(settings.AggregateMode)}}
 			field.ShowInForce = mode != settings.AggregateMode
 			card.Edited = card.Edited || field.ShowInForce
 		case setting.Duration:
 			value := setting.inForce(settings)
-			field = web.DurationField(setting.Key, setting.Key, setting.LabelKey, value, typed)
+			field = settingfields.DurationField(setting.Key, setting.Key, setting.LabelKey, value, typed)
 			if figure, present := typed[setting.Key]; present &&
-				web.DurationDiffers(figure, typed[web.UnitFieldName(setting.Key)], value) {
+				settingfields.DurationDiffers(figure, typed[settingfields.UnitFieldName(setting.Key)], value) {
 				card.Edited = true
 			}
 			if setting.Key == config.KeyRetentionSeconds && value == 0 {
@@ -535,8 +537,8 @@ func settingCardOf(spec settingCardSpec, settings config.Config, page *collectio
 			}
 		default:
 			value := strconv.FormatInt(setting.inForce(settings), 10)
-			field = web.SettingField{Name: setting.Key, ID: setting.Key, LabelKey: setting.LabelKey,
-				Value: value, InForce: web.InForceValue{Value: value}}
+			field = settingfields.SettingField{Name: setting.Key, ID: setting.Key, LabelKey: setting.LabelKey,
+				Value: value, InForce: settingfields.InForceValue{Value: value}}
 			if shown, present := typed[setting.Key]; present {
 				field.Value = shown
 				card.Edited = card.Edited || strings.TrimSpace(shown) != value
@@ -568,8 +570,8 @@ const (
 // withholds site names from what opnview shows; attributions are stored whatever
 // the mode (docs/data-model.md, domain_attribution, decision 7), so switching back
 // finds the history intact. "Shown" and "Withheld" say that and no more.
-func aggregateModeOptions(selected string) []web.ChoiceOption {
-	return []web.ChoiceOption{
+func aggregateModeOptions(selected string) []settingfields.ChoiceOption {
+	return []settingfields.ChoiceOption{
 		{Value: aggregateModeFull, LabelKey: msgSiteNamesShown, Selected: selected == aggregateModeFull},
 		{Value: aggregateModeNoDomains, LabelKey: msgSiteNamesWithheld,
 			Selected: selected == aggregateModeNoDomains},
@@ -601,7 +603,7 @@ func typedSetting(ctx context.Context, base config.SettingReader, spec settingSp
 			return spec.RefusalKey
 		}
 	}
-	if !web.AcceptedByLoad(ctx, base, map[string]string{spec.Key: typed}) {
+	if !settingfields.AcceptedByLoad(ctx, base, map[string]string{spec.Key: typed}) {
 		return spec.RefusalKey
 	}
 	return ""
@@ -680,7 +682,7 @@ func (s *surface) savePolledKind(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	intervalName := cardFieldName(kind.Kind, fieldInterval)
-	secondsText, refusal := web.TypedDuration(draft[intervalName], draft[web.UnitFieldName(intervalName)])
+	secondsText, refusal := settingfields.TypedDuration(draft[intervalName], draft[settingfields.UnitFieldName(intervalName)])
 	if refusal != "" {
 		refuse(intervalName, refusal)
 		return
@@ -728,7 +730,7 @@ func (s *surface) saveSettingCard(writer http.ResponseWriter, request *http.Requ
 	values, refusal, refused := checkSettingCard(ctx, s.store, spec, func(setting settingSpec) (string, messageKey) {
 		seconds := strings.TrimSpace(draft[setting.Key])
 		if setting.Duration {
-			return web.TypedDuration(seconds, draft[web.UnitFieldName(setting.Key)])
+			return settingfields.TypedDuration(seconds, draft[settingfields.UnitFieldName(setting.Key)])
 		}
 		return seconds, ""
 	})
@@ -779,9 +781,9 @@ func (noSettings) Setting(context.Context, string) (string, bool, error) { retur
 // accepts -- so a bound config adds, or moves, is the bound this refusal states, with
 // no second edit. It assumes, as every rule of Load's does, that what it accepts is
 // one unbroken range; nil when it accepts no value at all.
-func acceptedRangeOf(key string) *web.AcceptedRange {
+func acceptedRangeOf(key string) *settingfields.AcceptedRange {
 	accepts := func(value int64) bool {
-		return web.AcceptedByLoad(context.Background(), noSettings{},
+		return settingfields.AcceptedByLoad(context.Background(), noSettings{},
 			map[string]string{key: strconv.FormatInt(value, 10)})
 	}
 	low := int64(0)
@@ -800,7 +802,7 @@ func acceptedRangeOf(key string) *web.AcceptedRange {
 		}
 		low = top
 	}
-	found := &web.AcceptedRange{Low: web.InForceValue{Parts: web.SpelledDuration(low)}}
+	found := &settingfields.AcceptedRange{Low: settingfields.InForceValue{Parts: settingfields.SpelledDuration(low)}}
 	high, beyond := low, int64(math.MaxInt64)
 	for high+1 < beyond {
 		middle := high + (beyond-high)/2
@@ -810,6 +812,6 @@ func acceptedRangeOf(key string) *web.AcceptedRange {
 			beyond = middle
 		}
 	}
-	found.High = web.InForceValue{Parts: web.SpelledDuration(high)}
+	found.High = settingfields.InForceValue{Parts: settingfields.SpelledDuration(high)}
 	return found
 }

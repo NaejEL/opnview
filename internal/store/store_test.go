@@ -5,6 +5,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // openTestStore opens a database of the test's own on the test instance (testdatabase.go), and
@@ -98,7 +101,7 @@ func TestAProbedAvailabilityRowSurvivesTheSchemaBeingAppliedAgain(t *testing.T) 
 		t.Fatalf("looking up the filter-log provider: %v", err)
 	}
 	detail := "probed by this test"
-	if err := database.SetAvailability(ctx, providerID, StateReachable, OutcomeHealthy,
+	if err := database.SetAvailability(ctx, providerID, vocab.StateReachable, vocab.OutcomeHealthy,
 		"GET /api/diagnostics/firewall/log", &detail, 1750000000); err != nil {
 		t.Fatalf("recording availability: %v", err)
 	}
@@ -116,7 +119,7 @@ func TestAProbedAvailabilityRowSurvivesTheSchemaBeingAppliedAgain(t *testing.T) 
 	if err != nil {
 		t.Fatalf("reading availability back: %v", err)
 	}
-	if state != StateReachable || checkedAt != 1750000000 ||
+	if state != vocab.StateReachable || checkedAt != 1750000000 ||
 		!strings.Contains(probe, "/api/diagnostics/firewall/log") {
 		t.Fatalf("after a restart the row reads state %q probe %q at %d; the schema reset it",
 			state, probe, checkedAt)
@@ -292,7 +295,7 @@ func TestActivatingAnUnregisteredProviderIsRefused(t *testing.T) {
 // corrupt a statement rather than fail loudly.
 func TestSplitStatementsKeepsASemicolonInsideAString(t *testing.T) {
 	t.Parallel()
-	statements := SplitStatements(
+	statements := sqldb.SplitStatements(
 		"SELECT 'a;b';\n-- a comment\nSELECT 'c';\n\n")
 	if len(statements) != 2 {
 		t.Fatalf("got %d statements, want 2: %q", len(statements), statements)

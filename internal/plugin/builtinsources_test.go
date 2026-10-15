@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/plugin/contract"
 )
 
 // TestEveryBuiltinEndpointCitesOPNsense2673 is BR-AC26's first part, the citation test extended to
@@ -29,7 +31,7 @@ func TestEveryBuiltinEndpointCitesOPNsense2673(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		var manifest Manifest
+		var manifest contract.Manifest
 		if err := json.Unmarshal(raw, &manifest); err != nil {
 			t.Fatalf("%s: %v", file, err)
 		}

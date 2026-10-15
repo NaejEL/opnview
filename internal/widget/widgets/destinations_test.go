@@ -11,7 +11,11 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/figures"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	requestpkg "github.com/NaejEL/opnview/internal/widget/request"
+	"github.com/NaejEL/opnview/internal/widget/traffic"
 )
 
 // C2 and C4 of the backend-completion cycle: destinations no name was inferred for are shown by
@@ -20,7 +24,7 @@ import (
 
 // eligibleFlows counts the eligible flows of a window -- read_attribution_rate's rule -- with an
 // extra condition on the flow (f).
-func (f *fixture) eligibleFlows(t *testing.T, window widget.Interval, extra string, arguments ...any) int64 {
+func (f *fixture) eligibleFlows(t *testing.T, window envelope.Interval, extra string, arguments ...any) int64 {
 	t.Helper()
 	return f.scalar(t, `SELECT count(*) FROM flow AS f WHERE f.observed_at >= ? AND f.observed_at < ?
 		AND f.dst_interface_id IS NULL AND f.src_client_id IS NOT NULL AND f.src_is_this_firewall = 0
@@ -75,11 +79,11 @@ func TestUnnamedDestinationsAreAddressRowsThatMakeTheEligibleFlows(t *testing.T)
 				for _, row := range sites.Rows {
 					shown += row.Flows.Value
 					switch row.Kind {
-					case widget.DestinationKindSite:
+					case figures.DestinationKindSite:
 						if row.Name == "" {
 							t.Errorf("%s %s: a site row with no name", period, scope.name)
 						}
-					case widget.DestinationKindAddress:
+					case figures.DestinationKindAddress:
 						addressRows++
 						if row.Address == "" || row.LookupState == "" {
 							t.Errorf("%s %s: an address row without its address or its lookup state", period, scope.name)
@@ -121,7 +125,7 @@ func TestNoNodeStandsForEveryUnnamedDestinationTogether(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, defaultSpec)
 	forbidden := regexp.MustCompile(`"(site:none|site:|address:|unnamed|unnamed_destinations)"`)
-	inspect := func(label string, response widget.Response) {
+	inspect := func(label string, response envelope.Response) {
 		encoded, err := json.Marshal(response.Data)
 		if err != nil {
 			t.Fatal(err)
@@ -156,7 +160,7 @@ func TestNoNodeStandsForEveryUnnamedDestinationTogether(t *testing.T) {
 			response := f.respond(t, "traffic_sankey", map[string]any{"period": period, "right": right})
 			var sankey struct {
 				Other struct {
-					Unnamed []widget.UnplacedBin `json:"unnamed"`
+					Unnamed []figures.UnplacedBin `json:"unnamed"`
 				} `json:"other"`
 			}
 			encoded, err := json.Marshal(response.Data)
@@ -228,14 +232,14 @@ func TestUnderNoDomainsEveryDestinationIsInAddressForm(t *testing.T) {
 	if f.scalar(t, "SELECT count(*) FROM domain_attribution") == 0 {
 		t.Fatal("the fixture names nothing, so this test is vacuous")
 	}
-	check(t, f.db.SetSetting(ctx, config.KeyAggregateMode, widget.AggregateModeNoDomains, f.now))
+	check(t, f.db.SetSetting(ctx, config.KeyAggregateMode, requestpkg.AggregateModeNoDomains, f.now))
 	withNames := map[int][]byte{}
 	for index, item := range requests {
 		withNames[index] = answer(item)
 	}
 	for _, withheld := range []string{"top_sites", "sites_by_client"} {
 		response := f.respond(t, withheld, map[string]any{"period": "24h"})
-		if response.Condition != widget.ConditionWithheldByAggregateMode || response.Data != nil {
+		if response.Condition != envelope.ConditionWithheldByAggregateMode || response.Data != nil {
 			t.Errorf("%s is not withheld whole under no_domains", withheld)
 		}
 	}
@@ -271,18 +275,18 @@ func TestBeyondTheFlowHorizonUnnamedDestinationsAreANamedState(t *testing.T) {
 	f.exec(t, "DELETE FROM flow WHERE observed_at < ?", horizon)
 	for _, widgetType := range []string{"top_sites", "sites_by_client"} {
 		response := f.respond(t, widgetType, map[string]any{"period": "7d"})
-		if !widget.Contains(response.States, widget.StateUnnamedBeyondHorizon) {
+		if !params.Contains(response.States, figures.StateUnnamedBeyondHorizon) {
 			t.Errorf("%s 7d: the window reaches past the horizon and names no state (%v)", widgetType, response.States)
 		}
 		inside := f.respond(t, widgetType, map[string]any{"period": "1h"})
-		if widget.Contains(inside.States, widget.StateUnnamedBeyondHorizon) {
+		if params.Contains(inside.States, figures.StateUnnamedBeyondHorizon) {
 			t.Errorf("%s 1h: a window inside the horizon names the state", widgetType)
 		}
 	}
 	sites := decodeData[topSitesData](t, f.respond(t, "top_sites", map[string]any{"period": "7d"}))
 	var addressFlows int64
 	for _, row := range sites.Rows {
-		if row.Kind == widget.DestinationKindAddress {
+		if row.Kind == figures.DestinationKindAddress {
 			addressFlows += row.Flows.Value
 		}
 	}
@@ -432,7 +436,7 @@ func TestEveryCatalogueBindingOfPortAndProtocolIsServed(t *testing.T) {
 	keys := map[string]bool{}
 	for _, slice := range composition.Slices {
 		keys[slice.Key] = true
-		if slice.Key == widget.ServicePortNotRecorded && (slice.Port != nil || slice.Protocol != nil) {
+		if slice.Key == traffic.ServicePortNotRecorded && (slice.Port != nil || slice.Protocol != nil) {
 			t.Error("port:not_recorded names a port or a protocol")
 		}
 	}
@@ -442,14 +446,14 @@ func TestEveryCatalogueBindingOfPortAndProtocolIsServed(t *testing.T) {
 		}
 	}
 	if f.scalar(t, "SELECT count(*) FROM classified_flow WHERE dst_port IS NULL AND exit_leg_device IS NULL "+
-		"AND observed_at >= ?", f.now-3600) > 0 && !keys[widget.ServicePortNotRecorded] {
+		"AND observed_at >= ?", f.now-3600) > 0 && !keys[traffic.ServicePortNotRecorded] {
 		t.Error("the records with no port are not the slice port:not_recorded")
 	}
 }
 
 // TestTheDecisionsOfABlockingReasonCompositionAreTheBlockedDecisionViews holds the core's decision
-// rule (internal/widget/flows.statements.sql) equal to the blocked_decision view's engine kinds:
-// per engine kind, the refused records each counts are the same.
+// rule (internal/widget/traffic/flows.statements.sql) equal to the blocked_decision view's engine
+// kinds: per engine kind, the refused records each counts are the same.
 func TestTheDecisionsOfABlockingReasonCompositionAreTheBlockedDecisionViews(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, defaultSpec)
@@ -459,8 +463,8 @@ func TestTheDecisionsOfABlockingReasonCompositionAreTheBlockedDecisionViews(t *t
 		"measure": "connections", "slices": 10})
 	composition := decodeData[compositionData](t, response)
 	window := response.Window.Requested
-	for _, kind := range []string{widget.DecisionFirewallRule, widget.DecisionFirewallNoRule,
-		widget.DecisionFirewallReasonNotRecorded} {
+	for _, kind := range []string{traffic.DecisionFirewallRule, traffic.DecisionFirewallNoRule,
+		traffic.DecisionFirewallReasonNotRecorded} {
 		want := f.scalar(t, `SELECT count(*) FROM blocked_decision AS d JOIN flow AS f ON d.source_table = 'flow'
 			AND f.id = d.source_id WHERE d.engine_kind = ? AND d.occurred_at >= ? AND d.occurred_at < ?
 			AND (f.pair_outcome IS NULL OR f.pair_outcome <> 'second_leg')`, kind, window.From, window.To)

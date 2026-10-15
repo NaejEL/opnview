@@ -2,16 +2,19 @@ package settings_test
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
-	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store"
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
+	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
 // TestTheMaxMindAccountIDIsASettingAndASaveWakesTheRefresh is AC10 and AC11: the
@@ -59,7 +62,7 @@ func TestTheMaxMindAccountIDIsASettingAndASaveWakesTheRefresh(t *testing.T) {
 			webtest.FieldSettingsCard: {webtest.SettingsCardGeolocation}, "maxmind_account_id": {refused}, "theme": {string(web.ThemeSystem)},
 		}))
 		if status != http.StatusBadRequest || !strings.Contains(page,
-			webtest.CatalogueText(t, msgMaxMindAccountIDBad)) {
+			collectiontest.CatalogueText(t, msgMaxMindAccountIDBad)) {
 			t.Errorf("the account ID %q answered %d without its refusal", refused, status)
 		}
 	}
@@ -75,7 +78,7 @@ func TestTheDatasetStateIsTheOneTheRefreshRecorded(t *testing.T) {
 	h := webtest.New(t)
 	h.CompleteSetup()
 	text := pageText(t, h, web.PathSettings)
-	if !strings.Contains(text, webtest.CatalogueText(t, msgGeoIPNotDownloaded)) {
+	if !strings.Contains(text, collectiontest.CatalogueText(t, msgGeoIPNotDownloaded)) {
 		t.Error("a fresh installation does not say the databases are not downloaded yet")
 	}
 	for probe, key := range map[string]messageKey{
@@ -86,18 +89,18 @@ func TestTheDatasetStateIsTheOneTheRefreshRecorded(t *testing.T) {
 		ipgeolocation.ProbeLimited:                 msgGeoIPLimited,
 		ipgeolocation.ProbeFailed:                  msgGeoIPFailed,
 	} {
-		h.SetGeoIPProbe(store.StateUnavailable, probe)
-		if !strings.Contains(pageText(t, h, web.PathSettings), webtest.CatalogueText(t, key)) {
+		settingstest.SetGeoIPProbe(h, vocab.StateUnavailable, probe)
+		if !strings.Contains(pageText(t, h, web.PathSettings), collectiontest.CatalogueText(t, key)) {
 			t.Errorf("the probe %s does not read as %s", probe, key)
 		}
 	}
 
 	build := time.Date(2026, 9, 29, 0, 0, 0, 0, time.UTC)
 	h.GeoIP.SetBuild(build.Unix())
-	h.SetGeoIPProbe(store.StateReachable, ipgeolocation.ProbeCurrent)
+	settingstest.SetGeoIPProbe(h, vocab.StateReachable, ipgeolocation.ProbeCurrent)
 	page := webtest.PageSource(t, h, web.PathSettings)
-	if !webtest.StateShown(t, page, msgLabelGeoIPState, msgGeoIPCurrent) ||
-		!webtest.FigureShown(t, page, msgLabelGeoIPBuild, build.Format(time.RFC3339)) {
+	if !collectiontest.StateShown(t, page, msgLabelGeoIPState, msgGeoIPCurrent) ||
+		!collectiontest.FigureShown(t, page, msgLabelGeoIPBuild, build.Format(time.RFC3339)) {
 		t.Error("current databases are not reported with their build")
 	}
 }

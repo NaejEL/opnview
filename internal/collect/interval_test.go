@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 )
@@ -74,14 +75,14 @@ func TestASavedIntervalChangesTheNextScheduledPassWithoutARestart(t *testing.T) 
 
 	clock := &recordingClock{}
 	passes := make(chan struct{}, 8)
-	task := Task{
+	task := core.Task{
 		Name:     "filter log",
 		Interval: live.Interval(func(c config.Config) time.Duration { return c.FirewallLogInterval }),
 		Run:      func(context.Context) error { passes <- struct{}{}; return nil },
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { done <- Run(ctx, clock, []Task{task}, nil) }()
+	go func() { done <- core.Run(ctx, clock, []core.Task{task}, nil) }()
 
 	if asked := clock.awaitWaits(t, 1); asked[0] != 10*time.Second {
 		t.Fatalf("the first wait is %v, want the 10 s in force", asked[0])

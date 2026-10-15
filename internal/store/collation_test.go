@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // TestTextOrdersAsBytesAndFoldsAsciiAlone is P-AC7's first half: on the database opnview runs on,
@@ -69,7 +71,7 @@ func TestADatabaseThatDoesNotOrderByBytesIsRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pool, err := openPool(admin)
+	pool, err := sqldb.OpenPool(admin)
 	if err != nil {
 		t.Fatal(err)
 	}

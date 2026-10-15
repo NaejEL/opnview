@@ -5,10 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The provider-seam tests.
@@ -62,7 +63,7 @@ func TestEveryRegistryRowOfACollectedKindHasAnImplementation(t *testing.T) {
 	registered := registeredKeysByKind()
 
 	for _, provider := range everyProvider(t, database) {
-		if provider.kind == KindIPGeolocation || provider.kind == KindFlowVolume || provider.kind == KindRegistrableDomain {
+		if provider.kind == core.KindIPGeolocation || provider.kind == core.KindFlowVolume || provider.kind == core.KindRegistrableDomain {
 			continue
 		}
 		found := false
@@ -86,15 +87,15 @@ func TestTheKindsWithSeveralImplementationsReallyHaveSeveral(t *testing.T) {
 	t.Parallel()
 	registered := registeredKeysByKind()
 	for kind, minimum := range map[string]int{
-		KindDHCPLease: 3,
-		KindDNSLookup: 2,
+		core.KindDHCPLease: 3,
+		core.KindDNSLookup: 2,
 	} {
 		if got := len(registered[kind]); got < minimum {
 			t.Errorf("the %s kind has %d implementations, want at least %d", kind, got, minimum)
 		}
 	}
 	// And the kinds with one are not pretending otherwise.
-	for _, kind := range []string{KindFirewallLog, KindSecurityEvent, KindMeasurementSample} {
+	for _, kind := range []string{core.KindFirewallLog, core.KindSecurityEvent, core.KindMeasurementSample} {
 		if got := len(registered[kind]); got != 1 {
 			t.Errorf("the %s kind has %d implementations, want exactly the one that exists",
 				kind, got)
@@ -122,15 +123,15 @@ func TestAnImplementationTheFirewallDoesNotSeparateIsNeverActivatedWhateverItsPo
 	if err := harness.collector.probeDHCPLease(ctx); err != nil {
 		t.Logf("the lease probe reported: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindDHCPLease); key != ProviderDnsmasq {
+	if key := harness.activeKeyOf(t, core.KindDHCPLease); key != ProviderDnsmasq {
 		t.Fatalf("the active backend is %q; activation followed something other than the "+
 			"firewall's own configuration", key)
 	}
 
 	// The probe order is the sorted one, which is what makes a request sequence comparable.
-	keys := make([]string, 0, len(probeablesOf(plugin.Builtins().DHCPLease, leaseProbe)))
-	for _, candidate := range probeablesOf(plugin.Builtins().DHCPLease, leaseProbe) {
-		keys = append(keys, candidate.providerKey)
+	keys := make([]string, 0, len(core.ProbeablesOf(plugin.Builtins().DHCPLease, leaseProbe)))
+	for _, candidate := range core.ProbeablesOf(plugin.Builtins().DHCPLease, leaseProbe) {
+		keys = append(keys, candidate.ProviderKey)
 	}
 	for index := 1; index < len(keys); index++ {
 		if keys[index-1] > keys[index] {
@@ -158,16 +159,16 @@ func TestAnImplementationThatCannotBeReadReportsWhyRatherThanFailingThePass(t *t
 		key  string
 		call func(context.Context) error
 	}{
-		{KindDHCPLease, ProviderISC, func(ctx context.Context) error {
-			if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, ProviderISC); err != nil {
+		{core.KindDHCPLease, ProviderISC, func(ctx context.Context) error {
+			if err := harness.store.SetActiveProviders(ctx, core.KindDHCPLease, ProviderISC); err != nil {
 				return err
 			}
 			var seen []string
-			_, err := harness.collector.collectLeases(ctx, &seen)
+			_, err := harness.collector.CollectLeases(ctx, &seen)
 			return err
 		}},
-		{KindDNSLookup, ProviderDnsmasq, func(ctx context.Context) error {
-			if err := harness.store.SetActiveProviders(ctx, KindDNSLookup, ProviderDnsmasq); err != nil {
+		{core.KindDNSLookup, ProviderDnsmasq, func(ctx context.Context) error {
+			if err := harness.store.SetActiveProviders(ctx, core.KindDNSLookup, ProviderDnsmasq); err != nil {
 				return err
 			}
 			return harness.collector.CollectDNSLookup(ctx)
@@ -213,22 +214,22 @@ func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testi
 	if _, err := harness.store.DB().ExecContext(ctx,
 		`INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
 		 VALUES (?, ?, ?, 0, ?)`,
-		KindDHCPLease, "an-unimplemented-backend", "An unimplemented backend",
+		core.KindDHCPLease, "an-unimplemented-backend", "An unimplemented backend",
 		referenceEpoch()); err != nil {
 		t.Fatalf("registering a provider with no implementation: %v", err)
 	}
 	if _, err := harness.store.DB().ExecContext(ctx,
 		`INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
 		 SELECT id, ?, 'not_yet_probed', NULL, 0 FROM provider WHERE provider_key = ?`,
-		string(store.StateUnavailable), "an-unimplemented-backend"); err != nil {
+		string(vocab.StateUnavailable), "an-unimplemented-backend"); err != nil {
 		t.Fatalf("giving it an availability row: %v", err)
 	}
-	if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, "an-unimplemented-backend"); err != nil {
+	if err := harness.store.SetActiveProviders(ctx, core.KindDHCPLease, "an-unimplemented-backend"); err != nil {
 		t.Fatalf("activating it: %v", err)
 	}
 
 	var seen []string
-	if _, err := harness.collector.collectLeases(ctx, &seen); err == nil {
+	if _, err := harness.collector.CollectLeases(ctx, &seen); err == nil {
 		t.Fatal("collecting from an active provider with no implementation returned no error")
 	}
 }
@@ -237,25 +238,25 @@ func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testi
 func registeredKeysByKind() map[string][]string {
 	registered := map[string][]string{}
 	for key := range plugin.Builtins().FirewallLog.Sources() {
-		registered[KindFirewallLog] = append(registered[KindFirewallLog], key)
+		registered[core.KindFirewallLog] = append(registered[core.KindFirewallLog], key)
 	}
 	for key := range plugin.Builtins().SecurityEvent.Sources() {
-		registered[KindSecurityEvent] = append(registered[KindSecurityEvent], key)
+		registered[core.KindSecurityEvent] = append(registered[core.KindSecurityEvent], key)
 	}
 	for key := range plugin.Builtins().Measurement.Sources() {
-		registered[KindMeasurementSample] = append(registered[KindMeasurementSample], key)
+		registered[core.KindMeasurementSample] = append(registered[core.KindMeasurementSample], key)
 	}
 	for key := range plugin.Builtins().DHCPLease.Sources() {
-		registered[KindDHCPLease] = append(registered[KindDHCPLease], key)
+		registered[core.KindDHCPLease] = append(registered[core.KindDHCPLease], key)
 	}
 	for key := range plugin.Builtins().DNSLookup.Sources() {
-		registered[KindDNSLookup] = append(registered[KindDNSLookup], key)
+		registered[core.KindDNSLookup] = append(registered[core.KindDNSLookup], key)
 	}
 	for key := range plugin.Builtins().ResolverCache.Sources() {
-		registered[KindResolverCache] = append(registered[KindResolverCache], key)
+		registered[core.KindResolverCache] = append(registered[core.KindResolverCache], key)
 	}
 	for key := range plugin.Builtins().ResolverLocalData.Sources() {
-		registered[KindResolverLocalData] = append(registered[KindResolverLocalData], key)
+		registered[core.KindResolverLocalData] = append(registered[core.KindResolverLocalData], key)
 	}
 	return registered
 }

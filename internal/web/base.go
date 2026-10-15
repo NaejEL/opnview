@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 )
 
 // Base is the part of every page's data that is common to every page. A surface's page data
@@ -87,7 +87,7 @@ func (b *Base) setSurface(page string) {
 
 // NewBase returns the common part of a page's data with everything filled in.
 func (s *Server) NewBase(writer http.ResponseWriter, request *http.Request,
-	session *store.Session, title MessageKey) (Base, error) {
+	session *accounts.Session, title MessageKey) (Base, error) {
 	token, err := s.formToken(writer, request, session)
 	if err != nil {
 		return Base{}, err

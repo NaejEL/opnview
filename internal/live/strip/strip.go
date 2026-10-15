@@ -9,13 +9,19 @@ import (
 
 	"github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/store"
-	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/samples"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/request"
+	"github.com/NaejEL/opnview/internal/widget/traffic"
 )
 
 //go:embed *.statements.sql
 var statements embed.FS
 
-func init() { _ = store.RegisterStatements("live_strip", statements) }
+func init() { _ = sqldb.RegisterStatements("live_strip", statements) }
 
 // The window a strip covers, in seconds: the mockup's two minutes by default, an hour at most --
 // fine samples are kept an hour by default -- and never more than MaxBuckets buckets.
@@ -58,7 +64,7 @@ type Strip struct {
 	// CadenceSeconds is the width of a bucket: the live cadence in force.
 	CadenceSeconds int64 `json:"cadence_seconds"`
 	// Window is [from, to) of the buckets, aligned on UTC multiples of the cadence from the epoch.
-	Window widget.Interval `json:"window"`
+	Window envelope.Interval `json:"window"`
 	// LiveInterestUntil is when the live-interest lease this request renewed lapses.
 	LiveInterestUntil *int64 `json:"live_interest_until"`
 	// Throughput is sampled, never summed with Decisions, which are counted.
@@ -66,7 +72,7 @@ type Strip struct {
 	Decisions  []DecisionSeries   `json:"decisions"`
 	// Gaps are the intervals a bound provider did not cover, and those while opnview was not
 	// running.
-	Gaps []widget.Gap `json:"gaps"`
+	Gaps []envelope.Gap `json:"gaps"`
 }
 
 // ThroughputSeries is the sampled rate of one direction, per bucket.
@@ -148,7 +154,7 @@ func WindowBounds(cadence int64) (minimum, maximum int64) {
 func Read(ctx context.Context, database *store.Store, request Request) (*Strip, error) {
 	width := request.CadenceSeconds
 	if width <= 0 {
-		width = store.DefaultMeasurementIntervalSeconds
+		width = samples.DefaultMeasurementIntervalSeconds
 	}
 	minimum, maximum := WindowBounds(width)
 	if request.WindowSeconds < minimum || request.WindowSeconds > maximum {
@@ -156,16 +162,16 @@ func Read(ctx context.Context, database *store.Store, request Request) (*Strip, 
 	}
 	request.Interest.Renew(request.Now)
 	now := request.Now.Unix()
-	to := now - widget.FloorMod(now, width) + width
+	to := now - traffic.FloorMod(now, width) + width
 	from := now - request.WindowSeconds
-	from -= widget.FloorMod(from, width)
-	result := &Strip{CadenceSeconds: width, Window: widget.Interval{From: from, To: to},
-		Throughput: []ThroughputSeries{}, Decisions: []DecisionSeries{}, Gaps: []widget.Gap{}}
+	from -= traffic.FloorMod(from, width)
+	result := &Strip{CadenceSeconds: width, Window: envelope.Interval{From: from, To: to},
+		Throughput: []ThroughputSeries{}, Decisions: []DecisionSeries{}, Gaps: []envelope.Gap{}}
 	if until, held := request.Interest.Until(); held {
 		at := until.Unix()
 		result.LiveInterestUntil = &at
 	}
-	buckets := widget.BucketIntervals(result.Window, width)
+	buckets := traffic.BucketIntervals(result.Window, width)
 
 	throughput, err := readThroughput(ctx, database, result.Window, buckets, width)
 	if err != nil {
@@ -188,22 +194,22 @@ func Read(ctx context.Context, database *store.Store, request Request) (*Strip, 
 
 // readThroughput reads every sample of the window, fine and baseline, and averages each
 // direction's rate over the samples of each bucket.
-func readThroughput(ctx context.Context, database *store.Store, window widget.Interval, buckets []widget.Interval,
+func readThroughput(ctx context.Context, database *store.Store, window envelope.Interval, buckets []envelope.Interval,
 	width int64) ([]ThroughputSeries, error) {
 	instants, err := database.ReadRateSeries(ctx, window.From, window.To)
 	if err != nil {
 		return nil, err
 	}
-	byBucket := map[int64][]store.RateInstant{}
+	byBucket := map[int64][]samples.RateInstant{}
 	for _, instant := range instants {
-		start := instant.At - widget.FloorMod(instant.At, width)
+		start := instant.At - traffic.FloorMod(instant.At, width)
 		byBucket[start] = append(byBucket[start], instant)
 	}
 	keys := []string{SeriesOutbound, SeriesInbound, SeriesInterInterface, SeriesOutboundUnsplit}
 	series := make([]ThroughputSeries, 0, len(keys))
 	for _, key := range keys {
 		entry := ThroughputSeries{Key: key, Measure: measureSampled, Unit: unitBitsPerSecond,
-			SpanSeconds: store.SampleSeconds, CadenceSeconds: width, LowerBound: true,
+			SpanSeconds: vocab.SampleSeconds, CadenceSeconds: width, LowerBound: true,
 			Buckets: make([]ThroughputBucket, 0, len(buckets))}
 		for _, bucket := range buckets {
 			inside := byBucket[bucket.From]
@@ -237,12 +243,12 @@ func readThroughput(ctx context.Context, database *store.Store, window widget.In
 
 // readGaps reads the collection gaps of the two kinds the decisions count, and the intervals
 // opnview was not running.
-func readGaps(ctx context.Context, database *store.Store, window widget.Interval) ([]widget.Gap, error) {
-	gaps := []widget.Gap{}
-	err := database.WidgetRows(ctx, "widget_collection_gaps", store.Period{}, map[string]any{
-		"kinds": widget.JsonTexts([]string{kindFirewallLog, kindDNSLookup}), "from": window.From, "to": window.To,
-	}, func(row store.RowScanner) error {
-		var gap widget.Gap
+func readGaps(ctx context.Context, database *store.Store, window envelope.Interval) ([]envelope.Gap, error) {
+	gaps := []envelope.Gap{}
+	err := database.WidgetRows(ctx, "widget_collection_gaps", vocab.Period{}, map[string]any{
+		"kinds": request.JsonTexts([]string{kindFirewallLog, kindDNSLookup}), "from": window.From, "to": window.To,
+	}, func(row reads.RowScanner) error {
+		var gap envelope.Gap
 		if err := row.Scan(&gap.ProviderKind, &gap.ProviderKey, &gap.From, &gap.To, &gap.Reason); err != nil {
 			return err
 		}
@@ -257,7 +263,7 @@ func readGaps(ctx context.Context, database *store.Store, window widget.Interval
 		return nil, err
 	}
 	for _, interval := range notRunning {
-		gaps = append(gaps, widget.Gap{ProviderKind: gapKindOpnview, From: interval.From, To: interval.To,
+		gaps = append(gaps, envelope.Gap{ProviderKind: gapKindOpnview, From: interval.From, To: interval.To,
 			Reason: gapNotRunning})
 	}
 	return gaps, nil
@@ -265,7 +271,7 @@ func readGaps(ctx context.Context, database *store.Store, window widget.Interval
 
 // completeUntil is the instant a kind's records are complete up to: the oldest last healthy pass of
 // its active providers, never later than now. False when an active provider has none.
-func completeUntil(providers []widget.ProviderAvailability, kind string, now int64) (int64, bool) {
+func completeUntil(providers []envelope.ProviderAvailability, kind string, now int64) (int64, bool) {
 	until, found := int64(0), false
 	for _, provider := range providers {
 		if provider.Kind != kind || !provider.Active {
@@ -286,8 +292,8 @@ func completeUntil(providers []widget.ProviderAvailability, kind string, now int
 }
 
 // readDecisions counts the decisions of each kind per bucket.
-func readDecisions(ctx context.Context, database *store.Store, window widget.Interval, buckets []widget.Interval,
-	width, now int64, gaps []widget.Gap) ([]DecisionSeries, error) {
+func readDecisions(ctx context.Context, database *store.Store, window envelope.Interval, buckets []envelope.Interval,
+	width, now int64, gaps []envelope.Gap) ([]DecisionSeries, error) {
 	counts := map[string]map[int64]int64{}
 	add := func(series string, start, count int64) {
 		if counts[series] == nil {
@@ -296,8 +302,8 @@ func readDecisions(ctx context.Context, database *store.Store, window widget.Int
 		counts[series][start] += count
 	}
 	parameters := map[string]any{"width": width, "from": window.From, "to": window.To}
-	if err := database.WidgetRows(ctx, "widget_live_strip_allowed", store.Period{}, parameters,
-		func(row store.RowScanner) error {
+	if err := database.WidgetRows(ctx, "widget_live_strip_allowed", vocab.Period{}, parameters,
+		func(row reads.RowScanner) error {
 			var start, count int64
 			if err := row.Scan(&start, &count); err != nil {
 				return err
@@ -307,8 +313,8 @@ func readDecisions(ctx context.Context, database *store.Store, window widget.Int
 		}); err != nil {
 		return nil, err
 	}
-	if err := database.WidgetRows(ctx, "widget_live_strip_refusals", store.Period{}, parameters,
-		func(row store.RowScanner) error {
+	if err := database.WidgetRows(ctx, "widget_live_strip_refusals", vocab.Period{}, parameters,
+		func(row reads.RowScanner) error {
 			var (
 				start, count int64
 				engine       string
@@ -327,18 +333,18 @@ func readDecisions(ctx context.Context, database *store.Store, window widget.Int
 		}); err != nil {
 		return nil, err
 	}
-	var earliestFlow, earliestLookup store.NullInt64
-	if err := database.WidgetRows(ctx, "widget_live_strip_earliest", store.Period{}, nil,
-		func(row store.RowScanner) error { return row.Scan(&earliestFlow, &earliestLookup) }); err != nil {
+	var earliestFlow, earliestLookup reads.NullInt64
+	if err := database.WidgetRows(ctx, "widget_live_strip_earliest", vocab.Period{}, nil,
+		func(row reads.RowScanner) error { return row.Scan(&earliestFlow, &earliestLookup) }); err != nil {
 		return nil, err
 	}
-	providers, err := widget.ReadProviders(ctx, database)
+	providers, err := request.ReadProviders(ctx, database)
 	if err != nil {
 		return nil, err
 	}
 	definitions := []struct {
 		key, measure, kind string
-		earliest           store.NullInt64
+		earliest           reads.NullInt64
 	}{
 		{SeriesAllowed, measureLogged, kindFirewallLog, earliestFlow},
 		{SeriesFirewallRule, measureLogged, kindFirewallLog, earliestFlow},
@@ -351,20 +357,20 @@ func readDecisions(ctx context.Context, database *store.Store, window widget.Int
 		series := DecisionSeries{Key: definition.key, Measure: definition.measure, ProviderKind: definition.kind,
 			LowerBound: true, Buckets: make([]DecisionBucket, 0, len(buckets))}
 		until, complete := completeUntil(providers, definition.kind, now)
-		var covered *widget.Interval
+		var covered *envelope.Interval
 		if complete {
 			series.CompleteUntil = &until
 			if definition.earliest.Valid && definition.earliest.Int64 < until {
-				covered = &widget.Interval{From: definition.earliest.Int64, To: until}
+				covered = &envelope.Interval{From: definition.earliest.Int64, To: until}
 			}
 		}
 		kindGaps := gapsOf(gaps, definition.kind)
 		for _, bucket := range buckets {
 			cell := DecisionBucket{From: bucket.From, To: bucket.To}
 			count, counted := counts[definition.key][bucket.From]
-			if widget.IsGapBucket(bucket, covered, kindGaps) && !counted {
+			if traffic.IsGapBucket(bucket, covered, kindGaps) && !counted {
 				cell.Gap = true
-			} else if widget.IsGapBucket(bucket, covered, kindGaps) {
+			} else if traffic.IsGapBucket(bucket, covered, kindGaps) {
 				// Records exist in a bucket the collection did not cover whole: they are shown,
 				// and the bucket still says it is incomplete.
 				cell.Gap = true
@@ -382,8 +388,8 @@ func readDecisions(ctx context.Context, database *store.Store, window widget.Int
 }
 
 // gapsOf keeps the gaps of one kind and opnview's own absences.
-func gapsOf(gaps []widget.Gap, kind string) []widget.Gap {
-	var kept []widget.Gap
+func gapsOf(gaps []envelope.Gap, kind string) []envelope.Gap {
+	var kept []envelope.Gap
 	for _, gap := range gaps {
 		if gap.ProviderKind == kind || gap.ProviderKind == gapKindOpnview {
 			kept = append(kept, gap)

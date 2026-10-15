@@ -6,7 +6,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // The Sources surface's JSON equivalent (docs/widget-api.md, "Settings API"): every provider's
@@ -57,7 +57,7 @@ type ProviderState struct {
 	Probe      string  `json:"probe"`
 	Diagnostic *string `json:"detail"`
 	// Since bounds when the current state began: never an exact instant.
-	Since widget.StateSince `json:"since"`
+	Since request.StateSince `json:"since"`
 	// OPNsensePages are, for a provider installed and not collecting, the OPNsense pages that turn
 	// it on, on the configured firewall. opnview never makes that change.
 	OPNsensePages []OPNsensePage `json:"opnsense_pages"`
@@ -94,7 +94,7 @@ func (s *surface) sourcesAnswer(ctx context.Context) (SourcesAnswer, error) {
 	if err != nil {
 		return answer, err
 	}
-	since, err := widget.ReadAvailabilitySince(ctx, s.store)
+	since, err := request.ReadAvailabilitySince(ctx, s.store)
 	if err != nil {
 		return answer, err
 	}
@@ -122,7 +122,7 @@ func (s *surface) sourcesAnswer(ctx context.Context) (SourcesAnswer, error) {
 		drawn := ProviderState{Kind: row.Kind, ProviderKey: row.ProviderKey, DisplayName: row.DisplayName,
 			Availability: web.ConditionOf(availability), Active: row.IsActive,
 			Selection: string(status.selection), InOutage: counted[index], Probe: row.Probe,
-			Since: since[widget.SinceKey(row.Kind, row.ProviderKey)], OPNsensePages: []OPNsensePage{}}
+			Since: since[request.SinceKey(row.Kind, row.ProviderKey)], OPNsensePages: []OPNsensePage{}}
 		if row.HasAvailability {
 			outcome := string(row.Outcome)
 			drawn.Outcome = &outcome

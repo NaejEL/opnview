@@ -5,6 +5,10 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // TestTheLexerCountsStatementsOnTokensNotSubstrings: a semicolon inside a string literal, a
@@ -33,11 +37,11 @@ func TestTheLexerCountsStatementsOnTokensNotSubstrings(t *testing.T) {
 		{"leading delete", "DELETE FROM t", "DELETE", 1, nil},
 	}
 	for _, c := range cases {
-		got := lexSQL(c.text)
-		if got.statements != c.statements || got.firstWord != c.first ||
-			strings.Join(got.parameters, ",") != strings.Join(c.parameters, ",") {
-			t.Errorf("%s: statements %d first %q parameters %v, want %d %q %v", c.name, got.statements,
-				got.firstWord, got.parameters, c.statements, c.first, c.parameters)
+		got := sqldb.LexSQL(c.text)
+		if got.Statements != c.statements || got.FirstWord != c.first ||
+			strings.Join(got.Parameters, ",") != strings.Join(c.parameters, ",") {
+			t.Errorf("%s: statements %d first %q parameters %v, want %d %q %v", c.name, got.Statements,
+				got.FirstWord, got.Parameters, c.statements, c.first, c.parameters)
 		}
 	}
 }
@@ -53,24 +57,24 @@ func TestCheckQueryRefusesWhatIsNotOneReadOnlyStatementUnderItsOwnKind(t *testin
 	cases := []struct {
 		name, text, kind string
 	}{
-		{"empty", "-- nothing", QueryEmpty},
-		{"two statements", "SELECT 1 AS value; SELECT 2 AS value", QueryMultipleStatements},
-		{"hidden statement", "SELECT 1 AS value; /* x */ DELETE FROM setting", QueryMultipleStatements},
-		{"delete", "DELETE FROM setting", QueryNotReadOnly},
-		{"insert", "INSERT INTO setting (key, value, updated_at) VALUES ('a', 'b', 1)", QueryNotReadOnly},
-		{"pragma", "PRAGMA query_only = 0", QueryNotReadOnly},
-		{"attach", "ATTACH DATABASE ':memory:' AS other", QueryNotReadOnly},
+		{"empty", "-- nothing", sqldb.QueryEmpty},
+		{"two statements", "SELECT 1 AS value; SELECT 2 AS value", sqldb.QueryMultipleStatements},
+		{"hidden statement", "SELECT 1 AS value; /* x */ DELETE FROM setting", sqldb.QueryMultipleStatements},
+		{"delete", "DELETE FROM setting", sqldb.QueryNotReadOnly},
+		{"insert", "INSERT INTO setting (key, value, updated_at) VALUES ('a', 'b', 1)", sqldb.QueryNotReadOnly},
+		{"pragma", "PRAGMA query_only = 0", sqldb.QueryNotReadOnly},
+		{"attach", "ATTACH DATABASE ':memory:' AS other", sqldb.QueryNotReadOnly},
 		{"with insert", "WITH s(a) AS (SELECT 1) INSERT INTO setting (key, value, updated_at) SELECT 'a', 'b', a FROM s",
-			QueryNotReadOnly},
-		{"with delete", "WITH s(k) AS (SELECT key FROM setting) DELETE FROM setting WHERE key IN s", QueryNotReadOnly},
-		{"unbound parameter", "SELECT :other AS value", QueryUnboundParameter},
-		{"positional parameter", "SELECT ? AS value", QueryUnboundParameter},
-		{"does not plan", "SELECT no_such_column AS value FROM setting", QueryDoesNotPlan},
-		{"syntax", "SELECT FROM WHERE", QueryDoesNotPlan},
+			sqldb.QueryNotReadOnly},
+		{"with delete", "WITH s(k) AS (SELECT key FROM setting) DELETE FROM setting WHERE key IN s", sqldb.QueryNotReadOnly},
+		{"unbound parameter", "SELECT :other AS value", sqldb.QueryUnboundParameter},
+		{"positional parameter", "SELECT ? AS value", sqldb.QueryUnboundParameter},
+		{"does not plan", "SELECT no_such_column AS value FROM setting", sqldb.QueryDoesNotPlan},
+		{"syntax", "SELECT FROM WHERE", sqldb.QueryDoesNotPlan},
 	}
 	for _, c := range cases {
 		_, err := database.CheckQuery(ctx, c.text, allowed)
-		var problem *QueryProblem
+		var problem *sqldb.QueryProblem
 		if !errors.As(err, &problem) {
 			t.Errorf("%s: want a %s refusal, got %v", c.name, c.kind, err)
 			continue
@@ -110,24 +114,24 @@ func TestCheckQueryAcceptsAReadAndReportsItsColumnsAndParameters(t *testing.T) {
 }
 
 // TestTheReadConnectionsRefuseAWriteWhateverTheCheckDid is the last line of defence: a text that
-// reached the registry WITHOUT the check -- registered directly -- still cannot write, because
-// the connections it runs on log in as the read role, in read-only transactions (readers.go), and
-// PostgreSQL itself refuses.
+// reached the registry WITHOUT the check -- registered directly -- still cannot write, because the
+// connections it runs on log in as the read role, in read-only transactions
+// (internal/store/sqldb/readers.go), and PostgreSQL itself refuses.
 func TestTheReadConnectionsRefuseAWriteWhateverTheCheckDid(t *testing.T) {
 	// Not parallel: it registers a statement in the process-wide registry, which the tests that
 	// enumerate the statements must not meet, and it withdraws it before the parallel tests run.
-	t.Cleanup(func() { UnregisterOwner("test") })
+	t.Cleanup(func() { sqldb.UnregisterOwner("test") })
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	const name = "widget_x_unchecked_delete"
-	if err := RegisterQuery("test", name, "DELETE FROM setting"); err != nil {
+	if err := sqldb.RegisterQuery("test", name, "DELETE FROM setting"); err != nil {
 		t.Fatal(err)
 	}
 	var before, after int64
 	if err := database.DB().QueryRowContext(ctx, `SELECT count(*) FROM setting`).Scan(&before); err != nil {
 		t.Fatal(err)
 	}
-	err := database.WidgetRows(ctx, name, Period{}, nil, func(RowScanner) error { return nil })
+	err := database.WidgetRows(ctx, name, vocab.Period{}, nil, func(reads.RowScanner) error { return nil })
 	if err == nil {
 		t.Fatal("a DELETE ran on the read connections")
 	}
@@ -146,19 +150,19 @@ func TestTheReadConnectionsRefuseAWriteWhateverTheCheckDid(t *testing.T) {
 
 // TestRegisterQueryRefusesAnAlreadyRegisteredName and withdraws an owner's statements.
 func TestRegisterQueryRefusesAnAlreadyRegisteredNameAndUnregistersAnOwner(t *testing.T) {
-	t.Cleanup(func() { UnregisterOwner("first"); UnregisterOwner("second") })
+	t.Cleanup(func() { sqldb.UnregisterOwner("first"); sqldb.UnregisterOwner("second") })
 	const name = "widget_x_twice"
-	if err := RegisterQuery("first", name, "SELECT 1"); err != nil {
+	if err := sqldb.RegisterQuery("first", name, "SELECT 1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := RegisterQuery("second", name, "SELECT 2"); err == nil {
+	if err := sqldb.RegisterQuery("second", name, "SELECT 2"); err == nil {
 		t.Error("a name was registered twice")
 	}
-	if got, _ := Statement(name); got != "SELECT 1" {
+	if got, _ := sqldb.Statement(name); got != "SELECT 1" {
 		t.Errorf("the first registration was replaced: %q", got)
 	}
-	UnregisterOwner("first")
-	if _, err := Statement(name); err == nil {
+	sqldb.UnregisterOwner("first")
+	if _, err := sqldb.Statement(name); err == nil {
 		t.Error("the owner's statement survived its withdrawal")
 	}
 }

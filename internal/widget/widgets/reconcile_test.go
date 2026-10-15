@@ -1,15 +1,18 @@
 package widgets
 
 import (
-	"github.com/NaejEL/opnview/internal/widget"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/figures"
+	"github.com/NaejEL/opnview/internal/widget/shapes"
 )
 
 // AC11 and AC12: reconciliation, and remainders that make every total whole.
 
 // windowTotal is the logged bytes of the fixture's window over classified_flow, each
 // connection once.
-func (f *fixture) windowTotal(t *testing.T, window widget.Interval, extra string) (int64, int64) {
+func (f *fixture) windowTotal(t *testing.T, window envelope.Interval, extra string) (int64, int64) {
 	t.Helper()
 	var bytes, connections int64
 	row := f.db.DB().QueryRow(`SELECT coalesce(sum(packet_bytes), 0), count(*) FROM classified_flow
@@ -43,7 +46,7 @@ func TestEveryReconciliationCountsAPairedConnectionOnce(t *testing.T) {
 			cells.Total.Bytes, bytes)
 	}
 
-	mapped := decodeData[widget.MapData](t, f.respond(t, "passed_traffic_world_map", map[string]any{"period": "24h", "scope": "all"}))
+	mapped := decodeData[shapes.MapData](t, f.respond(t, "passed_traffic_world_map", map[string]any{"period": "24h", "scope": "all"}))
 	allowed, _ := f.windowTotal(t, window, "AND action = 'pass'")
 	var placed int64
 	for _, point := range mapped.Points {
@@ -58,7 +61,7 @@ func TestEveryReconciliationCountsAPairedConnectionOnce(t *testing.T) {
 	if placed+mapped.BelowMinimum.Volume.Bytes+unplaced != allowed || mapped.Total.Bytes != allowed {
 		t.Errorf("the map places %d and leaves %d unplaced, the allowed flows hold %d", placed, unplaced, allowed)
 	}
-	for _, reason := range []string{widget.UnplacedMiss, widget.UnplacedPending, widget.UnplacedNoRow, widget.UnplacedNoCoordinates} {
+	for _, reason := range []string{figures.UnplacedMiss, figures.UnplacedPending, figures.UnplacedNoRow, figures.UnplacedNoCoordinates} {
 		if !reasons[reason] {
 			t.Errorf("the unplaced bin %s is absent", reason)
 		}

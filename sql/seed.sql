@@ -727,7 +727,7 @@ SELECT
     CASE WHEN kind IN ('inbound', 'outside') THEN 'in'
          WHEN i % 2 = 0 THEN 'in' ELSE 'out' END,
     -- The reason the record was logged, from the established set
-    -- (internal/store/rows.go, LogReasons; survey, "The `reason` field's
+    -- (internal/store/vocab/rows.go, LogReasons; survey, "The `reason` field's
     -- values, read for step 5"): `match` when a rule decided, and one of the
     -- drops no rule expresses on the records whose rid matches no rule.
     -- One record in nineteen carries no reason at all, which blocked_decision

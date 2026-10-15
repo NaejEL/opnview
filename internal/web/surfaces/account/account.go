@@ -7,7 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/NaejEL/opnview/internal/auth"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -71,7 +71,7 @@ func (s *surface) handleSetupSubmit(writer http.ResponseWriter, request *http.Re
 		return
 	}
 	accountID, err := s.store.CreateAccount(request.Context(), login, hashed, s.now().UTC().Unix())
-	if errors.Is(err, store.ErrAccountExists) {
+	if errors.Is(err, accounts.ErrAccountExists) {
 		s.RefuseSetupClosed(writer, request)
 		return
 	}

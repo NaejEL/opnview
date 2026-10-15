@@ -3,8 +3,17 @@ package widgetapi_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/collect"
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
@@ -13,14 +22,9 @@ import (
 	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
 	"github.com/NaejEL/opnview/internal/widget"
-	"net/http"
-	"net/url"
-	"os"
-	"strings"
-	"sync"
-	"testing"
-	"time"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
 )
 
 // widgetPath is one type's path with a parameters object.
@@ -107,7 +111,7 @@ func TestAnUnauthenticatedWidgetRequestGetsA401ConditionAndNoData(t *testing.T) 
 
 	// A signed-in reader whose session then expires.
 	answer = harness.Get(path)
-	webtest.AssertStatus(t, answer, http.StatusOK)
+	accounttest.AssertStatus(t, answer, http.StatusOK)
 	harness.Clock.Advance(auth.DefaultLifetimes().Absolute + auth.DefaultLifetimes().Idle)
 	answer = harness.Get(path)
 	condition, body = decodeCondition(t, answer, http.StatusUnauthorized)
@@ -130,14 +134,14 @@ func TestUnknownTypesMalformedParametersAndUnknownKeysOverHTTP(t *testing.T) {
 	harness.CompleteSetup()
 	for _, unknown := range []string{"client_activity_timeline", "alerts_by_signature", "no_such_widget"} {
 		answer := harness.Get(widget.PathPrefix + unknown)
-		if condition, _ := decodeCondition(t, answer, http.StatusNotFound); condition != widget.ConditionUnknownWidgetType {
+		if condition, _ := decodeCondition(t, answer, http.StatusNotFound); condition != envelope.ConditionUnknownWidgetType {
 			t.Errorf("%s answered %q", unknown, condition)
 		}
 	}
 	for _, malformed := range []string{"{", "[1,2]", "\"text\"", "{} trailing"} {
 		answer := harness.Get(widget.PathPrefix + "interface_traffic_matrix?" + widget.ParametersQueryKey + "=" +
 			url.QueryEscape(malformed))
-		if condition, _ := decodeCondition(t, answer, http.StatusBadRequest); condition != widget.ConditionMalformedParameters {
+		if condition, _ := decodeCondition(t, answer, http.StatusBadRequest); condition != envelope.ConditionMalformedParameters {
 			t.Errorf("%q answered %q", malformed, condition)
 		}
 	}
@@ -185,7 +189,7 @@ func pluginCollector(t *testing.T, client *opnsense.Client, database *store.Stor
 	if refusals := loaded.Refusals(); len(refusals) != 0 {
 		t.Fatalf("a built-in plugin was refused: %v", refusals)
 	}
-	return loaded, collect.NewWithSources(client, database, collect.SystemClock{}, loaded.Set)
+	return loaded, collect.NewWithSources(client, database, core.SystemClock{}, loaded.Set)
 }
 
 // TestServingEveryServedTypeMakesNoOutboundRequest is AC16 over the product's own server,

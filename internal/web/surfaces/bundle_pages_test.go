@@ -1,11 +1,6 @@
 package surfaces_test
 
 import (
-	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
-	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store"
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -13,6 +8,17 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
+	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
+	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
+	"github.com/NaejEL/opnview/internal/web/webtest/interfacestest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
+	"github.com/NaejEL/opnview/internal/web/webtest/sourcestest"
 )
 
 var datumSpan = regexp.MustCompile(`<span class="datum" translate="no">[^<]*</span>`)
@@ -42,29 +48,29 @@ func bundlePages(t *testing.T) []webtest.RenderedPage {
 
 	// A fresh installation: no interface, every source not yet probed, no gap, no
 	// outage, the list never refreshed.
-	fresh := webtest.SignedInHarness(t)
+	fresh := collectiontest.SignedInHarness(t)
 	pages = append(pages,
 		webtest.RenderedPage{Name: "the Interfaces surface with no interface", Document: webtest.PageSource(t, fresh, webtest.PathInterfaces)},
 		webtest.RenderedPage{Name: "the Sources surface on a fresh installation", Document: webtest.PageSource(t, fresh, webtest.PathSources)},
 		webtest.RenderedPage{Name: "the settings surface with the list never refreshed", Document: webtest.PageSource(t, fresh, web.PathSettings)})
 
 	// Interfaces in every state.
-	h := webtest.SignedInHarness(t)
-	network := h.SeedBundleNetwork(3)
+	h := collectiontest.SignedInHarness(t)
+	network := interfacestest.SeedBundleNetwork(h, 3)
 	id := network.Inside[0]
 	saved := func(name string, form url.Values, interfaceID int64) {
 		t.Helper()
-		pages = append(pages, webtest.RenderedPage{Name: name, Document: h.SavedEdit(form, interfaceID)})
+		pages = append(pages, webtest.RenderedPage{Name: name, Document: interfacestest.SavedEdit(h, form, interfaceID)})
 	}
 	saved("the Interfaces surface after a network confirmed",
-		webtest.NetworkForm(webtest.ActionConfirmNetwork, id, webtest.ExampleNetworkV4(0).String()), id)
+		interfacestest.NetworkForm(webtest.ActionConfirmNetwork, id, interfacestest.ExampleNetworkV4(0).String()), id)
 	saved("the Interfaces surface after a network removed",
-		webtest.NetworkForm(webtest.ActionRemoveNetwork, id, webtest.ExampleNetworkV6(0).String()), id)
+		interfacestest.NetworkForm(webtest.ActionRemoveNetwork, id, interfacestest.ExampleNetworkV6(0).String()), id)
 	saved("the Interfaces surface after an overlapping network added",
-		webtest.NetworkForm(webtest.ActionAddNetwork, network.Inside[1], webtest.ExampleWideV4().String()), network.Inside[1])
+		interfacestest.NetworkForm(webtest.ActionAddNetwork, network.Inside[1], interfacestest.ExampleWideV4().String()), network.Inside[1])
 	// A detection discovery no longer reports: the third interface's first two.
 	if err := h.Store.DetectNetworks(t.Context(), network.Inside[2],
-		[]netip.Prefix{webtest.ExampleNetworkV4(9)}, h.Clock.Now().Unix()+60); err != nil {
+		[]netip.Prefix{interfacestest.ExampleNetworkV4(9)}, h.Clock.Now().Unix()+60); err != nil {
 		t.Fatalf("recording a later detection: %v", err)
 	}
 	pages = append(pages, webtest.RenderedPage{Name: "the Interfaces surface with a stale detection", Document: webtest.PageSource(t, h, webtest.PathInterfaces)})
@@ -78,23 +84,23 @@ func bundlePages(t *testing.T) []webtest.RenderedPage {
 		"link-local":    netip.PrefixFrom(netip.AddrFrom16(linkLocal), 64).String(),
 	} {
 		add("the Interfaces surface refusing a "+name+" network", h.Post(webtest.PathInterfaces,
-			webtest.NetworkForm(webtest.ActionAddNetwork, id, typed)))
+			interfacestest.NetworkForm(webtest.ActionAddNetwork, id, typed)))
 	}
 	add("the Interfaces surface refusing an upstream interface", h.Post(webtest.PathInterfaces,
-		webtest.NetworkForm(webtest.ActionAddNetwork, network.Upstream, webtest.ExampleOperatorV4(1).String())))
+		interfacestest.NetworkForm(webtest.ActionAddNetwork, network.Upstream, interfacestest.ExampleOperatorV4(1).String())))
 	add("the Interfaces surface refusing an unknown interface", h.Post(webtest.PathInterfaces,
-		webtest.NetworkForm(webtest.ActionAddNetwork, network.Upstream+network.Inside[2]+100, webtest.ExampleOperatorV4(1).String())))
+		interfacestest.NetworkForm(webtest.ActionAddNetwork, network.Upstream+network.Inside[2]+100, interfacestest.ExampleOperatorV4(1).String())))
 	add("the Interfaces surface refusing a network it does not carry", h.Post(webtest.PathInterfaces,
-		webtest.NetworkForm(webtest.ActionRemoveNetwork, id, webtest.ExampleOperatorV4(2).String())))
+		interfacestest.NetworkForm(webtest.ActionRemoveNetwork, id, interfacestest.ExampleOperatorV4(2).String())))
 	add("the Interfaces surface refusing an unknown edit", h.Post(webtest.PathInterfaces,
-		webtest.NetworkForm("rename", id, webtest.ExampleOperatorV4(2).String())))
+		interfacestest.NetworkForm("rename", id, interfacestest.ExampleOperatorV4(2).String())))
 	add("the Interfaces surface refusing a link-local rule that is neither", h.Post(webtest.PathInterfaces,
 		url.Values{webtest.FieldNetworkAction: {webtest.ActionLinkLocal}, webtest.FieldInterfaceID: {strconv.FormatInt(id, 10)},
 			webtest.FieldLinkLocal: {"maybe"}}))
 	saved("the Interfaces surface after the link-local rule set",
 		url.Values{webtest.FieldNetworkAction: {webtest.ActionLinkLocal}, webtest.FieldInterfaceID: {strconv.FormatInt(id, 10)},
 			webtest.FieldLinkLocal: {webtest.LinkLocalYes}}, id)
-	if _, err := h.Store.UpsertInterface(t.Context(), store.Interface{
+	if _, err := h.Store.UpsertInterface(t.Context(), vocab.Interface{
 		Identifier: "example_bare", Device: "exbare0", Description: "bare.example",
 		LinkType: "example-link", LinkKind: "other",
 	}, h.Clock.Now().Unix()); err != nil {
@@ -103,28 +109,28 @@ func bundlePages(t *testing.T) []webtest.RenderedPage {
 	pages = append(pages, webtest.RenderedPage{Name: "the Interfaces surface with a networkless interface", Document: webtest.PageSource(t, h, webtest.PathInterfaces)})
 
 	// Sources in every condition, with gaps of every reason and outages.
-	s := webtest.SignedInHarness(t)
+	s := collectiontest.SignedInHarness(t)
 	detail401, detail403 := "HTTP 401 from the example endpoint", "HTTP 403 from the example endpoint"
-	s.SetAvailabilityDetail("firewall_log", "pf", store.StateReachable, "GET /example/log", nil)
-	s.SetAvailabilityDetail("security_event", "suricata", store.StatePresentButDisabled, "GET /example/ids", nil)
-	s.SetAvailabilityDetail("dhcp_lease", "kea", store.StateUnavailable, "GET /example/kea", &detail401)
-	s.SetAvailabilityDetail("dhcp_lease", "isc", store.StateUnavailable, "GET /example/isc", &detail403)
-	s.DropAvailability("dhcp_lease", "dnsmasq")
+	sourcestest.SetAvailabilityDetail(s, "firewall_log", "pf", vocab.StateReachable, "GET /example/log", nil)
+	sourcestest.SetAvailabilityDetail(s, "security_event", "suricata", vocab.StatePresentButDisabled, "GET /example/ids", nil)
+	sourcestest.SetAvailabilityDetail(s, "dhcp_lease", "kea", vocab.StateUnavailable, "GET /example/kea", &detail401)
+	sourcestest.SetAvailabilityDetail(s, "dhcp_lease", "isc", vocab.StateUnavailable, "GET /example/isc", &detail403)
+	sourcestest.DropAvailability(s, "dhcp_lease", "dnsmasq")
 	// A provider turned on and failing beside a healthy implementation of its kind.
-	s.SetAvailabilityDetail("dns_lookup", "unbound", store.StateReachable, "GET /example/dns", nil)
-	s.SetAvailabilityDetail("dns_lookup", "dnsmasq", store.StateUnavailable, "GET /example/dnsmasq", nil)
-	s.SetSelection("dns_lookup", "dnsmasq", config.SelectionOn)
+	sourcestest.SetAvailabilityDetail(s, "dns_lookup", "unbound", vocab.StateReachable, "GET /example/dns", nil)
+	sourcestest.SetAvailabilityDetail(s, "dns_lookup", "dnsmasq", vocab.StateUnavailable, "GET /example/dnsmasq", nil)
+	collectiontest.SetSelection(s, "dns_lookup", "dnsmasq", config.SelectionOn)
 	now := s.Clock.Now().Unix()
-	for index, reason := range webtest.GapReasonsOfSchema(t, s) {
+	for index, reason := range sourcestest.GapReasonsOfSchema(t, s) {
 		start := now - int64(600*(index+1))
 		// Gaps of every length a duration is spelled in: one of each unit.
-		s.RecordGap("registrable_domain", "public_suffix_list", store.GapReason(reason), start-90061, start)
+		collectiontest.RecordGap(s, "registrable_domain", "public_suffix_list", vocab.GapReason(reason), start-90061, start)
 	}
 	pages = append(pages, webtest.RenderedPage{Name: "the Sources surface in every condition", Document: webtest.PageSource(t, s, webtest.PathSources)})
 
 	// Every provider installed and not collecting that an OPNsense page turns on, with
 	// a firewall URL configured, so each page's link is drawn.
-	l := webtest.SignedInHarness(t)
+	l := collectiontest.SignedInHarness(t)
 	if err := l.Store.SetSetting(t.Context(), config.KeyOPNsenseBaseURL, webtest.ReviewFirewallURL,
 		l.Clock.Now().Unix()); err != nil {
 		t.Fatalf("storing the firewall URL: %v", err)
@@ -132,12 +138,12 @@ func bundlePages(t *testing.T) []webtest.RenderedPage {
 	for _, row := range [][2]string{{"security_event", "suricata"}, {"dhcp_lease", "kea"},
 		{"dhcp_lease", "dnsmasq"}, {"dns_lookup", "unbound"}, {"resolver_cache", "unbound"},
 		{"measurement_sample", "insight"}} {
-		l.SetAvailabilityDetail(row[0], row[1], store.StatePresentButDisabled, "GET /example/status", nil)
+		sourcestest.SetAvailabilityDetail(l, row[0], row[1], vocab.StatePresentButDisabled, "GET /example/status", nil)
 	}
 	pages = append(pages, webtest.RenderedPage{Name: "the Sources surface with installed sources not collecting", Document: webtest.PageSource(t, l, webtest.PathSources)})
 
 	// The collection surface's settings cards, saved, refused and confirming.
-	c := webtest.SignedInHarness(t)
+	c := collectiontest.SignedInHarness(t)
 	addFollowed("the collection surface with a resolver interval saved", c, c.Post(webtest.PathCollectionSettings,
 		url.Values{webtest.FieldCard: {"resolver_cache"}, webtest.CardFieldName("resolver_cache", webtest.FieldInterval): {"90"}}))
 	add("the collection surface with a resolver interval refused", c.Post(webtest.PathCollectionSettings,
@@ -168,7 +174,7 @@ func bundlePages(t *testing.T) []webtest.RenderedPage {
 			config.KeyAggregateMode: {"full"}}))
 	add("the collection surface with a unit that does not exist", c.Post(webtest.PathCollectionSettings,
 		url.Values{webtest.FieldCard: {"attribution"}, config.KeyAttributionMaxDelay: {"7"},
-			web.UnitFieldName(config.KeyAttributionMaxDelay): {"fortnights"}, config.KeyCacheAnswerDelay: {"1800"}}))
+			settingfields.UnitFieldName(config.KeyAttributionMaxDelay): {"fortnights"}, config.KeyCacheAnswerDelay: {"1800"}}))
 	add("the collection surface with an edit kept beside a save", c.Post(webtest.PathCollectionSettings,
 		url.Values{webtest.FieldCard: {"attribution"}, config.KeyAttributionMaxDelay: {"7"},
 			config.KeyCacheAnswerDelay: {"1800"}, config.KeyLeaseBackendFailurePassLimit: {"9"}}))
@@ -176,10 +182,10 @@ func bundlePages(t *testing.T) []webtest.RenderedPage {
 		url.Values{config.KeyLeaseBackendFailurePassLimit: {"9"}}))
 
 	// The Public Suffix List card in every outcome, with a copy held and without.
-	p := webtest.SignedInHarness(t)
+	p := collectiontest.SignedInHarness(t)
 	for _, probe := range []string{registrabledomain.ProbeDownloaded, registrabledomain.ProbeNotModified,
 		registrabledomain.ProbeFailed, registrabledomain.ProbeMalformed} {
-		p.SetPublicSuffixProbe(store.StateReachable, probe, nil)
+		settingstest.SetPublicSuffixProbe(p, vocab.StateReachable, probe, nil)
 		pages = append(pages, webtest.RenderedPage{Name: "the settings surface after a " + probe + " refresh", Document: webtest.PageSource(t, p, web.PathSettings)})
 		if probe == registrabledomain.ProbeNotModified {
 			p.Suffix.Hold("2026-10-09_08-15-00_UTC", 9876, now-600)
@@ -197,7 +203,7 @@ func bundlePages(t *testing.T) []webtest.RenderedPage {
 		url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix}, webtest.FieldPublicSuffixInterval: {"daily"}}))
 
 	// The indicator whose read failed: its own named state, on a page still drawn.
-	u := webtest.SignedInHarness(t)
+	u := collectiontest.SignedInHarness(t)
 	if _, err := u.Store.DB().Exec("DROP TABLE source_availability"); err != nil {
 		t.Fatalf("dropping the availability table: %v", err)
 	}

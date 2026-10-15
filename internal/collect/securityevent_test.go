@@ -5,8 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The security-event collector tests.
@@ -151,7 +153,7 @@ func TestARotationThatDiscardedAWatermarkedFileIsRecordedAsLostAndAsAGap(t *test
 	// A watermark in a file the firewall no longer lists. get_alert_logs enumerates
 	// sequences 1, 2 and 3, so a watermark in file 0 is one rotation has discarded.
 	sequence := int64(0)
-	if err := harness.store.UpsertEveCursor(ctx, store.EveCursor{
+	if err := harness.store.UpsertEveCursor(ctx, vocab.EveCursor{
 		FileID: "0", ByteOffset: 4096, FileSequence: &sequence,
 		RotationState: "rotated", ObservedAt: referenceEpoch() - 604800,
 	}); err != nil {
@@ -175,14 +177,14 @@ func TestARotationThatDiscardedAWatermarkedFileIsRecordedAsLostAndAsAGap(t *test
 	}
 
 	gaps := scalarCount(t, harness.store,
-		"SELECT count(*) FROM collection_gap WHERE reason = ?", string(store.GapEveRotationLost))
+		"SELECT count(*) FROM collection_gap WHERE reason = ?", string(vocab.GapEveRotationLost))
 	if gaps != 1 {
 		t.Fatalf("the rotation wrote %d gap rows, want exactly one", gaps)
 	}
 	var detail *string
 	if err := harness.store.DB().QueryRowContext(ctx,
 		"SELECT detail FROM collection_gap WHERE reason = ?",
-		string(store.GapEveRotationLost)).Scan(&detail); err != nil {
+		string(vocab.GapEveRotationLost)).Scan(&detail); err != nil {
 		t.Fatalf("reading the gap back: %v", err)
 	}
 	if detail == nil || !strings.Contains(*detail, "gone") {
@@ -196,7 +198,7 @@ func TestARotationThatDiscardedAWatermarkedFileIsRecordedAsLostAndAsAGap(t *test
 	}
 	if repeated := scalarCount(t, harness.store,
 		"SELECT count(*) FROM collection_gap WHERE reason = ?",
-		string(store.GapEveRotationLost)); repeated != 1 {
+		string(vocab.GapEveRotationLost)); repeated != 1 {
 		t.Fatalf("a second pass left %d gap rows for one loss", repeated)
 	}
 }
@@ -212,7 +214,7 @@ func TestAnUnreadableRotationListConcludesNoLoss(t *testing.T) {
 	ctx := context.Background()
 
 	sequence := int64(0)
-	if err := harness.store.UpsertEveCursor(ctx, store.EveCursor{
+	if err := harness.store.UpsertEveCursor(ctx, vocab.EveCursor{
 		FileID: "0", ByteOffset: 4096, FileSequence: &sequence,
 		RotationState: "rotated", ObservedAt: referenceEpoch() - 604800,
 	}); err != nil {
@@ -250,11 +252,11 @@ func TestAnEmptyAlertFeedFromARunningEngineStaysReachable(t *testing.T) {
 	if err := harness.collector.CollectSecurityEvent(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	state, _, _ := harness.availabilityOf(t, KindSecurityEvent, ProviderSuricata)
-	if state != store.StateReachable {
+	state, _, _ := harness.availabilityOf(t, core.KindSecurityEvent, ProviderSuricata)
+	if state != vocab.StateReachable {
 		t.Fatalf("a running engine with nothing to report reads %q", state)
 	}
-	detail := harness.detailOf(t, KindSecurityEvent, ProviderSuricata)
+	detail := harness.detailOf(t, core.KindSecurityEvent, ProviderSuricata)
 	if !strings.Contains(detail, "not a fault") {
 		t.Errorf("the detail is %q, which does not record that silence here is a true reading",
 			detail)

@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The write-path tests. Each one is a guarantee the model rests on, exercised against a
@@ -58,7 +61,7 @@ func TestIngestingTheSameSecurityEventTwiceProducesTheSameCount(t *testing.T) {
 		t.Fatalf("looking up the provider: %v", err)
 	}
 
-	event := SecurityEvent{
+	event := vocab.SecurityEvent{
 		ProviderEventKey: "3:8192",
 		OccurredAt:       1750000000,
 		IngestedAt:       1750000030,
@@ -194,7 +197,7 @@ func TestOnlyTheDerivationWritesThePairVolumeTable(t *testing.T) {
 
 	// And the derivation really is a writer, so the guard is not passing on a table nothing
 	// writes.
-	text, err := Statement("insert_pair_volume")
+	text, err := sqldb.Statement("insert_pair_volume")
 	if err != nil || !strings.Contains(strings.ToLower(text), "insert into pair_volume_observation") {
 		t.Error("the derivation statement insert_pair_volume does not write the table")
 	}
@@ -217,12 +220,12 @@ func TestThePairVolumeGuardHasTeeth(t *testing.T) {
 			t.Errorf("the guard admits a writer in another SQL file: %q", writer)
 		}
 	}
-	derivation, _ := ownStatements.ReadFile("pairvolume.statements.sql")
-	if offenders := pairVolumeWriters("../../internal/store/pairvolume.statements.sql", string(derivation)); len(offenders) != 0 {
+	derivation, _ := os.ReadFile(filepath.Join("aggregates", "pairvolume.statements.sql"))
+	if offenders := pairVolumeWriters("../../internal/store/aggregates/pairvolume.statements.sql", string(derivation)); len(offenders) != 0 {
 		t.Errorf("the guard refuses the derivation itself: %v", offenders)
 	}
-	purge, _ := sqlFiles.ReadFile("purge.sql")
-	if offenders := pairVolumeWriters("../../internal/store/purge.sql", string(purge)); len(offenders) != 0 {
+	purge, _ := os.ReadFile(filepath.Join("purge", "purge.sql"))
+	if offenders := pairVolumeWriters("../../internal/store/purge/purge.sql", string(purge)); len(offenders) != 0 {
 		t.Errorf("the guard refuses the retention purge: %v", offenders)
 	}
 }
@@ -230,8 +233,8 @@ func TestThePairVolumeGuardHasTeeth(t *testing.T) {
 // pairVolumeWriters returns the writing statements one file holds against the derived
 // table, unless the file is the derivation or the retention purge.
 func pairVolumeWriters(path, source string) []string {
-	if strings.HasSuffix(path, "/internal/store/pairvolume.statements.sql") ||
-		strings.HasSuffix(path, "/internal/store/purge.sql") {
+	if strings.HasSuffix(path, "/internal/store/aggregates/pairvolume.statements.sql") ||
+		strings.HasSuffix(path, "/internal/store/purge/purge.sql") {
 		return nil
 	}
 	// The characters and qualifiers a Go source file can put between a verb and its table,
@@ -304,8 +307,8 @@ func TestAFlowWhoseJoinKeysResolveToNothingIsStoredWithItsState(t *testing.T) {
 	ctx := context.Background()
 
 	unmapped := exampleFlow(100)
-	unmapped.InterfaceLookupState = LookupNotFound
-	unmapped.RuleLookupState = LookupNotFound
+	unmapped.InterfaceLookupState = vocab.LookupNotFound
+	unmapped.RuleLookupState = vocab.LookupNotFound
 	rid := "example-rid-that-matches-no-rule"
 	unmapped.Rid = &rid
 	if err := database.InsertFlow(ctx, unmapped); err != nil {
@@ -347,28 +350,28 @@ func TestAMeasurementOfEachKindRoundTrips(t *testing.T) {
 		t.Fatalf("looking up the provider: %v", err)
 	}
 
-	samples := []MeasurementSample{
+	samples := []vocab.MeasurementSample{
 		{
 			// The firewall-health half. provider_id is NULL: the firewall's own
 			// telemetry implements no external contract.
-			SubjectKind: SubjectFirewall, SubjectKey: "", Measure: MeasureUptimeSeconds,
-			Unit: UnitSecond, Value: 987654, SampledAt: 1750000000,
+			SubjectKind: vocab.SubjectFirewall, SubjectKey: "", Measure: vocab.MeasureUptimeSeconds,
+			Unit: vocab.UnitSecond, Value: 987654, SampledAt: 1750000000,
 		},
 		{
-			SubjectKind: SubjectFirewall, SubjectKey: "example-sensor-0",
-			Measure: MeasureTemperatureCelsius, Unit: UnitCelsius, Value: 41.5,
+			SubjectKind: vocab.SubjectFirewall, SubjectKey: "example-sensor-0",
+			Measure: vocab.MeasureTemperatureCelsius, Unit: vocab.UnitCelsius, Value: 41.5,
 			SampledAt: 1750000000,
 		},
 		{
-			SubjectKind: SubjectInterface, SubjectKey: "example-device",
-			Measure: MeasureBytesIn, Unit: UnitByte, Value: 123456, SampledAt: 1750000000,
+			SubjectKind: vocab.SubjectInterface, SubjectKey: "example-device",
+			Measure: vocab.MeasureBytesIn, Unit: vocab.UnitByte, Value: 123456, SampledAt: 1750000000,
 		},
 		{
 			// The per-pair half, which exists because no endpoint answers for a past
 			// window and opnview has to build that history itself.
-			ProviderID: &providerID, SubjectKind: SubjectInterfaceEndpointPair,
+			ProviderID: &providerID, SubjectKind: vocab.SubjectInterfaceEndpointPair,
 			SubjectKey: "example-endpoint-a example-endpoint-b",
-			Measure:    MeasureCumulativeBytesIn, Unit: UnitByte, Value: 400,
+			Measure:    vocab.MeasureCumulativeBytesIn, Unit: vocab.UnitByte, Value: 400,
 			SampledAt: 1750000000,
 		},
 	}
@@ -427,9 +430,9 @@ func TestAMeasurementOfEachKindRoundTrips(t *testing.T) {
 func TestAMalformedMeasureTermIsRejected(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
-	err := database.InsertMeasurementSample(context.Background(), MeasurementSample{
-		SubjectKind: SubjectFirewall, Measure: Measure("example measure nobody declared"),
-		Unit: UnitRatio, Value: 1, SampledAt: 1750000000,
+	err := database.InsertMeasurementSample(context.Background(), vocab.MeasurementSample{
+		SubjectKind: vocab.SubjectFirewall, Measure: vocab.Measure("example measure nobody declared"),
+		Unit: vocab.UnitRatio, Value: 1, SampledAt: 1750000000,
 	})
 	if err == nil {
 		t.Fatal("a measure that is not a well-formed token was accepted")
@@ -448,9 +451,9 @@ func TestACollectionGapIsARowWithItsIntervalAndItsReason(t *testing.T) {
 	}
 
 	detail := "the page began after the newest record stored"
-	gap := CollectionGap{
+	gap := vocab.CollectionGap{
 		ProviderID: providerID, IntervalStartAt: 1749999000, IntervalEndAt: 1749999900,
-		Reason: GapDigestOutsideWindow, Detail: &detail, DetectedAt: 1750000000,
+		Reason: vocab.GapDigestOutsideWindow, Detail: &detail, DetectedAt: 1750000000,
 	}
 	if err := database.RecordCollectionGap(ctx, gap); err != nil {
 		t.Fatalf("recording a gap: %v", err)
@@ -471,7 +474,7 @@ func TestACollectionGapIsARowWithItsIntervalAndItsReason(t *testing.T) {
 	if storedProvider != providerID || start != gap.IntervalStartAt || end != gap.IntervalEndAt {
 		t.Fatalf("the gap reads provider %d over [%d, %d]", storedProvider, start, end)
 	}
-	if reason != string(GapDigestOutsideWindow) {
+	if reason != string(vocab.GapDigestOutsideWindow) {
 		t.Fatalf("the reason is %q", reason)
 	}
 	if storedDetail == nil || *storedDetail != detail {
@@ -490,9 +493,9 @@ func TestAGapReasonOutsideTheVocabularyIsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("looking up the provider: %v", err)
 	}
-	err = database.RecordCollectionGap(ctx, CollectionGap{
+	err = database.RecordCollectionGap(ctx, vocab.CollectionGap{
 		ProviderID: providerID, IntervalStartAt: 1, IntervalEndAt: 2,
-		Reason: GapReason("example-reason-nobody-declared"), DetectedAt: 3,
+		Reason: vocab.GapReason("example-reason-nobody-declared"), DetectedAt: 3,
 	})
 	if err == nil {
 		t.Fatal("a gap reason outside the vocabulary was accepted")
@@ -511,7 +514,7 @@ func TestAnEveWatermarkResumesWithoutLossOrDoubleCount(t *testing.T) {
 
 	sequence := int64(3)
 	for pass := 0; pass < 2; pass++ {
-		if err := database.UpsertEveCursor(ctx, EveCursor{
+		if err := database.UpsertEveCursor(ctx, vocab.EveCursor{
 			FileID: "3", ByteOffset: 8192, FileSequence: &sequence,
 			RotationState: "current", ObservedAt: 1750000000,
 		}); err != nil {
@@ -555,7 +558,7 @@ func TestADiscoveryRefreshNeverOverwritesAUserLabel(t *testing.T) {
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
-	iface := Interface{
+	iface := vocab.Interface{
 		Identifier: "example_if_a", Device: "exdev0", Description: "example description A",
 		LinkType: "example-link-type", LinkKind: "other",
 	}
@@ -607,8 +610,8 @@ func TestAClientReissuedAnAddressAfterTheIdleWindowStaysTwoClients(t *testing.T)
 	address := "example-address"
 
 	firstSeen := int64(1750000000)
-	if _, err := database.UpsertClient(ctx, Client{
-		Identity:    ClientIdentity{Kind: IdentityAddressInInterface, Key: "1|example-address|1749945600"},
+	if _, err := database.UpsertClient(ctx, vocab.Client{
+		Identity:    vocab.ClientIdentity{Kind: vocab.IdentityAddressInInterface, Key: "1|example-address|1749945600"},
 		LastAddress: &address,
 	}, firstSeen); err != nil {
 		t.Fatalf("storing the first machine: %v", err)
@@ -631,8 +634,8 @@ func TestAClientReissuedAnAddressAfterTheIdleWindowStaysTwoClients(t *testing.T)
 }
 
 // examplePage is a page of filter-log rows, as the collector would have built them.
-func examplePage() []Flow {
-	page := make([]Flow, 0, 3)
+func examplePage() []vocab.Flow {
+	page := make([]vocab.Flow, 0, 3)
 	for index := 0; index < 3; index++ {
 		page = append(page, exampleFlow(index))
 	}
@@ -641,14 +644,14 @@ func examplePage() []Flow {
 
 // exampleFlow is one row. Every value is synthesised from the index: nothing here is an
 // address, an identifier or a count read off anyone's network.
-func exampleFlow(index int) Flow {
+func exampleFlow(index int) vocab.Flow {
 	digits := []byte{byte('0' + index%10)}
-	return Flow{
+	return vocab.Flow{
 		LogDigest:            "example-digest-" + string(digits),
 		ObservedAt:           1750000000 - int64(index),
 		IngestedAt:           1750000005,
 		InterfaceDevice:      "example-device",
-		InterfaceLookupState: LookupResolved,
+		InterfaceLookupState: vocab.LookupResolved,
 		SrcAddress:           "example-source-" + string(digits),
 		DstAddress:           "example-destination-" + string(digits),
 		Protocol:             "tcp",
@@ -656,7 +659,7 @@ func exampleFlow(index int) Flow {
 		Action:               "pass",
 		Direction:            "in",
 		PacketBytes:          int64(100 + index),
-		RuleLookupState:      LookupPending,
+		RuleLookupState:      vocab.LookupPending,
 	}
 }
 
@@ -664,14 +667,14 @@ func exampleFlow(index int) Flow {
 func exampleTwoInterfaces(t *testing.T, database *Store) (int64, int64) {
 	t.Helper()
 	ctx := context.Background()
-	first, err := database.UpsertInterface(ctx, Interface{
+	first, err := database.UpsertInterface(ctx, vocab.Interface{
 		Identifier: "example_if_a", Device: "exdev0", Description: "example description A",
 		LinkType: "example-link-type", LinkKind: "other",
 	}, 1750000000)
 	if err != nil {
 		t.Fatalf("discovering the first interface: %v", err)
 	}
-	second, err := database.UpsertInterface(ctx, Interface{
+	second, err := database.UpsertInterface(ctx, vocab.Interface{
 		Identifier: "example_if_b", Device: "exdev1", Description: "example description B",
 		LinkType: "example-link-type", LinkKind: "vlan",
 	}, 1750000000)

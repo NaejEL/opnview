@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // Defect L2 of specs/SPEC-test-budget-and-two-live-defects.md: the ARP and NDP neighbour
@@ -44,7 +47,7 @@ func TestAnAddressThisFirewallHoldsIsRecognisedAsOfTheNeighbourEntrysInstant(t *
 			}
 			// The holding begins at the interface's first discovery; an instant a whole
 			// discovery interval before it is outside it.
-			margin, err := heldMargin(ctx, network.db.DB())
+			margin, err := flows.HeldMargin(ctx, network.db.DB())
 			if err != nil {
 				t.Fatalf("reading the margin: %v", err)
 			}
@@ -72,8 +75,8 @@ func TestTheClientsMintedAtThisFirewallsAddressesArePurgedAtTheNextFullPlacement
 			mint := func(index int, address string, interfaceID int64) int64 {
 				t.Helper()
 				mac := fmt.Sprintf("0a:11:22:33:%02x:%02x", 0xf0+index/256, index%256)
-				id, err := network.db.UpsertClient(ctx, Client{
-					Identity:    ClientIdentity{Kind: IdentityMAC, Key: mac},
+				id, err := network.db.UpsertClient(ctx, vocab.Client{
+					Identity:    vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: mac},
 					InterfaceID: &interfaceID, MAC: &mac, LastAddress: &address,
 				}, network.now-60)
 				if err != nil {

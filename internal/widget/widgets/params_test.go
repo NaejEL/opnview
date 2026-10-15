@@ -3,9 +3,13 @@ package widgets
 import (
 	"context"
 	"errors"
-	"github.com/NaejEL/opnview/internal/widget"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/traffic"
 )
 
 // AC4 and AC5: parameters and references.
@@ -23,22 +27,22 @@ func TestUnknownKeysAreReportedAndInvalidValuesTakeTheirDefault(t *testing.T) {
 	if _, reported := response.UnknownParameters["from_a_newer_build"]; !reported {
 		t.Error("an unknown key was not reported")
 	}
-	if response.Condition != widget.ConditionReachable {
+	if response.Condition != envelope.ConditionReachable {
 		t.Errorf("an unknown key changed the condition to %q", response.Condition)
 	}
 	reasons := map[string]string{}
 	for _, invalid := range response.InvalidParameters {
 		reasons[invalid.Path] = invalid.Reason
 	}
-	if reasons["scope"] != widget.ReasonNotInVocabulary || reasons["measure"] != widget.ReasonWrongType {
+	if reasons["scope"] != params.ReasonNotInVocabulary || reasons["measure"] != params.ReasonWrongType {
 		t.Errorf("the invalid values were reported as %v", reasons)
 	}
-	if response.Parameters["scope"] != widget.ScopeAll || response.Parameters["measure"] != "bytes" {
+	if response.Parameters["scope"] != traffic.ScopeAll || response.Parameters["measure"] != "bytes" {
 		t.Errorf("the defaults did not apply: %v", response.Parameters)
 	}
 
 	clamped := f.respond(t, "interface_volume_ranking", map[string]any{"limit": 0})
-	if len(clamped.InvalidParameters) != 1 || clamped.InvalidParameters[0].Reason != widget.ReasonOutOfRange ||
+	if len(clamped.InvalidParameters) != 1 || clamped.InvalidParameters[0].Reason != params.ReasonOutOfRange ||
 		clamped.Parameters["limit"] != float64(10) {
 		t.Errorf("an out-of-range limit was not reported with its default applied: %+v %v",
 			clamped.InvalidParameters, clamped.Parameters["limit"])
@@ -50,7 +54,7 @@ func TestUnknownKeysAreReportedAndInvalidValuesTakeTheirDefault(t *testing.T) {
 
 	for _, malformed := range []string{"{", "[]", "null", "3", "{}{}"} {
 		_, err := f.service.Respond(context.Background(), "interface_traffic_matrix", malformed)
-		var refusal widget.ErrMalformed
+		var refusal params.ErrMalformed
 		if !errors.As(err, &refusal) {
 			t.Errorf("%q was not refused as malformed: %v", malformed, err)
 		}
@@ -61,7 +65,7 @@ func TestUnknownKeysAreReportedAndInvalidValuesTakeTheirDefault(t *testing.T) {
 		}
 	}
 	missing := f.respond(t, "client_traffic_detail", nil)
-	if missing.Condition != widget.ConditionMissingRequiredParameter || missing.Data != nil {
+	if missing.Condition != envelope.ConditionMissingRequiredParameter || missing.Data != nil {
 		t.Errorf("client_traffic_detail without a client answered %q with data %v", missing.Condition, missing.Data)
 	}
 }
@@ -118,7 +122,7 @@ func TestEveryReferenceKindResolvesByItsKeyAndNeverByItsLabel(t *testing.T) {
 				t.Errorf("owner by display_name did not resolve: %+v", okResponse.UnresolvedReferences)
 			}
 			if len(badResponse.UnresolvedReferences) != 1 || badResponse.UnresolvedReferences[0].Path != "owners[0]" ||
-				badResponse.Data != nil || badResponse.Condition != widget.ConditionUnresolvedReference {
+				badResponse.Data != nil || badResponse.Condition != envelope.ConditionUnresolvedReference {
 				t.Errorf("an unmatched owner gave %+v, data %v", badResponse.UnresolvedReferences, badResponse.Data)
 			}
 			continue
@@ -140,14 +144,14 @@ func TestEveryReferenceKindResolvesByItsKeyAndNeverByItsLabel(t *testing.T) {
 			t.Errorf("%s by %s: the unresolved reference reads %+v", item.kind, item.by, unresolved)
 		}
 		chart := decodeData[customChartData](t, badResponse)
-		if chart.Series[0].Condition != widget.ConditionUnresolvedReference || chart.Series[0].Buckets != nil {
+		if chart.Series[0].Condition != envelope.ConditionUnresolvedReference || chart.Series[0].Buckets != nil {
 			t.Errorf("%s by %s: the unresolved series has data", item.kind, item.by)
 		}
-		if chart.Series[1].Buckets == nil || chart.Series[1].Condition != widget.ConditionReachable {
+		if chart.Series[1].Buckets == nil || chart.Series[1].Condition != envelope.ConditionReachable {
 			t.Errorf("%s by %s: the other series lost its data (%s)", item.kind, item.by, chart.Series[1].Condition)
 		}
 	}
-	for kind, accepted := range widget.ReferenceByKind {
+	for kind, accepted := range params.ReferenceByKind {
 		for _, by := range accepted {
 			if !covered[kind+"/"+by] {
 				t.Errorf("no case resolves %s by %s", kind, by)
@@ -158,7 +162,7 @@ func TestEveryReferenceKindResolvesByItsKeyAndNeverByItsLabel(t *testing.T) {
 	// A top-level reference: no data, never zeros.
 	response := f.respond(t, "interface_traffic_matrix", map[string]any{"interfaces": []any{
 		map[string]any{"kind": "interface", "by": "user_label", "value": "missing", "label": "example label"}}})
-	if response.Condition != widget.ConditionUnresolvedReference || response.Data != nil {
+	if response.Condition != envelope.ConditionUnresolvedReference || response.Data != nil {
 		t.Errorf("an unresolved top-level reference answered %q with data", response.Condition)
 	}
 	for _, outside := range []map[string]any{
@@ -167,7 +171,7 @@ func TestEveryReferenceKindResolvesByItsKeyAndNeverByItsLabel(t *testing.T) {
 		{"kind": "client", "by": "mac", "value": "x"},
 	} {
 		response := f.respond(t, "interface_traffic_matrix", map[string]any{"interfaces": []any{outside}})
-		if response.Condition != widget.ConditionUnresolvedReference || response.Data != nil ||
+		if response.Condition != envelope.ConditionUnresolvedReference || response.Data != nil ||
 			!strings.HasPrefix(response.UnresolvedReferences[0].Path, "interfaces[0]") {
 			t.Errorf("%v was not unresolved: %q %+v", outside, response.Condition, response.UnresolvedReferences)
 		}

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // TestADatabaseFromBeforeStep5BIsRefusedNamingTheRebuild is the code side of the rebuild
@@ -21,7 +23,7 @@ func TestADatabaseFromBeforeStep5BIsRefusedNamingTheRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = empty.Drop(context.Background()) })
-	old, err := openPool(empty.DSN)
+	old, err := sqldb.OpenPool(empty.DSN)
 	if err != nil {
 		t.Fatal(err)
 	}

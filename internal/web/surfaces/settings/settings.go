@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/NaejEL/opnview/internal/web"
 	"net/http"
 	"net/url"
 	"os"
@@ -12,11 +11,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/store/accounts"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
+
 	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/secret"
-	"github.com/NaejEL/opnview/internal/store"
 )
 
 // The settings surface: where credentials enter the product.
@@ -244,7 +246,7 @@ func (s *surface) handleSettingsSubmit(writer http.ResponseWriter, request *http
 			s.FailInternal(writer, request, err)
 			return
 		}
-		if err := s.storeSecret(ctx, store.CredentialMaxMindLicenceKey, licenceKey, now); err != nil {
+		if err := s.storeSecret(ctx, accounts.CredentialMaxMindLicenceKey, licenceKey, now); err != nil {
 			s.FailInternal(writer, request, err)
 			return
 		}
@@ -439,17 +441,17 @@ func (s *surface) applySettingsDraft(request *http.Request, built *view, except 
 	}
 	if except != settingsCardPublicSuffix {
 		if figure, sent := posted(fieldPublicSuffixInterval); sent {
-			unit, _ := posted(web.UnitFieldName(fieldPublicSuffixInterval))
+			unit, _ := posted(settingfields.UnitFieldName(fieldPublicSuffixInterval))
 			settings, err := s.Configuration(request.Context())
 			if err != nil {
 				return err
 			}
 			inForce := int64(settings.PublicSuffixRefreshInterval / time.Second)
-			field := web.DurationField(fieldPublicSuffixInterval, built.PublicSuffix.IntervalField.ID,
+			field := settingfields.DurationField(fieldPublicSuffixInterval, built.PublicSuffix.IntervalField.ID,
 				msgFieldPublicSuffixInterval, inForce, map[string]string{
-					fieldPublicSuffixInterval: figure, web.UnitFieldName(fieldPublicSuffixInterval): unit})
+					fieldPublicSuffixInterval: figure, settingfields.UnitFieldName(fieldPublicSuffixInterval): unit})
 			built.PublicSuffix.IntervalField = field
-			if web.DurationDiffers(figure, unit, inForce) {
+			if settingfields.DurationDiffers(figure, unit, inForce) {
 				edited[settingsCardPublicSuffix] = true
 			}
 		}
@@ -518,7 +520,7 @@ func (s *surface) fillSettings(request *http.Request, built *view,
 	}
 	if s.geoip != nil {
 		if build, ready := s.geoip.Ready(); ready {
-			built.GeoIPBuild = web.Instant(build)
+			built.GeoIPBuild = settingfields.Instant(build)
 		}
 	}
 	if err := s.fillPublicSuffix(ctx, built); err != nil {
@@ -560,7 +562,7 @@ func credentialStateKey(state config.CredentialState) messageKey {
 // IT MAKES NO CALL TO MAXMIND. Nothing in this package does: whether MaxMind accepts
 // the key is what a download finds out, and geoIPState reports what it found.
 func (s *surface) licenceKeyState(ctx context.Context) (messageKey, error) {
-	sealed, stored, err := s.store.Credential(ctx, store.CredentialMaxMindLicenceKey)
+	sealed, stored, err := s.store.Credential(ctx, accounts.CredentialMaxMindLicenceKey)
 	if err != nil {
 		return "", err
 	}
@@ -625,7 +627,7 @@ func (s *surface) storeSecret(ctx context.Context, name, plaintext string, now i
 	if err != nil {
 		return err
 	}
-	return s.store.SetCredential(ctx, store.EncryptedCredential{
+	return s.store.SetCredential(ctx, accounts.EncryptedCredential{
 		Name:       name,
 		Algorithm:  sealed.Algorithm,
 		KeyID:      sealed.KeyID,

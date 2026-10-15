@@ -9,8 +9,10 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
 )
 
 // The Interfaces surface: per interface, its networks and the link-local rule.
@@ -97,7 +99,7 @@ type interfaceCard struct {
 	// store.InterfaceNetworks returns them.
 	Networks []networkRow
 	// LinkLocal are the rule's two options, the stored one selected.
-	LinkLocal []web.ChoiceOption
+	LinkLocal []settingfields.ChoiceOption
 	// NoticeKey confirms an edit in this card; Overlaps lists every counting network
 	// of this card that overlaps a counting network of another interface.
 	NoticeKey messageKey
@@ -261,13 +263,13 @@ func (s *surface) applyEdit(ctx context.Context, idText, action, typed, linkLoca
 // is no field to draw it against; the page says it at the top.
 func storeRefusal(interfaceID int64, err error) (int64, editOutcome, error) {
 	switch {
-	case errors.Is(err, store.ErrUnknownInterface):
+	case errors.Is(err, flows.ErrUnknownInterface):
 		return interfaceID, editOutcome{refusal: msgInterfaceUnknown}, nil
-	case errors.Is(err, store.ErrUpstreamInterface):
+	case errors.Is(err, flows.ErrUpstreamInterface):
 		return interfaceID, editOutcome{refusal: msgInterfaceUpstream}, nil
-	case errors.Is(err, store.ErrUnknownNetwork):
+	case errors.Is(err, flows.ErrUnknownNetwork):
 		return interfaceID, editOutcome{refusal: msgNetworkUnknown}, nil
-	case errors.Is(err, store.ErrMalformedNetwork), errors.Is(err, store.ErrLinkLocalNetwork):
+	case errors.Is(err, flows.ErrMalformedNetwork), errors.Is(err, flows.ErrLinkLocalNetwork):
 		return interfaceID, editOutcome{refusal: msgNetworkMalformed}, nil
 	}
 	return interfaceID, editOutcome{}, err
@@ -279,9 +281,9 @@ func storeRefusal(interfaceID int64, err error) (int64, editOutcome, error) {
 // thing where the typed text shows which of the store's malformed cases it is.
 func networkRefusal(typed string, err error) messageKey {
 	switch {
-	case errors.Is(err, store.ErrLinkLocalNetwork):
+	case errors.Is(err, flows.ErrLinkLocalNetwork):
 		return msgNetworkLinkLocal
-	case errors.Is(err, store.ErrMalformedNetwork):
+	case errors.Is(err, flows.ErrMalformedNetwork):
 		prefix, parseErr := netip.ParsePrefix(strings.TrimSpace(typed))
 		switch {
 		case parseErr != nil:
@@ -297,17 +299,17 @@ func networkRefusal(typed string, err error) messageKey {
 }
 
 // interfaceRow reads one interface, and whether it exists.
-func (s *surface) interfaceRow(ctx context.Context, id int64) (store.InterfaceRow, bool, error) {
+func (s *surface) interfaceRow(ctx context.Context, id int64) (reads.InterfaceRow, bool, error) {
 	rows, err := s.store.Interfaces(ctx)
 	if err != nil {
-		return store.InterfaceRow{}, false, err
+		return reads.InterfaceRow{}, false, err
 	}
 	for _, row := range rows {
 		if row.ID == id {
 			return row, true, nil
 		}
 	}
-	return store.InterfaceRow{}, false, nil
+	return reads.InterfaceRow{}, false, nil
 }
 
 // renderInterfaces draws the surface at a status, with one card's feedback or a
@@ -358,7 +360,7 @@ func (s *surface) fillInterfaces(ctx context.Context, built *view, feedback *int
 			Device:      row.Device,
 			Upstream:    row.IsUpstream,
 			UpstreamKey: yesNo(row.IsUpstream),
-			LinkLocal: []web.ChoiceOption{
+			LinkLocal: []settingfields.ChoiceOption{
 				{Value: linkLocalNo, LabelKey: msgNo, Selected: !row.LinkLocalEvidence},
 				{Value: linkLocalYes, LabelKey: msgYes, Selected: row.LinkLocalEvidence},
 			},
@@ -374,7 +376,7 @@ func (s *surface) fillInterfaces(ctx context.Context, built *view, feedback *int
 					RemovedKey: yesNo(network.Removed),
 					CountsKey:  yesNo(network.Counts),
 					ReasonKey:  notCountingReason(network),
-					CanConfirm: !network.Removed && network.Origin == store.NetworkOriginDetected,
+					CanConfirm: !network.Removed && network.Origin == flows.NetworkOriginDetected,
 					CanRemove:  !network.Removed,
 					CanRestore: network.Removed,
 				})
@@ -394,13 +396,13 @@ func (s *surface) fillInterfaces(ctx context.Context, built *view, feedback *int
 // notCountingReason says why a network does not count now, or nothing when it does.
 // D1 leaves a network out in two ways: the operator removed it, or it is a detection
 // discovery no longer reports. An operator network that is not removed always counts.
-func notCountingReason(network store.InterfaceNetwork) messageKey {
+func notCountingReason(network flows.InterfaceNetwork) messageKey {
 	switch {
 	case network.Counts:
 		return ""
 	case network.Removed:
 		return msgCountsNoRemoved
-	case network.Origin == store.NetworkOriginDetected:
+	case network.Origin == flows.NetworkOriginDetected:
 		return msgCountsNoLongerDetected
 	default:
 		return ""
@@ -412,7 +414,7 @@ func notCountingReason(network store.InterfaceNetwork) messageKey {
 // the store reports after an edit (store.NetworkEdit.Overlaps), made for every
 // counting network of the card on every draw, so an overlap is shown for as long as it
 // exists rather than on the one response that created it.
-func overlapsOf(interfaceID int64, networks []store.InterfaceNetwork,
+func overlapsOf(interfaceID int64, networks []flows.InterfaceNetwork,
 	descriptions map[int64]string) []overlapRow {
 	var overlaps []overlapRow
 	for _, own := range networks {
@@ -435,7 +437,7 @@ func overlapsOf(interfaceID int64, networks []store.InterfaceNetwork,
 
 // originKey names an interface network's origin.
 func originKey(origin string) messageKey {
-	if origin == store.NetworkOriginOperator {
+	if origin == flows.NetworkOriginOperator {
 		return msgOriginOperator
 	}
 	return msgOriginDetected

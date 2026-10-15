@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/netflow"
 )
 
 // The NetFlow join and the measured volume (PS18-PS20 of the NetFlow join amendment), each test on the
@@ -79,9 +79,9 @@ func TestTheNATConnectionIsMeasuredAtTheSingleObservationPoint(t *testing.T) {
 		legDigest  string
 	}{
 		{"inside only", captured{identifier: insideIdentifier}, []flowRecord{insideForward, insideReverse},
-			store.MeasuredAtFirstLeg, "nat1"},
+			netflow.MeasuredAtFirstLeg, "nat1"},
 		{"upstream only", captured{identifier: upstreamIdentifier}, []flowRecord{upstreamForward, upstreamReverse},
-			store.MeasuredAtSecondLeg, "nat2"},
+			netflow.MeasuredAtSecondLeg, "nat2"},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
@@ -98,7 +98,7 @@ func TestTheNATConnectionIsMeasuredAtTheSingleObservationPoint(t *testing.T) {
 
 			legID := h.flowID(t, scenario.legDigest)
 			for _, record := range h.records(t) {
-				if record.joinState != store.JoinJoined || record.joinedFlowID == nil || *record.joinedFlowID != legID {
+				if record.joinState != netflow.JoinJoined || record.joinedFlowID == nil || *record.joinedFlowID != legID {
 					t.Errorf("a record of %d octets is %s (reason %s), joined to %v, want joined to the leg %d",
 						record.octets, record.joinState, orNull(record.reason), record.joinedFlowID, legID)
 				}
@@ -107,19 +107,19 @@ func TestTheNATConnectionIsMeasuredAtTheSingleObservationPoint(t *testing.T) {
 			if len(volumes) != 2 {
 				t.Fatalf("measured volumes %+v, want the connection's two directions", volumes)
 			}
-			wantBytes := map[string]int64{store.OrientationForward: 1000, store.OrientationReverse: 20000}
+			wantBytes := map[string]int64{netflow.OrientationForward: 1000, netflow.OrientationReverse: 20000}
 			for _, volume := range volumes {
 				if volume.connection != h.flowID(t, "nat1") {
 					t.Errorf("a figure belongs to the connection %d, not to its first leg", volume.connection)
 				}
-				if volume.state != store.VolumeMeasured || volume.bytes != wantBytes[volume.direction] ||
+				if volume.state != netflow.VolumeMeasured || volume.bytes != wantBytes[volume.direction] ||
 					orNull(volume.leg) != scenario.measuredAt || volume.point != scenario.capture.identifier {
 					t.Errorf("the %s direction is %+v (leg %s), want measured, %d bytes, at the %s on %s",
 						volume.direction, volume, orNull(volume.leg), wantBytes[volume.direction], scenario.measuredAt,
 						scenario.capture.identifier)
 				}
 			}
-			if scenario.measuredAt == store.MeasuredAtSecondLeg {
+			if scenario.measuredAt == netflow.MeasuredAtSecondLeg {
 				// The figure measured at the second leg belongs to that leg's exit_leg_device: the device it
 				// was logged on, which counts it as it counts the second leg's logged volume.
 				exit := scalarCount(t, h.store,
@@ -139,7 +139,7 @@ func TestTheNATConnectionIsMeasuredAtTheSingleObservationPoint(t *testing.T) {
 				"SELECT coalesce(sum(netflow_bytes), 0) FROM volume_aggregate_1h WHERE exit_leg_device = ?",
 				upstreamDevice)
 			wantExit := 0
-			if scenario.measuredAt == store.MeasuredAtSecondLeg {
+			if scenario.measuredAt == netflow.MeasuredAtSecondLeg {
 				wantExit = 21000
 			}
 			if first != 21000 || exit != wantExit {
@@ -261,8 +261,11 @@ func TestNoStatementSumsTwoMeasures(t *testing.T) {
 	t.Parallel()
 	mixed := regexp.MustCompile(`netflow_\w+\s*[+-]\s*(?:\w+\.)?(?:bytes|packet_bytes|allowed_bytes|blocked_bytes|` +
 		`unknown_bytes)\b|\b(?:bytes|packet_bytes|allowed_bytes|blocked_bytes|unknown_bytes)\s*[+-]\s*(?:\w+\.)?netflow_`)
+	// The store's statement files sit beside the Go file of each part that runs them.
 	files, err := filepath.Glob(filepath.Join("..", "store", "*.sql"))
-	if err != nil || len(files) == 0 {
+	parts, partsErr := filepath.Glob(filepath.Join("..", "store", "*", "*.sql"))
+	files = append(files, parts...)
+	if err != nil || partsErr != nil || len(parts) == 0 {
 		t.Fatalf("no statement file was found: %v", err)
 	}
 	for _, file := range files {

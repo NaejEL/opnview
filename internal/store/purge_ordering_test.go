@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The purge's ordering against the derivation, on the store's side: AC1 of
@@ -15,7 +17,7 @@ import (
 // against the sums over flows, and that no slot holds a key no flow produces.
 func assertEveryFamilyEqualsTheFlows(t *testing.T, database *Store, flows []storedFlow, when string) {
 	t.Helper()
-	for _, period := range Periods() {
+	for _, period := range vocab.Periods() {
 		for _, family := range allFamilies {
 			expected := expectedFamily(flows, period, family)
 			stored := storedFamily(t, database, period, family)
@@ -80,7 +82,7 @@ func TestAPurgeBetweenAPassStoreAndItsRefreshLeavesEverySlotWhole(t *testing.T) 
 		t.Fatalf("refreshing: %v", err)
 	}
 
-	for _, period := range Periods() {
+	for _, period := range vocab.Periods() {
 		if got := slotBytes(t, network.db, "volume", period, observed); got != 77 {
 			t.Errorf("the %s slot holding the purged flow holds %d bytes, not 77", period.Name, got)
 		}
@@ -100,7 +102,7 @@ func TestAPurgeBetweenAPassStoreAndItsRefreshLeavesEverySlotWhole(t *testing.T) 
 		t.Fatalf("the refresh after it: %v", err)
 	}
 	for _, slot := range refresh.Rewritten {
-		period, err := PeriodNamed(slot.Period)
+		period, err := vocab.PeriodNamed(slot.Period)
 		if err != nil {
 			t.Fatalf("naming the period %s: %v", slot.Period, err)
 		}

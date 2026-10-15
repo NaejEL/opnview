@@ -7,7 +7,8 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/owners"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/surfaces/labels"
 	"github.com/NaejEL/opnview/internal/web/webtest"
@@ -32,7 +33,7 @@ func seed(t *testing.T, harness *webtest.Harness) (int64, int64) {
 	t.Helper()
 	ctx := context.Background()
 	at := harness.Clock.Now().Unix() - 60
-	iface, err := harness.Store.UpsertInterface(ctx, store.Interface{Identifier: "example_if_0", Device: "exdev0",
+	iface, err := harness.Store.UpsertInterface(ctx, vocab.Interface{Identifier: "example_if_0", Device: "exdev0",
 		Description: "example description", LinkType: "example-link", LinkKind: "other"}, at)
 	if err != nil {
 		t.Fatal(err)
@@ -74,7 +75,7 @@ func TestALabelAndAPurposeAreSetAndClearedOverJSON(t *testing.T) {
 		t.Errorf("the label answered %+v", labelled)
 	}
 	listed := decode[labels.BlocklistsAnswer](t, harness.Get(labels.PathBlocklists), http.StatusOK)
-	if len(listed.Blocklists) != 1 || listed.Blocklists[0].Purpose != nil || len(listed.Purposes) != len(store.BlocklistPurposes) {
+	if len(listed.Blocklists) != 1 || listed.Blocklists[0].Purpose != nil || len(listed.Purposes) != len(owners.BlocklistPurposes) {
 		t.Errorf("the listing answered %+v", listed)
 	}
 	assigned := decode[labels.BlocklistAnswer](t, harness.PostJSON(purposePath, `{"purpose": "threat"}`, token, ""),
@@ -89,14 +90,14 @@ func TestALabelAndAPurposeAreSetAndClearedOverJSON(t *testing.T) {
 		path, body, condition string
 		status                int
 	}{
-		{purposePath, `{"purpose": "malware"}`, store.RefusalPurposeNotInVocabulary, http.StatusBadRequest},
+		{purposePath, `{"purpose": "malware"}`, owners.RefusalPurposeNotInVocabulary, http.StatusBadRequest},
 		{purposePath, `{"purpose": 3}`, web.ConditionMalformedBody, http.StatusBadRequest},
 		{purposePath, `{}`, web.ConditionMalformedBody, http.StatusBadRequest},
-		{"/api/blocklists/999/purpose", `{"purpose": "threat"}`, store.RefusalUnknownBlocklist, http.StatusNotFound},
-		{labelPath, `{"user_label": "  "}`, store.RefusalLabelEmpty, http.StatusBadRequest},
+		{"/api/blocklists/999/purpose", `{"purpose": "threat"}`, owners.RefusalUnknownBlocklist, http.StatusNotFound},
+		{labelPath, `{"user_label": "  "}`, owners.RefusalLabelEmpty, http.StatusBadRequest},
 		{labelPath, `{"user_label": "a", "other": 1}`, web.ConditionMalformedBody, http.StatusBadRequest},
-		{"/api/interfaces/999/label", `{"user_label": "a"}`, store.RefusalUnknownInterface, http.StatusNotFound},
-		{"/api/interfaces/x/label", `{"user_label": "a"}`, store.RefusalUnknownInterface, http.StatusNotFound},
+		{"/api/interfaces/999/label", `{"user_label": "a"}`, owners.RefusalUnknownInterface, http.StatusNotFound},
+		{"/api/interfaces/x/label", `{"user_label": "a"}`, owners.RefusalUnknownInterface, http.StatusNotFound},
 	} {
 		refusal := decode[labels.Refusal](t, harness.PostJSON(refused.path, refused.body, token, ""), refused.status)
 		if refusal.Condition != refused.condition {

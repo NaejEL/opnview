@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 )
 
 // The session lifetimes.
@@ -61,8 +61,8 @@ func DefaultLifetimes() Lifetimes {
 // SessionStore is what this package needs from storage. It is an interface so
 // that auth depends on no storage engine.
 type SessionStore interface {
-	CreateSession(ctx context.Context, session store.Session) error
-	SessionByTokenDigest(ctx context.Context, digest string) (store.Session, bool, error)
+	CreateSession(ctx context.Context, session accounts.Session) error
+	SessionByTokenDigest(ctx context.Context, digest string) (accounts.Session, bool, error)
 	TouchSession(ctx context.Context, digest string, now int64) error
 	DeleteSession(ctx context.Context, digest string) error
 	DeleteExpiredSessions(ctx context.Context, now, idleCutoff int64) error
@@ -99,7 +99,7 @@ type Issued struct {
 	// CSRFToken is the session's form token.
 	CSRFToken string
 	// Session is the stored row.
-	Session store.Session
+	Session accounts.Session
 }
 
 // Issue creates a session for an account.
@@ -113,7 +113,7 @@ func (s *Sessions) Issue(ctx context.Context, accountID int64, now time.Time) (I
 		return Issued{}, err
 	}
 	instant := now.UTC().Unix()
-	session := store.Session{
+	session := accounts.Session{
 		TokenDigest: TokenDigest(token),
 		AccountID:   accountID,
 		CSRFToken:   csrfToken,
@@ -132,29 +132,29 @@ func (s *Sessions) Issue(ctx context.Context, accountID int64, now time.Time) (I
 // AN EXPIRED SESSION IS DELETED AND REFUSED, never renewed. Both bounds are
 // checked before the window is touched, so a request that arrives after the idle
 // window closed cannot reopen it by arriving.
-func (s *Sessions) Validate(ctx context.Context, token string, now time.Time) (store.Session, error) {
+func (s *Sessions) Validate(ctx context.Context, token string, now time.Time) (accounts.Session, error) {
 	if token == "" {
-		return store.Session{}, ErrNoSession
+		return accounts.Session{}, ErrNoSession
 	}
 	digest := TokenDigest(token)
 	session, found, err := s.store.SessionByTokenDigest(ctx, digest)
 	if err != nil {
-		return store.Session{}, err
+		return accounts.Session{}, err
 	}
 	if !found {
-		return store.Session{}, ErrNoSession
+		return accounts.Session{}, ErrNoSession
 	}
 	instant := now.UTC()
 	switch {
 	case instant.Unix() >= session.ExpiresAt,
 		instant.Sub(time.Unix(session.LastSeenAt, 0).UTC()) >= s.lifetimes.Idle:
 		if err := s.store.DeleteSession(ctx, digest); err != nil {
-			return store.Session{}, err
+			return accounts.Session{}, err
 		}
-		return store.Session{}, ErrSessionExpired
+		return accounts.Session{}, ErrSessionExpired
 	}
 	if err := s.store.TouchSession(ctx, digest, instant.Unix()); err != nil {
-		return store.Session{}, err
+		return accounts.Session{}, err
 	}
 	session.LastSeenAt = instant.Unix()
 	return session, nil

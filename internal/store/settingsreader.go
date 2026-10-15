@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/NaejEL/opnview/internal/store/accounts"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // SettingsReader reads the settings and the sealed credentials of a database a running opnview may
@@ -21,7 +24,7 @@ func OpenSettingsReader(ctx context.Context, dsn string) (*SettingsReader, error
 	if strings.TrimSpace(dsn) == "" {
 		return nil, ErrNoDatabase
 	}
-	db, err := openPool(dsn)
+	db, err := sqldb.OpenPool(dsn)
 	if err != nil {
 		return nil, err
 	}
@@ -61,8 +64,8 @@ func (r *SettingsReader) Setting(ctx context.Context, key string) (string, bool,
 }
 
 // Credential reads one sealed credential.
-func (r *SettingsReader) Credential(ctx context.Context, name string) (EncryptedCredential, bool, error) {
-	var credential EncryptedCredential
+func (r *SettingsReader) Credential(ctx context.Context, name string) (accounts.EncryptedCredential, bool, error) {
+	var credential accounts.EncryptedCredential
 	err := r.readOnly(ctx, func(transaction *sql.Tx) error {
 		return transaction.QueryRowContext(ctx,
 			`SELECT name, algorithm, key_id, nonce, ciphertext, updated_at
@@ -72,9 +75,9 @@ func (r *SettingsReader) Credential(ctx context.Context, name string) (Encrypted
 	})
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
-		return EncryptedCredential{}, false, nil
+		return accounts.EncryptedCredential{}, false, nil
 	case err != nil:
-		return EncryptedCredential{}, false, fmt.Errorf("store: reading the credential %s: %w", name, err)
+		return accounts.EncryptedCredential{}, false, fmt.Errorf("store: reading the credential %s: %w", name, err)
 	}
 	return credential, true, nil
 }

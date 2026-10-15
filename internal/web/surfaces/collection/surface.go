@@ -1,7 +1,3 @@
-// Package collection is the collection surface: per source kind, the pair that governs its
-// polling, the record rate opnview has measured, and the pair it would suggest, and the
-// settings cards that govern what collection does with what it reads. It reads the local
-// database and writes setting rows only; nothing on it can reach the firewall.
 package collection
 
 import (
@@ -10,7 +6,9 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
 )
 
 // The surface's files: its page template, its catalogue file and its marker.
@@ -109,7 +107,7 @@ func (built view) hasUnsavedEdits() bool {
 
 // newView returns a view with everything common to every page filled in.
 func (s *surface) newView(writer http.ResponseWriter, request *http.Request,
-	session *store.Session, title messageKey) (view, error) {
+	session *accounts.Session, title messageKey) (view, error) {
 	base, err := s.NewBase(writer, request, session, title)
 	if err != nil {
 		return view{}, err
@@ -126,7 +124,7 @@ type figureRow struct {
 	Value string
 	// Duration replaces Value for a figure that is a length of time, spelled in days,
 	// hours, minutes and seconds.
-	Duration []web.DurationPart
+	Duration []settingfields.DurationPart
 	// StateKey replaces Value when there is none. Exactly one of the three is set.
 	StateKey messageKey
 }
@@ -138,7 +136,7 @@ type gapRow struct {
 	// Count is how many gaps of that reason the window holds.
 	Count string
 	// Missed is the time they cover, spelled in days, hours, minutes and seconds.
-	Missed []web.DurationPart
+	Missed []settingfields.DurationPart
 }
 
 // implementationRow is one implementation of a card's kind, with the operator's
@@ -205,8 +203,8 @@ type collectionCard struct {
 	// PageSize and Interval are the two fields: the pair in force, or what was typed
 	// and not stored, or the suggestion when the reader asked for it. The interval is a
 	// figure beside its unit, as every duration on the page is.
-	PageSize web.SettingField
-	Interval web.SettingField
+	PageSize settingfields.SettingField
+	Interval settingfields.SettingField
 
 	// The names of the two buttons a card carries, carried rather than spelled in the
 	// template, so the handler that reads them and the page that writes them cannot

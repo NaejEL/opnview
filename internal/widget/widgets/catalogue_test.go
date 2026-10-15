@@ -3,12 +3,15 @@ package widgets
 import (
 	"bufio"
 	"encoding/json"
-	"github.com/NaejEL/opnview/internal/widget"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // AC1 and the parameter table of AC6: the served widgets against the catalogue, and the
@@ -100,10 +103,10 @@ func parseCatalogue(t *testing.T) (map[string]catalogueEntry, []string) {
 // stepSixTypes are the alert presets decision 1 leaves to step 6.
 // servedPresets returns the declaration of every served type, from a service built over an
 // empty installation.
-func servedPresets(t *testing.T) []widget.Preset {
+func servedPresets(t *testing.T) []request.Preset {
 	t.Helper()
 	f := newFixture(t, fixtureSpec{interfaces: 1, clients: 1, flows: 1, span: 3600})
-	var presets []widget.Preset
+	var presets []request.Preset
 	for _, widgetType := range f.service.Types() {
 		preset, _ := f.service.Preset(widgetType)
 		presets = append(presets, preset)
@@ -129,7 +132,7 @@ func TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets(t *testing.T) {
 	}
 	expected := map[string]bool{}
 	for _, widgetType := range index {
-		if !widget.Contains(stepSixTypes, widgetType) {
+		if !params.Contains(stepSixTypes, widgetType) {
 			expected[widgetType] = true
 		}
 	}
@@ -166,17 +169,17 @@ func TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets(t *testing.T) {
 			for _, value := range param.Values {
 				accounted[value] = true
 			}
-			if param.Kind == widget.KindSeries {
-				for _, key := range widget.SeriesEntryKeys() {
+			if param.Kind == params.KindSeries {
+				for _, key := range params.SeriesEntryKeys() {
 					accounted[key] = true
 				}
-				for _, vocabulary := range [][]string{widget.SeriesSources, widget.SeriesAxes, widget.SeriesRenders, widget.SeriesAggregations,
-					widget.HealthMetrics} {
+				for _, vocabulary := range [][]string{params.SeriesSources, params.SeriesAxes, params.SeriesRenders, params.SeriesAggregations,
+					params.HealthMetrics} {
 					for _, value := range vocabulary {
 						accounted[value] = true
 					}
 				}
-				for _, measures := range widget.SeriesMeasures {
+				for _, measures := range params.SeriesMeasures {
 					for _, value := range measures {
 						accounted[value] = true
 					}
@@ -195,7 +198,7 @@ func TestTheRegisteredTypesAreThePresetIndexLessTheAlertPresets(t *testing.T) {
 			parameters[param.Key] = json.RawMessage("null")
 		}
 		encoded, _ := json.Marshal(parameters)
-		parsed, err := widget.ParseParameters(string(encoded), preset.Params)
+		parsed, err := params.ParseParameters(string(encoded), preset.Params)
 		check(t, err)
 		if len(parsed.Unknown) != 0 {
 			t.Errorf("%s reported its own keys unknown: %v", preset.Type, parsed.Unknown)
@@ -240,7 +243,7 @@ func TestTheAPIDocumentsParameterTableMatchesTheCode(t *testing.T) {
 }
 
 // documentedDefault renders a default the way the API document writes it.
-func documentedDefault(param widget.Param) string {
+func documentedDefault(param params.Param) string {
 	if param.Required {
 		return "required"
 	}

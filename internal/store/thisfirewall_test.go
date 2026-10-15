@@ -5,6 +5,11 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // This firewall as an end: AC1 to AC6 of specs/SPEC-step-5a-live-corrections.md.
@@ -19,8 +24,8 @@ func upstreamV6(t *testing.T, network *testNetwork) string {
 	t.Helper()
 	address := "2001:db8:ff00::2"
 	bits := int64(64)
-	if err := network.db.UpsertInterfaceAddress(context.Background(), InterfaceAddress{
-		InterfaceID: network.upstream.id, SourceField: SourceFieldAddr6, Address: address,
+	if err := network.db.UpsertInterfaceAddress(context.Background(), vocab.InterfaceAddress{
+		InterfaceID: network.upstream.id, SourceField: vocab.SourceFieldAddr6, Address: address,
 		PrefixLength: &bits, AddressFamily: 6,
 	}, nil, network.now-86400); err != nil {
 		t.Fatalf("writing the upstream IPv6 address: %v", err)
@@ -135,14 +140,14 @@ func TestThisFirewallIsRecognisedAtEveryEndInBothFamilies(t *testing.T) {
 			index := 0
 			for address := range expected {
 				index++
-				if err := network.db.InsertSecurityEvent(ctx, suricata, SecurityEvent{
+				if err := network.db.InsertSecurityEvent(ctx, suricata, vocab.SecurityEvent{
 					ProviderEventKey: fmt.Sprintf("example-event-%d", index), OccurredAt: network.now - 5,
 					IngestedAt: network.now - 1, RuleIdentity: "1", Signature: "example signature",
 					EventAction: "allowed", SrcAddress: address, DstAddress: outside(14, false),
 				}); err != nil {
 					t.Fatalf("writing an event: %v", err)
 				}
-				if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+				if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 					LookupKey: fmt.Sprintf("example-firewall-lookup-%d", index), ClientAddress: address,
 					Domain: "example.invalid", Resolver: "unbound", Action: "pass",
 					LookedUpAt: network.now - 5, IngestedAt: network.now - 1,
@@ -152,10 +157,10 @@ func TestThisFirewallIsRecognisedAtEveryEndInBothFamilies(t *testing.T) {
 			}
 			localhost := "localhost"
 			address, resolution, err := network.db.ResolveLeaseHostname(ctx, localhost, network.now-5)
-			if err != nil || resolution != ClientResolutionThisFirewall {
+			if err != nil || resolution != vocab.ClientResolutionThisFirewall {
 				t.Fatalf("`localhost` resolved to %q, %q, %v; it names this firewall", address, resolution, err)
 			}
-			if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+			if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 				LookupKey: "example-localhost-lookup", ClientAddress: address, ClientHostname: &localhost,
 				ClientResolution: resolution, Domain: "example.invalid", Resolver: "unbound",
 				Action: "pass", LookedUpAt: network.now - 5, IngestedAt: network.now - 1,
@@ -191,12 +196,12 @@ func TestThisFirewallIsRecognisedAtEveryEndInBothFamilies(t *testing.T) {
 				}
 				if got := queryInt(t, network.db, `SELECT count(*) FROM security_event
 					WHERE src_address = ? AND src_is_this_firewall = 1 AND src_client_id IS NULL
-					  AND src_interface_id IS NOT DISTINCT FROM ?`, address, optional(iface)); got != 1 {
+					  AND src_interface_id IS NOT DISTINCT FROM ?`, address, sqldb.Optional(iface)); got != 1 {
 					t.Errorf("the event from %s is not recorded as this firewall's", address)
 				}
 				if got := queryInt(t, network.db, `SELECT count(*) FROM dns_resolution
 					WHERE client_address = ? AND client_is_this_firewall = 1 AND client_id IS NULL
-					  AND interface_id IS NOT DISTINCT FROM ?`, address, optional(iface)); got != 1 {
+					  AND interface_id IS NOT DISTINCT FROM ?`, address, sqldb.Optional(iface)); got != 1 {
 					t.Errorf("the lookup from %s is not recorded as this firewall's", address)
 				}
 				if clients := queryInt(t, network.db, "SELECT count(*) FROM client WHERE last_address = ?",
@@ -240,16 +245,16 @@ func TestThisFirewallIsDecidedAsOfTheRowsInstant(t *testing.T) {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
 			network := newTestNetwork(t, counts[0], counts[1])
 			ctx := context.Background()
-			margin := int64(DefaultDiscoveryIntervalSeconds)
+			margin := int64(flows.DefaultDiscoveryIntervalSeconds)
 			for _, v6 := range []bool{false, true} {
 				// An address the upstream interface held from first to last, and holds no
 				// longer: the latest discovery of the interface is later.
 				held := outside(40, v6)
 				first, last := network.now-20000, network.now-10000
 				bits := int64(24)
-				field := SourceFieldAddr4
+				field := vocab.SourceFieldAddr4
 				if v6 {
-					bits, field = 64, SourceFieldAddr6
+					bits, field = 64, vocab.SourceFieldAddr6
 				}
 				if _, err := network.db.DB().ExecContext(ctx, `INSERT INTO interface_address
 					(interface_id, source_field, address, prefix_length, address_family, first_seen_at,
@@ -329,7 +334,7 @@ func TestThisFirewallIsItsOwnKeyAndHasATreeNodeOnEachSide(t *testing.T) {
 			if direct == 0 {
 				t.Fatal("no flow has an end that is this firewall, so the key is not exercised")
 			}
-			for _, period := range Periods() {
+			for _, period := range vocab.Periods() {
 				got := queryInt(t, network.db, fmt.Sprintf(`SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_%s
 					WHERE traffic_direction IN ('to_this_firewall', 'from_this_firewall')
 					  AND traffic_scope = 'this_firewall'`, period.Name))
@@ -347,25 +352,25 @@ func TestThisFirewallIsItsOwnKeyAndHasATreeNodeOnEachSide(t *testing.T) {
 			if err != nil {
 				t.Fatalf("reading the window: %v", err)
 			}
-			if got := window.ByDirection()[DirectionToThisFirewall].Bytes +
-				window.ByDirection()[DirectionFromThisFirewall].Bytes; got != direct {
+			if got := window.ByDirection()[vocab.DirectionToThisFirewall].Bytes +
+				window.ByDirection()[vocab.DirectionFromThisFirewall].Bytes; got != direct {
 				t.Errorf("the window's this-firewall directions hold %d bytes, a direct sum %d", got, direct)
 			}
 
-			for _, root := range []TreeRoot{TreeRootInterface, TreeRootClient, TreeRootOwner} {
+			for _, root := range []reads.TreeRoot{reads.TreeRootInterface, reads.TreeRootClient, reads.TreeRootOwner} {
 				tree, err := network.db.ReadConnectionTree(ctx, network.now-86400, network.now+1, root)
 				if err != nil {
 					t.Fatalf("reading the tree: %v", err)
 				}
 				var insideFirewall, outsideFirewall int64
 				for _, node := range tree.Inside {
-					if node.Key == TreeNodeThisFirewall {
+					if node.Key == reads.TreeNodeThisFirewall {
 						insideFirewall = node.Bytes
 					}
 					assertLevelSums(t, root, node)
 				}
 				for _, node := range tree.Outside {
-					if node.Key == TreeNodeThisFirewall {
+					if node.Key == reads.TreeNodeThisFirewall {
 						outsideFirewall = node.Bytes
 					}
 					assertLevelSums(t, root, node)
@@ -388,7 +393,7 @@ func TestThisFirewallIsItsOwnKeyAndHasATreeNodeOnEachSide(t *testing.T) {
 				// rest.
 				var rest int64
 				for _, node := range tree.Inside {
-					if node.Key != TreeNodeThisFirewall {
+					if node.Key != reads.TreeNodeThisFirewall {
 						rest += node.Bytes
 					}
 				}
@@ -406,7 +411,7 @@ func TestThisFirewallIsItsOwnKeyAndHasATreeNodeOnEachSide(t *testing.T) {
 }
 
 // assertLevelSums checks that a node's children sum to it.
-func assertLevelSums(t *testing.T, root TreeRoot, node *TreeNode) {
+func assertLevelSums(t *testing.T, root reads.TreeRoot, node *reads.TreeNode) {
 	t.Helper()
 	if len(node.Children) == 0 {
 		return
@@ -444,7 +449,7 @@ func TestAFlowToThisFirewallIsNeverAttributedAndAFlowFromItIsOutsideTheRate(t *t
 					direction: "in", src: client.address, dst: target, dstPort: &dns, protocol: "udp",
 					action: "pass", bytes: 70})
 				// The client looked one name up just before: the only lookup in the window.
-				if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+				if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 					LookupKey: fmt.Sprintf("example-before-firewall-%t", v6), ClientAddress: client.address,
 					Domain: "example-one.example.invalid", Resolver: "unbound", Action: "pass",
 					AnswerSource: ptr("Recursion"), LookedUpAt: network.now - 52, IngestedAt: network.now - 1,
@@ -460,7 +465,7 @@ func TestAFlowToThisFirewallIsNeverAttributedAndAFlowFromItIsOutsideTheRate(t *t
 				addresses = append(addresses, client.address)
 			}
 			network.classifyAndRefresh(t, addresses)
-			candidates, err := Statement("attribution_candidates")
+			candidates, err := sqldb.Statement("attribution_candidates")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -518,7 +523,7 @@ func TestAnAttributionMadeBeforeTheFirewallWasRecognisedIsRemoved(t *testing.T) 
 	network.insert(t, []networkFlow{{observedAt: network.now - 50, device: network.inside[0].device,
 		direction: "in", src: client.address, dst: network.inside[0].address, dstPort: &dns,
 		protocol: "udp", action: "pass", bytes: 70}})
-	if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey: "example-stale", ClientAddress: client.address, Domain: "example.invalid",
 		Resolver: "unbound", Action: "pass", AnswerSource: ptr("Recursion"),
 		LookedUpAt: network.now - 52, IngestedAt: network.now - 1,
@@ -585,8 +590,8 @@ func TestReclassifyEverythingPurgesThePhantomClientsAtFirewallAddresses(t *testi
 					WHERE address = ? LIMIT 1`, address).Scan(&interfaceID); err != nil {
 					t.Fatalf("reading the interface of %s: %v", address, err)
 				}
-				id, err := network.db.UpsertClient(ctx, Client{
-					Identity:    ClientIdentity{Kind: IdentityAddressInInterface, Key: AddressIdentityKey(&interfaceID, address, network.now)},
+				id, err := network.db.UpsertClient(ctx, vocab.Client{
+					Identity:    vocab.ClientIdentity{Kind: vocab.IdentityAddressInInterface, Key: flows.AddressIdentityKey(&interfaceID, address, network.now)},
 					InterfaceID: &interfaceID, LastAddress: &address,
 				}, network.now)
 				if err != nil {
@@ -646,18 +651,18 @@ func TestReclassifyEverythingPurgesThePhantomClientsAtFirewallAddresses(t *testi
 // loopback is recognised by its form, address or name, in both families.
 func TestTheTermIsOpnsensesThisFirewall(t *testing.T) {
 	t.Parallel()
-	if ScopeThisFirewall != "this_firewall" || DirectionToThisFirewall != "to_this_firewall" ||
-		DirectionFromThisFirewall != "from_this_firewall" || ClientResolutionThisFirewall != "this_firewall_hostname" ||
-		TreeNodeThisFirewall != "this_firewall" {
+	if vocab.ScopeThisFirewall != "this_firewall" || vocab.DirectionToThisFirewall != "to_this_firewall" ||
+		vocab.DirectionFromThisFirewall != "from_this_firewall" || vocab.ClientResolutionThisFirewall != "this_firewall_hostname" ||
+		reads.TreeNodeThisFirewall != "this_firewall" {
 		t.Error("an identifier does not use the term this firewall")
 	}
 	for _, loopback := range []string{"127.0.0.1", "127.8.9.10", "::1", "localhost", "LocalHost.", "::ffff:127.0.0.1"} {
-		if !IsLoopback(loopback) {
+		if !flows.IsLoopback(loopback) {
 			t.Errorf("%s is not recognised as the loopback", loopback)
 		}
 	}
 	for _, other := range []string{"198.51.100.1", "2001:db8::1", "localhost.example.invalid", "example-host"} {
-		if IsLoopback(other) {
+		if flows.IsLoopback(other) {
 			t.Errorf("%s is recognised as the loopback", other)
 		}
 	}
@@ -667,7 +672,7 @@ func TestTheTermIsOpnsensesThisFirewall(t *testing.T) {
 // instant read before anything is written, then every interface and the addresses it
 // reported, in the order given. upstream lists the upstream addresses this discovery read;
 // every inside interface reports its own two addresses.
-func discoveryPass(t *testing.T, network *testNetwork, at int64, upstreamFirst bool, upstream []InterfaceAddress) {
+func discoveryPass(t *testing.T, network *testNetwork, at int64, upstreamFirst bool, upstream []vocab.InterfaceAddress) {
 	t.Helper()
 	ctx := context.Background()
 	var previous *int64
@@ -676,7 +681,7 @@ func discoveryPass(t *testing.T, network *testNetwork, at int64, upstreamFirst b
 	} else if found {
 		previous = &latest
 	}
-	writeInterface := func(id int64, addresses []InterfaceAddress) {
+	writeInterface := func(id int64, addresses []vocab.InterfaceAddress) {
 		if _, err := network.db.DB().ExecContext(ctx, "UPDATE interface SET last_seen_at = ? WHERE id = ?",
 			at, id); err != nil {
 			t.Fatalf("writing an interface: %v", err)
@@ -690,9 +695,9 @@ func discoveryPass(t *testing.T, network *testNetwork, at int64, upstreamFirst b
 	bits4, bits6 := int64(24), int64(64)
 	inside := func() {
 		for _, iface := range network.inside {
-			writeInterface(iface.id, []InterfaceAddress{
-				{InterfaceID: iface.id, SourceField: SourceFieldAddr4, Address: iface.address, PrefixLength: &bits4, AddressFamily: 4},
-				{InterfaceID: iface.id, SourceField: SourceFieldAddr6, Address: iface.v6, PrefixLength: &bits6, AddressFamily: 6},
+			writeInterface(iface.id, []vocab.InterfaceAddress{
+				{InterfaceID: iface.id, SourceField: vocab.SourceFieldAddr4, Address: iface.address, PrefixLength: &bits4, AddressFamily: 4},
+				{InterfaceID: iface.id, SourceField: vocab.SourceFieldAddr6, Address: iface.v6, PrefixLength: &bits6, AddressFamily: 6},
 			})
 		}
 	}
@@ -719,10 +724,10 @@ func TestAnAddressReleasedAndReacquiredIsNotHeldInBetween(t *testing.T) {
 					network := newTestNetwork(t, counts[0], counts[1])
 					held4, held6 := outside(120, false), outside(120, true)
 					bits4, bits6 := int64(24), int64(64)
-					read := []InterfaceAddress{
-						{InterfaceID: network.upstream.id, SourceField: SourceFieldAddr4, Address: held4,
+					read := []vocab.InterfaceAddress{
+						{InterfaceID: network.upstream.id, SourceField: vocab.SourceFieldAddr4, Address: held4,
 							PrefixLength: &bits4, AddressFamily: 4},
-						{InterfaceID: network.upstream.id, SourceField: SourceFieldAddr6, Address: held6,
+						{InterfaceID: network.upstream.id, SourceField: vocab.SourceFieldAddr6, Address: held6,
 							PrefixLength: &bits6, AddressFamily: 6},
 					}
 					for _, discovery := range []struct {
@@ -732,13 +737,13 @@ func TestAnAddressReleasedAndReacquiredIsNotHeldInBetween(t *testing.T) {
 						{network.now - 9000, true}, {network.now - 8700, true}, {network.now - 8400, false},
 						{network.now - 8100, false}, {network.now - 7800, true},
 					} {
-						var upstream []InterfaceAddress
+						var upstream []vocab.InterfaceAddress
 						if discovery.read {
 							upstream = read
 						}
 						discoveryPass(t, network, discovery.at, upstreamFirst, upstream)
 					}
-					margin := int64(DefaultDiscoveryIntervalSeconds)
+					margin := int64(flows.DefaultDiscoveryIntervalSeconds)
 					port := int64(443)
 					for _, held := range []string{held4, held6} {
 						if holdings := queryInt(t, network.db, `SELECT count(*) FROM interface_address

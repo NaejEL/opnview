@@ -11,6 +11,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web"
 	surface "github.com/NaejEL/opnview/internal/web/surfaces/live"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 )
 
 // The live surface (C3 of the backend-completion cycle): the rolling strip and the live settings, in
@@ -62,13 +63,13 @@ func TestLiveSettingsWriteRefusesAMissingOrForeignProof(t *testing.T) {
 			t.Errorf("%s answered %d", name, answer.StatusCode)
 		}
 	}
-	if value := harness.Setting("live_interest_seconds"); value != "30" {
+	if value := collectiontest.Setting(harness, "live_interest_seconds"); value != "30" {
 		t.Errorf("a refused write left live_interest_seconds at %q", value)
 	}
 	if answer := harness.PostJSON(surface.PathSettings, body, token, harness.HTTP.URL); answer.StatusCode != http.StatusOK {
 		t.Errorf("a same-origin write with its proof answered %d", answer.StatusCode)
 	}
-	if value := harness.Setting("live_interest_seconds"); value != "60" {
+	if value := collectiontest.Setting(harness, "live_interest_seconds"); value != "60" {
 		t.Errorf("the accepted write stored %q", value)
 	}
 }
@@ -110,7 +111,7 @@ func TestLiveCadenceAndInterestSettingsAreReadAndWrittenWithinTheirBounds(t *tes
 			t.Errorf("%s answered %d %+v", refused.body, answer.StatusCode, decoded)
 		}
 	}
-	if value := harness.Setting("live_interest_seconds"); value != "30" {
+	if value := collectiontest.Setting(harness, "live_interest_seconds"); value != "30" {
 		t.Errorf("a refused write stored live_interest_seconds = %q", value)
 	}
 	answer := harness.PostJSON(surface.PathSettings, `{"live_sample_retention_seconds": 7200}`, token, harness.HTTP.URL)

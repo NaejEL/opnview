@@ -10,8 +10,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The availability outcome codes (SPEC-step-5b-widget-api.md, D1, AD1 and AD2), the move of
@@ -20,7 +22,7 @@ import (
 // pass (B8g, AC34).
 
 // outcomeOf reads one provider's recorded outcome code.
-func (h *probeHarness) outcomeOf(t *testing.T, kind, providerKey string) store.AvailabilityOutcome {
+func (h *probeHarness) outcomeOf(t *testing.T, kind, providerKey string) vocab.AvailabilityOutcome {
 	t.Helper()
 	ctx := context.Background()
 	providerID, err := h.store.ProviderID(ctx, kind, providerKey)
@@ -45,28 +47,28 @@ func TestEveryRecordReadOutcomeWritesItsOwnCode(t *testing.T) {
 		kind     string
 		collect  func(*Collector, context.Context) error
 	}{
-		{opnsense.UnboundDumpCache, KindResolverCache, (*Collector).CollectResolverCache},
-		{opnsense.UnboundListLocalData, KindResolverLocalData, (*Collector).CollectResolverLocalData},
+		{opnsense.UnboundDumpCache, core.KindResolverCache, (*Collector).CollectResolverCache},
+		{opnsense.UnboundListLocalData, core.KindResolverLocalData, (*Collector).CollectResolverLocalData},
 	} {
-		codes := map[store.AvailabilityOutcome]string{}
+		codes := map[vocab.AvailabilityOutcome]string{}
 		for _, answer := range []struct {
 			name   string
 			status int
 			body   string
-			want   store.AvailabilityOutcome
+			want   vocab.AvailabilityOutcome
 		}{
-			{"unauthorised", http.StatusUnauthorized, `{"status":401}`, store.OutcomeAuthenticationFailed},
-			{"forbidden", http.StatusForbidden, `{"errorMessage":"Forbidden"}`, store.OutcomeDenied},
-			{"not found", http.StatusNotFound, `{}`, store.OutcomeNotFound},
-			{"server error", http.StatusInternalServerError, `{}`, store.OutcomeServerError},
-			{"empty body", http.StatusOK, ``, store.OutcomeEmptyBody},
-			{"failed result", http.StatusOK, `{"result":"failed"}`, store.OutcomeResultFailed},
-			{"undecodable", http.StatusOK, `["not", "the", "envelope"]`, store.OutcomeUndecodable},
-			{"failed status", http.StatusOK, `{"status":"failed"}`, store.OutcomeStatusNotOK},
-			{"no record", http.StatusOK, `{"status":"ok","data":[]}`, store.OutcomeHealthyEmpty},
+			{"unauthorised", http.StatusUnauthorized, `{"status":401}`, vocab.OutcomeAuthenticationFailed},
+			{"forbidden", http.StatusForbidden, `{"errorMessage":"Forbidden"}`, vocab.OutcomeDenied},
+			{"not found", http.StatusNotFound, `{}`, vocab.OutcomeNotFound},
+			{"server error", http.StatusInternalServerError, `{}`, vocab.OutcomeServerError},
+			{"empty body", http.StatusOK, ``, vocab.OutcomeEmptyBody},
+			{"failed result", http.StatusOK, `{"result":"failed"}`, vocab.OutcomeResultFailed},
+			{"undecodable", http.StatusOK, `["not", "the", "envelope"]`, vocab.OutcomeUndecodable},
+			{"failed status", http.StatusOK, `{"status":"failed"}`, vocab.OutcomeStatusNotOK},
+			{"no record", http.StatusOK, `{"status":"ok","data":[]}`, vocab.OutcomeHealthyEmpty},
 			{"records", http.StatusOK, `{"status":"ok","data":[{"host":"edge.example.net.","name":` +
 				`"edge.example.net.","ttl":"60","type":"IN","rrtype":"A","value":"192.0.2.10"}]}`,
-				store.OutcomeHealthy},
+				vocab.OutcomeHealthy},
 		} {
 			harness := arrangeRecordCollection(t)
 			harness.fake.Answer(read.endpoint, answer.status, []byte(answer.body))
@@ -100,13 +102,13 @@ func TestEachNamedAbsenceHasItsOwnCode(t *testing.T) {
 	}
 	for _, want := range []struct {
 		kind, key string
-		outcome   store.AvailabilityOutcome
+		outcome   vocab.AvailabilityOutcome
 	}{
-		{KindResolverCache, ProviderDnsmasq, store.OutcomeNoCacheRead},
-		{KindResolverLocalData, ProviderDnsmasq, store.OutcomeNoLocalDataRead},
-		{KindDNSLookup, ProviderDnsmasq, store.OutcomeLogGrammarNotRecorded},
-		{KindDHCPLease, ProviderISC, store.OutcomePluginNotInstalled},
-		{KindResolverCache, ProviderUnbound, store.OutcomeHealthy},
+		{core.KindResolverCache, ProviderDnsmasq, vocab.OutcomeNoCacheRead},
+		{core.KindResolverLocalData, ProviderDnsmasq, vocab.OutcomeNoLocalDataRead},
+		{core.KindDNSLookup, ProviderDnsmasq, vocab.OutcomeLogGrammarNotRecorded},
+		{core.KindDHCPLease, ProviderISC, vocab.OutcomePluginNotInstalled},
+		{core.KindResolverCache, ProviderUnbound, vocab.OutcomeHealthy},
 	} {
 		if got := harness.outcomeOf(t, want.kind, want.key); got != want.outcome {
 			t.Errorf("%s/%s: the outcome is %q, not %q", want.kind, want.key, got, want.outcome)
@@ -118,8 +120,8 @@ func TestEachNamedAbsenceHasItsOwnCode(t *testing.T) {
 	if err := harness.collector.probeDHCPLease(ctx); err != nil {
 		t.Logf("the lease probe round reported %v", err)
 	}
-	if got := harness.outcomeOf(t, KindDHCPLease, ProviderISC); got != store.OutcomeReadNotSupported {
-		t.Errorf("the plugin answering: the outcome is %q, not %q", got, store.OutcomeReadNotSupported)
+	if got := harness.outcomeOf(t, core.KindDHCPLease, ProviderISC); got != vocab.OutcomeReadNotSupported {
+		t.Errorf("the plugin answering: the outcome is %q, not %q", got, vocab.OutcomeReadNotSupported)
 	}
 }
 
@@ -137,12 +139,12 @@ func TestTheProbeRoundsOutcomesFollowWhatTheFirewallAnswered(t *testing.T) {
 	_ = stopped.collector.ProbeAll(ctx)
 	for _, want := range []struct {
 		kind, key string
-		outcome   store.AvailabilityOutcome
+		outcome   vocab.AvailabilityOutcome
 	}{
-		{KindSecurityEvent, ProviderSuricata, store.OutcomeServiceNotRunning},
-		{KindMeasurementSample, ProviderInsight, store.OutcomePresentButDisabled},
-		{KindFirewallLog, ProviderPf, store.OutcomeUndecodable},
-		{KindDHCPLease, ProviderKea, store.OutcomeNotFound},
+		{core.KindSecurityEvent, ProviderSuricata, vocab.OutcomeServiceNotRunning},
+		{core.KindMeasurementSample, ProviderInsight, vocab.OutcomePresentButDisabled},
+		{core.KindFirewallLog, ProviderPf, vocab.OutcomeUndecodable},
+		{core.KindDHCPLease, ProviderKea, vocab.OutcomeNotFound},
 	} {
 		if got := stopped.outcomeOf(t, want.kind, want.key); got != want.outcome {
 			t.Errorf("%s/%s: the outcome is %q, not %q", want.kind, want.key, got, want.outcome)
@@ -152,19 +154,19 @@ func TestTheProbeRoundsOutcomesFollowWhatTheFirewallAnswered(t *testing.T) {
 	silent := newProbeHarness(t)
 	silent.fake.Answer(opnsense.FirewallLog, http.StatusOK, []byte(`[]`))
 	_ = silent.collector.ProbeAll(ctx)
-	if got := silent.outcomeOf(t, KindFirewallLog, ProviderPf); got != store.OutcomeHealthyEmpty {
+	if got := silent.outcomeOf(t, core.KindFirewallLog, ProviderPf); got != vocab.OutcomeHealthyEmpty {
 		t.Errorf("a filter log answering an empty array: the outcome is %q, not %q", got,
-			store.OutcomeHealthyEmpty)
+			vocab.OutcomeHealthyEmpty)
 	}
 
 	refused := newProbeHarness(t)
 	refused.fake.Answer(opnsense.FirewallLog, http.StatusUnauthorized, []byte(`{}`))
 	refused.fake.Answer(opnsense.IDSStatus, http.StatusForbidden, []byte(`{}`))
 	_ = refused.collector.ProbeAll(ctx)
-	if got := refused.outcomeOf(t, KindFirewallLog, ProviderPf); got != store.OutcomeAuthenticationFailed {
+	if got := refused.outcomeOf(t, core.KindFirewallLog, ProviderPf); got != vocab.OutcomeAuthenticationFailed {
 		t.Errorf("a 401: the outcome is %q", got)
 	}
-	if got := refused.outcomeOf(t, KindSecurityEvent, ProviderSuricata); got != store.OutcomeDenied {
+	if got := refused.outcomeOf(t, core.KindSecurityEvent, ProviderSuricata); got != vocab.OutcomeDenied {
 		t.Errorf("a 403: the outcome is %q", got)
 	}
 }
@@ -177,13 +179,13 @@ func TestEveryWrittenAvailabilityCarriesACodeInTheClosedSet(t *testing.T) {
 	harness := newProbeHarness(t)
 	_ = harness.collector.ProbeAll(context.Background())
 	for _, provider := range everyProvider(t, harness.store) {
-		if provider.kind == KindIPGeolocation || provider.kind == KindRegistrableDomain || provider.kind == KindFlowVolume {
+		if provider.kind == core.KindIPGeolocation || provider.kind == core.KindRegistrableDomain || provider.kind == core.KindFlowVolume {
 			// Recorded by internal/maxmind and internal/publicsuffix, or (flow_volume) by nothing,
 			// none of which this round runs.
 			continue
 		}
 		got := harness.outcomeOf(t, provider.kind, provider.key)
-		if !got.Valid() || got == store.OutcomeNotYetProbed {
+		if !got.Valid() || got == vocab.OutcomeNotYetProbed {
 			t.Errorf("%s/%s carries the outcome %q after the probe round", provider.kind, provider.key, got)
 		}
 	}
@@ -250,10 +252,11 @@ const a1e2707DumpDetail = "read 11 records of the cache (1381 bytes) in 0 ms: A 
 	"cached answer, with no ttl and no record data, so not records and not counted among them; " +
 	"skipped 1 whose value is not valid for their type"
 
-// TestMovingTheMessageCacheRuleLeavesTheDumpDetailByteIdentical is AC25. The detail of the
-// dump fixture is a1e2707's byte for byte, except for the one clause B6 extends on purpose:
-// the bad-value count now names its category, appended after the count a1e2707 wrote. And
-// resourcerecord.go, which holds the DNS-generic rules, states no Unbound fact.
+// TestMovingTheMessageCacheRuleLeavesTheDumpDetailByteIdentical is AC25. The detail of the dump
+// fixture is a1e2707's byte for byte, except for the one clause B6 extends on purpose: the
+// bad-value count now names its category, appended after the count a1e2707 wrote. And
+// internal/collect/kinds/resolverrecords/resourcerecord.go, which holds the DNS-generic rules,
+// states no Unbound fact.
 func TestMovingTheMessageCacheRuleLeavesTheDumpDetailByteIdentical(t *testing.T) {
 	t.Parallel()
 	harness := arrangeRecordCollection(t)
@@ -262,11 +265,11 @@ func TestMovingTheMessageCacheRuleLeavesTheDumpDetailByteIdentical(t *testing.T)
 		t.Fatalf("reading the cache: %v", err)
 	}
 	want := a1e2707DumpDetail + " (A whose value is an IPv6 address: 1)"
-	if detail := harness.detailOf(t, KindResolverCache, ProviderUnbound); detail != want {
+	if detail := harness.detailOf(t, core.KindResolverCache, ProviderUnbound); detail != want {
 		t.Errorf("the dump fixture's detail changed:\n got %q\nwant %q", detail, want)
 	}
 
-	source, err := os.ReadFile("resourcerecord.go")
+	source, err := os.ReadFile(filepath.Join("kinds", "resolverrecords", "resourcerecord.go"))
 	if err != nil {
 		t.Fatalf("reading resourcerecord.go: %v", err)
 	}
@@ -312,7 +315,7 @@ func TestARecordWhoseValueIsNotValidIsCountedUnderItsNamedCategory(t *testing.T)
 			t.Fatalf("reading the local data: %v", err)
 		}
 		n := func(count int) string { return strconv.Itoa(count * copies) }
-		cacheDetail := harness.detailOf(t, KindResolverCache, ProviderUnbound)
+		cacheDetail := harness.detailOf(t, core.KindResolverCache, ProviderUnbound)
 		wantCache := "; skipped " + n(5) + " whose value is not valid for their type (" +
 			"A whose value is not an address: " + n(1) + ", A whose value is an IPv6 address: " + n(1) +
 			", AAAA whose value is not an address: " + n(1) + ", AAAA whose value is an IPv4 address: " +
@@ -320,7 +323,7 @@ func TestARecordWhoseValueIsNotValidIsCountedUnderItsNamedCategory(t *testing.T)
 		if !strings.HasSuffix(cacheDetail, wantCache) {
 			t.Errorf("%d copies: the cache detail %q does not end %q", copies, cacheDetail, wantCache)
 		}
-		localDetail := harness.detailOf(t, KindResolverLocalData, ProviderUnbound)
+		localDetail := harness.detailOf(t, core.KindResolverLocalData, ProviderUnbound)
 		wantLocal := "; skipped " + n(3) + " whose value is not valid for their type (" +
 			"PTR with an empty target: " + n(1) + ", PTR whose owner name encodes no address: " + n(1) +
 			", local data whose host name has an empty first label: " + n(1) + ")"
@@ -349,10 +352,10 @@ func TestAStoreFailureInTheLeasePassIsRecordedAndCountsAsAFailedPass(t *testing.
 	harness := leaseRetryHarness(t, "example-key-store-failure", "example-host-store-failure")
 	ctx := context.Background()
 	harness.fake.AnswerFixture(opnsense.KeaLeases, "kea_leases.json")
-	if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, ProviderDnsmasq, ProviderKea); err != nil {
+	if err := harness.store.SetActiveProviders(ctx, core.KindDHCPLease, ProviderDnsmasq, ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
-	kea, err := harness.store.ProviderID(ctx, KindDHCPLease, ProviderKea)
+	kea, err := harness.store.ProviderID(ctx, core.KindDHCPLease, ProviderKea)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,14 +364,14 @@ func TestAStoreFailureInTheLeasePassIsRecordedAndCountsAsAFailedPass(t *testing.
 	if err := harness.collector.CollectDHCPLease(ctx); err == nil {
 		t.Fatal("a lease pass whose leases could not be stored reported no failure")
 	}
-	state, _, _ := harness.availabilityOf(t, KindDHCPLease, ProviderKea)
-	if state != store.StateUnavailable {
+	state, _, _ := harness.availabilityOf(t, core.KindDHCPLease, ProviderKea)
+	if state != vocab.StateUnavailable {
 		t.Errorf("the backend whose leases could not be stored reads %q", state)
 	}
-	if got := harness.outcomeOf(t, KindDHCPLease, ProviderKea); got != store.OutcomeStoreFailure {
-		t.Errorf("the outcome is %q, not %q", got, store.OutcomeStoreFailure)
+	if got := harness.outcomeOf(t, core.KindDHCPLease, ProviderKea); got != vocab.OutcomeStoreFailure {
+		t.Errorf("the outcome is %q, not %q", got, vocab.OutcomeStoreFailure)
 	}
-	if detail := harness.detailOf(t, KindDHCPLease, ProviderKea); !strings.Contains(detail,
+	if detail := harness.detailOf(t, core.KindDHCPLease, ProviderKea); !strings.Contains(detail,
 		"could not be stored") || !strings.Contains(detail, "lease passes in a row") {
 		t.Errorf("the detail %q does not name the store failure and the retry count", detail)
 	}
@@ -416,14 +419,14 @@ func TestAStoreFailureInTheLookupPassIsRecorded(t *testing.T) {
 	if err := harness.collector.CollectDNSLookup(ctx); err == nil {
 		t.Fatal("a lookup pass whose lookups could not be stored reported no failure")
 	}
-	state, _, _ := harness.availabilityOf(t, KindDNSLookup, ProviderUnbound)
-	if state != store.StateUnavailable {
+	state, _, _ := harness.availabilityOf(t, core.KindDNSLookup, ProviderUnbound)
+	if state != vocab.StateUnavailable {
 		t.Errorf("the resolver whose lookups could not be stored reads %q", state)
 	}
-	if got := harness.outcomeOf(t, KindDNSLookup, ProviderUnbound); got != store.OutcomeStoreFailure {
-		t.Errorf("the outcome is %q, not %q", got, store.OutcomeStoreFailure)
+	if got := harness.outcomeOf(t, core.KindDNSLookup, ProviderUnbound); got != vocab.OutcomeStoreFailure {
+		t.Errorf("the outcome is %q, not %q", got, vocab.OutcomeStoreFailure)
 	}
-	if detail := harness.detailOf(t, KindDNSLookup, ProviderUnbound); !strings.Contains(detail,
+	if detail := harness.detailOf(t, core.KindDNSLookup, ProviderUnbound); !strings.Contains(detail,
 		"could not be stored") || !strings.Contains(detail, "planted store failure") {
 		t.Errorf("the detail %q does not name the store failure", detail)
 	}
@@ -440,8 +443,8 @@ func TestAStoreFailureInTheRecordPassIsRecorded(t *testing.T) {
 		kind     string
 		collect  func(*Collector, context.Context) error
 	}{
-		{opnsense.UnboundDumpCache, KindResolverCache, (*Collector).CollectResolverCache},
-		{opnsense.UnboundListLocalData, KindResolverLocalData, (*Collector).CollectResolverLocalData},
+		{opnsense.UnboundDumpCache, core.KindResolverCache, (*Collector).CollectResolverCache},
+		{opnsense.UnboundListLocalData, core.KindResolverLocalData, (*Collector).CollectResolverLocalData},
 	} {
 		harness := arrangeRecordCollection(t)
 		ctx := context.Background()
@@ -454,17 +457,17 @@ func TestAStoreFailureInTheRecordPassIsRecorded(t *testing.T) {
 			t.Errorf("%s: a read whose records could not be stored reported no failure", read.kind)
 		}
 		state, _, _ := harness.availabilityOf(t, read.kind, ProviderUnbound)
-		if state != store.StateUnavailable {
+		if state != vocab.StateUnavailable {
 			t.Errorf("%s: the resolver whose records could not be stored reads %q", read.kind, state)
 		}
-		if got := harness.outcomeOf(t, read.kind, ProviderUnbound); got != store.OutcomeStoreFailure {
-			t.Errorf("%s: the outcome is %q, not %q", read.kind, got, store.OutcomeStoreFailure)
+		if got := harness.outcomeOf(t, read.kind, ProviderUnbound); got != vocab.OutcomeStoreFailure {
+			t.Errorf("%s: the outcome is %q, not %q", read.kind, got, vocab.OutcomeStoreFailure)
 		}
 		providerID, err := harness.store.ProviderID(ctx, read.kind, ProviderUnbound)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if kept := harness.collector.readDetail(providerID); !strings.Contains(kept, "could not be stored") {
+		if kept := harness.collector.ReadDetail(providerID); !strings.Contains(kept, "could not be stored") {
 			t.Errorf("%s: the detail the probe round keeps is %q, not the store failure", read.kind, kept)
 		}
 	}

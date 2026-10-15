@@ -1,6 +1,9 @@
 package web
 
-import "github.com/NaejEL/opnview/internal/store"
+import (
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+)
 
 // The keys composed from a registry row.
 //
@@ -42,17 +45,17 @@ func availabilityKeys() []MessageKey {
 // AvailabilityOf names one provider's condition as the preset does, with the class of its
 // mark. Only reachable is healthy; a missing row is "state unknown", and a state the schema
 // does not allow reads the same rather than as anything better.
-func AvailabilityOf(row store.SourceRow) (MessageKey, string) {
+func AvailabilityOf(row reads.SourceRow) (MessageKey, string) {
 	switch {
 	case !row.HasAvailability:
 		return msgAvailabilityUnknown, "mark-none"
 	case row.NotYetProbed():
 		return msgAvailabilityNotYetProbed, "mark-none"
-	case row.State == store.StateReachable:
+	case row.State == vocab.StateReachable:
 		return msgAvailabilityHealthy, "mark-ok"
-	case row.State == store.StatePresentButDisabled:
+	case row.State == vocab.StatePresentButDisabled:
 		return msgAvailabilityNotCollecting, "mark-off"
-	case row.State == store.StateUnavailable:
+	case row.State == vocab.StateUnavailable:
 		return msgAvailabilityUnavailable, "mark-warn"
 	default:
 		return msgAvailabilityUnknown, "mark-none"

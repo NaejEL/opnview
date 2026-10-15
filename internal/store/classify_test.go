@@ -6,6 +6,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // Classification: AC9, AC11, AC26, AC27 and AC31.
@@ -17,7 +20,7 @@ func aggregateTables() []string {
 	for _, family := range []string{"volume_aggregate_", "owner_volume_aggregate_",
 		"client_volume_aggregate_", "domain_volume_aggregate_", "rule_volume_aggregate_",
 		"peer_volume_aggregate_"} {
-		for _, period := range Periods() {
+		for _, period := range vocab.Periods() {
 			tables = append(tables, family+period.Name)
 		}
 	}
@@ -194,7 +197,7 @@ func TestDirectionComesFromMembershipAndPartitionsEveryFlow(t *testing.T) {
 	}
 
 	// The same partition in every aggregate period.
-	for _, period := range Periods() {
+	for _, period := range vocab.Periods() {
 		table := "volume_aggregate_" + period.Name
 		if got := queryInt(t, network.db, "SELECT sum(bytes) FROM "+table); got != total {
 			t.Errorf("%s sums to %d bytes over its directions, not %d", table, got, total)
@@ -230,7 +233,7 @@ func TestALookupIsPlacedFromTheSameEvidenceAsAFlow(t *testing.T) {
 	client := network.clients[1]
 	stranger := outside(5, true)
 	for index, address := range []string{client.address, stranger} {
-		if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+		if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-lookup-%d", index), ClientAddress: address,
 			Domain: "example.invalid", Resolver: "unbound", Action: "pass",
 			LookedUpAt: network.now - 60, IngestedAt: network.now - 60,
@@ -283,8 +286,8 @@ func TestReclassifyingAStepFourDatabaseClearsTheRemoteClients(t *testing.T) {
 		if index != 2 {
 			interfaceID = &network.upstream.id
 		}
-		id, err := network.db.UpsertClient(ctx, Client{
-			Identity:    ClientIdentity{Kind: IdentityAddressInInterface, Key: AddressIdentityKey(interfaceID, remote, network.now)},
+		id, err := network.db.UpsertClient(ctx, vocab.Client{
+			Identity:    vocab.ClientIdentity{Kind: vocab.IdentityAddressInInterface, Key: flows.AddressIdentityKey(interfaceID, remote, network.now)},
 			InterfaceID: interfaceID, LastAddress: &remote,
 		}, network.now-7200)
 		if err != nil {
@@ -300,25 +303,25 @@ func TestReclassifyingAStepFourDatabaseClearsTheRemoteClients(t *testing.T) {
 		}
 		clientID := remoteClients[len(remoteClients)-1]
 		insideInterface := client.interfaceID
-		if err := network.db.InsertFlow(ctx, Flow{
+		if err := network.db.InsertFlow(ctx, vocab.Flow{
 			LogDigest: fmt.Sprintf("example-step4-%d", index), ObservedAt: network.now - int64(600*(index+1)),
 			IngestedAt: network.now - 600, InterfaceDevice: network.upstream.device,
-			InterfaceLookupState: LookupResolved, SrcInterfaceID: &insideInterface,
+			InterfaceLookupState: vocab.LookupResolved, SrcInterfaceID: &insideInterface,
 			DstInterfaceID: interfaceID, DstClientID: &clientID,
 			SrcAddress: client.address, DstAddress: remote, Protocol: "tcp", IPVersion: map[bool]int64{false: 4, true: 6}[v6],
-			Action: "pass", Direction: "out", PacketBytes: 500, RuleLookupState: LookupPending,
+			Action: "pass", Direction: "out", PacketBytes: 500, RuleLookupState: vocab.LookupPending,
 		}); err != nil {
 			t.Fatalf("writing a step-4 flow: %v", err)
 		}
 		eventProvider, _ := network.db.ProviderID(ctx, "security_event", "suricata")
-		if err := network.db.InsertSecurityEvent(ctx, eventProvider, SecurityEvent{
+		if err := network.db.InsertSecurityEvent(ctx, eventProvider, vocab.SecurityEvent{
 			ProviderEventKey: fmt.Sprintf("example-event-%d", index), OccurredAt: network.now - 300,
 			IngestedAt: network.now - 300, RuleIdentity: "1", Signature: "example", EventAction: "blocked",
 			SrcAddress: remote, DstAddress: client.address, SrcClientID: &clientID, SrcInterfaceID: interfaceID,
 		}); err != nil {
 			t.Fatalf("writing an event: %v", err)
 		}
-		if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+		if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-step4-lookup-%d", index), ClientAddress: remote,
 			ClientID: &clientID, Domain: "example.invalid", Resolver: "unbound", Action: "pass",
 			LookedUpAt: network.now - 300, IngestedAt: network.now - 300,
@@ -330,7 +333,7 @@ func TestReclassifyingAStepFourDatabaseClearsTheRemoteClients(t *testing.T) {
 		t.Fatalf("refreshing the step-4 state: %v", err)
 	}
 
-	run := func() Reclassification {
+	run := func() flows.Reclassification {
 		result, err := network.db.ReclassifyAll(ctx, network.now)
 		if err != nil {
 			t.Fatalf("reclassifying: %v", err)
@@ -400,7 +403,7 @@ func TestALeaseNamingAnAddressSeenOnlyInFlowsRepointsItsRows(t *testing.T) {
 		{observedAt: network.now - 4000, device: client.device, direction: "in", src: client.address,
 			dst: outside(2, client.v6), dstPort: &port, protocol: "tcp", action: "pass", bytes: 200},
 	})
-	if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey: "example-lookup-before", ClientAddress: client.address, Domain: "example.invalid",
 		Resolver: "unbound", Action: "pass", AnswerSource: ptr("Recursion"),
 		LookedUpAt: network.now - 42, IngestedAt: network.now - 42,
@@ -417,14 +420,14 @@ func TestALeaseNamingAnAddressSeenOnlyInFlowsRepointsItsRows(t *testing.T) {
 		network.now-40).Scan(&addressLevel); err != nil {
 		t.Fatalf("reading the flow's client: %v", err)
 	}
-	if kind := queryString(t, network.db, "SELECT identity_kind FROM client WHERE id = ?", addressLevel); kind != IdentityAddressInInterface {
+	if kind := queryString(t, network.db, "SELECT identity_kind FROM client WHERE id = ?", addressLevel); kind != vocab.IdentityAddressInInterface {
 		t.Fatalf("an address seen only in flows has a %s identity", kind)
 	}
 
 	// A lease now names the address, with a MAC.
 	mac := "00:00:00:00:fe:01"
-	leaseClient, err := network.db.UpsertClient(ctx, Client{
-		Identity: ClientIdentity{Kind: IdentityMAC, Key: mac}, InterfaceID: &client.interfaceID,
+	leaseClient, err := network.db.UpsertClient(ctx, vocab.Client{
+		Identity: vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: mac}, InterfaceID: &client.interfaceID,
 		MAC: &mac, LastAddress: &client.address,
 	}, network.now)
 	if err != nil {

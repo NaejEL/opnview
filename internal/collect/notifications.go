@@ -2,11 +2,9 @@ package collect
 
 import (
 	"context"
-	"strings"
-	"sync"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/collect/core"
 )
 
 // The notifications a pass publishes, and the passes a notification triggers (P7 of
@@ -26,81 +24,17 @@ func (c *Collector) afterPass(kind string, pass func(context.Context) error) fun
 		if err := pass(ctx); err != nil {
 			return err
 		}
-		active, err := c.activeSources(ctx, kind)
+		active, err := c.ActiveSources(ctx, kind)
 		if err != nil {
 			return err
 		}
 		for _, source := range active {
-			if err := c.store.NotifyCollectionPass(ctx, kind, source.providerKey); err != nil {
+			if err := c.Store.NotifyCollectionPass(ctx, kind, source.ProviderKey); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-}
-
-// triggers routes the notifications heard to the loops whose provider named them.
-type triggers struct {
-	mutex  sync.Mutex
-	routes map[string][]chan struct{}
-}
-
-// wakeOn returns the wake channel of a loop that the notifications named run, or nil when it names
-// none. A name is "channel" or "channel:subject", the subject being the kind of a collection pass
-// or the plugin of a plugin pass.
-func (t *triggers) wakeOn(names []string) <-chan struct{} {
-	if len(names) == 0 {
-		return nil
-	}
-	wake := make(chan struct{}, 1)
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	if t.routes == nil {
-		t.routes = map[string][]chan struct{}{}
-	}
-	for _, name := range names {
-		t.routes[name] = append(t.routes[name], wake)
-	}
-	return wake
-}
-
-// heard wakes every loop a notification names, without blocking: a loop already woken runs once.
-func (t *triggers) heard(notification store.Notification) {
-	subject := ""
-	switch notification.Channel {
-	case store.ChannelCollectionPass:
-		subject, _ = notification.Payload["kind"].(string)
-	case store.ChannelPluginPass:
-		subject, _ = notification.Payload["plugin"].(string)
-	}
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	for _, name := range []string{notification.Channel, notification.Channel + ":" + subject} {
-		for _, wake := range t.routes[name] {
-			select {
-			case wake <- struct{}{}:
-			default:
-			}
-		}
-	}
-}
-
-// channels returns the channels any loop listens for.
-func (t *triggers) channels() []string {
-	t.mutex.Lock()
-	defer t.mutex.Unlock()
-	var channels []string
-	for name := range t.routes {
-		channel, _, _ := strings.Cut(name, ":")
-		found := false
-		for _, held := range channels {
-			found = found || held == channel
-		}
-		if !found {
-			channels = append(channels, channel)
-		}
-	}
-	return channels
 }
 
 // listenRestart is the interval of the listening loop. Its pass returns only when the context ends
@@ -109,16 +43,16 @@ const listenRestart = time.Minute
 
 // listenTask is the loop that hears the notifications the declared providers named, and wakes
 // their loops. It runs only when one provider named one.
-func (c *Collector) listenTask() []Task {
-	channels := c.triggers.channels()
+func (c *Collector) listenTask() []core.Task {
+	channels := c.Triggers.Channels()
 	if len(channels) == 0 {
 		return nil
 	}
-	return []Task{{
+	return []core.Task{{
 		Name:     "notifications",
-		Interval: FixedInterval(listenRestart),
+		Interval: core.FixedInterval(listenRestart),
 		Run: func(ctx context.Context) error {
-			return c.store.Listen(ctx, channels, c.triggers.heard)
+			return c.Store.Listen(ctx, channels, c.Triggers.Heard)
 		},
 		RunAtStart: true,
 	}}

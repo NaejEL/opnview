@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The second iteration of the step-5A corrections: the purged part and the purge under a
@@ -57,7 +59,7 @@ func TestALeaseNamingAPurgedAddressMovesItsPurgedPart(t *testing.T) {
 			break
 		}
 	}
-	hour := PeriodHour.SlotStart(network.now)
+	hour := vocab.PeriodHour.SlotStart(network.now)
 	if err := network.db.SetSetting(ctx, "retention_seconds", fmt.Sprint(network.now-(hour+400)),
 		network.now); err != nil {
 		t.Fatalf("setting the retention: %v", err)
@@ -72,8 +74,8 @@ func TestALeaseNamingAPurgedAddressMovesItsPurgedPart(t *testing.T) {
 	}
 
 	mac := "00:00:00:00:fe:03"
-	leased, err := network.db.UpsertClient(ctx, Client{
-		Identity: ClientIdentity{Kind: IdentityMAC, Key: mac}, InterfaceID: &client.interfaceID,
+	leased, err := network.db.UpsertClient(ctx, vocab.Client{
+		Identity: vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: mac}, InterfaceID: &client.interfaceID,
 		MAC: &mac, LastAddress: &client.address,
 	}, network.now)
 	if err != nil {
@@ -86,7 +88,7 @@ func TestALeaseNamingAPurgedAddressMovesItsPurgedPart(t *testing.T) {
 	if _, err := network.db.RefreshAggregates(ctx, 0, network.now+5, result.FlowInstants); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
-	for _, period := range []Period{PeriodHour, PeriodDay} {
+	for _, period := range []vocab.Period{vocab.PeriodHour, vocab.PeriodDay} {
 		for _, family := range []string{"volume", "client", "peer", "owner"} {
 			if got := slotBytes(t, network.db, family, period, hour); got != 300 {
 				t.Errorf("the %s %s slot holds %d bytes after the lease, not 300", period.Name, family, got)
@@ -131,7 +133,7 @@ func TestAPurgeUnderAShortRetentionKeepsEveryFamilyWhole(t *testing.T) {
 			if _, err := network.db.RefreshAggregates(ctx, 0, network.now+5, instants); err != nil {
 				t.Fatalf("refreshing: %v", err)
 			}
-			for _, period := range Periods() {
+			for _, period := range vocab.Periods() {
 				for _, family := range allFamilies {
 					expected := expectedFamily(flows, period, family)
 					stored := storedFamily(t, network.db, period, family)

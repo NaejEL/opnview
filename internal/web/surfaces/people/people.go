@@ -1,11 +1,3 @@
-// Package people mounts the JSON API of the people the user creates and the machines the user
-// assigns to them (C1 of the backend-completion cycle, docs/widget-api.md, "Write endpoints",
-// *People and machines*). It draws no page and carries no catalogue: it answers JSON only, for the
-// step-7 application.
-//
-// Ownership is assigned, never inferred: every write names its clients by id and changes exactly
-// those. Nothing here contacts the firewall. Every route is authenticated; every write is a JSON
-// POST the middleware asks for the session's form token, and no GET changes anything.
 package people
 
 import (
@@ -15,7 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/owners"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -178,7 +170,7 @@ type ClientsAnswer struct {
 	Clients []Client `json:"clients"`
 }
 
-func ownerOf(owner store.Owner) Owner {
+func ownerOf(owner owners.Owner) Owner {
 	return Owner{ID: owner.ID, DisplayName: owner.DisplayName, CreatedAt: owner.CreatedAt, UpdatedAt: owner.UpdatedAt,
 		ClientCount: owner.ClientCount}
 }
@@ -186,13 +178,13 @@ func ownerOf(owner store.Owner) Owner {
 // refuse answers a store refusal with its code: 404 for a person named by the path that does not
 // exist, 400 otherwise. Any other failure is a 500 whose detail goes to the console.
 func refuse(writer http.ResponseWriter, request *http.Request, err error) {
-	var refusal *store.UserInputRefusal
+	var refusal *owners.UserInputRefusal
 	if !errors.As(err, &refusal) {
 		web.FailJSON(writer, request, err)
 		return
 	}
 	status := http.StatusBadRequest
-	if refusal.Code == store.RefusalUnknownOwner {
+	if refusal.Code == owners.RefusalUnknownOwner {
 		status = http.StatusNotFound
 	}
 	web.WriteJSON(writer, status, Refusal{Condition: refusal.Code, Client: refusal.ClientID})
@@ -207,7 +199,7 @@ func malformed(writer http.ResponseWriter) {
 func pathID(writer http.ResponseWriter, request *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(request.PathValue("id"), 10, 64)
 	if err != nil || id <= 0 {
-		web.WriteJSON(writer, http.StatusNotFound, Refusal{Condition: store.RefusalUnknownOwner})
+		web.WriteJSON(writer, http.StatusNotFound, Refusal{Condition: owners.RefusalUnknownOwner})
 		return 0, false
 	}
 	return id, true
@@ -351,7 +343,7 @@ func (s *surface) handleRestore(writer http.ResponseWriter, request *http.Reques
 		malformed(writer)
 		return
 	}
-	assignments := make([]store.Assignment, 0, len(listed))
+	assignments := make([]owners.Assignment, 0, len(listed))
 	for _, entry := range listed {
 		member, isObject := entry.(map[string]any)
 		if !isObject || len(member) != 2 {
@@ -364,7 +356,7 @@ func (s *surface) handleRestore(writer http.ResponseWriter, request *http.Reques
 			malformed(writer)
 			return
 		}
-		assignments = append(assignments, store.Assignment{ClientID: client, OwnerAssignedAt: at})
+		assignments = append(assignments, owners.Assignment{ClientID: client, OwnerAssignedAt: at})
 	}
 	restored, err := s.Store().RestoreOwner(request.Context(), name, assignments, s.Now().Unix())
 	if err != nil {
@@ -423,7 +415,7 @@ func (s *surface) handleUnassign(writer http.ResponseWriter, request *http.Reque
 	web.WriteJSON(writer, http.StatusOK, assignmentsAnswer(changes))
 }
 
-func assignmentsAnswer(changes []store.AssignmentChange) AssignmentsAnswer {
+func assignmentsAnswer(changes []owners.AssignmentChange) AssignmentsAnswer {
 	answer := AssignmentsAnswer{Assignments: make([]AssignmentChange, 0, len(changes))}
 	for _, change := range changes {
 		answer.Assignments = append(answer.Assignments, AssignmentChange{Client: change.ClientID,

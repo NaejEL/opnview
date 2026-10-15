@@ -7,10 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The live pass (C3 of the backend-completion cycle, C-AC10 to C-AC12), with a fake clock: it runs
@@ -115,7 +117,7 @@ func TestLiveCadenceAndInterestThePassRunsOnlyWhileTheLeaseHolds(t *testing.T) {
 func TestLiveCadenceAndInterestTheLoopTicksAtTheLiveCadence(t *testing.T) {
 	t.Parallel()
 	harness, _ := arrangeLive(t)
-	var task *Task
+	var task *core.Task
 	for _, candidate := range harness.collector.Tasks(config.NewLive(config.Defaults())) {
 		if candidate.Name == "live sampling" {
 			candidate := candidate
@@ -209,8 +211,8 @@ func TestLiveEndpointsVerifiedAFailedLivePassYieldsAClosedOutcome(t *testing.T) 
 	harness.fake.Answer(opnsense.TrafficTop, http.StatusInternalServerError, []byte(`{}`))
 	interest.Renew(harness.clock.Now())
 	_ = harness.collector.CollectLive(ctx)
-	state, _, _ := harness.availabilityOf(t, KindMeasurementSample, ProviderInsight)
-	if state != store.StateUnavailable {
+	state, _, _ := harness.availabilityOf(t, core.KindMeasurementSample, ProviderInsight)
+	if state != vocab.StateUnavailable {
 		t.Errorf("a live pass the firewall did not answer left the provider %q", state)
 	}
 	var outcome string
@@ -219,7 +221,7 @@ func TestLiveEndpointsVerifiedAFailedLivePassYieldsAClosedOutcome(t *testing.T) 
 		ProviderInsight).Scan(&outcome); err != nil {
 		t.Fatal(err)
 	}
-	if !store.AvailabilityOutcome(outcome).Valid() {
+	if !vocab.AvailabilityOutcome(outcome).Valid() {
 		t.Errorf("the outcome %q is not one of the closed availability outcomes", outcome)
 	}
 	var pairs int

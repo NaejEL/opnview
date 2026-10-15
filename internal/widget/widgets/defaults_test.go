@@ -2,8 +2,11 @@ package widgets
 
 import (
 	"encoding/json"
-	"github.com/NaejEL/opnview/internal/widget"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
 )
 
 // defaultParameters are the parameters a type needs beyond its defaults to answer at all:
@@ -29,14 +32,14 @@ func TestEveryServedTypeAnswersAtItsDefaultsWithReachableData(t *testing.T) {
 			if parameters == nil {
 				parameters = map[string]any{}
 			}
-			if widget.Contains(paramKeys(f.service, widgetType), "period") {
+			if params.Contains(paramKeys(f.service, widgetType), "period") {
 				parameters["period"] = period
 			}
 			response := f.respond(t, widgetType, parameters)
 			if _, err := json.Marshal(response); err != nil {
 				t.Errorf("%s: the response does not serialise: %v", widgetType, err)
 			}
-			if response.Condition != widget.ConditionReachable && response.Condition != widget.ConditionReachableNoRows {
+			if response.Condition != envelope.ConditionReachable && response.Condition != envelope.ConditionReachableNoRows {
 				t.Errorf("%s %s: condition %q on a healthy installation (unresolved %+v, missing %v)", widgetType,
 					period, response.Condition, response.UnresolvedReferences, response.MissingParameters)
 			}

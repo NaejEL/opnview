@@ -9,7 +9,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/sizing"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -183,7 +183,7 @@ func selectionWord(key messageKey) string {
 }
 
 // rateState is a measured rate, or its state, as rateFigure draws it.
-func rateState(rate store.Rate, clock bool) RateState {
+func rateState(rate attribution.Rate, clock bool) RateState {
 	switch {
 	case !clock:
 		state := web.ConditionOf(msgNoIngestedClock)

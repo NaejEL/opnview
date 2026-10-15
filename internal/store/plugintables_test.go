@@ -5,15 +5,18 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/plugindecl"
+	"github.com/NaejEL/opnview/internal/store/plugintables"
 )
 
 // exampleReadings is a plugin table with a time column, a dimension and a measure with a unit.
-func exampleReadings(plugin string) PluginTable {
-	return PluginTable{Plugin: plugin, Table: "readings",
-		Columns: []PluginColumn{
-			{Name: "sampled_at", Type: "integer", Role: RoleTime},
+func exampleReadings(plugin string) plugindecl.PluginTable {
+	return plugindecl.PluginTable{Plugin: plugin, Table: "readings",
+		Columns: []plugindecl.PluginColumn{
+			{Name: "sampled_at", Type: "integer", Role: plugindecl.RoleTime},
 			{Name: "subject", Type: "text"},
-			{Name: "value", Type: "real", Role: RoleMeasure, Unit: "byte"},
+			{Name: "value", Type: "real", Role: plugindecl.RoleMeasure, Unit: "byte"},
 		},
 		PrimaryKey: []string{"subject", "sampled_at"},
 		TimeColumn: "sampled_at", RetentionSeconds: 3 * 86400}
@@ -31,8 +34,8 @@ func TestEveryPluginHasItsOwnSchemaAndATimedTableIsAHypertable(t *testing.T) {
 			t.Fatalf("ensuring the table of %s: %v", plugin, err)
 		}
 	}
-	untimed := PluginTable{Plugin: "example_one", Table: "names",
-		Columns: []PluginColumn{{Name: "name", Type: "text"}}, PrimaryKey: []string{"name"}}
+	untimed := plugindecl.PluginTable{Plugin: "example_one", Table: "names",
+		Columns: []plugindecl.PluginColumn{{Name: "name", Type: "text"}}, PrimaryKey: []string{"name"}}
 	if _, err := database.EnsurePluginTable(ctx, untimed); err != nil {
 		t.Fatal(err)
 	}
@@ -79,17 +82,17 @@ func TestAUniqueKeyWithoutTheTimeColumnIsRefused(t *testing.T) {
 	t.Parallel()
 	table := exampleReadings("example_one")
 	table.PrimaryKey = []string{"subject"}
-	if err := ValidatePluginTable(table); !errors.Is(err, ErrUniqueKeyWithoutTime) {
+	if err := plugindecl.ValidatePluginTable(table); !errors.Is(err, plugindecl.ErrUniqueKeyWithoutTime) {
 		t.Errorf("a primary key without the time column gave %v", err)
 	}
 	table = exampleReadings("example_one")
-	table.Indexes = []PluginIndex{{Columns: []string{"subject"}, Unique: true}}
-	if err := ValidatePluginTable(table); !errors.Is(err, ErrUniqueKeyWithoutTime) {
+	table.Indexes = []plugindecl.PluginIndex{{Columns: []string{"subject"}, Unique: true}}
+	if err := plugindecl.ValidatePluginTable(table); !errors.Is(err, plugindecl.ErrUniqueKeyWithoutTime) {
 		t.Errorf("a unique index without the time column gave %v", err)
 	}
 	table = exampleReadings("example_one")
 	table.Columns[2].Unit = "Bytes Per Second"
-	if err := ValidatePluginTable(table); err == nil {
+	if err := plugindecl.ValidatePluginTable(table); err == nil {
 		t.Error("a unit with capitals and spaces was accepted")
 	}
 }
@@ -107,21 +110,21 @@ func TestAChangedDeclarationMovesTheTableIntoTheAsideSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := int64(1790000000)
-	if err := database.WritePluginPass(ctx, "example_one", "example_one", PluginRows{"readings": {
+	if err := database.WritePluginPass(ctx, "example_one", "example_one", plugintables.PluginRows{"readings": {
 		{"sampled_at": now - 10*86400, "subject": "a", "value": 1.5},
 		{"sampled_at": now - 60, "subject": "b", "value": 2.5},
 	}}, map[string]string{"cursor": "42"}, now); err != nil {
 		t.Fatal(err)
 	}
 	changed := table
-	changed.Columns = append(append([]PluginColumn(nil), table.Columns...), PluginColumn{Name: "note", Type: "text",
+	changed.Columns = append(append([]plugindecl.PluginColumn(nil), table.Columns...), plugindecl.PluginColumn{Name: "note", Type: "text",
 		Nullable: true})
 	event, err := database.EnsurePluginTable(ctx, changed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event == nil || event.Code != PluginTableRebuilt || event.Rows != 2 ||
-		!strings.HasPrefix(event.Aside, AsideSchema+"."+AsidePrefix) {
+	if event == nil || event.Code != plugintables.PluginTableRebuilt || event.Rows != 2 ||
+		!strings.HasPrefix(event.Aside, plugindecl.AsideSchema+"."+plugintables.AsidePrefix) {
 		t.Fatalf("the rebuild reported %+v", event)
 	}
 	if rows, err := database.PluginTableRows(ctx, changed); err != nil || rows != 0 {
@@ -134,7 +137,7 @@ func TestAChangedDeclarationMovesTheTableIntoTheAsideSchema(t *testing.T) {
 	if err != nil || len(aside) != 1 || aside[0].Rows != 2 {
 		t.Fatalf("the aside tables are %+v (%v)", aside, err)
 	}
-	if _, err := database.reader.db.QueryContext(ctx, "SELECT count(*) FROM "+aside[0].Name); err == nil {
+	if _, err := database.Reader.DB.QueryContext(ctx, "SELECT count(*) FROM "+aside[0].Name); err == nil {
 		t.Error("the read role reads the aside schema")
 	}
 	if err := database.Purge(ctx, now); err != nil {
@@ -171,7 +174,7 @@ func TestAPluginHypertableIsPurgedByChunkToTheExactSecond(t *testing.T) {
 	}
 	rows = append(rows, map[string]any{"sampled_at": horizon - 1, "subject": "edge-before", "value": 0.0},
 		map[string]any{"sampled_at": horizon, "subject": "edge-at", "value": 0.0})
-	if err := database.WritePluginPass(ctx, "example_one", "example_one", PluginRows{"readings": rows}, nil, now); err != nil {
+	if err := database.WritePluginPass(ctx, "example_one", "example_one", plugintables.PluginRows{"readings": rows}, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	chunks := func() int {
@@ -217,7 +220,7 @@ func TestARemovedPluginsTablesAreListedAndKept(t *testing.T) {
 	if _, err := database.EnsurePluginTable(ctx, table); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.WritePluginPass(ctx, "example_gone", "example_gone", PluginRows{"readings": {
+	if err := database.WritePluginPass(ctx, "example_gone", "example_gone", plugintables.PluginRows{"readings": {
 		{"sampled_at": int64(1790000000), "subject": "a", "value": 1.0}}}, nil, 1790000000); err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +234,7 @@ func TestARemovedPluginsTablesAreListedAndKept(t *testing.T) {
 	if orphaned, _ := database.OrphanedPluginTables(ctx, []string{"example_gone"}); len(orphaned) != 0 {
 		t.Errorf("a loaded plugin's tables were listed as orphaned: %+v", orphaned)
 	}
-	if _, err := database.reader.db.QueryContext(ctx, "SELECT count(*) FROM plugin_example_gone.readings"); err != nil {
+	if _, err := database.Reader.DB.QueryContext(ctx, "SELECT count(*) FROM plugin_example_gone.readings"); err != nil {
 		t.Errorf("the read role cannot read a plugin's table: %v", err)
 	}
 }

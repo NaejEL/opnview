@@ -12,10 +12,12 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // Push sources: what the firewall sends to opnview, when the user configures it to (PS1-PS16 of the
@@ -126,7 +128,7 @@ func startPush(ctx context.Context, listens pushListens, database *store.Store, 
 	// the decoders of its push entries follow the exporter's sequence numbers afresh (PS18 of the NetFlow
 	// join amendment): what they concluded of the stream held under the previous configuration.
 	collector.SetCaptureChangeObserver(func(key string) {
-		for _, protocol := range protocolsOf[[2]string{collect.KindFlowRecord, key}] {
+		for _, protocol := range protocolsOf[[2]string{derive.KindFlowRecord, key}] {
 			service.hub.ResetSequences(protocol)
 		}
 	})
@@ -228,7 +230,7 @@ func (s *pushService) extendSilences(ctx context.Context) {
 }
 
 func (s *pushService) recordSilence(ctx context.Context, subscription string, from, to time.Time) {
-	if err := s.RecordPushGap(ctx, subscription, string(store.GapPushNotAlive), from, to, 0,
+	if err := s.RecordPushGap(ctx, subscription, string(vocab.GapPushNotAlive), from, to, 0,
 		"the push source sent nothing for longer than its liveness span"); err != nil {
 		s.report(err)
 	}
@@ -248,7 +250,7 @@ func (s *pushService) RecordPushGap(ctx context.Context, subscription, reason st
 	if count > 0 {
 		detail = fmt.Sprintf("%s (%d)", detail, count)
 	}
-	return s.database.RecordPushGap(ctx, providerID, store.GapReason(reason), from.Unix(), to.Unix(), detail,
+	return s.database.RecordPushGap(ctx, providerID, vocab.GapReason(reason), from.Unix(), to.Unix(), detail,
 		time.Now().Unix())
 }
 

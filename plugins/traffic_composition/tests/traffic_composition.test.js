@@ -52,7 +52,7 @@ test("by protocol, the slices are ranked by bytes and the Other slice carries th
   t.equal([data.whole, data.total.bytes], ["all_traffic", 4200], "the whole");
   t.equal(data.current_rates.by_member, [], "traffic/top carries no protocol, and this world has no pf_states");
   t.equal([data.current_rates.by_member_source.dataset, data.current_rates.by_member_source.state,
-    data.current_rates.by_member_source.at], ["pf_states.rate", "dataset_absent", null],
+    data.current_rates.by_member_source.at], ["pf_states.rate", "unknown_dataset", null],
     "the named absence: the dataset the rate by protocol is read from is not installed");
   t.equal(data.current_rates.by_direction.map(function (entry) { return [entry.key, entry.rate.state]; }),
     [["outbound", "no_current_sample"], ["inbound", "no_current_sample"], ["inter_interface", "no_current_sample"]],

@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store"
-	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // The built-in widgets as a seam: the plugin tree is the only list of built-in widgets, and
@@ -82,12 +83,12 @@ func TestEveryBuiltinWidgetIsADirectoryWithAValidSelfContainedManifest(t *testin
 		seen[directory.Type] = true
 		raw, err := os.ReadFile(filepath.Join(directory.Path, "manifest.json"))
 		check(t, err)
-		var manifest widget.Manifest
+		var manifest params.Manifest
 		if err := json.Unmarshal(raw, &manifest); err != nil {
 			t.Errorf("%s: %v", directory.Path, err)
 			continue
 		}
-		if refusal := widget.ValidateManifest(manifest); refusal != nil {
+		if refusal := params.ValidateManifest(manifest); refusal != nil {
 			t.Errorf("%s: %v", directory.Path, refusal)
 		}
 		if manifest.Type != directory.Type {
@@ -139,7 +140,7 @@ func TestTheServedBuiltinsAreExactlyTheDirectoriesOfTheTree(t *testing.T) {
 	}
 	for _, widgetType := range served {
 		preset, _ := f.service.Preset(widgetType)
-		if preset.Origin != widget.OriginBuiltin {
+		if preset.Origin != request.OriginBuiltin {
 			t.Errorf("%s is %q", widgetType, preset.Origin)
 		}
 	}
@@ -151,15 +152,15 @@ func TestTheServedBuiltinsAreExactlyTheDirectoriesOfTheTree(t *testing.T) {
 func TestNoStatementFileFailedToRegister(t *testing.T) {
 	t.Parallel()
 	newFixture(t, fixtureSpec{interfaces: 1, clients: 1, flows: 1, span: 3600})
-	if failures := store.RegistrationFailures(); len(failures) != 0 {
+	if failures := sqldb.RegistrationFailures(); len(failures) != 0 {
 		t.Fatalf("statement registration failed: %v", failures)
 	}
-	names, err := store.StatementNames()
+	names, err := sqldb.StatementNames()
 	check(t, err)
 	owners := map[string]int{}
 	for _, name := range names {
 		if strings.HasPrefix(name, "widget_") {
-			owners[store.StatementOwner(name)]++
+			owners[sqldb.StatementOwner(name)]++
 		}
 	}
 	if owners["widget"] == 0 {

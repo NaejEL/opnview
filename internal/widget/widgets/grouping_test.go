@@ -2,8 +2,10 @@ package widgets
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/widget"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/params"
 )
 
 // TestGroupingAndTheResolverCeilingAreNamedStates is the rest of A9: grouping by
@@ -22,7 +24,7 @@ func TestGroupingAndTheResolverCeilingAreNamedStates(t *testing.T) {
 	check(t, err)
 	response, err := bare.Respond(context.Background(), "top_sites", `{"group_by_registrable_domain":true}`)
 	check(t, err)
-	if !widget.Contains(response.States, "registrable_domain_grouping_unavailable") ||
+	if !params.Contains(response.States, "registrable_domain_grouping_unavailable") ||
 		decodeData[topSitesData](t, response).Grouping != "site_name" {
 		t.Errorf("before any download the grouping reads %v", response.States)
 	}

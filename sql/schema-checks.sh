@@ -79,12 +79,12 @@ fi
 # only code that applies it can read it. This harness reads those same two files,
 # so what is checked here is what ships.
 SCHEMA_FILE="$REPO_ROOT/internal/store/schema.sql"
-PURGE_FILE="$REPO_ROOT/internal/store/purge.sql"
+PURGE_FILE="$REPO_ROOT/internal/store/purge/purge.sql"
 REFERENCE_FILE="$REPO_ROOT/sql/testdata/sqlite_reference_queries.json"
 WORK="$(mktemp -d)"
 
 # Every connection reads the core's schema first, as the store's own connections do
-# (internal/store/driver.go), and a notice -- "already exists, skipping" from an
+# (internal/store/sqldb/driver.go), and a notice -- "already exists, skipping" from an
 # idempotent statement -- is not printed: a warning or an error still is.
 export PGOPTIONS='-c search_path=opnview,public -c client_min_messages=warning'
 PSQL=(psql -X -q -A -t -v ON_ERROR_STOP=1)
@@ -262,7 +262,7 @@ DECLARED_DATABASES=("$MAIN_DB" "$REPEAT_DB" "$ALT_DB" "$PURGE_DB" "$UNLIMITED_DB
     "$RECLASSIFY_DB" "$RESTORED_DB")
 
 # drop_database <name> — one database, and the read role the store creates for it
-# (internal/store/readers.go names it <database>_reader), each by its exact name.
+# (internal/store/sqldb/readers.go names it <database>_reader), each by its exact name.
 drop_database() {
     admin "DROP DATABASE IF EXISTS \"$1\" WITH (FORCE);" > /dev/null
     admin "DROP ROLE IF EXISTS \"$1_reader\";" > /dev/null
@@ -841,7 +841,7 @@ check 'AC4 the schema is exactly one file' '1' \
 if [ -f "$SCHEMA_FILE" ] && [ -f "$PURGE_FILE" ]; then
     pass 'AC4 the schema and the purge are where the code that applies them can read them'
 else
-    fail 'AC4 the schema or the purge is missing from internal/store'
+    fail 'AC4 the schema or the purge is missing from internal/store and internal/store/purge'
 fi
 
 # ===========================================================================
@@ -2399,19 +2399,19 @@ $REPO_ROOT/docs/data-model.md
 $REPO_ROOT/docs/architecture.md
 $STATEMENT_FILES
 $REPO_ROOT/docs/widget-api.md
-$REPO_ROOT/internal/store/aggregate.go
-$REPO_ROOT/internal/store/attribute.go
-$REPO_ROOT/internal/store/classify.go
-$REPO_ROOT/internal/store/network.go
-$REPO_ROOT/internal/store/exec.go
-$REPO_ROOT/internal/store/period.go
-$REPO_ROOT/internal/store/read.go
-$REPO_ROOT/internal/store/samples.go
-$REPO_ROOT/internal/store/statements.go
-$REPO_ROOT/internal/collect/derive.go
-$REPO_ROOT/internal/collect/discovery.go
-$REPO_ROOT/internal/collect/dnslookup.go
-$REPO_ROOT/internal/collect/firewalllog.go"
+$REPO_ROOT/internal/store/aggregates/aggregate.go
+$REPO_ROOT/internal/store/attribution/attribute.go
+$REPO_ROOT/internal/store/flows/classify.go
+$REPO_ROOT/internal/store/flows/network.go
+$REPO_ROOT/internal/store/sqldb/exec.go
+$REPO_ROOT/internal/store/vocab/period.go
+$REPO_ROOT/internal/store/reads/read.go
+$REPO_ROOT/internal/store/samples/samples.go
+$REPO_ROOT/internal/store/sqldb/statements.go
+$REPO_ROOT/internal/collect/derive/derive.go
+$REPO_ROOT/internal/collect/discovery/discovery.go
+$REPO_ROOT/internal/collect/kinds/lookups/dnslookup.go
+$REPO_ROOT/internal/collect/kinds/filterlog/firewalllog.go"
 DOTTED_QUAD='[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}(/[0-9]{1,2})?'
 : > "$WORK/literals.txt"
 while IFS= read -r f; do
@@ -3250,7 +3250,7 @@ while IFS= read -r source_file; do
     esac
 done <<EOF
 $(find "$REPO_ROOT/internal" "$REPO_ROOT/cmd" \( -name '*.go' -o -name '*.sql' \) ! -name '*_test.go' |
-  grep -vxF -e "$REPO_ROOT/internal/store/pairvolume.statements.sql" -e "$REPO_ROOT/internal/store/purge.sql" | sort)
+  grep -vxF -e "$REPO_ROOT/internal/store/aggregates/pairvolume.statements.sql" -e "$REPO_ROOT/internal/store/purge/purge.sql" | sort)
 EOF
 # RESTATED by step 5A, which wrote the derivation. The scan now reads the embedded
 # .sql files as well as the Go sources -- the derivation is SQL embedded into the
@@ -3264,7 +3264,7 @@ if [ -s "$WORK/pair_writers.txt" ]; then
 else
     pass 'PV-AC1 nothing but the derivation and the purge writes the derived per-pair table'
 fi
-for admitted in pairvolume.statements.sql purge.sql; do
+for admitted in aggregates/pairvolume.statements.sql purge/purge.sql; do
     if tr '\n' ' ' < "$REPO_ROOT/internal/store/$admitted" | tr -s ' ' | tr '[:upper:]' '[:lower:]' |
             grep -qE '(insert into|delete from) pair_volume_observation'; then
         pass "PV-AC1 the admitted writer internal/store/$admitted does write the table"
@@ -3380,7 +3380,7 @@ section 'PN-AC22 — schema discipline'
 # the day the product runs somewhere with data worth keeping, and that file
 # becomes the baseline.
 check 'PN-AC22 the schema is one file and it is the one the code embeds' '1' \
-    "$(grep -c 'go:embed schema.sql purge.sql' "$REPO_ROOT/internal/store/store.go")"
+    "$(grep -cx '//go:embed schema.sql' "$REPO_ROOT/internal/store/store.go")"
 if grep -qF 'THERE ARE NO MIGRATIONS' "$SCHEMA_FILE"; then
     pass 'PN-AC22 the schema states that there are no migrations, and why'
 else

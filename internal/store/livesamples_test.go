@@ -3,6 +3,9 @@ package store
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/samples"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The fine samples of the live pass (C3 of the backend-completion cycle, C-AC12): stored beside the
@@ -10,9 +13,9 @@ import (
 // reads the same capture, purged after live_sample_retention_seconds while the baseline is kept.
 
 // liveSample is one rate reading of one local address, fine when cadence is not nil.
-func liveSample(providerID int64, at int64, cadence *int64) MeasurementSample {
-	return MeasurementSample{ProviderID: &providerID, SubjectKind: SubjectInterfaceEndpoint,
-		SubjectKey: InterfaceEndpointKey("exdev0", "192.0.2.10"), Measure: MeasureRateBitsIn,
+func liveSample(providerID int64, at int64, cadence *int64) vocab.MeasurementSample {
+	return vocab.MeasurementSample{ProviderID: &providerID, SubjectKind: vocab.SubjectInterfaceEndpoint,
+		SubjectKey: vocab.InterfaceEndpointKey("exdev0", "192.0.2.10"), Measure: vocab.MeasureRateBitsIn,
 		Unit: "bit_per_second", Value: 1000, SampledAt: at, LiveCadenceSeconds: cadence}
 }
 
@@ -22,7 +25,7 @@ func fineCadences(t *testing.T, database *Store) map[int64]int64 {
 	t.Helper()
 	rows, err := database.DB().QueryContext(context.Background(),
 		`SELECT sampled_at, coalesce(live_cadence_seconds, -1) FROM measurement_sample WHERE subject_key = ?`,
-		InterfaceEndpointKey("exdev0", "192.0.2.10"))
+		vocab.InterfaceEndpointKey("exdev0", "192.0.2.10"))
 	if err != nil {
 		t.Fatalf("reading the samples: %v", err)
 	}
@@ -50,7 +53,7 @@ func TestLiveFineAndBaselineSamplesAreStoredAndDistinguishable(t *testing.T) {
 		t.Fatal(err)
 	}
 	cadence := int64(10)
-	for _, sample := range []MeasurementSample{
+	for _, sample := range []vocab.MeasurementSample{
 		liveSample(providerID, 1790000000, nil),
 		liveSample(providerID, 1790000010, &cadence),
 		liveSample(providerID, 1790000020, &cadence),
@@ -111,7 +114,7 @@ func TestLiveFineSamplesArePurgedAfterTheirRetentionAndBaselineSamplesAreNot(t *
 		t.Fatal(err)
 	}
 	cadence := int64(10)
-	for _, sample := range []MeasurementSample{
+	for _, sample := range []vocab.MeasurementSample{
 		liveSample(providerID, now-601, &cadence), // a fine sample past its retention
 		liveSample(providerID, now-600, &cadence), // exactly at the horizon: kept
 		liveSample(providerID, now-599, &cadence),
@@ -176,9 +179,9 @@ func TestLiveRatesCarryTheirCadenceAndAreStaleOnlyPastTwiceIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rate := rates.ByDevice["exdev0"]; rate.CadenceSeconds != DefaultMeasurementIntervalSeconds || rate.Stale(1790000500) {
+	if rate := rates.ByDevice["exdev0"]; rate.CadenceSeconds != samples.DefaultMeasurementIntervalSeconds || rate.Stale(1790000500) {
 		t.Errorf("a baseline rate 400 s old reads cadence %d, stale %v; want %d, not stale",
-			rate.CadenceSeconds, rate.Stale(1790000500), DefaultMeasurementIntervalSeconds)
+			rate.CadenceSeconds, rate.Stale(1790000500), samples.DefaultMeasurementIntervalSeconds)
 	}
 }
 

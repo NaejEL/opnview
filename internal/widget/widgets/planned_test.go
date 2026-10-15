@@ -1,10 +1,10 @@
 package widgets
 
 import (
-	"github.com/NaejEL/opnview/internal/widget"
-)
+	"testing"
 
-import "testing"
+	"github.com/NaejEL/opnview/internal/widget/params"
+)
 
 // TestEveryStatementTheAPIRunsIsAPlannedStatement is AC17's "schema-checks plans every
 // statement the API runs": every served type is answered -- at its defaults and with every
@@ -33,7 +33,7 @@ func TestEveryStatementTheAPIRunsIsAPlannedStatement(t *testing.T) {
 		{"kind": "site", "by": "domain", "value": f.sites[0]},
 	} {
 		key, _ := reference["kind"].(string)
-		f.respond(t, "custom_chart", map[string]any{"series": []any{map[string]any{"source": widget.SourceTraffic,
+		f.respond(t, "custom_chart", map[string]any{"series": []any{map[string]any{"source": params.SourceTraffic,
 			key: reference}}})
 	}
 	f.respond(t, "connection_tree", map[string]any{"owners": []any{map[string]any{"kind": "owner",

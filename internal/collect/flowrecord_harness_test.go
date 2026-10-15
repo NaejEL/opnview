@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/broker/schedule"
+	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/config"
@@ -17,6 +19,7 @@ import (
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The NetFlow join's test world: a fake firewall whose discovery maps two interfaces to kernel
@@ -123,7 +126,7 @@ func (r gapRecorder) RecordPushGap(ctx context.Context, subscription, reason str
 	if err != nil {
 		return err
 	}
-	return r.database.RecordPushGap(ctx, providerID, store.GapReason(reason), from.Unix(), to.Unix(), detail,
+	return r.database.RecordPushGap(ctx, providerID, vocab.GapReason(reason), from.Unix(), to.Unix(), detail,
 		to.Unix())
 }
 
@@ -161,17 +164,17 @@ func newNetflowHarnessWith(t *testing.T, loaded *plugin.Loaded, key string,
 	if err := collector.RefreshDiscovery(ctx); err != nil {
 		t.Fatalf("runtime discovery: %v", err)
 	}
-	if err := collector.discoverClock(ctx); err != nil {
+	if err := collector.DiscoverClock(ctx); err != nil {
 		t.Fatal(err)
 	}
 	arrange(fake)
-	if err := collector.ensureProviders(ctx); err != nil {
+	if err := collector.EnsureProviders(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := collector.probeFlowRecord(ctx); err != nil {
+	if err := collector.ProbeFlowRecord(ctx); err != nil {
 		t.Fatalf("probing the flow_record kind: %v", err)
 	}
-	if active := h.activeKeyOf(t, KindFlowRecord); active != key {
+	if active := h.activeKeyOf(t, derive.KindFlowRecord); active != key {
 		t.Fatalf("the flow_record kind activated %q, want %q", active, key)
 	}
 	fake.AnswerJSON(opnsense.FirewallLog, []any{})
@@ -204,7 +207,7 @@ func newNetflowHarnessWith(t *testing.T, loaded *plugin.Loaded, key string,
 }
 
 // newTestCollectorWithSources is newTestCollector over a source set of the test's.
-func newTestCollectorWithSources(t *testing.T, client *opnsense.Client, database *store.Store, clock Clock,
+func newTestCollectorWithSources(t *testing.T, client *opnsense.Client, database *store.Store, clock core.Clock,
 	set *sources.Set) *Collector {
 	t.Helper()
 	collector := NewWithSources(client, database, clock, set)

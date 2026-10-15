@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/auth"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -122,7 +122,7 @@ func (s *surface) handleAPISetup(writer http.ResponseWriter, request *http.Reque
 		return
 	}
 	accountID, err := s.store.CreateAccount(request.Context(), login, hashed, s.now().UTC().Unix())
-	if errors.Is(err, store.ErrAccountExists) {
+	if errors.Is(err, accounts.ErrAccountExists) {
 		web.RefuseJSON(writer, http.StatusForbidden, web.ConditionSetupClosed, "")
 		return
 	}

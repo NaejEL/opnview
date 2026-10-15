@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // TestBlocklistLastSeenNeverMovesBackwardsOnReingestion is AC33 of
@@ -21,7 +23,7 @@ func TestBlocklistLastSeenNeverMovesBackwardsOnReingestion(t *testing.T) {
 
 	ingest := func(index int, lookedUpAt, ingestedAt int64) {
 		t.Helper()
-		if err := database.InsertDNSResolution(ctx, DNSResolution{
+		if err := database.InsertDNSResolution(ctx, vocab.DNSResolution{
 			LookupKey:     fmt.Sprintf("blocklist-test-%d", index),
 			ClientAddress: "192.0.2.10",
 			Domain:        fmt.Sprintf("blocked-%d.example", index),

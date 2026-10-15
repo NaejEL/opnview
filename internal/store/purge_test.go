@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The purge tests.
@@ -239,7 +241,7 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 			t.Fatalf("seeding a flow: %v", err)
 		}
 
-		if err := database.InsertDNSResolution(ctx, DNSResolution{
+		if err := database.InsertDNSResolution(ctx, vocab.DNSResolution{
 			LookupKey:     "example-purge-lookup-" + string(suffix),
 			ClientAddress: "example-address-" + string(suffix),
 			Domain:        "example-domain", Resolver: "unbound", Action: "pass",
@@ -248,7 +250,7 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 			t.Fatalf("seeding a lookup: %v", err)
 		}
 
-		if err := database.InsertSecurityEvent(ctx, eventProviderID, SecurityEvent{
+		if err := database.InsertSecurityEvent(ctx, eventProviderID, vocab.SecurityEvent{
 			ProviderEventKey: "example-purge-event-" + string(suffix),
 			OccurredAt:       instant, IngestedAt: instant,
 			RuleIdentity: "example-rule-identity", Signature: "example signature",
@@ -258,18 +260,18 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 			t.Fatalf("seeding a security event: %v", err)
 		}
 
-		if err := database.InsertDHCPLease(ctx, leaseProviderID, DHCPLease{
+		if err := database.InsertDHCPLease(ctx, leaseProviderID, vocab.DHCPLease{
 			Backend: "dnsmasq", Address: "example-address-" + string(suffix),
 			LeaseState: "active", StartsAt: nil,
-			GenerationKey: GenerationKeyOf(nil, &instant, instant),
+			GenerationKey: vocab.GenerationKeyOf(nil, &instant, instant),
 			ExpiresAt:     &instant, ObservedAt: instant,
 		}); err != nil {
 			t.Fatalf("seeding a lease: %v", err)
 		}
 
-		if _, err := database.UpsertClient(ctx, Client{
-			Identity: ClientIdentity{
-				Kind: IdentityMAC, Key: "0a:00:00:00:00:0" + string(suffix),
+		if _, err := database.UpsertClient(ctx, vocab.Client{
+			Identity: vocab.ClientIdentity{
+				Kind: vocab.IdentityMAC, Key: "0a:00:00:00:00:0" + string(suffix),
 			},
 		}, instant); err != nil {
 			t.Fatalf("seeding a client: %v", err)
@@ -284,9 +286,9 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 			t.Fatalf("seeding a geo row: %v", err)
 		}
 
-		if err := database.RecordCollectionGap(ctx, CollectionGap{
+		if err := database.RecordCollectionGap(ctx, vocab.CollectionGap{
 			ProviderID: providerID, IntervalStartAt: instant - 30, IntervalEndAt: instant,
-			Reason: GapDigestOutsideWindow, DetectedAt: instant,
+			Reason: vocab.GapDigestOutsideWindow, DetectedAt: instant,
 		}); err != nil {
 			t.Fatalf("seeding a gap: %v", err)
 		}
@@ -298,18 +300,18 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 			t.Fatalf("seeding an interval opnview was not running: %v", err)
 		}
 
-		if err := database.InsertMeasurementSample(ctx, MeasurementSample{
-			SubjectKind: SubjectFirewall, SubjectKey: "", Measure: MeasureUptimeSeconds,
-			Unit: UnitSecond, Value: float64(instant), SampledAt: instant,
+		if err := database.InsertMeasurementSample(ctx, vocab.MeasurementSample{
+			SubjectKind: vocab.SubjectFirewall, SubjectKey: "", Measure: vocab.MeasureUptimeSeconds,
+			Unit: vocab.UnitSecond, Value: float64(instant), SampledAt: instant,
 		}); err != nil {
 			t.Fatalf("seeding a measurement: %v", err)
 		}
 
 		// A reconciled set, with a member, so the purge has both the snapshot and the
 		// cascade to remove.
-		if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+		if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 			ProviderID: providerID, SetKey: "example-set", CapturedAt: instant,
-			Items: []StateItem{{ItemKey: "example-item-" + string(suffix)}},
+			Items: []vocab.StateItem{{ItemKey: "example-item-" + string(suffix)}},
 		}); err != nil {
 			t.Fatalf("seeding a reconciled set: %v", err)
 		}

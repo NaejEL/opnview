@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/accounts"
 )
 
 // TestASecondApplySeedsNoAccountNoSessionAndNoCredential is AC2 for the three tables
@@ -38,15 +40,15 @@ func TestASecondApplySeedsNoAccountNoSessionAndNoCredential(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating an account: %v", err)
 	}
-	if err := database.CreateSession(ctx, Session{
+	if err := database.CreateSession(ctx, accounts.Session{
 		TokenDigest: randomValue(t, 32), AccountID: accountID,
 		CSRFToken: randomValue(t, 16),
 		CreatedAt: 1_700_000_000, LastSeenAt: 1_700_000_000, ExpiresAt: 1_700_003_600,
 	}); err != nil {
 		t.Fatalf("creating a session: %v", err)
 	}
-	if err := database.SetCredential(ctx, EncryptedCredential{
-		Name: CredentialOPNsenseAPISecret, Algorithm: "aes-256-gcm", KeyID: "abcd1234",
+	if err := database.SetCredential(ctx, accounts.EncryptedCredential{
+		Name: accounts.CredentialOPNsenseAPISecret, Algorithm: "aes-256-gcm", KeyID: "abcd1234",
 		Nonce: []byte("nonce-bytes"), Ciphertext: []byte("sealed-bytes"),
 		UpdatedAt: 1_700_000_000,
 	}); err != nil {
@@ -93,8 +95,8 @@ func TestOverwritingACredentialLeavesNoPriorCiphertext(t *testing.T) {
 	second := []byte("second-sealed-" + randomValue(t, 8))
 
 	for _, sealed := range [][]byte{first, second} {
-		if err := database.SetCredential(ctx, EncryptedCredential{
-			Name: CredentialOPNsenseAPISecret, Algorithm: "aes-256-gcm",
+		if err := database.SetCredential(ctx, accounts.EncryptedCredential{
+			Name: accounts.CredentialOPNsenseAPISecret, Algorithm: "aes-256-gcm",
 			KeyID: "abcd1234", Nonce: []byte("nonce"), Ciphertext: sealed,
 			UpdatedAt: 1_700_000_000,
 		}); err != nil {
@@ -105,7 +107,7 @@ func TestOverwritingACredentialLeavesNoPriorCiphertext(t *testing.T) {
 	if count := countRows(t, database, "encrypted_credential"); count != 1 {
 		t.Fatalf("there are %d rows rather than one, so a prior ciphertext survives", count)
 	}
-	stored, found, err := database.Credential(ctx, CredentialOPNsenseAPISecret)
+	stored, found, err := database.Credential(ctx, accounts.CredentialOPNsenseAPISecret)
 	if err != nil || !found {
 		t.Fatalf("reading the credential: found=%v err=%v", found, err)
 	}
@@ -131,7 +133,7 @@ func TestAPasswordChangeRevokesEverySessionOfThatAccount(t *testing.T) {
 	}
 	digests := []string{randomValue(t, 32), randomValue(t, 32), randomValue(t, 32)}
 	for _, digest := range digests {
-		if err := database.CreateSession(ctx, Session{
+		if err := database.CreateSession(ctx, accounts.Session{
 			TokenDigest: digest, AccountID: accountID, CSRFToken: randomValue(t, 16),
 			CreatedAt: 1_700_000_000, LastSeenAt: 1_700_000_000, ExpiresAt: 1_700_003_600,
 		}); err != nil {
@@ -162,7 +164,7 @@ func TestDeletingAnAccountCascadesToItsSessions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("creating an account: %v", err)
 	}
-	if err := database.CreateSession(ctx, Session{
+	if err := database.CreateSession(ctx, accounts.Session{
 		TokenDigest: randomValue(t, 32), AccountID: accountID, CSRFToken: randomValue(t, 16),
 		CreatedAt: 1_700_000_000, LastSeenAt: 1_700_000_000, ExpiresAt: 1_700_003_600,
 	}); err != nil {
@@ -181,7 +183,7 @@ func TestDeletingAnAccountCascadesToItsSessions(t *testing.T) {
 func TestASessionCannotNameAnAccountThatDoesNotExist(t *testing.T) {
 	t.Parallel()
 	database := openTemporary(t)
-	err := database.CreateSession(context.Background(), Session{
+	err := database.CreateSession(context.Background(), accounts.Session{
 		TokenDigest: randomValue(t, 32), AccountID: 999_999_999,
 		CSRFToken: randomValue(t, 16),
 		CreatedAt: 1_700_000_000, LastSeenAt: 1_700_000_000, ExpiresAt: 1_700_003_600,
@@ -246,7 +248,7 @@ func TestCreateAccountRefusesASecondAccountWhateverItsLogin(t *testing.T) {
 	// The second caller is the one that read the count above: it saw an empty table and
 	// carries a login of its own, which is the case no UNIQUE constraint catches.
 	if _, err := database.CreateAccount(ctx, "second-"+randomValue(t, 4),
-		somePasswordHash(t), 1_700_000_100); !errors.Is(err, ErrAccountExists) {
+		somePasswordHash(t), 1_700_000_100); !errors.Is(err, accounts.ErrAccountExists) {
 		t.Errorf("a second account with a different login was accepted: err=%v", err)
 	}
 	if count := countRows(t, database, "account"); count != 1 {
@@ -307,9 +309,9 @@ func openTemporary(t *testing.T) *Store {
 // somePasswordHash is a record of the right shape. It is not a real Argon2id output —
 // deriving one here would import internal/auth into its own dependency — and what these
 // tests assert is storage rather than hashing.
-func somePasswordHash(t *testing.T) PasswordHash {
+func somePasswordHash(t *testing.T) accounts.PasswordHash {
 	t.Helper()
-	return PasswordHash{
+	return accounts.PasswordHash{
 		Algorithm: "argon2id", MemoryKiB: 65536, Iterations: 3, Parallelism: 4,
 		Salt:   []byte(randomValue(t, 8)),
 		Digest: []byte(randomValue(t, 16)),
@@ -358,7 +360,7 @@ func TestConcurrentSetupsCreateExactlyOneAccount(t *testing.T) {
 		switch err := <-results; {
 		case err == nil:
 			created++
-		case !errors.Is(err, ErrAccountExists):
+		case !errors.Is(err, accounts.ErrAccountExists):
 			t.Errorf("a racing setup failed otherwise: %v", err)
 		}
 	}

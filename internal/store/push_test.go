@@ -7,18 +7,23 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/store/plugindecl"
+	"github.com/NaejEL/opnview/internal/store/plugintables"
+	"github.com/NaejEL/opnview/internal/store/push"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // pushOutputTable is a push output table holding every type of the vocabulary.
-func pushOutputTable(plugin string) PluginTable {
-	return PluginTable{Plugin: plugin, Table: "lines",
-		Columns: []PluginColumn{
-			{Name: "logged_at", Type: "instant", Role: RoleTime},
+func pushOutputTable(plugin string) plugindecl.PluginTable {
+	return plugindecl.PluginTable{Plugin: plugin, Table: "lines",
+		Columns: []plugindecl.PluginColumn{
+			{Name: "logged_at", Type: "instant", Role: plugindecl.RoleTime},
 			{Name: "client", Type: "ip"},
 			{Name: "station", Type: "mac", Nullable: true},
 			{Name: "cached", Type: "boolean", Nullable: true},
-			{Name: "count", Type: "integer", Role: RoleMeasure},
-			{Name: "seconds", Type: "real", Nullable: true, Role: RoleMeasure, Unit: "second"},
+			{Name: "count", Type: "integer", Role: plugindecl.RoleMeasure},
+			{Name: "seconds", Type: "real", Nullable: true, Role: plugindecl.RoleMeasure, Unit: "second"},
 			{Name: "name", Type: "text", Nullable: true},
 		},
 		TimeColumn: "logged_at", RetentionSeconds: 86400}
@@ -95,7 +100,7 @@ func TestPushRowsAreBatchedTypedAndPurgedByTheirInstant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := (2500*len(table.Columns) + maxBoundParameters - 1) / maxBoundParameters; statements != want {
+	if want := (2500*len(table.Columns) + plugintables.MaxBoundParameters - 1) / plugintables.MaxBoundParameters; statements != want {
 		t.Errorf("2500 rows took %d statements, want %d", statements, want)
 	}
 	var client, station string
@@ -135,7 +140,7 @@ func TestAPushGapSeenAgainIsExtended(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, to := range []int64{1_790_467_230, 1_790_467_260, 1_790_467_250} {
-		if err := database.RecordPushGap(ctx, providerID, GapPushNotAlive, 1_790_467_200, to, "silent",
+		if err := database.RecordPushGap(ctx, providerID, vocab.GapPushNotAlive, 1_790_467_200, to, "silent",
 			1_790_467_300); err != nil {
 			t.Fatal(err)
 		}
@@ -161,17 +166,17 @@ func TestSourcePeriodsNeverOverlap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := database.OpenSourcePeriod(ctx, providerID, PathPush, 1_790_467_100); err != nil {
+	if err := database.OpenSourcePeriod(ctx, providerID, push.PathPush, 1_790_467_100); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.OpenSourcePeriod(ctx, providerID, PathPull, 1_790_467_150); err != nil {
+	if err := database.OpenSourcePeriod(ctx, providerID, push.PathPull, 1_790_467_150); err != nil {
 		t.Fatal(err)
 	}
 	periods, err := database.SourcePeriods(ctx, providerID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(periods) != 3 || periods[0].Path != PathPull || periods[1].Path != PathPush || periods[2].Path != PathPull {
+	if len(periods) != 3 || periods[0].Path != push.PathPull || periods[1].Path != push.PathPush || periods[2].Path != push.PathPull {
 		t.Fatalf("periods %+v", periods)
 	}
 	for index := 1; index < len(periods); index++ {

@@ -496,7 +496,7 @@ CREATE TABLE IF NOT EXISTS interface (
 -- "held at an instant", the this_firewall_address view, reads one row as one
 -- holding). The previous discovery is the instant the interfaces carried before
 -- this one wrote anything, read once at the start of the pass
--- (internal/store/write.go, LatestInterfaceDiscoveryAt and UpsertInterfaceAddress),
+-- (internal/store/flows/write.go, LatestInterfaceDiscoveryAt and UpsertInterfaceAddress),
 -- so the outcome does not depend on the order the interfaces are listed in. "When did the public address last change" is therefore the first_seen_at
 -- of the current row, and it can only come from opnview having looked before:
 -- no endpoint keeps that history.
@@ -1591,7 +1591,7 @@ CREATE TABLE IF NOT EXISTS resource_record_read (
 -- apart (specs/SPEC-resolver-cache-attribution.md, decision 8 of the step-5A live
 -- corrections). Both remain inferences.
 --
--- THE RULE, written once in internal/store/attribute.go and derive.sql and stated
+-- THE RULE, written once in internal/store/attribution/attribute.go and derive.sql and stated
 -- in docs/data-model.md. A flow is eligible when its destination is outside, it is
 -- no second leg, and it has a source client; a lookup is eligible when it passed,
 -- was answered by Recursion, Cache or Local-data, and names its client.
@@ -2910,7 +2910,7 @@ CREATE INDEX IF NOT EXISTS idx_rule_volume_aggregate_30d_rule
 -- client, the purged part is re-pointed to it as the flows are
 -- (internal/store/derive.sql, "repoint_purged_*"). An interface that changes
 -- after the flows are gone does not reach them. A client is never purged while
--- the purged part names it (internal/store/purge.sql), so the client, peer,
+-- the purged part names it (internal/store/purge/purge.sql), so the client, peer,
 -- owner and domain families keep its bytes for as long as the hour is kept;
 -- ON DELETE SET NULL is only the backstop of the foreign key.
 --
@@ -2988,7 +2988,7 @@ CREATE INDEX IF NOT EXISTS idx_purged_flow_hour_local_client ON purged_flow_hour
 --                                        and how often.
 --
 -- The widget measure judges from them whether every connection an answer counts is
--- covered (internal/widget/measure.go): a connection is covered when it is joinable
+-- covered (internal/widget/request/measure.go): a connection is covered when it is joinable
 -- and none of its directions is not_captured, export_gap or
 -- not_exported_when_refused (PS22).
 --
@@ -3294,7 +3294,7 @@ CREATE INDEX IF NOT EXISTS idx_owner_reassigned_hour ON owner_reassigned_hour (h
 -- placed in full.
 --
 -- The term "fingerprint" is the one the discovery pass already uses for the same
--- kind of record (internal/collect, discovery.go).
+-- kind of record (internal/collect/discovery/discovery.go).
 --
 -- Growing: one row per address ever classified. Purged by classified_at; an
 -- address whose row was purged is simply placed in full again.
@@ -3548,7 +3548,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_source_period_open
 -- list: a term is non-empty, lower-case and carries no space, so a typo or a
 -- free-text sentence is rejected and two spellings of one measure cannot both
 -- exist. What opnview's own sampler uses is the vocabulary listed above, and
--- that list is in internal/store/rows.go as named constants; a provider's own
+-- that list is in internal/store/vocab/rows.go as named constants; a provider's own
 -- term is an ordinary value beside them.
 --
 -- Identity is (subject_kind, subject_key, measure, sampled_at, provider):

@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The two defects found live after the step-5A live corrections were deployed
@@ -29,14 +30,14 @@ func leaseRetryHarness(t *testing.T, key, hostname string) *probeHarness {
 	ctx := context.Background()
 	unresolvedLookup(t, harness.store, key, hostname+".example.invalid",
 		referenceEpoch()-120, referenceEpoch()-100)
-	provider, err := harness.store.ProviderID(ctx, KindDHCPLease, ProviderDnsmasq)
+	provider, err := harness.store.ProviderID(ctx, core.KindDHCPLease, ProviderDnsmasq)
 	if err != nil {
 		t.Fatalf("looking up the readable backend: %v", err)
 	}
 	label := hostname
-	if err := harness.store.InsertDHCPLease(ctx, provider, store.DHCPLease{
+	if err := harness.store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		Backend: "dnsmasq", Address: "198.51.100.51", Hostname: &label, LeaseState: "reserved",
-		GenerationKey: store.GenerationKeyOf(nil, nil, referenceEpoch()), ObservedAt: referenceEpoch(),
+		GenerationKey: vocab.GenerationKeyOf(nil, nil, referenceEpoch()), ObservedAt: referenceEpoch(),
 	}); err != nil {
 		t.Fatalf("writing the lease: %v", err)
 	}
@@ -51,7 +52,7 @@ func TestABackendThatCannotBeReadByDesignDoesNotHoldTheHostNameRetry(t *testing.
 	t.Parallel()
 	harness := leaseRetryHarness(t, "example-key-unsupported", "example-host-unsupported")
 	ctx := context.Background()
-	if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, ProviderDnsmasq, ProviderISC); err != nil {
+	if err := harness.store.SetActiveProviders(ctx, core.KindDHCPLease, ProviderDnsmasq, ProviderISC); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
 
@@ -59,12 +60,12 @@ func TestABackendThatCannotBeReadByDesignDoesNotHoldTheHostNameRetry(t *testing.
 		t.Fatalf("a backend that cannot be read by design failed the lease pass: %v", err)
 	}
 	if done, resolution := examined(t, harness.store, "example-key-unsupported"); !done ||
-		resolution != store.ClientResolutionLeased {
+		resolution != vocab.ClientResolutionLeased {
 		t.Errorf("the first pass beside an unreadable backend left the lookup examined %t, %s",
 			done, resolution)
 	}
 	// The backend that cannot be read keeps its own reason, as before.
-	if detail := harness.detailOf(t, KindDHCPLease, ProviderISC); !strings.Contains(detail,
+	if detail := harness.detailOf(t, core.KindDHCPLease, ProviderISC); !strings.Contains(detail,
 		"field contract is unverified") {
 		t.Errorf("the unreadable backend's detail is %q, which has lost its reason", detail)
 	}
@@ -79,7 +80,7 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 	t.Parallel()
 	harness := leaseRetryHarness(t, "example-key-failing", "example-host-failing")
 	ctx := context.Background()
-	if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, ProviderDnsmasq, ProviderKea); err != nil {
+	if err := harness.store.SetActiveProviders(ctx, core.KindDHCPLease, ProviderDnsmasq, ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
 	harness.fake.Answer(opnsense.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
@@ -99,16 +100,16 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 			t.Fatalf("pass %d of %d: the lookup was examined while the failing backend still "+
 				"held it back", pass, limit)
 		}
-		if pass == limit && (!done || resolution != store.ClientResolutionLeased) {
+		if pass == limit && (!done || resolution != vocab.ClientResolutionLeased) {
 			t.Fatalf("pass %d, the limit: the lookup is examined %t, %s; the failing backend "+
 				"still holds it back", pass, done, resolution)
 		}
-		detail := harness.detailOf(t, KindDHCPLease, ProviderKea)
+		detail := harness.detailOf(t, core.KindDHCPLease, ProviderKea)
 		if !strings.Contains(detail, "lease passes in a row") {
 			t.Errorf("pass %d: the failing backend's detail %q does not state the limit", pass, detail)
 		}
 	}
-	if detail := harness.detailOf(t, KindDHCPLease, ProviderKea); !strings.Contains(detail,
+	if detail := harness.detailOf(t, core.KindDHCPLease, ProviderKea); !strings.Contains(detail,
 		"re-examined without this backend") {
 		t.Errorf("at the limit the detail %q does not say the retry goes on without the backend", detail)
 	}
@@ -120,7 +121,7 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("the pass whose backends both answered: %v", err)
 	}
-	if failures := harness.collector.leaseFailurePasses(mustProviderID(t, harness, ProviderKea)); failures != 0 {
+	if failures := harness.collector.LeaseFailurePasses(mustProviderID(t, harness, ProviderKea)); failures != 0 {
 		t.Errorf("a backend read again still counts %d failed passes", failures)
 	}
 }
@@ -132,7 +133,7 @@ func TestTheLimitIsAValidatedSettingOfTheLeasePass(t *testing.T) {
 	t.Parallel()
 	harness := leaseRetryHarness(t, "example-key-configured", "example-host-configured")
 	ctx := context.Background()
-	if err := harness.store.SetActiveProviders(ctx, KindDHCPLease, ProviderDnsmasq, ProviderKea); err != nil {
+	if err := harness.store.SetActiveProviders(ctx, core.KindDHCPLease, ProviderDnsmasq, ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
 	harness.fake.Answer(opnsense.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
@@ -151,7 +152,7 @@ func TestTheLimitIsAValidatedSettingOfTheLeasePass(t *testing.T) {
 // mustProviderID looks one lease provider's registry id up.
 func mustProviderID(t *testing.T, harness *probeHarness, key string) int64 {
 	t.Helper()
-	id, err := harness.store.ProviderID(context.Background(), KindDHCPLease, key)
+	id, err := harness.store.ProviderID(context.Background(), core.KindDHCPLease, key)
 	if err != nil {
 		t.Fatalf("looking up %s: %v", key, err)
 	}
@@ -208,7 +209,7 @@ func TestANeighbourAtAnAddressThisFirewallHoldsCreatesNoClient(t *testing.T) {
 		}
 	}
 	if clients := scalarCount(t, harness.store, `SELECT count(*) FROM client
-		WHERE last_address = '198.51.100.77' AND identity_kind = ?`, store.IdentityMAC); clients != 1 {
+		WHERE last_address = '198.51.100.77' AND identity_kind = ?`, vocab.IdentityMAC); clients != 1 {
 		t.Errorf("the neighbour at an address the firewall does not hold made %d clients, want 1", clients)
 	}
 }

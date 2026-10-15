@@ -8,6 +8,7 @@ import (
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/broker/answer"
 	"github.com/NaejEL/opnview/internal/broker/infer"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
 )
 
 // What a plugin's manifest tells the broker (A10, A12, A14 and A17 of the broker amendment to
@@ -16,9 +17,9 @@ import (
 // endpoint it replaces. Every key is optional; a manifest stating none loads unchanged.
 
 // checkBrokerKeys checks one endpoint's broker keys.
-func checkBrokerKeys(manifest Manifest, declaration EndpointDeclaration) *Refusal {
-	invalid := func(format string, arguments ...any) *Refusal {
-		return refuse(manifest.Name, RefusalMirrorCorrectionInvalid, "the endpoint %q: "+format,
+func checkBrokerKeys(manifest contract.Manifest, declaration contract.EndpointDeclaration) *contract.Refusal {
+	invalid := func(format string, arguments ...any) *contract.Refusal {
+		return contract.Refuse(manifest.Name, contract.RefusalMirrorCorrectionInvalid, "the endpoint %q: "+format,
 			append([]any{declaration.Name}, arguments...)...)
 	}
 	if declaration.MaxAgeSeconds < 0 || declaration.FloorSeconds < 0 || declaration.DiscardEvents < 0 {
@@ -104,8 +105,8 @@ func (p *Plugin) declareTo(gate *broker.Broker) {
 	if gate == nil {
 		return
 	}
-	for _, declaration := range p.manifest.Endpoints {
-		endpoint, found := p.endpoints[declaration.Name]
+	for _, declaration := range p.Manifest.Endpoints {
+		endpoint, found := p.Endpoints[declaration.Name]
 		if !found {
 			continue
 		}
@@ -124,7 +125,7 @@ func (p *Plugin) declareTo(gate *broker.Broker) {
 			brokered.Corrections = *declaration.Corrections
 		}
 		if declaration.Replaces != "" {
-			if replaced, found := p.endpoints[declaration.Replaces]; found {
+			if replaced, found := p.Endpoints[declaration.Replaces]; found {
 				brokered.Replaces = replaced.Path
 			}
 		}
@@ -134,7 +135,7 @@ func (p *Plugin) declareTo(gate *broker.Broker) {
 		}
 		// Each versioned route is an endpoint of its own to the broker: a different path is a
 		// different datum, with the route's own corrections.
-		routes := p.routes[declaration.Name]
+		routes := p.Routes[declaration.Name]
 		for index, variant := range declaration.Variants {
 			if index+1 >= len(routes) {
 				break
@@ -145,7 +146,7 @@ func (p *Plugin) declareTo(gate *broker.Broker) {
 			if variant.Corrections != nil {
 				variantDeclared.Corrections = *variant.Corrections
 			}
-			if code := gate.Declare(p.Name, p.Origin == OriginBuiltin, routes[index+1].endpoint, variantDeclared); code != "" {
+			if code := gate.Declare(p.Name, p.Origin == OriginBuiltin, routes[index+1].Endpoint, variantDeclared); code != "" {
 				p.CorrectionConflicts = append(p.CorrectionConflicts, CorrectionConflict{Endpoint: declaration.Name,
 					Code: code})
 			}

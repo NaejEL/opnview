@@ -8,7 +8,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // Session is THE PORT: everything an implementation may ask of the host that runs it, and
@@ -58,7 +58,7 @@ type Session interface {
 	// product is an OPNsense service asks the same question of the same shape of answer, so
 	// the host answers it once.
 	ServiceState(ctx context.Context, endpoint opnsense.Endpoint) (
-		running bool, state store.AvailabilityState, outcome store.AvailabilityOutcome, detail string,
+		running bool, state vocab.AvailabilityState, outcome vocab.AvailabilityOutcome, detail string,
 		err error)
 
 	// ReadObject calls an endpoint and decodes a JSON object, reporting whether that
@@ -161,28 +161,28 @@ func (h *Host) Stream(ctx context.Context, endpoint opnsense.Endpoint,
 // the availability state and detail its answer implies. Every implementation whose product
 // exposes an OPNsense service uses it, which is why it lives here rather than in one of them.
 func (h *Host) ServiceState(ctx context.Context, endpoint opnsense.Endpoint) (
-	bool, store.AvailabilityState, store.AvailabilityOutcome, string, error) {
+	bool, vocab.AvailabilityState, vocab.AvailabilityOutcome, string, error) {
 	response, err := h.gate.GateCall(ctx, h.requester, endpoint, opnsense.RequestOptions{}, h.maxAge)
 	if err != nil && response.Outcome == "" {
-		return false, store.StateUnavailable, store.OutcomeRequestNotMade, "", err
+		return false, vocab.StateUnavailable, vocab.OutcomeRequestNotMade, "", err
 	}
 	if !response.OK() {
-		return false, store.StateUnavailable, ResponseOutcome(response), response.Detail, nil
+		return false, vocab.StateUnavailable, ResponseOutcome(response), response.Detail, nil
 	}
 	var body decode.Object
 	if err := json.Unmarshal(response.Body, &body); err != nil {
-		return false, store.StateUnavailable, store.OutcomeUndecodable,
+		return false, vocab.StateUnavailable, vocab.OutcomeUndecodable,
 			"the status body could not be read", nil
 	}
 	status, present := decode.String(body, "status")
 	if !present {
-		return false, store.StateUnavailable, store.OutcomeUndecodable,
+		return false, vocab.StateUnavailable, vocab.OutcomeUndecodable,
 			"the status body reported no status", nil
 	}
 	if decode.LowerASCII(status) == "running" {
-		return true, store.StateReachable, store.OutcomeHealthy, "", nil
+		return true, vocab.StateReachable, vocab.OutcomeHealthy, "", nil
 	}
-	return false, store.StatePresentButDisabled, store.OutcomeServiceNotRunning,
+	return false, vocab.StatePresentButDisabled, vocab.OutcomeServiceNotRunning,
 		"the service reported " + QuoteForDetail(status), nil
 }
 
@@ -255,29 +255,29 @@ func CollectionRows(decoded any, body []byte, wrapperKeys ...string) ([]decode.O
 // detail: 401 and 403 are one opnsense outcome and two availability outcomes, because
 // the first is a key that was refused and the second a key whose user lacks a privilege,
 // and the user acts on them in two different places.
-func ResponseOutcome(response opnsense.Response) store.AvailabilityOutcome {
+func ResponseOutcome(response opnsense.Response) vocab.AvailabilityOutcome {
 	switch response.Outcome {
 	case opnsense.OutcomeOK:
-		return store.OutcomeHealthy
+		return vocab.OutcomeHealthy
 	case opnsense.OutcomeNotFound:
-		return store.OutcomeNotFound
+		return vocab.OutcomeNotFound
 	case opnsense.OutcomeForbidden:
 		if response.StatusCode == http.StatusUnauthorized {
-			return store.OutcomeAuthenticationFailed
+			return vocab.OutcomeAuthenticationFailed
 		}
-		return store.OutcomeDenied
+		return vocab.OutcomeDenied
 	case opnsense.OutcomeEmptyBody:
-		return store.OutcomeEmptyBody
+		return vocab.OutcomeEmptyBody
 	case opnsense.OutcomeResultFailed:
-		return store.OutcomeResultFailed
+		return vocab.OutcomeResultFailed
 	case opnsense.OutcomeServerError:
-		return store.OutcomeServerError
+		return vocab.OutcomeServerError
 	case opnsense.OutcomeTransportFailure:
-		return store.OutcomeTransportFailure
+		return vocab.OutcomeTransportFailure
 	case opnsense.OutcomeCertificateRefused:
-		return store.OutcomeCertificateRefused
+		return vocab.OutcomeCertificateRefused
 	}
-	return store.OutcomeRequestNotMade
+	return vocab.OutcomeRequestNotMade
 }
 
 // QuoteForDetail renders a value the firewall reported for an availability detail, so a reader

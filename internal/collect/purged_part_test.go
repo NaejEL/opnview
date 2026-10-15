@@ -2,11 +2,11 @@ package collect
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"testing"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/collect/dnslookup"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The second iteration of the step-5A corrections, on the collection side.
@@ -58,7 +58,7 @@ func TestAHostNameLookupReadBeforeItsLeaseIsResolvedByTheLeasePass(t *testing.T)
 	ctx := context.Background()
 	answer := "Recursion"
 	logged := "example-host-three.example.invalid"
-	lookup, err := harness.collector.buildDNSResolution(ctx, dnslookup.Record{
+	lookup, err := harness.collector.BuildDNSResolution(ctx, dnslookup.Record{
 		DeduplicationKey: "example-key-early", ClientAddress: logged,
 		Domain: "example-site.example.invalid", Action: "pass", AnswerSource: &answer,
 		LookedUpAt: referenceEpoch() - 60,
@@ -66,7 +66,7 @@ func TestAHostNameLookupReadBeforeItsLeaseIsResolvedByTheLeasePass(t *testing.T)
 	if err != nil {
 		t.Fatalf("building the lookup: %v", err)
 	}
-	if lookup.ClientResolution != store.ClientResolutionUnknown {
+	if lookup.ClientResolution != vocab.ClientResolutionUnknown {
 		t.Fatalf("with no lease stored the lookup is %s, not unknown", lookup.ClientResolution)
 	}
 	if err := harness.store.InsertDNSResolution(ctx, lookup); err != nil {
@@ -88,7 +88,7 @@ func TestAHostNameLookupReadBeforeItsLeaseIsResolvedByTheLeasePass(t *testing.T)
 		Scan(&address, &resolution, &hostname, &state); err != nil {
 		t.Fatalf("reading the lookup: %v", err)
 	}
-	if resolution != store.ClientResolutionLeased || address != "198.51.100.12" {
+	if resolution != vocab.ClientResolutionLeased || address != "198.51.100.12" {
 		t.Errorf("after the lease pass the lookup is %s at %s, not resolved to the leased address",
 			resolution, address)
 	}

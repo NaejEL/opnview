@@ -4,7 +4,7 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -108,7 +108,7 @@ func (s *surface) interfacesAnswer(ctx context.Context) (InterfacesAnswer, error
 }
 
 // overlapStates are overlapsOf's rows, with the other interface named by its id.
-func overlapStates(interfaceID int64, networks []store.InterfaceNetwork,
+func overlapStates(interfaceID int64, networks []flows.InterfaceNetwork,
 	descriptions map[int64]string) []OverlapState {
 	overlaps := []OverlapState{}
 	for _, own := range networks {

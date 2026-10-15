@@ -5,6 +5,9 @@ import (
 	"math"
 	"strconv"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/attribution"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The tests of the record-rate measurement. Rebuilt after the loss of 2 October
@@ -13,7 +16,7 @@ import (
 
 // flowSpec is the record-rate spec of the filter log, as package sizing builds
 // it: the flow table, measured on the firewall's clock and on opnview's.
-var flowSpec = RecordRateSpec{
+var flowSpec = attribution.RecordRateSpec{
 	Kind:           "firewall_log",
 	Table:          "flow",
 	SourceColumn:   "observed_at",
@@ -37,14 +40,14 @@ func insertFlowsAt(t *testing.T, database *Store, lag int64, observedAt ...int64
 }
 
 // recordGap stores one collection gap of the filter log's pf implementation.
-func recordGap(t *testing.T, database *Store, reason GapReason, start, end, detectedAt int64) {
+func recordGap(t *testing.T, database *Store, reason vocab.GapReason, start, end, detectedAt int64) {
 	t.Helper()
 	ctx := context.Background()
 	providerID, err := database.ProviderID(ctx, "firewall_log", "pf")
 	if err != nil {
 		t.Fatalf("looking up the filter-log provider: %v", err)
 	}
-	if err := database.RecordCollectionGap(ctx, CollectionGap{
+	if err := database.RecordCollectionGap(ctx, vocab.CollectionGap{
 		ProviderID: providerID, IntervalStartAt: start, IntervalEndAt: end,
 		Reason: reason, DetectedAt: detectedAt,
 	}); err != nil {
@@ -65,7 +68,7 @@ func TestTheRecordRateIsMeasuredPerKindOverBothClocks(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
-	window := RecordRateWindow{StartAt: 1750000000, EndAt: 1750003600}
+	window := attribution.RecordRateWindow{StartAt: 1750000000, EndAt: 1750003600}
 
 	// Seven records over 600 s of source time, three of them in one minute,
 	// ingested in a burst 20 s after each (so the ingested span is the same
@@ -75,11 +78,11 @@ func TestTheRecordRateIsMeasuredPerKindOverBothClocks(t *testing.T) {
 		window.StartAt+300, window.StartAt+400, window.StartAt+500, window.StartAt+700)
 	insertFlowsAt(t, database, 20, window.StartAt-1, window.EndAt)
 
-	recordGap(t, database, GapDigestOutsideWindow, window.StartAt+200, window.StartAt+260, window.StartAt+261)
-	recordGap(t, database, GapDigestOutsideWindow, window.StartAt+600, window.StartAt+610, window.StartAt+611)
-	recordGap(t, database, GapEveRotationLost, window.StartAt+50, window.StartAt+80, window.StartAt+90)
+	recordGap(t, database, vocab.GapDigestOutsideWindow, window.StartAt+200, window.StartAt+260, window.StartAt+261)
+	recordGap(t, database, vocab.GapDigestOutsideWindow, window.StartAt+600, window.StartAt+610, window.StartAt+611)
+	recordGap(t, database, vocab.GapEveRotationLost, window.StartAt+50, window.StartAt+80, window.StartAt+90)
 	// A gap detected outside the window is not counted, whatever span it covers.
-	recordGap(t, database, GapDigestOutsideWindow, window.StartAt+10, window.StartAt+20, window.EndAt+1)
+	recordGap(t, database, vocab.GapDigestOutsideWindow, window.StartAt+10, window.StartAt+20, window.EndAt+1)
 
 	measurement, err := database.MeasureRecordRate(ctx, flowSpec, window, 60)
 	if err != nil {
@@ -124,14 +127,14 @@ func TestTheRecordRateIsMeasuredPerKindOverBothClocks(t *testing.T) {
 	if len(measurement.Gaps) != 2 {
 		t.Fatalf("the window holds gaps of %d reasons, want 2: %+v", len(measurement.Gaps), measurement.Gaps)
 	}
-	byReason := map[string]RecordRateGap{}
+	byReason := map[string]attribution.RecordRateGap{}
 	for _, gap := range measurement.Gaps {
 		byReason[gap.Reason] = gap
 	}
-	if gap := byReason[string(GapDigestOutsideWindow)]; gap.Count != 2 || gap.MissedSeconds != 70 {
+	if gap := byReason[string(vocab.GapDigestOutsideWindow)]; gap.Count != 2 || gap.MissedSeconds != 70 {
 		t.Errorf("the filter-log gaps are %+v, want 2 covering 70 s", gap)
 	}
-	if gap := byReason[string(GapEveRotationLost)]; gap.Count != 1 || gap.MissedSeconds != 30 {
+	if gap := byReason[string(vocab.GapEveRotationLost)]; gap.Count != 1 || gap.MissedSeconds != 30 {
 		t.Errorf("the rotation gaps are %+v, want 1 covering 30 s", gap)
 	}
 	if measurement.GapCount != 3 || measurement.MissedSeconds != 100 {
@@ -156,7 +159,7 @@ func TestTheRecordRateIsMeasuredPerKindOverBothClocks(t *testing.T) {
 
 	// Another kind over the same window is measured on its own rows: the flows
 	// are not its records and the filter log's gaps are not its gaps.
-	other, err := database.MeasureRecordRate(ctx, RecordRateSpec{
+	other, err := database.MeasureRecordRate(ctx, attribution.RecordRateSpec{
 		Kind: "security_event", Table: "security_event", SourceColumn: "occurred_at", IngestedColumn: "ingested_at",
 	}, window, 60)
 	if err != nil {
@@ -176,7 +179,7 @@ func TestTheWindowIsBoundedByTheRetentionHorizon(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
-	window := RecordRateWindow{StartAt: 1750000000, EndAt: 1750086400}
+	window := attribution.RecordRateWindow{StartAt: 1750000000, EndAt: 1750086400}
 	if window.Seconds() != 86400 {
 		t.Fatalf("the window is %d s long, want 86400", window.Seconds())
 	}
@@ -222,7 +225,7 @@ func TestAWindowWithNoRecordIsAStateAndNotARateOfNought(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
-	window := RecordRateWindow{StartAt: 1750000000, EndAt: 1750003600}
+	window := attribution.RecordRateWindow{StartAt: 1750000000, EndAt: 1750003600}
 
 	empty, err := database.MeasureRecordRate(ctx, flowSpec, window, 60)
 	if err != nil {

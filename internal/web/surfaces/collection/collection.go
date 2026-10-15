@@ -2,16 +2,20 @@ package collection
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/web"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/store/attribution"
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
+
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/sizing"
-	"github.com/NaejEL/opnview/internal/store"
 )
 
 // The collection surface: per source kind, the pair that governs its polling, the
@@ -180,7 +184,7 @@ func (s *surface) handleCollectionSubmit(writer http.ResponseWriter, request *ht
 	}
 
 	// Every figure and every selection is checked before anything is stored.
-	secondsText, refusal := web.TypedDuration(draft[intervalName], draft[web.UnitFieldName(intervalName)])
+	secondsText, refusal := settingfields.TypedDuration(draft[intervalName], draft[settingfields.UnitFieldName(intervalName)])
 	if refusal != "" {
 		refuse(refusal, intervalName)
 		return
@@ -261,9 +265,9 @@ func (s *surface) fillSuggestedFields(writer http.ResponseWriter, request *http.
 	feedback := &cardFeedback{kind: kind.Kind, notice: msgSuggestionNotFilled}
 	if suggestion.Outcome == sizing.OutcomeSuggested {
 		intervalName := cardFieldName(kind.Kind, fieldInterval)
-		figure, unit := web.FieldDuration(int64(suggestion.Pair.Interval / time.Second))
+		figure, unit := settingfields.FieldDuration(int64(suggestion.Pair.Interval / time.Second))
 		draft[intervalName] = figure
-		draft[web.UnitFieldName(intervalName)] = unit
+		draft[settingfields.UnitFieldName(intervalName)] = unit
 		if kind.PageIsAdjustable() {
 			draft[cardFieldName(kind.Kind, fieldPageSize)] = strconv.Itoa(suggestion.Pair.PageSize)
 		}
@@ -371,11 +375,11 @@ func (s *surface) fillCollection(ctx context.Context, built *view, page *collect
 // reports whether opnview collects it, and derives the suggestion from both. It
 // reads the database only. A measurement taken before a later step failed is
 // returned with the error, for a caller that can still use it.
-func (s *surface) measureKind(ctx context.Context, kind sizing.Kind) (store.RecordRateMeasurement,
+func (s *surface) measureKind(ctx context.Context, kind sizing.Kind) (attribution.RecordRateMeasurement,
 	sizing.Suggestion, kindState, error) {
 	settings, err := s.Configuration(ctx)
 	if err != nil {
-		return store.RecordRateMeasurement{}, sizing.Suggestion{}, kindState{}, err
+		return attribution.RecordRateMeasurement{}, sizing.Suggestion{}, kindState{}, err
 	}
 	window := sizing.Window(s.now(), settings.RetentionSeconds)
 	measured, err := s.store.MeasureRecordRate(ctx, kind.Spec, window, sizing.BucketSeconds)
@@ -443,7 +447,7 @@ func (s *surface) sourceState(ctx context.Context, kind string) (kindState, erro
 		if err != nil {
 			return kindState{}, err
 		}
-		if provider.State == store.StateReachable {
+		if provider.State == vocab.StateReachable {
 			reachable = true
 		}
 		if selection == config.SelectionOff {
@@ -479,7 +483,7 @@ func (s *surface) sourceState(ctx context.Context, kind string) (kindState, erro
 // when any was checked and found so; failing that, not yet probed; and state unknown
 // when no provider of the kind carries an availability row at all. Nothing but a
 // reachable provider reads as healthy.
-func kindAvailability(kind string, rows []store.SourceRow) messageKey {
+func kindAvailability(kind string, rows []reads.SourceRow) messageKey {
 	found := map[messageKey]bool{}
 	for _, row := range rows {
 		if row.Kind != kind {
@@ -524,14 +528,14 @@ func (s *surface) buildCollectionCard(ctx context.Context, kind sizing.Kind,
 			cardFieldName(kind.Kind, fieldSelectionPrefix+provider.ProviderKey))
 	}
 	typed := page.typed(kind.Kind,
-		append([]string{pageName, intervalName, web.UnitFieldName(intervalName)}, selectionNames...)...)
+		append([]string{pageName, intervalName, settingfields.UnitFieldName(intervalName)}, selectionNames...)...)
 
 	inForceSeconds := int64(inForce.Interval / time.Second)
 	card := collectionCard{
 		Kind:             kind.Kind,
 		LabelKey:         messageKey(kind.LabelKey),
 		PageIsAdjustable: kind.PageIsAdjustable(),
-		Interval: web.DurationField(intervalName, "interval_"+kind.Kind, msgFieldPollInterval,
+		Interval: settingfields.DurationField(intervalName, "interval_"+kind.Kind, msgFieldPollInterval,
 			inForceSeconds, typed),
 
 		// The outcome of the derivation, as a state, whatever it is; the fill
@@ -543,13 +547,13 @@ func (s *surface) buildCollectionCard(ctx context.Context, kind sizing.Kind,
 		SuggestionExists:   suggestion.Outcome == sizing.OutcomeSuggested,
 	}
 	if _, present := typed[intervalName]; present &&
-		web.DurationDiffers(typed[intervalName], typed[web.UnitFieldName(intervalName)], inForceSeconds) {
+		settingfields.DurationDiffers(typed[intervalName], typed[settingfields.UnitFieldName(intervalName)], inForceSeconds) {
 		card.Edited = true
 	}
 	if kind.PageIsAdjustable() {
 		value := strconv.Itoa(inForce.PageSize)
-		card.PageSize = web.SettingField{Name: pageName, ID: "page_size_" + kind.Kind,
-			LabelKey: msgFieldPageSize, Value: value, InForce: web.InForceValue{Value: value}}
+		card.PageSize = settingfields.SettingField{Name: pageName, ID: "page_size_" + kind.Kind,
+			LabelKey: msgFieldPageSize, Value: value, InForce: settingfields.InForceValue{Value: value}}
 		if shown, present := typed[pageName]; present {
 			card.PageSize.Value = shown
 			card.PageSize.ShowInForce = shown != value
@@ -578,7 +582,7 @@ func (s *surface) buildCollectionCard(ctx context.Context, kind sizing.Kind,
 			Value:    strconv.Itoa(inForce.PageSize)})
 	}
 	card.InForce = append(card.InForce, figureRow{
-		LabelKey: msgLabelIntervalInForce, Duration: web.SpelledDuration(inForceSeconds)})
+		LabelKey: msgLabelIntervalInForce, Duration: settingfields.SpelledDuration(inForceSeconds)})
 	if kind.PageIsAdjustable() {
 		card.InForce = append(card.InForce, ceilingFigure(kind))
 		if kind.HasPageCeiling() {
@@ -589,8 +593,8 @@ func (s *surface) buildCollectionCard(ctx context.Context, kind sizing.Kind,
 	}
 
 	card.Measurement = []figureRow{
-		{LabelKey: msgLabelWindowStart, Value: web.Instant(measured.Window.StartAt)},
-		{LabelKey: msgLabelWindowEnd, Value: web.Instant(measured.Window.EndAt)},
+		{LabelKey: msgLabelWindowStart, Value: settingfields.Instant(measured.Window.StartAt)},
+		{LabelKey: msgLabelWindowEnd, Value: settingfields.Instant(measured.Window.EndAt)},
 		retentionFigure(measured.RetentionSeconds),
 		coveredFigure(msgLabelCoveredFrom, measured, measured.CoveredFromAt),
 		coveredFigure(msgLabelCoveredTo, measured, measured.CoveredToAt),
@@ -599,13 +603,13 @@ func (s *surface) buildCollectionCard(ctx context.Context, kind sizing.Kind,
 		rateFigure(msgLabelMeanRateIngested, measured.IngestedMeanRate, measured.HasIngestedClock),
 		rateFigure(msgLabelPeakRate, measured.PeakRate, true),
 		{LabelKey: msgLabelGapCount, Value: strconv.FormatInt(measured.GapCount, 10)},
-		{LabelKey: msgLabelMissedSeconds, Duration: web.SpelledDuration(measured.MissedSeconds)},
+		{LabelKey: msgLabelMissedSeconds, Duration: settingfields.SpelledDuration(measured.MissedSeconds)},
 	}
 	for _, gap := range measured.Gaps {
 		card.Gaps = append(card.Gaps, gapRow{
 			ReasonKey: messageKey("gap_reason." + gap.Reason),
 			Count:     strconv.FormatInt(gap.Count, 10),
-			Missed:    web.SpelledDuration(gap.MissedSeconds),
+			Missed:    settingfields.SpelledDuration(gap.MissedSeconds),
 		})
 	}
 
@@ -664,7 +668,7 @@ func (s *surface) buildCollectionCard(ctx context.Context, kind sizing.Kind,
 		}
 		card.Suggestion = append(card.Suggestion, figureRow{
 			LabelKey: msgLabelSuggestedInterval,
-			Duration: web.SpelledDuration(int64(suggestion.Pair.Interval / time.Second))})
+			Duration: settingfields.SpelledDuration(int64(suggestion.Pair.Interval / time.Second))})
 	}
 	card.Suggestion = append(card.Suggestion, figureRow{
 		LabelKey: msgLabelSuggestionState,
@@ -688,7 +692,7 @@ func retentionFigure(retentionSeconds int64) figureRow {
 		return figureRow{LabelKey: msgLabelRetentionHorizon, StateKey: msgRetentionUnlimited}
 	}
 	return figureRow{LabelKey: msgLabelRetentionHorizon,
-		Duration: web.SpelledDuration(retentionSeconds)}
+		Duration: settingfields.SpelledDuration(retentionSeconds)}
 }
 
 // coveredFigure is one end of the span the records cover, as an instant, or the
@@ -697,16 +701,16 @@ func retentionFigure(retentionSeconds int64) figureRow {
 //
 // The span is the records' own, by the source's clock: it can start after the
 // window does and end before it, which is what the two rows exist to show.
-func coveredFigure(label messageKey, measured store.RecordRateMeasurement, at int64) figureRow {
+func coveredFigure(label messageKey, measured attribution.RecordRateMeasurement, at int64) figureRow {
 	// No record, no span: both ends say so.
 	if !measured.HasRecords {
 		return figureRow{LabelKey: label, StateKey: msgNoRecordsInWindow}
 	}
-	return figureRow{LabelKey: label, Value: web.Instant(at)}
+	return figureRow{LabelKey: label, Value: settingfields.Instant(at)}
 }
 
 // rateFigure is a rate in records per second to three decimals, or a state.
-func rateFigure(label messageKey, rate store.Rate, clock bool) figureRow {
+func rateFigure(label messageKey, rate attribution.Rate, clock bool) figureRow {
 	switch {
 	case !clock:
 		return figureRow{LabelKey: label, StateKey: msgNoIngestedClock}

@@ -5,7 +5,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -53,7 +53,7 @@ func (s *surface) saveFirewall(ctx context.Context, firewallURL, apiKey, apiSecr
 			return "", err
 		}
 	}
-	if err := s.storeSecret(ctx, store.CredentialOPNsenseAPISecret, apiSecret, now); err != nil {
+	if err := s.storeSecret(ctx, accounts.CredentialOPNsenseAPISecret, apiSecret, now); err != nil {
 		return "", err
 	}
 	// THE LIVE HOLDER, through the same path start-up uses. This is what makes the change reach

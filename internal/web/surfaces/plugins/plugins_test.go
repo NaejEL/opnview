@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/plugin"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
+	listingpkg "github.com/NaejEL/opnview/internal/plugin/listing"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/surfaces/plugins"
 	"github.com/NaejEL/opnview/internal/web/webtest"
@@ -32,13 +34,13 @@ func listing(t *testing.T, harness *webtest.Harness) (plugins.Listing, string) {
 	return listed, body
 }
 
-func find(listed plugins.Listing, name string) (plugin.ListedPlugin, bool) {
+func find(listed plugins.Listing, name string) (listingpkg.ListedPlugin, bool) {
 	for _, entry := range listed.Plugins {
 		if entry.Name == name {
 			return entry, true
 		}
 	}
-	return plugin.ListedPlugin{}, false
+	return listingpkg.ListedPlugin{}, false
 }
 
 // condition reads a JSON answer's condition.
@@ -70,7 +72,7 @@ func TestThePluginListingListsEveryBuiltinAndCarriesNoSecret(t *testing.T) {
 			t.Errorf("the built-in plugin %s is not listed", name)
 			continue
 		}
-		if entry.State != plugin.StateLoaded || entry.Origin != plugin.OriginBuiltin || entry.Version == "" ||
+		if entry.State != listingpkg.StateLoaded || entry.Origin != plugin.OriginBuiltin || entry.Version == "" ||
 			entry.APIVersion != 1 || len(entry.Providers) == 0 {
 			t.Errorf("%s is listed as %+v", name, entry)
 		}
@@ -260,13 +262,13 @@ func TestAThirdPartyPluginIsListedAndARefusedOneSaysWhy(t *testing.T) {
 	harness.CompleteSetup()
 	listed, _ := listing(t, harness)
 	reader, found := find(listed, "example_reader")
-	if !found || reader.State != plugin.StateLoaded || reader.Origin != plugin.OriginDataDirectory ||
+	if !found || reader.State != listingpkg.StateLoaded || reader.Origin != plugin.OriginDataDirectory ||
 		len(reader.Providers) != 1 || reader.Providers[0].Kind != "dhcp_lease" {
 		t.Errorf("the third-party plugin is listed as %+v (found %v)", reader, found)
 	}
 	broken, found := find(listed, "broken_example")
-	if !found || broken.State != plugin.StateRefused || broken.Reason == nil ||
-		broken.Reason.Code != plugin.RefusalManifestInvalid || broken.Origin != plugin.OriginDataDirectory {
+	if !found || broken.State != listingpkg.StateRefused || broken.Reason == nil ||
+		broken.Reason.Code != contract.RefusalManifestInvalid || broken.Origin != plugin.OriginDataDirectory {
 		t.Errorf("the broken plugin is listed as %+v (found %v)", broken, found)
 	}
 }

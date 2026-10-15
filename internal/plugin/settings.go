@@ -11,8 +11,10 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/pluginkind"
 	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
 	"github.com/NaejEL/opnview/internal/secret"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 )
 
 // The settings a plugin declares (A6 of the backend-completion cycle).
@@ -34,23 +36,6 @@ const (
 	SettingEnum    = "enum"
 	SettingSecret  = "secret"
 )
-
-// SettingDeclaration is one setting a plugin declares.
-type SettingDeclaration struct {
-	// Key is the setting's own key, a snake_case word; it is stored as <plugin>_<key>.
-	Key string `json:"key"`
-	// Type is integer, number, boolean, text, enum or secret.
-	Type string `json:"type"`
-	// Default is the value an unset setting takes. A secret has none.
-	Default any `json:"default,omitempty"`
-	// Min and Max bound an integer or a number.
-	Min *float64 `json:"min,omitempty"`
-	Max *float64 `json:"max,omitempty"`
-	// Values is an enum's vocabulary.
-	Values []string `json:"values,omitempty"`
-	// Label is the catalogue key naming the setting, which the plugin's own locale/ carries.
-	Label string `json:"label,omitempty"`
-}
 
 // The closed codes a setting write is refused with.
 const (
@@ -78,51 +63,51 @@ const RefusalSettingCollision = "setting_collision"
 func StorageKey(plugin, key string) string { return plugin + "_" + key }
 
 // checkSettings validates a manifest's setting declarations.
-func checkSettings(manifest Manifest, takenKeys map[string]string) *Refusal {
+func checkSettings(manifest contract.Manifest, takenKeys map[string]string) *contract.Refusal {
 	seen := map[string]bool{}
 	for _, setting := range manifest.Settings {
-		if !namePattern.MatchString(setting.Key) {
-			return refuse(manifest.Name, RefusalManifestInvalid, "the setting key %q is not a snake_case word", setting.Key)
+		if !contract.NamePattern.MatchString(setting.Key) {
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the setting key %q is not a snake_case word", setting.Key)
 		}
 		if seen[setting.Key] {
-			return refuse(manifest.Name, RefusalManifestInvalid, "the setting %q is declared twice", setting.Key)
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the setting %q is declared twice", setting.Key)
 		}
 		seen[setting.Key] = true
 		stored := StorageKey(manifest.Name, setting.Key)
 		if config.IsCoreKey(stored) {
-			return refuse(manifest.Name, RefusalSettingCollision, "the setting %q would be stored as %q, which the "+
+			return contract.Refuse(manifest.Name, RefusalSettingCollision, "the setting %q would be stored as %q, which the "+
 				"core reads itself", setting.Key, stored)
 		}
 		if owner, taken := takenKeys[settingClaim(stored)]; taken {
-			return refuse(manifest.Name, RefusalSettingCollision, "the setting %q would be stored as %q, which the "+
+			return contract.Refuse(manifest.Name, RefusalSettingCollision, "the setting %q would be stored as %q, which the "+
 				"plugin %s already declares", setting.Key, stored, owner)
 		}
 		switch setting.Type {
 		case SettingInteger, SettingNumber:
 			if setting.Min != nil && setting.Max != nil && *setting.Min > *setting.Max {
-				return refuse(manifest.Name, RefusalManifestInvalid, "the setting %q has min above max", setting.Key)
+				return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the setting %q has min above max", setting.Key)
 			}
 		case SettingEnum:
 			if len(setting.Values) == 0 {
-				return refuse(manifest.Name, RefusalManifestInvalid, "the enum setting %q lists no values", setting.Key)
+				return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the enum setting %q lists no values", setting.Key)
 			}
 		case SettingBoolean, SettingText:
 		case SettingSecret:
 			if setting.Default != nil {
-				return refuse(manifest.Name, RefusalManifestInvalid, "the secret %q declares a default; a secret "+
+				return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the secret %q declares a default; a secret "+
 					"has none", setting.Key)
 			}
 		default:
-			return refuse(manifest.Name, RefusalManifestInvalid, "the setting %q has the type %q, not integer, "+
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the setting %q has the type %q, not integer, "+
 				"number, boolean, text, enum or secret", setting.Key, setting.Type)
 		}
 		if (setting.Min != nil || setting.Max != nil) && setting.Type != SettingInteger && setting.Type != SettingNumber {
-			return refuse(manifest.Name, RefusalManifestInvalid, "the setting %q has bounds and is not a number",
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the setting %q has bounds and is not a number",
 				setting.Key)
 		}
 		if setting.Default != nil {
 			if _, refusal := parseSetting(setting, fmt.Sprint(setting.Default)); refusal != nil {
-				return refuse(manifest.Name, RefusalManifestInvalid, "the default of the setting %q is not a value it "+
+				return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the default of the setting %q is not a value it "+
 					"accepts", setting.Key)
 			}
 		}
@@ -131,7 +116,7 @@ func checkSettings(manifest Manifest, takenKeys map[string]string) *Refusal {
 }
 
 // parseSetting reads a stored or submitted text as a declared setting's value.
-func parseSetting(setting SettingDeclaration, text string) (any, *SettingRefusal) {
+func parseSetting(setting contract.SettingDeclaration, text string) (any, *SettingRefusal) {
 	refuse := func(code string) (any, *SettingRefusal) { return nil, &SettingRefusal{Code: code, Key: setting.Key} }
 	bounded := func(value float64) *SettingRefusal {
 		if (setting.Min != nil && value < *setting.Min) || (setting.Max != nil && value > *setting.Max) {
@@ -180,7 +165,7 @@ func parseSetting(setting SettingDeclaration, text string) (any, *SettingRefusal
 // SettingValue is one setting as the listing reports it: its declaration, and its value, or for a
 // secret whether one is set.
 type SettingValue struct {
-	SettingDeclaration
+	contract.SettingDeclaration
 	Value any  `json:"value"`
 	Set   bool `json:"set"`
 }
@@ -190,8 +175,8 @@ type SettingStore interface {
 	Setting(ctx context.Context, key string) (string, bool, error)
 	SetSetting(ctx context.Context, key, value string, now int64) error
 	DeleteSetting(ctx context.Context, key string) error
-	Credential(ctx context.Context, name string) (store.EncryptedCredential, bool, error)
-	SetCredential(ctx context.Context, credential store.EncryptedCredential) error
+	Credential(ctx context.Context, name string) (accounts.EncryptedCredential, bool, error)
+	SetCredential(ctx context.Context, credential accounts.EncryptedCredential) error
 }
 
 // Sealer seals and opens a secret with the key file beside the database.
@@ -203,7 +188,7 @@ type Sealer interface {
 // SettingValues reads a plugin's settings for the listing: a secret's value is never read, only
 // whether it is set.
 func (p *Plugin) SettingValues(ctx context.Context, database SettingStore) ([]SettingValue, error) {
-	values := make([]SettingValue, 0, len(p.manifest.Settings)+len(p.manifest.Providers))
+	values := make([]SettingValue, 0, len(p.Manifest.Settings)+len(p.Manifest.Providers))
 	for _, setting := range p.operatorSettings() {
 		value := SettingValue{SettingDeclaration: setting, Value: setting.Default}
 		stored := StorageKey(p.Name, setting.Key)
@@ -244,7 +229,7 @@ func (p *Plugin) ReadSettings(ctx context.Context, database SettingStore, sealer
 	map[string]string, error) {
 	settings := map[string]any{}
 	states := map[string]string{}
-	for _, setting := range p.manifest.Settings {
+	for _, setting := range p.Manifest.Settings {
 		stored := StorageKey(p.Name, setting.Key)
 		if setting.Type == SettingSecret {
 			settings[setting.Key], states[setting.Key] = nil, SecretAbsent
@@ -288,18 +273,18 @@ var ErrNoSuchPlugin = errors.New("plugin: no such plugin")
 // key file; an empty secret clears nothing and is refused, as the settings surface refuses one.
 func (p *Plugin) WriteSettings(ctx context.Context, database SettingStore, sealer Sealer, submitted map[string]any,
 	now int64) error {
-	declared := map[string]SettingDeclaration{}
+	declared := map[string]contract.SettingDeclaration{}
 	for _, setting := range p.operatorSettings() {
 		declared[setting.Key] = setting
 	}
 	type write struct {
-		setting SettingDeclaration
+		setting contract.SettingDeclaration
 		text    string
 		// clear removes the setting's row: a null value of a setting that is not a secret.
 		clear bool
 	}
 	var writes []write
-	for _, key := range sortedKeys(submitted) {
+	for _, key := range runtime.SortedKeys(submitted) {
 		setting, known := declared[key]
 		if !known {
 			return &SettingRefusal{Code: SettingRefusalUnknownKey, Key: key}
@@ -340,7 +325,7 @@ func (p *Plugin) WriteSettings(ctx context.Context, database SettingStore, seale
 			if err != nil {
 				return err
 			}
-			if err := database.SetCredential(ctx, store.EncryptedCredential{Name: stored, Algorithm: sealed.Algorithm,
+			if err := database.SetCredential(ctx, accounts.EncryptedCredential{Name: stored, Algorithm: sealed.Algorithm,
 				KeyID: sealed.KeyID, Nonce: sealed.Nonce, Ciphertext: sealed.Bytes, UpdatedAt: now}); err != nil {
 				return err
 			}
@@ -377,9 +362,9 @@ func settingText(value any) (string, error) {
 // seconds, never below the provider's lower bound, stored under pluginkind.CadenceSettingKey and
 // read by the scheduler before every wait. It carries no label: no catalogue string names it yet,
 // and its key, cadence__<kind>__<provider key>, says what it is.
-func (p *Plugin) operatorSettings() []SettingDeclaration {
-	settings := append([]SettingDeclaration(nil), p.manifest.Settings...)
-	for _, declared := range p.manifest.Providers {
+func (p *Plugin) operatorSettings() []contract.SettingDeclaration {
+	settings := append([]contract.SettingDeclaration(nil), p.Manifest.Settings...)
+	for _, declared := range p.Manifest.Providers {
 		if declared.CadenceSeconds <= 0 {
 			continue
 		}
@@ -388,7 +373,7 @@ func (p *Plugin) operatorSettings() []SettingDeclaration {
 			key = p.Name
 		}
 		minimum := float64(max(declared.MinCadenceSeconds, 1))
-		settings = append(settings, SettingDeclaration{Key: pluginkind.CadenceSettingName(declared.Kind, key),
+		settings = append(settings, contract.SettingDeclaration{Key: pluginkind.CadenceSettingName(declared.Kind, key),
 			Type: SettingInteger, Default: float64(declared.CadenceSeconds), Min: &minimum})
 	}
 	return settings

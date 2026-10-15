@@ -16,6 +16,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
 	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
@@ -80,15 +81,15 @@ func TestAFieldTheMirrorDoesNotHoldIsReadFromTheFirewall(t *testing.T) {
 	if err := opnsense.AdmitDeclaredEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compile("example_brokered", "example.js", brokeredScript,
+	compiled, err := runtime.Compile("example_brokered", "example.js", brokeredScript,
 		map[string]opnsense.Endpoint{"rows": endpoint}, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled.version = "1"
+	compiled.Version = "1"
 	pass := func(fields ...string) map[string]any {
 		t.Helper()
-		answer, _, failed := compiled.call(context.Background(), world.session, "example", "pass", fields)
+		answer, _, failed := compiled.Call(context.Background(), world.session, "example", "pass", fields)
 		if failed != nil {
 			t.Fatalf("the pass reading %v failed: %+v", fields, failed)
 		}
@@ -120,20 +121,20 @@ func TestHostCatalogueIsTheBrokersCatalogue(t *testing.T) {
 	if err := opnsense.AdmitDeclaredEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := compile("example_catalogue", "example.js", `exports.example = { pass: function (host) {
+	compiled, err := runtime.Compile("example_catalogue", "example.js", `exports.example = { pass: function (host) {
 			host.call("rows", {}).value.rows.length;
 			return { catalogue: host.catalogue() };
 		} };`, map[string]opnsense.Endpoint{"rows": endpoint}, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
 	}
-	compiled.version = "1"
+	compiled.Version = "1"
 	// The first pass learns the endpoint and reports what it read once it returns; the second
 	// reads the catalogue that holds it, which nothing changes after.
-	if _, _, failed := compiled.call(context.Background(), world.session, "example", "pass"); failed != nil {
+	if _, _, failed := compiled.Call(context.Background(), world.session, "example", "pass"); failed != nil {
 		t.Fatalf("the first pass failed: %+v", failed)
 	}
-	answer, _, failed := compiled.call(context.Background(), world.session, "example", "pass")
+	answer, _, failed := compiled.Call(context.Background(), world.session, "example", "pass")
 	if failed != nil {
 		t.Fatalf("the pass failed: %+v", failed)
 	}

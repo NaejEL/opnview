@@ -13,6 +13,8 @@ import (
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // A third party's widget whose script reads the domain names of the resolver lookups, and does
@@ -81,15 +83,15 @@ func TestTheCoreWithholdsAThirdPartyScriptsDomainNamesUnderNoDomains(t *testing.
 	condition, body := decodeCondition(t, harness.Get(widget.PathPrefix+"example_looked_up_names"), http.StatusOK)
 	data, _ := body["data"].(map[string]any)
 	rows, _ := data["rows"].([]any)
-	if condition != widget.ConditionReachable || len(rows) != 1 || rows[0].(map[string]any)["domain"] != "example.org" {
+	if condition != envelope.ConditionReachable || len(rows) != 1 || rows[0].(map[string]any)["domain"] != "example.org" {
 		t.Fatalf("in full mode the widget answered %q with %v", condition, body["data"])
 	}
 
-	if err := harness.Store.SetSetting(ctx, config.KeyAggregateMode, widget.AggregateModeNoDomains, now); err != nil {
+	if err := harness.Store.SetSetting(ctx, config.KeyAggregateMode, request.AggregateModeNoDomains, now); err != nil {
 		t.Fatal(err)
 	}
 	condition, body = decodeCondition(t, harness.Get(widget.PathPrefix+"example_looked_up_names"), http.StatusOK)
-	if condition != widget.ConditionWithheldByAggregateMode || body["data"] != nil {
+	if condition != envelope.ConditionWithheldByAggregateMode || body["data"] != nil {
 		t.Errorf("under no_domains the widget answered %q with %v", condition, body["data"])
 	}
 	withheld, _ := body["withheld"].([]any)

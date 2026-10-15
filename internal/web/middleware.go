@@ -10,7 +10,7 @@ import (
 	"sort"
 
 	"github.com/NaejEL/opnview/internal/auth"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/widget"
 )
 
@@ -34,8 +34,8 @@ import (
 type sessionContextKey struct{}
 
 // sessionFrom returns the session a request was resolved to, if any.
-func sessionFrom(request *http.Request) *store.Session {
-	session, present := request.Context().Value(sessionContextKey{}).(*store.Session)
+func sessionFrom(request *http.Request) *accounts.Session {
+	session, present := request.Context().Value(sessionContextKey{}).(*accounts.Session)
 	if !present {
 		return nil
 	}
@@ -133,7 +133,7 @@ func (s *Server) guard(route Route) http.HandlerFunc {
 // It returns the session and, separately, why there is none, so that a reader
 // whose session ended is told that rather than being told they were never signed
 // in.
-func (s *Server) resolveSession(request *http.Request) (*store.Session, error) {
+func (s *Server) resolveSession(request *http.Request) (*accounts.Session, error) {
 	cookie, err := request.Cookie(cookieSession)
 	if err != nil || cookie.Value == "" {
 		return nil, auth.ErrNoSession
@@ -158,7 +158,7 @@ func (s *Server) resolveSession(request *http.Request) (*store.Session, error) {
 //     lifted from somewhere else does not match the cookie the request carries.
 //
 // The comparison is constant-time.
-func (s *Server) formTokenValid(request *http.Request, session *store.Session) bool {
+func (s *Server) formTokenValid(request *http.Request, session *accounts.Session) bool {
 	submitted := request.PostFormValue("csrf_token")
 	if submitted == "" {
 		return false
@@ -192,7 +192,7 @@ const ConditionCSRFRefused = "csrf_refused"
 // session reaches -- the expected token is the one in this browser's own cookie, exactly as a
 // page's form is compared with it (formTokenValid); the application reads it from
 // GET /api/session, which sets that cookie as a page draw does.
-func (s *Server) jsonProofValid(request *http.Request, session *store.Session) bool {
+func (s *Server) jsonProofValid(request *http.Request, session *accounts.Session) bool {
 	expected := ""
 	if session != nil {
 		expected = session.CSRFToken
@@ -241,7 +241,7 @@ func (s *Server) keyFileMatches(presented string) bool {
 // A signed-in reader gets the session's own token and no cookie is written: the
 // row already holds it.
 func (s *Server) formToken(writer http.ResponseWriter, request *http.Request,
-	session *store.Session) (string, error) {
+	session *accounts.Session) (string, error) {
 	if session != nil {
 		return session.CSRFToken, nil
 	}
@@ -423,7 +423,7 @@ func pageOf(route Route) string {
 
 // SessionFrom returns the session a request was resolved to, if any. The middleware has
 // resolved it before a surface's handler runs.
-func SessionFrom(request *http.Request) *store.Session { return sessionFrom(request) }
+func SessionFrom(request *http.Request) *accounts.Session { return sessionFrom(request) }
 
 // SetSessionCookie puts a freshly issued session token in the cookie.
 func SetSessionCookie(writer http.ResponseWriter, token string) { setSessionCookie(writer, token) }

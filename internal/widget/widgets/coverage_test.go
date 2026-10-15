@@ -2,10 +2,10 @@ package widgets
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/widget"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // AC9 and AC10: coverage, gaps and freshness.
@@ -20,15 +20,15 @@ func TestCoverageGapsAndBucketsNeverInventAZero(t *testing.T) {
 	ctx := context.Background()
 	month := f.respond(t, "interface_traffic_matrix", map[string]any{"period": "30d"})
 	window := month.Window
-	if window.Covered == nil || window.Covered.From <= window.Requested.From || window.Coverage != widget.CoveragePartial {
+	if window.Covered == nil || window.Covered.From <= window.Requested.From || window.Coverage != request.CoveragePartial {
 		t.Errorf("a 30-day window over three days of data reads %+v", window)
 	}
 
 	provider, err := f.db.ProviderID(ctx, "firewall_log", "pf")
 	check(t, err)
-	gapStart := store.PeriodHour.SlotStart(f.now-5*3600) + 120
-	check(t, f.db.RecordCollectionGap(ctx, store.CollectionGap{ProviderID: provider, IntervalStartAt: gapStart,
-		IntervalEndAt: gapStart + 1200, Reason: store.GapDigestOutsideWindow, DetectedAt: f.now}))
+	gapStart := vocab.PeriodHour.SlotStart(f.now-5*3600) + 120
+	check(t, f.db.RecordCollectionGap(ctx, vocab.CollectionGap{ProviderID: provider, IntervalStartAt: gapStart,
+		IntervalEndAt: gapStart + 1200, Reason: vocab.GapDigestOutsideWindow, DetectedAt: f.now}))
 	f.exec(t, "DELETE FROM flow WHERE observed_at >= ? AND observed_at < ?", gapStart, gapStart+1200)
 	_, err = f.db.RefreshAggregates(ctx, 0, f.now, []int64{gapStart})
 	check(t, err)
@@ -92,7 +92,7 @@ func TestAnAggregateBehindItsFlowsIsFlaggedStale(t *testing.T) {
 		t.Errorf("a refreshed window reads %+v", fresh.Freshness)
 	}
 	f.exec(t, "UPDATE volume_aggregate_1h SET computed_at = ? WHERE period_start_at = ?",
-		f.now-7200, store.PeriodHour.SlotStart(f.now-6*3600))
+		f.now-7200, vocab.PeriodHour.SlotStart(f.now-6*3600))
 	stale := f.respond(t, "interface_traffic_matrix", map[string]any{"period": "24h"})
 	if len(stale.Freshness) != 1 || !stale.Freshness[0].Stale || stale.Freshness[0].StaleSlots == 0 {
 		t.Errorf("a slot behind its flows reads %+v", stale.Freshness)

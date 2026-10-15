@@ -3,19 +3,20 @@ package collect
 import (
 	"context"
 	"fmt"
+
+	"github.com/NaejEL/opnview/internal/collect/derive"
 )
 
 // The retention purge, and its ordering against the passes.
 //
-// WHY THE PURGE IS ORDERED. A pass stores its rows with neither end placed and
-// derives them afterwards: it places them, decides their attribution, and refreshes
-// the slots they fall in (derive.go). The purge moves every flow older than the
-// horizon into the purged part of its hour (internal/store/purge.sql). Were it to
-// commit between a pass storing its rows and that pass's refresh, the rows would
-// leave `flow` before any refresh had read them, unplaced; nothing would ever select
-// their hour again, and the hour, and the day, week and month composed from it,
-// would lose them. So the purge never runs inside that window, and a pass never
-// stores or derives while a purge runs:
+// WHY THE PURGE IS ORDERED. A pass stores its rows with neither end placed and derives them
+// afterwards: it places them, decides their attribution, and refreshes the slots they fall in
+// (internal/collect/derive/derive.go). The purge moves every flow older than the horizon into the
+// purged part of its hour (internal/store/purge/purge.sql). Were it to commit between a pass
+// storing its rows and that pass's refresh, the rows would leave `flow` before any refresh had read
+// them, unplaced; nothing would ever select their hour again, and the hour, and the day, week and
+// month composed from it, would lose them. So the purge never runs inside that window, and a pass
+// never stores or derives while a purge runs:
 //
 //   - every pass that stores rows holds purgeMutex for reading, from before it stores
 //     its first row until its derivation has ended (see storing). Passes still run
@@ -37,64 +38,41 @@ import (
 // by a pass whose derivation failed, or by an earlier run that stopped before
 // deriving, enters the purged part where the evidence held puts it. That derivation
 // is also the first of a run when the purge runs before any pass has derived, and
-// the first derivation of a run places every address (derive.go).
+// the first derivation of a run places every address (internal/collect/derive/derive.go).
 //
-// AND THE REFRESH DOES NOT DEPEND ON THE ORDERING. The hours a purge writes a purged
-// part for are selected by the next refresh whatever ran before it
-// (internal/store/aggregate.statements.sql, dirty_hours), so the slot invariant would survive a
-// broken ordering; orderingHooks.unordered is how a test proves it.
-
-// orderingHooks let a test stop a pass between its store and its derivation, see a
-// purge wait for it, and turn the ordering off to show what the refresh does alone.
-// Every field is nil or false outside a test, and nothing else sets them.
-type orderingHooks struct {
-	// afterStore runs in a filter-log pass once its rows are stored, before its
-	// derivation.
-	afterStore func()
-	// purgeWaits runs when a purge finds a pass or a derivation in progress and is
-	// about to wait for it.
-	purgeWaits func()
-	// unordered makes Purge run the store's purge alone, with no lock and no
-	// placement before it.
-	unordered bool
-}
-
-// storing marks the start of a pass's store-and-derive: it waits for a purge in
-// progress, and keeps the next one waiting until the returned function is called,
-// once the pass's derivation has ended.
-func (c *Collector) storing() func() {
-	c.purgeMutex.RLock()
-	return c.purgeMutex.RUnlock
-}
+// AND THE REFRESH DOES NOT DEPEND ON THE ORDERING. The hours a purge writes a purged part for are
+// selected by the next refresh whatever ran before it
+// (internal/store/aggregates/aggregate.statements.sql, dirty_hours), so the slot invariant would
+// survive a broken ordering; orderingHooks.unordered is how a test proves it.
 
 // Purge applies the retention purge, ordered against the passes as the comment above
 // describes. It is the retention-purge loop's work.
 func (c *Collector) Purge(ctx context.Context) error {
-	if c.hooks.unordered {
-		return c.store.Purge(ctx, c.now())
+	if c.Hooks.Unordered {
+		return c.Store.Purge(ctx, c.Now())
 	}
-	if !c.purgeMutex.TryLock() {
-		if c.hooks.purgeWaits != nil {
-			c.hooks.purgeWaits()
+	if !c.PurgeMutex.TryLock() {
+		if c.Hooks.PurgeWaits != nil {
+			c.Hooks.PurgeWaits()
 		}
-		c.purgeMutex.Lock()
+		c.PurgeMutex.Lock()
 	}
-	defer c.purgeMutex.Unlock()
-	c.deriveMutex.Lock()
-	defer c.deriveMutex.Unlock()
+	defer c.PurgeMutex.Unlock()
+	c.DeriveMutex.Lock()
+	defer c.DeriveMutex.Unlock()
 
 	// One instant for both, so the purge removes exactly the flows the derivation
 	// was asked to place.
-	now := c.now()
-	due, err := c.store.PurgeDueAddresses(ctx, now)
+	now := c.Now()
+	due, err := c.Store.PurgeDueAddresses(ctx, now)
 	if err != nil {
 		return err
 	}
-	if err := c.deriveLocked(ctx, derivation{addresses: due}); err != nil {
+	if err := c.DeriveLocked(ctx, derive.Derivation{Addresses: due}); err != nil {
 		return fmt.Errorf("collect: placing what the purge is about to remove: %w", err)
 	}
-	if err := c.store.Purge(ctx, now); err != nil {
+	if err := c.Store.Purge(ctx, now); err != nil {
 		return err
 	}
-	return c.purgeMirror(ctx, now)
+	return c.PurgeMirror(ctx, now)
 }

@@ -3,6 +3,8 @@ package collect
 import (
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/collect/identity"
 )
 
 // TestDayStartTruncatesToTheUTCDay pins the boundary a level-3 client identity is keyed on.
@@ -15,7 +17,7 @@ func TestDayStartTruncatesToTheUTCDay(t *testing.T) {
 	t.Parallel()
 	instant := time.Date(2026, time.September, 26, 23, 51, 6, 0, time.UTC).Unix()
 	want := time.Date(2026, time.September, 26, 0, 0, 0, 0, time.UTC).Unix()
-	if got := DayStart(instant); got != want {
+	if got := identity.DayStart(instant); got != want {
 		t.Fatalf("the day start is %d, want %d", got, want)
 	}
 }

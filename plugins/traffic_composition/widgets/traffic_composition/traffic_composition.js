@@ -39,12 +39,22 @@ var FORWARDED_ONCE = [{ column: "direction", op: "eq", value: "in" }];
 
 // pfStateRates is the current rate of each protocol, or each service, from the latest pass of
 // pf_states.rate: {by_member, source}. by_member is one {key, rate} per member, sorted by key, its
-// key the slice key of the grouping; each rate {state, measure, forward_bits_per_second,
-// reverse_bits_per_second, bits_per_second, states, sampled_at, span_seconds, lower_bound}, the
-// sums over the pass's rows of that member -- forward from the connection's initiator, reverse back
-// to it -- current, or stale_sample when its pass is older than twice the seconds it spans. source
-// is {dataset, state, at, condition} as host.datasets.latest answered: a dataset_absent or no_rows
-// state is the named absence, with by_member empty.
+// key the slice key of the grouping, its rate a chip rate as host.rates answers one for a client or
+// an interface: {state, measure, in_bits_per_second, out_bits_per_second, out_measured, sampled_at,
+// span_seconds, cadence_seconds, lower_bound}, summed over the pass's rows of that member.
+//
+// THE MAPPING. A chip rate is relative to the local side: in what it receives, out what it sends.
+// The states read are pf's direction-in states (FORWARDED_ONCE), each on the interface its
+// connection entered by, so the local side is the connection's initiator: out_bits_per_second is
+// pf's forward counter (bytes[0], from the initiator) and in_bits_per_second its reverse counter
+// (bytes[1], back to it). pf keeps both counters on every state and the dataset declares neither
+// column nullable, so both figures are always filled and out_measured is true: the chip rule -- a
+// figure that cannot be filled is null, out_measured false, never a rate of 0 -- never applies here.
+// span_seconds and cadence_seconds are both the pass's span_seconds, the seconds between the two
+// reads the rate is taken over: the cadence the pass actually ran at. A pass older than twice it is
+// stale_sample, its figures beside it. source is {dataset, state, at, condition} as
+// host.datasets.latest answered: an unknown_dataset or no_rows state is the named absence, with
+// by_member empty.
 function pfStateRates(host, groupBy) {
   var latest = host.datasets.latest(PF_STATES_RATE, FORWARDED_ONCE);
   var source = { dataset: latest.dataset, state: latest.state, at: latest.at, condition: latest.condition };
@@ -54,14 +64,12 @@ function pfStateRates(host, groupBy) {
     var key = groupBy === "protocol" ? "protocol:" + (row.protocol === null ? "" : row.protocol) :
       host.flows.serviceKey(row.protocol === "" ? null : row.protocol, row.port);
     if (sums[key] === undefined) {
-      sums[key] = { forward: 0, reverse: 0, bits: 0, states: 0, span: row.span_seconds };
+      sums[key] = { "in": 0, out: 0, span: row.span_seconds };
       keys.push(key);
     }
     var sum = sums[key];
-    sum.forward += row.forward_bits_per_second;
-    sum.reverse += row.reverse_bits_per_second;
-    sum.bits += row.bits_per_second;
-    sum.states += row.states;
+    sum["in"] += row.reverse_bits_per_second;
+    sum.out += row.forward_bits_per_second;
   });
   keys.sort(function (a, b) { return host.figures.compare(a, b); });
   var byMember = keys.map(function (key) {
@@ -72,12 +80,12 @@ function pfStateRates(host, groupBy) {
       rate: {
         state: stale ? "stale_sample" : "current",
         measure: "sampled",
-        forward_bits_per_second: sum.forward,
-        reverse_bits_per_second: sum.reverse,
-        bits_per_second: sum.bits,
-        states: sum.states,
+        in_bits_per_second: sum["in"],
+        out_bits_per_second: sum.out,
+        out_measured: true,
         sampled_at: latest.at,
         span_seconds: sum.span,
+        cadence_seconds: sum.span,
         lower_bound: true
       }
     };

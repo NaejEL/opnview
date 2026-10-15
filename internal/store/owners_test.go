@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/owners"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The tests of C1 of specs/SPEC-backend-completion-plugins.md at the store: people, assignments,
@@ -14,7 +17,7 @@ import (
 
 // refusalCode is the closed code of a refused write, or "" when err is not a refusal.
 func refusalCode(err error) string {
-	var refusal *UserInputRefusal
+	var refusal *owners.UserInputRefusal
 	if errors.As(err, &refusal) {
 		return refusal.Code
 	}
@@ -48,7 +51,7 @@ func clientOwnership(t *testing.T, database *Store) string {
 // exampleClient writes one client by MAC and returns its id.
 func exampleClient(t *testing.T, database *Store, mac, hostname, vendor string, at int64) int64 {
 	t.Helper()
-	client := Client{Identity: ClientIdentity{Kind: IdentityMAC, Key: mac}, MAC: &mac}
+	client := vocab.Client{Identity: vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: mac}, MAC: &mac}
 	if hostname != "" {
 		client.Hostname = &hostname
 	}
@@ -77,10 +80,10 @@ func TestCreatingAPersonRefusesAnEmptyOrDuplicateNameAndChangesNoRow(t *testing.
 	}
 	before := ownerRows(t, database)
 	for raw, code := range map[string]string{
-		"":                  RefusalDisplayNameEmpty,
-		"   \t ":            RefusalDisplayNameEmpty,
-		"Example Person":    RefusalDisplayNameTaken,
-		" Example Person\n": RefusalDisplayNameTaken,
+		"":                  owners.RefusalDisplayNameEmpty,
+		"   \t ":            owners.RefusalDisplayNameEmpty,
+		"Example Person":    owners.RefusalDisplayNameTaken,
+		" Example Person\n": owners.RefusalDisplayNameTaken,
 	} {
 		if _, err := database.CreateOwner(ctx, raw, 2000); refusalCode(err) != code {
 			t.Errorf("creating %q answered %v, not %s", raw, err, code)
@@ -112,12 +115,12 @@ func TestRenamingAPersonFollowsTheCreationRules(t *testing.T) {
 		t.Fatal(err)
 	}
 	before := ownerRows(t, database)
-	for raw, code := range map[string]string{" ": RefusalDisplayNameEmpty, "Example Person B": RefusalDisplayNameTaken} {
+	for raw, code := range map[string]string{" ": owners.RefusalDisplayNameEmpty, "Example Person B": owners.RefusalDisplayNameTaken} {
 		if _, err := database.RenameOwner(ctx, first.ID, raw, 2000); refusalCode(err) != code {
 			t.Errorf("renaming to %q answered %v, not %s", raw, err, code)
 		}
 	}
-	if _, err := database.RenameOwner(ctx, first.ID+100, "Anything", 2000); refusalCode(err) != RefusalUnknownOwner {
+	if _, err := database.RenameOwner(ctx, first.ID+100, "Anything", 2000); refusalCode(err) != owners.RefusalUnknownOwner {
 		t.Errorf("renaming nobody answered %v", err)
 	}
 	if after := ownerRows(t, database); after != before {
@@ -152,7 +155,7 @@ func TestDeletingAPersonReturnsEveryClearedAssignment(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deleting the person: %v", err)
 	}
-	want := []Assignment{{ClientID: first, OwnerAssignedAt: 1100}, {ClientID: second, OwnerAssignedAt: 1200}}
+	want := []owners.Assignment{{ClientID: first, OwnerAssignedAt: 1100}, {ClientID: second, OwnerAssignedAt: 1200}}
 	if fmt.Sprint(deleted.Cleared) != fmt.Sprint(want) || deleted.DisplayName != "Example Person" {
 		t.Errorf("the deletion returned %+v, want the cleared %v", deleted, want)
 	}
@@ -162,7 +165,7 @@ func TestDeletingAPersonReturnsEveryClearedAssignment(t *testing.T) {
 	if ownership := clientOwnership(t, database); ownership != fmt.Sprintf("%d|-|-,%d|-|-,%d|-|-", first, second, other) {
 		t.Errorf("the clients stand as %s", ownership)
 	}
-	if _, err := database.DeleteOwner(ctx, person.ID, 1400); refusalCode(err) != RefusalUnknownOwner {
+	if _, err := database.DeleteOwner(ctx, person.ID, 1400); refusalCode(err) != owners.RefusalUnknownOwner {
 		t.Errorf("deleting nobody answered %v", err)
 	}
 }
@@ -197,18 +200,18 @@ func TestUndoingADeletionRestoresTheOriginalAssignedAtAndReportsAClientAssignedE
 	if _, err := database.AssignClients(ctx, someoneElse.ID, []int64{taken}, 2500); err != nil {
 		t.Fatal(err)
 	}
-	gone := Assignment{ClientID: taken + 1000, OwnerAssignedAt: 900}
+	gone := owners.Assignment{ClientID: taken + 1000, OwnerAssignedAt: 900}
 	restored, err := database.RestoreOwner(ctx, deleted.DisplayName, append(deleted.Cleared, gone), 3000)
 	if err != nil {
 		t.Fatalf("undoing the deletion: %v", err)
 	}
 	if restored.Owner.DisplayName != "Example Person" || len(restored.Restored) != 1 ||
-		restored.Restored[0] != (Assignment{ClientID: kept, OwnerAssignedAt: 1111}) {
+		restored.Restored[0] != (owners.Assignment{ClientID: kept, OwnerAssignedAt: 1111}) {
 		t.Errorf("the undo restored %+v", restored)
 	}
 	if len(restored.NotRestored) != 2 || restored.NotRestored[0].ClientID != taken ||
-		restored.NotRestored[0].Reason != NotRestoredAssignedElsewhere || *restored.NotRestored[0].OwnerID != someoneElse.ID ||
-		restored.NotRestored[1].Reason != NotRestoredClientGone {
+		restored.NotRestored[0].Reason != owners.NotRestoredAssignedElsewhere || *restored.NotRestored[0].OwnerID != someoneElse.ID ||
+		restored.NotRestored[1].Reason != owners.NotRestoredClientGone {
 		t.Errorf("the undo reported %+v", restored.NotRestored)
 	}
 	want := fmt.Sprintf("%d|%d|1111,%d|%d|2500", kept, restored.Owner.ID, taken, someoneElse.ID)
@@ -217,12 +220,12 @@ func TestUndoingADeletionRestoresTheOriginalAssignedAtAndReportsAClientAssignedE
 	}
 	// An undo under a name somebody holds again is refused and writes nothing.
 	before := clientOwnership(t, database) + ownerRows(t, database)
-	if _, err := database.RestoreOwner(ctx, "Example Other", []Assignment{{ClientID: kept, OwnerAssignedAt: 5}},
-		4000); refusalCode(err) != RefusalDisplayNameTaken {
+	if _, err := database.RestoreOwner(ctx, "Example Other", []owners.Assignment{{ClientID: kept, OwnerAssignedAt: 5}},
+		4000); refusalCode(err) != owners.RefusalDisplayNameTaken {
 		t.Errorf("an undo under a taken name answered %v", err)
 	}
-	if _, err := database.RestoreOwner(ctx, "Example New", []Assignment{{ClientID: kept, OwnerAssignedAt: -1}},
-		4000); refusalCode(err) != RefusalInvalidInstant {
+	if _, err := database.RestoreOwner(ctx, "Example New", []owners.Assignment{{ClientID: kept, OwnerAssignedAt: -1}},
+		4000); refusalCode(err) != owners.RefusalInvalidInstant {
 		t.Errorf("an undo with an instant out of range answered %v", err)
 	}
 	if after := clientOwnership(t, database) + ownerRows(t, database); after != before {
@@ -283,16 +286,16 @@ func TestAssigningAClientNeverInfersAnotherClientsOwner(t *testing.T) {
 	// An unknown client, an empty list or a client named twice refuses the whole write.
 	before := clientOwnership(t, database)
 	for name, attempt := range map[string]func() error{
-		RefusalUnknownClient: func() error {
+		owners.RefusalUnknownClient: func() error {
 			_, err := database.AssignClients(ctx, person.ID, []int64{named + 1, unstable + 1000}, 1700)
 			return err
 		},
-		RefusalNoClients: func() error { _, err := database.AssignClients(ctx, person.ID, nil, 1700); return err },
-		RefusalDuplicateClient: func() error {
+		owners.RefusalNoClients: func() error { _, err := database.AssignClients(ctx, person.ID, nil, 1700); return err },
+		owners.RefusalDuplicateClient: func() error {
 			_, err := database.UnassignClients(ctx, []int64{named, named}, 1700)
 			return err
 		},
-		RefusalUnknownOwner: func() error {
+		owners.RefusalUnknownOwner: func() error {
 			_, err := database.AssignClients(ctx, person.ID+100, []int64{named + 1}, 1700)
 			return err
 		},
@@ -421,7 +424,7 @@ func TestAReassignmentForcesTheOwnerFamilyToBeRecomputed(t *testing.T) {
 		GROUP BY client_id ORDER BY count(*) DESC, client_id LIMIT 1`)
 	clientBytes := queryInt(t, database, "SELECT sum(bytes) FROM client_volume_aggregate_30d WHERE client_id = ?", client)
 	totals := map[string]int64{}
-	for _, period := range Periods() {
+	for _, period := range vocab.Periods() {
 		totals[period.Name] = queryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period.Name)
 	}
 	refresh := func() {
@@ -432,7 +435,7 @@ func TestAReassignmentForcesTheOwnerFamilyToBeRecomputed(t *testing.T) {
 		if pending := queryInt(t, database, "SELECT count(*) FROM owner_reassigned_hour"); pending != 0 {
 			t.Errorf("%d recorded hours survive the refresh that rewrote them", pending)
 		}
-		for _, period := range Periods() {
+		for _, period := range vocab.Periods() {
 			if got := queryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period.Name); got != totals[period.Name] {
 				t.Errorf("the %s owner family sums %d bytes, %d before", period.Name, got, totals[period.Name])
 			}
@@ -454,7 +457,7 @@ func TestAReassignmentForcesTheOwnerFamilyToBeRecomputed(t *testing.T) {
 			t.Fatalf("step %d recorded no hour for the refresh", step)
 		}
 		refresh()
-		for _, period := range Periods() {
+		for _, period := range vocab.Periods() {
 			if got := ownerFamilyBytes(t, database, period.Name, owner); owner != nil && got != clientBytes {
 				t.Errorf("step %d: the %s owner family holds %d bytes for the new owner, not the client's %d",
 					step, period.Name, got, clientBytes)
@@ -484,10 +487,10 @@ func TestALabelIsSetTrimmedAndClearedAndAnUnknownInterfaceIsRefused(t *testing.T
 		t.Fatalf("labelling answered %+v (%v)", labelled, err)
 	}
 	empty := " "
-	if _, err := network.db.SetInterfaceUserLabel(ctx, id, &empty); refusalCode(err) != RefusalLabelEmpty {
+	if _, err := network.db.SetInterfaceUserLabel(ctx, id, &empty); refusalCode(err) != owners.RefusalLabelEmpty {
 		t.Errorf("an empty label answered %v", err)
 	}
-	if _, err := network.db.SetInterfaceUserLabel(ctx, id+1000, &label); refusalCode(err) != RefusalUnknownInterface {
+	if _, err := network.db.SetInterfaceUserLabel(ctx, id+1000, &label); refusalCode(err) != owners.RefusalUnknownInterface {
 		t.Errorf("labelling no interface answered %v", err)
 	}
 	cleared, err := network.db.SetInterfaceUserLabel(ctx, id, nil)
@@ -509,14 +512,14 @@ func TestAPurposeOutsideTheVocabularyIsRefusedAndTheVocabularyIsTheSchemas(t *te
 		  AND pg_get_constraintdef(c.oid) LIKE '%purpose = ANY%'`).Scan(&definition); err != nil {
 		t.Fatalf("reading the purpose constraint: %v", err)
 	}
-	if count := strings.Count(definition, "'::text"); count != len(BlocklistPurposes) {
-		t.Errorf("the schema lists %d purposes, the code %d: %s", count, len(BlocklistPurposes), definition)
+	if count := strings.Count(definition, "'::text"); count != len(owners.BlocklistPurposes) {
+		t.Errorf("the schema lists %d purposes, the code %d: %s", count, len(owners.BlocklistPurposes), definition)
 	}
 	id, err := database.UpsertBlocklist(ctx, "an observed list name", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for index, purpose := range BlocklistPurposes {
+	for index, purpose := range owners.BlocklistPurposes {
 		if !strings.Contains(definition, "'"+purpose+"'") {
 			t.Errorf("the schema does not list %s", purpose)
 		}
@@ -527,10 +530,10 @@ func TestAPurposeOutsideTheVocabularyIsRefusedAndTheVocabularyIsTheSchemas(t *te
 		}
 	}
 	outside := "malware"
-	if _, err := database.SetBlocklistPurpose(ctx, id, &outside, 2000); refusalCode(err) != RefusalPurposeNotInVocabulary {
+	if _, err := database.SetBlocklistPurpose(ctx, id, &outside, 2000); refusalCode(err) != owners.RefusalPurposeNotInVocabulary {
 		t.Errorf("a purpose outside the vocabulary answered %v", err)
 	}
-	if _, err := database.SetBlocklistPurpose(ctx, id+100, nil, 2000); refusalCode(err) != RefusalUnknownBlocklist {
+	if _, err := database.SetBlocklistPurpose(ctx, id+100, nil, 2000); refusalCode(err) != owners.RefusalUnknownBlocklist {
 		t.Errorf("no list answered %v", err)
 	}
 	cleared, err := database.SetBlocklistPurpose(ctx, id, nil, 3000)

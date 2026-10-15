@@ -22,7 +22,11 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/securityevent"
 	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/store/plugindecl"
+	"github.com/NaejEL/opnview/internal/store/plugintables"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The kind adapters: each turns a plugin into the Source interface of the kind it implements, so
@@ -33,18 +37,18 @@ import (
 // invoker is a plugin's way of answering a function of a kind: a script, or a declarative form.
 type invoker interface {
 	invoke(ctx context.Context, session provider.Session, function string, arguments ...any) (
-		answer any, hostErrors []error, failed *failure)
+		answer any, hostErrors []error, failed *runtime.Failure)
 }
 
 // scriptInvoker calls a script's exported functions under one kind's namespace.
 type scriptInvoker struct {
-	script    *script
+	script    *runtime.Script
 	namespace string
 }
 
 func (i scriptInvoker) invoke(ctx context.Context, session provider.Session, function string,
-	arguments ...any) (any, []error, *failure) {
-	return i.script.call(ctx, session, i.namespace, function, arguments...)
+	arguments ...any) (any, []error, *runtime.Failure) {
+	return i.script.Call(ctx, session, i.namespace, function, arguments...)
 }
 
 // adapter is what every kind adapter shares.
@@ -69,34 +73,34 @@ func (a adapter) run(ctx context.Context, session provider.Session, function, ta
 	}
 	object, isObject := answer.(map[string]any)
 	if !isObject {
-		invalid := &failure{code: failureRecords, detail: fmt.Sprintf("%s returned no object", function)}
+		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("%s returned no object", function)}
 		return nil, a.failed(invalid), invalid
 	}
 	answerErr, _ := object["error"].(error)
 	delete(object, "error")
-	checked, err := checkRecord(a.contract, table, object, function)
+	checked, err := runtime.CheckRecord(a.contract, table, object, function)
 	if err != nil {
-		invalid := &failure{code: failureRecords, detail: err.Error()}
+		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
 		return nil, a.failed(invalid), invalid
 	}
-	result, err := resultOf(checked["result"].(map[string]any), a.endpoints)
+	result, err := runtime.ResultOf(checked["result"].(map[string]any), a.endpoints)
 	if err != nil {
-		invalid := &failure{code: failureRecords, detail: err.Error()}
+		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
 		return nil, a.failed(invalid), invalid
 	}
 	if answerErr != nil {
 		return checked, result, answerErr
 	}
-	if unsupported := text(checked, "unsupported"); unsupported != "" {
+	if unsupported := runtime.Text(checked, "unsupported"); unsupported != "" {
 		return checked, result, fmt.Errorf("%w: %s", provider.ErrUnsupportedRead, unsupported)
 	}
 	return checked, result, nil
 }
 
 // failed is the result a failed call is recorded with.
-func (a adapter) failed(failed *failure) provider.Result {
-	return provider.Result{State: store.StateUnavailable, Outcome: failed.code, Probe: a.scriptProbe,
-		Detail: fmt.Sprintf("the plugin %s: %s", a.plugin, failed.detail)}
+func (a adapter) failed(failed *runtime.Failure) provider.Result {
+	return provider.Result{State: vocab.StateUnavailable, Outcome: failed.Code, Probe: a.scriptProbe,
+		Detail: fmt.Sprintf("the plugin %s: %s", a.plugin, failed.Detail)}
 }
 
 // probe is the probe every kind shares.
@@ -119,7 +123,7 @@ func (a firewallLogAdapter) Records(ctx context.Context, session provider.Sessio
 		return nil, result, err
 	}
 	var converted []firewalllog.Record
-	for _, record := range records(checked, "records") {
+	for _, record := range runtime.Records(checked, "records") {
 		converted = append(converted, firewallLogRecord(record))
 	}
 	if invalid := firewallLogRecordsInvalid(converted); invalid != "" {
@@ -131,14 +135,14 @@ func (a firewallLogAdapter) Records(ctx context.Context, session provider.Sessio
 // firewallLogRecord converts one checked firewall_log record, pulled or pushed.
 func firewallLogRecord(record map[string]any) firewalllog.Record {
 	return firewalllog.Record{
-		Digest: text(record, "digest"), ObservedAt: integer(record, "observed_at"),
-		Device: text(record, "device"), SrcAddress: text(record, "src_address"),
-		DstAddress: text(record, "dst_address"), SrcPort: integerPointer(record, "src_port"),
-		DstPort: integerPointer(record, "dst_port"), Protocol: text(record, "protocol"),
-		IPVersion: integer(record, "ip_version"), Action: text(record, "action"),
-		Direction: text(record, "direction"), LogReason: textPointer(record, "log_reason"),
-		PacketBytes: integer(record, "packet_bytes"), Rid: textPointer(record, "rid"),
-		IPID: integerPointer(record, "ip_id"), TCPSeq: integerPointer(record, "tcp_seq"),
+		Digest: runtime.Text(record, "digest"), ObservedAt: runtime.Integer(record, "observed_at"),
+		Device: runtime.Text(record, "device"), SrcAddress: runtime.Text(record, "src_address"),
+		DstAddress: runtime.Text(record, "dst_address"), SrcPort: runtime.IntegerPointer(record, "src_port"),
+		DstPort: runtime.IntegerPointer(record, "dst_port"), Protocol: runtime.Text(record, "protocol"),
+		IPVersion: runtime.Integer(record, "ip_version"), Action: runtime.Text(record, "action"),
+		Direction: runtime.Text(record, "direction"), LogReason: runtime.TextPointer(record, "log_reason"),
+		PacketBytes: runtime.Integer(record, "packet_bytes"), Rid: runtime.TextPointer(record, "rid"),
+		IPID: runtime.IntegerPointer(record, "ip_id"), TCPSeq: runtime.IntegerPointer(record, "tcp_seq"),
 	}
 }
 
@@ -161,7 +165,7 @@ func portValid(port *int64) bool { return port == nil || (*port >= 0 && *port <=
 
 // invalid answers a read whose records the contract's ranges refuse.
 func (a firewallLogAdapter) invalid(detail string) ([]firewalllog.Record, provider.Result, error) {
-	failed := &failure{code: failureRecords, detail: detail}
+	failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: detail}
 	return nil, a.failed(failed), failed
 }
 
@@ -179,11 +183,11 @@ func (a securityEventAdapter) Rotation(ctx context.Context, session provider.Ses
 	if err != nil {
 		return view, result, err
 	}
-	view.Known = flag(checked, "known", false)
-	for _, file := range texts(checked, "present") {
+	view.Known = runtime.Flag(checked, "known", false)
+	for _, file := range runtime.Texts(checked, "present") {
 		view.Present[file] = struct{}{}
 	}
-	view.HighestSequence = integerPointer(checked, "highest_sequence")
+	view.HighestSequence = runtime.IntegerPointer(checked, "highest_sequence")
 	return view, result, nil
 }
 
@@ -194,18 +198,18 @@ func (a securityEventAdapter) Alerts(ctx context.Context, session provider.Sessi
 		return nil, result, err
 	}
 	var converted []securityevent.Alert
-	for index, record := range records(checked, "alerts") {
+	for index, record := range runtime.Records(checked, "alerts") {
 		alert := securityevent.Alert{
-			FileID: text(record, "file_id"), ByteOffset: integer(record, "byte_offset"),
-			OccurredAt: integer(record, "occurred_at"), RuleIdentity: text(record, "rule_identity"),
-			Signature: text(record, "signature"), EventAction: text(record, "event_action"),
-			NormalisedSeverity: textPointer(record, "normalised_severity"),
-			SrcAddress:         text(record, "src_address"), DstAddress: text(record, "dst_address"),
-			SrcPort: integerPointer(record, "src_port"), DstPort: integerPointer(record, "dst_port"),
-			Protocol: textPointer(record, "protocol"), InInterfaceDevice: textPointer(record, "in_interface_device"),
+			FileID: runtime.Text(record, "file_id"), ByteOffset: runtime.Integer(record, "byte_offset"),
+			OccurredAt: runtime.Integer(record, "occurred_at"), RuleIdentity: runtime.Text(record, "rule_identity"),
+			Signature: runtime.Text(record, "signature"), EventAction: runtime.Text(record, "event_action"),
+			NormalisedSeverity: runtime.TextPointer(record, "normalised_severity"),
+			SrcAddress:         runtime.Text(record, "src_address"), DstAddress: runtime.Text(record, "dst_address"),
+			SrcPort: runtime.IntegerPointer(record, "src_port"), DstPort: runtime.IntegerPointer(record, "dst_port"),
+			Protocol: runtime.TextPointer(record, "protocol"), InInterfaceDevice: runtime.TextPointer(record, "in_interface_device"),
 		}
 		if !portValid(alert.SrcPort) || !portValid(alert.DstPort) {
-			failed := &failure{code: failureRecords, detail: fmt.Sprintf("alerts[%d] carries a port outside 0 to "+
+			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("alerts[%d] carries a port outside 0 to "+
 				"65535", index)}
 			return nil, a.failed(failed), failed
 		}
@@ -227,20 +231,20 @@ func (a dhcpLeaseAdapter) Leases(ctx context.Context, session provider.Session, 
 	if err != nil {
 		return nil, result, err
 	}
-	leases := records(checked, "leases")
+	leases := runtime.Records(checked, "leases")
 	if leases == nil {
 		return nil, result, nil
 	}
 	converted := make([]dhcplease.Observation, 0, len(leases))
 	for _, record := range leases {
 		converted = append(converted, dhcplease.Observation{
-			Address: text(record, "address"), MAC: dhcplease.MACPointer(text(record, "mac")),
-			Hostname: textPointer(record, "hostname"), DHCPClientID: textPointer(record, "dhcp_client_id"),
-			DUID: textPointer(record, "duid"), IAID: textPointer(record, "iaid"),
-			VendorHint: textPointer(record, "vendor_hint"), LeaseState: text(record, "lease_state"),
-			InterfaceIdentifier: text(record, "interface_identifier"),
-			InterfaceDevice:     text(record, "interface_device"),
-			StartsAt:            integerPointer(record, "starts_at"), ExpiresAt: integerPointer(record, "expires_at"),
+			Address: runtime.Text(record, "address"), MAC: dhcplease.MACPointer(runtime.Text(record, "mac")),
+			Hostname: runtime.TextPointer(record, "hostname"), DHCPClientID: runtime.TextPointer(record, "dhcp_client_id"),
+			DUID: runtime.TextPointer(record, "duid"), IAID: runtime.TextPointer(record, "iaid"),
+			VendorHint: runtime.TextPointer(record, "vendor_hint"), LeaseState: runtime.Text(record, "lease_state"),
+			InterfaceIdentifier: runtime.Text(record, "interface_identifier"),
+			InterfaceDevice:     runtime.Text(record, "interface_device"),
+			StartsAt:            runtime.IntegerPointer(record, "starts_at"), ExpiresAt: runtime.IntegerPointer(record, "expires_at"),
 		})
 	}
 	return converted, result, nil
@@ -267,21 +271,21 @@ func (a dnsLookupAdapter) Lookups(ctx context.Context, session provider.Session,
 	if err != nil {
 		return nil, result, err
 	}
-	lookups := records(checked, "lookups")
+	lookups := runtime.Records(checked, "lookups")
 	converted := make([]dnslookup.Record, 0, len(lookups))
 	for index, record := range lookups {
-		family := integerPointer(record, "client_family")
+		family := runtime.IntegerPointer(record, "client_family")
 		if family != nil && *family != 4 && *family != 6 {
-			failed := &failure{code: failureRecords, detail: fmt.Sprintf("lookups[%d].client_family is %d, not 4 or "+
+			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("lookups[%d].client_family is %d, not 4 or "+
 				"6", index, *family)}
 			return nil, a.failed(failed), failed
 		}
 		converted = append(converted, dnslookup.Record{
-			DeduplicationKey: text(record, "deduplication_key"), ClientAddress: text(record, "client_address"),
-			ClientFamily: family, Domain: text(record, "domain"), Action: text(record, "action"),
-			AnswerSource: textPointer(record, "answer_source"), Rcode: textPointer(record, "rcode"),
-			DNSSECStatus: textPointer(record, "dnssec_status"), BlocklistName: text(record, "blocklist_name"),
-			LookedUpAt: integer(record, "looked_up_at"),
+			DeduplicationKey: runtime.Text(record, "deduplication_key"), ClientAddress: runtime.Text(record, "client_address"),
+			ClientFamily: family, Domain: runtime.Text(record, "domain"), Action: runtime.Text(record, "action"),
+			AnswerSource: runtime.TextPointer(record, "answer_source"), Rcode: runtime.TextPointer(record, "rcode"),
+			DNSSECStatus: runtime.TextPointer(record, "dnssec_status"), BlocklistName: runtime.Text(record, "blocklist_name"),
+			LookedUpAt: runtime.Integer(record, "looked_up_at"),
 		})
 	}
 	return converted, result, nil
@@ -312,22 +316,22 @@ func (a dumpAdapter) dump(ctx context.Context, session provider.Session) (record
 	if err != nil {
 		return recorddump.Dump{}, result, err
 	}
-	rows := records(checked, "records")
-	dump := recorddump.Dump{ResponseBytes: int(integer(checked, "response_bytes")),
+	rows := runtime.Records(checked, "records")
+	dump := recorddump.Dump{ResponseBytes: int(runtime.Integer(checked, "response_bytes")),
 		Records: make([]recorddump.Record, 0, len(rows))}
 	for index, record := range rows {
-		shape, known := shapeOf(text(record, "ttl_shape"))
+		shape, known := runtime.ShapeOf(runtime.Text(record, "ttl_shape"))
 		if !known {
-			failed := &failure{code: failureRecords, detail: fmt.Sprintf("records[%d].ttl_shape is not a shape",
+			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("records[%d].ttl_shape is not a shape",
 				index)}
 			return recorddump.Dump{}, a.failed(failed), failed
 		}
-		dump.Records = append(dump.Records, recorddump.Record{OwnerName: text(record, "owner_name"),
-			TTL: text(record, "ttl"), TTLShape: shape, RRType: text(record, "rrtype"), Value: text(record, "value")})
+		dump.Records = append(dump.Records, recorddump.Record{OwnerName: runtime.Text(record, "owner_name"),
+			TTL: runtime.Text(record, "ttl"), TTLShape: shape, RRType: runtime.Text(record, "rrtype"), Value: runtime.Text(record, "value")})
 	}
-	for _, count := range records(checked, "not_records") {
-		dump.NotRecords = append(dump.NotRecords, recorddump.NotRecordCount{Count: int(integer(count, "count")),
-			Wording: text(count, "wording")})
+	for _, count := range runtime.Records(checked, "not_records") {
+		dump.NotRecords = append(dump.NotRecords, recorddump.NotRecordCount{Count: int(runtime.Integer(count, "count")),
+			Wording: runtime.Text(count, "wording")})
 	}
 	return dump, result, nil
 }
@@ -340,37 +344,37 @@ func (a measurementAdapter) Probe(ctx context.Context, session provider.Session)
 }
 
 func (a measurementAdapter) Sample(ctx context.Context, session provider.Session, snapshot provider.Discovery,
-	providerID, now int64) ([]store.MeasurementSample, []string, provider.Result, error) {
+	providerID, now int64) ([]vocab.MeasurementSample, []string, provider.Result, error) {
 	return a.sampleWith(ctx, session, "sample", snapshot, providerID, now)
 }
 
 // sampleWith runs a function answering a sample_answer: sample, or a live pass's function.
 func (a measurementAdapter) sampleWith(ctx context.Context, session provider.Session, function string,
-	snapshot provider.Discovery, providerID, now int64) ([]store.MeasurementSample, []string, provider.Result, error) {
+	snapshot provider.Discovery, providerID, now int64) ([]vocab.MeasurementSample, []string, provider.Result, error) {
 	checked, result, err := a.run(ctx, session, function, "sample_answer", DiscoveryView(snapshot), now)
 	if err != nil {
 		return nil, nil, result, err
 	}
-	var readings []store.MeasurementSample
-	for index, record := range records(checked, "readings") {
-		reading := store.MeasurementSample{
-			SubjectKind: store.SubjectKind(text(record, "subject_kind")), SubjectKey: text(record, "subject_key"),
-			Measure: store.Measure(text(record, "measure")), Unit: store.Unit(text(record, "unit")),
-			Value: number(record, "value"), SampledAt: integer(record, "sampled_at"),
+	var readings []vocab.MeasurementSample
+	for index, record := range runtime.Records(checked, "readings") {
+		reading := vocab.MeasurementSample{
+			SubjectKind: vocab.SubjectKind(runtime.Text(record, "subject_kind")), SubjectKey: runtime.Text(record, "subject_key"),
+			Measure: vocab.Measure(runtime.Text(record, "measure")), Unit: vocab.Unit(runtime.Text(record, "unit")),
+			Value: runtime.Number(record, "value"), SampledAt: runtime.Integer(record, "sampled_at"),
 		}
 		if !provider.TermShapeValid(string(reading.SubjectKind)) || !provider.TermShapeValid(string(reading.Measure)) ||
 			!provider.TermShapeValid(string(reading.Unit)) {
-			failed := &failure{code: failureRecords, detail: fmt.Sprintf("readings[%d] has a subject kind, measure "+
+			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("readings[%d] has a subject kind, measure "+
 				"or unit that is not a lower-case word with no space", index)}
 			return nil, nil, a.failed(failed), failed
 		}
-		if flag(record, "attributed", true) {
+		if runtime.Flag(record, "attributed", true) {
 			id := providerID
 			reading.ProviderID = &id
 		}
 		readings = append(readings, reading)
 	}
-	return readings, texts(checked, "missing"), result, nil
+	return readings, runtime.Texts(checked, "missing"), result, nil
 }
 
 // DiscoveryView is the discovery snapshot as a sampling script reads it: the identifiers it may
@@ -382,7 +386,7 @@ func DiscoveryView(snapshot provider.Discovery) map[string]any {
 		identifiers = append(identifiers, string(identifier))
 	}
 	devices := make([]any, 0, len(snapshot.Devices))
-	for _, device := range sortedKeys(snapshot.Devices) {
+	for _, device := range runtime.SortedKeys(snapshot.Devices) {
 		devices = append(devices, device)
 	}
 	return map[string]any{
@@ -427,16 +431,16 @@ func (a reconciledStateAdapter) Snapshot(ctx context.Context, session provider.S
 		return nil, result, err
 	}
 	var sets []reconciledstate.Set
-	for index, record := range records(checked, "sets") {
-		set := reconciledstate.Set{SetKey: text(record, "set_key")}
+	for index, record := range runtime.Records(checked, "sets") {
+		set := reconciledstate.Set{SetKey: runtime.Text(record, "set_key")}
 		if !provider.TermShapeValid(set.SetKey) {
-			failed := &failure{code: failureRecords, detail: fmt.Sprintf("sets[%d].set_key is not a lower-case "+
+			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("sets[%d].set_key is not a lower-case "+
 				"word with no space", index)}
 			return nil, a.failed(failed), failed
 		}
-		for _, item := range records(record, "items") {
-			set.Items = append(set.Items, store.StateItem{ItemKey: text(item, "item_key"),
-				Attributes: textPointer(item, "attributes"), ValidUntilAt: integerPointer(item, "valid_until_at")})
+		for _, item := range runtime.Records(record, "items") {
+			set.Items = append(set.Items, vocab.StateItem{ItemKey: runtime.Text(item, "item_key"),
+				Attributes: runtime.TextPointer(item, "attributes"), ValidUntilAt: runtime.IntegerPointer(item, "valid_until_at")})
 		}
 		sets = append(sets, set)
 	}
@@ -446,7 +450,7 @@ func (a reconciledStateAdapter) Snapshot(ctx context.Context, session provider.S
 // declaredKindAdapter is a plugin as the source of a kind it declares, writing into its own tables.
 type declaredKindAdapter struct {
 	adapter
-	tables map[string]store.PluginTable
+	tables map[string]plugindecl.PluginTable
 }
 
 // declaredContract is the contract of a declared kind: probe and collect, whose answer holds the
@@ -486,44 +490,44 @@ func (a declaredKindAdapter) Collect(ctx context.Context, session provider.Sessi
 	}
 	object, isObject := answer.(map[string]any)
 	if !isObject {
-		invalid := &failure{code: failureRecords, detail: "collect returned no object"}
+		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: "collect returned no object"}
 		return pluginkind.Pass{}, a.failed(invalid), invalid
 	}
 	rows, state2, err := a.rowsAndState(object)
 	if err != nil {
-		invalid := &failure{code: failureRecords, detail: err.Error()}
+		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
 		return pluginkind.Pass{}, a.failed(invalid), invalid
 	}
 	delete(object, "rows")
 	delete(object, "state")
 	answerErr, _ := object["error"].(error)
 	delete(object, "error")
-	checked, err := checkRecord(a.contract, "collect_answer", object, "collect")
+	checked, err := runtime.CheckRecord(a.contract, "collect_answer", object, "collect")
 	if err != nil {
-		invalid := &failure{code: failureRecords, detail: err.Error()}
+		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
 		return pluginkind.Pass{}, a.failed(invalid), invalid
 	}
-	result, err := resultOf(checked["result"].(map[string]any), a.endpoints)
+	result, err := runtime.ResultOf(checked["result"].(map[string]any), a.endpoints)
 	if err != nil {
-		invalid := &failure{code: failureRecords, detail: err.Error()}
+		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
 		return pluginkind.Pass{}, a.failed(invalid), invalid
 	}
 	if answerErr != nil {
 		return pluginkind.Pass{}, result, answerErr
 	}
-	if unsupported := text(checked, "unsupported"); unsupported != "" {
+	if unsupported := runtime.Text(checked, "unsupported"); unsupported != "" {
 		return pluginkind.Pass{}, result, fmt.Errorf("%w: %s", provider.ErrUnsupportedRead, unsupported)
 	}
 	return pluginkind.Pass{Rows: rows, State: state2}, result, nil
 }
 
 // rowsAndState checks the rows and the state of a collect answer.
-func (a declaredKindAdapter) rowsAndState(object map[string]any) (store.PluginRows, map[string]string, error) {
-	rows, err := checkRows(a.tables, object["rows"])
+func (a declaredKindAdapter) rowsAndState(object map[string]any) (plugintables.PluginRows, map[string]string, error) {
+	rows, err := runtime.CheckRows(a.tables, object["rows"])
 	if err != nil {
 		return nil, nil, err
 	}
-	state, err := checkState(object["state"])
+	state, err := runtime.CheckState(object["state"])
 	if err != nil {
 		return nil, nil, err
 	}
@@ -535,7 +539,7 @@ var errNoAdapter = errors.New("plugin: no adapter serves this kind")
 
 // addToSet adds a plugin's provider to a source set, through the adapter of its kind.
 func addToSet(set *sources.Set, manifest provider.Manifest, base adapter, plugin *Plugin,
-	declaration ProviderDeclaration) error {
+	declaration contract.ProviderDeclaration) error {
 	cadence := cadenceOf(declaration)
 	switch manifest.Kind {
 	case firewalllog.Kind:
@@ -574,8 +578,8 @@ func addToSet(set *sources.Set, manifest provider.Manifest, base adapter, plugin
 	if _, core := provider.ContractOf(manifest.Kind); core {
 		return fmt.Errorf("%w: %s", errNoAdapter, manifest.Kind)
 	}
-	tables := map[string]store.PluginTable{}
-	for _, table := range plugin.tables {
+	tables := map[string]plugindecl.PluginTable{}
+	for _, table := range plugin.OwnTables {
 		tables[table.Table] = table
 	}
 	return set.AddDeclared(manifest, pluginkind.Registration{Plugin: plugin.Name, Cadence: cadence,
@@ -586,23 +590,23 @@ func addToSet(set *sources.Set, manifest provider.Manifest, base adapter, plugin
 
 // lookupBounds reads the two values a dns_lookup implementation states: from its script's exports,
 // or, for a declarative read, one page and no requested window.
-func (p *Plugin) lookupBounds(declaration ProviderDeclaration) (int, int64, error) {
+func (p *Plugin) lookupBounds(declaration contract.ProviderDeclaration) (int, int64, error) {
 	if declaration.Read != nil {
 		return 1, 0, nil
 	}
-	bound, err := p.script.exportedValue(dnslookup.Kind, "page_bound")
+	bound, err := p.script.ExportedValue(dnslookup.Kind, "page_bound")
 	if err != nil {
 		return 0, 0, err
 	}
-	span, err := p.script.exportedValue(dnslookup.Kind, "requested_span_seconds")
+	span, err := p.script.ExportedValue(dnslookup.Kind, "requested_span_seconds")
 	if err != nil {
 		return 0, 0, err
 	}
-	pageBound, ok := integerOf(bound)
+	pageBound, ok := runtime.IntegerOf(bound)
 	if !ok || pageBound < 1 {
 		return 0, 0, fmt.Errorf("dns_lookup.page_bound is %v, not a whole number of 1 or more", bound)
 	}
-	seconds, ok := integerOf(span)
+	seconds, ok := runtime.IntegerOf(span)
 	if !ok || seconds < 0 {
 		return 0, 0, fmt.Errorf("dns_lookup.requested_span_seconds is %v, not a whole number of 0 or more", span)
 	}
@@ -613,7 +617,7 @@ func (p *Plugin) lookupBounds(declaration ProviderDeclaration) (int, int64, erro
 // decided the outcome.
 func scriptEndpoint(plugin, file string) opnsense.Endpoint {
 	if file == "" {
-		file = ManifestFile
+		file = contract.ManifestFile
 	}
 	return opnsense.Endpoint{Method: "plugin", Path: plugin + "/" + file}
 }
@@ -634,28 +638,28 @@ func (a flowRecordAdapter) Capture(ctx context.Context, session provider.Session
 	}
 	captured, present := checked["capture"].(map[string]any)
 	if !present {
-		failed := &failure{code: failureRecords, detail: "capture returned neither a capture nor an error"}
+		failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: "capture returned neither a capture nor an error"}
 		return flowrecord.Configuration{}, a.failed(failed), failed
 	}
-	configuration := flowrecord.Configuration{Enabled: flag(captured, "enabled", false),
-		ExportVersion:          text(captured, "export_version"),
-		ActiveTimeoutSeconds:   integerPointer(captured, "active_timeout_seconds"),
-		InactiveTimeoutSeconds: integerPointer(captured, "inactive_timeout_seconds")}
+	configuration := flowrecord.Configuration{Enabled: runtime.Flag(captured, "enabled", false),
+		ExportVersion:          runtime.Text(captured, "export_version"),
+		ActiveTimeoutSeconds:   runtime.IntegerPointer(captured, "active_timeout_seconds"),
+		InactiveTimeoutSeconds: runtime.IntegerPointer(captured, "inactive_timeout_seconds")}
 	seen := map[string]bool{}
-	for index, row := range records(captured, "interfaces") {
-		identifier := text(row, "identifier")
+	for index, row := range runtime.Records(captured, "interfaces") {
+		identifier := runtime.Text(row, "identifier")
 		if identifier == "" || seen[identifier] {
-			failed := &failure{code: failureRecords, detail: fmt.Sprintf("capture.interfaces[%d] names an empty or "+
+			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("capture.interfaces[%d] names an empty or "+
 				"repeated identifier", index)}
 			return flowrecord.Configuration{}, a.failed(failed), failed
 		}
 		seen[identifier] = true
 		configuration.Interfaces = append(configuration.Interfaces, flowrecord.Interface{Identifier: identifier,
-			Ingress: flag(row, "ingress", false), Egress: flag(row, "egress", false)})
+			Ingress: runtime.Flag(row, "ingress", false), Egress: runtime.Flag(row, "egress", false)})
 	}
 	for _, timeout := range []*int64{configuration.ActiveTimeoutSeconds, configuration.InactiveTimeoutSeconds} {
 		if timeout != nil && *timeout <= 0 {
-			failed := &failure{code: failureRecords, detail: "capture states a timeout that is not positive"}
+			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: "capture states a timeout that is not positive"}
 			return flowrecord.Configuration{}, a.failed(failed), failed
 		}
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
@@ -33,15 +34,15 @@ func kindNamed(t *testing.T, name string) Kind {
 
 // measuredPeak is a measurement holding a peak of peakRecords in one bucket,
 // over a covered span of a day: enough records and span for a suggestion.
-func measuredPeak(peakRecords int64) store.RecordRateMeasurement {
-	return store.RecordRateMeasurement{
+func measuredPeak(peakRecords int64) attribution.RecordRateMeasurement {
+	return attribution.RecordRateMeasurement{
 		BucketSeconds:     BucketSeconds,
 		RecordCount:       peakRecords + 100,
 		CoveredFromAt:     1750000000,
 		CoveredToAt:       1750000000 + NominalWindowSeconds - 1,
 		HasRecords:        true,
 		PeakBucketRecords: peakRecords,
-		PeakRate:          store.Rate{PerSecond: float64(peakRecords) / float64(BucketSeconds), Known: true},
+		PeakRate:          attribution.Rate{PerSecond: float64(peakRecords) / float64(BucketSeconds), Known: true},
 	}
 }
 
@@ -72,15 +73,15 @@ func TestADegenerateMeasurementIsNeverRenderedAsAPair(t *testing.T) {
 	for _, kind := range Kinds() {
 		cases := []struct {
 			name      string
-			measured  store.RecordRateMeasurement
+			measured  attribution.RecordRateMeasurement
 			collected bool
 			want      Outcome
 		}{
-			{"an empty window", store.RecordRateMeasurement{BucketSeconds: BucketSeconds}, true, OutcomeNotYetMeasured},
+			{"an empty window", attribution.RecordRateMeasurement{BucketSeconds: BucketSeconds}, true, OutcomeNotYetMeasured},
 			{"one record", single, true, OutcomeNotYetMeasured},
 			{"a span shorter than one bucket", short, true, OutcomeNotYetMeasured},
 			{"a peak that was not measured", unknownPeak, true, OutcomeNotYetMeasured},
-			{"no bucket at all", store.RecordRateMeasurement{}, true, OutcomeNotYetMeasured},
+			{"no bucket at all", attribution.RecordRateMeasurement{}, true, OutcomeNotYetMeasured},
 			{"a source nobody collects", measuredPeak(5), false, OutcomeSourceNotCollected},
 		}
 		for _, testCase := range cases {
@@ -243,16 +244,16 @@ func TestTheDerivationMovesThePageBeforeTheIntervalAndNeverPastTheCeiling(t *tes
 func TestTheMeasurementSQLIsTheDiagnosticInTheRepository(t *testing.T) {
 	branches := make([]string, 0, len(Kinds()))
 	for _, kind := range Kinds() {
-		branches = append(branches, store.RecordRateBranch(kind.Spec, BucketSeconds))
+		branches = append(branches, attribution.RecordRateBranch(kind.Spec, BucketSeconds))
 	}
 	want := strings.Join(branches, "\nUNION ALL\n") + ";"
 
 	file := repositoryFile(t, "sql/queries/diagnostics.sql")
-	marker := "-- diagnostic: " + store.RecordRateDiagnosticName + "\n"
+	marker := "-- diagnostic: " + attribution.RecordRateDiagnosticName + "\n"
 	start := strings.Index(file, marker)
 	if start < 0 {
 		t.Fatalf("sql/queries/diagnostics.sql has no %q diagnostic; it should read:\n%s",
-			store.RecordRateDiagnosticName, want)
+			attribution.RecordRateDiagnosticName, want)
 	}
 	// The statement begins after the diagnostic's comment lines and ends at
 	// the first semicolon at the end of a line.
@@ -268,7 +269,7 @@ func TestTheMeasurementSQLIsTheDiagnosticInTheRepository(t *testing.T) {
 	}
 	if got := strings.Join(statement, "\n"); got != want {
 		t.Fatalf("the %q diagnostic is not the measurement; it should read:\n%s",
-			store.RecordRateDiagnosticName, want)
+			attribution.RecordRateDiagnosticName, want)
 	}
 }
 

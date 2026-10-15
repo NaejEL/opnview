@@ -2,11 +2,14 @@ package collect
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"testing"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/derive"
+	"github.com/NaejEL/opnview/internal/collect/dnslookup"
+	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The third iteration of the step-5A corrections, on the collection side.
@@ -35,12 +38,12 @@ func TestAPurgeCommittingDuringAFilterLogPassDoesNotCountTwice(t *testing.T) {
 	}
 
 	// The pass reads its page, as CollectFirewallLog does...
-	_, providerID, _, err := harness.collector.activeSourceKey(ctx, KindFirewallLog)
+	_, providerID, _, err := harness.collector.ActiveSourceKey(ctx, core.KindFirewallLog)
 	if err != nil {
 		t.Fatalf("reading the active source: %v", err)
 	}
 	records, _, err := mustFirewallLogSource(t, ProviderPf).Records(ctx, harness.collector,
-		harness.collector.pages().FirewallLog)
+		harness.collector.Pages().FirewallLog)
 	if err != nil {
 		t.Fatalf("reading the page: %v", err)
 	}
@@ -53,8 +56,8 @@ func TestAPurgeCommittingDuringAFilterLogPassDoesNotCountTwice(t *testing.T) {
 		t.Fatalf("purging: %v", err)
 	}
 	// ...and the pass stores the page it read.
-	var stored derivation
-	if err := harness.collector.storeFirewallLog(ctx, records, pullPlan{keep: records}, harness.collector.Discovery(),
+	var stored derive.Derivation
+	if err := harness.collector.StoreFirewallLog(ctx, records, filterlog.PullPlan{Keep: records}, harness.collector.Discovery(),
 		referenceEpoch(), providerID, newestStored, hasStored, &stored); err != nil {
 		t.Fatalf("storing the page: %v", err)
 	}
@@ -89,7 +92,7 @@ func TestALeasePassResolvesOnlyTheHostNameLookupsSinceThePreviousOne(t *testing.
 	answer := "Recursion"
 	ingest := func(key, logged string, at int64) {
 		t.Helper()
-		lookup, err := harness.collector.buildDNSResolution(ctx, dnslookup.Record{
+		lookup, err := harness.collector.BuildDNSResolution(ctx, dnslookup.Record{
 			DeduplicationKey: key, ClientAddress: logged, Domain: "example-site.example.invalid",
 			Action: "pass", AnswerSource: &answer, LookedUpAt: at,
 		}, "unbound", harness.clock.Now().Unix())
@@ -117,7 +120,7 @@ func TestALeasePassResolvesOnlyTheHostNameLookupsSinceThePreviousOne(t *testing.
 	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("the first lease pass: %v", err)
 	}
-	if got := resolution("example-key-tried"); got != store.ClientResolutionUnknown {
+	if got := resolution("example-key-tried"); got != vocab.ClientResolutionUnknown {
 		t.Fatalf("with no lease naming it the lookup is %s", got)
 	}
 
@@ -129,9 +132,9 @@ func TestALeasePassResolvesOnlyTheHostNameLookupsSinceThePreviousOne(t *testing.
 		t.Fatalf("looking up the provider: %v", err)
 	}
 	hostname := "example-host-later"
-	if err := harness.store.InsertDHCPLease(ctx, provider, store.DHCPLease{
+	if err := harness.store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		Backend: "dnsmasq", Address: "198.51.100.13", Hostname: &hostname, LeaseState: "reserved",
-		GenerationKey: store.GenerationKeyOf(nil, nil, referenceEpoch()), ObservedAt: referenceEpoch(),
+		GenerationKey: vocab.GenerationKeyOf(nil, nil, referenceEpoch()), ObservedAt: referenceEpoch(),
 	}); err != nil {
 		t.Fatalf("writing the lease: %v", err)
 	}
@@ -139,10 +142,10 @@ func TestALeasePassResolvesOnlyTheHostNameLookupsSinceThePreviousOne(t *testing.
 	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("the second lease pass: %v", err)
 	}
-	if got := resolution("example-key-new"); got != store.ClientResolutionLeased {
+	if got := resolution("example-key-new"); got != vocab.ClientResolutionLeased {
 		t.Errorf("the lookup read since the previous pass is %s, not resolved", got)
 	}
-	if got := resolution("example-key-tried"); got != store.ClientResolutionUnknown {
+	if got := resolution("example-key-tried"); got != vocab.ClientResolutionUnknown {
 		t.Errorf("the lookup the previous pass already tried was tried again: it is %s", got)
 	}
 }

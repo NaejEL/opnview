@@ -5,12 +5,16 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/samples"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The read functions: AC2, AC12, AC15, AC16, AC22, AC23, AC24, AC25 and AC30.
 
 // directWindow computes a window's totals over flow alone, independently of the slots.
-func directWindow(t *testing.T, database *Store, from, to int64) map[string]VolumeFigures {
+func directWindow(t *testing.T, database *Store, from, to int64) map[string]reads.VolumeFigures {
 	t.Helper()
 	rows, err := database.DB().Query(`SELECT traffic_direction,
 		sum(packet_bytes), sum(CASE WHEN action = 'pass' THEN packet_bytes ELSE 0 END),
@@ -24,11 +28,11 @@ func directWindow(t *testing.T, database *Store, from, to int64) map[string]Volu
 		t.Fatalf("computing a window directly: %v", err)
 	}
 	defer func() { _ = rows.Close() }()
-	result := map[string]VolumeFigures{}
+	result := map[string]reads.VolumeFigures{}
 	for rows.Next() {
 		var (
 			direction string
-			figures   VolumeFigures
+			figures   reads.VolumeFigures
 		)
 		if err := rows.Scan(&direction, &figures.Bytes, &figures.AllowedBytes, &figures.BlockedBytes,
 			&figures.UnknownBytes, &figures.AllowedConnections, &figures.BlockedConnections,
@@ -66,7 +70,7 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 	// Beyond the horizon: the flows are purged, the slots survive, and the function reads
 	// them and says what it covers.
 	horizon := network.now - 4*86400
-	whole := PeriodHour.SlotStart(horizon) + 3600
+	whole := vocab.PeriodHour.SlotStart(horizon) + 3600
 	if _, err := network.db.DB().Exec("DELETE FROM flow WHERE observed_at < ?", whole); err != nil {
 		t.Fatalf("purging the old flows: %v", err)
 	}
@@ -79,7 +83,7 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 	if window.Covered == nil {
 		t.Fatal("a window over slots reports no coverage")
 	}
-	firstHour := PeriodHour.SlotStart(from) + 3600
+	firstHour := vocab.PeriodHour.SlotStart(from) + 3600
 	if window.Covered.From != firstHour || window.Covered.To != to {
 		t.Errorf("the window [%d, %d) reports coverage [%d, %d), not [%d, %d): its left edge's flows "+
 			"are gone and its hours are slots", from, to, window.Covered.From, window.Covered.To, firstHour, to)
@@ -89,10 +93,10 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 	}
 	var slotBytes int64
 	if err := network.db.DB().QueryRow(`SELECT sum(bytes) FROM volume_aggregate_1h
-		WHERE period_start_at >= ? AND period_start_at < ?`, firstHour, PeriodHour.SlotStart(to)).Scan(&slotBytes); err != nil {
+		WHERE period_start_at >= ? AND period_start_at < ?`, firstHour, vocab.PeriodHour.SlotStart(to)).Scan(&slotBytes); err != nil {
 		t.Fatalf("summing the slots: %v", err)
 	}
-	right := directWindow(t, network.db, PeriodHour.SlotStart(to), to)
+	right := directWindow(t, network.db, vocab.PeriodHour.SlotStart(to), to)
 	var rightBytes int64
 	for _, figures := range right {
 		rightBytes += figures.Bytes
@@ -120,15 +124,15 @@ func TestASeriesSumsToItsWindowAndMarksItsGaps(t *testing.T) {
 	from := network.now - 2*86400 - 1700
 	to := network.now + 2*3600
 	// A collection gap over two hours of the window.
-	gapStart := PeriodHour.SlotStart(network.now-30*3600) + 600
+	gapStart := vocab.PeriodHour.SlotStart(network.now-30*3600) + 600
 	providerID, _ := network.db.ProviderID(ctx, "firewall_log", "pf")
-	if err := network.db.RecordCollectionGap(ctx, CollectionGap{ProviderID: providerID,
-		IntervalStartAt: gapStart, IntervalEndAt: gapStart + 3600, Reason: GapDigestOutsideWindow,
+	if err := network.db.RecordCollectionGap(ctx, vocab.CollectionGap{ProviderID: providerID,
+		IntervalStartAt: gapStart, IntervalEndAt: gapStart + 3600, Reason: vocab.GapDigestOutsideWindow,
 		DetectedAt: network.now}); err != nil {
 		t.Fatalf("recording a gap: %v", err)
 	}
 	// And an hour with no flow at all inside the covered interval.
-	silent := PeriodHour.SlotStart(network.now - 10*3600)
+	silent := vocab.PeriodHour.SlotStart(network.now - 10*3600)
 	if _, err := network.db.DB().Exec("DELETE FROM flow WHERE observed_at >= ? AND observed_at < ?",
 		silent, silent+3600); err != nil {
 		t.Fatalf("emptying an hour: %v", err)
@@ -140,7 +144,7 @@ func TestASeriesSumsToItsWindowAndMarksItsGaps(t *testing.T) {
 		t.Fatalf("recomputing: %v", err)
 	}
 
-	buckets, err := network.db.ReadVolumeSeries(ctx, from, to, PeriodHour, network.now)
+	buckets, err := network.db.ReadVolumeSeries(ctx, from, to, vocab.PeriodHour, network.now)
 	if err != nil {
 		t.Fatalf("reading the series: %v", err)
 	}
@@ -217,12 +221,12 @@ func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
 		WHERE observed_at >= ? AND observed_at < ?`, from, to).Scan(&flows, &bytes, &blocked); err != nil {
 		t.Fatalf("counting the window: %v", err)
 	}
-	for _, root := range []TreeRoot{TreeRootInterface, TreeRootClient, TreeRootOwner} {
+	for _, root := range []reads.TreeRoot{reads.TreeRootInterface, reads.TreeRootClient, reads.TreeRootOwner} {
 		tree, err := network.db.ReadConnectionTree(ctx, from, to, root)
 		if err != nil {
 			t.Fatalf("reading the %s tree: %v", root, err)
 		}
-		for side, nodes := range map[string][]*TreeNode{"inside": tree.Inside, "outside": tree.Outside} {
+		for side, nodes := range map[string][]*reads.TreeNode{"inside": tree.Inside, "outside": tree.Outside} {
 			var levelBytes, levelConnections, levelBlocked int64
 			keys := map[string]bool{}
 			for _, node := range nodes {
@@ -253,7 +257,7 @@ func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
 					"window %d in %d", root, side, levelBytes, levelConnections, bytes, flows)
 			}
 		}
-		if root == TreeRootInterface {
+		if root == reads.TreeRootInterface {
 			found := map[string]bool{}
 			for _, node := range tree.Outside {
 				found[node.Key[:min(len(node.Key), 8)]] = true
@@ -268,7 +272,7 @@ func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
 			}
 		}
 	}
-	if _, err := network.db.ReadConnectionTree(ctx, from, to, TreeRoot("example-root")); err == nil {
+	if _, err := network.db.ReadConnectionTree(ctx, from, to, reads.TreeRoot("example-root")); err == nil {
 		t.Error("an unknown root was accepted")
 	}
 }
@@ -314,7 +318,7 @@ func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 		if index == 3 {
 			action = "allowed"
 		}
-		if err := network.db.InsertSecurityEvent(ctx, eventProvider, SecurityEvent{
+		if err := network.db.InsertSecurityEvent(ctx, eventProvider, vocab.SecurityEvent{
 			ProviderEventKey: fmt.Sprintf("example-blocked-event-%d", index), OccurredAt: network.now - 50,
 			IngestedAt: network.now, RuleIdentity: "1", Signature: "example", EventAction: action,
 			SrcAddress: outside(index, false), DstAddress: network.upstream.address,
@@ -414,7 +418,7 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 		t.Errorf("the rate counts %d eligible flows, not the %d a client sent outside", rate.EligibleFlows, sent)
 	}
 	unbound, _ := network.db.ProviderID(ctx, "dns_lookup", "unbound")
-	if err := network.db.SetAvailability(ctx, unbound, StateReachable, OutcomeHealthy, "example probe", nil, network.now); err != nil {
+	if err := network.db.SetAvailability(ctx, unbound, vocab.StateReachable, vocab.OutcomeHealthy, "example probe", nil, network.now); err != nil {
 		t.Fatalf("recording the resolver reachable: %v", err)
 	}
 	rate, err = network.db.ReadAttributionRate(ctx, network.now-86400, network.now+1, nil)
@@ -442,14 +446,14 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 		t.Errorf("a past window with no lookup reads %v although only today's probe was reachable", rate.Rate)
 	}
 	// And a past window holding a lookup is defined although the resolver is unreachable now.
-	if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey: "example-past-lookup", ClientAddress: network.clients[0].address,
 		Domain: "past.example.invalid", Resolver: "unbound", Action: "pass",
 		AnswerSource: ptr("Recursion"), LookedUpAt: past + 600, IngestedAt: past + 700,
 	}); err != nil {
 		t.Fatalf("writing a past lookup: %v", err)
 	}
-	if err := network.db.SetAvailability(ctx, unbound, StateUnavailable, OutcomeTransportFailure, "example probe", nil, network.now); err != nil {
+	if err := network.db.SetAvailability(ctx, unbound, vocab.StateUnavailable, vocab.OutcomeTransportFailure, "example probe", nil, network.now); err != nil {
 		t.Fatalf("recording the resolver unavailable: %v", err)
 	}
 	rate, err = network.db.ReadAttributionRate(ctx, past, past+86400, nil)
@@ -483,8 +487,8 @@ func TestAChangeOfPublicAddressIsANewRowAndTheOldOneKeepsItsLastSighting(t *test
 		{network.now + 300, "192.0.2.77"},
 		{network.now + 400, "192.0.2.77"},
 	} {
-		if err := network.db.UpsertInterfaceAddress(ctx, InterfaceAddress{
-			InterfaceID: network.upstream.id, SourceField: SourceFieldAddr4, Address: step.address,
+		if err := network.db.UpsertInterfaceAddress(ctx, vocab.InterfaceAddress{
+			InterfaceID: network.upstream.id, SourceField: vocab.SourceFieldAddr4, Address: step.address,
 			PrefixLength: &bits, AddressFamily: 4}, nil, step.at); err != nil {
 			t.Fatalf("writing an address: %v", err)
 		}
@@ -496,10 +500,10 @@ func TestAChangeOfPublicAddressIsANewRowAndTheOldOneKeepsItsLastSighting(t *test
 	if len(addresses) != 1 || addresses[0].InterfaceID != network.upstream.id {
 		t.Fatalf("the public addresses are %+v", addresses)
 	}
-	var current, previous *AddressHistory
+	var current, previous *reads.AddressHistory
 	for index := range addresses[0].History {
 		entry := &addresses[0].History[index]
-		if entry.SourceField != SourceFieldAddr4 {
+		if entry.SourceField != vocab.SourceFieldAddr4 {
 			continue
 		}
 		switch entry.Address {
@@ -524,15 +528,15 @@ func TestAChangeOfPublicAddressIsANewRowAndTheOldOneKeepsItsLastSighting(t *test
 }
 
 // insertReading writes one measurement.
-func insertReading(t *testing.T, database *Store, kind SubjectKind, key string, measure Measure,
-	unit Unit, value float64, at int64) {
+func insertReading(t *testing.T, database *Store, kind vocab.SubjectKind, key string, measure vocab.Measure,
+	unit vocab.Unit, value float64, at int64) {
 	t.Helper()
 	providerID, _ := database.ProviderID(context.Background(), "measurement_sample", "insight")
 	var provider *int64
-	if kind == SubjectInterfaceEndpointPair || kind == SubjectInterfaceEndpoint {
+	if kind == vocab.SubjectInterfaceEndpointPair || kind == vocab.SubjectInterfaceEndpoint {
 		provider = &providerID
 	}
-	if err := database.InsertMeasurementSample(context.Background(), MeasurementSample{
+	if err := database.InsertMeasurementSample(context.Background(), vocab.MeasurementSample{
 		ProviderID: provider, SubjectKind: kind, SubjectKey: key, Measure: measure, Unit: unit,
 		Value: value, SampledAt: at,
 	}); err != nil {
@@ -550,7 +554,7 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
 	const interval = 300
-	if err := network.db.SetSetting(ctx, MeasurementIntervalKey, fmt.Sprint(interval), network.now); err != nil {
+	if err := network.db.SetSetting(ctx, samples.MeasurementIntervalKey, fmt.Sprint(interval), network.now); err != nil {
 		t.Fatalf("writing the interval: %v", err)
 	}
 	bound, err := network.db.CurrentSampleBound(ctx)
@@ -563,15 +567,15 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 	peers := []string{outside(1, leased.v6), outside(2, leased.v6)}
 
 	endpoint := func(device, local string, at int64, in float64, out *float64) {
-		key := InterfaceEndpointKey(device, local)
-		insertReading(t, network.db, SubjectInterfaceEndpoint, key, MeasureRateBitsIn, UnitBitPerSecond, in, at)
+		key := vocab.InterfaceEndpointKey(device, local)
+		insertReading(t, network.db, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
 		if out != nil {
-			insertReading(t, network.db, SubjectInterfaceEndpoint, key, MeasureRateBitsOut, UnitBitPerSecond, *out, at)
+			insertReading(t, network.db, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsOut, vocab.UnitBitPerSecond, *out, at)
 		}
 	}
 	pair := func(device, local, peer string, at int64, in float64) {
-		insertReading(t, network.db, SubjectInterfaceEndpointPair, InterfaceEndpointPairKey(device, local, peer),
-			MeasureRateBitsIn, UnitBitPerSecond, in, at)
+		insertReading(t, network.db, vocab.SubjectInterfaceEndpointPair, vocab.InterfaceEndpointPairKey(device, local, peer),
+			vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
 	}
 	figure := func(value float64) *float64 { return &value }
 
@@ -600,7 +604,7 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 	if err != nil {
 		t.Fatalf("reading the rate: %v", err)
 	}
-	if state != RateCurrent || rate.InBitsPerSecond != 130 || rate.OutBitsPerSecond != 240 || !rate.OutMeasured {
+	if state != samples.RateCurrent || rate.InBitsPerSecond != 130 || rate.OutBitsPerSecond != 240 || !rate.OutMeasured {
 		t.Errorf("the client's current rate is %s %+v, not in 130 and a measured out of 240", state, rate)
 	}
 	if rate.SampledAt != latest {
@@ -633,11 +637,11 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 	if err != nil {
 		t.Fatalf("reading the rate: %v", err)
 	}
-	if state != RateNoCurrentSample {
+	if state != samples.RateNoCurrentSample {
 		t.Errorf("beyond the bound the state is %s", state)
 	}
 	// A setting that is not a positive whole number is refused rather than bounding nothing.
-	if err := network.db.SetSetting(ctx, MeasurementIntervalKey, "0", network.now); err != nil {
+	if err := network.db.SetSetting(ctx, samples.MeasurementIntervalKey, "0", network.now); err != nil {
 		t.Fatalf("writing the interval: %v", err)
 	}
 	if _, err := network.db.CurrentSampleBound(ctx); err == nil {
@@ -654,10 +658,10 @@ func TestAThroughputIsDerivedFromConsecutiveCountersAndAResetIsNotANegativeRate(
 		at    int64
 		value float64
 	}{{100, 1000}, {400, 4000}, {700, 500}, {1000, 3500}} {
-		insertReading(t, network.db, SubjectInterface, device, MeasureBytesIn, UnitByte, sample.value,
+		insertReading(t, network.db, vocab.SubjectInterface, device, vocab.MeasureBytesIn, vocab.UnitByte, sample.value,
 			network.now+sample.at)
 	}
-	points, err := network.db.ReadInterfaceThroughput(context.Background(), device, MeasureBytesIn,
+	points, err := network.db.ReadInterfaceThroughput(context.Background(), device, vocab.MeasureBytesIn,
 		network.now, network.now+2000)
 	if err != nil {
 		t.Fatalf("reading the throughput: %v", err)
@@ -687,28 +691,28 @@ func TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero(t *testi
 	network := newTestNetwork(t, 1, 2)
 	ctx := context.Background()
 	client := network.clients[0]
-	key := InterfaceEndpointKey(client.device, client.address)
+	key := vocab.InterfaceEndpointKey(client.device, client.address)
 	for _, at := range []int64{100, 400} {
-		insertReading(t, network.db, SubjectInterfaceEndpoint, key, MeasureCumulativeBytesIn, UnitByte, 300, network.now+at)
-		insertReading(t, network.db, SubjectInterfaceEndpoint, key, MeasureCumulativeBytesOut, UnitByte, 200, network.now+at)
+		insertReading(t, network.db, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureCumulativeBytesIn, vocab.UnitByte, 300, network.now+at)
+		insertReading(t, network.db, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureCumulativeBytesOut, vocab.UnitByte, 200, network.now+at)
 	}
 	// A per-peer reading is not counted again: the totals already hold it.
-	insertReading(t, network.db, SubjectInterfaceEndpointPair,
-		InterfaceEndpointPairKey(client.device, client.address, outside(1, client.v6)),
-		MeasureCumulativeBytesIn, UnitByte, 300, network.now+100)
+	insertReading(t, network.db, vocab.SubjectInterfaceEndpointPair,
+		vocab.InterfaceEndpointPairKey(client.device, client.address, outside(1, client.v6)),
+		vocab.MeasureCumulativeBytesIn, vocab.UnitByte, 300, network.now+100)
 	sampled, state, err := network.db.ReadSampledBytes(ctx, network.now, network.now+1000)
 	if err != nil {
 		t.Fatalf("reading the sampled bytes: %v", err)
 	}
-	if state != Sampled || len(sampled) != 1 || sampled[0].Bytes != 1000 || sampled[0].Samples != 2 ||
-		sampled[0].SampledSeconds != 2*SampleSeconds {
+	if state != samples.Sampled || len(sampled) != 1 || sampled[0].Bytes != 1000 || sampled[0].Samples != 2 ||
+		sampled[0].SampledSeconds != 2*vocab.SampleSeconds {
 		t.Errorf("the sampled bytes are %s %+v", state, sampled)
 	}
 	_, state, err = network.db.ReadSampledBytes(ctx, network.now+2000, network.now+3000)
 	if err != nil {
 		t.Fatalf("reading an unsampled period: %v", err)
 	}
-	if state != NotSampled {
+	if state != samples.NotSampled {
 		t.Errorf("a period with no sample is %s, not not_sampled", state)
 	}
 }
@@ -721,7 +725,7 @@ func TestNonLoggingRulesAreCountedPerInterfaceByKey(t *testing.T) {
 	network := newTestNetwork(t, 3, 3)
 	ctx := context.Background()
 	no, yes, legacy := false, true, true
-	for index, rule := range []Rule{
+	for index, rule := range []vocab.Rule{
 		{Interface: ptr("example_if_0"), LogsMatches: &no},
 		{Interface: ptr("example_if_0,example_if_2"), LogsMatches: &no},
 		{Interface: ptr("example_if_1"), LogsMatches: &yes},

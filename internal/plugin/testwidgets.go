@@ -15,7 +15,11 @@ import (
 
 	"github.com/dop251/goja"
 
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
 	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // What a widget plugin's tests add to the test API (docs/plugins.md, "Testing a widget").
@@ -43,7 +47,7 @@ func (w *testWorld) widgetAPI(vm *goja.Runtime, t *goja.Object, fail func(string
 	set := func(name string, function func(goja.FunctionCall) goja.Value) { _ = t.Set(name, function) }
 	set("sql", func(call goja.FunctionCall) goja.Value {
 		if w.database == nil {
-			throw(vm, "t.sql needs a database: the plugin declares neither a table nor a widget")
+			runtime.Throw(vm, "t.sql needs a database: the plugin declares neither a table nor a widget")
 		}
 		var arguments []any
 		if object, isObject := call.Argument(1).(*goja.Object); isObject {
@@ -58,7 +62,7 @@ func (w *testWorld) widgetAPI(vm *goja.Runtime, t *goja.Object, fail func(string
 			}
 		}
 		if _, err := w.database.DB().ExecContext(context.Background(), call.Argument(0).String(), arguments...); err != nil {
-			throw(vm, "t.sql: %v", err)
+			runtime.Throw(vm, "t.sql: %v", err)
 		}
 		return goja.Undefined()
 	})
@@ -66,18 +70,18 @@ func (w *testWorld) widgetAPI(vm *goja.Runtime, t *goja.Object, fail func(string
 		widgetType := call.Argument(0).String()
 		service, err := w.widgetService()
 		if err != nil {
-			throw(vm, "t.widget: %v", err)
+			runtime.Throw(vm, "t.widget: %v", err)
 		}
 		for _, refusal := range service.Refusals() {
 			if refusal.Type == widgetType {
-				throw(vm, "t.widget: %v", &refusal)
+				runtime.Throw(vm, "t.widget: %v", &refusal)
 			}
 		}
 		raw := ""
 		if parameters := call.Argument(1); !goja.IsUndefined(parameters) && !goja.IsNull(parameters) {
 			encoded, err := json.Marshal(parameters.Export())
 			if err != nil {
-				throw(vm, "t.widget: the parameters: %v", err)
+				runtime.Throw(vm, "t.widget: the parameters: %v", err)
 			}
 			raw = string(encoded)
 		}
@@ -98,17 +102,17 @@ func (w *testWorld) widgetAPI(vm *goja.Runtime, t *goja.Object, fail func(string
 	set("golden", func(call goja.FunctionCall) goja.Value {
 		name := call.Argument(0).String()
 		if !goldenFileName(name) {
-			throw(vm, "t.golden: %q is not a .json file name of the plugin's tests/ directory", name)
+			runtime.Throw(vm, "t.golden: %q is not a .json file name of the plugin's tests/ directory", name)
 		}
 		var got bytes.Buffer
 		if err := json.Indent(&got, []byte(call.Argument(1).String()), "", "  "); err != nil {
-			throw(vm, "t.golden: the value is not JSON: %v", err)
+			runtime.Throw(vm, "t.golden: the value is not JSON: %v", err)
 		}
 		got.WriteByte('\n')
 		path := filepath.Join(w.directory, "tests", name)
 		if os.Getenv("OPNVIEW_WRITE_GOLDEN") == "1" {
 			if err := os.WriteFile(path, got.Bytes(), 0o644); err != nil {
-				throw(vm, "t.golden: %v", err)
+				runtime.Throw(vm, "t.golden: %v", err)
 			}
 			return goja.Undefined()
 		}
@@ -153,8 +157,8 @@ func (w *testWorld) widgetService() (*widget.Service, error) {
 func (w *testWorld) respond(service *widget.Service, widgetType, parameters string) (int, []byte) {
 	response, err := service.Respond(context.Background(), widgetType, parameters)
 	var (
-		malformed widget.ErrMalformed
-		failed    *widget.ScriptError
+		malformed params.ErrMalformed
+		failed    *request.ScriptError
 	)
 	var (
 		status int
@@ -162,11 +166,11 @@ func (w *testWorld) respond(service *widget.Service, widgetType, parameters stri
 	)
 	switch {
 	case errors.As(err, &failed):
-		status, body = 500, widget.Failure{Condition: widget.ConditionScriptFailed, Type: widgetType, Reason: failed.Detail}
+		status, body = 500, widget.Failure{Condition: request.ConditionScriptFailed, Type: widgetType, Reason: failed.Detail}
 	case errors.As(err, &malformed):
-		status, body = 400, widget.Failure{Condition: widget.ConditionMalformedParameters, Type: widgetType}
+		status, body = 400, widget.Failure{Condition: envelope.ConditionMalformedParameters, Type: widgetType}
 	case errors.Is(err, widget.ErrUnknownType):
-		status, body = 404, widget.Failure{Condition: widget.ConditionUnknownWidgetType, Type: widgetType}
+		status, body = 404, widget.Failure{Condition: envelope.ConditionUnknownWidgetType, Type: widgetType}
 	case err != nil:
 		status, body = 500, widget.Failure{Condition: "read_failed", Type: widgetType, Reason: err.Error()}
 	default:

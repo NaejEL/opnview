@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
 )
 
 // TestEveryHostAnswerIsHeardAndSearchedForCredentials is BR-AC16's harness: under `opnview plugin
@@ -18,7 +19,7 @@ import (
 // a credential or the firewall's address in any of them is a failure of the test.
 func TestEveryHostAnswerIsHeardAndSearchedForCredentials(t *testing.T) {
 	t.Parallel()
-	compiled, err := compile("example", "example.js", `exports.example = { pass: function (host) {
+	compiled, err := runtime.Compile("example", "example.js", `exports.example = { pass: function (host) {
 			var answer = host.call("rows", {});
 			var state = host.serviceState("rows");
 			return { rows: answer.value.rows.length, running: state.running, now: host.now() };
@@ -29,14 +30,14 @@ func TestEveryHostAnswerIsHeardAndSearchedForCredentials(t *testing.T) {
 	}
 	var mutex sync.Mutex
 	heard := map[string][]string{}
-	compiled.observe = func(function string, answer any) {
+	compiled.Observe = func(function string, answer any) {
 		encoded, _ := json.Marshal(answer)
 		mutex.Lock()
 		heard[function] = append(heard[function], string(encoded))
 		mutex.Unlock()
 	}
 	body := []byte(`{"rows": [{"id": "carried-in-the-body"}]}`)
-	answer, _, failed := compiled.call(context.Background(), stubSession{body: body, now: 1750000000}, "example", "pass")
+	answer, _, failed := compiled.Call(context.Background(), stubSession{body: body, now: 1750000000}, "example", "pass")
 	if failed != nil {
 		t.Fatalf("the pass failed: %+v", failed)
 	}

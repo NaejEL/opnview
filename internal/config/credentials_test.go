@@ -9,7 +9,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/secret"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 )
 
 // fakeCredentialReader stands in for the database.
@@ -19,13 +19,13 @@ import (
 // surface from internal/web.
 type fakeCredentialReader struct {
 	settings    map[string]string
-	credentials map[string]store.EncryptedCredential
+	credentials map[string]accounts.EncryptedCredential
 }
 
 func newFakeCredentialReader() *fakeCredentialReader {
 	return &fakeCredentialReader{
 		settings:    map[string]string{},
-		credentials: map[string]store.EncryptedCredential{},
+		credentials: map[string]accounts.EncryptedCredential{},
 	}
 }
 
@@ -35,14 +35,14 @@ func (f *fakeCredentialReader) Setting(_ context.Context, key string) (string, b
 }
 
 func (f *fakeCredentialReader) Credential(_ context.Context, name string) (
-	store.EncryptedCredential, bool, error) {
+	accounts.EncryptedCredential, bool, error) {
 	credential, present := f.credentials[name]
 	return credential, present, nil
 }
 
 // store records one sealed credential.
 func (f *fakeCredentialReader) put(name string, sealed secret.Ciphertext) {
-	f.credentials[name] = store.EncryptedCredential{
+	f.credentials[name] = accounts.EncryptedCredential{
 		Name: name, Algorithm: sealed.Algorithm, KeyID: sealed.KeyID,
 		Nonce: sealed.Nonce, Ciphertext: sealed.Bytes, UpdatedAt: 1_700_000_000,
 	}
@@ -94,7 +94,7 @@ func TestTheThreeCredentialStatesAreDistinguishable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sealing: %v", err)
 		}
-		reader.put(store.CredentialOPNsenseAPISecret, sealed)
+		reader.put(accounts.CredentialOPNsenseAPISecret, sealed)
 
 		credentials, state, err := LoadFirewallCredentials(ctx, reader, box)
 		if err != nil {
@@ -116,7 +116,7 @@ func TestTheThreeCredentialStatesAreDistinguishable(t *testing.T) {
 		if err != nil {
 			t.Fatalf("sealing: %v", err)
 		}
-		reader.put(store.CredentialOPNsenseAPISecret, sealed)
+		reader.put(accounts.CredentialOPNsenseAPISecret, sealed)
 
 		// The key file is gone. The service must come up and say WHICH thing is wrong.
 		credentials, state, err := LoadFirewallCredentials(ctx, reader, nil)
@@ -155,7 +155,7 @@ func TestTheThreeCredentialStatesAreDistinguishable(t *testing.T) {
 			t.Fatalf("sealing: %v", err)
 		}
 		sealed.Bytes[0] ^= 0x01
-		reader.put(store.CredentialOPNsenseAPISecret, sealed)
+		reader.put(accounts.CredentialOPNsenseAPISecret, sealed)
 
 		credentials, state, err := LoadFirewallCredentials(ctx, reader, box)
 		if err != nil {
@@ -273,7 +273,7 @@ func TestTheMaxMindLicenceKeyStatesAreDistinguishable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sealing: %v", err)
 	}
-	reader.put(store.CredentialMaxMindLicenceKey, sealed)
+	reader.put(accounts.CredentialMaxMindLicenceKey, sealed)
 	loaded, state, err = LoadMaxMindCredentials(ctx, reader, box)
 	if err != nil || state != CredentialStateReady || loaded.LicenceKey != licenceKey ||
 		loaded.AccountID != "424242" {

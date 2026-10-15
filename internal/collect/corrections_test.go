@@ -2,8 +2,11 @@ package collect
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/collect/dnslookup"
+	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -105,10 +108,10 @@ func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing
 		field, address string
 		bits           int64
 	}{
-		{store.SourceFieldIPv4, "198.51.100.1", 24},
-		{store.SourceFieldIPv4, "192.0.2.129", 25},
-		{store.SourceFieldIPv6, "2001:db8::1", 64},
-		{store.SourceFieldIPv6, "fe80::1", 64},
+		{vocab.SourceFieldIPv4, "198.51.100.1", 24},
+		{vocab.SourceFieldIPv4, "192.0.2.129", 25},
+		{vocab.SourceFieldIPv6, "2001:db8::1", 64},
+		{vocab.SourceFieldIPv6, "fe80::1", 64},
 	} {
 		if rows := scalarCount(t, harness.store, `SELECT count(*) FROM interface_address
 			WHERE interface_id = ? AND source_field = ? AND address = ? AND prefix_length = ?`,
@@ -127,7 +130,7 @@ func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing
 	proposed := map[string]bool{}
 	for _, network := range networks {
 		if network.InterfaceID == inside {
-			proposed[network.Network.String()] = network.Origin == store.NetworkOriginDetected && network.Counts
+			proposed[network.Network.String()] = network.Origin == flows.NetworkOriginDetected && network.Counts
 		}
 	}
 	for _, want := range []string{"198.51.100.0/24", "192.0.2.128/25", "2001:db8::/64"} {
@@ -136,7 +139,7 @@ func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing
 		}
 	}
 	for network := range proposed {
-		if store.IsLinkLocal(network[:len(network)-3]) {
+		if flows.IsLinkLocal(network[:len(network)-3]) {
 			t.Errorf("the link-local network %s was proposed", network)
 		}
 	}
@@ -215,21 +218,21 @@ func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.
 		{source, "example-host"}, {"198.51.100.21", "example-twin"}, {"198.51.100.22", "example-twin"},
 	} {
 		hostname := lease.hostname
-		if err := harness.store.InsertDHCPLease(ctx, provider, store.DHCPLease{
+		if err := harness.store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 			Backend: "dnsmasq", Address: lease.address, Hostname: &hostname, LeaseState: "active",
-			GenerationKey: store.GenerationKeyOf(nil, &expires, int64(index)), ExpiresAt: &expires,
+			GenerationKey: vocab.GenerationKeyOf(nil, &expires, int64(index)), ExpiresAt: &expires,
 			ObservedAt: referenceEpoch(),
 		}); err != nil {
 			t.Fatalf("writing a lease: %v", err)
 		}
 	}
 	answer := "Recursion"
-	decide := func(logged string) (store.DNSResolution, int64) {
+	decide := func(logged string) (vocab.DNSResolution, int64) {
 		t.Helper()
 		record := dnslookup.Record{DeduplicationKey: "example-key-" + logged, ClientAddress: logged,
 			Domain: "example-site.example.invalid", Action: "pass", AnswerSource: &answer,
 			LookedUpAt: observedAt - 2}
-		lookup, err := harness.collector.buildDNSResolution(ctx, record, "unbound", referenceEpoch())
+		lookup, err := harness.collector.BuildDNSResolution(ctx, record, "unbound", referenceEpoch())
 		if err != nil {
 			t.Fatalf("building the lookup: %v", err)
 		}
@@ -254,9 +257,9 @@ func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.
 		logged, resolution string
 		attributes         bool
 	}{
-		{"example-twin.example.invalid", store.ClientResolutionAmbiguous, false},
-		{"example-nobody.example.invalid", store.ClientResolutionUnknown, false},
-		{"example-host.example.invalid", store.ClientResolutionLeased, true},
+		{"example-twin.example.invalid", vocab.ClientResolutionAmbiguous, false},
+		{"example-nobody.example.invalid", vocab.ClientResolutionUnknown, false},
+		{"example-host.example.invalid", vocab.ClientResolutionLeased, true},
 	} {
 		lookup, attributed := decide(step.logged)
 		if lookup.ClientResolution != step.resolution {
@@ -278,7 +281,7 @@ func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.
 
 	// A lookup that logged an address is recorded as such.
 	lookup, attributed := decide(source)
-	if lookup.ClientResolution != store.ClientResolutionLoggedAddress || lookup.ClientHostname != nil {
+	if lookup.ClientResolution != vocab.ClientResolutionLoggedAddress || lookup.ClientHostname != nil {
 		t.Errorf("an address lookup was recorded as %s with host name %v", lookup.ClientResolution,
 			lookup.ClientHostname)
 	}

@@ -6,10 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The filter-log collector tests.
@@ -23,7 +25,7 @@ func arrangeFilterLogCollection(t *testing.T) *probeHarness {
 	if err := harness.collector.probeFirewallLog(context.Background()); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindFirewallLog); key != ProviderPf {
+	if key := harness.activeKeyOf(t, core.KindFirewallLog); key != ProviderPf {
 		t.Fatalf("the filter-log kind activated %q", key)
 	}
 	return harness
@@ -155,15 +157,15 @@ func TestAPageThatBeginsAfterTheNewestStoredRecordWritesAGapRow(t *testing.T) {
 	// A record stored well before the page, standing for a poll that happened and then a
 	// period during which opnview was not running.
 	oldest := oldestFixtureInstant(t, harness)
-	if err := harness.store.InsertFlow(ctx, store.Flow{
+	if err := harness.store.InsertFlow(ctx, vocab.Flow{
 		LogDigest:            "example-digest-from-an-earlier-poll",
 		ObservedAt:           oldest - 3600,
 		IngestedAt:           oldest - 3600,
 		InterfaceDevice:      "exdev0",
-		InterfaceLookupState: store.LookupResolved,
+		InterfaceLookupState: vocab.LookupResolved,
 		SrcAddress:           "example-source", DstAddress: "example-destination",
 		Protocol: "tcp", IPVersion: 4, Action: "pass", Direction: "in",
-		PacketBytes: 100, RuleLookupState: store.LookupPending,
+		PacketBytes: 100, RuleLookupState: vocab.LookupPending,
 	}); err != nil {
 		t.Fatalf("seeding an earlier record: %v", err)
 	}
@@ -186,7 +188,7 @@ func TestAPageThatBeginsAfterTheNewestStoredRecordWritesAGapRow(t *testing.T) {
 		Scan(&start, &end, &reason, &detail); err != nil {
 		t.Fatalf("reading the gap back: %v", err)
 	}
-	if reason != string(store.GapDigestOutsideWindow) {
+	if reason != string(vocab.GapDigestOutsideWindow) {
 		t.Errorf("the reason is %q", reason)
 	}
 	if start != oldest-3600 || end != oldest {
@@ -229,33 +231,33 @@ func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
 		name      string
 		status    int
 		body      string
-		wantState store.AvailabilityState
+		wantState vocab.AvailabilityState
 		wantRows  int
 		because   string
 	}{
 		{
 			name: "an empty body", status: http.StatusOK, body: "",
-			wantState: store.StateUnavailable,
+			wantState: vocab.StateUnavailable,
 			because:   "the survey names an empty body as a backend failure or a wrong verb",
 		},
 		{
 			name: "a failed result", status: http.StatusOK, body: `{"result":"failed"}`,
-			wantState: store.StateUnavailable,
+			wantState: vocab.StateUnavailable,
 			because:   "HTTP 200 is not proof of success",
 		},
 		{
 			name: "HTTP 404", status: http.StatusNotFound, body: `{"errorMessage":"Endpoint not found"}`,
-			wantState: store.StateUnavailable,
+			wantState: vocab.StateUnavailable,
 			because:   "the endpoint is not present on this firewall",
 		},
 		{
 			name: "HTTP 403", status: http.StatusForbidden, body: `{"errorMessage":"Forbidden"}`,
-			wantState: store.StateUnavailable,
+			wantState: vocab.StateUnavailable,
 			because:   "the key owner's ACL does not cover the path",
 		},
 		{
 			name: "an empty array", status: http.StatusOK, body: `[]`,
-			wantState: store.StateReachable, wantRows: 0,
+			wantState: vocab.StateReachable, wantRows: 0,
 			because: "a healthy log with nothing to report is reachable but silent, which is " +
 				"not an absence of traffic",
 		},
@@ -274,11 +276,11 @@ func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
 
 			harness.fake.Answer(opnsense.FirewallLog, testCase.status, []byte(testCase.body))
 			err := harness.collector.CollectFirewallLog(context.Background())
-			if testCase.wantState == store.StateUnavailable && err == nil {
+			if testCase.wantState == vocab.StateUnavailable && err == nil {
 				t.Fatalf("%s was collected without an error (%s)", testCase.name, testCase.because)
 			}
 
-			state, probe, checkedAt := harness.availabilityOf(t, KindFirewallLog, ProviderPf)
+			state, probe, checkedAt := harness.availabilityOf(t, core.KindFirewallLog, ProviderPf)
 			if state != testCase.wantState {
 				t.Errorf("the state is %q, want %q (%s)", state, testCase.wantState, testCase.because)
 			}

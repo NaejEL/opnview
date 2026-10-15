@@ -3,6 +3,8 @@ package store
 import (
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // AC18 — slot boundaries are calendar boundaries in UTC.
@@ -26,18 +28,18 @@ func TestAMonthSlotIsTheCalendarMonthOfAnyLength(t *testing.T) {
 		{"a 31-day January", utc(2026, time.January, 1, 0, 0), utc(2026, time.February, 1, 0, 0), 31},
 	} {
 		middle := month.start + (month.end-month.start)/2
-		start := PeriodMonth.SlotStart(middle)
+		start := vocab.PeriodMonth.SlotStart(middle)
 		if start != month.start {
 			t.Errorf("%s: the slot starts at %d, not %d", month.name, start, month.start)
 		}
-		end := PeriodMonth.SlotEnd(start)
+		end := vocab.PeriodMonth.SlotEnd(start)
 		if end != month.end {
 			t.Errorf("%s: the slot ends at %d, not %d", month.name, end, month.end)
 		}
 		if (end-start)/86400 != month.days {
 			t.Errorf("%s: the slot is %d days long", month.name, (end-start)/86400)
 		}
-		if PeriodMonth.SlotStart(month.end-1) != month.start || PeriodMonth.SlotStart(month.end) != month.end {
+		if vocab.PeriodMonth.SlotStart(month.end-1) != month.start || vocab.PeriodMonth.SlotStart(month.end) != month.end {
 			t.Errorf("%s: the last second and the next month's first are on the wrong sides", month.name)
 		}
 	}
@@ -55,18 +57,18 @@ func TestAnISOWeekSpanningAYearBoundaryIsOneSlot(t *testing.T) {
 		monday, utc(2026, time.December, 31, 23, 59), utc(2027, time.January, 1, 0, 0),
 		utc(2027, time.January, 3, 23, 59),
 	} {
-		if start := PeriodWeek.SlotStart(instant); start != monday {
+		if start := vocab.PeriodWeek.SlotStart(instant); start != monday {
 			t.Errorf("%s falls in the week starting %s",
 				time.Unix(instant, 0).UTC(), time.Unix(start, 0).UTC())
 		}
 	}
-	if end := PeriodWeek.SlotEnd(monday); end != utc(2027, time.January, 4, 0, 0) {
+	if end := vocab.PeriodWeek.SlotEnd(monday); end != utc(2027, time.January, 4, 0, 0) {
 		t.Errorf("the week ends at %s", time.Unix(end, 0).UTC())
 	}
-	if start := PeriodWeek.SlotStart(utc(2027, time.January, 4, 0, 0)); start != utc(2027, time.January, 4, 0, 0) {
+	if start := vocab.PeriodWeek.SlotStart(utc(2027, time.January, 4, 0, 0)); start != utc(2027, time.January, 4, 0, 0) {
 		t.Error("Monday 4 January 2027 does not start the next week")
 	}
-	if start := PeriodWeek.SlotStart(utc(2026, time.December, 27, 23, 59)); start != utc(2026, time.December, 21, 0, 0) {
+	if start := vocab.PeriodWeek.SlotStart(utc(2026, time.December, 27, 23, 59)); start != utc(2026, time.December, 21, 0, 0) {
 		t.Error("Sunday 27 December 2026 is not in the week before")
 	}
 }
@@ -77,21 +79,21 @@ func TestAnHourCrossingMidnightUTCEndsAtMidnight(t *testing.T) {
 	t.Parallel()
 	lateHour := utc(2026, time.October, 3, 23, 0)
 	midnight := utc(2026, time.October, 4, 0, 0)
-	if start := PeriodHour.SlotStart(utc(2026, time.October, 3, 23, 30)); start != lateHour {
+	if start := vocab.PeriodHour.SlotStart(utc(2026, time.October, 3, 23, 30)); start != lateHour {
 		t.Errorf("23:30 is in the hour starting %s", time.Unix(start, 0).UTC())
 	}
-	if end := PeriodHour.SlotEnd(lateHour); end != midnight {
+	if end := vocab.PeriodHour.SlotEnd(lateHour); end != midnight {
 		t.Errorf("the last hour ends at %s", time.Unix(end, 0).UTC())
 	}
-	if start := PeriodDay.SlotStart(utc(2026, time.October, 3, 23, 30)); start != utc(2026, time.October, 3, 0, 0) {
+	if start := vocab.PeriodDay.SlotStart(utc(2026, time.October, 3, 23, 30)); start != utc(2026, time.October, 3, 0, 0) {
 		t.Error("23:30 is not in its own day")
 	}
-	if start := PeriodDay.SlotStart(midnight); start != midnight {
+	if start := vocab.PeriodDay.SlotStart(midnight); start != midnight {
 		t.Error("midnight does not start the next day")
 	}
 	// Every slot of every period is a whole number of hours, which is what lets a rolling
 	// window be assembled from hour slots.
-	for _, period := range Periods() {
+	for _, period := range vocab.Periods() {
 		for _, instant := range []int64{lateHour + 1800, midnight, utc(2028, time.February, 29, 12, 0)} {
 			start := period.SlotStart(instant)
 			if start%3600 != 0 || period.SlotEnd(start)%3600 != 0 {
@@ -106,12 +108,12 @@ func TestSlotsCoverAWindowInOrder(t *testing.T) {
 	t.Parallel()
 	from := utc(2026, time.October, 3, 22, 30)
 	to := utc(2026, time.October, 4, 1, 15)
-	slots := PeriodHour.Slots(from, to)
+	slots := vocab.PeriodHour.Slots(from, to)
 	if len(slots) != 4 || slots[0] != utc(2026, time.October, 3, 22, 0) ||
 		slots[3] != utc(2026, time.October, 4, 1, 0) {
 		t.Errorf("the hour slots of the window are %v", slots)
 	}
-	if _, err := PeriodNamed("2w"); err == nil {
+	if _, err := vocab.PeriodNamed("2w"); err == nil {
 		t.Error("a period that does not exist was accepted")
 	}
 }

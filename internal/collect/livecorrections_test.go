@@ -7,9 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The collector half of specs/SPEC-step-5a-live-corrections.md: the gateway absences
@@ -61,7 +64,7 @@ func TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 			if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
 				t.Fatalf("sampling: %v", err)
 			}
-			detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight)
+			detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
 			if !strings.Contains(detail, one.wording) {
 				t.Errorf("the detail is %q, which does not name the absence as %q", detail, one.wording)
 			}
@@ -98,7 +101,7 @@ func TestTheGatewayMeasuresOfTheLiveShapeAreStoredPerGatewayWithFigures(t *testi
 	if _, zeroes := gatewayReadings(t, harness.store); zeroes != 0 {
 		t.Errorf("%d gateway readings are 0", zeroes)
 	}
-	if detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
+	if detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
 		"1 of 2 gateways listed with no figure") {
 		t.Errorf("the detail %q does not name the gateway listed with no figure", detail)
 	}
@@ -119,7 +122,7 @@ func TestTheProbeRoundKeepsWhatTheLastSamplingPassCouldNotRead(t *testing.T) {
 	if err := harness.collector.probeMeasurement(ctx); err != nil {
 		t.Fatalf("probing: %v", err)
 	}
-	if detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
+	if detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
 		"gateways listed with no figure") {
 		t.Errorf("after the probe round the detail is %q, which has lost the gateways with no figure", detail)
 	}
@@ -246,15 +249,15 @@ func TestAnUnresolvedLookupStoredBeforeARestartIsResolvedByTheFirstLeasePassAfte
 	}
 	hostname := "example-restart-host"
 	expires := referenceEpoch() + 86400
-	if err := harness.store.InsertDHCPLease(ctx, provider, store.DHCPLease{
+	if err := harness.store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		Backend: "dnsmasq", Address: "198.51.100.30", Hostname: &hostname, LeaseState: "active",
-		GenerationKey: store.GenerationKeyOf(nil, &expires, 0), ExpiresAt: &expires,
+		GenerationKey: vocab.GenerationKeyOf(nil, &expires, 0), ExpiresAt: &expires,
 		ObservedAt: referenceEpoch() + 3600,
 	}); err != nil {
 		t.Fatalf("writing the lease: %v", err)
 	}
 	// What the first lease pass after the restart derives.
-	if err := restarted.derive(ctx, derivation{hostnames: true, hostnamesBefore: referenceEpoch() + 3600}); err != nil {
+	if err := restarted.Derive(ctx, derive.Derivation{Hostnames: true, HostnamesBefore: referenceEpoch() + 3600}); err != nil {
 		t.Fatalf("deriving the lease pass: %v", err)
 	}
 	if resolved := scalarCount(t, harness.store, `SELECT count(*) FROM dns_resolution
@@ -377,9 +380,9 @@ func TestAReacquiredAddressIsANewHoldingWhateverTheOrderInterfacesAreListed(t *t
 func unresolvedLookup(t *testing.T, database *store.Store, key, hostname string, lookedUpAt, ingestedAt int64) {
 	t.Helper()
 	name := hostname
-	if err := database.InsertDNSResolution(context.Background(), store.DNSResolution{
+	if err := database.InsertDNSResolution(context.Background(), vocab.DNSResolution{
 		LookupKey: key, ClientAddress: name, ClientHostname: &name,
-		ClientResolution: store.ClientResolutionUnknown, Domain: "example-site.example.invalid",
+		ClientResolution: vocab.ClientResolutionUnknown, Domain: "example-site.example.invalid",
 		Resolver: "unbound", Action: "pass", LookedUpAt: lookedUpAt, IngestedAt: ingestedAt,
 	}); err != nil {
 		t.Fatalf("writing the lookup: %v", err)
@@ -424,9 +427,9 @@ func TestAFailedLeasePassDoesNotUseUpALookupsRetry(t *testing.T) {
 		t.Fatalf("looking up the provider: %v", err)
 	}
 	hostname := "example-host-failed"
-	if err := harness.store.InsertDHCPLease(ctx, provider, store.DHCPLease{
+	if err := harness.store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		Backend: "dnsmasq", Address: "198.51.100.41", Hostname: &hostname, LeaseState: "reserved",
-		GenerationKey: store.GenerationKeyOf(nil, nil, referenceEpoch()), ObservedAt: referenceEpoch(),
+		GenerationKey: vocab.GenerationKeyOf(nil, nil, referenceEpoch()), ObservedAt: referenceEpoch(),
 	}); err != nil {
 		t.Fatalf("writing the lease: %v", err)
 	}
@@ -435,7 +438,7 @@ func TestAFailedLeasePassDoesNotUseUpALookupsRetry(t *testing.T) {
 		t.Fatalf("the lease pass: %v", err)
 	}
 	if done, resolution := examined(t, harness.store, "example-key-failed-pass"); !done ||
-		resolution != store.ClientResolutionLeased {
+		resolution != vocab.ClientResolutionLeased {
 		t.Errorf("the first lease pass that read the backend left the lookup examined %t, %s", done, resolution)
 	}
 }

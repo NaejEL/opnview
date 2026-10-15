@@ -11,9 +11,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The retention purge's ordering against the passes: AC1 to AC4 of
@@ -151,7 +153,7 @@ func nullText(value sql.NullInt64) string {
 }
 
 // expectedSlots keys every contribution as one family of one period keys it.
-func expectedSlots(all []contribution, period store.Period, family string) map[string]slotFigures {
+func expectedSlots(all []contribution, period vocab.Period, family string) map[string]slotFigures {
 	sums := map[string]slotFigures{}
 	for _, c := range all {
 		slot := period.SlotStart(c.at)
@@ -202,7 +204,7 @@ func expectedSlots(all []contribution, period store.Period, family string) map[s
 var orderingFamilies = []string{"volume", "rule", "domain", "client", "peer", "owner"}
 
 // storedSlots reads one family of one period back, keyed as expectedSlots keys it.
-func storedSlots(t *testing.T, database *store.Store, period store.Period, family string) map[string]slotFigures {
+func storedSlots(t *testing.T, database *store.Store, period vocab.Period, family string) map[string]slotFigures {
 	t.Helper()
 	var key, table string
 	switch family {
@@ -254,7 +256,7 @@ func storedSlots(t *testing.T, database *store.Store, period store.Period, famil
 func assertSlotsArePurgedPartPlusFlows(t *testing.T, database *store.Store) {
 	t.Helper()
 	all := contributions(t, database)
-	for _, period := range store.Periods() {
+	for _, period := range vocab.Periods() {
 		for _, family := range orderingFamilies {
 			expected := expectedSlots(all, period, family)
 			stored := storedSlots(t, database, period, family)
@@ -275,7 +277,7 @@ func assertSlotsArePurgedPartPlusFlows(t *testing.T, database *store.Store) {
 }
 
 // slotBytesAt sums the volume family's bytes in the slot of period holding instant.
-func slotBytesAt(t *testing.T, database *store.Store, period store.Period, instant int64) int {
+func slotBytesAt(t *testing.T, database *store.Store, period vocab.Period, instant int64) int {
 	t.Helper()
 	return scalarCount(t, database, "SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_"+period.Name+
 		" WHERE period_start_at = ?", period.SlotStart(instant))
@@ -313,7 +315,7 @@ func assertTheProbeIsInEverySlot(t *testing.T, harness *probeHarness, observed i
 	if purged := scalarCount(t, harness.store, "SELECT coalesce(sum(bytes), 0) FROM purged_flow_hour"); purged != 77 {
 		t.Errorf("the purged part holds %d bytes, not the probe's 77", purged)
 	}
-	for _, period := range store.Periods() {
+	for _, period := range vocab.Periods() {
 		if got := slotBytesAt(t, harness.store, period, observed); got != 77 {
 			t.Errorf("the %s slot holding the probe holds %d bytes, not 77", period.Name, got)
 		}
@@ -334,8 +336,8 @@ func TestAPurgeRequestedBetweenAPassStoreAndItsRefreshWaitsForTheDerivation(t *t
 	waiting := make(chan struct{})
 	purged := make(chan error, 1)
 	ranInsideTheWindow := false
-	harness.collector.hooks.purgeWaits = func() { close(waiting) }
-	harness.collector.hooks.afterStore = func() {
+	harness.collector.Hooks.PurgeWaits = func() { close(waiting) }
+	harness.collector.Hooks.AfterStore = func() {
 		go func() { purged <- harness.collector.Purge(ctx) }()
 		select {
 		case <-waiting:
@@ -372,9 +374,9 @@ func TestWithTheOrderingOffTheNextRefreshStillFillsEverySlot(t *testing.T) {
 	t.Parallel()
 	harness, observed := arrangeProbeRecord(t)
 	ctx := context.Background()
-	harness.collector.hooks.unordered = true
+	harness.collector.Hooks.Unordered = true
 	var purgeErr error
-	harness.collector.hooks.afterStore = func() { purgeErr = harness.collector.Purge(ctx) }
+	harness.collector.Hooks.AfterStore = func() { purgeErr = harness.collector.Purge(ctx) }
 	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
@@ -410,12 +412,12 @@ func TestAPurgeBeforeTheFirstDerivationPlacesWhatItRemoves(t *testing.T) {
 		if record.version == "6" {
 			version = 6
 		}
-		if err := earlier.store.InsertFlow(ctx, store.Flow{
+		if err := earlier.store.InsertFlow(ctx, vocab.Flow{
 			LogDigest: fmt.Sprintf("example-unplaced-%d", index), ObservedAt: observed + int64(index),
 			IngestedAt: referenceEpoch() - 990, InterfaceDevice: record.device,
-			InterfaceLookupState: store.LookupResolved, SrcAddress: record.src, DstAddress: record.dst,
+			InterfaceLookupState: vocab.LookupResolved, SrcAddress: record.src, DstAddress: record.dst,
 			Protocol: "tcp", IPVersion: version, Action: record.action, Direction: "in",
-			PacketBytes: record.bytes, RuleLookupState: store.LookupNotFound,
+			PacketBytes: record.bytes, RuleLookupState: vocab.LookupNotFound,
 		}); err != nil {
 			t.Fatalf("storing an unplaced flow: %v", err)
 		}
@@ -502,8 +504,8 @@ func arrangeEveryStoringSource(t *testing.T) *probeHarness {
 			t.Fatalf("probing: %v", err)
 		}
 	}
-	for kind, want := range map[string]string{KindFirewallLog: ProviderPf, KindDHCPLease: ProviderDnsmasq,
-		KindDNSLookup: ProviderUnbound} {
+	for kind, want := range map[string]string{core.KindFirewallLog: ProviderPf, core.KindDHCPLease: ProviderDnsmasq,
+		core.KindDNSLookup: ProviderUnbound} {
 		if key := harness.activeKeyOf(t, kind); key != want {
 			t.Fatalf("the %s kind activated %q, not %q", kind, key, want)
 		}
@@ -562,7 +564,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 	// Nine minutes before a Monday's midnight, so the run crosses an hour, a day and a week.
 	start := referenceInstant().Add(23*time.Hour + 51*time.Minute)
 	setClock(harness, start)
-	if store.PeriodWeek.SlotStart(start.Unix()) == store.PeriodWeek.SlotStart(start.Add(18*time.Minute).Unix()) {
+	if vocab.PeriodWeek.SlotStart(start.Unix()) == vocab.PeriodWeek.SlotStart(start.Add(18*time.Minute).Unix()) {
 		t.Fatal("the run does not cross an ISO week, so the composed week is not exercised")
 	}
 	if err := harness.store.SetSetting(ctx, "retention_seconds", "600", start.Unix()); err != nil {
@@ -591,13 +593,13 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		purgeWaits sync.Mutex
 		waited     bool
 	)
-	harness.collector.hooks.purgeWaits = func() {
+	harness.collector.Hooks.PurgeWaits = func() {
 		purgeWaits.Lock()
 		waited = true
 		purgeWaits.Unlock()
 		settled <- struct{}{}
 	}
-	harness.collector.hooks.afterStore = func() {
+	harness.collector.Hooks.AfterStore = func() {
 		stored <- struct{}{}
 		<-settled
 	}
@@ -698,14 +700,14 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 	// Every record was offered first when it was newer than the last purge's watermark, so
 	// every one was ingested, and stored again never.
 	var truth, connections int64
-	truthBySlot := map[store.Period]map[int64]slotFigures{}
-	for _, period := range store.Periods() {
+	truthBySlot := map[vocab.Period]map[int64]slotFigures{}
+	for _, period := range vocab.Periods() {
 		truthBySlot[period] = map[int64]slotFigures{}
 	}
 	for _, record := range offered {
 		truth += record.bytes
 		connections++
-		for _, period := range store.Periods() {
+		for _, period := range vocab.Periods() {
 			slot := truthBySlot[period][period.SlotStart(record.observedAt)]
 			slot.add(record.action, record.bytes, 1)
 			truthBySlot[period][period.SlotStart(record.observedAt)] = slot
@@ -727,7 +729,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 	}
 
 	// Every slot of the families every flow reaches holds what the records sum to...
-	for _, period := range store.Periods() {
+	for _, period := range vocab.Periods() {
 		for _, family := range []string{"volume", "rule"} {
 			bySlot := map[int64]slotFigures{}
 			for key, figures := range storedSlots(t, harness.store, period, family) {

@@ -9,8 +9,11 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/pluginkind"
 	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
 	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // How a push entry's records become rows (PS3, PS8): its regular expression -- the fast path, no
@@ -64,7 +67,7 @@ type PushEnvironment struct {
 // its sink, for the hub to route to.
 func (l *Loaded) PushSubscriptions(environment PushEnvironment) ([]push.Subscription, error) {
 	var subscriptions []push.Subscription
-	for _, plugin := range l.plugins {
+	for _, plugin := range l.Members {
 		for _, binding := range plugin.pushes {
 			if binding.table.Table == "" && environment.Kinds == nil {
 				return nil, fmt.Errorf("plugin: %s delivers %s records and no receiver of them is wired",
@@ -97,7 +100,7 @@ func pushSubscriptionOf(plugin *Plugin, binding *pushBinding, environment PushEn
 // belong to.
 func (l *Loaded) PushProviders() map[string][2]string {
 	providers := map[string][2]string{}
-	for _, plugin := range l.plugins {
+	for _, plugin := range l.Members {
 		for _, binding := range plugin.pushes {
 			providers[binding.ID()] = [2]string{binding.providerKind, binding.providerKey}
 		}
@@ -259,15 +262,15 @@ func callParse(ctx context.Context, plugin *Plugin, session provider.Session, fu
 		counts[pushCounterScriptFailed]++
 		return nil, pushCounterScriptFailed
 	}
-	answer, _, failed := plugin.script.runWith(ctx, session, pushParseNamespace, function, runOptions{plain: true},
+	answer, _, failed := plugin.script.RunWith(ctx, session, pushParseNamespace, function, runtime.RunOptions{Plain: true},
 		messages)
 	if failed != nil {
 		reason := pushCounterScriptFailed
-		switch failed.code {
-		case failureTimeout:
+		switch failed.Code {
+		case runtime.FailureTimeout:
 			reason = pushCounterScriptTimeout
-		case failureVersionUnsupported:
-			reason = string(failureVersionUnsupported)
+		case runtime.FailureVersionUnsupported:
+			reason = string(runtime.FailureVersionUnsupported)
 		}
 		counts[reason]++
 		return nil, reason
@@ -337,8 +340,8 @@ func (a pushProviderAdapter) Collect(context.Context, provider.Session, map[stri
 }
 
 func (a pushProviderAdapter) result() provider.Result {
-	result := provider.Result{State: store.StateUnavailable, Outcome: store.OutcomeListenerNotConfigured,
-		Probe: scriptEndpoint(a.plugin.Name, ManifestFile), Separable: true,
+	result := provider.Result{State: vocab.StateUnavailable, Outcome: vocab.OutcomeListenerNotConfigured,
+		Probe: scriptEndpoint(a.plugin.Name, contract.ManifestFile), Separable: true,
 		Detail: "no push listener of this provider's protocol is configured: start opnview with --push-listen"}
 	var hub *push.Hub
 	if a.plugin.pushHost != nil {
@@ -358,13 +361,13 @@ func (a pushProviderAdapter) result() provider.Result {
 		}
 		listening = true
 		if state.Liveness.Alive {
-			result.State, result.Outcome = store.StateReachable, store.OutcomeHealthy
+			result.State, result.Outcome = vocab.StateReachable, vocab.OutcomeHealthy
 			result.Detail = fmt.Sprintf("the push entry %s is receiving", binding.declaration.Name)
 			return result
 		}
 	}
 	if listening {
-		result.Outcome = store.OutcomeNoMessageReceived
+		result.Outcome = vocab.OutcomeNoMessageReceived
 		result.Detail = "the listener is open and no message of this provider arrived within its liveness span: " +
 			"the firewall's export is off, filtered, or sent elsewhere"
 	}

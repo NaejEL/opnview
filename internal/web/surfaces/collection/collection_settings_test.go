@@ -2,16 +2,19 @@ package collection_test
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/surfaces/collection"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
+	"github.com/NaejEL/opnview/internal/web/surfaces/collection"
+	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 )
 
 // mapReader is a configuration holding exactly the rows given.
@@ -32,27 +35,27 @@ func loadAccepts(key, value string) bool {
 // TestTheResolverCardsAreDrawnExactlyWhenTheRegistryHoldsTheirKind is AC9 and AC13.
 func TestTheResolverCardsAreDrawnExactlyWhenTheRegistryHoldsTheirKind(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	page := webtest.PageSource(t, h, webtest.PathCollection)
-	for kind, interval := range map[string][2]string{"resolver_cache": {"1", web.UnitMinutes},
-		"resolver_local_data": {"5", web.UnitMinutes}} {
-		card := webtest.CardOf(t, page, kind)
+	for kind, interval := range map[string][2]string{"resolver_cache": {"1", settingfields.UnitMinutes},
+		"resolver_local_data": {"5", settingfields.UnitMinutes}} {
+		card := collectiontest.CardOf(t, page, kind)
 		// The interval in force is shown once, in its field, in its longest exact unit.
-		if !webtest.DurationFieldShows(t, card, webtest.FieldInterval+"_"+kind, interval[0], interval[1]) {
+		if !collectiontest.DurationFieldShows(t, card, webtest.FieldInterval+"_"+kind, interval[0], interval[1]) {
 			t.Errorf("the %s card's interval field does not hold %s %s", kind, interval[0], interval[1])
 		}
 		if strings.Contains(card, `class="in-force"`) {
 			t.Errorf("the %s card shows its interval in force twice", kind)
 		}
 		// AC13: no measurement, no suggestion, no fill control.
-		for _, absent := range []string{webtest.CatalogueText(t, "collection.group.measurement"),
-			webtest.CatalogueText(t, "collection.group.suggestion"), `name="` + webtest.FieldFill + `"`} {
+		for _, absent := range []string{collectiontest.CatalogueText(t, "collection.group.measurement"),
+			collectiontest.CatalogueText(t, "collection.group.suggestion"), `name="` + webtest.FieldFill + `"`} {
 			if strings.Contains(card, absent) {
 				t.Errorf("the %s card carries %q", kind, absent)
 			}
 		}
 		for _, row := range []string{"unbound", "dnsmasq"} {
-			if !webtest.StateShown(t, card, web.ProviderLabelKey(kind, row), msgAvailabilityNotYetProbed) {
+			if !collectiontest.StateShown(t, card, web.ProviderLabelKey(kind, row), msgAvailabilityNotYetProbed) {
 				t.Errorf("the %s card does not show the availability of %s", kind, row)
 			}
 		}
@@ -90,14 +93,14 @@ func TestTheResolverCardsAreDrawnExactlyWhenTheRegistryHoldsTheirKind(t *testing
 // TestASavedResolverIntervalReachesTheRunningServiceAndRefusalsStoreNothing is AC10.
 func TestASavedResolverIntervalReachesTheRunningServiceAndRefusalsStoreNothing(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	generation := h.Live.Generation()
 	status, page := webtest.Followed(t, h, h.Post(webtest.PathCollectionSettings, url.Values{
 		webtest.FieldCard: {"resolver_local_data"}, webtest.CardFieldName("resolver_local_data", webtest.FieldInterval): {"420"}}))
 	if status != http.StatusSeeOther {
 		t.Fatalf("saving an interval answered %d", status)
 	}
-	if got := h.Setting(config.KeyResolverLocalDataInterval); got != "420" {
+	if got := collectiontest.Setting(h, config.KeyResolverLocalDataInterval); got != "420" {
 		t.Errorf("the stored interval is %q", got)
 	}
 	loaded, err := config.Load(context.Background(), h.Store)
@@ -111,25 +114,25 @@ func TestASavedResolverIntervalReachesTheRunningServiceAndRefusalsStoreNothing(t
 	if len(received) != 1 || received[0].ResolverLocalDataInterval != 420*time.Second {
 		t.Error("the running collector was not configured with the saved interval")
 	}
-	card := webtest.CardOf(t, page, "resolver_local_data")
-	if !strings.Contains(card, webtest.CatalogueText(t, msgCollectionSaved)) ||
-		!webtest.DurationFieldShows(t, card, webtest.FieldInterval+"_resolver_local_data", "7", web.UnitMinutes) {
+	card := collectiontest.CardOf(t, page, "resolver_local_data")
+	if !strings.Contains(card, collectiontest.CatalogueText(t, msgCollectionSaved)) ||
+		!collectiontest.DurationFieldShows(t, card, webtest.FieldInterval+"_resolver_local_data", "7", settingfields.UnitMinutes) {
 		t.Error("the save is not confirmed in its card with the interval now in force")
 	}
 
 	// A figure in a unit is stored in seconds; a unit that is not one is refused.
 	status, _ = webtest.StatusAndBody(t, h.Post(webtest.PathCollectionSettings, url.Values{
 		webtest.FieldCard: {"resolver_local_data"}, webtest.CardFieldName("resolver_local_data", webtest.FieldInterval): {"2"},
-		web.UnitFieldName(webtest.CardFieldName("resolver_local_data", webtest.FieldInterval)): {web.UnitHours}}))
-	if status != http.StatusSeeOther || h.Setting(config.KeyResolverLocalDataInterval) != "7200" {
+		settingfields.UnitFieldName(webtest.CardFieldName("resolver_local_data", webtest.FieldInterval)): {settingfields.UnitHours}}))
+	if status != http.StatusSeeOther || collectiontest.Setting(h, config.KeyResolverLocalDataInterval) != "7200" {
 		t.Errorf("2 hours answered %d and stored %q, want 7200", status,
-			h.Setting(config.KeyResolverLocalDataInterval))
+			collectiontest.Setting(h, config.KeyResolverLocalDataInterval))
 	}
 	status, page = webtest.StatusAndBody(t, h.Post(webtest.PathCollectionSettings, url.Values{
 		webtest.FieldCard: {"resolver_local_data"}, webtest.CardFieldName("resolver_local_data", webtest.FieldInterval): {"2"},
-		web.UnitFieldName(webtest.CardFieldName("resolver_local_data", webtest.FieldInterval)): {"fortnights"}}))
-	if status != http.StatusBadRequest || h.Setting(config.KeyResolverLocalDataInterval) != "7200" ||
-		!strings.Contains(webtest.CardOf(t, page, "resolver_local_data"), webtest.CatalogueText(t, msgDurationUnitUnknown)) {
+		settingfields.UnitFieldName(webtest.CardFieldName("resolver_local_data", webtest.FieldInterval)): {"fortnights"}}))
+	if status != http.StatusBadRequest || collectiontest.Setting(h, config.KeyResolverLocalDataInterval) != "7200" ||
+		!strings.Contains(collectiontest.CardOf(t, page, "resolver_local_data"), collectiontest.CatalogueText(t, msgDurationUnitUnknown)) {
 		t.Errorf("an unknown unit answered %d and was not refused against its field", status)
 	}
 	generation = h.Live.Generation()
@@ -145,9 +148,9 @@ func TestASavedResolverIntervalReachesTheRunningServiceAndRefusalsStoreNothing(t
 		if _, present, err := h.Store.Setting(context.Background(), config.KeyResolverCacheInterval); err != nil || present {
 			t.Errorf("the refused interval %q was stored", typed)
 		}
-		card := webtest.CardOf(t, page, "resolver_cache")
+		card := collectiontest.CardOf(t, page, "resolver_cache")
 		id := webtest.FieldInterval + "_resolver_cache"
-		if webtest.FieldValue(card, id) != typed || !strings.Contains(card, `aria-describedby="`+id+`_refusal"`) ||
+		if collectiontest.FieldValue(card, id) != typed || !strings.Contains(card, `aria-describedby="`+id+`_refusal"`) ||
 			!strings.Contains(card, `class="in-force"`) {
 			t.Errorf("the refused interval %q is not kept and marked in its field, the interval in force beneath", typed)
 		}
@@ -160,21 +163,21 @@ func TestASavedResolverIntervalReachesTheRunningServiceAndRefusalsStoreNothing(t
 // TestASelectionSavedOnAResolverCardIsStoredAndApplied is AC12.
 func TestASelectionSavedOnAResolverCardIsStoredAndApplied(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	status, page := webtest.Followed(t, h, h.Post(webtest.PathCollectionSettings, url.Values{
 		webtest.FieldCard: {"resolver_cache"}, webtest.CardFieldName("resolver_cache", webtest.FieldInterval): {"60"},
 		webtest.CardFieldName("resolver_cache", webtest.FieldSelectionPrefix+"dnsmasq"): {"off"}, webtest.CardFieldName("resolver_cache", webtest.FieldSelectionPrefix+"unbound"): {"on"}}))
 	if status != http.StatusSeeOther {
 		t.Fatalf("saving a selection answered %d", status)
 	}
-	if h.Setting(config.KeySourceSelection("resolver_cache", "dnsmasq")) != "off" ||
-		h.Setting(config.KeySourceSelection("resolver_cache", "unbound")) != "on" {
+	if collectiontest.Setting(h, config.KeySourceSelection("resolver_cache", "dnsmasq")) != "off" ||
+		collectiontest.Setting(h, config.KeySourceSelection("resolver_cache", "unbound")) != "on" {
 		t.Error("the selections were not stored under their keys")
 	}
 	if got := h.Collector.ReselectedKinds(); len(got) != 1 || got[0] != "resolver_cache" {
 		t.Errorf("the running collector applied %v, want [resolver_cache]", got)
 	}
-	if webtest.SelectedIn(t, webtest.CardOf(t, page, "resolver_cache"), webtest.CardFieldName("resolver_cache", "selection_unbound")) != "on" {
+	if collectiontest.SelectedIn(t, collectiontest.CardOf(t, page, "resolver_cache"), webtest.CardFieldName("resolver_cache", "selection_unbound")) != "on" {
 		t.Error("the card does not show the selection now in force")
 	}
 
@@ -183,11 +186,11 @@ func TestASelectionSavedOnAResolverCardIsStoredAndApplied(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Errorf("a selection that is not one of the three answered %d", status)
 	}
-	if !strings.Contains(webtest.CardOf(t, page, "resolver_cache"),
+	if !strings.Contains(collectiontest.CardOf(t, page, "resolver_cache"),
 		`aria-describedby="resolver_cache.selection_unbound_refusal"`) {
 		t.Error("the refused selection is not marked")
 	}
-	if h.Setting(config.KeySourceSelection("resolver_cache", "unbound")) != "on" {
+	if collectiontest.Setting(h, config.KeySourceSelection("resolver_cache", "unbound")) != "on" {
 		t.Error("a refused selection was stored")
 	}
 }
@@ -223,7 +226,7 @@ func TestEverySettingAcceptsExactlyWhatConfigLoadAccepts(t *testing.T) {
 	for setting, values := range cases {
 		t.Run(setting.key, func(t *testing.T) {
 			t.Parallel()
-			h := webtest.SignedInHarness(t)
+			h := collectiontest.SignedInHarness(t)
 			for _, value := range values {
 				before, wasPresent, err := h.Store.Setting(context.Background(), setting.key)
 				if err != nil {
@@ -304,7 +307,7 @@ func inForceLineOf(card, id string) string {
 // longest exact unit; and drawn again beneath the field only when it is a named state.
 func TestEverySettingShowsItsValueInForce(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	defaults := config.Defaults()
 	for _, spec := range collection.SettingCardSpecs() {
 		for _, setting := range spec.Settings {
@@ -318,21 +321,21 @@ func TestEverySettingShowsItsValueInForce(t *testing.T) {
 	}
 	page := webtest.PageSource(t, h, webtest.PathCollection)
 	for _, spec := range collection.SettingCardSpecs() {
-		card := webtest.CardOf(t, page, spec.ID)
+		card := collectiontest.CardOf(t, page, spec.ID)
 		for _, setting := range spec.Settings {
 			switch {
 			case setting.Rule == collection.RuleAggregateMode:
-				if webtest.SelectedIn(t, card, setting.Key) != webtest.AggregateModeFull {
+				if collectiontest.SelectedIn(t, card, setting.Key) != webtest.AggregateModeFull {
 					t.Error("the site-name mode does not show its default")
 				}
 			case setting.Duration:
-				figure, unit := web.FieldDuration(collection.SettingInForce(setting, defaults))
-				if !webtest.DurationFieldShows(t, card, setting.Key, figure, unit) {
+				figure, unit := settingfields.FieldDuration(collection.SettingInForce(setting, defaults))
+				if !collectiontest.DurationFieldShows(t, card, setting.Key, figure, unit) {
 					t.Errorf("%s does not show its default %s %s with no row", setting.Key, figure, unit)
 				}
 			default:
 				want := strconv.FormatInt(collection.SettingInForce(setting, defaults), 10)
-				if webtest.FieldValue(card, setting.Key) != want {
+				if collectiontest.FieldValue(card, setting.Key) != want {
 					t.Errorf("%s does not show its default %s with no row", setting.Key, want)
 				}
 			}
@@ -362,34 +365,34 @@ func TestEverySettingShowsItsValueInForce(t *testing.T) {
 	}
 	page = webtest.PageSource(t, h, webtest.PathCollection)
 	expected := map[string][2]string{
-		config.KeyLegPairingWindow:    {"4", web.UnitSeconds},
-		config.KeyAttributionMaxDelay: {"9", web.UnitSeconds},
-		config.KeyCacheAnswerDelay:    {"30", web.UnitMinutes},
-		config.KeyRetentionSeconds:    {"0", web.UnitSeconds},
+		config.KeyLegPairingWindow:    {"4", settingfields.UnitSeconds},
+		config.KeyAttributionMaxDelay: {"9", settingfields.UnitSeconds},
+		config.KeyCacheAnswerDelay:    {"30", settingfields.UnitMinutes},
+		config.KeyRetentionSeconds:    {"0", settingfields.UnitSeconds},
 	}
 	for _, spec := range collection.SettingCardSpecs() {
-		card := webtest.CardOf(t, page, spec.ID)
+		card := collectiontest.CardOf(t, page, spec.ID)
 		for _, setting := range spec.Settings {
 			switch {
 			case setting.Rule == collection.RuleAggregateMode:
-				if webtest.SelectedIn(t, card, setting.Key) != webtest.AggregateModeNoDomains {
+				if collectiontest.SelectedIn(t, card, setting.Key) != webtest.AggregateModeNoDomains {
 					t.Error("the site-name mode does not show the stored mode")
 				}
 			case setting.Duration:
 				want := expected[setting.Key]
-				if !webtest.DurationFieldShows(t, card, setting.Key, want[0], want[1]) {
+				if !collectiontest.DurationFieldShows(t, card, setting.Key, want[0], want[1]) {
 					t.Errorf("%s does not show its stored value as %s %s", setting.Key, want[0], want[1])
 				}
 			default:
-				if webtest.FieldValue(card, setting.Key) != stored[setting.Key] {
+				if collectiontest.FieldValue(card, setting.Key) != stored[setting.Key] {
 					t.Errorf("%s does not show its stored value %s", setting.Key, stored[setting.Key])
 				}
 			}
 		}
 	}
 	// An unlimited retention is a named state, so it is drawn beneath its field.
-	if line := inForceLineOf(webtest.CardOf(t, page, "storage"), config.KeyRetentionSeconds); !strings.Contains(line,
-		`<span class="state">`+webtest.CatalogueText(t, msgRetentionUnlimited)+"</span>") {
+	if line := inForceLineOf(collectiontest.CardOf(t, page, "storage"), config.KeyRetentionSeconds); !strings.Contains(line,
+		`<span class="state">`+collectiontest.CatalogueText(t, msgRetentionUnlimited)+"</span>") {
 		t.Errorf("an unlimited retention is not its own state: %q", line)
 	}
 }
@@ -400,27 +403,27 @@ func TestEverySettingShowsItsValueInForce(t *testing.T) {
 // is not drawn as a success, and confirms one horizon only.
 func TestAShorterRetentionIsConfirmedForTheValueItWarnedAbout(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	form := url.Values{webtest.FieldCard: {"storage"}, config.KeyRetentionSeconds: {"1"},
-		web.UnitFieldName(config.KeyRetentionSeconds): {web.UnitDays}, config.KeyAggregateMode: {"full"}}
+		settingfields.UnitFieldName(config.KeyRetentionSeconds): {settingfields.UnitDays}, config.KeyAggregateMode: {"full"}}
 	status, page := webtest.StatusAndBody(t, h.Post(webtest.PathCollectionSettings, form))
 	if status != http.StatusOK {
 		t.Fatalf("a shorter retention answered %d", status)
 	}
-	if got := h.Setting(config.KeyRetentionSeconds); got != "7776000" {
+	if got := collectiontest.Setting(h, config.KeyRetentionSeconds); got != "7776000" {
 		t.Errorf("a shorter retention was stored before its confirmation: %q", got)
 	}
-	card := webtest.CardOf(t, page, "storage")
+	card := collectiontest.CardOf(t, page, "storage")
 	for _, expected := range []string{
-		`<p class="notice bad">` + webtest.CatalogueText(t, msgRetentionConfirm) + "</p>",
-		"<dt>" + webtest.CatalogueText(t, msgLabelRetentionNow) + "</dt>\n<dd>" + webtest.DurationText(t, 7776000) + "</dd>",
-		"<dt>" + webtest.CatalogueText(t, msgLabelRetentionRequested) + "</dt>\n<dd>" + webtest.DurationText(t, 86400) + "</dd>",
+		`<p class="notice bad">` + collectiontest.CatalogueText(t, msgRetentionConfirm) + "</p>",
+		"<dt>" + collectiontest.CatalogueText(t, msgLabelRetentionNow) + "</dt>\n<dd>" + collectiontest.DurationText(t, 7776000) + "</dd>",
+		"<dt>" + collectiontest.CatalogueText(t, msgLabelRetentionRequested) + "</dt>\n<dd>" + collectiontest.DurationText(t, 86400) + "</dd>",
 		`<input type="hidden" name="` + config.KeyRetentionSeconds + `" value="86400">`,
 		`<input type="hidden" name="` + webtest.FieldConfirm + `" value="86400">`,
 		`<button type="submit" name="` + webtest.FieldCard + `" value="storage" formaction="` + webtest.PathCollectionSettings +
 			`#card_storage" class="destructive">`,
 		`<button type="submit" name="` + webtest.FieldCancel + `" value="storage" formaction="` + webtest.PathCollectionSettings +
-			`#card_storage" class="secondary">` + webtest.CatalogueText(t, "action.cancel"),
+			`#card_storage" class="secondary">` + collectiontest.CatalogueText(t, "action.cancel"),
 	} {
 		if !strings.Contains(card, expected) {
 			t.Errorf("the confirmation does not carry %q", expected)
@@ -438,24 +441,24 @@ func TestAShorterRetentionIsConfirmedForTheValueItWarnedAbout(t *testing.T) {
 	bound := url.Values{webtest.FieldCard: {"storage"}, config.KeyRetentionSeconds: {"7000000"},
 		config.KeyAggregateMode: {"full"}, webtest.FieldConfirm: {"86400"}}
 	status, page = webtest.StatusAndBody(t, h.Post(webtest.PathCollectionSettings, bound))
-	if status != http.StatusOK || h.Setting(config.KeyRetentionSeconds) != "7776000" {
+	if status != http.StatusOK || collectiontest.Setting(h, config.KeyRetentionSeconds) != "7776000" {
 		t.Errorf("a horizon other than the one confirmed answered %d and stored %q", status,
-			h.Setting(config.KeyRetentionSeconds))
+			collectiontest.Setting(h, config.KeyRetentionSeconds))
 	}
-	if !strings.Contains(webtest.CardOf(t, page, "storage"), `name="`+webtest.FieldConfirm+`" value="7000000"`) {
+	if !strings.Contains(collectiontest.CardOf(t, page, "storage"), `name="`+webtest.FieldConfirm+`" value="7000000"`) {
 		t.Error("a horizon other than the one confirmed is not asked about afresh")
 	}
 
 	// The confirmation as drawn stores the horizon it named.
 	webtest.Discard(t, h.Post(webtest.PathCollectionSettings, url.Values{webtest.FieldCard: {"storage"},
 		config.KeyRetentionSeconds: {"86400"}, config.KeyAggregateMode: {"full"}, webtest.FieldConfirm: {"86400"}}))
-	if got := h.Setting(config.KeyRetentionSeconds); got != "86400" {
+	if got := collectiontest.Setting(h, config.KeyRetentionSeconds); got != "86400" {
 		t.Errorf("a confirmed retention was not stored: %q", got)
 	}
 	// A longer one, or unlimited, purges nothing more and needs no confirmation.
 	webtest.Discard(t, h.Post(webtest.PathCollectionSettings, url.Values{webtest.FieldCard: {"storage"},
 		config.KeyRetentionSeconds: {"0"}, config.KeyAggregateMode: {"full"}}))
-	if got := h.Setting(config.KeyRetentionSeconds); got != "0" {
+	if got := collectiontest.Setting(h, config.KeyRetentionSeconds); got != "0" {
 		t.Errorf("an unlimited retention waited for a confirmation: %q", got)
 	}
 }
@@ -464,7 +467,7 @@ func TestAShorterRetentionIsConfirmedForTheValueItWarnedAbout(t *testing.T) {
 // config.Load, so a bound added there is stated without another edit.
 func TestThePairingWindowRefusalStatesTheRangeConfigAccepts(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	status, page := webtest.StatusAndBody(t, h.Post(webtest.PathCollectionSettings, url.Values{
 		webtest.FieldCard: {"pairing"}, config.KeyLegPairingWindow: {"-1"}}))
 	if status != http.StatusBadRequest {
@@ -481,17 +484,17 @@ func TestThePairingWindowRefusalStatesTheRangeConfigAccepts(t *testing.T) {
 		t.Errorf("the range's low end %d is not config.Load's", low)
 	}
 	top := mustSeconds(t, found.High.Parts)
-	high := webtest.DurationText(t, top)
+	high := collectiontest.DurationText(t, top)
 	if !loadAccepts(config.KeyLegPairingWindow, strconv.FormatInt(top, 10)) ||
 		loadAccepts(config.KeyLegPairingWindow, strconv.FormatInt(top+1, 10)) {
 		t.Errorf("the range's high end %d is not config.Load's", top)
 	}
-	refusal := webtest.CardOf(t, page, "pairing")
+	refusal := collectiontest.CardOf(t, page, "pairing")
 	refusal = refusal[strings.Index(refusal, `<p class="field-refusal"`):]
 	refusal = refusal[:strings.Index(refusal, "</p>")]
-	for _, expected := range []string{webtest.CatalogueText(t, msgValueOutOfRange),
-		webtest.CatalogueText(t, "range.accepted_from") + " " + webtest.DurationText(t, low) + " " +
-			webtest.CatalogueText(t, "range.to"), high} {
+	for _, expected := range []string{collectiontest.CatalogueText(t, msgValueOutOfRange),
+		collectiontest.CatalogueText(t, "range.accepted_from") + " " + collectiontest.DurationText(t, low) + " " +
+			collectiontest.CatalogueText(t, "range.to"), high} {
 		if !strings.Contains(refusal, expected) {
 			t.Errorf("the refusal does not state %q: %s", expected, refusal)
 		}
@@ -499,7 +502,7 @@ func TestThePairingWindowRefusalStatesTheRangeConfigAccepts(t *testing.T) {
 }
 
 // mustSeconds adds a spelled duration back up into seconds.
-func mustSeconds(t *testing.T, parts []web.DurationPart) int64 {
+func mustSeconds(t *testing.T, parts []settingfields.DurationPart) int64 {
 	t.Helper()
 	var total int64
 	for _, part := range parts {
@@ -508,7 +511,7 @@ func mustSeconds(t *testing.T, parts []web.DurationPart) int64 {
 			t.Fatalf("a duration figure %q is not a number", part.Figure)
 		}
 		matched := false
-		for _, unit := range web.DurationUnits() {
+		for _, unit := range settingfields.DurationUnits() {
 			if part.UnitKey == unit.One || part.UnitKey == unit.Other {
 				total += count * unit.Seconds
 				matched = true

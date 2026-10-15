@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/specialpurpose"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // AC19: Public address and the special-purpose registries.
@@ -72,8 +72,8 @@ func TestPublicAddressSaysWhenTheInstallationIsBehindAnotherNAT(t *testing.T) {
 	// A second address on the same field: the change instant appears, and the first one is
 	// history.
 	bits := int64(24)
-	check(t, f.db.UpsertInterfaceAddress(context.Background(), store.InterfaceAddress{InterfaceID: f.upstream.id,
-		SourceField: store.SourceFieldAddr4, Address: "11.22.33.44", PrefixLength: &bits, AddressFamily: 4}, nil, f.now))
+	check(t, f.db.UpsertInterfaceAddress(context.Background(), vocab.InterfaceAddress{InterfaceID: f.upstream.id,
+		SourceField: vocab.SourceFieldAddr4, Address: "11.22.33.44", PrefixLength: &bits, AddressFamily: 4}, nil, f.now))
 	f.exec(t, "UPDATE interface SET last_seen_at = ? WHERE id = ?", f.now, f.upstream.id)
 	second := decodeData[publicAddressData](t, f.respond(t, "public_address", nil)).Upstreams[0]
 	changed := false

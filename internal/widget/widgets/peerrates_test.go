@@ -7,7 +7,8 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/live"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/samples"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The per-peer current rate (row 24 of the mockup's coverage, docs/widget-api.md) is exposed by the
@@ -53,14 +54,14 @@ func TestAThirdPartyWidgetServesThePerPeerRateFromFilesAlone(t *testing.T) {
 	clientID := f.scalar(t, "SELECT id FROM client WHERE last_address = ? AND identity_kind = 'mac' ORDER BY id LIMIT 1", client.address)
 	at := f.now - 20
 	peers := []string{f.peers[0], f.peers[1]}
-	f.sampleAt(t, at, store.SubjectInterfaceEndpoint, store.InterfaceEndpointKey(client.iface.device, client.address),
-		store.MeasureRateBitsIn, store.UnitBitPerSecond, 900)
-	f.sampleAt(t, at, store.SubjectInterfaceEndpointPair,
-		store.InterfaceEndpointPairKey(client.iface.device, client.address, peers[0]),
-		store.MeasureRateBitsIn, store.UnitBitPerSecond, 600)
-	f.sampleAt(t, at, store.SubjectInterfaceEndpointPair,
-		store.InterfaceEndpointPairKey(client.iface.device, client.address, peers[1]),
-		store.MeasureRateBitsIn, store.UnitBitPerSecond, 300)
+	f.sampleAt(t, at, vocab.SubjectInterfaceEndpoint, vocab.InterfaceEndpointKey(client.iface.device, client.address),
+		vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, 900)
+	f.sampleAt(t, at, vocab.SubjectInterfaceEndpointPair,
+		vocab.InterfaceEndpointPairKey(client.iface.device, client.address, peers[0]),
+		vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, 600)
+	f.sampleAt(t, at, vocab.SubjectInterfaceEndpointPair,
+		vocab.InterfaceEndpointPairKey(client.iface.device, client.address, peers[1]),
+		vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, 300)
 
 	dataDir := t.TempDir()
 	writePlugin(t, dataDir, "example_peer_rates", examplePeerRatesPlugin)
@@ -82,7 +83,7 @@ func TestAThirdPartyWidgetServesThePerPeerRateFromFilesAlone(t *testing.T) {
 		t.Fatalf("the third party's widget served %+v", data.Rows)
 	}
 	for _, row := range data.Rows {
-		if row.Rate["in_bits_per_second"] != want[row.Peer] || row.Rate["state"] != string(store.RateCurrent) ||
+		if row.Rate["in_bits_per_second"] != want[row.Peer] || row.Rate["state"] != string(samples.RateCurrent) ||
 			row.Rate["measure"] != "sampled" || row.Rate["lower_bound"] != true {
 			t.Errorf("%s reads %v", row.Peer, row.Rate)
 		}

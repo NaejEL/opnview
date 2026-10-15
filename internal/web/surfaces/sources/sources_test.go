@@ -2,11 +2,6 @@ package sources_test
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store"
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/surfaces/sources"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -14,6 +9,16 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
+	"github.com/NaejEL/opnview/internal/web/surfaces/sources"
+	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
+	"github.com/NaejEL/opnview/internal/web/webtest/interfacestest"
+	"github.com/NaejEL/opnview/internal/web/webtest/sourcestest"
 )
 
 // sourcesTable returns the providers table's body out of a Sources page.
@@ -43,8 +48,8 @@ func gapsCard(t *testing.T, page string) string {
 // the line beneath it carrying its probe and its detail.
 func sourceRowOf(t *testing.T, table, kind, providerKey string) string {
 	t.Helper()
-	marker := "<td>" + webtest.CatalogueText(t, web.KindLabelKey(kind)) + "</td>\n<td>" +
-		webtest.CatalogueText(t, web.ProviderLabelKey(kind, providerKey)) + "</td>"
+	marker := "<td>" + collectiontest.CatalogueText(t, web.KindLabelKey(kind)) + "</td>\n<td>" +
+		collectiontest.CatalogueText(t, web.ProviderLabelKey(kind, providerKey)) + "</td>"
 	start := strings.Index(table, marker)
 	if start < 0 {
 		t.Fatalf("the table has no row for %s/%s", kind, providerKey)
@@ -57,12 +62,12 @@ func sourceRowOf(t *testing.T, table, kind, providerKey string) string {
 // TestSourcesDrawsOneRowPerProviderWithEveryColumn is AC17.
 func TestSourcesDrawsOneRowPerProviderWithEveryColumn(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	var providers int
 	if err := h.Store.DB().QueryRow("SELECT count(*) FROM provider").Scan(&providers); err != nil {
 		t.Fatalf("counting the providers: %v", err)
 	}
-	h.SetAvailabilityDetail("firewall_log", "pf", store.StateReachable, "test-probe", nil)
+	sourcestest.SetAvailabilityDetail(h, "firewall_log", "pf", vocab.StateReachable, "test-probe", nil)
 	page := webtest.PageSource(t, h, webtest.PathSources)
 	table := sourcesTable(t, page)
 	if got := strings.Count(table, "<tr>"); got != providers || providers == 0 {
@@ -77,19 +82,19 @@ func TestSourcesDrawsOneRowPerProviderWithEveryColumn(t *testing.T) {
 		row := sourceRowOf(t, table, source.Kind, source.ProviderKey)
 		availability, _ := web.AvailabilityOf(source)
 		for _, expected := range []string{
-			webtest.CatalogueText(t, availability),
-			"<td>" + webtest.CatalogueText(t, webtest.YesNo(source.IsActive)) + "</td>",
-			"<td>" + webtest.CatalogueText(t, msgSelectionAuto) + "</td>",
+			collectiontest.CatalogueText(t, availability),
+			"<td>" + collectiontest.CatalogueText(t, webtest.YesNo(source.IsActive)) + "</td>",
+			"<td>" + collectiontest.CatalogueText(t, msgSelectionAuto) + "</td>",
 			probeCell(source.Probe),
-			webtest.CatalogueText(t, msgNoDetail),
+			collectiontest.CatalogueText(t, msgNoDetail),
 		} {
 			if !strings.Contains(row, expected) {
 				t.Errorf("the row of %s/%s does not carry %q", source.Kind, source.ProviderKey, expected)
 			}
 		}
-		checked := webtest.CatalogueText(t, msgNeverChecked)
+		checked := collectiontest.CatalogueText(t, msgNeverChecked)
 		if !source.NotYetProbed() {
-			checked = `<span class="figure">` + web.Instant(source.CheckedAt) + "</span>"
+			checked = `<span class="figure">` + settingfields.Instant(source.CheckedAt) + "</span>"
 		}
 		if !strings.Contains(row, checked) {
 			t.Errorf("the row of %s/%s does not carry its checked instant %q", source.Kind,
@@ -101,17 +106,17 @@ func TestSourcesDrawsOneRowPerProviderWithEveryColumn(t *testing.T) {
 // TestEachConditionRendersItsOwnKeyAndOnlyReachableIsHealthy is AC18.
 func TestEachConditionRendersItsOwnKeyAndOnlyReachableIsHealthy(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
-	h.SetAvailabilityDetail("firewall_log", "pf", store.StateReachable, "test-probe", nil)
-	h.SetAvailabilityDetail("security_event", "suricata", store.StatePresentButDisabled, "test-probe", nil)
-	h.SetAvailabilityDetail("dhcp_lease", "kea", store.StateUnavailable, "test-probe", nil)
+	h := collectiontest.SignedInHarness(t)
+	sourcestest.SetAvailabilityDetail(h, "firewall_log", "pf", vocab.StateReachable, "test-probe", nil)
+	sourcestest.SetAvailabilityDetail(h, "security_event", "suricata", vocab.StatePresentButDisabled, "test-probe", nil)
+	sourcestest.SetAvailabilityDetail(h, "dhcp_lease", "kea", vocab.StateUnavailable, "test-probe", nil)
 	for _, key := range []string{"kea", "dnsmasq", "isc"} {
 		if key != "kea" {
-			h.DropAvailability("dhcp_lease", key)
+			sourcestest.DropAvailability(h, "dhcp_lease", key)
 		}
 	}
-	h.DropAvailability("dns_lookup", "unbound")
-	h.DropAvailability("dns_lookup", "dnsmasq")
+	sourcestest.DropAvailability(h, "dns_lookup", "unbound")
+	sourcestest.DropAvailability(h, "dns_lookup", "dnsmasq")
 
 	table := sourcesTable(t, webtest.PageSource(t, h, webtest.PathSources))
 	for _, expected := range []struct {
@@ -125,11 +130,11 @@ func TestEachConditionRendersItsOwnKeyAndOnlyReachableIsHealthy(t *testing.T) {
 		{"ip_geolocation", "maxmind_geolite2", msgAvailabilityNotYetProbed},
 	} {
 		row := sourceRowOf(t, table, expected.kind, expected.key)
-		if !strings.Contains(row, ">"+webtest.CatalogueText(t, expected.state)+"</span>") {
+		if !strings.Contains(row, ">"+collectiontest.CatalogueText(t, expected.state)+"</span>") {
 			t.Errorf("%s/%s does not read %s", expected.kind, expected.key, expected.state)
 		}
 		if expected.state != msgAvailabilityHealthy &&
-			strings.Contains(row, webtest.CatalogueText(t, msgAvailabilityHealthy)) {
+			strings.Contains(row, collectiontest.CatalogueText(t, msgAvailabilityHealthy)) {
 			t.Errorf("%s/%s reads healthy and is not reachable", expected.kind, expected.key)
 		}
 	}
@@ -145,12 +150,12 @@ func TestEachConditionRendersItsOwnKeyAndOnlyReachableIsHealthy(t *testing.T) {
 		{"dhcp_lease", msgAvailabilityUnavailable},
 		{"dns_lookup", msgAvailabilityUnknown},
 	} {
-		if !webtest.StateShown(t, webtest.CardOf(t, page, expected.kind), msgLabelSourceState, expected.state) {
+		if !collectiontest.StateShown(t, collectiontest.CardOf(t, page, expected.kind), msgLabelSourceState, expected.state) {
 			t.Errorf("the %s card does not read %s", expected.kind, expected.state)
 		}
 	}
-	fresh := webtest.SignedInHarness(t)
-	if !webtest.StateShown(t, webtest.CardOf(t, webtest.PageSource(t, fresh, webtest.PathCollection), "firewall_log"),
+	fresh := collectiontest.SignedInHarness(t)
+	if !collectiontest.StateShown(t, collectiontest.CardOf(t, webtest.PageSource(t, fresh, webtest.PathCollection), "firewall_log"),
 		msgLabelSourceState, msgAvailabilityNotYetProbed) {
 		t.Error("a kind never probed does not read not yet probed on its card")
 	}
@@ -159,11 +164,11 @@ func TestEachConditionRendersItsOwnKeyAndOnlyReachableIsHealthy(t *testing.T) {
 // TestTwoRefusalsOfOneProviderAreDistinguishableThroughTheDetail is AC19.
 func TestTwoRefusalsOfOneProviderAreDistinguishableThroughTheDetail(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	var rows []string
 	for _, detail := range []string{"HTTP 401 from the example endpoint", "HTTP 403 from the example endpoint"} {
 		value := detail
-		h.SetAvailabilityDetail("dhcp_lease", "kea", store.StateUnavailable, "GET /example/probe", &value)
+		sourcestest.SetAvailabilityDetail(h, "dhcp_lease", "kea", vocab.StateUnavailable, "GET /example/probe", &value)
 		row := sourceRowOf(t, sourcesTable(t, webtest.PageSource(t, h, webtest.PathSources)), "dhcp_lease", "kea")
 		if !strings.Contains(row, `<dd class="detail"><span class="datum" translate="no">`+detail+"</span></dd>") {
 			t.Errorf("the detail %q is not rendered verbatim, as data", detail)
@@ -179,28 +184,28 @@ func TestTwoRefusalsOfOneProviderAreDistinguishableThroughTheDetail(t *testing.T
 // asserted in internal/store, beside the statement.
 func TestEveryRecentGapRendersWithItsReasonKey(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	catalogue, err := web.ProductCatalogue(web.SourceLanguage)
 	if err != nil {
 		t.Fatalf("loading the catalogue: %v", err)
 	}
 	if !strings.Contains(gapsCard(t, webtest.PageSource(t, h, webtest.PathSources)),
-		webtest.CatalogueText(t, "state.source.no_recent_gap")) {
+		collectiontest.CatalogueText(t, "state.source.no_recent_gap")) {
 		t.Error("no gap in the window is not a named state")
 	}
 
 	now := h.Clock.Now().Unix()
-	reasons := webtest.GapReasonsOfSchema(t, h)
+	reasons := sourcestest.GapReasonsOfSchema(t, h)
 	for index, reason := range reasons {
 		if _, present := catalogue.Strings[string(web.GapReasonKey(reason))]; !present {
 			t.Errorf("the gap reason %s has no catalogue key", reason)
 		}
 		start := now - int64(3600*(index+1))
-		h.RecordGap("registrable_domain", "public_suffix_list", store.GapReason(reason), start, start+60)
+		collectiontest.RecordGap(h, "registrable_domain", "public_suffix_list", vocab.GapReason(reason), start, start+60)
 	}
 	// One detected a day and a second ago, outside the window.
 	outside := now - int64(sources.RecentGapWindow/time.Second) - 1
-	h.RecordGap("firewall_log", "pf", store.GapDigestOutsideWindow, outside-77, outside)
+	collectiontest.RecordGap(h, "firewall_log", "pf", vocab.GapDigestOutsideWindow, outside-77, outside)
 
 	card := gapsCard(t, webtest.PageSource(t, h, webtest.PathSources))
 	if got := strings.Count(card, "<tr>") - 1; got != len(reasons) {
@@ -208,19 +213,19 @@ func TestEveryRecentGapRendersWithItsReasonKey(t *testing.T) {
 	}
 	for index, reason := range reasons {
 		start := now - int64(3600*(index+1))
-		row := "<td>" + webtest.CatalogueText(t, web.GapReasonKey(reason)) + "</td>\n<td><span class=\"figure\">" +
-			web.Instant(start) + "</span></td>\n<td><span class=\"figure\">" + web.Instant(start+60) +
+		row := "<td>" + collectiontest.CatalogueText(t, web.GapReasonKey(reason)) + "</td>\n<td><span class=\"figure\">" +
+			settingfields.Instant(start) + "</span></td>\n<td><span class=\"figure\">" + settingfields.Instant(start+60) +
 			"</span></td>\n<td><span class=\"duration-part\"><span class=\"figure\">1</span> " +
-			webtest.CatalogueText(t, msgUnitMinute) + "</span></td>"
+			collectiontest.CatalogueText(t, msgUnitMinute) + "</span></td>"
 		if !strings.Contains(card, row) {
 			t.Errorf("the %s gap is not drawn with its reason, its interval and its seconds", reason)
 		}
 	}
-	if strings.Contains(card, web.Instant(outside)) {
+	if strings.Contains(card, settingfields.Instant(outside)) {
 		t.Error("a gap detected outside the window was drawn")
 	}
 	// Newest first.
-	if strings.Index(card, web.Instant(now-3600)) > strings.Index(card, web.Instant(now-7200)) {
+	if strings.Index(card, settingfields.Instant(now-3600)) > strings.Index(card, settingfields.Instant(now-7200)) {
 		t.Error("the gaps are not drawn newest first")
 	}
 }
@@ -263,18 +268,18 @@ func indicatorOf(t *testing.T, page string) string {
 // TestTheOutageIndicator is AC21.
 func TestTheOutageIndicator(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 
 	// A fresh installation: every row not yet probed, so nothing is in outage, even
 	// with a provider turned on.
-	h.SetSelection("dhcp_lease", "isc", config.SelectionOn)
+	collectiontest.SetSelection(h, "dhcp_lease", "isc", config.SelectionOn)
 	if got := independentOutageCount(t, h); got != 0 {
 		t.Fatalf("the independent query counts %d outages on a fresh installation", got)
 	}
 	for _, path := range []string{web.PathSettings, webtest.PathCollection, webtest.PathInterfaces, webtest.PathSources} {
 		indicator := indicatorOf(t, webtest.PageSource(t, h, path))
 		if !strings.Contains(indicator, `href="`+webtest.PathSources+`"`) ||
-			!strings.Contains(indicator, webtest.CatalogueText(t, "indicator.no_outage")) {
+			!strings.Contains(indicator, collectiontest.CatalogueText(t, "indicator.no_outage")) {
 			t.Errorf("the indicator on %s is not the named state at nought linking to Sources", path)
 		}
 	}
@@ -282,19 +287,19 @@ func TestTheOutageIndicator(t *testing.T) {
 	// The filter log unavailable (a kind in outage); one DHCP implementation reachable
 	// and another turned on and failing (a provider in outage); both resolvers off;
 	// Suricata installed and switched off on auto (a kind in outage).
-	h.SetAvailability("firewall_log", "pf", store.StateUnavailable)
-	h.SetAvailability("dhcp_lease", "kea", store.StateReachable)
-	h.SetAvailability("dhcp_lease", "isc", store.StateUnavailable)
-	h.SetAvailability("dns_lookup", "unbound", store.StateUnavailable)
-	h.SetSelection("dns_lookup", "unbound", config.SelectionOff)
-	h.SetAvailability("security_event", "suricata", store.StatePresentButDisabled)
+	collectiontest.SetAvailability(h, "firewall_log", "pf", vocab.StateUnavailable)
+	collectiontest.SetAvailability(h, "dhcp_lease", "kea", vocab.StateReachable)
+	collectiontest.SetAvailability(h, "dhcp_lease", "isc", vocab.StateUnavailable)
+	collectiontest.SetAvailability(h, "dns_lookup", "unbound", vocab.StateUnavailable)
+	collectiontest.SetSelection(h, "dns_lookup", "unbound", config.SelectionOff)
+	collectiontest.SetAvailability(h, "security_event", "suricata", vocab.StatePresentButDisabled)
 	expected := independentOutageCount(t, h)
 	if expected != 3 {
 		t.Fatalf("the independent query counts %d outages on the fixture, want 3", expected)
 	}
 	for _, path := range []string{web.PathSettings, webtest.PathCollection, webtest.PathInterfaces, webtest.PathSources} {
 		indicator := indicatorOf(t, webtest.PageSource(t, h, path))
-		if !strings.Contains(indicator, webtest.CatalogueText(t, "indicator.outages")) ||
+		if !strings.Contains(indicator, collectiontest.CatalogueText(t, "indicator.outages")) ||
 			!strings.Contains(indicator, `<span class="figure">`+strconv.Itoa(expected)+"</span>") ||
 			!strings.Contains(indicator, `href="`+webtest.PathSources+`"`) {
 			t.Errorf("the indicator on %s does not show %d outages: %s", path, expected, indicator)
@@ -302,7 +307,7 @@ func TestTheOutageIndicator(t *testing.T) {
 	}
 
 	// A provider turned on in a kind already in outage is not counted twice.
-	h.SetSelection("firewall_log", "pf", config.SelectionOn)
+	collectiontest.SetSelection(h, "firewall_log", "pf", config.SelectionOn)
 	if got, want := countOutagesOf(t, h), independentOutageCount(t, h); got != want || got != 3 {
 		t.Errorf("the indicator counts %d with the filter log turned on, the query %d", got, want)
 	}
@@ -373,7 +378,7 @@ func TestDrawingTheSettingsInterfacesAndSourcesContactsNothing(t *testing.T) {
 	http.DefaultTransport = counter
 	t.Cleanup(func() { http.DefaultTransport = original })
 
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	front, err := url.Parse(h.HTTP.URL)
 	if err != nil {
 		t.Fatalf("parsing the front address: %v", err)
@@ -382,7 +387,7 @@ func TestDrawingTheSettingsInterfacesAndSourcesContactsNothing(t *testing.T) {
 	counter.front = front.Host
 	counter.other = nil
 	counter.mutex.Unlock()
-	h.SeedBundleNetwork(2)
+	interfacestest.SeedBundleNetwork(h, 2)
 	firewallBefore := len(h.Fake.Received())
 
 	for _, path := range []string{web.PathSettings, webtest.PathInterfaces, webtest.PathSources} {
@@ -452,19 +457,19 @@ func outageFlagOf(t *testing.T, table, kind, providerKey string) string {
 // and no other, however unavailable.
 func TestSourcesMarksExactlyTheRowsTheIndicatorCounts(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	// The filter log unavailable: a kind in outage. Suricata installed and not
 	// collecting, on auto: a kind in outage. One DHCP implementation reachable, one
 	// turned on and failing (a provider in outage), one unavailable on auto beside the
 	// reachable one (counts towards nothing). The resolver lookups declined.
-	h.SetAvailability("firewall_log", "pf", store.StateUnavailable)
-	h.SetAvailability("security_event", "suricata", store.StatePresentButDisabled)
-	h.SetAvailability("dhcp_lease", "kea", store.StateReachable)
-	h.SetAvailability("dhcp_lease", "isc", store.StateUnavailable)
-	h.SetSelection("dhcp_lease", "isc", config.SelectionOn)
-	h.SetAvailability("dhcp_lease", "dnsmasq", store.StateUnavailable)
-	h.SetAvailability("dns_lookup", "unbound", store.StateUnavailable)
-	h.SetSelection("dns_lookup", "unbound", config.SelectionOff)
+	collectiontest.SetAvailability(h, "firewall_log", "pf", vocab.StateUnavailable)
+	collectiontest.SetAvailability(h, "security_event", "suricata", vocab.StatePresentButDisabled)
+	collectiontest.SetAvailability(h, "dhcp_lease", "kea", vocab.StateReachable)
+	collectiontest.SetAvailability(h, "dhcp_lease", "isc", vocab.StateUnavailable)
+	collectiontest.SetSelection(h, "dhcp_lease", "isc", config.SelectionOn)
+	collectiontest.SetAvailability(h, "dhcp_lease", "dnsmasq", vocab.StateUnavailable)
+	collectiontest.SetAvailability(h, "dns_lookup", "unbound", vocab.StateUnavailable)
+	collectiontest.SetSelection(h, "dns_lookup", "unbound", config.SelectionOff)
 
 	page := webtest.PageSource(t, h, webtest.PathSources)
 	expected := independentOutageCount(t, h)
@@ -480,12 +485,12 @@ func TestSourcesMarksExactlyTheRowsTheIndicatorCounts(t *testing.T) {
 		t.Errorf("the outage list has %d lines, the indicator counts %d", got, expected)
 	}
 	for _, line := range []string{
-		webtest.CatalogueText(t, web.KindLabelKey("firewall_log")) + `</span> <span class="outage-state">` +
-			webtest.CatalogueText(t, msgOutageKind),
-		webtest.CatalogueText(t, web.KindLabelKey("security_event")) + `</span> <span class="outage-state">` +
-			webtest.CatalogueText(t, msgOutageKind),
-		`<span class="outage-provider">` + webtest.CatalogueText(t, web.ProviderLabelKey("dhcp_lease", "isc")) +
-			`</span> <span class="outage-state">` + webtest.CatalogueText(t, msgOutageProvider),
+		collectiontest.CatalogueText(t, web.KindLabelKey("firewall_log")) + `</span> <span class="outage-state">` +
+			collectiontest.CatalogueText(t, msgOutageKind),
+		collectiontest.CatalogueText(t, web.KindLabelKey("security_event")) + `</span> <span class="outage-state">` +
+			collectiontest.CatalogueText(t, msgOutageKind),
+		`<span class="outage-provider">` + collectiontest.CatalogueText(t, web.ProviderLabelKey("dhcp_lease", "isc")) +
+			`</span> <span class="outage-state">` + collectiontest.CatalogueText(t, msgOutageProvider),
 	} {
 		if !strings.Contains(list, line) {
 			t.Errorf("the outage list does not carry %q", line)
@@ -493,8 +498,8 @@ func TestSourcesMarksExactlyTheRowsTheIndicatorCounts(t *testing.T) {
 	}
 
 	table := sourcesTable(t, page)
-	counted := `<span class="outage-flag counted">` + webtest.CatalogueText(t, msgYes)
-	notCounted := `<span class="outage-flag">` + webtest.CatalogueText(t, msgNo)
+	counted := `<span class="outage-flag counted">` + collectiontest.CatalogueText(t, msgYes)
+	notCounted := `<span class="outage-flag">` + collectiontest.CatalogueText(t, msgNo)
 	for _, row := range []struct {
 		kind, provider string
 		counts         bool
@@ -520,9 +525,9 @@ func TestSourcesMarksExactlyTheRowsTheIndicatorCounts(t *testing.T) {
 	}
 
 	// At nought, the named state.
-	fresh := webtest.SignedInHarness(t)
+	fresh := collectiontest.SignedInHarness(t)
 	if !strings.Contains(webtest.PageSource(t, fresh, webtest.PathSources),
-		`<p class="empty-state">`+webtest.CatalogueText(t, "indicator.no_outage")+"</p>") {
+		`<p class="empty-state">`+collectiontest.CatalogueText(t, "indicator.no_outage")+"</p>") {
 		t.Error("no outage is not a named state on the Sources surface")
 	}
 }
@@ -532,14 +537,14 @@ func TestSourcesMarksExactlyTheRowsTheIndicatorCounts(t *testing.T) {
 // page is drawn.
 func TestAnUnreadableIndicatorIsANamedStateAndNotAFailedPage(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
-	h.SeedBundleNetwork(1)
+	h := collectiontest.SignedInHarness(t)
+	interfacestest.SeedBundleNetwork(h, 1)
 	if _, err := h.Store.DB().Exec("DROP TABLE source_availability"); err != nil {
 		t.Fatalf("dropping the availability table: %v", err)
 	}
 	indicator := indicatorOf(t, webtest.PageSource(t, h, webtest.PathInterfaces))
-	if !strings.Contains(indicator, webtest.CatalogueText(t, "indicator.unknown")) ||
-		strings.Contains(indicator, webtest.CatalogueText(t, "indicator.no_outage")) ||
+	if !strings.Contains(indicator, collectiontest.CatalogueText(t, "indicator.unknown")) ||
+		strings.Contains(indicator, collectiontest.CatalogueText(t, "indicator.no_outage")) ||
 		!strings.Contains(indicator, `href="`+webtest.PathSources+`"`) {
 		t.Errorf("an unreadable indicator is not its own named state: %s", indicator)
 	}
@@ -553,11 +558,11 @@ func TestAnUnreadableIndicatorIsANamedStateAndNotAFailedPage(t *testing.T) {
 // installation with no firewall URL carries none.
 func TestAnInstalledSourceNotCollectingLinksToTheOPNsensePageThatTurnsItOn(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
-	h.SetAvailabilityDetail("security_event", "suricata", store.StatePresentButDisabled, "GET /example/ids", nil)
-	h.SetAvailabilityDetail("dns_lookup", "unbound", store.StatePresentButDisabled, "GET /example/dns", nil)
-	h.SetAvailabilityDetail("dns_lookup", "dnsmasq", store.StatePresentButDisabled, "GET /example/dnsmasq", nil)
-	h.SetAvailabilityDetail("dhcp_lease", "kea", store.StateUnavailable, "GET /example/kea", nil)
+	h := collectiontest.SignedInHarness(t)
+	sourcestest.SetAvailabilityDetail(h, "security_event", "suricata", vocab.StatePresentButDisabled, "GET /example/ids", nil)
+	sourcestest.SetAvailabilityDetail(h, "dns_lookup", "unbound", vocab.StatePresentButDisabled, "GET /example/dns", nil)
+	sourcestest.SetAvailabilityDetail(h, "dns_lookup", "dnsmasq", vocab.StatePresentButDisabled, "GET /example/dnsmasq", nil)
+	sourcestest.SetAvailabilityDetail(h, "dhcp_lease", "kea", vocab.StateUnavailable, "GET /example/kea", nil)
 
 	// No firewall URL entered: no link anywhere.
 	if strings.Contains(webtest.PageSource(t, h, webtest.PathSources), `class="opnsense-page"`) {
@@ -571,10 +576,10 @@ func TestAnInstalledSourceNotCollectingLinksToTheOPNsensePageThatTurnsItOn(t *te
 	table := sourcesTable(t, webtest.PageSource(t, h, webtest.PathSources))
 	link := func(path string, label messageKey) string {
 		return `<a class="opnsense-page" href="` + webtest.ReviewFirewallURL + path + `" rel="noreferrer noopener">` +
-			webtest.CatalogueText(t, label) + "</a>"
+			collectiontest.CatalogueText(t, label) + "</a>"
 	}
 	suricata := sourceRowOf(t, table, "security_event", "suricata")
-	if !strings.Contains(suricata, "<dt>"+webtest.CatalogueText(t, msgOpenInOPNsense)+"</dt>") ||
+	if !strings.Contains(suricata, "<dt>"+collectiontest.CatalogueText(t, msgOpenInOPNsense)+"</dt>") ||
 		!strings.Contains(suricata, link("/ui/ids", msgPageIDSAdministration)) {
 		t.Error("Suricata installed and not collecting does not link to Intrusion Detection")
 	}
@@ -606,10 +611,10 @@ func TestAnInstalledSourceNotCollectingLinksToTheOPNsensePageThatTurnsItOn(t *te
 // the providers table and in the outage list.
 func TestOneSelectionHasOneNameOnTheSourcesSurface(t *testing.T) {
 	t.Parallel()
-	on := webtest.CatalogueText(t, msgSelectionOn)
-	if !strings.HasPrefix(webtest.CatalogueText(t, msgOutageProvider), on) {
+	on := collectiontest.CatalogueText(t, msgSelectionOn)
+	if !strings.HasPrefix(collectiontest.CatalogueText(t, msgOutageProvider), on) {
 		t.Errorf("the outage list names a provider turned on %q, the table %q",
-			webtest.CatalogueText(t, msgOutageProvider), on)
+			collectiontest.CatalogueText(t, msgOutageProvider), on)
 	}
 }
 
@@ -619,14 +624,14 @@ func TestOneSelectionHasOneNameOnTheSourcesSurface(t *testing.T) {
 // itself.
 func TestTheDetailIsNeverAColumnBeyondThePage(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
-	h.RecordGap("registrable_domain", "public_suffix_list", store.GapDownloadFailed,
+	h := collectiontest.SignedInHarness(t)
+	collectiontest.RecordGap(h, "registrable_domain", "public_suffix_list", vocab.GapDownloadFailed,
 		h.Clock.Now().Unix()-120, h.Clock.Now().Unix()-60)
 	page := webtest.PageSource(t, h, webtest.PathSources)
 	providers := page[strings.Index(page, `aria-labelledby="sources_providers"`):]
 	header := providers[strings.Index(providers, "<thead>"):strings.Index(providers, "</thead>")]
 	if columns := strings.Count(header, "<th "); !strings.Contains(providers, `<td colspan="`+
-		strconv.Itoa(columns)+`">`) || strings.Contains(header, webtest.CatalogueText(t, "sources.column.detail")) {
+		strconv.Itoa(columns)+`">`) || strings.Contains(header, collectiontest.CatalogueText(t, "sources.column.detail")) {
 		t.Error("the providers' detail is a column rather than a line spanning the row")
 	}
 	gaps := gapsCard(t, page)

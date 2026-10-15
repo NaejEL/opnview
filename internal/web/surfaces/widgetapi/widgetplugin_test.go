@@ -11,6 +11,9 @@ import (
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // A third party's widget plugin, written as files into the data directory and nothing else: a table
@@ -107,7 +110,7 @@ func TestAThirdPartyWidgetPluginIsServedOverHTTPFromFilesAlone(t *testing.T) {
 	harness.CompleteSetup()
 
 	refused := harness.Server.Widgets().Refusals()
-	if len(refused) != 1 || refused[0].Type != "example_reads_accounts" || refused[0].Code != widget.RefusalQueryReadsCredential {
+	if len(refused) != 1 || refused[0].Type != "example_reads_accounts" || refused[0].Code != params.RefusalQueryReadsCredential {
 		t.Errorf("the widget reading the accounts was not refused by name: %+v", refused)
 	}
 	if answer := harness.Get(widget.PathPrefix + "example_reads_accounts"); answer.StatusCode != http.StatusNotFound {
@@ -129,7 +132,7 @@ func TestAThirdPartyWidgetPluginIsServedOverHTTPFromFilesAlone(t *testing.T) {
 	answer := harness.Get(widgetPath(t, "example_latency_percentile",
 		map[string]any{"percentile": 75, "period": "1y", "colour": "red"}))
 	condition, body := decodeCondition(t, answer, http.StatusOK)
-	if condition != widget.ConditionReachable {
+	if condition != envelope.ConditionReachable {
 		t.Errorf("the condition is %q", condition)
 	}
 	parameters, _ := body["parameters"].(map[string]any)
@@ -144,7 +147,7 @@ func TestAThirdPartyWidgetPluginIsServedOverHTTPFromFilesAlone(t *testing.T) {
 		t.Errorf("the invalid period was not reported: %v", body["invalid_parameters"])
 	}
 	window, _ := body["window"].(map[string]any)
-	if window == nil || window["coverage"] != widget.CoverageFull {
+	if window == nil || window["coverage"] != request.CoverageFull {
 		t.Errorf("the window is %v", body["window"])
 	}
 	data, _ := body["data"].(map[string]any)

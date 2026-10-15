@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/widget"
+	envelopepkg "github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // The refusal proof (c): an operator widget that breaks any rule is refused WITH ITS OWN NAMED
@@ -41,83 +44,83 @@ func refusalCases() []refusalCase {
 		return refusalCase{directory: widgetType, manifest: good(widgetType), query: query}
 	}
 	cases := []refusalCase{
-		{name: "no manifest", directory: "example_no_manifest", skipManifest: true, code: widget.RefusalManifestUnreadable},
+		{name: "no manifest", directory: "example_no_manifest", skipManifest: true, code: params.RefusalManifestUnreadable},
 		{name: "not JSON", directory: "example_not_json", manifest: `{"type": `, query: goodQuery,
-			code: widget.RefusalManifestInvalid},
+			code: params.RefusalManifestInvalid},
 		{name: "an unknown field", directory: "example_unknown_field",
 			manifest: strings.Replace(good("example_unknown_field"), `"queries":["query.sql"]`, `"queries":["query.sql"],"colour":"red"`, 1),
-			query:    goodQuery, code: widget.RefusalManifestInvalid},
+			query:    goodQuery, code: params.RefusalManifestInvalid},
 		{name: "a bad type name", directory: "Example-Bad", manifest: good("Example-Bad"), query: goodQuery,
-			code: widget.RefusalManifestInvalid},
+			code: params.RefusalManifestInvalid},
 		{name: "a future manifest version", directory: "example_version",
 			manifest: strings.Replace(good("example_version"), `"manifest_version":1`, `"manifest_version":2`, 1),
-			query:    goodQuery, code: widget.RefusalUnsupportedManifestVersion},
+			query:    goodQuery, code: params.RefusalUnsupportedManifestVersion},
 		{name: "an unknown shape", directory: "example_shape",
 			manifest: strings.Replace(good("example_shape"), `"ranked_bars"`, `"pie"`, 1), query: goodQuery,
-			code: widget.RefusalUnknownShape},
+			code: params.RefusalUnknownShape},
 		{name: "an unknown provider kind", directory: "example_provider",
 			manifest: strings.Replace(good("example_provider"), `"providers":[]`, `"providers":["telepathy"]`, 1),
-			query:    goodQuery, code: widget.RefusalUnknownProviderKind},
+			query:    goodQuery, code: params.RefusalUnknownProviderKind},
 		{name: "a primary that is not bound", directory: "example_primary",
 			manifest: strings.Replace(good("example_primary"), `"providers":[]`, `"providers":[],"primary":"dns_lookup"`, 1),
-			query:    goodQuery, code: widget.RefusalManifestInvalid},
+			query:    goodQuery, code: params.RefusalManifestInvalid},
 		{name: "an unknown parameter kind", directory: "example_param_kind",
 			manifest: shapeManifest("example_param_kind", "ranked_bars", false,
 				`{"key":"when","kind":"datetime","default":null,"class":"data"}`),
-			query: goodQuery, code: widget.RefusalUnknownParameterKind},
+			query: goodQuery, code: params.RefusalUnknownParameterKind},
 		{name: "an enum with no values", directory: "example_enum",
 			manifest: shapeManifest("example_enum", "ranked_bars", false,
 				`{"key":"mode","kind":"enum","default":"a","class":"data"}`),
-			query: goodQuery, code: widget.RefusalParameterVocabulary},
+			query: goodQuery, code: params.RefusalParameterVocabulary},
 		{name: "an unknown parameter class", directory: "example_class",
 			manifest: shapeManifest("example_class", "ranked_bars", false,
 				`{"key":"mode","kind":"boolean","default":true,"class":"decorative"}`),
-			query: goodQuery, code: widget.RefusalParameterVocabulary},
+			query: goodQuery, code: params.RefusalParameterVocabulary},
 		{name: "a reference of an unknown kind", directory: "example_ref_kind",
 			manifest: shapeManifest("example_ref_kind", "ranked_bars", false,
 				`{"key":"thing","kind":"reference","reference":"galaxy","default":null,"class":"data"}`),
-			query: goodQuery, code: widget.RefusalParameterVocabulary},
+			query: goodQuery, code: params.RefusalParameterVocabulary},
 		{name: "a default outside the vocabulary", directory: "example_default",
 			manifest: shapeManifest("example_default", "ranked_bars", false,
 				`{"key":"mode","kind":"enum","values":["a","b"],"default":"c","class":"data"}`),
-			query: goodQuery, code: widget.RefusalBadDefault},
+			query: goodQuery, code: params.RefusalBadDefault},
 		{name: "a default of the wrong type", directory: "example_default_type",
 			manifest: shapeManifest("example_default_type", "ranked_bars", false,
 				`{"key":"count","kind":"integer","default":"many","class":"data"}`),
-			query: goodQuery, code: widget.RefusalBadDefault},
+			query: goodQuery, code: params.RefusalBadDefault},
 		{name: "a parameter named like a bound one", directory: "example_reserved",
 			manifest: shapeManifest("example_reserved", "ranked_bars", false,
 				`{"key":"from","kind":"integer","default":1,"class":"data"}`),
-			query: goodQuery, code: widget.RefusalReservedParameterKey},
+			query: goodQuery, code: params.RefusalReservedParameterKey},
 		{name: "a reference not listed", directory: "example_references",
 			manifest: shapeManifest("example_references", "ranked_bars", false,
 				`{"key":"interfaces","kind":"reference_list","reference":"interface","default":null,"class":"data"}`),
-			query: goodQuery, code: widget.RefusalReferencesMismatch},
+			query: goodQuery, code: params.RefusalReferencesMismatch},
 		{name: "a renderer that is not the reserved slot", directory: "example_renderer",
 			manifest: strings.Replace(good("example_renderer"), `"queries":["query.sql"]`, `"queries":["query.sql"],"renderer":{"reserved":false}`, 1),
-			query:    goodQuery, code: widget.RefusalRendererInvalid},
+			query:    goodQuery, code: params.RefusalRendererInvalid},
 		{name: "a time series that is not windowed", directory: "example_unwindowed",
 			manifest: shapeManifest("example_unwindowed", "time_series", false, ""), query: goodQuery,
-			code: widget.RefusalManifestInvalid},
+			code: params.RefusalManifestInvalid},
 		{name: "a type that differs from its directory", directory: "example_directory",
-			manifest: good("example_other_name"), query: goodQuery, code: widget.RefusalTypeMismatchWithDirectory},
+			manifest: good("example_other_name"), query: goodQuery, code: params.RefusalTypeMismatchWithDirectory},
 		{name: "a built-in's type", directory: "top_sites", manifest: good("top_sites"), query: goodQuery,
-			code: widget.RefusalTypeCollision},
+			code: params.RefusalTypeCollision},
 		{name: "no query file", directory: "example_no_query", manifest: good("example_no_query"), skipQuery: true,
-			code: widget.RefusalQueryMissing},
+			code: params.RefusalQueryMissing},
 		{name: "no query declared", directory: "example_no_queries",
 			manifest: strings.Replace(good("example_no_queries"), `"queries":["query.sql"]`, `"queries":[]`, 1),
-			query:    goodQuery, code: widget.RefusalQueryMissing},
+			query:    goodQuery, code: params.RefusalQueryMissing},
 		{name: "two queries", directory: "example_two_queries",
 			manifest: strings.Replace(good("example_two_queries"), `"queries":["query.sql"]`,
 				`"queries":["query.sql","other.sql"]`, 1),
-			query: goodQuery, code: widget.RefusalTooManyQueries},
+			query: goodQuery, code: params.RefusalTooManyQueries},
 		{name: "a path as a query file", directory: "example_query_path",
 			manifest: strings.Replace(good("example_query_path"), `"queries":["query.sql"]`,
 				`"queries":["../query.sql"]`, 1),
-			query: goodQuery, code: widget.RefusalManifestInvalid},
+			query: goodQuery, code: params.RefusalManifestInvalid},
 		{name: "an empty query", directory: "example_empty_query", manifest: good("example_empty_query"),
-			query: "  -- nothing\n", code: widget.RefusalQueryMissing},
+			query: "  -- nothing\n", code: params.RefusalQueryMissing},
 
 		// Statements: a second statement, however it is hidden, and every way to write.
 		withQuery("example_two_statements", "SELECT 1 AS key, 1 AS value; SELECT 2 AS key, 2 AS value"),
@@ -145,27 +148,27 @@ func refusalCases() []refusalCase {
 		withQuery("example_missing_column", "SELECT 1 AS value"),
 	}
 	expected := map[string]string{
-		"example_two_statements":  widget.RefusalQueryMultipleStatements,
-		"example_hidden_delete":   widget.RefusalQueryMultipleStatements,
-		"example_delete":          widget.RefusalQueryNotReadOnly,
-		"example_insert":          widget.RefusalQueryNotReadOnly,
-		"example_update":          widget.RefusalQueryNotReadOnly,
-		"example_replace":         widget.RefusalQueryNotReadOnly,
-		"example_drop":            widget.RefusalQueryNotReadOnly,
-		"example_create":          widget.RefusalQueryNotReadOnly,
-		"example_pragma":          widget.RefusalQueryNotReadOnly,
-		"example_attach":          widget.RefusalQueryNotReadOnly,
-		"example_vacuum":          widget.RefusalQueryNotReadOnly,
-		"example_with_insert":     widget.RefusalQueryNotReadOnly,
-		"example_with_delete":     widget.RefusalQueryNotReadOnly,
-		"example_explain":         widget.RefusalQueryNotReadOnly,
-		"example_not_planned":     widget.RefusalQueryDoesNotPlan,
-		"example_syntax":          widget.RefusalQueryNotReadOnly,
-		"example_unknown_table":   widget.RefusalQueryDoesNotPlan,
-		"example_unbound":         widget.RefusalUnknownQueryParameter,
-		"example_positional":      widget.RefusalUnknownQueryParameter,
-		"example_from_unwindowed": widget.RefusalUnknownQueryParameter,
-		"example_missing_column":  widget.RefusalMissingColumn,
+		"example_two_statements":  params.RefusalQueryMultipleStatements,
+		"example_hidden_delete":   params.RefusalQueryMultipleStatements,
+		"example_delete":          params.RefusalQueryNotReadOnly,
+		"example_insert":          params.RefusalQueryNotReadOnly,
+		"example_update":          params.RefusalQueryNotReadOnly,
+		"example_replace":         params.RefusalQueryNotReadOnly,
+		"example_drop":            params.RefusalQueryNotReadOnly,
+		"example_create":          params.RefusalQueryNotReadOnly,
+		"example_pragma":          params.RefusalQueryNotReadOnly,
+		"example_attach":          params.RefusalQueryNotReadOnly,
+		"example_vacuum":          params.RefusalQueryNotReadOnly,
+		"example_with_insert":     params.RefusalQueryNotReadOnly,
+		"example_with_delete":     params.RefusalQueryNotReadOnly,
+		"example_explain":         params.RefusalQueryNotReadOnly,
+		"example_not_planned":     params.RefusalQueryDoesNotPlan,
+		"example_syntax":          params.RefusalQueryNotReadOnly,
+		"example_unknown_table":   params.RefusalQueryDoesNotPlan,
+		"example_unbound":         params.RefusalUnknownQueryParameter,
+		"example_positional":      params.RefusalUnknownQueryParameter,
+		"example_from_unwindowed": params.RefusalUnknownQueryParameter,
+		"example_missing_column":  params.RefusalMissingColumn,
 	}
 	for index := range cases {
 		if cases[index].code == "" {
@@ -205,7 +208,7 @@ func TestEveryBadOperatorWidgetIsRefusedWithItsOwnReasonAndTheServiceKeepsRunnin
 
 	service := f.operatorService(t, directory)
 
-	refused := map[string]widget.Refusal{}
+	refused := map[string]params.Refusal{}
 	for _, refusal := range service.Refusals() {
 		refused[refusal.Type] = refusal
 	}
@@ -221,7 +224,7 @@ func TestEveryBadOperatorWidgetIsRefusedWithItsOwnReasonAndTheServiceKeepsRunnin
 		if refusal.Detail == "" {
 			t.Errorf("%s: the refusal carries no detail", c.name)
 		}
-		if widget.Contains(service.Types(), c.directory) && c.directory != "top_sites" {
+		if params.Contains(service.Types(), c.directory) && c.directory != "top_sites" {
 			t.Errorf("%s: a refused widget is served", c.name)
 		}
 	}
@@ -234,7 +237,7 @@ func TestEveryBadOperatorWidgetIsRefusedWithItsOwnReasonAndTheServiceKeepsRunnin
 		t.Errorf("the operator widgets that loaded are %v", got)
 	}
 	status, envelope := serve(t, service, "example_good", nil)
-	if status != http.StatusOK || envelope["condition"] != widget.ConditionReachable {
+	if status != http.StatusOK || envelope["condition"] != envelopepkg.ConditionReachable {
 		t.Errorf("the good widget answered %d %v", status, envelope["condition"])
 	}
 	// Every built-in is as served as before, including the one an operator tried to shadow.
@@ -243,7 +246,7 @@ func TestEveryBadOperatorWidgetIsRefusedWithItsOwnReasonAndTheServiceKeepsRunnin
 			t.Errorf("the built-in %s answered %d beside the refused widgets", widgetType, status)
 		}
 	}
-	if preset, _ := service.Preset("top_sites"); preset.Origin != widget.OriginBuiltin {
+	if preset, _ := service.Preset("top_sites"); preset.Origin != request.OriginBuiltin {
 		t.Errorf("top_sites is now %q: an operator widget shadowed a built-in", preset.Origin)
 	}
 	// And nothing the refused queries held ran: the data is as the fixture wrote it.
@@ -285,7 +288,7 @@ func TestAnOperatorDirectoryThatIsAFileIsRefusedWithoutStoppingTheService(t *tes
 	check(t, os.WriteFile(file, []byte("not a directory"), 0o644))
 	service := f.operatorService(t, file)
 	refusals := service.Refusals()
-	if len(refusals) != 1 || refusals[0].Code != widget.RefusalNotADirectory {
+	if len(refusals) != 1 || refusals[0].Code != params.RefusalNotADirectory {
 		t.Errorf("a widgets path that is a file gave %v", refusals)
 	}
 	if len(service.Types()) != len(f.service.Types()) {

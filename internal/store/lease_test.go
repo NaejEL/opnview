@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The lease tests that belong to the dhcp_lease kind becoming concurrent.
@@ -43,9 +45,9 @@ func TestOneAddressLeasedByTwoServersIsTwoLeases(t *testing.T) {
 	first, second := leaseProviders(t, database)
 
 	startsAt := int64(1750000000)
-	lease := DHCPLease{
+	lease := vocab.DHCPLease{
 		Backend: "kea", Address: "example-contested-address", LeaseState: "active",
-		StartsAt: &startsAt, GenerationKey: GenerationKeyOf(&startsAt, nil, startsAt),
+		StartsAt: &startsAt, GenerationKey: vocab.GenerationKeyOf(&startsAt, nil, startsAt),
 		ObservedAt: startsAt,
 	}
 	for _, provider := range []int64{first, second} {
@@ -83,10 +85,10 @@ func TestARePollOfALeaseWithNoValidityStartIsStillIdempotentUnderTwoServers(t *t
 	first, second := leaseProviders(t, database)
 
 	expiresAt := int64(1750003600)
-	lease := DHCPLease{
+	lease := vocab.DHCPLease{
 		Backend: "dnsmasq", Address: "example-startless-address", LeaseState: "active",
 		StartsAt: nil, ExpiresAt: &expiresAt,
-		GenerationKey: GenerationKeyOf(nil, &expiresAt, 1750000000),
+		GenerationKey: vocab.GenerationKeyOf(nil, &expiresAt, 1750000000),
 		ObservedAt:    1750000000,
 	}
 	for pass := 0; pass < 3; pass++ {
@@ -123,8 +125,8 @@ func TestALeaseNamesTheServerThatIssuedIt(t *testing.T) {
 	ctx := context.Background()
 	first, second := leaseProviders(t, database)
 
-	clientID, err := database.UpsertClient(ctx, Client{
-		Identity: ClientIdentity{Kind: IdentityMAC, Key: "0a:00:00:00:00:01"},
+	clientID, err := database.UpsertClient(ctx, vocab.Client{
+		Identity: vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: "0a:00:00:00:00:01"},
 	}, 1750000000)
 	if err != nil {
 		t.Fatalf("recording the machine: %v", err)
@@ -132,11 +134,11 @@ func TestALeaseNamesTheServerThatIssuedIt(t *testing.T) {
 
 	for index, provider := range []int64{first, second} {
 		startsAt := int64(1750000000 + index)
-		if err := database.InsertDHCPLease(ctx, provider, DHCPLease{
+		if err := database.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 			ClientID: &clientID, Backend: "kea",
 			Address: "example-address-" + string(rune('a'+index)),
 			MAC:     nil, LeaseState: "active", StartsAt: &startsAt,
-			GenerationKey: GenerationKeyOf(&startsAt, nil, startsAt),
+			GenerationKey: vocab.GenerationKeyOf(&startsAt, nil, startsAt),
 			ObservedAt:    startsAt,
 		}); err != nil {
 			t.Fatalf("writing the lease of server %d: %v", provider, err)
@@ -183,9 +185,9 @@ func TestALeaseWithNoIssuingServerIsRejected(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	startsAt := int64(1750000000)
-	err := database.InsertDHCPLease(context.Background(), 999999999, DHCPLease{
+	err := database.InsertDHCPLease(context.Background(), 999999999, vocab.DHCPLease{
 		Backend: "kea", Address: "example-orphan-address", LeaseState: "active",
-		StartsAt: &startsAt, GenerationKey: GenerationKeyOf(&startsAt, nil, startsAt),
+		StartsAt: &startsAt, GenerationKey: vocab.GenerationKeyOf(&startsAt, nil, startsAt),
 		ObservedAt: startsAt,
 	})
 	if err == nil {

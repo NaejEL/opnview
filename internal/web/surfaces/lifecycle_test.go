@@ -2,15 +2,19 @@ package surfaces_test
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/collect"
-	"github.com/NaejEL/opnview/internal/store"
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"net"
 	"net/http"
 	"net/url"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/collect"
+	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/store/accounts"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
 // TestCollectionDoesNotWaitForASignIn is AC5.
@@ -23,16 +27,16 @@ func TestCollectionDoesNotWaitForASignIn(t *testing.T) {
 	harness := webtest.New(t)
 	login, password := harness.CompleteSetup()
 	apiKey, apiSecret := webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)
-	webtest.AssertStatus(t, harness.StoreCredentials(apiKey, apiSecret), http.StatusSeeOther)
+	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, apiKey, apiSecret), http.StatusSeeOther)
 
 	// Sign out, and destroy every session there is, so nothing anywhere is signed in.
-	webtest.AssertStatus(t, harness.Post(web.PathSignOut, url.Values{}), http.StatusSeeOther)
+	accounttest.AssertStatus(t, harness.Post(web.PathSignOut, url.Values{}), http.StatusSeeOther)
 	if count := sessionCount(t, harness); count != 0 {
 		t.Fatalf("%d sessions survive, so this proves nothing about collecting without one", count)
 	}
 
 	// A real collector, built the way cmd/opnview builds one, over the same client.
-	collector := collect.New(harness.Server.Client(), harness.Store, collect.SystemClock{})
+	collector := collect.New(harness.Server.Client(), harness.Store, core.SystemClock{})
 	if err := collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("a collection pass with nobody signed in failed: %v", err)
 	}
@@ -142,7 +146,7 @@ func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
 	// 1. An empty data directory. The schema is applied and the account table is
 	// empty, and the service is up regardless.
 	harness := webtest.New(t)
-	webtest.AssertNoAccount(t, harness)
+	accounttest.AssertNoAccount(t, harness)
 
 	// 2. The token, which cmd/opnview prints and which exists nowhere else.
 	token := harness.SetupToken.Token()
@@ -157,7 +161,7 @@ func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
 		"setup_token": {token}, "login": {login},
 		"password": {password}, "password_again": {password},
 	})
-	webtest.AssertStatus(t, created, http.StatusSeeOther)
+	accounttest.AssertStatus(t, created, http.StatusSeeOther)
 
 	// 4. Sign in, from a browser that has never been signed in.
 	browser := webtest.FreshClient(t, harness)
@@ -179,10 +183,10 @@ func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
 	}
 
 	// 6. The verification outcome is on the page.
-	webtest.AssertContains(t, body, webtest.Text(t, harness.Server.Catalogue(), msgVerifyVerified))
+	settingstest.AssertContains(t, body, settingstest.Text(t, harness.Server.Catalogue(), msgVerifyVerified))
 
 	// 7. A collection pass uses what was entered, in this same process.
-	collector := collect.New(harness.Server.Client(), harness.Store, collect.SystemClock{})
+	collector := collect.New(harness.Server.Client(), harness.Store, core.SystemClock{})
 	if err := collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("the collection pass failed: %v", err)
 	}
@@ -196,7 +200,7 @@ func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
 		t.Errorf("the API secret is readable in the database, in %s", where)
 	}
 	sealed, stored, err := harness.Store.Credential(
-		context.Background(), store.CredentialOPNsenseAPISecret)
+		context.Background(), accounts.CredentialOPNsenseAPISecret)
 	if err != nil || !stored {
 		t.Fatalf("the API secret was not stored: stored=%v err=%v", stored, err)
 	}

@@ -4,14 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/NaejEL/opnview/internal/widget"
 	"net/netip"
 	"net/url"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/request"
+
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/geo"
 	"github.com/NaejEL/opnview/internal/store/storetest"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/suffixlist"
 )
 
@@ -109,7 +114,7 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 
 	for index := 0; index < spec.interfaces; index++ {
 		vlan := int64(100 + index)
-		id, err := database.UpsertInterface(ctx, store.Interface{
+		id, err := database.UpsertInterface(ctx, vocab.Interface{
 			Identifier: fmt.Sprintf("example_if_%d", index), Device: fmt.Sprintf("exdev%d", index),
 			Description: fmt.Sprintf("example description %d", index), LinkType: "example-link",
 			LinkKind: "vlan", VLANTag: &vlan,
@@ -118,10 +123,10 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 		iface := fixtureInterface{id: id, device: fmt.Sprintf("exdev%d", index),
 			v4: fmt.Sprintf("192.0.2.%d", 32*index+1), v6: fmt.Sprintf("2001:db8:%x::1", index+1)}
 		bits4, bits6 := int64(27), int64(64)
-		check(t, database.UpsertInterfaceAddress(ctx, store.InterfaceAddress{InterfaceID: id,
-			SourceField: store.SourceFieldAddr4, Address: iface.v4, PrefixLength: &bits4, AddressFamily: 4}, nil, before))
-		check(t, database.UpsertInterfaceAddress(ctx, store.InterfaceAddress{InterfaceID: id,
-			SourceField: store.SourceFieldAddr6, Address: iface.v6, PrefixLength: &bits6, AddressFamily: 6}, nil, before))
+		check(t, database.UpsertInterfaceAddress(ctx, vocab.InterfaceAddress{InterfaceID: id,
+			SourceField: vocab.SourceFieldAddr4, Address: iface.v4, PrefixLength: &bits4, AddressFamily: 4}, nil, before))
+		check(t, database.UpsertInterfaceAddress(ctx, vocab.InterfaceAddress{InterfaceID: id,
+			SourceField: vocab.SourceFieldAddr6, Address: iface.v6, PrefixLength: &bits6, AddressFamily: 6}, nil, before))
 		check(t, database.DetectNetworks(ctx, id, prefixes(t, fmt.Sprintf("192.0.2.%d/27", 32*index),
 			fmt.Sprintf("2001:db8:%x::/64", index+1)), before))
 		check(t, database.UpsertInterfaceMapEntry(ctx, iface.device, fmt.Sprintf("example map %d", index), &id, before))
@@ -129,23 +134,23 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 	}
 	f.exec(t, "UPDATE interface SET user_label = 'example label' WHERE id = ?", f.interfaces[0].id)
 
-	upstreamID, err := database.UpsertInterface(ctx, store.Interface{Identifier: "example_if_upstream",
+	upstreamID, err := database.UpsertInterface(ctx, vocab.Interface{Identifier: "example_if_upstream",
 		Device: "exdevup", Description: "example description upstream", LinkType: "example-link",
 		LinkKind: "physical", IsUpstream: true}, before)
 	check(t, err)
 	f.upstream = fixtureInterface{id: upstreamID, device: "exdevup", v4: "203.0.113.2", v6: "2001:db8:ff::2"}
 	bits := int64(24)
-	check(t, database.UpsertInterfaceAddress(ctx, store.InterfaceAddress{InterfaceID: upstreamID,
-		SourceField: store.SourceFieldAddr4, Address: f.upstream.v4, PrefixLength: &bits, AddressFamily: 4}, nil, before))
-	check(t, database.UpsertInterfaceAddress(ctx, store.InterfaceAddress{InterfaceID: upstreamID,
-		SourceField: store.SourceFieldGateways, Address: "203.0.113.1", AddressFamily: 4}, nil, before))
+	check(t, database.UpsertInterfaceAddress(ctx, vocab.InterfaceAddress{InterfaceID: upstreamID,
+		SourceField: vocab.SourceFieldAddr4, Address: f.upstream.v4, PrefixLength: &bits, AddressFamily: 4}, nil, before))
+	check(t, database.UpsertInterfaceAddress(ctx, vocab.InterfaceAddress{InterfaceID: upstreamID,
+		SourceField: vocab.SourceFieldGateways, Address: "203.0.113.1", AddressFamily: 4}, nil, before))
 	check(t, database.DetectNetworks(ctx, upstreamID, prefixes(t, "203.0.113.0/24"), before))
 	check(t, database.UpsertInterfaceMapEntry(ctx, "exdevup", "example map upstream", &upstreamID, before))
 
-	f.ruleID, err = database.UpsertRule(ctx, store.Rule{PfLabel: "example-pass-label",
+	f.ruleID, err = database.UpsertRule(ctx, vocab.Rule{PfLabel: "example-pass-label",
 		Description: "example pass rule", Action: "pass"}, before)
 	check(t, err)
-	f.blockRule, err = database.UpsertRule(ctx, store.Rule{PfLabel: "example-block-label",
+	f.blockRule, err = database.UpsertRule(ctx, vocab.Rule{PfLabel: "example-block-label",
 		Description: "example block rule", Action: "block", IsAutomatic: true}, before)
 	check(t, err)
 
@@ -167,14 +172,14 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 				mac = "02:00:5e:00:53:02"
 			}
 			hostname := fmt.Sprintf("host%d.example", index)
-			id, err := database.UpsertClient(ctx, store.Client{Identity: store.ClientIdentity{Kind: store.IdentityMAC,
+			id, err := database.UpsertClient(ctx, vocab.Client{Identity: vocab.ClientIdentity{Kind: vocab.IdentityMAC,
 				Key: mac}, InterfaceID: &iface.id, MAC: &mac, Hostname: &hostname, LastAddress: &client.address},
 				f.now-3600)
 			check(t, err)
 			expiry := f.now + 3600
-			check(t, database.InsertDHCPLease(ctx, leaseProvider, store.DHCPLease{ClientID: &id, Backend: "dnsmasq",
+			check(t, database.InsertDHCPLease(ctx, leaseProvider, vocab.DHCPLease{ClientID: &id, Backend: "dnsmasq",
 				Address: client.address, MAC: &mac, LeaseState: "active", InterfaceID: &iface.id,
-				GenerationKey: store.GenerationKeyOf(nil, &expiry, 0), ExpiresAt: &expiry, ObservedAt: f.now - 3600}))
+				GenerationKey: vocab.GenerationKeyOf(nil, &expiry, 0), ExpiresAt: &expiry, ObservedAt: f.now - 3600}))
 		}
 		f.clients = append(f.clients, client)
 	}
@@ -198,7 +203,7 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 		observed := f.now - int64(index)*spec.span/int64(spec.flows+1) - 1
 		port := int64(443 + index%3)
 		ipID, seq := int64(index%65535), int64(1000+index)
-		record := store.Flow{ObservedAt: observed, Protocol: "tcp", Action: "pass", PacketBytes: int64(60 + index*37%1400),
+		record := vocab.Flow{ObservedAt: observed, Protocol: "tcp", Action: "pass", PacketBytes: int64(60 + index*37%1400),
 			DstPort: &port, Direction: "in", InterfaceDevice: client.iface.device, SrcAddress: client.address,
 			DstAddress: peer, IPID: &ipID, TCPSeq: &seq}
 		if index%5 == 0 {
@@ -253,16 +258,16 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 		case 3:
 			continue // never looked up
 		case 2:
-			check(t, database.UpsertGeoASN(ctx, store.GeoASN{Address: peer, ProviderID: geoProvider,
-				LookupState: store.GeoMiss, DatasetBuildAt: f.now - 86400, LookedUpAt: f.now - 60}))
+			check(t, database.UpsertGeoASN(ctx, geo.GeoASN{Address: peer, ProviderID: geoProvider,
+				LookupState: geo.GeoMiss, DatasetBuildAt: f.now - 86400, LookedUpAt: f.now - 60}))
 			continue
 		}
 		country := []string{"AA", "BB", "CC"}[k%3]
 		latitude, longitude := float64(k), float64(-k)
 		asn := int64(64496 + k%3)
 		operator := fmt.Sprintf("example operator %d", k%3)
-		check(t, database.UpsertGeoASN(ctx, store.GeoASN{Address: peer, ProviderID: geoProvider,
-			LookupState: store.GeoResolved, CountryCode: &country, CountryName: &country, Latitude: &latitude,
+		check(t, database.UpsertGeoASN(ctx, geo.GeoASN{Address: peer, ProviderID: geoProvider,
+			LookupState: geo.GeoResolved, CountryCode: &country, CountryName: &country, Latitude: &latitude,
 			Longitude: &longitude, ASN: &asn, Operator: &operator, DatasetBuildAt: f.now - 86400, LookedUpAt: f.now - 60}))
 	}
 
@@ -288,8 +293,8 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 	check(t, rows.Close())
 	recursion := "Recursion"
 	for index, item := range lookups {
-		check(t, database.InsertDNSResolution(ctx, store.DNSResolution{LookupKey: fmt.Sprintf("example-lookup-%d", index),
-			ClientAddress: item.address, ClientResolution: store.ClientResolutionLoggedAddress,
+		check(t, database.InsertDNSResolution(ctx, vocab.DNSResolution{LookupKey: fmt.Sprintf("example-lookup-%d", index),
+			ClientAddress: item.address, ClientResolution: vocab.ClientResolutionLoggedAddress,
 			Domain: f.sites[index%len(f.sites)], Resolver: "unbound", Action: "pass", AnswerSource: &recursion,
 			LookedUpAt: item.at - 1,
 			IngestedAt: f.now - 1}))
@@ -297,8 +302,8 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 	// Refused lookups: two lists, one with an assigned purpose, and one refusal attributed to no list.
 	for index, list := range []string{"example-list-a", "example-list-b", ""} {
 		action := "block"
-		check(t, database.InsertDNSResolution(ctx, store.DNSResolution{LookupKey: fmt.Sprintf("example-refused-%d", index),
-			ClientAddress: f.clients[index%len(f.clients)].address, ClientResolution: store.ClientResolutionLoggedAddress,
+		check(t, database.InsertDNSResolution(ctx, vocab.DNSResolution{LookupKey: fmt.Sprintf("example-refused-%d", index),
+			ClientAddress: f.clients[index%len(f.clients)].address, ClientResolution: vocab.ClientResolutionLoggedAddress,
 			Domain: fmt.Sprintf("blocked%d.example", index), Resolver: "unbound", Action: action, BlocklistName: list,
 			LookedUpAt: f.now - 600 - int64(index)*3600, IngestedAt: f.now - 1}))
 	}
@@ -321,7 +326,7 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 	eventProvider, err := database.ProviderID(ctx, "security_event", "suricata")
 	check(t, err)
 	for index := 0; index < 2; index++ {
-		check(t, database.InsertSecurityEvent(ctx, eventProvider, store.SecurityEvent{
+		check(t, database.InsertSecurityEvent(ctx, eventProvider, vocab.SecurityEvent{
 			ProviderEventKey: fmt.Sprintf("example-event-%d", index), OccurredAt: f.now - 900, IngestedAt: f.now - 1,
 			RuleIdentity: "1:2000:1", Signature: "example signature", EventAction: "blocked",
 			SrcAddress: f.clients[0].address, DstAddress: f.peers[0]}))
@@ -329,12 +334,12 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 
 	// Telemetry and interface counters, every five minutes over the last day.
 	for at := f.now - 86400 + 300; at <= f.now; at += 300 {
-		f.sampleAt(t, at, store.SubjectFirewall, "cpu", store.MeasureCPUUseRatio, store.UnitRatio,
+		f.sampleAt(t, at, vocab.SubjectFirewall, "cpu", vocab.MeasureCPUUseRatio, vocab.UnitRatio,
 			float64(at%7)/10)
 		for _, iface := range f.interfaces {
-			f.sampleAt(t, at, store.SubjectInterface, iface.device, store.MeasureBytesIn, store.UnitByte,
+			f.sampleAt(t, at, vocab.SubjectInterface, iface.device, vocab.MeasureBytesIn, vocab.UnitByte,
 				float64((at-f.now+86400)*1000))
-			f.sampleAt(t, at, store.SubjectInterface, iface.device, store.MeasureBytesOut, store.UnitByte,
+			f.sampleAt(t, at, vocab.SubjectInterface, iface.device, vocab.MeasureBytesOut, vocab.UnitByte,
 				float64((at-f.now+86400)*500))
 		}
 	}
@@ -362,7 +367,7 @@ func (s suffixList) RegistrableDomains(_ context.Context, names []string) (map[s
 	return domains, true
 }
 
-func exampleSuffixList(t *testing.T) widget.SuffixLists {
+func exampleSuffixList(t *testing.T) request.SuffixLists {
 	t.Helper()
 	// Parse refuses a copy with fewer than ten rules, as a truncated download.
 	list, err := suffixlist.Parse([]byte("// ===BEGIN ICANN DOMAINS===\ncom\nnet\norg\nexample\ntest\n" +
@@ -373,22 +378,22 @@ func exampleSuffixList(t *testing.T) widget.SuffixLists {
 }
 
 // insertFlow stores one record unplaced, as the collector does, and returns its addresses.
-func (f *fixture) insertFlow(t *testing.T, record store.Flow) []string {
+func (f *fixture) insertFlow(t *testing.T, record vocab.Flow) []string {
 	t.Helper()
 	f.digest++
 	record.LogDigest = fmt.Sprintf("example-digest-%d", f.digest)
 	record.IngestedAt = f.now - 1
-	record.InterfaceLookupState = store.LookupResolved
+	record.InterfaceLookupState = vocab.LookupResolved
 	record.IPVersion = 4
 	for _, character := range record.SrcAddress {
 		if character == ':' {
 			record.IPVersion = 6
 		}
 	}
-	record.RuleLookupState = store.LookupNotFound
+	record.RuleLookupState = vocab.LookupNotFound
 	rid := "example-unknown-rid"
 	if record.RuleID != nil {
-		record.RuleLookupState = store.LookupResolved
+		record.RuleLookupState = vocab.LookupResolved
 		if *record.RuleID == f.ruleID {
 			rid = "example-pass-label"
 		} else {
@@ -413,10 +418,10 @@ func prefixes(t *testing.T, texts ...string) []netip.Prefix {
 }
 
 // sampleAt stores one reading.
-func (f *fixture) sampleAt(t *testing.T, at int64, kind store.SubjectKind, key string, measure store.Measure,
-	unit store.Unit, value float64) {
+func (f *fixture) sampleAt(t *testing.T, at int64, kind vocab.SubjectKind, key string, measure vocab.Measure,
+	unit vocab.Unit, value float64) {
 	t.Helper()
-	err := f.db.InsertMeasurementSample(context.Background(), store.MeasurementSample{SubjectKind: kind,
+	err := f.db.InsertMeasurementSample(context.Background(), vocab.MeasurementSample{SubjectKind: kind,
 		SubjectKey: key, Measure: measure, Unit: unit, Value: value, SampledAt: at})
 	if err != nil {
 		// A second reading at one instant of one subject is a collision the store refuses
@@ -437,13 +442,13 @@ func (f *fixture) allReachable(t *testing.T) {
 		{"dhcp_lease", "dnsmasq"}, {"security_event", "suricata"}, {"measurement_sample", "insight"},
 		{"resolver_cache", "unbound"}} {
 		check(t, f.db.SetActiveProviders(ctx, pair[0], pair[1]))
-		f.setAvailability(t, pair[0], pair[1], store.StateReachable, store.OutcomeHealthy, "example probe")
+		f.setAvailability(t, pair[0], pair[1], vocab.StateReachable, vocab.OutcomeHealthy, "example probe")
 	}
 }
 
 // setAvailability writes one provider's availability.
-func (f *fixture) setAvailability(t *testing.T, kind, key string, state store.AvailabilityState,
-	outcome store.AvailabilityOutcome, probe string) {
+func (f *fixture) setAvailability(t *testing.T, kind, key string, state vocab.AvailabilityState,
+	outcome vocab.AvailabilityOutcome, probe string) {
 	t.Helper()
 	id, err := f.db.ProviderID(context.Background(), kind, key)
 	check(t, err)
@@ -459,7 +464,7 @@ func (f *fixture) exec(t *testing.T, statement string, arguments ...any) {
 }
 
 // respond asks the service for one type with parameters given as a Go value.
-func (f *fixture) respond(t *testing.T, widgetType string, parameters any) widget.Response {
+func (f *fixture) respond(t *testing.T, widgetType string, parameters any) envelope.Response {
 	t.Helper()
 	raw := ""
 	if parameters != nil {
@@ -478,7 +483,7 @@ func (f *fixture) respond(t *testing.T, widgetType string, parameters any) widge
 }
 
 // data decodes a response's data into a map, through its JSON, as a client would read it.
-func data(t *testing.T, response widget.Response) map[string]any {
+func data(t *testing.T, response envelope.Response) map[string]any {
 	t.Helper()
 	encoded, err := json.Marshal(response.Data)
 	check(t, err)

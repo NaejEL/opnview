@@ -15,6 +15,8 @@ import (
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
 	"github.com/NaejEL/opnview/internal/push"
 )
 
@@ -95,42 +97,42 @@ func TestEveryPushRefusalHasItsCode(t *testing.T) {
 		mutate func(map[string]any)
 		script string
 	}{
-		{RefusalPushProtocolUnknown, func(m map[string]any) { entry(m)["protocol"] = "sflow" }, ""},
-		{RefusalPushFilterInvalid, func(m map[string]any) { entry(m)["filter"] = map[string]any{"program": []any{}} }, ""},
-		{RefusalPushPatternInvalid, func(m map[string]any) { entry(m)["pattern"] = `(?P<word>a(b` }, ""},
-		{RefusalPushPatternInvalid, func(m map[string]any) { entry(m)["pattern"] = `(?P<not_a_column>\w+)` }, ""},
-		{RefusalTableInvalid, func(m map[string]any) {
+		{contract.RefusalPushProtocolUnknown, func(m map[string]any) { entry(m)["protocol"] = "sflow" }, ""},
+		{contract.RefusalPushFilterInvalid, func(m map[string]any) { entry(m)["filter"] = map[string]any{"program": []any{}} }, ""},
+		{contract.RefusalPushPatternInvalid, func(m map[string]any) { entry(m)["pattern"] = `(?P<word>a(b` }, ""},
+		{contract.RefusalPushPatternInvalid, func(m map[string]any) { entry(m)["pattern"] = `(?P<not_a_column>\w+)` }, ""},
+		{contract.RefusalTableInvalid, func(m map[string]any) {
 			m["tables"].([]any)[0].(map[string]any)["columns"].([]any)[1].(map[string]any)["type"] = "json"
 		}, ""},
-		{RefusalPushTableWithoutInstant, func(m map[string]any) {
+		{contract.RefusalPushTableWithoutInstant, func(m map[string]any) {
 			table := m["tables"].([]any)[0].(map[string]any)
 			table["columns"].([]any)[0].(map[string]any)["type"] = "integer"
 		}, ""},
-		{RefusalPushDestinationInvalid, func(m map[string]any) { entry(m)["kind"] = "firewall_log" }, ""},
-		{RefusalPushDestinationInvalid, func(m map[string]any) { delete(entry(m), "output_table") }, ""},
-		{RefusalPushReplacesUnknown, func(m map[string]any) { entry(m)["replaces"] = "no_such_endpoint" }, ""},
-		{RefusalPushElementUnknown, func(m map[string]any) {
+		{contract.RefusalPushDestinationInvalid, func(m map[string]any) { entry(m)["kind"] = "firewall_log" }, ""},
+		{contract.RefusalPushDestinationInvalid, func(m map[string]any) { delete(entry(m), "output_table") }, ""},
+		{contract.RefusalPushReplacesUnknown, func(m map[string]any) { entry(m)["replaces"] = "no_such_endpoint" }, ""},
+		{contract.RefusalPushElementUnknown, func(m map[string]any) {
 			entry(m)["fields"] = map[string]any{"word": "no_such_field"}
 		}, ""},
-		{RefusalPushElementUnknown, func(m map[string]any) {
+		{contract.RefusalPushElementUnknown, func(m map[string]any) {
 			entry(m)["protocol"] = "netflow"
 			delete(entry(m), "pattern")
 			entry(m)["filter"] = map[string]any{"require": []any{"notAnInformationElement"}}
 		}, ""},
-		{RefusalPushLivenessBelowFloor, func(m map[string]any) { entry(m)["liveness_seconds"] = 1 }, ""},
-		{RefusalPushProviderMissing, func(m map[string]any) {
+		{contract.RefusalPushLivenessBelowFloor, func(m map[string]any) { entry(m)["liveness_seconds"] = 1 }, ""},
+		{contract.RefusalPushProviderMissing, func(m map[string]any) {
 			m["providers"].([]any)[0].(map[string]any)["source"] = ""
 			m["providers"].([]any)[0].(map[string]any)["cadence_seconds"] = 60
 			m["script"] = "example.js"
 		}, `exports.example_push_lines = { probe: function () {}, collect: function () {} };`},
-		{RefusalPushColumnUnfilled, func(m map[string]any) { entry(m)["pattern"] = `^(?P<count>\d+)$` }, ""},
-		{RefusalPushParseMissing, func(m map[string]any) {
+		{contract.RefusalPushColumnUnfilled, func(m map[string]any) { entry(m)["pattern"] = `^(?P<count>\d+)$` }, ""},
+		{contract.RefusalPushParseMissing, func(m map[string]any) {
 			delete(entry(m), "pattern")
 			entry(m)["parse"] = "lines"
 			m["script"] = "example.js"
 		}, `exports.push = {};`},
-		{RefusalPushDeclarationInvalid, func(m map[string]any) { entry(m)["transports"] = []any{"sctp"} }, ""},
-		{RefusalPushDeclarationInvalid, func(m map[string]any) {
+		{contract.RefusalPushDeclarationInvalid, func(m map[string]any) { entry(m)["transports"] = []any{"sctp"} }, ""},
+		{contract.RefusalPushDeclarationInvalid, func(m map[string]any) {
 			entry(m)["parse"] = "lines"
 			m["script"] = "example.js"
 		}, `exports.push = { lines: function (m) { return m; } };`},
@@ -167,7 +169,7 @@ func TestACoreKindEntryMustDeclareItsReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded := loadManifest(t, manifest, string(script))
-	if refusals := loaded.Refusals(); len(refusals) != 1 || refusals[0].Code != RefusalPushKindWithoutReplacement {
+	if refusals := loaded.Refusals(); len(refusals) != 1 || refusals[0].Code != contract.RefusalPushKindWithoutReplacement {
 		t.Errorf("refusals %+v", refusals)
 	}
 }
@@ -273,7 +275,7 @@ func TestAParseFunctionIsTakenFromTheScriptOfTheFirewallsVersion(t *testing.T) {
 		prepared := sink.Prepare(context.Background(), records)
 		gate.Close()
 		if want == "" {
-			if prepared.Failed != 1 || prepared.Counts[string(failureVersionUnsupported)] != 1 {
+			if prepared.Failed != 1 || prepared.Counts[string(runtime.FailureVersionUnsupported)] != 1 {
 				t.Errorf("version %s: %+v", version, prepared)
 			}
 			continue
@@ -382,14 +384,14 @@ func TestAPushOnlyKindLoadsWithoutReplacesAndRefusesOne(t *testing.T) {
 	replacing, script := netflowManifest(t)
 	replacing["push"].([]any)[0].(map[string]any)["replaces"] = "getconfig"
 	if refusals := loadManifest(t, replacing, script).Refusals(); len(refusals) != 1 ||
-		refusals[0].Code != RefusalPushDeclarationInvalid {
+		refusals[0].Code != contract.RefusalPushDeclarationInvalid {
 		t.Errorf("an entry replacing what no polled function delivers: %+v", refusals)
 	}
 
 	unmapped, script := netflowManifest(t)
 	delete(unmapped["push"].([]any)[0].(map[string]any)["fields"].(map[string]any), "octets")
 	if refusals := loadManifest(t, unmapped, script).Refusals(); len(refusals) != 1 ||
-		refusals[0].Code != RefusalPushColumnUnfilled {
+		refusals[0].Code != contract.RefusalPushColumnUnfilled {
 		t.Errorf("an entry leaving a required field unmapped: %+v", refusals)
 	}
 }

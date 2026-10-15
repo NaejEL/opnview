@@ -10,7 +10,9 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/measurement"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The live pass (C3 of the backend-completion cycle, docs/plugins.md "Live pass").
@@ -25,18 +27,6 @@ import (
 //
 // Only a kind whose records a fine sample can be is accepted: measurement_sample, today's only
 // sampled kind. A live pass on any other kind is refused at load, with its reason.
-
-// LiveDeclaration is a provider's live pass.
-type LiveDeclaration struct {
-	// Function is the function of the kind's namespace the live pass calls. It is called as the
-	// kind's read function is, and returns that function's answer.
-	Function string `json:"function"`
-	// CadenceSetting is the key of the plugin's declared integer setting holding the live cadence,
-	// in seconds. Its default is the cadence with no row, and its min the lowest it may take.
-	CadenceSetting string `json:"cadence_setting"`
-	// Endpoints are the only endpoints the live pass may read, by their manifest names.
-	Endpoints []string `json:"endpoints"`
-}
 
 // liveKinds are the kinds a live pass may be declared on, each with the answer record its live
 // function returns: the answer of the kind's read function.
@@ -74,55 +64,55 @@ type ListedLive struct {
 }
 
 // checkLive checks a provider's live pass and returns its binding; nil with no live pass.
-func checkLive(plugin *Plugin, declaration ProviderDeclaration, exports map[string]map[string]string) (
-	*liveBinding, *Refusal) {
+func checkLive(plugin *Plugin, declaration contract.ProviderDeclaration, exports map[string]map[string]string) (
+	*liveBinding, *contract.Refusal) {
 	live := declaration.Live
 	if live == nil {
 		return nil, nil
 	}
 	if _, accepted := liveKinds[declaration.Kind]; !accepted {
-		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the %s kind has no live pass: only %v accept one",
+		return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the %s kind has no live pass: only %v accept one",
 			declaration.Kind, LiveKinds())
 	}
 	if declaration.Probe != nil || declaration.Read != nil || plugin.script == nil {
-		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the %s provider's live pass needs a script, and "+
+		return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the %s provider's live pass needs a script, and "+
 			"the provider is declarative", declaration.Kind)
 	}
-	if !namePattern.MatchString(live.Function) || exports[declaration.Kind][live.Function] != "function" {
-		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the script does not export the live function %s.%s",
+	if !contract.NamePattern.MatchString(live.Function) || exports[declaration.Kind][live.Function] != "function" {
+		return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the script does not export the live function %s.%s",
 			declaration.Kind, live.Function)
 	}
-	var setting *SettingDeclaration
-	for index := range plugin.manifest.Settings {
-		if plugin.manifest.Settings[index].Key == live.CadenceSetting {
-			setting = &plugin.manifest.Settings[index]
+	var setting *contract.SettingDeclaration
+	for index := range plugin.Manifest.Settings {
+		if plugin.Manifest.Settings[index].Key == live.CadenceSetting {
+			setting = &plugin.Manifest.Settings[index]
 		}
 	}
 	if setting == nil || setting.Type != "integer" || setting.Min == nil || *setting.Min < 1 || setting.Default == nil {
-		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the live cadence setting %q is not a declared "+
+		return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the live cadence setting %q is not a declared "+
 			"integer setting with a default and a min of at least 1 second", live.CadenceSetting)
 	}
-	fallback, ok := integerOf(setting.Default)
+	fallback, ok := runtime.IntegerOf(setting.Default)
 	if !ok || float64(fallback) < *setting.Min {
-		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the live cadence setting %q has a default below "+
+		return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the live cadence setting %q has a default below "+
 			"its min", live.CadenceSetting)
 	}
 	if len(live.Endpoints) == 0 {
-		return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the live pass names no endpoint")
+		return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the live pass names no endpoint")
 	}
 	only := map[string]bool{}
 	floor := int64(0)
 	for _, name := range live.Endpoints {
-		if _, declared := plugin.endpoints[name]; !declared {
-			return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the live pass names the endpoint %q, which the "+
+		if _, declared := plugin.Endpoints[name]; !declared {
+			return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the live pass names the endpoint %q, which the "+
 				"manifest does not declare", name)
 		}
-		for _, endpoint := range plugin.manifest.Endpoints {
+		for _, endpoint := range plugin.Manifest.Endpoints {
 			if endpoint.Name == name && int64(math.Ceil(endpoint.FloorSeconds)) > floor {
 				floor = int64(math.Ceil(endpoint.FloorSeconds))
 			}
 			if endpoint.Name == name && endpoint.Stream {
-				return nil, refuse(plugin.Name, RefusalLivePassInvalid, "the live pass names the stream %q; a live "+
+				return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the live pass names the stream %q; a live "+
 					"pass reads answers", name)
 			}
 		}
@@ -133,7 +123,7 @@ func checkLive(plugin *Plugin, declaration ProviderDeclaration, exports map[stri
 }
 
 // listedLive renders a live pass for the listing; nil with none.
-func listedLive(declaration ProviderDeclaration) *ListedLive {
+func listedLive(declaration contract.ProviderDeclaration) *ListedLive {
 	if declaration.Live == nil {
 		return nil
 	}
@@ -147,7 +137,7 @@ func listedLive(declaration ProviderDeclaration) *ListedLive {
 // measurement.LiveSource.
 type liveMeasurementAdapter struct {
 	measurementAdapter
-	script *script
+	script *runtime.Script
 	live   *liveBinding
 }
 
@@ -158,7 +148,7 @@ func (a liveMeasurementAdapter) LiveCadence() (string, int64, int64, int64) {
 
 // Live runs the live pass, its requests accepting an answer at most cadence old.
 func (a liveMeasurementAdapter) Live(ctx context.Context, session provider.Session, snapshot provider.Discovery,
-	providerID, now int64, cadence time.Duration) ([]store.MeasurementSample, []string, provider.Result, error) {
+	providerID, now int64, cadence time.Duration) ([]vocab.MeasurementSample, []string, provider.Result, error) {
 	live := a.measurementAdapter
 	live.invoker = liveInvoker{script: a.script, namespace: measurement.Kind, maxAge: cadence, only: a.live.only}
 	return live.sampleWith(ctx, session, a.live.function, snapshot, providerID, now)
@@ -166,15 +156,15 @@ func (a liveMeasurementAdapter) Live(ctx context.Context, session provider.Sessi
 
 // liveInvoker calls a live function: the script's, under the live pass's max age and endpoints.
 type liveInvoker struct {
-	script    *script
+	script    *runtime.Script
 	namespace string
 	maxAge    time.Duration
 	only      map[string]bool
 }
 
 func (i liveInvoker) invoke(ctx context.Context, session provider.Session, function string,
-	arguments ...any) (any, []error, *failure) {
-	return i.script.callLive(ctx, session, i.namespace, function, i.maxAge, i.only, arguments...)
+	arguments ...any) (any, []error, *runtime.Failure) {
+	return i.script.CallLive(ctx, session, i.namespace, function, i.maxAge, i.only, arguments...)
 }
 
 // LivePass is one loaded provider's live pass: what the collector runs and the rolling strip is
@@ -223,8 +213,8 @@ func EffectiveLiveCadence(ctx context.Context, reader interface {
 // LivePasses lists every loaded provider's live pass, built-ins first.
 func (l *Loaded) LivePasses() []LivePass {
 	var passes []LivePass
-	for _, loaded := range l.plugins {
-		for _, declaration := range loaded.manifest.Providers {
+	for _, loaded := range l.Members {
+		for _, declaration := range loaded.Manifest.Providers {
 			key := declaration.Key
 			if key == "" {
 				key = loaded.Name

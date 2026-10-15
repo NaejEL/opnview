@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // The shared fragment (the maintainer's decision of 11 October 2026): the per-leg counting over
@@ -67,7 +70,7 @@ func TestNoStatementCopiesThePerLegCounting(t *testing.T) {
 		if !strings.HasSuffix(path, ".statements.sql") {
 			continue
 		}
-		parsed, err := parseStatements(text)
+		parsed, err := sqldb.ParseStatements(text)
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)
 		}
@@ -115,10 +118,10 @@ func TestNetflowPartsIsTheCompositeTypeOfTheSchema(t *testing.T) {
 		}
 		fields = append(fields, words[0])
 	}
-	if strings.Join(fields, ",") != strings.Join(NetflowPartsColumns(), ",") {
-		t.Errorf("netflow_parts is\n%v\nnot\n%v", fields, NetflowPartsColumns())
+	if strings.Join(fields, ",") != strings.Join(reads.NetflowPartsColumns(), ",") {
+		t.Errorf("netflow_parts is\n%v\nnot\n%v", fields, reads.NetflowPartsColumns())
 	}
-	var parts NetflowParts
+	var parts reads.NetflowParts
 	if len(parts.Fields()) != len(fields) {
 		t.Errorf("NetflowParts holds %d figures, netflow_parts %d", len(parts.Fields()), len(fields))
 	}

@@ -1,14 +1,16 @@
 package account_test
 
 import (
-	"github.com/NaejEL/opnview/internal/auth"
-	"github.com/NaejEL/opnview/internal/secret"
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"net/http"
 	"net/url"
 	"os"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/auth"
+	"github.com/NaejEL/opnview/internal/secret"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
 )
 
 // TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse is AC15.
@@ -28,7 +30,7 @@ func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.
 		answer := anonymous.Post(web.PathRecover, url.Values{
 			"login": {login}, "password": {newPassword}, "password_again": {newPassword},
 		})
-		webtest.AssertStatus(t, answer, http.StatusForbidden)
+		accounttest.AssertStatus(t, answer, http.StatusForbidden)
 		assertPasswordIs(t, harness, login, oldPassword)
 	})
 
@@ -48,7 +50,7 @@ func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.
 			"login": {login}, "key_file": {string(wrong)},
 			"password": {newPassword}, "password_again": {newPassword},
 		})
-		webtest.AssertStatus(t, answer, http.StatusForbidden)
+		accounttest.AssertStatus(t, answer, http.StatusForbidden)
 		assertPasswordIs(t, harness, login, oldPassword)
 	})
 
@@ -58,7 +60,7 @@ func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.
 			"login": {login}, "key_file": {string(keyFile)},
 			"password": {newPassword}, "password_again": {newPassword},
 		})
-		webtest.AssertStatus(t, answer, http.StatusSeeOther)
+		accounttest.AssertStatus(t, answer, http.StatusSeeOther)
 		assertPasswordIs(t, harness, login, newPassword)
 
 		// And the new password actually signs in, which the stored record alone does
@@ -73,7 +75,7 @@ func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.
 		if signedIn.SessionCookie() == "" {
 			t.Fatal("signing in set no session cookie")
 		}
-		webtest.AssertStatus(t, signedIn.Get(web.PathSettings), http.StatusOK)
+		accounttest.AssertStatus(t, signedIn.Get(web.PathSettings), http.StatusOK)
 
 		later := webtest.RandomHex(t, 12)
 		resetter := webtest.FreshClient(t, harness)
@@ -81,7 +83,7 @@ func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.
 			"login": {login}, "key_file": {string(keyFile)},
 			"password": {later}, "password_again": {later},
 		})
-		webtest.AssertStatus(t, answer, http.StatusSeeOther)
+		accounttest.AssertStatus(t, answer, http.StatusSeeOther)
 
 		stale := signedIn.Get(web.PathSettings)
 		defer func() { _ = stale.Body.Close() }()
@@ -109,7 +111,7 @@ func TestTheResetIsRefusedWhenThereIsNoKeyFileAtAll(t *testing.T) {
 		"login": {login}, "key_file": {string(keyFile)},
 		"password": {replacement}, "password_again": {replacement},
 	})
-	webtest.AssertStatus(t, answer, http.StatusForbidden)
+	accounttest.AssertStatus(t, answer, http.StatusForbidden)
 	assertPasswordIs(t, withoutKey, login, password)
 }
 

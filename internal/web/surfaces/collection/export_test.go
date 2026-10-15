@@ -7,6 +7,7 @@ import (
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/sizing"
 	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
 )
 
 // What the external tests of this surface need of its internals.
@@ -43,7 +44,7 @@ type PageFigure struct {
 }
 
 // spelled renders a duration as the page draws its parts.
-func spelled(parts []web.DurationPart) string { return fmt.Sprint(parts) }
+func spelled(parts []settingfields.DurationPart) string { return fmt.Sprint(parts) }
 
 // figureText renders one figure row.
 func figureText(row figureRow) string {
@@ -67,7 +68,7 @@ func selectedOf(options []selectionOption) string {
 }
 
 // fieldText is a field as the page shows it: its figure and selected unit, or its selected option.
-func fieldText(field web.SettingField) string {
+func fieldText(field settingfields.SettingField) string {
 	for _, option := range field.Options {
 		if option.Selected {
 			return option.Value

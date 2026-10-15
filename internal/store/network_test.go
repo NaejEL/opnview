@@ -6,6 +6,10 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/aggregates"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The test network every derivation test runs against.
@@ -63,7 +67,7 @@ func newTestNetwork(t *testing.T, interfaceCount, clientCount int) *testNetwork 
 	for index := 0; index < interfaceCount; index++ {
 		identifier := fmt.Sprintf("example_if_%d", index)
 		device := fmt.Sprintf("exdev%d", index)
-		id, err := database.UpsertInterface(ctx, Interface{
+		id, err := database.UpsertInterface(ctx, vocab.Interface{
 			Identifier: identifier, Device: device,
 			Description: fmt.Sprintf("example description %d", index),
 			LinkType:    "example-link", LinkKind: "other",
@@ -78,9 +82,9 @@ func newTestNetwork(t *testing.T, interfaceCount, clientCount int) *testNetwork 
 		}
 		network.inside = append(network.inside, iface)
 		bits4, bits6 := int64(24), int64(64)
-		for _, address := range []InterfaceAddress{
-			{InterfaceID: id, SourceField: SourceFieldAddr4, Address: iface.address, PrefixLength: &bits4, AddressFamily: 4},
-			{InterfaceID: id, SourceField: SourceFieldAddr6, Address: iface.v6, PrefixLength: &bits6, AddressFamily: 6},
+		for _, address := range []vocab.InterfaceAddress{
+			{InterfaceID: id, SourceField: vocab.SourceFieldAddr4, Address: iface.address, PrefixLength: &bits4, AddressFamily: 4},
+			{InterfaceID: id, SourceField: vocab.SourceFieldAddr6, Address: iface.v6, PrefixLength: &bits6, AddressFamily: 6},
 		} {
 			if err := database.UpsertInterfaceAddress(ctx, address, nil, network.now-86400); err != nil {
 				t.Fatalf("writing an interface address: %v", err)
@@ -95,7 +99,7 @@ func newTestNetwork(t *testing.T, interfaceCount, clientCount int) *testNetwork 
 		}
 	}
 
-	upstreamID, err := database.UpsertInterface(ctx, Interface{
+	upstreamID, err := database.UpsertInterface(ctx, vocab.Interface{
 		Identifier: "example_if_upstream", Device: "exdevup",
 		Description: "example description upstream",
 		LinkType:    "example-link", LinkKind: "other", IsUpstream: true,
@@ -105,9 +109,9 @@ func newTestNetwork(t *testing.T, interfaceCount, clientCount int) *testNetwork 
 	}
 	network.upstream = testInterface{id: upstreamID, device: "exdevup", address: "203.0.113.2", prefix: 24, family: 4}
 	bits := int64(24)
-	for _, address := range []InterfaceAddress{
-		{InterfaceID: upstreamID, SourceField: SourceFieldAddr4, Address: "203.0.113.2", PrefixLength: &bits, AddressFamily: 4},
-		{InterfaceID: upstreamID, SourceField: SourceFieldGateways, Address: "203.0.113.1", AddressFamily: 4},
+	for _, address := range []vocab.InterfaceAddress{
+		{InterfaceID: upstreamID, SourceField: vocab.SourceFieldAddr4, Address: "203.0.113.2", PrefixLength: &bits, AddressFamily: 4},
+		{InterfaceID: upstreamID, SourceField: vocab.SourceFieldGateways, Address: "203.0.113.1", AddressFamily: 4},
 	} {
 		if err := database.UpsertInterfaceAddress(ctx, address, nil, network.now-86400); err != nil {
 			t.Fatalf("writing an upstream address: %v", err)
@@ -119,7 +123,7 @@ func newTestNetwork(t *testing.T, interfaceCount, clientCount int) *testNetwork 
 		t.Fatalf("detecting the upstream network: %v", err)
 	}
 
-	network.ruleID, err = database.UpsertRule(ctx, Rule{
+	network.ruleID, err = database.UpsertRule(ctx, vocab.Rule{
 		PfLabel: "example-rule-label", Description: "example rule", Action: "pass",
 	}, network.now-86400)
 	if err != nil {
@@ -142,18 +146,18 @@ func newTestNetwork(t *testing.T, interfaceCount, clientCount int) *testNetwork 
 		}
 		if client.leased {
 			mac := fmt.Sprintf("00:00:00:00:%02x:%02x", index/256, index%256)
-			clientID, err := database.UpsertClient(ctx, Client{
-				Identity:    ClientIdentity{Kind: IdentityMAC, Key: mac},
+			clientID, err := database.UpsertClient(ctx, vocab.Client{
+				Identity:    vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: mac},
 				InterfaceID: &iface.id, MAC: &mac, LastAddress: &client.address,
 			}, network.now-3600)
 			if err != nil {
 				t.Fatalf("writing a leased client: %v", err)
 			}
 			expiry := network.now + 3600
-			if err := database.InsertDHCPLease(ctx, leaseProvider, DHCPLease{
+			if err := database.InsertDHCPLease(ctx, leaseProvider, vocab.DHCPLease{
 				ClientID: &clientID, Backend: "dnsmasq", Address: client.address, MAC: &mac,
 				LeaseState: "active", InterfaceID: &iface.id,
-				GenerationKey: GenerationKeyOf(nil, &expiry, 0), ExpiresAt: &expiry,
+				GenerationKey: vocab.GenerationKeyOf(nil, &expiry, 0), ExpiresAt: &expiry,
 				ObservedAt: network.now - 3600,
 			}); err != nil {
 				t.Fatalf("writing a lease: %v", err)
@@ -202,9 +206,9 @@ func (n *testNetwork) insert(t *testing.T, specs []networkFlow) []string {
 			version = 6
 		}
 		rid := "example-rule-label"
-		state := LookupNotFound
+		state := vocab.LookupNotFound
 		if spec.ruleID != nil {
-			state = LookupResolved
+			state = vocab.LookupResolved
 		}
 		ingested := spec.ingestedAt
 		if ingested == 0 {
@@ -212,9 +216,9 @@ func (n *testNetwork) insert(t *testing.T, specs []networkFlow) []string {
 			// stamped in the same second as a refresh is stale to it by rule 3.
 			ingested = n.now - 1
 		}
-		if err := n.db.InsertFlow(ctx, Flow{
+		if err := n.db.InsertFlow(ctx, vocab.Flow{
 			LogDigest: fmt.Sprintf("example-digest-%d", n.digestSeed), ObservedAt: spec.observedAt,
-			IngestedAt: ingested, InterfaceDevice: spec.device, InterfaceLookupState: LookupResolved,
+			IngestedAt: ingested, InterfaceDevice: spec.device, InterfaceLookupState: vocab.LookupResolved,
 			SrcAddress: spec.src, DstAddress: spec.dst, DstPort: spec.dstPort, Protocol: spec.protocol,
 			IPVersion: version, Action: spec.action, Direction: spec.direction, LogReason: spec.reason,
 			PacketBytes: spec.bytes, Rid: &rid, RuleID: spec.ruleID, RuleLookupState: state,
@@ -242,7 +246,7 @@ func containsColon(text string) bool {
 // interface, and an unsolicited packet to the firewall's own upstream address. Blocked
 // records carry each kind of reason.
 func (n *testNetwork) flowsFor(count int, span int64) []networkFlow {
-	reasons := []*string{ptr(LogReasonMatch), ptr("state-mismatch"), nil, ptr("unknown(16)")}
+	reasons := []*string{ptr(vocab.LogReasonMatch), ptr("state-mismatch"), nil, ptr("unknown(16)")}
 	var specs []networkFlow
 	for index := 0; index < count; index++ {
 		client := n.clients[index%len(n.clients)]
@@ -293,7 +297,7 @@ func (n *testNetwork) flowsFor(count int, span int64) []networkFlow {
 func ptr[T any](value T) *T { return &value }
 
 // classifyAndRefresh runs what the collector runs after a pass.
-func (n *testNetwork) classifyAndRefresh(t *testing.T, addresses []string) Refresh {
+func (n *testNetwork) classifyAndRefresh(t *testing.T, addresses []string) aggregates.Refresh {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := n.db.Reclassify(ctx, addresses, n.now); err != nil {
@@ -343,7 +347,7 @@ func foreignKeyViolations(t *testing.T, database *Store) int {
 		        JOIN pg_attribute AS a ON a.attrelid = c.confrelid AND a.attnum = k.attnum)
 		FROM pg_constraint AS c
 		JOIN pg_namespace AS n ON n.oid = c.connamespace
-		WHERE c.contype = 'f' AND n.nspname = ?`, CoreSchema)
+		WHERE c.contype = 'f' AND n.nspname = ?`, sqldb.CoreSchema)
 	if err != nil {
 		t.Fatalf("listing the foreign keys: %v", err)
 	}

@@ -8,8 +8,10 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
 )
 
 // The Sources surface: one row per registered provider, with its availability, and
@@ -98,7 +100,7 @@ type recentGapRow struct {
 	Start       string
 	End         string
 	// Missed is the time the gap covers, in days, hours, minutes and seconds.
-	Missed      []web.DurationPart
+	Missed      []settingfields.DurationPart
 	Detail      string
 	DetailState messageKey
 }
@@ -106,7 +108,7 @@ type recentGapRow struct {
 // sourceStatus is one provider's availability beside the operator's selection of
 // it: the two facts the outage rule reads.
 type sourceStatus struct {
-	row       store.SourceRow
+	row       reads.SourceRow
 	selection config.Selection
 }
 
@@ -128,8 +130,8 @@ func (s *surface) readSourceStatuses(ctx context.Context) ([]sourceStatus, error
 }
 
 // isReachable is the one condition that reads as healthy.
-func isReachable(row store.SourceRow) bool {
-	return row.HasAvailability && row.State == store.StateReachable
+func isReachable(row reads.SourceRow) bool {
+	return row.HasAvailability && row.State == vocab.StateReachable
 }
 
 // outage is one current outage, as the indicator counts it: a kind none of whose
@@ -282,7 +284,7 @@ func (s *surface) fillSources(ctx context.Context, built *view) error {
 		// A row never checked carries the schema's checked_at of 0, which as an
 		// instant would read as the first second of 1970.
 		if row.HasAvailability && !row.NotYetProbed() {
-			drawn.Checked = web.Instant(row.CheckedAt)
+			drawn.Checked = settingfields.Instant(row.CheckedAt)
 		} else {
 			drawn.CheckedState = msgNeverChecked
 		}
@@ -306,9 +308,9 @@ func (s *surface) fillSources(ctx context.Context, built *view) error {
 			KindKey:     web.KindLabelKey(gap.Kind),
 			ProviderKey: web.ProviderLabelKey(gap.Kind, gap.ProviderKey),
 			ReasonKey:   web.GapReasonKey(string(gap.Reason)),
-			Start:       web.Instant(gap.IntervalStartAt),
-			End:         web.Instant(gap.IntervalEndAt),
-			Missed:      web.SpelledDuration(gap.MissedSeconds()),
+			Start:       settingfields.Instant(gap.IntervalStartAt),
+			End:         settingfields.Instant(gap.IntervalEndAt),
+			Missed:      settingfields.SpelledDuration(gap.MissedSeconds()),
 		}
 		if gap.HasDetail {
 			drawn.Detail = gap.Detail
@@ -342,7 +344,7 @@ func yesNo(value bool) messageKey {
 
 // verbatimDetail is a provider's availability detail as data, null when there is none: the JSON
 // answer carries it verbatim, as the page draws it, and nothing reads it.
-func verbatimDetail(row store.SourceRow) *string {
+func verbatimDetail(row reads.SourceRow) *string {
 	if !row.HasDetail {
 		return nil
 	}
@@ -351,7 +353,7 @@ func verbatimDetail(row store.SourceRow) *string {
 }
 
 // verbatimGapDetail is a collection gap's detail as data, null when there is none.
-func verbatimGapDetail(gap store.RecentGap) *string {
+func verbatimGapDetail(gap reads.RecentGap) *string {
 	if !gap.HasDetail {
 		return nil
 	}

@@ -11,9 +11,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
+	"github.com/NaejEL/opnview/internal/web/webtest/interfacestest"
+	"github.com/NaejEL/opnview/internal/web/webtest/sourcestest"
 )
 
 // The byte-identity record of the Go-rendered pages (AC X3 of the backend-completion cycle).
@@ -54,19 +57,19 @@ func normalisePage(page, dataDir string) string {
 func TestEveryPageRendersByteForByteAsBefore(t *testing.T) {
 	t.Parallel()
 	pages := map[string]string{}
-	for _, page := range webtest.CollectionPages(t) {
+	for _, page := range collectiontest.CollectionPages(t) {
 		pages[page.Name] = normalisePage(page.Document, "")
 	}
 
-	signedIn := webtest.SignedInHarness(t)
+	signedIn := collectiontest.SignedInHarness(t)
 	now := signedIn.Clock.Now().Unix()
-	signedIn.SetAvailability("firewall_log", "pf", store.StateReachable)
-	signedIn.SetAvailability("security_event", "suricata", store.StatePresentButDisabled)
+	collectiontest.SetAvailability(signedIn, "firewall_log", "pf", vocab.StateReachable)
+	collectiontest.SetAvailability(signedIn, "security_event", "suricata", vocab.StatePresentButDisabled)
 	stopped := "the service reported a status of stopped"
-	signedIn.SetAvailabilityDetail("dns_lookup", "unbound", store.StateUnavailable, "GET /api/unbound/service/status",
+	sourcestest.SetAvailabilityDetail(signedIn, "dns_lookup", "unbound", vocab.StateUnavailable, "GET /api/unbound/service/status",
 		&stopped)
-	signedIn.RecordGap("firewall_log", "pf", store.GapDigestOutsideWindow, now-900, now-840)
-	signedIn.SeedBundleNetwork(2)
+	collectiontest.RecordGap(signedIn, "firewall_log", "pf", vocab.GapDigestOutsideWindow, now-900, now-840)
+	interfacestest.SeedBundleNetwork(signedIn, 2)
 	for _, path := range []string{web.PathSettings, webtest.PathInterfaces, webtest.PathSources} {
 		pages["signed in "+path] = normalisePage(webtest.PageSource(t, signedIn, path), signedIn.DataDir)
 	}

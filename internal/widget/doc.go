@@ -7,7 +7,7 @@
 // and the ordered array of objects of `series` -- as JSON in one query parameter,
 // `parameters`. There is no second encoding of the parameters.
 //
-// WHAT A RESPONSE CARRIES. One envelope for every type (envelope.go): the effective
+// WHAT A RESPONSE CARRIES. One envelope for every type (internal/widget/envelope): the effective
 // parameters after defaults, the requested and the covered window, the gaps, the
 // availability of every provider the preset binds with the condition each maps to, the
 // freshness of the aggregates read, what could not be resolved or parsed, what the
@@ -16,11 +16,11 @@
 // THE SEAM. A widget is a DIRECTORY holding its manifest.json, its query files and the logic a
 // shape cannot express. A widget a plugin carries -- plugins/<name>/widgets/<type>/ in the
 // repository, <data-dir>/plugins/<name>/widgets/<type>/ for a third party -- writes that logic in
-// JavaScript, run by the script host (script.go, host*.go; docs/plugins.md, "Widgets"). Every
+// JavaScript, run by the script host (internal/widget/script and its areas, internal/widget/hostareas; docs/plugins.md, "Widgets"). Every
 // built-in widget is such a plugin; an operator widget under <data-dir>/widgets is a manifest and
 // a query. The HTTP routes are built from the loaded types, the parameter handling
 // from the manifest, the envelope from its bindings, and what is common to a shape is written
-// once in this package (engine.go, shape files). docs/widget-authoring.md is the reference.
+// once in the core (internal/widget/shapes). docs/widget-authoring.md is the reference.
 //
 // WHAT IT NEVER DOES. It never calls the firewall, MaxMind or the Public Suffix List --
 // the three outbound calls stay three, and none is reachable from here -- and it never

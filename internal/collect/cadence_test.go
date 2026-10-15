@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/pluginkind"
 )
 
@@ -15,9 +16,9 @@ import (
 // every wait.
 func TestADeclaredCadenceIsOverriddenNeverBelowItsBound(t *testing.T) {
 	database := newTestStore(t)
-	collector := NewWithSources(nil, database, SystemClock{}, nil)
+	collector := NewWithSources(nil, database, core.SystemClock{}, nil)
 	key := pluginkind.CadenceSettingKey("example_inventory", "example_inventory", "example_inventory")
-	interval := collector.overriddenCadence(key, 10*time.Minute, 2*time.Minute)
+	interval := collector.OverriddenCadence(key, 10*time.Minute, 2*time.Minute)
 	ctx := context.Background()
 	for _, step := range []struct {
 		stored string

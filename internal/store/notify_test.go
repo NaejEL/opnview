@@ -8,18 +8,21 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/store/plugintables"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // listening starts a listener on every channel and returns what it hears, once it is known to be
 // listening: it publishes a probe until the probe comes back, and drops it.
-func listening(t *testing.T, database *Store) <-chan Notification {
+func listening(t *testing.T, database *Store) <-chan sqldb.Notification {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
-	heard := make(chan Notification, 64)
+	heard := make(chan sqldb.Notification, 64)
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		_ = database.Listen(ctx, Channels(), func(notification Notification) { heard <- notification })
+		_ = database.Listen(ctx, sqldb.Channels(), func(notification sqldb.Notification) { heard <- notification })
 	}()
 	t.Cleanup(func() {
 		cancel()
@@ -51,14 +54,14 @@ func listening(t *testing.T, database *Store) <-chan Notification {
 }
 
 // next returns the next notification heard, or fails the test.
-func next(t *testing.T, heard <-chan Notification) Notification {
+func next(t *testing.T, heard <-chan sqldb.Notification) sqldb.Notification {
 	t.Helper()
 	select {
 	case notification := <-heard:
 		return notification
 	case <-time.After(10 * time.Second):
 		t.Fatal("no notification was heard in ten seconds")
-		return Notification{}
+		return sqldb.Notification{}
 	}
 }
 
@@ -75,7 +78,7 @@ func TestACommittedPassEmitsItsNotificationAndARolledBackOneNone(t *testing.T) {
 	if err := database.NotifyCollectionPass(ctx, "dhcp_lease", "kea"); err != nil {
 		t.Fatal(err)
 	}
-	if got := next(t, heard); got.Channel != ChannelCollectionPass || got.Payload["kind"] != "dhcp_lease" ||
+	if got := next(t, heard); got.Channel != sqldb.ChannelCollectionPass || got.Payload["kind"] != "dhcp_lease" ||
 		got.Payload["provider_key"] != "kea" {
 		t.Errorf("the collection pass published %+v", got)
 	}
@@ -83,18 +86,18 @@ func TestACommittedPassEmitsItsNotificationAndARolledBackOneNone(t *testing.T) {
 	if _, err := database.EnsurePluginTable(ctx, exampleReadings("example_one")); err != nil {
 		t.Fatal(err)
 	}
-	if err := database.WritePluginPass(ctx, "example_one", "example_reader", PluginRows{"readings": {
+	if err := database.WritePluginPass(ctx, "example_one", "example_reader", plugintables.PluginRows{"readings": {
 		{"sampled_at": int64(1790000000), "subject": "a", "value": 1.0}}}, nil, 1790000000); err != nil {
 		t.Fatal(err)
 	}
-	if got := next(t, heard); got.Channel != ChannelPluginPass || got.Payload["plugin"] != "example_one" ||
+	if got := next(t, heard); got.Channel != sqldb.ChannelPluginPass || got.Payload["plugin"] != "example_one" ||
 		got.Payload["provider"] != "example_reader" {
 		t.Errorf("the plugin pass published %+v", got)
 	}
 
 	// A pass that fails stores nothing and publishes nothing; nor does a transaction that publishes
 	// and then rolls back.
-	if err := database.WritePluginPass(ctx, "example_one", "example_reader", PluginRows{"readings": {
+	if err := database.WritePluginPass(ctx, "example_one", "example_reader", plugintables.PluginRows{"readings": {
 		{"sampled_at": int64(1790000000), "subject": nil, "value": 1.0}}}, nil, 1790000000); err == nil {
 		t.Fatal("a row with a NULL key was stored")
 	}
@@ -102,7 +105,7 @@ func TestACommittedPassEmitsItsNotificationAndARolledBackOneNone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := notify(ctx, transaction, ChannelPluginPass, map[string]string{"plugin": "rolled_back"}); err != nil {
+	if err := sqldb.Notify(ctx, transaction, sqldb.ChannelPluginPass, map[string]string{"plugin": "rolled_back"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := transaction.Rollback(); err != nil {
@@ -125,7 +128,7 @@ func TestACommittedPassEmitsItsNotificationAndARolledBackOneNone(t *testing.T) {
 	}
 	got := next(t, heard)
 	periods, _ := got.Payload["periods"].([]any)
-	if got.Channel != ChannelAggregateRefresh || len(periods) == 0 {
+	if got.Channel != sqldb.ChannelAggregateRefresh || len(periods) == 0 {
 		t.Errorf("the aggregate refresh published %+v", got)
 	}
 }
@@ -148,7 +151,7 @@ func TestTheDocumentedChannelsAreTheChannels(t *testing.T) {
 		documented = append(documented, strings.Trim(strings.Split(line, "|")[1], " `"))
 	}
 	sort.Strings(documented)
-	channels := Channels()
+	channels := sqldb.Channels()
 	sort.Strings(channels)
 	if strings.Join(documented, " ") != strings.Join(channels, " ") {
 		t.Errorf("the document lists %v, the core publishes on %v", documented, channels)

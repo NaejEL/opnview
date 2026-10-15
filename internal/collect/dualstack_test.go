@@ -7,7 +7,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The dual-stack rule through the collector: AC37 of specs/SPEC-step-5b-widget-api.md, from
@@ -28,11 +28,11 @@ func TestALoggedHostNameWithAnAAndAnAAAAIsResolvedByTheReportedFamily(t *testing
 		name, family, wantResolution, wantAddress string
 		restart                                   bool
 	}{
-		{"the IPv4 family", "ip4", store.ClientResolutionLocalData, v4, false},
-		{"the IPv6 family", "ip6", store.ClientResolutionLocalData, v6, false},
-		{"the IPv6 family, decided after a restart", "ip6", store.ClientResolutionLocalData, v6, true},
-		{"a unix socket", "unix", store.ClientResolutionDualStack, hostname, false},
-		{"no family field", "", store.ClientResolutionDualStack, hostname, false},
+		{"the IPv4 family", "ip4", vocab.ClientResolutionLocalData, v4, false},
+		{"the IPv6 family", "ip6", vocab.ClientResolutionLocalData, v6, false},
+		{"the IPv6 family, decided after a restart", "ip6", vocab.ClientResolutionLocalData, v6, true},
+		{"a unix socket", "unix", vocab.ClientResolutionDualStack, hostname, false},
+		{"no family field", "", vocab.ClientResolutionDualStack, hostname, false},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()

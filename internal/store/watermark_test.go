@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The third iteration of the step-5A corrections: the purge watermark enforced by the
@@ -38,7 +40,7 @@ func TestARecordOlderThanThePurgeWatermarkIsRefusedByTheInsertItself(t *testing.
 		t.Errorf("flow holds %d bytes: the record older than the watermark was stored, or the other was not", got)
 	}
 	for index, at := range []int64{watermark - 1, watermark} {
-		if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+		if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-watermark-%d", index), ClientAddress: client.address,
 			Domain: "example.invalid", Resolver: "unbound", Action: "pass",
 			LookedUpAt: at, IngestedAt: network.now,
@@ -112,9 +114,9 @@ func TestReResolvingHostNamesIsBoundedToTheLookupsNotYetExamined(t *testing.T) {
 	since := network.now - 600
 	for index := 0; index < 50; index++ {
 		hostname := fmt.Sprintf("example-static-%d.example.invalid", index)
-		if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+		if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-old-%d", index), ClientAddress: hostname,
-			ClientHostname: &hostname, ClientResolution: ClientResolutionUnknown,
+			ClientHostname: &hostname, ClientResolution: vocab.ClientResolutionUnknown,
 			Domain: "example.invalid", Resolver: "unbound", Action: "pass",
 			LookedUpAt: since - 3600, IngestedAt: since - 3000,
 		}); err != nil {
@@ -131,18 +133,18 @@ func TestReResolvingHostNamesIsBoundedToTheLookupsNotYetExamined(t *testing.T) {
 	}
 
 	recent := "example-late.example.invalid"
-	if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey: "example-recent", ClientAddress: recent, ClientHostname: &recent,
-		ClientResolution: ClientResolutionUnknown, Domain: "example.invalid", Resolver: "unbound",
+		ClientResolution: vocab.ClientResolutionUnknown, Domain: "example.invalid", Resolver: "unbound",
 		Action: "pass", LookedUpAt: network.now - 120, IngestedAt: network.now - 100,
 	}); err != nil {
 		t.Fatalf("writing the recent lookup: %v", err)
 	}
 	provider, _ := network.db.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 	hostname := "example-late"
-	if err := network.db.InsertDHCPLease(ctx, provider, DHCPLease{
+	if err := network.db.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		Backend: "dnsmasq", Address: network.clients[1].address, Hostname: &hostname,
-		LeaseState: "reserved", GenerationKey: GenerationKeyOf(nil, nil, network.now), ObservedAt: network.now,
+		LeaseState: "reserved", GenerationKey: vocab.GenerationKeyOf(nil, nil, network.now), ObservedAt: network.now,
 	}); err != nil {
 		t.Fatalf("writing the lease: %v", err)
 	}

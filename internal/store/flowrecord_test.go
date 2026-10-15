@@ -4,18 +4,21 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/netflow"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The NetFlow tables of the store (PS17, PS18 and the retention of PS-AC44 of the NetFlow join
 // amendment).
 
 // flowRecordAt is one flow record of a provider starting at an instant, with no Observation Point.
-func flowRecordAt(providerID, at int64, identity string) FlowRecordRow {
+func flowRecordAt(providerID, at int64, identity string) netflow.FlowRecordRow {
 	captured := int64(2)
-	return FlowRecordRow{ProviderID: providerID, Identity: identity, StartAt: at, EndAt: at + 1, ReceivedAt: at + 30,
+	return netflow.FlowRecordRow{ProviderID: providerID, Identity: identity, StartAt: at, EndAt: at + 1, ReceivedAt: at + 30,
 		ExporterAddress: "192.0.2.1", IPVersion: 4, Protocol: 17, SrcAddress: "198.51.100.10",
-		DstAddress: "192.0.2.80", Octets: 100, Packets: 1, CaptureState: CaptureObservationPointHidden,
-		CapturedInterfaces: &captured, TupleKey: "4|17|192.0.2.80|198.51.100.10", JoinState: JoinNotJoinable}
+		DstAddress: "192.0.2.80", Octets: 100, Packets: 1, CaptureState: netflow.CaptureObservationPointHidden,
+		CapturedInterfaces: &captured, TupleKey: "4|17|192.0.2.80|198.51.100.10", JoinState: netflow.JoinNotJoinable}
 }
 
 // identityOf is a 64-hexadecimal-digit identity for a test.
@@ -51,11 +54,11 @@ func TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention(t *testing.T) {
 		t.Fatal(err)
 	}
 	retention := int64(2*86400 + 3600)
-	if err := database.SetSetting(ctx, FlowRecordRetentionKey, fmt.Sprint(retention), now); err != nil {
+	if err := database.SetSetting(ctx, netflow.FlowRecordRetentionKey, fmt.Sprint(retention), now); err != nil {
 		t.Fatal(err)
 	}
 	horizon := now - retention
-	var rows []FlowRecordRow
+	var rows []netflow.FlowRecordRow
 	for offset, number := int64(-5*86400), 0; offset <= 0; offset, number = offset+3600, number+1 {
 		rows = append(rows, flowRecordAt(providerID, now+offset, identityOf(number)))
 	}
@@ -65,8 +68,8 @@ func TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention(t *testing.T) {
 		t.Fatalf("inserted %d of %d (%v)", inserted, len(rows), err)
 	}
 	for _, at := range []int64{now - 5*86400, now - 60} {
-		configuration := CaptureConfiguration{Readable: true, Enabled: true,
-			Interfaces: []CaptureInterface{{Identifier: fmt.Sprintf("example_if_%d", at%7), Egress: true}}}
+		configuration := netflow.CaptureConfiguration{Readable: true, Enabled: true,
+			Interfaces: []netflow.CaptureInterface{{Identifier: fmt.Sprintf("example_if_%d", at%7), Egress: true}}}
 		if _, err := database.RecordCaptureRead(ctx, providerID, at, configuration); err != nil {
 			t.Fatal(err)
 		}
@@ -121,14 +124,14 @@ func TestACaptureReadExtendsItsRunOrOpensOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	one := CaptureConfiguration{Readable: true, Enabled: true,
-		Interfaces: []CaptureInterface{{Identifier: "example_if_a", Ingress: true, Egress: true}}}
-	two := CaptureConfiguration{Readable: true, Enabled: true, Interfaces: append(one.Interfaces,
-		CaptureInterface{Identifier: "example_if_b", Egress: true})}
-	unreadable := CaptureConfiguration{Outcome: OutcomeDenied, Detail: "HTTP 403"}
+	one := netflow.CaptureConfiguration{Readable: true, Enabled: true,
+		Interfaces: []netflow.CaptureInterface{{Identifier: "example_if_a", Ingress: true, Egress: true}}}
+	two := netflow.CaptureConfiguration{Readable: true, Enabled: true, Interfaces: append(one.Interfaces,
+		netflow.CaptureInterface{Identifier: "example_if_b", Egress: true})}
+	unreadable := netflow.CaptureConfiguration{Outcome: vocab.OutcomeDenied, Detail: "HTTP 403"}
 	for _, read := range []struct {
 		at            int64
-		configuration CaptureConfiguration
+		configuration netflow.CaptureConfiguration
 		opens         bool
 	}{
 		{1000, one, true}, {1060, one, false}, {1120, two, true}, {1180, unreadable, true}, {1240, unreadable, false},
@@ -155,7 +158,7 @@ func TestACaptureReadExtendsItsRunOrOpensOne(t *testing.T) {
 			t.Errorf("run %d spans [%d, %d], want %v", index, run.FirstReadAt, run.LastReadAt, want[index])
 		}
 	}
-	if runs[2].Readable || runs[2].Outcome != OutcomeDenied || len(runs[1].Interfaces) != 2 {
+	if runs[2].Readable || runs[2].Outcome != vocab.OutcomeDenied || len(runs[1].Interfaces) != 2 {
 		t.Errorf("the unreadable run is %+v and the two-interface run %+v", runs[2], runs[1])
 	}
 }

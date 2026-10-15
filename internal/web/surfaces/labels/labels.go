@@ -1,12 +1,3 @@
-// Package labels mounts the JSON API of the labels the user gives interfaces and the purposes the
-// user gives blocklists (C1 of the backend-completion cycle, docs/widget-api.md, "Write endpoints",
-// *Labels and purposes*). It draws no page and carries no catalogue: it answers JSON only, for the
-// step-7 application.
-//
-// Both are user input that nothing infers: a label is never derived from a description, a purpose
-// never from a list's name (docs/data-model.md, "interface", "blocklist"). Discovery never writes a
-// label and the purge never removes a purpose. Every route is authenticated; every write is a JSON
-// POST the middleware asks for the session's form token, and no GET changes anything.
 package labels
 
 import (
@@ -15,7 +6,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/owners"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -100,7 +91,7 @@ type BlocklistAnswer struct {
 	Blocklist Blocklist `json:"blocklist"`
 }
 
-func blocklistOf(list store.Blocklist) Blocklist {
+func blocklistOf(list owners.Blocklist) Blocklist {
 	return Blocklist{ID: list.ID, Name: list.Name, Purpose: list.Purpose, PurposeAssignedAt: list.PurposeAssignedAt,
 		FirstSeenAt: list.FirstSeenAt, LastSeenAt: list.LastSeenAt}
 }
@@ -108,13 +99,13 @@ func blocklistOf(list store.Blocklist) Blocklist {
 // refuse answers a store refusal with its code: 404 for a row named by the path that does not
 // exist, 400 otherwise; any other failure is a 500 whose detail goes to the console.
 func refuse(writer http.ResponseWriter, request *http.Request, err error) {
-	var refusal *store.UserInputRefusal
+	var refusal *owners.UserInputRefusal
 	if !errors.As(err, &refusal) {
 		web.FailJSON(writer, request, err)
 		return
 	}
 	status := http.StatusBadRequest
-	if refusal.Code == store.RefusalUnknownInterface || refusal.Code == store.RefusalUnknownBlocklist {
+	if refusal.Code == owners.RefusalUnknownInterface || refusal.Code == owners.RefusalUnknownBlocklist {
 		status = http.StatusNotFound
 	}
 	web.WriteJSON(writer, status, Refusal{Condition: refusal.Code})
@@ -148,7 +139,7 @@ func nullableText(writer http.ResponseWriter, request *http.Request, key string)
 }
 
 func (s *surface) handleLabel(writer http.ResponseWriter, request *http.Request) {
-	id, ok := pathID(writer, request, store.RefusalUnknownInterface)
+	id, ok := pathID(writer, request, owners.RefusalUnknownInterface)
 	if !ok {
 		return
 	}
@@ -172,7 +163,7 @@ func (s *surface) handleBlocklists(writer http.ResponseWriter, request *http.Req
 		return
 	}
 	answer := BlocklistsAnswer{Blocklists: make([]Blocklist, 0, len(lists)),
-		Purposes: append([]string(nil), store.BlocklistPurposes...)}
+		Purposes: append([]string(nil), owners.BlocklistPurposes...)}
 	for _, list := range lists {
 		answer.Blocklists = append(answer.Blocklists, blocklistOf(list))
 	}
@@ -180,7 +171,7 @@ func (s *surface) handleBlocklists(writer http.ResponseWriter, request *http.Req
 }
 
 func (s *surface) handlePurpose(writer http.ResponseWriter, request *http.Request) {
-	id, ok := pathID(writer, request, store.RefusalUnknownBlocklist)
+	id, ok := pathID(writer, request, owners.RefusalUnknownBlocklist)
 	if !ok {
 		return
 	}

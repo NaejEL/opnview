@@ -15,6 +15,8 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/firewalllog"
 	"github.com/NaejEL/opnview/internal/collect/flowrecord"
 	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
 	"github.com/NaejEL/opnview/internal/push"
 )
 
@@ -23,7 +25,7 @@ import (
 // at all, by its field mapping -- each contract field named after the protocol fields it is read
 // from, the first present one winning -- and checked against the kind's contract (contract.go) as a
 // pulled answer is. They then go to the core: a kind fed by two paths to its coordinator, which keeps
-// one path per instant (internal/collect, pushpaths.go); a push-only record to the kind's receiver.
+// one path per instant (internal/collect/kinds/filterlog/pushpaths.go); a push-only record to the kind's receiver.
 
 // KindReceiver is the core's side: it takes the records a push entry delivered for one provider, and
 // what the decoder detected on the stream they came by.
@@ -105,7 +107,7 @@ func firewallLogFromPush(answers []map[string]any, records []push.Record) (any, 
 	invalid := 0
 	for index, answer := range answers {
 		answer["digest"] = pushedDigest(records[index])
-		checked, err := checkRecord(contract, "firewall_log_record", answer, fmt.Sprintf("record %d", index))
+		checked, err := runtime.CheckRecord(contract, "firewall_log_record", answer, fmt.Sprintf("record %d", index))
 		if err != nil {
 			invalid++
 			continue
@@ -136,7 +138,7 @@ func flowRecordsFromPush(answers []map[string]any, records []push.Record) (any, 
 	var converted []flowrecord.Record
 	invalid := 0
 	for index, answer := range answers {
-		checked, err := checkRecord(contract, flowrecord.Kind+"_record", answer, fmt.Sprintf("record %d", index))
+		checked, err := runtime.CheckRecord(contract, flowrecord.Kind+"_record", answer, fmt.Sprintf("record %d", index))
 		if err != nil {
 			invalid++
 			continue
@@ -155,24 +157,24 @@ func flowRecordsFromPush(answers []map[string]any, records []push.Record) (any, 
 // flowRecordOf converts one checked flow_record record, refusing what the contract's types cannot:
 // the ranges, and an address that is not one.
 func flowRecordOf(checked map[string]any) (flowrecord.Record, bool) {
-	source, sourceErr := netip.ParseAddr(text(checked, "src_address"))
-	destination, destinationErr := netip.ParseAddr(text(checked, "dst_address"))
-	exporter, exporterErr := netip.ParseAddr(text(checked, "exporter_address"))
+	source, sourceErr := netip.ParseAddr(runtime.Text(checked, "src_address"))
+	destination, destinationErr := netip.ParseAddr(runtime.Text(checked, "dst_address"))
+	exporter, exporterErr := netip.ParseAddr(runtime.Text(checked, "exporter_address"))
 	if sourceErr != nil || destinationErr != nil || exporterErr != nil {
 		return flowrecord.Record{}, false
 	}
 	record := flowrecord.Record{
-		ExporterAddress: exporter.Unmap().String(), ObservationDomain: integer(checked, "observation_domain"),
-		IngressInterface: integerPointer(checked, "ingress_interface"),
-		EgressInterface:  integerPointer(checked, "egress_interface"),
-		IPVersion:        integer(checked, "ip_version"), Protocol: integer(checked, "protocol"),
+		ExporterAddress: exporter.Unmap().String(), ObservationDomain: runtime.Integer(checked, "observation_domain"),
+		IngressInterface: runtime.IntegerPointer(checked, "ingress_interface"),
+		EgressInterface:  runtime.IntegerPointer(checked, "egress_interface"),
+		IPVersion:        runtime.Integer(checked, "ip_version"), Protocol: runtime.Integer(checked, "protocol"),
 		SrcAddress: source.Unmap().String(), DstAddress: destination.Unmap().String(),
-		SrcPort: integerPointer(checked, "src_port"), DstPort: integerPointer(checked, "dst_port"),
-		TCPFlags: integerPointer(checked, "tcp_flags"), Octets: integer(checked, "octets"),
-		Packets:     integer(checked, "packets"),
-		StartMillis: millisecondsOf(number(checked, "start_at")),
-		EndMillis:   millisecondsOf(number(checked, "end_at")),
-		ReceivedAt:  int64(math.Floor(number(checked, "received_at"))),
+		SrcPort: runtime.IntegerPointer(checked, "src_port"), DstPort: runtime.IntegerPointer(checked, "dst_port"),
+		TCPFlags: runtime.IntegerPointer(checked, "tcp_flags"), Octets: runtime.Integer(checked, "octets"),
+		Packets:     runtime.Integer(checked, "packets"),
+		StartMillis: millisecondsOf(runtime.Number(checked, "start_at")),
+		EndMillis:   millisecondsOf(runtime.Number(checked, "end_at")),
+		ReceivedAt:  int64(math.Floor(runtime.Number(checked, "received_at"))),
 	}
 	// The version an exporter does not send is the addresses' own; one it sends must agree with them.
 	family := int64(6)
@@ -216,7 +218,7 @@ func flowRecordIdentity(record flowrecord.Record, delivered push.Record) string 
 // field takes the value of the first of its protocol fields the record carries, as the contract's
 // JSON type reads it. A field none of whose sources is present is absent, and a required one then
 // refuses the record when it is checked.
-func mappedAnswers(contract provider.Contract, table string, mapping map[string]PushField,
+func mappedAnswers(contract provider.Contract, table string, mapping map[string]contract.PushField,
 	records []push.Record) []map[string]any {
 	record, _ := provider.LookupRecord(contract, table)
 	answers := make([]map[string]any, 0, len(records))
@@ -279,7 +281,7 @@ func contractValue(fieldType provider.FieldType, value any) (any, bool) {
 // said and who said it -- header and message -- so the same line delivered twice is stored once.
 func pushedDigest(record push.Record) string {
 	var text strings.Builder
-	for _, name := range sortedKeys(record.Fields) {
+	for _, name := range runtime.SortedKeys(record.Fields) {
 		fmt.Fprintf(&text, "%s=%v\x00", name, record.Fields[name])
 	}
 	sum := sha256.Sum256([]byte(text.String()))

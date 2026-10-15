@@ -7,6 +7,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // TestTheOutcomeCheckHoldsExactlyTheClosedSet is AD1's schema half: the CHECK on
@@ -29,7 +32,7 @@ func TestTheOutcomeCheckHoldsExactlyTheClosedSet(t *testing.T) {
 		inSchema = append(inSchema, string(quoted[1]))
 	}
 	var inCode []string
-	for _, outcome := range AvailabilityOutcomes {
+	for _, outcome := range vocab.AvailabilityOutcomes {
 		inCode = append(inCode, string(outcome))
 	}
 	sort.Strings(inSchema)
@@ -45,18 +48,18 @@ func TestTheOutcomeCheckHoldsExactlyTheClosedSet(t *testing.T) {
 		t.Fatal(err)
 	}
 	if outcome, err := database.AvailabilityOutcomeOf(ctx, providerID); err != nil ||
-		outcome != OutcomeNotYetProbed {
-		t.Errorf("a fresh availability row reads %q (%v), not %q", outcome, err, OutcomeNotYetProbed)
+		outcome != vocab.OutcomeNotYetProbed {
+		t.Errorf("a fresh availability row reads %q (%v), not %q", outcome, err, vocab.OutcomeNotYetProbed)
 	}
-	if err := database.SetAvailability(ctx, providerID, StateReachable, "invented_code", "probe", nil, 1); err == nil {
+	if err := database.SetAvailability(ctx, providerID, vocab.StateReachable, "invented_code", "probe", nil, 1); err == nil {
 		t.Error("SetAvailability accepted a code outside the set")
 	}
 	if _, err := database.DB().ExecContext(ctx,
-		"UPDATE source_availability SET outcome = 'invented_code' WHERE provider_id = ?", providerID); !IsConstraintViolation(err) {
+		"UPDATE source_availability SET outcome = 'invented_code' WHERE provider_id = ?", providerID); !sqldb.IsConstraintViolation(err) {
 		t.Errorf("the schema accepted a code outside the set: %v", err)
 	}
-	for _, outcome := range AvailabilityOutcomes {
-		if err := database.SetAvailability(ctx, providerID, StateUnavailable, outcome, "probe", nil, 1); err != nil {
+	for _, outcome := range vocab.AvailabilityOutcomes {
+		if err := database.SetAvailability(ctx, providerID, vocab.StateUnavailable, outcome, "probe", nil, 1); err != nil {
 			t.Errorf("the code %q was refused: %v", outcome, err)
 		}
 	}

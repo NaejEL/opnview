@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/samples"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // TestThePerPeerCurrentRateIsEachInsidePairReadingAndTheUpstreamReadingIsNotSummed is row 24 of the
@@ -16,22 +19,22 @@ func TestThePerPeerCurrentRateIsEachInsidePairReadingAndTheUpstreamReadingIsNotS
 	t.Parallel()
 	network := newTestNetwork(t, 2, 4)
 	ctx := context.Background()
-	if err := network.db.SetSetting(ctx, MeasurementIntervalKey, fmt.Sprint(300), network.now); err != nil {
+	if err := network.db.SetSetting(ctx, samples.MeasurementIntervalKey, fmt.Sprint(300), network.now); err != nil {
 		t.Fatalf("writing the interval: %v", err)
 	}
 	at := network.now - 100
 	pairIn := func(device, local, peer string, in float64) {
-		insertReading(t, network.db, SubjectInterfaceEndpointPair, InterfaceEndpointPairKey(device, local, peer),
-			MeasureRateBitsIn, UnitBitPerSecond, in, at)
+		insertReading(t, network.db, vocab.SubjectInterfaceEndpointPair, vocab.InterfaceEndpointPairKey(device, local, peer),
+			vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
 	}
 	pairOut := func(device, local, peer string, out float64) {
-		insertReading(t, network.db, SubjectInterfaceEndpointPair, InterfaceEndpointPairKey(device, local, peer),
-			MeasureRateBitsOut, UnitBitPerSecond, out, at)
+		insertReading(t, network.db, vocab.SubjectInterfaceEndpointPair, vocab.InterfaceEndpointPairKey(device, local, peer),
+			vocab.MeasureRateBitsOut, vocab.UnitBitPerSecond, out, at)
 	}
 	endpoint := func(device, local string, in, out float64) {
-		key := InterfaceEndpointKey(device, local)
-		insertReading(t, network.db, SubjectInterfaceEndpoint, key, MeasureRateBitsIn, UnitBitPerSecond, in, at)
-		insertReading(t, network.db, SubjectInterfaceEndpoint, key, MeasureRateBitsOut, UnitBitPerSecond, out, at)
+		key := vocab.InterfaceEndpointKey(device, local)
+		insertReading(t, network.db, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
+		insertReading(t, network.db, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsOut, vocab.UnitBitPerSecond, out, at)
 	}
 	shared := outside(1, network.clients[0].v6)
 	only := outside(2, network.clients[0].v6)

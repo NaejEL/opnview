@@ -15,6 +15,7 @@ import (
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/widget"
 )
 
@@ -183,7 +184,7 @@ type Host interface {
 	// PasswordParams are the Argon2id parameters a new record is written with.
 	PasswordParams() auth.Params
 	// DecoyPassword is a record nobody's password matches.
-	DecoyPassword() store.PasswordHash
+	DecoyPassword() accounts.PasswordHash
 	// LiveSettings is the configuration holder the scheduler reads; may be nil.
 	LiveSettings() *config.Live
 	// Collector is told the configuration after a save; may be nil.
@@ -212,7 +213,7 @@ type Host interface {
 	// NewBase returns the part of a page's data common to every page: the language, the
 	// theme, the form token, the carried notice or refusal, the paths, the tabs and the
 	// indicators.
-	NewBase(writer http.ResponseWriter, request *http.Request, session *store.Session,
+	NewBase(writer http.ResponseWriter, request *http.Request, session *accounts.Session,
 		title MessageKey) (Base, error)
 	// Render writes one page, buffered, with the security headers. data must be a pointer
 	// to a struct embedding Base.

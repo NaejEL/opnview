@@ -8,7 +8,7 @@
 // prints an EXPLAIN (FORMAT JSON) of a named statement with every :name parameter replaced by
 // <value> as an untyped literal, which the server types from the place it stands in -- a
 // bigint beside a bigint column, text beside a text one -- as the store's driver casts each
-// argument to its Go type (internal/store/driver.go). A literal is planned for its value, as
+// argument to its Go type (internal/store/sqldb/driver.go). A literal is planned for its value, as
 // the store's first executions are;
 //
 //	planjson nodes

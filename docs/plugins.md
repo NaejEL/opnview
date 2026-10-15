@@ -995,6 +995,26 @@ live-interest lease.
 | `clientPeers(id)` | The same for one client: an object from each peer address it was read with to its rate; empty when it has none. |
 | `none()` | The named absence of a rate, what a subject with no current sample reads. |
 
+**A rate a widget builds from another source keeps this shape.** A figure the source cannot fill is
+`null`, `out_measured` false for the outbound one, never a rate of `0`. `traffic_composition` builds
+the rate of a protocol or service-port member from the `pf_states` plugin's dataset `pf_states.rate`
+(below, *`host.datasets`*), read `direction` `eq` `in` so a forwarded connection counts once. A chip
+rate is relative to the local side -- `in` what it receives, `out` what it sends -- and a direction-in
+state sits on the interface its connection entered by, so the local side is the connection's
+initiator:
+
+| Chip field | From `pf_states.rate`, summed over the member's rows of the latest pass |
+|---|---|
+| `out_bits_per_second` | `forward_bits_per_second`: pf's `bytes[0]`, from the initiator |
+| `in_bits_per_second` | `reverse_bits_per_second`: pf's `bytes[1]`, back to the initiator |
+| `out_measured` | `true`: pf keeps both counters on every state, and neither column is nullable, so neither figure is ever unfilled |
+| `sampled_at` | the pass's `sampled_at` |
+| `span_seconds`, `cadence_seconds` | the pass's `span_seconds`, the seconds between the two reads the rate is taken over: the cadence the pass actually ran at |
+| `state` | `current`, or `stale_sample` when the pass is older than twice that, its figures beside it |
+
+The dataset's `bits_per_second` (the two summed) and `states` are not carried: a chip has no field
+for either. The firewall's own traffic has an `out` state only and is therefore not in these rates.
+
 #### `host.datasets`
 
 Another plugin's dataset, read by its data-catalogue name (`<plugin>.<table>`, or a core dataset's
@@ -1013,7 +1033,7 @@ the dataset is found when the widget asks, and an installation without it answer
 |---|---|
 | `current` | rows were found; `at` is their instant |
 | `no_rows` | the dataset is there, and nothing `filter` keeps lies within its horizon |
-| `dataset_absent` | the catalogue holds no dataset of that name -- the plugin declaring it is not installed, or was refused; `rows` is empty and `at` `null` |
+| `unknown_dataset` | the catalogue holds no dataset of that name, the data catalogue API's own refusal code for it -- the plugin declaring it is not installed, or was refused; `rows` is empty and `at` `null` |
 | `withheld_by_aggregate_mode` | `aggregate_mode` is `no_domains` and `filter` reads a column that carries a domain name: nothing is read |
 
 Under `no_domains` a column carrying a domain name is left out of every row and named in `withheld`. A
@@ -1025,7 +1045,7 @@ path, which the script may catch.
 // The rate by protocol, from the pf_states plugin when the installation has it.
 var latest = host.datasets.latest("pf_states.rate", [{ column: "direction", op: "eq", value: "in" }]);
 if (latest.state !== "current") {
-  // dataset_absent, no_rows or withheld_by_aggregate_mode: show the absence, never a rate of 0.
+  // unknown_dataset, no_rows or withheld_by_aggregate_mode: show the absence, never a rate of 0.
 }
 ```
 

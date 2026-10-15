@@ -2,12 +2,6 @@ package settings_test
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
-	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store"
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/surfaces/settings"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"io/fs"
 	"net/http"
 	"net/url"
@@ -16,12 +10,24 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
+	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
+	"github.com/NaejEL/opnview/internal/web/surfaces/settings"
+	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
 // publicSuffixCardOf returns the Public Suffix List card out of the settings page.
 func publicSuffixCardOf(t *testing.T, page string) string {
 	t.Helper()
-	heading := `<h2 id="settings_public_suffix_name">` + webtest.CatalogueText(t, msgKindRegistrableDomain) + "</h2>"
+	heading := `<h2 id="settings_public_suffix_name">` + collectiontest.CatalogueText(t, msgKindRegistrableDomain) + "</h2>"
 	start := strings.Index(page, heading)
 	if start < 0 {
 		t.Fatal("the settings page has no Public Suffix List card")
@@ -32,26 +38,26 @@ func publicSuffixCardOf(t *testing.T, page string) string {
 // TestEachRefreshOutcomeRendersItsOwnKey is AC14.
 func TestEachRefreshOutcomeRendersItsOwnKey(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	if !strings.Contains(publicSuffixCardOf(t, webtest.PageSource(t, h, web.PathSettings)),
-		webtest.CatalogueText(t, msgPublicSuffixNotYetRefreshed)) {
+		collectiontest.CatalogueText(t, msgPublicSuffixNotYetRefreshed)) {
 		t.Error("a list never refreshed does not say so")
 	}
 	for _, outcome := range []struct {
 		probe string
-		state store.AvailabilityState
+		state vocab.AvailabilityState
 		key   messageKey
 	}{
-		{registrabledomain.ProbeDownloaded, store.StateReachable, msgPublicSuffixDownloaded},
-		{registrabledomain.ProbeNotModified, store.StateReachable, msgPublicSuffixNotModified},
-		{registrabledomain.ProbeFailed, store.StateUnavailable, msgPublicSuffixFailed},
-		{registrabledomain.ProbeMalformed, store.StateUnavailable, msgPublicSuffixMalformed},
-		{store.ProbeNotYetProbed, store.StateUnavailable, msgPublicSuffixNotYetRefreshed},
-		{"a_probe_nobody_wrote", store.StateReachable, msgPublicSuffixFailed},
+		{registrabledomain.ProbeDownloaded, vocab.StateReachable, msgPublicSuffixDownloaded},
+		{registrabledomain.ProbeNotModified, vocab.StateReachable, msgPublicSuffixNotModified},
+		{registrabledomain.ProbeFailed, vocab.StateUnavailable, msgPublicSuffixFailed},
+		{registrabledomain.ProbeMalformed, vocab.StateUnavailable, msgPublicSuffixMalformed},
+		{reads.ProbeNotYetProbed, vocab.StateUnavailable, msgPublicSuffixNotYetRefreshed},
+		{"a_probe_nobody_wrote", vocab.StateReachable, msgPublicSuffixFailed},
 	} {
-		h.SetPublicSuffixProbe(outcome.state, outcome.probe, nil)
+		settingstest.SetPublicSuffixProbe(h, outcome.state, outcome.probe, nil)
 		card := publicSuffixCardOf(t, webtest.PageSource(t, h, web.PathSettings))
-		if !strings.Contains(card, "<dd>"+webtest.CatalogueText(t, outcome.key)+"</dd>") {
+		if !strings.Contains(card, "<dd>"+collectiontest.CatalogueText(t, outcome.key)+"</dd>") {
 			t.Errorf("the probe %q does not render %s", outcome.probe, outcome.key)
 		}
 	}
@@ -60,16 +66,16 @@ func TestEachRefreshOutcomeRendersItsOwnKey(t *testing.T) {
 // TestTheCopysFiguresComeFromTheProcess is AC15.
 func TestTheCopysFiguresComeFromTheProcess(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	// A detail that reads like figures, and no copy held: nothing of it renders.
 	misleading := "VERSION 1999-12-31_00-00-00_UTC, 4321 rules"
-	h.SetPublicSuffixProbe(store.StateReachable, registrabledomain.ProbeDownloaded, &misleading)
+	settingstest.SetPublicSuffixProbe(h, vocab.StateReachable, registrabledomain.ProbeDownloaded, &misleading)
 	card := publicSuffixCardOf(t, webtest.PageSource(t, h, web.PathSettings))
 	if strings.Contains(card, "4321") || strings.Contains(card, "1999-12-31") {
 		t.Error("the card read figures out of the availability detail")
 	}
-	if !strings.Contains(card, "<dd>"+webtest.CatalogueText(t, msgNo)+"</dd>") ||
-		!strings.Contains(card, webtest.CatalogueText(t, msgNeverConfirmed)) {
+	if !strings.Contains(card, "<dd>"+collectiontest.CatalogueText(t, msgNo)+"</dd>") ||
+		!strings.Contains(card, collectiontest.CatalogueText(t, msgNeverConfirmed)) {
 		t.Error("with no copy held the card does not say so")
 	}
 
@@ -80,8 +86,8 @@ func TestTheCopysFiguresComeFromTheProcess(t *testing.T) {
 	for _, expected := range []string{
 		`<span class="datum" translate="no">2026-10-09_08-15-00_UTC</span>`,
 		`<span class="figure">9876</span>`,
-		`<span class="figure">` + web.Instant(confirmed) + `</span>`,
-		"<dd>" + webtest.CatalogueText(t, msgYes) + "</dd>",
+		`<span class="figure">` + settingfields.Instant(confirmed) + `</span>`,
+		"<dd>" + collectiontest.CatalogueText(t, msgYes) + "</dd>",
 	} {
 		if !strings.Contains(card, expected) {
 			t.Errorf("the card does not carry %q", expected)
@@ -89,9 +95,9 @@ func TestTheCopysFiguresComeFromTheProcess(t *testing.T) {
 	}
 
 	// A failed refresh over the copy still in use shows both facts.
-	h.SetPublicSuffixProbe(store.StateReachable, registrabledomain.ProbeFailed, nil)
+	settingstest.SetPublicSuffixProbe(h, vocab.StateReachable, registrabledomain.ProbeFailed, nil)
 	card = publicSuffixCardOf(t, webtest.PageSource(t, h, web.PathSettings))
-	if !strings.Contains(card, webtest.CatalogueText(t, msgPublicSuffixFailed)) ||
+	if !strings.Contains(card, collectiontest.CatalogueText(t, msgPublicSuffixFailed)) ||
 		!strings.Contains(card, `<span class="figure">9876</span>`) {
 		t.Error("a failed refresh over a held copy does not show both the failure and the copy")
 	}
@@ -130,10 +136,10 @@ func TestTheCopysFiguresComeFromTheProcess(t *testing.T) {
 // interval and hands it to the running service; a refusal stores nothing.
 func TestTheRefreshIntervalIsSavedAndRefusedAgainstItsField(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
-	webtest.AssertStatus(t, h.Post(web.PathSettings, map[string][]string{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix},
+	h := collectiontest.SignedInHarness(t)
+	accounttest.AssertStatus(t, h.Post(web.PathSettings, map[string][]string{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix},
 		webtest.FieldPublicSuffixInterval: {"43200"}}), http.StatusSeeOther)
-	if got := h.Setting(webtest.FieldPublicSuffixInterval); got != "43200" {
+	if got := collectiontest.Setting(h, webtest.FieldPublicSuffixInterval); got != "43200" {
 		t.Errorf("the stored interval is %q", got)
 	}
 	if h.Live.Get().PublicSuffixRefreshInterval.Seconds() != 43200 {
@@ -146,10 +152,10 @@ func TestTheRefreshIntervalIsSavedAndRefusedAgainstItsField(t *testing.T) {
 	}
 	card := publicSuffixCardOf(t, page)
 	if !strings.Contains(card, `aria-describedby="public_suffix_interval_refusal"`) ||
-		webtest.FieldValue(card, "public_suffix_interval") != "daily" {
+		collectiontest.FieldValue(card, "public_suffix_interval") != "daily" {
 		t.Error("the refused interval is not kept and marked in its field")
 	}
-	if got := h.Setting(webtest.FieldPublicSuffixInterval); got != "43200" {
+	if got := collectiontest.Setting(h, webtest.FieldPublicSuffixInterval); got != "43200" {
 		t.Errorf("a refused interval was stored: %q", got)
 	}
 }
@@ -159,14 +165,14 @@ func TestTheRefreshIntervalIsSavedAndRefusedAgainstItsField(t *testing.T) {
 // back to the card, and the card says what it did, or what it refused, inside itself.
 func TestEachSettingsCardSavesOnlyItsOwnFields(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	urlBefore, urlPresent, err := h.Store.Setting(context.Background(), config.KeyOPNsenseBaseURL)
 	if err != nil {
 		t.Fatalf("reading the firewall URL: %v", err)
 	}
 
 	page := webtest.PageSource(t, h, web.PathSettings)
-	if !strings.Contains(page, "<h1>"+webtest.CatalogueText(t, "settings.title")+"</h1>") {
+	if !strings.Contains(page, "<h1>"+collectiontest.CatalogueText(t, "settings.title")+"</h1>") {
 		t.Error("the settings surface has no page heading")
 	}
 	if strings.Count(page, `<form method="post" action="`+web.PathSettings+`"`) != 1 {
@@ -186,14 +192,14 @@ func TestEachSettingsCardSavesOnlyItsOwnFields(t *testing.T) {
 		t.Errorf("the save sent the browser to %q, not back to its card", location)
 	}
 	status, page := webtest.Followed(t, h, answer)
-	if status != http.StatusSeeOther || h.Setting(config.KeyTheme) != string(web.ThemeDark) {
+	if status != http.StatusSeeOther || collectiontest.Setting(h, config.KeyTheme) != string(web.ThemeDark) {
 		t.Fatalf("saving the appearance card answered %d", status)
 	}
 	urlAfter, urlStill, err := h.Store.Setting(context.Background(), config.KeyOPNsenseBaseURL)
 	if err != nil || urlStill != urlPresent || urlAfter != urlBefore {
 		t.Error("saving the appearance card changed the firewall URL")
 	}
-	saved := `<p class="notice ok">` + webtest.CatalogueText(t, msgSettingsSaved) + "</p>"
+	saved := `<p class="notice ok">` + collectiontest.CatalogueText(t, msgSettingsSaved) + "</p>"
 	if !strings.Contains(settingsCardOf(t, page, webtest.SettingsCardAppearance), saved) ||
 		strings.Count(page, saved) != 1 {
 		t.Error("the save is not confirmed inside the card it was made in, and only there")
@@ -206,14 +212,14 @@ func TestEachSettingsCardSavesOnlyItsOwnFields(t *testing.T) {
 	if status != http.StatusBadRequest {
 		t.Errorf("a refused interval answered %d", status)
 	}
-	if h.Setting(config.KeyTheme) != string(web.ThemeDark) ||
-		webtest.SelectedIn(t, settingsCardOf(t, page, webtest.SettingsCardAppearance), "theme") != string(web.ThemeDark) {
+	if collectiontest.Setting(h, config.KeyTheme) != string(web.ThemeDark) ||
+		collectiontest.SelectedIn(t, settingsCardOf(t, page, webtest.SettingsCardAppearance), "theme") != string(web.ThemeDark) {
 		t.Error("a refused interval discarded the theme")
 	}
 
 	// A card that does not exist is refused.
 	status, page = webtest.StatusAndBody(t, h.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {"no_such_card"}}))
-	if status != http.StatusBadRequest || !strings.Contains(page, webtest.CatalogueText(t, msgSettingsCardUnknown)) {
+	if status != http.StatusBadRequest || !strings.Contains(page, collectiontest.CatalogueText(t, msgSettingsCardUnknown)) {
 		t.Errorf("a card that does not exist answered %d", status)
 	}
 }
@@ -223,20 +229,20 @@ func TestEachSettingsCardSavesOnlyItsOwnFields(t *testing.T) {
 // seconds, whatever unit it was typed in.
 func TestTheRefreshIntervalIsStoredOnlyWhenItChanges(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
-	figure, unit := web.FieldDuration(int64(config.Defaults().PublicSuffixRefreshInterval / time.Second))
-	webtest.AssertStatus(t, h.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix},
-		webtest.FieldPublicSuffixInterval: {figure}, web.UnitFieldName(webtest.FieldPublicSuffixInterval): {unit}}), http.StatusSeeOther)
+	h := collectiontest.SignedInHarness(t)
+	figure, unit := settingfields.FieldDuration(int64(config.Defaults().PublicSuffixRefreshInterval / time.Second))
+	accounttest.AssertStatus(t, h.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix},
+		webtest.FieldPublicSuffixInterval: {figure}, settingfields.UnitFieldName(webtest.FieldPublicSuffixInterval): {unit}}), http.StatusSeeOther)
 	if _, present, err := h.Store.Setting(context.Background(), webtest.FieldPublicSuffixInterval); err != nil || present {
 		t.Error("saving the interval in force turned the default into a stored row")
 	}
-	webtest.AssertStatus(t, h.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix},
-		webtest.FieldPublicSuffixInterval: {"12"}, web.UnitFieldName(webtest.FieldPublicSuffixInterval): {web.UnitHours}}), http.StatusSeeOther)
-	if got := h.Setting(webtest.FieldPublicSuffixInterval); got != "43200" {
+	accounttest.AssertStatus(t, h.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix},
+		webtest.FieldPublicSuffixInterval: {"12"}, settingfields.UnitFieldName(webtest.FieldPublicSuffixInterval): {settingfields.UnitHours}}), http.StatusSeeOther)
+	if got := collectiontest.Setting(h, webtest.FieldPublicSuffixInterval); got != "43200" {
 		t.Errorf("12 hours was stored as %q, want 43200", got)
 	}
 	card := publicSuffixCardOf(t, webtest.PageSource(t, h, web.PathSettings))
-	if !webtest.DurationFieldShows(t, card, "public_suffix_interval", "12", web.UnitHours) {
+	if !collectiontest.DurationFieldShows(t, card, "public_suffix_interval", "12", settingfields.UnitHours) {
 		t.Error("the card does not show the interval now in force in its field")
 	}
 }

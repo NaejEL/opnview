@@ -10,6 +10,8 @@ import (
 
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
 // The Settings API's coverage (C5 of the backend-completion cycle, C-AC9 and C-AC4): every route of
@@ -143,8 +145,8 @@ func concrete(pattern string) string {
 // a row.
 func TestEveryJSONRouteOfThePagesIsGuardedAndARefusalChangesNothing(t *testing.T) {
 	t.Parallel()
-	harness := webtest.SignedInHarness(t)
-	token := harness.APIToken()
+	harness := collectiontest.SignedInHarness(t)
+	token := settingstest.APIToken(harness)
 	before := webtest.DatabaseBytesExcept(t, harness, "session")
 	unchanged := func(what string) {
 		t.Helper()
@@ -155,7 +157,7 @@ func TestEveryJSONRouteOfThePagesIsGuardedAndARefusalChangesNothing(t *testing.T
 	condition := func(answer *http.Response) string {
 		t.Helper()
 		defer func() { _ = answer.Body.Close() }()
-		decoded := webtest.DecodeJSON(t, webtest.ReadBody(t, answer))
+		decoded := settingstest.DecodeJSON(t, webtest.ReadBody(t, answer))
 		text, _ := decoded["condition"].(string)
 		return text
 	}

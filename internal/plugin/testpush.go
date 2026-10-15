@@ -17,6 +17,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/firewalllog"
 	"github.com/NaejEL/opnview/internal/collect/flowrecord"
 	"github.com/NaejEL/opnview/internal/decode"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
 	"github.com/NaejEL/opnview/internal/push"
 )
 
@@ -213,7 +214,7 @@ func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.Functio
 		return func(call goja.FunctionCall) goja.Value {
 			world, err := w.pushWorldOf()
 			if err != nil {
-				throw(vm, "%v", err)
+				runtime.Throw(vm, "%v", err)
 			}
 			transport := push.TransportUDP
 			if protocol != "netflow" {
@@ -226,29 +227,29 @@ func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.Functio
 				}
 				if value, ok := options["sender"].(string); ok {
 					if address, err = netip.ParseAddr(value); err != nil {
-						throw(vm, "the sender %q is not an address", value)
+						runtime.Throw(vm, "the sender %q is not an address", value)
 					}
 				}
 			}
 			payloads, isList := call.Argument(0).Export().([]any)
 			if !isList {
-				throw(vm, "the first argument is a list of messages")
+				runtime.Throw(vm, "the first argument is a list of messages")
 			}
 			ctx := context.Background()
 			for _, item := range payloads {
 				text, isText := item.(string)
 				if !isText {
-					throw(vm, "each message is a string")
+					runtime.Throw(vm, "each message is a string")
 				}
 				payload := []byte(text)
 				if decodeHex {
 					payload, err = hex.DecodeString(strings.Join(strings.Fields(text), ""))
 					if err != nil {
-						throw(vm, "a NetFlow packet is hexadecimal text: %v", err)
+						runtime.Throw(vm, "a NetFlow packet is hexadecimal text: %v", err)
 					}
 				}
 				if err := world.hub.Deliver(ctx, protocol, transport, payload, address); err != nil {
-					throw(vm, "%v", err)
+					runtime.Throw(vm, "%v", err)
 				}
 			}
 			world.hub.Flush(ctx)
@@ -258,11 +259,11 @@ func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.Functio
 	set("fixture", func(call goja.FunctionCall) goja.Value {
 		raw, err := w.fixture(call.Argument(0).String())
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		var body any
 		if err := json.Unmarshal(raw, &body); err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		return vm.ToValue(body)
 	})
@@ -271,11 +272,11 @@ func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.Functio
 	set("acceptSender", func(call goja.FunctionCall) goja.Value {
 		world, err := w.pushWorldOf()
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		address, err := netip.ParseAddr(call.Argument(0).String())
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		world.accepted = append(world.accepted, address)
 		world.hub.Senders().Set(world.accepted)
@@ -284,7 +285,7 @@ func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.Functio
 	set("pushed", func(call goja.FunctionCall) goja.Value {
 		world, err := w.pushWorldOf()
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		world.mutex.Lock()
 		defer world.mutex.Unlock()
@@ -297,11 +298,11 @@ func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.Functio
 	set("pushCounters", func(call goja.FunctionCall) goja.Value {
 		world, err := w.pushWorldOf()
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		state, found := world.hub.SubscriptionState(w.plugin.Name + "." + call.Argument(0).String())
 		if !found {
-			throw(vm, "the plugin declares no push entry %q", call.Argument(0).String())
+			runtime.Throw(vm, "the plugin declares no push entry %q", call.Argument(0).String())
 		}
 		counters := map[string]any{}
 		for name, count := range state.Counters {
@@ -312,7 +313,7 @@ func (w *testWorld) pushAPI(vm *goja.Runtime, set func(string, func(goja.Functio
 	set("listenerCounters", func(call goja.FunctionCall) goja.Value {
 		world, err := w.pushWorldOf()
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		counters := map[string]any{}
 		for _, listener := range world.hub.Catalogue().Listeners {

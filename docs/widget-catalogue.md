@@ -761,12 +761,16 @@ slice it would have been, from the same figures (row E8 of `docs/widget-api.md`,
 *Coverage of the mockup*). The current rate by protocol or by service is read
 from the `pf_states` plugin's dataset `pf_states.rate` (`sampled_at`,
 `span_seconds`, `direction`, `protocol`, `port`, `forward_bits_per_second`,
-`reverse_bits_per_second`, `bits_per_second`, `states`), its latest pass,
-`direction` `in` only so a forwarded connection counts once, by its catalogue
-name (`host.datasets.latest`), since `traffic/top` carries neither: it fills
-`current_rates.by_member` for those two groupings, and
+`reverse_bits_per_second`), its latest pass, `direction` `in` only so a
+forwarded connection counts once, by its catalogue name
+(`host.datasets.latest`), since `traffic/top` carries neither: it fills
+`current_rates.by_member` for those two groupings, each member's rate in the
+same shape as a client or interface chip -- `out_bits_per_second` the forward
+counter, from the connection's initiator, `in_bits_per_second` the reverse one,
+`out_measured` true, `cadence_seconds` the pass's span (`docs/plugins.md`,
+*`host.rates`*) -- and
 `current_rates.by_member_source` names the dataset and its state. Without that
-dataset, or with no pass within its horizon, the state is `dataset_absent` or
+dataset, or with no pass within its horizon, the state is `unknown_dataset` or
 `no_rows` and `by_member` is empty, never a rate of 0 (row 4). Sources: *Data
 source 1 — Filter logs*; per-pair volume, *Data source 3 — NetFlow / Insight*;
 the current rate by protocol or service, the pf state table (`pf_states`).

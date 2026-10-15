@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/reconciledstate"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/plugin"
@@ -120,14 +121,14 @@ func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
 	var counts [4]atomic.Int64
 	reported := make(chan string, 64)
 
-	tasks := []Task{
-		{Name: "the failing one", Interval: FixedInterval(time.Second), RunAtStart: true,
+	tasks := []core.Task{
+		{Name: "the failing one", Interval: core.FixedInterval(time.Second), RunAtStart: true,
 			Run: func(context.Context) error { counts[0].Add(1); return failing }},
-		{Name: "the first healthy one", Interval: FixedInterval(time.Second), RunAtStart: true,
+		{Name: "the first healthy one", Interval: core.FixedInterval(time.Second), RunAtStart: true,
 			Run: func(context.Context) error { counts[1].Add(1); return nil }},
-		{Name: "the second healthy one", Interval: FixedInterval(time.Second), RunAtStart: true,
+		{Name: "the second healthy one", Interval: core.FixedInterval(time.Second), RunAtStart: true,
 			Run: func(context.Context) error { counts[2].Add(1); return nil }},
-		{Name: "the third healthy one", Interval: FixedInterval(time.Second), RunAtStart: true,
+		{Name: "the third healthy one", Interval: core.FixedInterval(time.Second), RunAtStart: true,
 			Run: func(context.Context) error { counts[3].Add(1); return nil }},
 	}
 
@@ -136,7 +137,7 @@ func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
 	finished.Add(1)
 	go func() {
 		defer finished.Done()
-		if err := Run(ctx, clock, tasks, func(name string, _ error) { reported <- name }); err != nil {
+		if err := core.Run(ctx, clock, tasks, func(name string, _ error) { reported <- name }); err != nil {
 			t.Errorf("the run returned %v", err)
 		}
 	}()
@@ -186,16 +187,16 @@ func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
 func TestTheRunLoopStopsOnCancellationWithinABoundedDeadline(t *testing.T) {
 	t.Parallel()
 	clock := newFixedClock(referenceInstant())
-	tasks := []Task{
-		{Name: "a loop that waits", Interval: FixedInterval(time.Hour), RunAtStart: true,
+	tasks := []core.Task{
+		{Name: "a loop that waits", Interval: core.FixedInterval(time.Hour), RunAtStart: true,
 			Run: func(context.Context) error { return nil }},
-		{Name: "another loop that waits", Interval: FixedInterval(time.Hour), RunAtStart: true,
+		{Name: "another loop that waits", Interval: core.FixedInterval(time.Hour), RunAtStart: true,
 			Run: func(context.Context) error { return nil }},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	stopped := make(chan error, 1)
-	go func() { stopped <- Run(ctx, clock, tasks, nil) }()
+	go func() { stopped <- core.Run(ctx, clock, tasks, nil) }()
 
 	cancel()
 	select {
@@ -217,15 +218,15 @@ func TestALoopWithNoCadenceIsNotRun(t *testing.T) {
 	t.Parallel()
 	clock := newFixedClock(referenceInstant())
 	var ran atomic.Int64
-	tasks := []Task{
-		{Name: "a loop with no interval", Interval: FixedInterval(0), RunAtStart: true,
+	tasks := []core.Task{
+		{Name: "a loop with no interval", Interval: core.FixedInterval(0), RunAtStart: true,
 			Run: func(context.Context) error { ran.Add(1); return nil }},
-		{Name: "a loop with no work", Interval: FixedInterval(time.Second), RunAtStart: true},
+		{Name: "a loop with no work", Interval: core.FixedInterval(time.Second), RunAtStart: true},
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := Run(ctx, clock, tasks, nil); err != nil {
+	if err := core.Run(ctx, clock, tasks, nil); err != nil {
 		t.Fatalf("the run returned %v", err)
 	}
 	if ran.Load() != 0 {
@@ -241,14 +242,14 @@ func TestAPassThatFailsBecauseTheRunIsStoppingIsNotReported(t *testing.T) {
 	reported := make(chan string, 8)
 
 	ctx, cancel := context.WithCancel(context.Background())
-	tasks := []Task{{
-		Name: "a loop that fails as the context closes", Interval: FixedInterval(time.Hour), RunAtStart: true,
+	tasks := []core.Task{{
+		Name: "a loop that fails as the context closes", Interval: core.FixedInterval(time.Hour), RunAtStart: true,
 		Run: func(ctx context.Context) error {
 			cancel()
 			return ctx.Err()
 		},
 	}}
-	if err := Run(ctx, clock, tasks, func(name string, _ error) { reported <- name }); err != nil {
+	if err := core.Run(ctx, clock, tasks, func(name string, _ error) { reported <- name }); err != nil {
 		t.Fatalf("the run returned %v", err)
 	}
 	close(reported)

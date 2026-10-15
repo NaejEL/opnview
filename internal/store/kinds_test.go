@@ -6,14 +6,16 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The tests of the rule that replaced one-active-provider-per-kind.
 //
-// The rule: A KIND ADMITS SEVERAL CONCURRENTLY ACTIVE PROVIDERS EXACTLY WHEN THE IDENTITY OF
-// ITS DESTINATION ROWS INCLUDES THE PROVIDER. It is written out beside the index that enforces
-// it in schema.sql and mirrored in kinds.go, and these tests are what keep the two together and
-// what make both directions of the rule fail loudly when broken.
+// The rule: A KIND ADMITS SEVERAL CONCURRENTLY ACTIVE PROVIDERS EXACTLY WHEN THE IDENTITY OF ITS
+// DESTINATION ROWS INCLUDES THE PROVIDER. It is written out beside the index that enforces it in
+// schema.sql and mirrored in internal/store/vocab/kinds.go, and these tests are what keep the two
+// together and what make both directions of the rule fail loudly when broken.
 
 // TestTwoSecurityEventProvidersCanBothBeActive is the case that made the old index wrong.
 //
@@ -66,7 +68,7 @@ func TestTwoSecurityEventProvidersCanBothBeActive(t *testing.T) {
 	// the identity includes the provider — which is the whole reason this kind may have two
 	// active providers at once.
 	for _, id := range ids {
-		if err := database.InsertSecurityEvent(ctx, id, SecurityEvent{
+		if err := database.InsertSecurityEvent(ctx, id, vocab.SecurityEvent{
 			ProviderEventKey: "example-shared-event-key",
 			OccurredAt:       1750000000, IngestedAt: 1750000000,
 			RuleIdentity: "example-rule-identity", Signature: "example signature",
@@ -92,7 +94,7 @@ func TestAskingForTheSingleActiveProviderOfAConcurrentKindIsRefused(t *testing.T
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
-	for _, kind := range ConcurrentKinds() {
+	for _, kind := range vocab.ConcurrentKinds() {
 		if _, _, err := database.ActiveProviderID(ctx, kind); err == nil {
 			t.Errorf("asking for the single active provider of %s succeeded, and that kind "+
 				"admits several", kind)
@@ -132,9 +134,9 @@ func TestActivatingSeveralProvidersOfAnExclusiveKindIsRefused(t *testing.T) {
 
 // TestTheConcurrentKindsInCodeAreTheOnesTheSchemaExempts keeps the rule from having two truths.
 //
-// kinds.go exists so the probe round can activate every qualifying provider of a concurrent kind
-// instead of discovering the constraint by failing. The database is the authority, so the set in
-// code is read back out of the index's own definition and compared.
+// internal/store/vocab/kinds.go exists so the probe round can activate every qualifying provider of
+// a concurrent kind instead of discovering the constraint by failing. The database is the
+// authority, so the set in code is read back out of the index's own definition and compared.
 func TestTheConcurrentKindsInCodeAreTheOnesTheSchemaExempts(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
@@ -146,7 +148,7 @@ func TestTheConcurrentKindsInCodeAreTheOnesTheSchemaExempts(t *testing.T) {
 		t.Fatalf("reading the exclusivity index out of the schema: %v", err)
 	}
 
-	for _, kind := range ConcurrentKinds() {
+	for _, kind := range vocab.ConcurrentKinds() {
 		if !strings.Contains(definition, "'"+kind+"'") {
 			t.Errorf("code says the %s kind admits several active providers and the index does "+
 				"not exempt it, so the database would reject the second one", kind)
@@ -157,7 +159,7 @@ func TestTheConcurrentKindsInCodeAreTheOnesTheSchemaExempts(t *testing.T) {
 	// active providers. The exempt kinds are read out of the index's own definition rather than
 	// from a list here.
 	for _, quoted := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(definition, -1) {
-		if !KindAdmitsSeveralActiveProviders(quoted[1]) {
+		if !vocab.KindAdmitsSeveralActiveProviders(quoted[1]) {
 			t.Errorf("the index exempts %s and the code says it admits one active provider", quoted[1])
 		}
 	}
@@ -181,7 +183,7 @@ func TestTheMeasurementSampleKindHasARegistryRowAndAnAvailabilityRow(t *testing.
 	if err != nil {
 		t.Fatalf("the measurement_sample provider has no availability row: %v", err)
 	}
-	if state != StateUnavailable || probe != "not_yet_probed" {
+	if state != vocab.StateUnavailable || probe != "not_yet_probed" {
 		t.Errorf("a freshly applied schema reports the measurement provider as %q by %q, want "+
 			"the not-yet-probed unavailable state", state, probe)
 	}

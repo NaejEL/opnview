@@ -8,6 +8,9 @@ import (
 
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // The maintainer's decisions of 11 October 2026, after the PS22 build: the aggregates count
@@ -39,7 +42,7 @@ func TestBestAvailableTreatsEveryCoveredDirectionStateAsCovered(t *testing.T) {
 		total, _ := data(t, answer)["total"].(map[string]any)
 		coverage, _ := total["coverage"].(map[string]any)
 		states, _ := coverage["direction_states"].(map[string]any)
-		if total["measure"] != widget.MeasureNetflow || len(answer.States) != 0 || answer.StateDetails != nil {
+		if total["measure"] != envelope.MeasureNetflow || len(answer.States) != 0 || answer.StateDetails != nil {
 			t.Errorf("%s: best_available answered %s", test.state, encoded(t, answer))
 			continue
 		}
@@ -67,9 +70,9 @@ func TestBestAvailableFallsBackOnEveryUncoveredDirectionState(t *testing.T) {
 		}
 		best := f.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"})
 		logged := f.respond(t, "interface_volume_ranking", map[string]any{"period": "1h", "volume_measure": "logged"})
-		if !widget.Contains(best.States, widget.StateNetflowNotCoveringWindow) ||
-			string(withoutMeasureDifferences(t, best, widget.StateNetflowNotCoveringWindow)) !=
-				string(withoutMeasureDifferences(t, logged, widget.StateNetflowNotCoveringWindow)) {
+		if !params.Contains(best.States, request.StateNetflowNotCoveringWindow) ||
+			string(withoutMeasureDifferences(t, best, request.StateNetflowNotCoveringWindow)) !=
+				string(withoutMeasureDifferences(t, logged, request.StateNetflowNotCoveringWindow)) {
 			t.Errorf("%s: best_available is not logged's answer with the state\nlogged: %s\ngot:    %s", state,
 				encoded(t, logged), encoded(t, best))
 		}
@@ -123,7 +126,7 @@ func TestEachActionPartCarriesItsOwnPacketsAndCoverage(t *testing.T) {
 		return coverage
 	}
 	total, _ := data(t, f.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"}))["total"].(map[string]any)
-	if total["measure"] != widget.MeasureNetflow || total["packets"] != float64(31) || total["allowed_packets"] != float64(29) ||
+	if total["measure"] != envelope.MeasureNetflow || total["packets"] != float64(31) || total["allowed_packets"] != float64(29) ||
 		total["blocked_packets"] != float64(2) || total["unknown_packets"] != float64(0) ||
 		coverageOf(total, "coverage")["measured"] != float64(2) || coverageOf(total, "coverage")["partial"] != float64(1) ||
 		coverageOf(total, "allowed_coverage")["measured"] != float64(2) ||
@@ -143,7 +146,7 @@ func TestEachActionPartCarriesItsOwnPacketsAndCoverage(t *testing.T) {
 		answer := f.respond(t, test.widgetType, map[string]any{"period": "1h"})
 		mapTotal, _ := data(t, answer)["total"].(map[string]any)
 		coverage := coverageOf(mapTotal, "coverage")
-		if mapTotal["measure"] != widget.MeasureNetflow || mapTotal["bytes"] != test.bytes ||
+		if mapTotal["measure"] != envelope.MeasureNetflow || mapTotal["bytes"] != test.bytes ||
 			mapTotal["packets"] != test.packets || mapTotal["connections"] != test.connection || coverage == nil ||
 			coverage["measured"] != test.measured || coverage["partial"] != test.partial {
 			t.Errorf("%s: the map's total is %v (states %v)", test.widgetType, mapTotal, answer.States)
@@ -214,7 +217,7 @@ func TestAWidgetWhoseNetflowTwinBindsOtherParametersIsRefused(t *testing.T) {
 		refusals := service.Refusals()
 		_, served := service.Preset("example_twin_total")
 		switch {
-		case test.refused && (len(refusals) != 1 || refusals[0].Code != widget.RefusalNetflowTwinMismatch ||
+		case test.refused && (len(refusals) != 1 || refusals[0].Code != params.RefusalNetflowTwinMismatch ||
 			!strings.Contains(refusals[0].Detail, "widget_example_twin_rows_netflow") || served):
 			t.Errorf("%s: the refusals are %+v (served %v)", name, refusals, served)
 		case !test.refused && (len(refusals) != 0 || !served):
@@ -230,8 +233,8 @@ func TestTheRefusalCodeOfATwinIsDocumented(t *testing.T) {
 	for _, document := range []string{"widget-authoring.md", "plugins.md"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", document))
 		check(t, err)
-		if !strings.Contains(string(raw), "`"+widget.RefusalNetflowTwinMismatch+"`") {
-			t.Errorf("docs/%s does not name the refusal code %s", document, widget.RefusalNetflowTwinMismatch)
+		if !strings.Contains(string(raw), "`"+params.RefusalNetflowTwinMismatch+"`") {
+			t.Errorf("docs/%s does not name the refusal code %s", document, params.RefusalNetflowTwinMismatch)
 		}
 	}
 }
@@ -243,7 +246,7 @@ func TestAStateDetailIsServedOnlyWithItsState(t *testing.T) {
 	t.Parallel()
 	unconfigured := newMeasureWorld(t)
 	answer := unconfigured.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"})
-	if !widget.Contains(answer.States, widget.StateNetflowNotConfigured) || answer.StateDetails != nil ||
+	if !params.Contains(answer.States, request.StateNetflowNotConfigured) || answer.StateDetails != nil ||
 		strings.Contains(string(encoded(t, answer)), "state_details") {
 		t.Errorf("NetFlow not configured answered %s", encoded(t, answer))
 	}

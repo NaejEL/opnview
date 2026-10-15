@@ -1,0 +1,394 @@
+package core
+
+import (
+	"context"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/NaejEL/opnview/internal/broker"
+	"github.com/NaejEL/opnview/internal/collect/dhcplease"
+	"github.com/NaejEL/opnview/internal/collect/dnslookup"
+	"github.com/NaejEL/opnview/internal/collect/firewalllog"
+	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
+	"github.com/NaejEL/opnview/internal/collect/measurement"
+	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
+	"github.com/NaejEL/opnview/internal/collect/resolvercache"
+	"github.com/NaejEL/opnview/internal/collect/resolverlocaldata"
+	"github.com/NaejEL/opnview/internal/collect/securityevent"
+	"github.com/NaejEL/opnview/internal/collect/sources"
+	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/decode"
+	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+)
+
+// The provider kinds, which are the eleven the schema constrains `provider.kind` to. Those with a
+// collector-side implementation take their value from their kind package.
+const (
+	// KindRegistrableDomain is a list giving a site name its registrable domain. It is a service
+	// kind: internal/collect/services/services.go refreshes and consults its active provider, which
+	// acquires the list through the plugin host's fetch facility.
+	KindRegistrableDomain = registrabledomain.Kind
+	// KindFirewallLog is data source 1.
+	KindFirewallLog = firewalllog.Kind
+	// KindSecurityEvent is data source 2. It admits several concurrently active
+	// providers: people run Suricata, CrowdSec and Zenarmor together.
+	KindSecurityEvent = securityevent.Kind
+	// KindFlowVolume is data source 3, and nothing collects it. Its destination,
+	// pair_volume_observation, is DERIVED from flow by step 5: the only per-pair
+	// endpoint carries neither a port nor a protocol and the filter log carries
+	// both. No implementation of it is registered here, deliberately.
+	KindFlowVolume = "flow_volume"
+	// KindDHCPLease is data source 4.
+	KindDHCPLease = dhcplease.Kind
+	// KindDNSLookup is data source 5.
+	KindDNSLookup = dnslookup.Kind
+	// KindIPGeolocation is a dataset placing public addresses. It is a service kind:
+	// internal/collect/services/services.go refreshes its active provider and places addresses with
+	// it.
+	KindIPGeolocation = ipgeolocation.Kind
+	// KindMeasurementSample is the sampled reading: the firewall's own gauges and
+	// the live per-pair traffic snapshot, and the kind eight of the ten surveyed
+	// sources that fit an existing shape fit. It owns the sampler this package
+	// already had, which was registered under flow_volume only because the kind
+	// did not exist. It admits several concurrently active providers.
+	KindMeasurementSample = measurement.Kind
+	// KindReconciledState is the complete set of things of one type as of one
+	// instant — the shape ten of the eleven sources that fit nothing else produce.
+	// No implementation is registered for it: the kind gives such a source a
+	// destination, and writing a connector for one is not this cycle's work.
+	KindReconciledState = "reconciled_state"
+	// KindResolverCache is the records a resolver holds in its cache: the answer
+	// addresses the query report does not carry. "Cache" is Unbound's own word
+	// (unbound-control(8), dump_cache). It admits several active providers, since
+	// every record it stores names the provider that read it.
+	KindResolverCache = resolvercache.Kind
+	// KindResolverLocalData is the records a resolver serves from its local data,
+	// host overrides among them: Unbound's own words again (unbound.conf(5),
+	// local-data; unbound-control(8), list_local_data). Concurrent for the same
+	// reason.
+	KindResolverLocalData = resolverlocaldata.Kind
+)
+
+// Clock is the time the scheduler and the collectors read. It is an interface so
+// that a test drives every loop deterministically instead of sleeping.
+type Clock interface {
+	// Now is the current instant.
+	Now() time.Time
+	// After returns a channel that delivers once, after d.
+	After(d time.Duration) <-chan time.Time
+}
+
+// SystemClock is the real clock.
+type SystemClock struct{}
+
+// Now returns the current instant.
+func (SystemClock) Now() time.Time { return time.Now() }
+
+// After returns a channel that delivers once, after d.
+func (SystemClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+
+// Discovery is the snapshot of the firewall's own configuration the collectors join against.
+// It is declared in the provider contract, because the measurement sampler is handed it.
+type Discovery = provider.Discovery
+
+// newDiscovery returns an empty snapshot. Empty is the honest starting state: on
+// the first pass nothing is discovered, so every join key reports `pending`
+// rather than `not_found`.
+func NewDiscovery() Discovery {
+	return Discovery{
+		InterfaceIDByIdentifier: map[string]int64{},
+		InterfaceIDByDevice:     map[string]int64{},
+		Devices:                 map[string]struct{}{},
+		RuleIDByPfLabel:         map[string]int64{},
+		Upstream:                map[int64]struct{}{},
+	}
+}
+
+// Broker is the collector's broker: the one path to the firewall API.
+func (c *Collector) Broker() *broker.Broker { return c.APIBroker }
+
+// vocabulary is the installation's interface identifiers and devices, which mark an object keyed
+// by them as value-keyed in the mirror. They are read from discovery, never written into a schema.
+func (c *Collector) Vocabulary() []string {
+	snapshot := c.Discovery()
+	names := make([]string, 0, len(snapshot.InterfaceIDByIdentifier)+len(snapshot.Devices))
+	for identifier := range snapshot.InterfaceIDByIdentifier {
+		names = append(names, identifier)
+	}
+	for device := range snapshot.Devices {
+		names = append(names, device)
+	}
+	return names
+}
+
+// Configure applies a configuration to a running collector: the page sizes and the
+// attribution delay, which are the parts of it the collectors read. The intervals reach the scheduler
+// through config.Live, not through here. The next pass of each collector uses the
+// new pages; a pass already running finishes with the ones it started with. It is
+// what web.Reconfigurable asks of a collector.
+func (c *Collector) Configure(settings config.Config) {
+	c.Mutex.Lock()
+	defer c.Mutex.Unlock()
+	c.Cadences = settings
+	c.PageSizeSettings = config.PageSizes{
+		FirewallLog:   settings.FirewallLogPageSize,
+		SecurityEvent: settings.SecurityEventPageSize,
+		DHCPLease:     settings.DHCPLeasePageSize,
+	}
+	if settings.AttributionMaxDelaySeconds > 0 {
+		c.MaxDelaySeconds = settings.AttributionMaxDelaySeconds
+	}
+	if settings.CacheAnswerDelaySeconds > 0 {
+		c.CacheAnswerDelaySeconds = settings.CacheAnswerDelaySeconds
+	}
+	if settings.LegPairingWindowSeconds >= 0 {
+		c.PairingWindowSeconds = settings.LegPairingWindowSeconds
+	}
+	if settings.LeaseBackendFailurePassLimit > 0 {
+		c.LeaseFailureLimit = settings.LeaseBackendFailurePassLimit
+	}
+	if settings.NetflowJoinToleranceSeconds > 0 {
+		c.Netflow.Mutex.Lock()
+		c.Netflow.ToleranceSeconds = settings.NetflowJoinToleranceSeconds
+		c.Netflow.Mutex.Unlock()
+	}
+}
+
+// setSampleAbsence records what one measurement provider's last pass could not read.
+func (c *Collector) SetSampleAbsence(providerID int64, absent string) {
+	c.Mutex.Lock()
+	defer c.Mutex.Unlock()
+	if c.SampleAbsences == nil {
+		c.SampleAbsences = map[int64]string{}
+	}
+	if absent == "" {
+		delete(c.SampleAbsences, providerID)
+		return
+	}
+	c.SampleAbsences[providerID] = absent
+}
+
+// setReadDetail records what one resolver-record provider's last read said.
+//
+// The outcome is kept beside the words for the same reason: a probe round restating a
+// read's refusal in the detail must not stamp the row `healthy` beside it.
+func (c *Collector) SetReadDetail(providerID int64, outcome vocab.AvailabilityOutcome, detail string) {
+	c.Mutex.Lock()
+	defer c.Mutex.Unlock()
+	if c.ReadDetails == nil {
+		c.ReadDetails = map[int64]string{}
+	}
+	if c.ReadOutcomes == nil {
+		c.ReadOutcomes = map[int64]vocab.AvailabilityOutcome{}
+	}
+	c.ReadDetails[providerID] = detail
+	c.ReadOutcomes[providerID] = outcome
+}
+
+// readDetail is what one resolver-record provider's last read said, or empty.
+func (c *Collector) ReadDetail(providerID int64) string {
+	c.Mutex.RLock()
+	defer c.Mutex.RUnlock()
+	return c.ReadDetails[providerID]
+}
+
+// readOutcome is the outcome of one resolver-record provider's last read, or empty.
+func (c *Collector) readOutcome(providerID int64) vocab.AvailabilityOutcome {
+	c.Mutex.RLock()
+	defer c.Mutex.RUnlock()
+	return c.ReadOutcomes[providerID]
+}
+
+// sampleAbsence is what one provider's last sampling pass could not read, or empty.
+func (c *Collector) sampleAbsence(providerID int64) string {
+	c.Mutex.RLock()
+	defer c.Mutex.RUnlock()
+	return c.SampleAbsences[providerID]
+}
+
+// PageSizes returns the page sizes the collectors use now.
+//
+// It exists for a test to assert that a saved setting reached a running
+// collector. Nothing should use it as a second source of truth: the setting rows
+// are the truth, and this is what the collectors were last told.
+func (c *Collector) PageSizes() config.PageSizes { return c.Pages() }
+
+// pages returns the page sizes in force.
+func (c *Collector) Pages() config.PageSizes {
+	c.Mutex.RLock()
+	defer c.Mutex.RUnlock()
+	return c.PageSizeSettings
+}
+
+// Discovery returns the current snapshot.
+func (c *Collector) Discovery() Discovery {
+	c.Mutex.RLock()
+	defer c.Mutex.RUnlock()
+	return c.DiscoverySnapshot
+}
+
+// setDiscovery replaces the snapshot.
+func (c *Collector) SetDiscovery(snapshot Discovery) {
+	c.Mutex.Lock()
+	defer c.Mutex.Unlock()
+	c.DiscoverySnapshot = snapshot
+}
+
+// measureNormaliser returns the timestamp normaliser for this instant, carrying the
+// reference time the year-less filter-log shape needs and the firewall's offset
+// from UTC.
+//
+// NO ZONE-LESS TIMESTAMP IS READ BEFORE THE OFFSET IS KNOWN. At start the collectors
+// and discovery run side by side, so a collector that gets here first measures the
+// offset itself; if that fails, its pass fails and is retried, rather than storing
+// records at a guessed time that nothing would later correct.
+func (c *Collector) MeasureNormaliser(ctx context.Context) (decode.Normaliser, error) {
+	c.Mutex.RLock()
+	offset, measured := c.OffsetSeconds, c.OffsetMeasured
+	c.Mutex.RUnlock()
+	if !measured {
+		if err := c.DiscoverClock(ctx); err != nil {
+			return decode.Normaliser{}, fmt.Errorf("collect: the firewall's offset from UTC "+
+				"is not known yet, so no zone-less timestamp is read: %w", err)
+		}
+		offset = c.FirewallOffsetSeconds()
+	}
+	return decode.Normaliser{Reference: c.Clock.Now(), OffsetSeconds: offset}, nil
+}
+
+// FirewallOffsetSeconds is the firewall's offset from UTC as discovery last measured
+// it, and zero before it has.
+func (c *Collector) FirewallOffsetSeconds() int {
+	c.Mutex.RLock()
+	defer c.Mutex.RUnlock()
+	return c.OffsetSeconds
+}
+
+// now is the current instant as the UTC epoch every column stores.
+func (c *Collector) Now() int64 { return c.Clock.Now().UTC().Unix() }
+
+// recordOutcome turns one response into the availability state the survey names
+// for it, and writes it with the probe and the instant.
+//
+// The mapping is the survey's, not an invention, and the important half is what
+// it refuses to do: an OK response with an empty collection is `reachable`, never
+// `unavailable`, because a source that is working and has nothing to say is a
+// normal state — a reachable IDS with a narrow ruleset and nothing to report is
+// the case the verified section describes, and treating it as a fault would be
+// the defect.
+func (c *Collector) recordOutcome(ctx context.Context, providerID int64,
+	response opnsense.Response, extra string) error {
+	state := vocab.StateUnavailable
+	switch response.Outcome {
+	case opnsense.OutcomeOK:
+		state = vocab.StateReachable
+	case opnsense.OutcomeNotFound:
+		// An absent module is unavailable, and it is the normal signal that an
+		// optional component is not installed.
+		state = vocab.StateUnavailable
+	case opnsense.OutcomeForbidden, opnsense.OutcomeEmptyBody,
+		opnsense.OutcomeResultFailed, opnsense.OutcomeServerError,
+		opnsense.OutcomeTransportFailure:
+		state = vocab.StateUnavailable
+	}
+	detail := response.Detail
+	if extra != "" {
+		if detail == "" {
+			detail = extra
+		} else {
+			detail += "; " + extra
+		}
+	}
+	return c.WriteAvailability(ctx, providerID, state, provider.ResponseOutcome(response), response.Endpoint, detail)
+}
+
+// writeAvailability records a state determined by one probe endpoint, with the outcome
+// code that names why. An empty outcome is refused rather than defaulted: a code nobody
+// chose is a code that would have to be guessed back from the detail.
+func (c *Collector) WriteAvailability(ctx context.Context, providerID int64,
+	state vocab.AvailabilityState, outcome vocab.AvailabilityOutcome, probe opnsense.Endpoint,
+	detail string) error {
+	if outcome == "" {
+		return fmt.Errorf("collect: the availability of provider %d (%s %s) was written with no "+
+			"outcome code", providerID, probe.Method, probe.Path)
+	}
+	var detailValue *string
+	if detail != "" {
+		detailValue = &detail
+	}
+	probeName := probe.Method + " " + probe.Path
+	if err := c.Store.SetAvailability(ctx, providerID, state, outcome, probeName, detailValue,
+		c.Now()); err != nil {
+		return fmt.Errorf("collect: recording availability: %w", err)
+	}
+	return nil
+}
+
+// joinErrors folds several failures into one error without losing any of them.
+//
+// It stayed in this package when the decoding layer moved out: a pass that reads five kinds
+// reports every failure it met rather than the first, and that is a fact about how collection
+// is organised, not about how a field is read.
+func JoinErrors(errs []error) error {
+	if len(errs) == 0 {
+		return nil
+	}
+	joined := errs[0]
+	for _, err := range errs[1:] {
+		joined = fmt.Errorf("%w; %w", joined, err)
+	}
+	return joined
+}
+
+// Sources returns the implementations this collector reads.
+func (c *Collector) Sources() *sources.Set { return c.SourceSet }
+
+// discoverClock measures the firewall's offset from UTC from its own clock, survey
+// gap 7, and puts it in force for every timestamp read after it. A failure leaves
+// the last measurement in force rather than falling back to zero: a zone does not
+// change because one request failed.
+func (c *Collector) DiscoverClock(ctx context.Context) error {
+	readAt := c.Clock.Now()
+	body, ok, err := c.ReadObject(ctx, opnsense.SystemTime)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("collect: %s did not answer, so the firewall's offset from UTC "+
+			"stays at %ds", opnsense.SystemTime.Path, c.FirewallOffsetSeconds())
+	}
+	datetime, present := decode.String(body, "datetime")
+	if !present {
+		return fmt.Errorf("collect: %s carries no datetime, so the firewall's offset from UTC "+
+			"stays at %ds", opnsense.SystemTime.Path, c.FirewallOffsetSeconds())
+	}
+	offset, err := decode.FirewallOffsetSeconds(datetime, readAt)
+	if err != nil {
+		return err
+	}
+	c.Mutex.Lock()
+	c.OffsetSeconds, c.OffsetMeasured = offset, true
+	c.Mutex.Unlock()
+	return nil
+}
+
+// storing marks the start of a pass's store-and-derive: it waits for a purge in
+// progress, and keeps the next one waiting until the returned function is called,
+// once the pass's derivation has ended.
+func (c *Collector) Storing() func() {
+	c.PurgeMutex.RLock()
+	return c.PurgeMutex.RUnlock
+}
+
+// sortedKeys returns a map's keys, sorted.
+func SortedKeys[V any](values map[string]V) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}

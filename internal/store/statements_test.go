@@ -9,6 +9,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The embedded statements, and the value sets they match on.
@@ -25,13 +28,13 @@ func TestEveryStatementPreparesForEveryPeriod(t *testing.T) {
 	}
 	for _, name := range names {
 		texts := []string{}
-		if IsComposeTemplate(name) {
+		if sqldb.IsComposeTemplate(name) {
 			composed := 0
-			for _, period := range Periods() {
+			for _, period := range vocab.Periods() {
 				if _, has := period.Child(); !has {
 					continue
 				}
-				text, err := ComposeStatement(name, period)
+				text, err := sqldb.ComposeStatement(name, period)
 				if err != nil {
 					t.Fatalf("expanding %s: %v", name, err)
 				}
@@ -41,16 +44,16 @@ func TestEveryStatementPreparesForEveryPeriod(t *testing.T) {
 			if composed != 3 {
 				t.Errorf("the composition %s was expanded for %d periods, not the three with a finer one", name, composed)
 			}
-		} else if IsPeriodTemplate(name) {
-			for _, period := range Periods() {
-				text, err := PeriodStatement(name, period)
+		} else if sqldb.IsPeriodTemplate(name) {
+			for _, period := range vocab.Periods() {
+				text, err := sqldb.PeriodStatement(name, period)
 				if err != nil {
 					t.Fatalf("expanding %s: %v", name, err)
 				}
 				texts = append(texts, text)
 			}
 		} else {
-			text, err := Statement(name)
+			text, err := sqldb.Statement(name)
 			if err != nil {
 				t.Fatalf("reading %s: %v", name, err)
 			}
@@ -62,16 +65,16 @@ func TestEveryStatementPreparesForEveryPeriod(t *testing.T) {
 			}
 		}
 	}
-	if _, err := Statement("no_such_statement"); err == nil {
+	if _, err := sqldb.Statement("no_such_statement"); err == nil {
 		t.Error("a statement that does not exist was returned")
 	}
-	if _, err := PeriodStatement("dirty_hours", PeriodHour); err == nil {
+	if _, err := sqldb.PeriodStatement("dirty_hours", vocab.PeriodHour); err == nil {
 		t.Error("a statement that is not a template was expanded as one")
 	}
-	if _, err := ComposeStatement("compose_volume", PeriodHour); err == nil {
+	if _, err := sqldb.ComposeStatement("compose_volume", vocab.PeriodHour); err == nil {
 		t.Error("an hour, which has no finer period, was composed")
 	}
-	if _, err := ComposeStatement("insert_volume", PeriodDay); err == nil {
+	if _, err := sqldb.ComposeStatement("insert_volume", vocab.PeriodDay); err == nil {
 		t.Error("a statement that is not a composition was expanded as one")
 	}
 }
@@ -85,11 +88,11 @@ func TestTheStatementParserRefusesWhatItCannotRun(t *testing.T) {
 		"-- statement: empty\n-- only a comment\n",
 		"-- statement: twice\nSELECT 1;\n-- statement: twice\nSELECT 2;\n",
 	} {
-		if _, err := parseStatements(text); err == nil {
+		if _, err := sqldb.ParseStatements(text); err == nil {
 			t.Errorf("the parser accepted %q", text)
 		}
 	}
-	parsed, err := parseStatements("-- a header\n-- statement: one\n-- its comment\nSELECT :value\nFROM setting;\n")
+	parsed, err := sqldb.ParseStatements("-- a header\n-- statement: one\n-- its comment\nSELECT :value\nFROM setting;\n")
 	if err != nil || parsed["one"] != "SELECT :value\nFROM setting" {
 		t.Errorf("the parser read %q, %v", parsed["one"], err)
 	}
@@ -108,7 +111,7 @@ var quotedLiteral = regexp.MustCompile(`'([^']*)'`)
 func TestNoCodeMatchesALogReasonOutsideTheEstablishedSet(t *testing.T) {
 	t.Parallel()
 	established := map[string]bool{}
-	for _, reason := range LogReasons {
+	for _, reason := range vocab.LogReasons {
 		established[reason] = true
 	}
 	matched := 0
@@ -148,7 +151,7 @@ func TestNoCodeMatchesALogReasonOutsideTheEstablishedSet(t *testing.T) {
 	// The view names every established value but `match` as a drop no rule expresses.
 	schema, _ := sqlFiles.ReadFile("schema.sql")
 	view := string(schema)[strings.Index(string(schema), "CREATE OR REPLACE VIEW blocked_decision"):]
-	for _, reason := range LogReasons {
+	for _, reason := range vocab.LogReasons {
 		if !strings.Contains(view, "'"+reason+"'") {
 			t.Errorf("blocked_decision does not place the established reason %s", reason)
 		}
@@ -171,7 +174,7 @@ func logReasonsOutsideTheSet(source string, established map[string]bool) []strin
 // recorded set in step.
 func TestTheEligibleAnswerSourcesAreTheEstablishedOnes(t *testing.T) {
 	t.Parallel()
-	text, err := Statement("attribution_lookups")
+	text, err := sqldb.Statement("attribution_lookups")
 	if err != nil {
 		t.Fatalf("reading the statement: %v", err)
 	}
@@ -180,7 +183,7 @@ func TestTheEligibleAnswerSourcesAreTheEstablishedOnes(t *testing.T) {
 	if len(lists) != 2 {
 		t.Fatalf("the statement names the eligible sources %d times, not twice", len(lists))
 	}
-	want := append([]string(nil), AttributionAnswerSources...)
+	want := append([]string(nil), vocab.AttributionAnswerSources...)
 	sort.Strings(want)
 	for _, list := range lists {
 		var got []string

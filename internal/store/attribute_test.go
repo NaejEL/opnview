@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // Site-name attribution: AC29, AC32 and AC33.
@@ -77,7 +79,7 @@ func TestAttributionFollowsTheRuleExactly(t *testing.T) {
 					direction: "in", src: client.address, dst: destination, dstPort: &port,
 					protocol: "tcp", action: "pass", bytes: 100}})
 				for number, lookup := range testCase.lookups {
-					if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+					if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 						LookupKey:     fmt.Sprintf("example-case-lookup-%d", number),
 						ClientAddress: client.address, Domain: lookup.domain, Resolver: "unbound",
 						Action: lookup.action, AnswerSource: ptr(lookup.source),
@@ -134,7 +136,7 @@ func TestAttributionIsStoredWhateverTheAggregateModeSays(t *testing.T) {
 	addresses := network.insert(t, []networkFlow{{observedAt: network.now - 50, device: client.device,
 		direction: "in", src: client.address, dst: outside(1, client.v6), dstPort: &port,
 		protocol: "tcp", action: "pass", bytes: 100}})
-	if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey: "example-mode-lookup", ClientAddress: client.address, Domain: "mode.example.invalid",
 		Resolver: "unbound", Action: "pass", AnswerSource: ptr("Recursion"),
 		LookedUpAt: network.now - 52, IngestedAt: network.now,
@@ -152,7 +154,7 @@ func TestAttributionIsStoredWhateverTheAggregateModeSays(t *testing.T) {
 	if rows := queryInt(t, network.db, "SELECT count(*) FROM domain_attribution"); rows != 1 {
 		t.Errorf("with no_domains set, %d attributions were written", rows)
 	}
-	for _, period := range Periods() {
+	for _, period := range vocab.Periods() {
 		if rows := queryInt(t, network.db, "SELECT count(*) FROM domain_volume_aggregate_"+period.Name+
 			" WHERE site_name = 'mode.example.invalid'"); rows != 1 {
 			t.Errorf("with no_domains set, the %s domain family holds %d rows for the name", period.Name, rows)
@@ -174,7 +176,7 @@ func TestPurgingALookupOrAFlowRemovesItsAttribution(t *testing.T) {
 			dst: outside(2, client.v6), dstPort: &port, protocol: "tcp", action: "pass", bytes: 100},
 	})
 	for index, instant := range []int64{network.now - 51, network.now - 501} {
-		if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+		if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-purge-lookup-%d", index), ClientAddress: client.address,
 			Domain: fmt.Sprintf("purge-%d.example.invalid", index), Resolver: "unbound", Action: "pass",
 			AnswerSource: ptr("Recursion"), LookedUpAt: instant, IngestedAt: network.now,
@@ -204,7 +206,7 @@ func TestPurgingALookupOrAFlowRemovesItsAttribution(t *testing.T) {
 
 	// And through the retention purge itself, on an attribution that is still there when the
 	// purge runs: the surviving flow is named again from a fresh lookup first.
-	if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey: "example-purge-lookup-again", ClientAddress: client.address,
 		Domain: "purge-again.example.invalid", Resolver: "unbound", Action: "pass",
 		AnswerSource: ptr("Recursion"), LookedUpAt: network.now - 52, IngestedAt: network.now,

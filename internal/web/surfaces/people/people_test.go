@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/owners"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/surfaces/people"
 	"github.com/NaejEL/opnview/internal/web/webtest"
@@ -35,7 +36,7 @@ func decode[T any](t *testing.T, answer *http.Response, want int) T {
 // exampleClient writes one client by MAC and returns its id.
 func exampleClient(t *testing.T, harness *webtest.Harness, mac, hostname string) int64 {
 	t.Helper()
-	client := store.Client{Identity: store.ClientIdentity{Kind: store.IdentityMAC, Key: mac}, MAC: &mac,
+	client := vocab.Client{Identity: vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: mac}, MAC: &mac,
 		Hostname: &hostname}
 	id, err := harness.Store.UpsertClient(context.Background(), client, harness.Clock.Now().Unix()-60)
 	if err != nil {
@@ -77,8 +78,8 @@ func TestOwnersAreCreatedRenamedDeletedRestoredAndAssignedOverJSON(t *testing.T)
 	}
 	before := ownership(t, harness)
 	for body, code := range map[string]string{
-		`{"display_name": "  "}`:             store.RefusalDisplayNameEmpty,
-		`{"display_name": "Example Person"}`: store.RefusalDisplayNameTaken,
+		`{"display_name": "  "}`:             owners.RefusalDisplayNameEmpty,
+		`{"display_name": "Example Person"}`: owners.RefusalDisplayNameTaken,
 		`{"display_name": 3}`:                web.ConditionMalformedBody,
 		`{"name": "Example"}`:                web.ConditionMalformedBody,
 		`not json`:                           web.ConditionMalformedBody,
@@ -98,7 +99,7 @@ func TestOwnersAreCreatedRenamedDeletedRestoredAndAssignedOverJSON(t *testing.T)
 		t.Errorf("renamed %+v", renamed.Owner)
 	}
 	if refusal := decode[people.Refusal](t, post("/api/owners/999/rename", `{"display_name": "X"}`),
-		http.StatusNotFound); refusal.Condition != store.RefusalUnknownOwner {
+		http.StatusNotFound); refusal.Condition != owners.RefusalUnknownOwner {
 		t.Errorf("renaming nobody answered %s", refusal.Condition)
 	}
 
@@ -110,7 +111,7 @@ func TestOwnersAreCreatedRenamedDeletedRestoredAndAssignedOverJSON(t *testing.T)
 	}
 	before = ownership(t, harness)
 	if refusal := decode[people.Refusal](t, post(assignPath, fmt.Sprintf(`{"clients": [%d, 999]}`, twin)),
-		http.StatusBadRequest); refusal.Condition != store.RefusalUnknownClient || refusal.Client != 999 {
+		http.StatusBadRequest); refusal.Condition != owners.RefusalUnknownClient || refusal.Client != 999 {
 		t.Errorf("an unknown client answered %+v", refusal)
 	}
 	if after := ownership(t, harness); after != before {

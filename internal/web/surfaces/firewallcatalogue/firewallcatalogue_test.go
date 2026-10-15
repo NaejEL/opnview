@@ -8,6 +8,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/web/surfaces/firewallcatalogue"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 )
 
 // TestTheCatalogueAnswersOnlyASession is BR-AC23's web half: without a session the catalogue
@@ -15,7 +16,7 @@ import (
 // catalogue, whose endpoint and subscription lists are lists, never null.
 func TestTheCatalogueAnswersOnlyASession(t *testing.T) {
 	t.Parallel()
-	harness := webtest.SignedInHarness(t)
+	harness := collectiontest.SignedInHarness(t)
 	anonymous, err := http.Get(harness.HTTP.URL + firewallcatalogue.PathCatalogue)
 	if err != nil {
 		t.Fatal(err)

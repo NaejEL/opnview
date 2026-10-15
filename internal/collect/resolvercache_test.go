@@ -6,13 +6,17 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
+	attributionpkg "github.com/NaejEL/opnview/internal/store/attribution"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The collector half of specs/SPEC-resolver-cache-attribution.md: the two resolver-record
@@ -38,7 +42,7 @@ func arrangeRecordCollection(t *testing.T) *probeHarness {
 	if err := harness.collector.probeResolverLocalData(ctx); err != nil {
 		t.Fatalf("probing the local data: %v", err)
 	}
-	for _, kind := range []string{KindResolverCache, KindResolverLocalData} {
+	for _, kind := range []string{core.KindResolverCache, core.KindResolverLocalData} {
 		if keys := harness.activeKeysOf(t, kind); len(keys) != 1 || keys[0] != ProviderUnbound {
 			t.Fatalf("the %s kind activated %v, not Unbound alone", kind, keys)
 		}
@@ -121,7 +125,7 @@ func TestADumpOfEveryRRTypeStoresOnlyAAAAAAndCNAME(t *testing.T) {
 				WHERE owner_name LIKE '%text.example.com'`); text != 0 {
 				t.Error("a TXT record whose class field read A was stored: `type` was read as the record type")
 			}
-			detail := harness.detailOf(t, KindResolverCache, ProviderUnbound)
+			detail := harness.detailOf(t, core.KindResolverCache, ProviderUnbound)
 			references := 0
 			for _, row := range template {
 				if row["ttl"] == nil {
@@ -139,7 +143,7 @@ func TestADumpOfEveryRRTypeStoresOnlyAAAAAAndCNAME(t *testing.T) {
 					t.Errorf("the detail %q does not say %q", detail, want)
 				}
 			}
-			if state, _, _ := harness.availabilityOf(t, KindResolverCache, ProviderUnbound); state != store.StateReachable {
+			if state, _, _ := harness.availabilityOf(t, core.KindResolverCache, ProviderUnbound); state != vocab.StateReachable {
 				t.Errorf("a cache read that answered is %q", state)
 			}
 		})
@@ -193,7 +197,7 @@ func TestMessageCacheReferencesAreNamedForWhatTheyAreAndNotCountedAsABadTTL(t *t
 				WHERE rrtype IN ('A', 'AAAA') AND covered_until_at = last_seen_at`); zero != 2 {
 				t.Errorf("%d address records were stored with their ttl of 0, not 2", zero)
 			}
-			detail := harness.detailOf(t, KindResolverCache, ProviderUnbound)
+			detail := harness.detailOf(t, core.KindResolverCache, ProviderUnbound)
 			for _, want := range []string{
 				"read 12 records",
 				fmt.Sprintf("skipped %d message-cache references: lines of the dump's message-cache section",
@@ -219,8 +223,8 @@ func TestEachRecordReadAbsenceHasItsOwnWordingAndStoresNothing(t *testing.T) {
 		kind     string
 		collect  func(*Collector, context.Context) error
 	}{
-		{opnsense.UnboundDumpCache, KindResolverCache, (*Collector).CollectResolverCache},
-		{opnsense.UnboundListLocalData, KindResolverLocalData, (*Collector).CollectResolverLocalData},
+		{opnsense.UnboundDumpCache, core.KindResolverCache, (*Collector).CollectResolverCache},
+		{opnsense.UnboundListLocalData, core.KindResolverLocalData, (*Collector).CollectResolverLocalData},
 	} {
 		details := map[string]string{}
 		for _, absence := range []struct {
@@ -253,7 +257,7 @@ func TestEachRecordReadAbsenceHasItsOwnWordingAndStoresNothing(t *testing.T) {
 				t.Errorf("%s %s: the detail %q blames a privilege for a failed authentication",
 					endpoint.endpoint.Path, absence.name, detail)
 			}
-			if state, _, _ := harness.availabilityOf(t, endpoint.kind, ProviderUnbound); state != store.StateUnavailable {
+			if state, _, _ := harness.availabilityOf(t, endpoint.kind, ProviderUnbound); state != vocab.StateUnavailable {
 				t.Errorf("%s %s: the state is %q", endpoint.endpoint.Path, absence.name, state)
 			}
 			if stored := observationCount(t, harness.store); stored != 0 {
@@ -286,8 +290,8 @@ func TestDnsmasqReportsItsNamedNoReadStates(t *testing.T) {
 		kind, want string
 		collect    func(context.Context) error
 	}{
-		{KindResolverCache, "this resolver offers no cache read through the API", harness.collector.CollectResolverCache},
-		{KindResolverLocalData, "this resolver offers no local-data read through the API", harness.collector.CollectResolverLocalData},
+		{core.KindResolverCache, "this resolver offers no cache read through the API", harness.collector.CollectResolverCache},
+		{core.KindResolverLocalData, "this resolver offers no local-data read through the API", harness.collector.CollectResolverLocalData},
 	} {
 		if detail := harness.detailOf(t, kind.kind, ProviderDnsmasq); !strings.Contains(detail, kind.want) {
 			t.Errorf("after the probe round the %s Dnsmasq detail is %q", kind.kind, detail)
@@ -323,10 +327,10 @@ func TestTheCacheAndTheQueryReportKeepTheirOwnAvailability(t *testing.T) {
 	}
 	harness.fake.Answer(opnsense.UnboundDumpCache, http.StatusForbidden, []byte(`{}`))
 	_ = harness.collector.CollectResolverCache(ctx)
-	if state, _, _ := harness.availabilityOf(t, KindDNSLookup, ProviderUnbound); state != store.StateReachable {
+	if state, _, _ := harness.availabilityOf(t, core.KindDNSLookup, ProviderUnbound); state != vocab.StateReachable {
 		t.Errorf("a refused cache read moved the query report to %q", state)
 	}
-	if state, _, _ := harness.availabilityOf(t, KindResolverCache, ProviderUnbound); state != store.StateUnavailable {
+	if state, _, _ := harness.availabilityOf(t, core.KindResolverCache, ProviderUnbound); state != vocab.StateUnavailable {
 		t.Errorf("the refused cache read is %q", state)
 	}
 
@@ -336,10 +340,10 @@ func TestTheCacheAndTheQueryReportKeepTheirOwnAvailability(t *testing.T) {
 	}
 	harness.fake.Answer(opnsense.SearchQueries, http.StatusInternalServerError, []byte(`{}`))
 	_ = harness.collector.CollectDNSLookup(ctx)
-	if state, _, _ := harness.availabilityOf(t, KindResolverCache, ProviderUnbound); state != store.StateReachable {
+	if state, _, _ := harness.availabilityOf(t, core.KindResolverCache, ProviderUnbound); state != vocab.StateReachable {
 		t.Errorf("a failed query report moved the cache to %q", state)
 	}
-	if state, _, _ := harness.availabilityOf(t, KindDNSLookup, ProviderUnbound); state != store.StateUnavailable {
+	if state, _, _ := harness.availabilityOf(t, core.KindDNSLookup, ProviderUnbound); state != vocab.StateUnavailable {
 		t.Errorf("the failed query report is %q", state)
 	}
 }
@@ -401,7 +405,7 @@ func TestACacheReadNamesAFlowThatThreeLookupsCouldNot(t *testing.T) {
 	if err := harness.collector.CollectResolverCache(ctx); err != nil {
 		t.Fatalf("reading the cache: %v", err)
 	}
-	if count, method := attribution(); count != 1 || method != store.MethodResolverCacheAnswer {
+	if count, method := attribution(); count != 1 || method != attributionpkg.MethodResolverCacheAnswer {
 		t.Fatalf("the cache pass left the flow with %d attributions by %q", count, method)
 	}
 	var site string
@@ -462,13 +466,13 @@ func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 		restart   bool
 		want      string
 	}{
-		{"one IPv4 address", []string{"192.0.2.40"}, false, store.ClientResolutionLocalData},
-		{"one IPv6 address", []string{"2001:db8::40"}, false, store.ClientResolutionLocalData},
-		{"one address, across a restart", []string{"2001:db8::41"}, true, store.ClientResolutionLocalData},
+		{"one IPv4 address", []string{"192.0.2.40"}, false, vocab.ClientResolutionLocalData},
+		{"one IPv6 address", []string{"2001:db8::40"}, false, vocab.ClientResolutionLocalData},
+		{"one address, across a restart", []string{"2001:db8::41"}, true, vocab.ClientResolutionLocalData},
 		{"two addresses of one family", []string{"192.0.2.42", "192.0.2.43"}, false,
-			store.ClientResolutionAmbiguous},
+			vocab.ClientResolutionAmbiguous},
 		{"one A and one AAAA, no family reported", []string{"192.0.2.44", "2001:db8::44"}, false,
-			store.ClientResolutionDualStack},
+			vocab.ClientResolutionDualStack},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
@@ -486,7 +490,7 @@ func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 			}
 			setClock(harness, referenceInstant())
 			unresolvedHostLookup(t, harness, hostname, referenceEpoch()-120)
-			if resolution, _ := resolutionOf(t, harness.store, hostname); resolution != store.ClientResolutionUnknown {
+			if resolution, _ := resolutionOf(t, harness.store, hostname); resolution != vocab.ClientResolutionUnknown {
 				t.Fatalf("the lookup was stored %s before any data named its host", resolution)
 			}
 
@@ -509,8 +513,8 @@ func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 			if resolution != testCase.want {
 				t.Errorf("the lookup is %s, not %s", resolution, testCase.want)
 			}
-			if testCase.want == store.ClientResolutionLocalData {
-				if canonical, _ := store.CanonicalAddress(testCase.addresses[0]); address != canonical.String() {
+			if testCase.want == vocab.ClientResolutionLocalData {
+				if canonical, _ := attributionpkg.CanonicalAddress(testCase.addresses[0]); address != canonical.String() {
 					t.Errorf("the lookup's client is %q, not the one address the local data named", address)
 				}
 			}
@@ -552,7 +556,7 @@ func TestALeasePassWaitsForTheLocalDataBeforeExaminingALookup(t *testing.T) {
 		t.Fatalf("the local-data pass: %v", err)
 	}
 	if done, resolution := examined(t, harness.store, "example-key-waits"); !done ||
-		resolution != store.ClientResolutionLocalData {
+		resolution != vocab.ClientResolutionLocalData {
 		t.Errorf("the pass that read both sources left the lookup examined %t, %s; want examined and "+
 			"resolved by the local data", done, resolution)
 	}
@@ -575,7 +579,7 @@ func arrangeProcessorStream(t *testing.T, events ...string) *probeHarness {
 func processorReadings(t *testing.T, database *store.Store) []float64 {
 	t.Helper()
 	rows, err := database.DB().Query("SELECT value FROM measurement_sample WHERE measure = ?",
-		string(store.MeasureCPUUseRatio))
+		string(vocab.MeasureCPUUseRatio))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,7 +686,7 @@ func TestEachProcessorAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 			if got := processorReadings(t, harness.store); len(got) != 0 {
 				t.Errorf("an absence wrote the readings %v", got)
 			}
-			detail := harness.detailOf(t, KindMeasurementSample, ProviderInsight)
+			detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
 			if !strings.Contains(detail, testCase.want) {
 				t.Errorf("the detail %q does not say %q", detail, testCase.want)
 			}
@@ -698,21 +702,25 @@ func TestEachProcessorAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 // fixture rather than that one.
 func TestTheUnverifiedProcessorPathIsGone(t *testing.T) {
 	t.Parallel()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		source, err := os.ReadFile(entry.Name())
+	// The package and its parts (core, derive, the kinds' coordinators...), each a directory below it.
+	err := filepath.WalkDir(".", func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
-			t.Fatal(err)
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		source, err := os.ReadFile(path)
+		if err != nil {
+			return err
 		}
 		if strings.Contains(string(source), "unverifiedCPU"+"Keys") {
-			t.Errorf("%s still carries the unverified processor keys", entry.Name())
+			t.Errorf("%s still carries the unverified processor keys", path)
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 	for _, name := range providertest.FixtureNames(t) {
 		// A body that is not an object carries no key, so a decoding failure here is no
@@ -786,7 +794,7 @@ func TestLocalDataPTRRecordsMapTheirReverseNameToAnAddressAndTheirTargetToAHost(
 		WHERE value LIKE 'malformed-%' OR owner_name = 'host-b.example.test'`); bad != 0 {
 		t.Errorf("%d PTR records whose owner encodes no address were stored", bad)
 	}
-	detail := harness.detailOf(t, KindResolverLocalData, ProviderUnbound)
+	detail := harness.detailOf(t, core.KindResolverLocalData, ProviderUnbound)
 	for _, wantDetail := range []string{
 		fmt.Sprintf("read %d records of the local data", len(rows)),
 		fmt.Sprintf("PTR %d", 2+len(malformed)), "TXT 1", "A 1", "AAAA 1",

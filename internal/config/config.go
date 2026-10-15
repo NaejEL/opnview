@@ -1,21 +1,3 @@
-// Package config is the only reader of configuration in opnview.
-//
-// There are exactly two sources, and no third: the `setting` table, and the
-// defaults written down here. There is no environment variable, no
-// configuration file and no `configure` subcommand — the firewall URL, the API
-// key and secret and the MaxMind key are entered in opnview's own settings
-// surface and nowhere else.
-//
-// Since cycle 4B this package also SURFACES THE CREDENTIALS TO THE COLLECTORS and
-// notices a change to them without a restart. That is credentials.go: the
-// `setting` rows holding the firewall URL and the API key, the decryption of the
-// API secret from `encrypted_credential`, the three named states those can be in,
-// and the live holder the OPNsense client reads on every call. live.go does the
-// same for the rest of the configuration.
-//
-// Every default here is a duration, a mode or a page size. NO INTERFACE NAME,
-// VLAN NAME, ADDRESS, CIDR OR COUNT OF THINGS ON THE NETWORK IS A DEFAULT, because
-// every one of those is discovered at runtime through the API.
 package config
 
 import (
@@ -26,7 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/attribution"
+	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/samples"
 )
 
 // MaxIntervalSeconds is the longest interval, in seconds, that a time.Duration
@@ -53,7 +37,7 @@ const (
 	// KeySecurityEventInterval overrides the eve.json alert poll interval.
 	KeySecurityEventInterval = "poll_interval_security_event_seconds"
 	// KeyMeasurementInterval overrides the sampled-measurement interval.
-	KeyMeasurementInterval = store.MeasurementIntervalKey
+	KeyMeasurementInterval = samples.MeasurementIntervalKey
 	// KeyDHCPLeaseInterval overrides the lease poll interval.
 	KeyDHCPLeaseInterval = "poll_interval_dhcp_lease_seconds"
 	// KeyDNSLookupInterval overrides the resolver poll interval.
@@ -66,7 +50,7 @@ const (
 	// KeyDiscoveryInterval overrides the runtime-discovery refresh interval. The
 	// store reads the same row as the margin of "held at an instant" for this
 	// firewall's own addresses, so the key lives there.
-	KeyDiscoveryInterval = store.DiscoveryIntervalKey
+	KeyDiscoveryInterval = flows.DiscoveryIntervalKey
 	// KeyPurgeInterval overrides the retention-purge interval.
 	KeyPurgeInterval = "purge_interval_seconds"
 	// KeyGeoIPRefreshInterval overrides how often the MaxMind databases are
@@ -84,11 +68,11 @@ const (
 	// KeyCacheAnswerDelay is how long before a flow, in seconds, a resolver lookup may
 	// have been made and still name it through the resolver's cache (decision 2 of
 	// specs/SPEC-resolver-cache-attribution.md). The schema writes its default row.
-	KeyCacheAnswerDelay = store.CacheAnswerDelayKey
+	KeyCacheAnswerDelay = attribution.CacheAnswerDelayKey
 	// KeyLegPairingWindow is how far apart, in seconds, the two records of one
 	// connection may have been logged and still be paired (decision 4 of the step-5A
 	// live corrections). The schema writes its default row.
-	KeyLegPairingWindow = store.PairingWindowKey
+	KeyLegPairingWindow = flows.PairingWindowKey
 	// KeyLeaseBackendFailurePassLimit is how many lease passes in a row a backend may
 	// fail before a pass that read every other backend counts as complete, so the
 	// unresolved host-name lookups are examined without it (defect L1 of
@@ -158,7 +142,7 @@ const (
 	// upstream answers for a past window, so this interval is the resolution of
 	// opnview's own per-pair history rather than a refresh rate. The figure lives in
 	// internal/store, which reads the same row to bound a current rate.
-	DefaultMeasurementInterval = store.DefaultMeasurementIntervalSeconds * time.Second
+	DefaultMeasurementInterval = samples.DefaultMeasurementIntervalSeconds * time.Second
 
 	// DefaultDHCPLeaseInterval is 300 s. Survey, data source 4, "Sustainable
 	// polling frequency": leases change on the scale of minutes to hours, the
@@ -190,7 +174,7 @@ const (
 	// survey gives no figure, so this one is opnview's own and is stated as
 	// such: it matches the slowest collector, which is the fastest rate at
 	// which a newly discovered interface could matter to an ingest.
-	DefaultDiscoveryInterval = store.DefaultDiscoveryIntervalSeconds * time.Second
+	DefaultDiscoveryInterval = flows.DefaultDiscoveryIntervalSeconds * time.Second
 
 	// DefaultPurgeInterval is 3600 s. No survey section bears on it: the purge
 	// reads no endpoint. It is opnview's own, chosen so that the database is
@@ -274,13 +258,13 @@ const DefaultAttributionMaxDelaySeconds int64 = 5
 // before a flow a lookup may have been made and still name it through the resolver's
 // cache (decision 2). It is written in the schema and read from the database; the
 // constant exists only so a database with no row still behaves.
-const DefaultCacheAnswerDelaySeconds int64 = store.DefaultCacheAnswerDelaySeconds
+const DefaultCacheAnswerDelaySeconds int64 = attribution.DefaultCacheAnswerDelaySeconds
 
 // DefaultLegPairingWindowSeconds is 1 s, the maintainer's default for how far apart
 // the two records of one connection may have been logged and still be paired
 // (decision 4). It is written in the schema and read from the database; the constant
 // exists only so a database with no row still behaves.
-const DefaultLegPairingWindowSeconds int64 = store.DefaultPairingWindowSeconds
+const DefaultLegPairingWindowSeconds int64 = flows.DefaultPairingWindowSeconds
 
 // MaxLegPairingWindowSeconds is the largest pairing window accepted: 60 s, the
 // maintainer's decision 13 of specs/SPEC-step-5b-widget-api.md.

@@ -12,6 +12,13 @@ import (
 	"sync/atomic"
 
 	"github.com/NaejEL/opnview/internal/store"
+	readspkg "github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
+	"github.com/NaejEL/opnview/internal/widget/script"
+	"github.com/NaejEL/opnview/internal/widget/shapes"
 )
 
 // Loading the widgets plugins carry (source.go).
@@ -21,7 +28,7 @@ import (
 //
 //   - with a script (manifest `script`): its statement files declare named statements, in the
 //     marker format of every *.statements.sql file of the tree, and its script answers the request
-//     through its host (script.go), running those statements by name;
+//     through its host (internal/widget/script/script.go), running those statements by name;
 //   - without one: a single query file, served by the declarative engine as an operator widget is.
 //
 // EVERY STATEMENT IS CHECKED AT LOAD, before anything is served: one read-only statement that
@@ -37,32 +44,20 @@ import (
 // pluginStatementSeparator joins a third party's statement name to its registration's sequence.
 const pluginStatementSeparator = "__p"
 
-// widgetStatement is one statement a plugin widget declares.
-type widgetStatement struct {
-	// registered is the name it is registered under.
-	registered string
-	// template says it is a period template (@period@), run for the period a script names.
-	template bool
-	// domain says it reads a column carrying a domain name.
-	domain bool
-	// parameters are the names it binds, without the colon.
-	parameters []string
-}
-
 // checkedStatement is what the load-time check found of one text.
 type checkedStatement struct {
 	domain  bool
-	refusal *Refusal
+	refusal *params.Refusal
 }
 
 var pluginStatements = struct {
 	sync.Mutex
 	// builtin holds the statements of every built-in plugin widget registered, by type.
-	builtin map[string]map[string]widgetStatement
+	builtin map[string]map[string]script.WidgetStatement
 	// checked holds what the check found of a built-in's statement texts, which depends on the
 	// schema alone, so it is made once per process.
 	checked map[string]checkedStatement
-}{builtin: map[string]map[string]widgetStatement{}, checked: map[string]checkedStatement{}}
+}{builtin: map[string]map[string]script.WidgetStatement{}, checked: map[string]checkedStatement{}}
 
 // builtinRegistration serialises the registration of the built-in plugin widgets' statements.
 var builtinRegistration sync.Mutex
@@ -71,32 +66,32 @@ var builtinRegistration sync.Mutex
 var pluginSequence atomic.Int64
 
 // loadPluginWidget validates one widget a plugin carries and returns its preset.
-func loadPluginWidget(ctx context.Context, database *store.Store, source Source, existing map[string]Preset) (
-	Preset, *Refusal) {
+func loadPluginWidget(ctx context.Context, database *store.Store, source Source, existing map[string]request.Preset) (
+	request.Preset, *params.Refusal) {
 	name := source.Type
 	raw, err := fs.ReadFile(source.Files, manifestFile)
 	if err != nil {
-		return Preset{}, refuse(name, RefusalManifestUnreadable, "%s cannot be read: %v", manifestFile, err)
+		return request.Preset{}, params.Refuse(name, params.RefusalManifestUnreadable, "%s cannot be read: %v", manifestFile, err)
 	}
-	manifest, err := decodeManifest(raw)
+	manifest, err := params.DecodeManifest(raw)
 	if err != nil {
-		return Preset{}, refuse(name, RefusalManifestInvalid, "%s is not a valid manifest: %v", manifestFile, err)
+		return request.Preset{}, params.Refuse(name, params.RefusalManifestInvalid, "%s is not a valid manifest: %v", manifestFile, err)
 	}
-	if refusal := ValidateManifest(manifest); refusal != nil {
+	if refusal := params.ValidateManifest(manifest); refusal != nil {
 		refusal.Type = name
-		return Preset{}, refusal
+		return request.Preset{}, refusal
 	}
 	if manifest.Type != name {
-		return Preset{}, refuse(name, RefusalTypeMismatchWithDirectory,
+		return request.Preset{}, params.Refuse(name, params.RefusalTypeMismatchWithDirectory,
 			"the manifest declares type %q in the directory %q: they must be the same", manifest.Type, name)
 	}
 	if _, taken := existing[manifest.Type]; taken {
-		return Preset{}, refuse(name, RefusalTypeCollision,
+		return request.Preset{}, params.Refuse(name, params.RefusalTypeCollision,
 			"the type %q is already served; a widget never shadows another widget", manifest.Type)
 	}
-	origin := OriginOperator
+	origin := request.OriginOperator
 	if source.Builtin {
-		origin = OriginBuiltin
+		origin = request.OriginBuiltin
 	}
 	if manifest.Script == "" {
 		return loadPluginDeclarative(ctx, database, source, manifest, origin)
@@ -104,51 +99,51 @@ func loadPluginWidget(ctx context.Context, database *store.Store, source Source,
 
 	text, err := fs.ReadFile(source.Files, manifest.Script)
 	if err != nil {
-		return Preset{}, refuse(name, RefusalScriptMissing, "%s cannot be read: %v", manifest.Script, err)
+		return request.Preset{}, params.Refuse(name, params.RefusalScriptMissing, "%s cannot be read: %v", manifest.Script, err)
 	}
-	program, err := compileWidgetScript(path.Join(source.Location, manifest.Script), string(text))
+	program, err := script.CompileWidgetScript(path.Join(source.Location, manifest.Script), string(text))
 	if err != nil {
-		return Preset{}, refuse(name, RefusalScriptDoesNotCompile, "%v", err)
+		return request.Preset{}, params.Refuse(name, params.RefusalScriptDoesNotCompile, "%v", err)
 	}
 	statements, refusal := pluginWidgetStatements(ctx, database, source, manifest)
 	if refusal != nil {
-		return Preset{}, refusal
+		return request.Preset{}, refusal
 	}
 	preset := presetFromManifest(manifest, origin)
-	script := &scriptWidget{plugin: source.Plugin, file: manifest.Script, program: program, statements: statements,
-		builtin: source.Builtin}
-	preset.Serve = script.serve
+	script := &script.ScriptWidget{Plugin: source.Plugin, File: manifest.Script, Program: program, Statements: statements,
+		Builtin: source.Builtin}
+	preset.Serve = script.Serve
 	return preset, nil
 }
 
 // loadPluginDeclarative loads a plugin widget with no script: one query, served by the declarative
 // engine.
-func loadPluginDeclarative(ctx context.Context, database *store.Store, source Source, manifest Manifest,
-	origin string) (Preset, *Refusal) {
+func loadPluginDeclarative(ctx context.Context, database *store.Store, source Source, manifest params.Manifest,
+	origin string) (request.Preset, *params.Refusal) {
 	name := manifest.Type
 	switch len(manifest.Queries) {
 	case 0:
-		return Preset{}, refuse(name, RefusalQueryMissing, "a declarative widget declares its query file in `queries`")
+		return request.Preset{}, params.Refuse(name, params.RefusalQueryMissing, "a declarative widget declares its query file in `queries`")
 	case 1:
 	default:
-		return Preset{}, refuse(name, RefusalTooManyQueries,
+		return request.Preset{}, params.Refuse(name, params.RefusalTooManyQueries,
 			"a widget with no script runs exactly one query and this one declares %d", len(manifest.Queries))
 	}
 	text, err := fs.ReadFile(source.Files, manifest.Queries[0])
 	if err != nil {
-		code := RefusalQueryUnreadable
+		code := params.RefusalQueryUnreadable
 		if errors.Is(err, fs.ErrNotExist) {
-			code = RefusalQueryMissing
+			code = params.RefusalQueryMissing
 		}
-		return Preset{}, refuse(name, code, "%s cannot be read: %v", manifest.Queries[0], err)
+		return request.Preset{}, params.Refuse(name, code, "%s cannot be read: %v", manifest.Queries[0], err)
 	}
 	columns, refusal := checkDeclarative(ctx, database, manifest, string(text))
 	if refusal != nil {
-		return Preset{}, refusal
+		return request.Preset{}, refusal
 	}
 	preset := presetFromManifest(manifest, origin)
 	preset.Columns = columns
-	preset.Serve = serveDeclarative
+	preset.Serve = shapes.ServeDeclarative
 	statement := declarativeStatementPrefix + manifest.Type
 	owner := "widget:" + manifest.Type
 	if !source.Builtin {
@@ -161,19 +156,19 @@ func loadPluginDeclarative(ctx context.Context, database *store.Store, source So
 		builtinRegistration.Lock()
 		defer builtinRegistration.Unlock()
 	}
-	if store.StatementOwner(statement) == owner {
+	if sqldb.StatementOwner(statement) == owner {
 		return preset, nil
 	}
-	if err := store.RegisterQuery(owner, statement, string(text)); err != nil {
-		return Preset{}, refuse(name, RefusalStatementRegistrationFailed, "%v", err)
+	if err := sqldb.RegisterQuery(owner, statement, string(text)); err != nil {
+		return request.Preset{}, params.Refuse(name, params.RefusalStatementRegistrationFailed, "%v", err)
 	}
 	return preset, nil
 }
 
 // pluginWidgetStatements reads, checks and registers the statements a script widget's query files
 // declare, and returns them by the name the files give them.
-func pluginWidgetStatements(ctx context.Context, database *store.Store, source Source, manifest Manifest) (
-	map[string]widgetStatement, *Refusal) {
+func pluginWidgetStatements(ctx context.Context, database *store.Store, source Source, manifest params.Manifest) (
+	map[string]script.WidgetStatement, *params.Refusal) {
 	name := manifest.Type
 	if source.Builtin {
 		// Services are built concurrently by the tests: the first registers, the others wait for it
@@ -191,45 +186,45 @@ func pluginWidgetStatements(ctx context.Context, database *store.Store, source S
 	for _, file := range manifest.Queries {
 		raw, err := fs.ReadFile(source.Files, file)
 		if err != nil {
-			code := RefusalQueryUnreadable
+			code := params.RefusalQueryUnreadable
 			if errors.Is(err, fs.ErrNotExist) {
-				code = RefusalQueryMissing
+				code = params.RefusalQueryMissing
 			}
-			return nil, refuse(name, code, "%s cannot be read: %v", file, err)
+			return nil, params.Refuse(name, code, "%s cannot be read: %v", file, err)
 		}
-		parsed, err := store.ParseStatements(string(raw))
+		parsed, err := sqldb.ParseStatements(string(raw))
 		if err != nil {
-			return nil, refuse(name, RefusalQueryMultipleStatements, "%s: %v", file, err)
+			return nil, params.Refuse(name, params.RefusalQueryMultipleStatements, "%s: %v", file, err)
 		}
 		if len(parsed) == 0 {
-			return nil, refuse(name, RefusalQueryMissing, "%s declares no statement: each begins with a line %q",
-				file, store.StatementMarker+"widget_<name>")
+			return nil, params.Refuse(name, params.RefusalQueryMissing, "%s declares no statement: each begins with a line %q",
+				file, sqldb.StatementMarker+"widget_<name>")
 		}
 		for statement, text := range parsed {
-			if !statementNamePattern.MatchString(statement) {
-				return nil, refuse(name, RefusalStatementNameInvalid,
+			if !params.StatementNamePattern.MatchString(statement) {
+				return nil, params.Refuse(name, params.RefusalStatementNameInvalid,
 					"%s declares the statement %q; a widget's statement is named widget_<snake_case>", file, statement)
 			}
 			if _, duplicate := texts[statement]; duplicate {
-				return nil, refuse(name, RefusalStatementNameInvalid, "the statement %q is declared twice", statement)
+				return nil, params.Refuse(name, params.RefusalStatementNameInvalid, "the statement %q is declared twice", statement)
 			}
 			texts[statement] = text
 		}
 	}
-	for _, statement := range sortedNames(texts) {
-		if mismatch := netflowTwinMismatch(texts, statement); mismatch != "" {
-			return nil, refuse(name, RefusalNetflowTwinMismatch, "%s", mismatch)
+	for _, statement := range request.SortedNames(texts) {
+		if mismatch := request.NetflowTwinMismatch(texts, statement); mismatch != "" {
+			return nil, params.Refuse(name, params.RefusalNetflowTwinMismatch, "%s", mismatch)
 		}
 	}
-	statements := map[string]widgetStatement{}
-	for _, statement := range sortedNames(texts) {
+	statements := map[string]script.WidgetStatement{}
+	for _, statement := range request.SortedNames(texts) {
 		text := texts[statement]
 		checked, refusal := checkScriptStatement(ctx, database, name, statement, text, source.Builtin)
 		if refusal != nil {
 			return nil, refusal
 		}
-		statements[statement] = widgetStatement{registered: statement, template: strings.Contains(text, periodToken),
-			domain: checked, parameters: store.QueryParameters(text)}
+		statements[statement] = script.WidgetStatement{Registered: statement, Template: strings.Contains(text, request.PeriodToken),
+			Domain: checked, Parameters: sqldb.QueryParameters(text)}
 	}
 
 	owner := "widget:" + name
@@ -237,14 +232,14 @@ func pluginWidgetStatements(ctx context.Context, database *store.Store, source S
 		sequence := pluginSequence.Add(1)
 		owner = fmt.Sprintf("plugin:%s/%s#%d", source.Plugin, name, sequence)
 		for statement, held := range statements {
-			held.registered = fmt.Sprintf("%s%s%d", statement, pluginStatementSeparator, sequence)
+			held.Registered = fmt.Sprintf("%s%s%d", statement, pluginStatementSeparator, sequence)
 			statements[statement] = held
 		}
 	}
-	for _, statement := range sortedNames(texts) {
-		if err := store.RegisterQuery(owner, statements[statement].registered, texts[statement]); err != nil {
-			store.UnregisterOwner(owner)
-			return nil, refuse(name, RefusalStatementRegistrationFailed, "%v", err)
+	for _, statement := range request.SortedNames(texts) {
+		if err := sqldb.RegisterQuery(owner, statements[statement].Registered, texts[statement]); err != nil {
+			sqldb.UnregisterOwner(owner)
+			return nil, params.Refuse(name, params.RefusalStatementRegistrationFailed, "%v", err)
 		}
 	}
 	if source.Builtin {
@@ -255,18 +250,15 @@ func pluginWidgetStatements(ctx context.Context, database *store.Store, source S
 	return statements, nil
 }
 
-// periodToken is the store's period template token (store.PeriodStatement).
-const periodToken = "@period@"
-
 // checkScriptStatement checks one statement of a script widget at every period it can run at, and
 // returns whether it reads a column carrying a domain name.
 func checkScriptStatement(ctx context.Context, database *store.Store, widgetType, statement, text string,
-	builtin bool) (bool, *Refusal) {
+	builtin bool) (bool, *params.Refusal) {
 	expansions := []string{text}
-	if strings.Contains(text, periodToken) {
+	if strings.Contains(text, request.PeriodToken) {
 		expansions = expansions[:0]
-		for _, period := range store.Periods() {
-			expansions = append(expansions, strings.ReplaceAll(text, periodToken, period.Name))
+		for _, period := range vocab.Periods() {
+			expansions = append(expansions, strings.ReplaceAll(text, request.PeriodToken, period.Name))
 		}
 	}
 	domain := false
@@ -297,17 +289,17 @@ func checkScriptStatement(ctx context.Context, database *store.Store, widgetType
 // checkReadStatement is the load-time check of one statement text: one read that plans, reading no
 // credential table.
 func checkReadStatement(ctx context.Context, database *store.Store, widgetType, statement, text string) checkedStatement {
-	parameters := store.QueryParameters(text)
+	parameters := sqldb.QueryParameters(text)
 	if _, err := database.CheckQuery(ctx, text, parameters); err != nil {
 		return checkedStatement{refusal: queryRefusal(widgetType, fmt.Sprintf("the statement %s", statement), err)}
 	}
 	reads, err := database.Reads(ctx, text, parameters)
 	if err != nil {
-		return checkedStatement{refusal: refuse(widgetType, RefusalQueryDoesNotPlan, "the statement %s: %v",
+		return checkedStatement{refusal: params.Refuse(widgetType, params.RefusalQueryDoesNotPlan, "the statement %s: %v",
 			statement, err)}
 	}
-	if credential := store.CredentialTablesRead(reads); len(credential) > 0 {
-		return checkedStatement{refusal: refuse(widgetType, RefusalQueryReadsCredential,
+	if credential := readspkg.CredentialTablesRead(reads); len(credential) > 0 {
+		return checkedStatement{refusal: params.Refuse(widgetType, params.RefusalQueryReadsCredential,
 			"the statement %s reads %v, which hold a credential, a session or a setting row; no widget reads them",
 			statement, credential)}
 	}
@@ -315,42 +307,32 @@ func checkReadStatement(ctx context.Context, database *store.Store, widgetType, 
 }
 
 // queryRefusal names a refusal of the store's query check with the widget's code.
-func queryRefusal(widgetType, what string, err error) *Refusal {
-	var problem *store.QueryProblem
+func queryRefusal(widgetType, what string, err error) *params.Refusal {
+	var problem *sqldb.QueryProblem
 	if !errors.As(err, &problem) {
-		return refuse(widgetType, RefusalQueryDoesNotPlan, "%s: %v", what, err)
+		return params.Refuse(widgetType, params.RefusalQueryDoesNotPlan, "%s: %v", what, err)
 	}
 	code := map[string]string{
-		store.QueryMultipleStatements: RefusalQueryMultipleStatements,
-		store.QueryNotReadOnly:        RefusalQueryNotReadOnly,
-		store.QueryDoesNotPlan:        RefusalQueryDoesNotPlan,
-		store.QueryUnboundParameter:   RefusalUnknownQueryParameter,
-		store.QueryEmpty:              RefusalQueryMissing,
+		sqldb.QueryMultipleStatements: params.RefusalQueryMultipleStatements,
+		sqldb.QueryNotReadOnly:        params.RefusalQueryNotReadOnly,
+		sqldb.QueryDoesNotPlan:        params.RefusalQueryDoesNotPlan,
+		sqldb.QueryUnboundParameter:   params.RefusalUnknownQueryParameter,
+		sqldb.QueryEmpty:              params.RefusalQueryMissing,
 	}[problem.Kind]
-	return refuse(widgetType, code, "%s: %s", what, problem.Detail)
-}
-
-// sortedNames returns a map's keys, sorted.
-func sortedNames[V any](values map[string]V) []string {
-	names := make([]string, 0, len(values))
-	for name := range values {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
+	return params.Refuse(widgetType, code, "%s: %s", what, problem.Detail)
 }
 
 // loadPluginWidgets loads every source. A refused built-in is an error; a refused third party's
 // widget is reported with its reason and the service carries on without it.
-func loadPluginWidgets(ctx context.Context, database *store.Store, sources []Source, existing map[string]Preset) (
-	[]Preset, []Refusal, error) {
+func loadPluginWidgets(ctx context.Context, database *store.Store, sources []Source, existing map[string]request.Preset) (
+	[]request.Preset, []params.Refusal, error) {
 	ctx, cancel := context.WithTimeout(ctx, loadTimeout)
 	defer cancel()
 	var (
-		loaded   []Preset
-		refusals []Refusal
+		loaded   []request.Preset
+		refusals []params.Refusal
 	)
-	taken := make(map[string]Preset, len(existing))
+	taken := make(map[string]request.Preset, len(existing))
 	for widgetType, preset := range existing {
 		taken[widgetType] = preset
 	}

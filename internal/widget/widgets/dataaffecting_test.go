@@ -3,11 +3,11 @@ package widgets
 import (
 	"context"
 	"encoding/json"
-	"github.com/NaejEL/opnview/internal/widget"
 	"reflect"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/NaejEL/opnview/internal/widget/params"
 )
 
 // AC6: every data-affecting parameter of every served type changes the response when its
@@ -15,8 +15,8 @@ import (
 
 // alternatives are the values a key is tried with beside its default. A key whose
 // alternatives come from its own vocabulary or kind needs no entry here.
-func alternatives(f *fixture, widgetType string, param widget.Param) []any {
-	if param.Kind == widget.KindSeries {
+func alternatives(f *fixture, widgetType string, param params.Param) []any {
+	if param.Kind == params.KindSeries {
 		return []any{[]any{map[string]any{"source": "traffic"}}, []any{map[string]any{"source": "dns"}}}
 	}
 	switch param.Key {
@@ -47,20 +47,20 @@ func alternatives(f *fixture, widgetType string, param widget.Param) []any {
 	}
 	var result []any
 	switch param.Kind {
-	case widget.KindEnum:
+	case params.KindEnum:
 		for _, value := range param.Values {
 			if value != param.Default {
 				result = append(result, value)
 			}
 		}
-	case widget.KindEnumSet:
+	case params.KindEnumSet:
 		for _, value := range param.Values {
 			result = append(result, []any{value})
 		}
-	case widget.KindBoolean:
+	case params.KindBoolean:
 		flag, _ := param.Default.(bool)
 		result = append(result, !flag)
-	case widget.KindInteger, widget.KindNumber:
+	case params.KindInteger, params.KindNumber:
 		result = append(result, float64(1), float64(2))
 	}
 	return result
@@ -73,8 +73,8 @@ func TestEveryDataParameterChangesTheDataAndEveryRenderingOneIsEchoed(t *testing
 	// Two earlier addresses on the upstream interface, so the history has something to cut.
 	bits := int64(24)
 	for index, address := range []string{"198.51.100.201", "198.51.100.202"} {
-		check(t, f.db.UpsertInterfaceAddress(context.Background(), store.InterfaceAddress{InterfaceID: f.upstream.id,
-			SourceField: store.SourceFieldAddr4, Address: address, PrefixLength: &bits, AddressFamily: 4}, nil,
+		check(t, f.db.UpsertInterfaceAddress(context.Background(), vocab.InterfaceAddress{InterfaceID: f.upstream.id,
+			SourceField: vocab.SourceFieldAddr4, Address: address, PrefixLength: &bits, AddressFamily: 4}, nil,
 			f.now-500000+int64(index)*1000))
 	}
 	for _, widgetType := range f.service.Types() {
@@ -116,20 +116,20 @@ func TestEveryDataParameterChangesTheDataAndEveryRenderingOneIsEchoed(t *testing
 }
 
 // renderingValue is a value of a rendering-only key other than its default.
-func renderingValue(param widget.Param) any {
+func renderingValue(param params.Param) any {
 	switch param.Kind {
-	case widget.KindBoolean:
+	case params.KindBoolean:
 		flag, _ := param.Default.(bool)
 		return !flag
-	case widget.KindEnum:
+	case params.KindEnum:
 		for _, value := range param.Values {
 			if value != param.Default {
 				return value
 			}
 		}
-	case widget.KindEnumSet:
+	case params.KindEnumSet:
 		return []any{param.Values[0]}
-	case widget.KindObject:
+	case params.KindObject:
 		return map[string]any{"left": map[string]any{"unit": "example"}}
 	}
 	return param.Default

@@ -11,6 +11,8 @@ import (
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/surfaces/account"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
 // The account surface's JSON equivalents (C-AC9, C-AC4): each refuses what its page refuses, with
@@ -25,7 +27,7 @@ func sendAnonymous(t *testing.T, h *webtest.Harness, path string, body map[strin
 	}
 	answer := h.PostJSON(path, string(encoded), token, "")
 	defer func() { _ = answer.Body.Close() }()
-	return answer.StatusCode, webtest.DecodeJSON(t, webtest.ReadBody(t, answer))
+	return answer.StatusCode, settingstest.DecodeJSON(t, webtest.ReadBody(t, answer))
 }
 
 // TestTheJSONSetupRefusesWhatThePageRefusesAndCreatesTheSameAccount is C-AC9 for POST /setup.
@@ -65,13 +67,13 @@ func TestTheJSONSetupRefusesWhatThePageRefusesAndCreatesTheSameAccount(t *testin
 			if page.StatusCode != refused.status {
 				t.Errorf("the page answered %d rather than %d", page.StatusCode, refused.status)
 			}
-			webtest.AssertNoAccount(t, h)
-			status, answer := sendAnonymous(t, h, account.PathAPISetup, body, h.APIToken())
+			accounttest.AssertNoAccount(t, h)
+			status, answer := sendAnonymous(t, h, account.PathAPISetup, body, settingstest.APIToken(h))
 			if status != refused.status || answer["condition"] != refused.condition {
 				t.Errorf("the JSON setup answered %d %v rather than %d %s", status, answer, refused.status,
 					refused.condition)
 			}
-			webtest.AssertNoAccount(t, h)
+			accounttest.AssertNoAccount(t, h)
 		})
 	}
 
@@ -83,7 +85,7 @@ func TestTheJSONSetupRefusesWhatThePageRefusesAndCreatesTheSameAccount(t *testin
 		if status != http.StatusForbidden || answer["condition"] != web.ConditionCSRFRefused {
 			t.Errorf("answered %d %v rather than 403 csrf_refused", status, answer)
 		}
-		webtest.AssertNoAccount(t, h)
+		accounttest.AssertNoAccount(t, h)
 		if h.SetupToken.Spent() {
 			t.Error("a setup refused for its form token spent the setup token")
 		}
@@ -91,25 +93,25 @@ func TestTheJSONSetupRefusesWhatThePageRefusesAndCreatesTheSameAccount(t *testin
 
 	t.Run("a valid setup creates the account, signs in and closes the setup", func(t *testing.T) {
 		h := webtest.New(t)
-		if state := h.GetJSON(account.PathAPISession); state["account_exists"] != false || state["signed_in"] != false {
+		if state := settingstest.GetJSON(h, account.PathAPISession); state["account_exists"] != false || state["signed_in"] != false {
 			t.Errorf("a fresh installation's session state is %v", state)
 		}
 		login := "operator-" + webtest.RandomHex(t, 4)
 		status, answer := sendAnonymous(t, h, account.PathAPISetup, map[string]any{
 			"setup_token": h.SetupToken.Token(), "login": login, "password": password,
-			"password_again": password}, h.APIToken())
+			"password_again": password}, settingstest.APIToken(h))
 		if status != http.StatusOK || answer["signed_in"] != true || answer["csrf_token"] == "" {
 			t.Fatalf("the setup answered %d %v", status, answer)
 		}
 		if _, found, err := h.Store.AccountByLogin(t.Context(), login); err != nil || !found {
 			t.Fatalf("the account was not created (%v)", err)
 		}
-		if state := h.GetJSON(account.PathAPISession); state["account_exists"] != true || state["signed_in"] != true {
+		if state := settingstest.GetJSON(h, account.PathAPISession); state["account_exists"] != true || state["signed_in"] != true {
 			t.Errorf("after the setup the session state is %v", state)
 		}
 		status, answer = sendAnonymous(t, h, account.PathAPISetup, map[string]any{
 			"setup_token": h.SetupToken.Token(), "login": "second", "password": password,
-			"password_again": password}, h.APIToken())
+			"password_again": password}, settingstest.APIToken(h))
 		if status != http.StatusForbidden || answer["condition"] != web.ConditionSetupClosed {
 			t.Errorf("a second setup answered %d %v rather than 403 setup_closed", status, answer)
 		}
@@ -123,7 +125,7 @@ func TestTheJSONSignInAndSignOutAreThePages(t *testing.T) {
 	h := webtest.New(t)
 	login, password := h.CompleteSetup()
 	anonymous := webtest.FreshClient(t, h)
-	token := anonymous.APIToken()
+	token := settingstest.APIToken(anonymous)
 	for _, wrong := range []map[string]any{
 		{"login": login, "password": password + "x"},
 		{"login": "nobody-" + webtest.RandomHex(t, 4), "password": password},
@@ -153,7 +155,7 @@ func TestTheJSONSignInAndSignOutAreThePages(t *testing.T) {
 		t.Fatalf("the session the JSON sign-in issued is not accepted (%d)", settings.StatusCode)
 	}
 	cookie := anonymous.SessionCookie()
-	status, answer = anonymous.SendJSON(account.PathAPISignOut, map[string]any{})
+	status, answer = settingstest.SendJSON(anonymous, account.PathAPISignOut, map[string]any{})
 	if status != http.StatusOK || answer["signed_in"] != false {
 		t.Fatalf("the sign-out answered %d %v", status, answer)
 	}
@@ -177,7 +179,7 @@ func TestTheJSONResetIsAuthorisedByTheKeyFileAndByNothingElse(t *testing.T) {
 		t.Fatalf("reading the key file: %v", err)
 	}
 	anonymous := webtest.FreshClient(t, h)
-	token := anonymous.APIToken()
+	token := settingstest.APIToken(anonymous)
 	reset := func(fields map[string]any) (int, map[string]any) {
 		return sendAnonymous(t, anonymous, account.PathAPIRecover, fields, token)
 	}

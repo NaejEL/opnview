@@ -20,11 +20,20 @@ import (
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/plugin"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/plugindecl"
+	"github.com/NaejEL/opnview/internal/store/plugintables"
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/surfaces/datasets"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 	"github.com/NaejEL/opnview/internal/widget"
+	datasetspkg "github.com/NaejEL/opnview/internal/widget/datasets"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
+	"github.com/NaejEL/opnview/internal/widget/traffic"
 )
 
 // The example plugin of these tests: a meter with a kind of its own and one table, a sample
@@ -106,7 +115,7 @@ func catalogueHarness(t *testing.T) (*webtest.Harness, []reading) {
 		}
 	}
 	if err := harness.Store.WritePluginPass(context.Background(), meterPlugin, meterPlugin,
-		store.PluginRows{"readings": rows}, nil, now); err != nil {
+		plugintables.PluginRows{"readings": rows}, nil, now); err != nil {
 		t.Fatal(err)
 	}
 	return harness, readings
@@ -125,12 +134,12 @@ func query(t *testing.T, harness *webtest.Harness, name string, parameters any) 
 }
 
 // answered decodes a 200 answer.
-func answered(t *testing.T, status int, body string) widget.DatasetResponse {
+func answered(t *testing.T, status int, body string) datasetspkg.DatasetResponse {
 	t.Helper()
 	if status != http.StatusOK {
 		t.Fatalf("the query answered %d: %.400s", status, body)
 	}
-	var response widget.DatasetResponse
+	var response datasetspkg.DatasetResponse
 	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		t.Fatalf("the answer is not the envelope: %v", err)
 	}
@@ -138,10 +147,10 @@ func answered(t *testing.T, status int, body string) widget.DatasetResponse {
 }
 
 // timeSeries decodes a time-axis answer's data.
-func timeSeries(t *testing.T, response widget.DatasetResponse) widget.DatasetTimeData {
+func timeSeries(t *testing.T, response datasetspkg.DatasetResponse) datasetspkg.DatasetTimeData {
 	t.Helper()
 	encoded, _ := json.Marshal(response.Data)
-	var data widget.DatasetTimeData
+	var data datasetspkg.DatasetTimeData
 	if err := json.Unmarshal(encoded, &data); err != nil || len(data.Series) == 0 {
 		t.Fatalf("the data is not a time axis: %s", encoded)
 	}
@@ -149,10 +158,10 @@ func timeSeries(t *testing.T, response widget.DatasetResponse) widget.DatasetTim
 }
 
 // rowsOf decodes a dimension-axis answer's data.
-func rowsOf(t *testing.T, response widget.DatasetResponse) widget.DatasetRowsData {
+func rowsOf(t *testing.T, response datasetspkg.DatasetResponse) datasetspkg.DatasetRowsData {
 	t.Helper()
 	encoded, _ := json.Marshal(response.Data)
-	var data widget.DatasetRowsData
+	var data datasetspkg.DatasetRowsData
 	if err := json.Unmarshal(encoded, &data); err != nil {
 		t.Fatalf("the data is not a dimension axis: %s", encoded)
 	}
@@ -166,13 +175,13 @@ func TestTheListingCarriesTheCustomChartSourcesAndEveryPluginTable(t *testing.T)
 	t.Parallel()
 	harness, _ := catalogueHarness(t)
 	// A table set aside by a changed declaration, which must not be listed.
-	gone := store.PluginTable{Plugin: "example_gone", Table: "samples", TimeColumn: "sampled_at",
-		Columns: []store.PluginColumn{{Name: "sampled_at", Type: "integer", Role: store.RoleTime},
-			{Name: "value", Type: "real", Role: store.RoleMeasure}}}
+	gone := plugindecl.PluginTable{Plugin: "example_gone", Table: "samples", TimeColumn: "sampled_at",
+		Columns: []plugindecl.PluginColumn{{Name: "sampled_at", Type: "integer", Role: plugindecl.RoleTime},
+			{Name: "value", Type: "real", Role: plugindecl.RoleMeasure}}}
 	if _, err := harness.Store.EnsurePluginTable(context.Background(), gone); err != nil {
 		t.Fatal(err)
 	}
-	gone.Columns = append(gone.Columns, store.PluginColumn{Name: "note", Type: "text", Nullable: true})
+	gone.Columns = append(gone.Columns, plugindecl.PluginColumn{Name: "note", Type: "text", Nullable: true})
 	if event, err := harness.Store.EnsurePluginTable(context.Background(), gone); err != nil || event == nil {
 		t.Fatalf("setting the table aside gave %v, %v", event, err)
 	}
@@ -182,15 +191,15 @@ func TestTheListingCarriesTheCustomChartSourcesAndEveryPluginTable(t *testing.T)
 	if answer.StatusCode != http.StatusOK {
 		t.Fatalf("the listing answered %d: %.300s", answer.StatusCode, body)
 	}
-	var listing widget.DatasetListing
+	var listing datasetspkg.DatasetListing
 	if err := json.Unmarshal([]byte(body), &listing); err != nil {
 		t.Fatal(err)
 	}
-	byName := map[string]widget.ListedDataset{}
+	byName := map[string]datasetspkg.ListedDataset{}
 	for _, listed := range listing.Datasets {
 		byName[listed.Name] = listed
 	}
-	for _, source := range append(widget.SeriesSources, meterDataset) {
+	for _, source := range append(params.SeriesSources, meterDataset) {
 		listed, found := byName[source]
 		if !found {
 			t.Errorf("the dataset %s is not listed", source)
@@ -226,7 +235,7 @@ func TestTheListingCarriesTheCustomChartSourcesAndEveryPluginTable(t *testing.T)
 		t.Errorf("the measure is listed as %+v", value)
 	}
 	for _, excluded := range []string{`"account"`, `"session"`, "encrypted_credential", "plugin_state",
-		store.AsideSchema, store.AsidePrefix, "example_gone"} {
+		plugindecl.AsideSchema, plugintables.AsidePrefix, "example_gone"} {
 		if strings.Contains(body, excluded) {
 			t.Errorf("the listing carries %s", excluded)
 		}
@@ -254,7 +263,7 @@ func TestTheListingCarriesTheCustomChartSourcesAndEveryPluginTable(t *testing.T)
 	}
 }
 
-func carriesDomain(listed widget.ListedDataset, name string) bool {
+func carriesDomain(listed datasetspkg.ListedDataset, name string) bool {
 	for _, column := range listed.Columns {
 		if column.Name == name {
 			return column.CarriesDomain
@@ -490,7 +499,7 @@ func TestARefusedQueryNamesItsCodeAndReachesNoDatabase(t *testing.T) {
 	}
 	covered := map[string]bool{}
 	for _, testCase := range cases {
-		before := store.CatalogueStatementCount()
+		before := reads.CatalogueStatementCount()
 		var status int
 		var code string
 		if text, isText := testCase.parameters.(string); isText {
@@ -509,7 +518,7 @@ func TestARefusedQueryNamesItsCodeAndReachesNoDatabase(t *testing.T) {
 		if status != testCase.status || code != testCase.code {
 			t.Errorf("%s answered %d %q, want %d %q", testCase.name, status, code, testCase.status, testCase.code)
 		}
-		if after := store.CatalogueStatementCount(); after != before {
+		if after := reads.CatalogueStatementCount(); after != before {
 			t.Errorf("%s ran %d statements", testCase.name, after-before)
 		}
 		covered[code] = true
@@ -562,8 +571,8 @@ func TestGapsAreGapsAndBucketsAlignOnTheAggregatePeriods(t *testing.T) {
 		}
 		instants = append(instants, at)
 	}
-	harness.StoreFlows(instants...)
-	harness.RecordGap("firewall_log", "pf", store.GapDigestOutsideWindow, gapFrom, gapTo)
+	collectiontest.StoreFlows(harness, instants...)
+	collectiontest.RecordGap(harness, "firewall_log", "pf", vocab.GapDigestOutsideWindow, gapFrom, gapTo)
 	status, body = query(t, harness, "traffic", map[string]any{"period": "24h",
 		"x": map[string]any{"column": "observed_at", "bucket": 3600},
 		"y": []any{map[string]any{"column": "connections", "aggregation": "sum"}}})
@@ -618,17 +627,17 @@ func TestGapsAreGapsAndBucketsAlignOnTheAggregatePeriods(t *testing.T) {
 		}
 	}
 
-	if err := harness.Store.SetSetting(context.Background(), config.KeyAggregateMode, widget.AggregateModeNoDomains,
+	if err := harness.Store.SetSetting(context.Background(), config.KeyAggregateMode, request.AggregateModeNoDomains,
 		now); err != nil {
 		t.Fatal(err)
 	}
 	status, body = query(t, harness, "dns", map[string]any{"split_by": map[string]any{"column": "domain"}})
-	if withheld := answered(t, status, body); withheld.Condition != widget.ConditionWithheldByAggregateMode ||
+	if withheld := answered(t, status, body); withheld.Condition != envelope.ConditionWithheldByAggregateMode ||
 		withheld.Data != nil || !strings.Contains(body, `"data":null`) {
 		t.Errorf("a query splitting on a domain under no_domains answered %s", body)
 	}
 	status, body = query(t, harness, "dns", map[string]any{"x": map[string]any{"column": "resolver"}})
-	if open := answered(t, status, body); open.Condition == widget.ConditionWithheldByAggregateMode {
+	if open := answered(t, status, body); open.Condition == envelope.ConditionWithheldByAggregateMode {
 		t.Errorf("a query touching no domain was withheld: %s", body)
 	}
 }
@@ -647,7 +656,7 @@ func TestACustomChartSeriesReadsAPluginDataset(t *testing.T) {
 	if answer.StatusCode != http.StatusOK {
 		t.Fatalf("custom_chart answered %d: %.300s", answer.StatusCode, body)
 	}
-	var response widget.Response
+	var response envelope.Response
 	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -656,7 +665,7 @@ func TestACustomChartSeriesReadsAPluginDataset(t *testing.T) {
 	}
 	encodedData, _ := json.Marshal(response.Data)
 	var chart struct {
-		Series []widget.Series `json:"series"`
+		Series []traffic.Series `json:"series"`
 	}
 	if err := json.Unmarshal(encodedData, &chart); err != nil || len(chart.Series) != 1 {
 		t.Fatalf("the chart is %s", encodedData)

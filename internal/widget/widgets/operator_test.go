@@ -13,8 +13,11 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget"
+	envelopepkg "github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // The modularity proof of the widget seam (b): a brand-new widget is created ONLY by writing
@@ -154,7 +157,7 @@ func TestABrandNewWidgetCreatedOnlyByWritingFilesIsServedOverHTTP(t *testing.T) 
 	if got := service.OperatorTypes(); len(got) != 1 || got[0] != exampleWidgetType {
 		t.Fatalf("the operator widgets loaded are %v", got)
 	}
-	if !widget.Contains(service.Types(), exampleWidgetType) {
+	if !params.Contains(service.Types(), exampleWidgetType) {
 		t.Fatalf("the new type is not routed: %v", service.Types())
 	}
 	if len(service.Types()) != len(f.service.Types())+1 {
@@ -166,7 +169,7 @@ func TestABrandNewWidgetCreatedOnlyByWritingFilesIsServedOverHTTP(t *testing.T) 
 	if status != http.StatusOK {
 		t.Fatalf("the new widget answered %d", status)
 	}
-	if envelope["type"] != exampleWidgetType || envelope["condition"] != widget.ConditionReachable {
+	if envelope["type"] != exampleWidgetType || envelope["condition"] != envelopepkg.ConditionReachable {
 		t.Errorf("the envelope is %v", envelope)
 	}
 	if envelope["window"] == nil || len(list(t, envelope, "availability")) == 0 {
@@ -236,7 +239,7 @@ func TestADeclarativeWidgetObeysItsParametersAndTheEnvelope(t *testing.T) {
 	}
 
 	status, malformed := serve(t, service, exampleWidgetType, "[1,2]")
-	if status != http.StatusBadRequest || malformed["condition"] != widget.ConditionMalformedParameters {
+	if status != http.StatusBadRequest || malformed["condition"] != envelopepkg.ConditionMalformedParameters {
 		t.Errorf("a non-object parameters payload answered %d %v", status, malformed)
 	}
 }
@@ -253,25 +256,25 @@ func TestADeclarativeWidgetTakesItsConditionFromItsProviderAndNeverInventsAZero(
 	service := f.operatorService(t, directory)
 
 	_, healthy := serve(t, service, exampleWidgetType, nil)
-	if healthy["condition"] != widget.ConditionReachableNoRows {
+	if healthy["condition"] != envelopepkg.ConditionReachableNoRows {
 		t.Fatalf("a healthy source with no rows is %v", healthy["condition"])
 	}
 	if got := figureValue(t, object(t, healthy, "data")["total"]); got != 0 {
 		t.Errorf("a measured empty window totals %v", got)
 	}
 
-	f.setAvailability(t, "firewall_log", "pf", store.StateUnavailable, store.OutcomeNotFound, "example probe")
+	f.setAvailability(t, "firewall_log", "pf", vocab.StateUnavailable, vocab.OutcomeNotFound, "example probe")
 	_, unavailable := serve(t, service, exampleWidgetType, nil)
-	if unavailable["condition"] != widget.ConditionUnavailable {
+	if unavailable["condition"] != envelopepkg.ConditionUnavailable {
 		t.Errorf("an unavailable provider gave the condition %v", unavailable["condition"])
 	}
 	if unavailable["data"] != nil {
 		t.Errorf("an unavailable source with nothing stored must have no data, not %v", unavailable["data"])
 	}
 
-	f.setAvailability(t, "firewall_log", "pf", store.StatePresentButDisabled, store.OutcomePresentButDisabled, "example probe")
+	f.setAvailability(t, "firewall_log", "pf", vocab.StatePresentButDisabled, vocab.OutcomePresentButDisabled, "example probe")
 	_, disabled := serve(t, service, exampleWidgetType, nil)
-	if disabled["condition"] != widget.ConditionPresentButDisabled || disabled["data"] != nil {
+	if disabled["condition"] != envelopepkg.ConditionPresentButDisabled || disabled["data"] != nil {
 		t.Errorf("a disabled source gave %v with data %v", disabled["condition"], disabled["data"])
 	}
 }
@@ -292,12 +295,12 @@ func TestADeclarativeWidgetThatCarriesDomainNamesIsWithheldWholeUnderNoDomains(t
 	service := f.operatorService(t, directory)
 
 	_, full := serve(t, service, exampleWidgetType, nil)
-	if full["condition"] != widget.ConditionReachable {
+	if full["condition"] != envelopepkg.ConditionReachable {
 		t.Fatalf("in full mode the widget is %v", full["condition"])
 	}
-	check(t, f.db.SetSetting(context.Background(), config.KeyAggregateMode, widget.AggregateModeNoDomains, f.now))
+	check(t, f.db.SetSetting(context.Background(), config.KeyAggregateMode, request.AggregateModeNoDomains, f.now))
 	_, withheld := serve(t, service, exampleWidgetType, nil)
-	if withheld["condition"] != widget.ConditionWithheldByAggregateMode || withheld["data"] != nil {
+	if withheld["condition"] != envelopepkg.ConditionWithheldByAggregateMode || withheld["data"] != nil {
 		t.Errorf("under no_domains the widget gave %v with data %v", withheld["condition"], withheld["data"])
 	}
 	if got := list(t, withheld, "withheld"); len(got) != 1 || got[0] != "data" {
@@ -520,7 +523,7 @@ func TestEveryShapeIsDrawnFromItsColumnContract(t *testing.T) {
 		name := "example_" + c.shape
 		writeWidget(t, directory, name, shapeManifest(name, c.shape, c.shape == "time_series", limit), c.query)
 	}
-	for _, shape := range widget.Shapes {
+	for _, shape := range params.Shapes {
 		if !covered[shape] {
 			t.Errorf("the shape %s has no case in this test", shape)
 		}
@@ -536,7 +539,7 @@ func TestEveryShapeIsDrawnFromItsColumnContract(t *testing.T) {
 			if status != http.StatusOK {
 				t.Fatalf("answered %d", status)
 			}
-			if envelope["condition"] != widget.ConditionReachable {
+			if envelope["condition"] != envelopepkg.ConditionReachable {
 				t.Errorf("condition %v", envelope["condition"])
 			}
 			c.check(t, object(t, envelope, "data"))
@@ -554,7 +557,7 @@ func TestAWidgetWithNoRowsKeepsItsShapeAndCountsNothing(t *testing.T) {
 		`SELECT NULL AS value`)
 	service := f.operatorService(t, directory)
 	_, envelope := serve(t, service, "example_none", nil)
-	if envelope["condition"] != widget.ConditionReachableNoRows {
+	if envelope["condition"] != envelopepkg.ConditionReachableNoRows {
 		t.Errorf("a NULL figure is no figure: %v", envelope["condition"])
 	}
 	if object(t, envelope, "data")["figure"] != nil {
@@ -599,7 +602,7 @@ func TestAnOperatorWidgetBindsReferenceAndListParameters(t *testing.T) {
 	}
 	_, none := serve(t, service, "example_flows_of_interfaces",
 		map[string]any{"interfaces": []any{reference("no_such_interface")}})
-	if none["condition"] != widget.ConditionUnresolvedReference || none["data"] != nil {
+	if none["condition"] != envelopepkg.ConditionUnresolvedReference || none["data"] != nil {
 		t.Errorf("an unresolved reference gave %v with data %v", none["condition"], none["data"])
 	}
 	_, blockOnly := serve(t, service, "example_flows_of_interfaces", map[string]any{"actions": []any{"block"}})

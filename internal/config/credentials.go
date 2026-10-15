@@ -8,7 +8,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/secret"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 )
 
 // The setting keys cycle 4B adds. All four are configuration, and configuration
@@ -127,7 +127,7 @@ const (
 // CredentialReader is what loading needs from storage.
 type CredentialReader interface {
 	Setting(ctx context.Context, key string) (string, bool, error)
-	Credential(ctx context.Context, name string) (store.EncryptedCredential, bool, error)
+	Credential(ctx context.Context, name string) (accounts.EncryptedCredential, bool, error)
 }
 
 // Unsealer is what loading needs from the key file. It is an interface so that a
@@ -159,7 +159,7 @@ func LoadFirewallCredentials(ctx context.Context, reader CredentialReader,
 		return opnsense.Credentials{}, CredentialStateAbsent, err
 	}
 
-	sealed, stored, err := reader.Credential(ctx, store.CredentialOPNsenseAPISecret)
+	sealed, stored, err := reader.Credential(ctx, accounts.CredentialOPNsenseAPISecret)
 	if err != nil {
 		return opnsense.Credentials{}, CredentialStateAbsent, err
 	}
@@ -246,7 +246,7 @@ func LoadMaxMindCredentials(ctx context.Context, reader CredentialReader,
 	}
 	loaded := MaxMindCredentials{AccountID: accountID}
 
-	sealed, stored, err := reader.Credential(ctx, store.CredentialMaxMindLicenceKey)
+	sealed, stored, err := reader.Credential(ctx, accounts.CredentialMaxMindLicenceKey)
 	if err != nil {
 		return loaded, CredentialStateAbsent, err
 	}

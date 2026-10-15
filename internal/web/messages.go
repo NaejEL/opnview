@@ -25,22 +25,22 @@ const (
 // The units a duration is spelled and typed in, a count of one and any other count; and the
 // refusals of a typed duration.
 const (
-	msgUnitDay     messageKey = "unit.day.one"
-	msgUnitDays    messageKey = "unit.day.other"
-	msgUnitHour    messageKey = "unit.hour.one"
-	msgUnitHours   messageKey = "unit.hour.other"
-	msgUnitMinute  messageKey = "unit.minute.one"
-	msgUnitMinutes messageKey = "unit.minute.other"
-	msgUnitSecond  messageKey = "unit.second.one"
-	msgUnitSeconds messageKey = "unit.second.other"
+	MsgUnitDay     messageKey = "unit.day.one"
+	MsgUnitDays    messageKey = "unit.day.other"
+	MsgUnitHour    messageKey = "unit.hour.one"
+	MsgUnitHours   messageKey = "unit.hour.other"
+	MsgUnitMinute  messageKey = "unit.minute.one"
+	MsgUnitMinutes messageKey = "unit.minute.other"
+	MsgUnitSecond  messageKey = "unit.second.one"
+	MsgUnitSeconds messageKey = "unit.second.other"
 	// msgDurationUnitUnknown refuses a unit that is not one of the four.
-	msgDurationUnitUnknown messageKey = "error.duration_unit_unknown"
+	MsgDurationUnitUnknown messageKey = "error.duration_unit_unknown"
 	// msgCollectionIntervalTooLarge refuses an interval no duration can hold. It is a
 	// refusal of its own rather than "not a number", because the figure IS a number
 	// and telling the operator otherwise would send them looking for a typo.
-	msgCollectionIntervalTooLarge messageKey = "error.collection_interval_too_large"
+	MsgCollectionIntervalTooLarge messageKey = "error.collection_interval_too_large"
 	// msgCollectionValueInvalid refuses an interval that is not a positive whole number.
-	msgCollectionValueInvalid messageKey = "error.collection_value_invalid"
+	MsgCollectionValueInvalid messageKey = "error.collection_value_invalid"
 )
 
 // The theme names. The theme is one setting row for the installation, so these
@@ -59,8 +59,8 @@ const (
 func CoreKeys() []MessageKey {
 	return append([]MessageKey{
 		msgSetupClosed, msgSessionExpired, msgFormTokenRefused, msgKeyFileRefused, msgInternal,
-		msgUnitDay, msgUnitDays, msgUnitHour, msgUnitHours, msgUnitMinute, msgUnitMinutes,
-		msgUnitSecond, msgUnitSeconds, msgDurationUnitUnknown, msgCollectionIntervalTooLarge, msgCollectionValueInvalid,
+		MsgUnitDay, MsgUnitDays, MsgUnitHour, MsgUnitHours, MsgUnitMinute, MsgUnitMinutes,
+		MsgUnitSecond, MsgUnitSeconds, MsgDurationUnitUnknown, MsgCollectionIntervalTooLarge, MsgCollectionValueInvalid,
 		msgThemeSystem, msgThemeLight, msgThemeDark,
 	}, append(vocabularyKeys(), availabilityKeys()...)...)
 }

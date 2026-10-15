@@ -4,14 +4,14 @@ import (
 	"context"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/widget"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
 )
 
 // C1 of the backend-completion cycle seen through the widget API: a change of ownership, a label
 // and a purpose written through the store's own write paths, and the next responses.
 
 // ownerTotals sums an owner_activity response's cards per owner id, the unassigned card under 0.
-func ownerTotals(t *testing.T, response widget.Response) (map[int64]int64, int64) {
+func ownerTotals(t *testing.T, response envelope.Response) (map[int64]int64, int64) {
 	t.Helper()
 	decoded := decodeData[ownerActivityData](t, response)
 	totals := map[int64]int64{}
@@ -30,7 +30,7 @@ func ownerTotals(t *testing.T, response widget.Response) (map[int64]int64, int64
 }
 
 // staleSlots is the stale hour slots a response's freshness reports.
-func staleSlots(response widget.Response) int64 {
+func staleSlots(response envelope.Response) int64 {
 	var stale int64
 	for _, entry := range response.Freshness {
 		stale += entry.StaleSlots

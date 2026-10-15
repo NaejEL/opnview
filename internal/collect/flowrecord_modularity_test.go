@@ -9,11 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/push/ipfixregistry"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/netflow"
 )
 
 // The flow_record kind is a seam: a second exporter is a plugin directory, and the core's join,
@@ -137,22 +138,22 @@ func TestASecondExporterIsAddedByItsDirectoryAlone(t *testing.T) {
 func TestTheDirectionAtTheObservationPointComesFromTheConfigurationAndTheIngressIndex(t *testing.T) {
 	t.Parallel()
 	index := func(value int64) *int64 { return &value }
-	both := store.CaptureInterface{Identifier: insideIdentifier, Ingress: true, Egress: true}
-	egressOnly := store.CaptureInterface{Identifier: insideIdentifier, Egress: true}
+	both := netflow.CaptureInterface{Identifier: insideIdentifier, Ingress: true, Egress: true}
+	egressOnly := netflow.CaptureInterface{Identifier: insideIdentifier, Egress: true}
 	for _, scenario := range []struct {
 		name    string
-		point   store.CaptureInterface
+		point   netflow.CaptureInterface
 		ingress *int64
 		want    string
 	}{
-		{"received on the point", both, index(insideIndex), store.DirectionIngress},
-		{"received elsewhere", both, index(upstreamIndex), store.DirectionEgress},
-		{"originated by the firewall (index 0, S6a)", both, index(0), store.DirectionEgress},
-		{"no ingress index", both, nil, store.DirectionEgress},
-		{"egress-only point, received on it", egressOnly, index(insideIndex), store.DirectionEgress},
-		{"egress-only point, received elsewhere", egressOnly, index(upstreamIndex), store.DirectionEgress},
+		{"received on the point", both, index(insideIndex), netflow.DirectionIngress},
+		{"received elsewhere", both, index(upstreamIndex), netflow.DirectionEgress},
+		{"originated by the firewall (index 0, S6a)", both, index(0), netflow.DirectionEgress},
+		{"no ingress index", both, nil, netflow.DirectionEgress},
+		{"egress-only point, received on it", egressOnly, index(insideIndex), netflow.DirectionEgress},
+		{"egress-only point, received elsewhere", egressOnly, index(upstreamIndex), netflow.DirectionEgress},
 	} {
-		if got := directionAt(scenario.point, insideIndex, scenario.ingress); got != scenario.want {
+		if got := derive.DirectionAt(scenario.point, insideIndex, scenario.ingress); got != scenario.want {
 			t.Errorf("%s: %s, want %s", scenario.name, got, scenario.want)
 		}
 	}
@@ -177,12 +178,12 @@ func TestAPolicyRoutedRecordJoinsByItsIngressIndexAndAContradictionJoinsNothing(
 		singleLeg("contradicted", at, "udp", 17, 46001, 53, "pass"))
 	records := byOctets(t, h)
 	if record := records[7]; record.joinedFlowID == nil || *record.joinedFlowID != h.flowID(t, "routed") ||
-		orNull(record.direction) != store.DirectionIngress {
+		orNull(record.direction) != netflow.DirectionIngress {
 		t.Errorf("the policy-routed record is %s %s, want ingress and joined", orNull(record.direction),
 			record.joinState)
 	}
-	if record := records[8]; record.joinState != store.JoinUnmatched ||
-		orNull(record.reason) != store.UnmatchedNoLoggedLeg {
+	if record := records[8]; record.joinState != netflow.JoinUnmatched ||
+		orNull(record.reason) != netflow.UnmatchedNoLoggedLeg {
 		t.Errorf("the contradicting record is %s (%s), want unmatched", record.joinState, orNull(record.reason))
 	}
 }
@@ -192,8 +193,13 @@ func TestAPolicyRoutedRecordJoinsByItsIngressIndexAndAContradictionJoinsNothing(
 // and reads the contract's fields only.
 func TestTheCoreJoinReadsContractFieldsOnly(t *testing.T) {
 	t.Parallel()
-	files := []string{"flowrecord.go", "measuredvolume.go", filepath.Join("flowrecord", "flowrecord.go"),
-		filepath.Join("..", "store", "flowrecord.go"), filepath.Join("..", "store", "flowrecord.statements.sql")}
+	// The core's flow_record code is the join and the measured volume (derive), the kind's coordinator
+	// (kinds/flowrecords) and the state they share (core).
+	files := []string{filepath.Join("derive", "flowrecord.go"), filepath.Join("derive", "measuredvolume.go"),
+		filepath.Join("kinds", "flowrecords", "flowrecordkind.go"), filepath.Join("core", "state.go"),
+		filepath.Join("flowrecord", "flowrecord.go"),
+		filepath.Join("..", "store", "netflow", "flowrecord.go"),
+		filepath.Join("..", "store", "netflow", "flowrecord.statements.sql")}
 	forbidden := []*regexp.Regexp{regexp.MustCompile(`getconfig`), regexp.MustCompile(`is_enabled`),
 		regexp.MustCompile(`capture\.interfaces`), regexp.MustCompile(`egress_only`), regexp.MustCompile(`\bconf\b`),
 		regexp.MustCompile(`/api/`)}

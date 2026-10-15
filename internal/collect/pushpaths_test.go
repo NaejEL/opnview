@@ -9,9 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/firewalllog"
+	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/push"
 )
 
 // PS-AC14, the critical criterion: one series of filter-log lines delivered through the polled
@@ -43,7 +45,7 @@ func (l line) pulledRow(offset int) map[string]any {
 func (l line) pushedRecord() firewalllog.Record {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("pushed %d", l.port())))
 	source, destination := l.port(), int64(443)
-	return firewalllog.Record{Digest: PushedDigestPrefix + hex.EncodeToString(sum[:]), ObservedAt: lineSecond(l.second),
+	return firewalllog.Record{Digest: filterlog.PushedDigestPrefix + hex.EncodeToString(sum[:]), ObservedAt: lineSecond(l.second),
 		Device: "exdev0", SrcAddress: "198.51.100.10", DstAddress: "203.0.113.20", SrcPort: &source,
 		DstPort: &destination, Protocol: "tcp", IPVersion: 4, Action: "pass", Direction: "in", PacketBytes: 100}
 }
@@ -91,7 +93,7 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 	t.Parallel()
 	h := arrangeFilterLogCollection(t)
 	ctx := context.Background()
-	if err := h.collector.discoverClock(ctx); err != nil {
+	if err := h.collector.DiscoverClock(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -100,7 +102,7 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 	collectPage(t, h)
 
 	// The push source becomes alive; its lines from second 15 overlap what polling read.
-	if err := h.collector.PushLiveness(ctx, KindFirewallLog, ProviderPf, true, lineSecond(15)); err != nil {
+	if err := h.collector.PushLiveness(ctx, core.KindFirewallLog, ProviderPf, true, lineSecond(15)); err != nil {
 		t.Fatal(err)
 	}
 	deliverPushed(t, h, lines(15, 30))
@@ -119,7 +121,7 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 	deliverPushed(t, h, []line{{10, 0}})
 
 	// The push source stops; polling resumes and reads back over the boundary, second 40.
-	if err := h.collector.PushLiveness(ctx, KindFirewallLog, ProviderPf, false, lineSecond(40)); err != nil {
+	if err := h.collector.PushLiveness(ctx, core.KindFirewallLog, ProviderPf, false, lineSecond(40)); err != nil {
 		t.Fatal(err)
 	}
 	answerPage(h, 30, 50)
@@ -145,7 +147,7 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 		t.Errorf("%d flows stored for 102 lines", total)
 	}
 	// The periods never overlap and cover the series with no hole.
-	providerID, err := h.store.ProviderID(ctx, KindFirewallLog, ProviderPf)
+	providerID, err := h.store.ProviderID(ctx, core.KindFirewallLog, ProviderPf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,12 +155,12 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(periods) != 3 || periods[0].Path != store.PathPull || *periods[0].ToAt != lineSecond(24) ||
-		periods[1].Path != store.PathPush || periods[1].FromAt != lineSecond(25) || *periods[1].ToAt != lineSecond(40) ||
-		periods[2].Path != store.PathPull || periods[2].FromAt != lineSecond(41) || periods[2].ToAt != nil {
+	if len(periods) != 3 || periods[0].Path != push.PathPull || *periods[0].ToAt != lineSecond(24) ||
+		periods[1].Path != push.PathPush || periods[1].FromAt != lineSecond(25) || *periods[1].ToAt != lineSecond(40) ||
+		periods[2].Path != push.PathPull || periods[2].FromAt != lineSecond(41) || periods[2].ToAt != nil {
 		t.Errorf("periods %+v", periods)
 	}
-	state, _ := h.collector.PushPathOf(KindFirewallLog, ProviderPf)
+	state, _ := h.collector.PushPathOf(core.KindFirewallLog, ProviderPf)
 	// Superseded: pushed 15-24 (20) and the late pushed line (1); pulled 30-40 after the handover
 	// back (22).
 	if state.Superseded != 43 {
@@ -179,24 +181,24 @@ func TestAPullGapIsClippedByThePushPeriod(t *testing.T) {
 	t.Parallel()
 	h := arrangeFilterLogCollection(t)
 	ctx := context.Background()
-	if err := h.collector.discoverClock(ctx); err != nil {
+	if err := h.collector.DiscoverClock(ctx); err != nil {
 		t.Fatal(err)
 	}
 	answerPage(h, 0, 10)
 	collectPage(t, h)
-	if err := h.collector.PushLiveness(ctx, KindFirewallLog, ProviderPf, true, lineSecond(5)); err != nil {
+	if err := h.collector.PushLiveness(ctx, core.KindFirewallLog, ProviderPf, true, lineSecond(5)); err != nil {
 		t.Fatal(err)
 	}
 	deliverPushed(t, h, lines(5, 20))
 	answerPage(h, 0, 12)
 	collectPage(t, h)
-	if err := h.collector.PushLiveness(ctx, KindFirewallLog, ProviderPf, false, lineSecond(20)); err != nil {
+	if err := h.collector.PushLiveness(ctx, core.KindFirewallLog, ProviderPf, false, lineSecond(20)); err != nil {
 		t.Fatal(err)
 	}
 	// The page now begins at second 30: seconds 21 to 29 were read by neither path.
 	answerPage(h, 30, 35)
 	collectPage(t, h)
-	providerID, _ := h.store.ProviderID(ctx, KindFirewallLog, ProviderPf)
+	providerID, _ := h.store.ProviderID(ctx, core.KindFirewallLog, ProviderPf)
 	var from, to int64
 	if err := h.store.DB().QueryRowContext(ctx,
 		"SELECT interval_start_at, interval_end_at FROM collection_gap WHERE provider_id = ?", providerID).

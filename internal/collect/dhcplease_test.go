@@ -2,12 +2,15 @@ package collect
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/dhcplease"
+	"github.com/NaejEL/opnview/internal/collect/identity"
+	"github.com/NaejEL/opnview/internal/store/vocab"
+
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
 )
 
 // The lease and neighbour collector tests.
@@ -27,7 +30,7 @@ func arrangeLeaseCollection(t *testing.T) *probeHarness {
 	if err := harness.collector.probeDHCPLease(context.Background()); err != nil {
 		t.Fatalf("probing the lease backends: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindDHCPLease); key != ProviderDnsmasq {
+	if key := harness.activeKeyOf(t, core.KindDHCPLease); key != ProviderDnsmasq {
 		t.Fatalf("the lease kind activated %q", key)
 	}
 	return harness
@@ -54,11 +57,11 @@ func TestALeasePassStoresEachGenerationAndResolvesTheIdentityCascade(t *testing.
 	// reports only a MAC uses the second.
 	if byIdentifier := scalarCount(t, harness.store,
 		"SELECT count(*) FROM client WHERE identity_kind = ?",
-		store.IdentityDHCPClientID); byIdentifier == 0 {
+		vocab.IdentityDHCPClientID); byIdentifier == 0 {
 		t.Error("no client was identified by its DHCP client identifier")
 	}
 	if byMAC := scalarCount(t, harness.store,
-		"SELECT count(*) FROM client WHERE identity_kind = ?", store.IdentityMAC); byMAC == 0 {
+		"SELECT count(*) FROM client WHERE identity_kind = ?", vocab.IdentityMAC); byMAC == 0 {
 		t.Error("no client was identified by its MAC")
 	}
 
@@ -209,7 +212,7 @@ func TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs(t *testing.T) {
 	if err := harness.collector.probeDHCPLease(context.Background()); err != nil {
 		t.Logf("the lease probe reported: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindDHCPLease); key != "" {
+	if key := harness.activeKeyOf(t, core.KindDHCPLease); key != "" {
 		t.Fatalf("a lease backend was activated against a firewall with none: %q", key)
 	}
 
@@ -241,7 +244,7 @@ func TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs(t *testing.T) {
 	}
 	// Every neighbour is identified by its MAC, which is the level the tables supply.
 	if byMAC := scalarCount(t, harness.store,
-		"SELECT count(*) FROM client WHERE identity_kind = ?", store.IdentityMAC); byMAC != neighbours {
+		"SELECT count(*) FROM client WHERE identity_kind = ?", vocab.IdentityMAC); byMAC != neighbours {
 		t.Errorf("%d of the %d neighbours were identified by MAC", byMAC, neighbours)
 	}
 }
@@ -259,13 +262,13 @@ func TestAMalformedHardwareAddressIsStoredAsAbsentRatherThanStoredWrong(t *testi
 		"", "not a mac", "0a:11:22:33:44", "0a-11-22-33-44-55", "0a:11:22:33:44:5g",
 		"0A:11:22:33:44:55:66",
 	} {
-		if normalised, ok := normaliseMAC(malformed); ok {
+		if normalised, ok := identity.NormaliseMAC(malformed); ok {
 			t.Errorf("%q was accepted as the MAC %q", malformed, normalised)
 		}
 	}
 	// And an upper-case one of the right shape is lower-cased rather than refused, because
 	// the digit test is on a lower-case value.
-	normalised, ok := normaliseMAC("0A:11:22:33:44:55")
+	normalised, ok := identity.NormaliseMAC("0A:11:22:33:44:55")
 	if !ok || normalised != "0a:11:22:33:44:55" {
 		t.Fatalf("an upper-case MAC normalised to %q (accepted: %v)", normalised, ok)
 	}
@@ -312,11 +315,11 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 			harness := newProbeHarness(t)
 			arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
 
-			first, err := harness.store.ProviderID(ctx, KindDHCPLease, ProviderKea)
+			first, err := harness.store.ProviderID(ctx, core.KindDHCPLease, ProviderKea)
 			if err != nil {
 				t.Fatalf("looking up the first server: %v", err)
 			}
-			second, err := harness.store.ProviderID(ctx, KindDHCPLease, ProviderDnsmasq)
+			second, err := harness.store.ProviderID(ctx, core.KindDHCPLease, ProviderDnsmasq)
 			if err != nil {
 				t.Fatalf("looking up the second server: %v", err)
 			}
@@ -352,7 +355,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 				if index == 1 {
 					providerID, backend = second, "dnsmasq"
 				}
-				if err := harness.collector.ingestLease(ctx, lease, snapshot,
+				if err := harness.collector.IngestLease(ctx, lease, snapshot,
 					providerID, backend, referenceEpoch()); err != nil {
 					t.Fatalf("ingesting the lease from server %d: %v", providerID, err)
 				}
@@ -401,7 +404,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 					if index == 1 {
 						providerID, backend = second, "dnsmasq"
 					}
-					if err := harness.collector.ingestLease(ctx, lease, snapshot,
+					if err := harness.collector.IngestLease(ctx, lease, snapshot,
 						providerID, backend, referenceEpoch()); err != nil {
 						t.Fatalf("re-polling: %v", err)
 					}
@@ -440,14 +443,14 @@ func TestTwoDHCPServersBothServingAreBothActivated(t *testing.T) {
 		t.Logf("the lease probe reported: %v", err)
 	}
 
-	keys := harness.activeKeysOf(t, KindDHCPLease)
+	keys := harness.activeKeysOf(t, core.KindDHCPLease)
 	if len(keys) != 2 {
 		t.Fatalf("a firewall running two DHCP servers activated %d of them: %v", len(keys), keys)
 	}
 	// And neither row carries the ambiguity detail, because there is no ambiguity to record:
 	// that sentence belongs to a kind where opnview would have to choose.
 	for _, key := range keys {
-		if detail := harness.detailOf(t, KindDHCPLease, key); strings.Contains(detail, "reads neither") {
+		if detail := harness.detailOf(t, core.KindDHCPLease, key); strings.Contains(detail, "reads neither") {
 			t.Errorf("%s records an ambiguity that no longer applies: %q", key, detail)
 		}
 	}
@@ -464,25 +467,27 @@ func TestTwoDHCPServersBothServingAreBothActivated(t *testing.T) {
 //
 // WHY IT IS PINNED RATHER THAN FIXED: the split is a property of what a source reported, not of
 // running two sources — the same thing already happened in sequence when a firewall switched
-// backends — and closing it means merging identities across cascade levels on a shared MAC,
-// which is a change to the cascade. The reasoning in full, and what closing it would take, is
-// in the doc comment on `leaseIdentity` in dhcplease.go, under "THE ONE CASE THAT STILL SPLITS A
-// MACHINE IN TWO". What making the kind concurrent changed is only that the disagreement is now
-// simultaneous rather than sequential, which is why it needs an assertion under it.
+// backends — and closing it means merging identities across cascade levels on a shared MAC, which
+// is a change to the cascade. The reasoning in full, and what closing it would take, is in the doc
+// comment on `leaseIdentity` in internal/collect/kinds/leases/dhcplease.go, under "THE ONE CASE
+// THAT STILL SPLITS A MACHINE IN TWO". What making the kind concurrent changed is only that the
+// disagreement is now simultaneous rather than sequential, which is why it needs an assertion under
+// it.
 //
 // IF THIS TEST FAILS because the cascade was changed deliberately, the expectation below is what
-// records the new answer — and the paragraph in dhcplease.go has to move with it.
+// records the new answer — and the paragraph in internal/collect/kinds/leases/dhcplease.go has to
+// move with it.
 func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	harness := newProbeHarness(t)
 	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
 
-	first, err := harness.store.ProviderID(ctx, KindDHCPLease, ProviderKea)
+	first, err := harness.store.ProviderID(ctx, core.KindDHCPLease, ProviderKea)
 	if err != nil {
 		t.Fatalf("looking up the first server: %v", err)
 	}
-	second, err := harness.store.ProviderID(ctx, KindDHCPLease, ProviderDnsmasq)
+	second, err := harness.store.ProviderID(ctx, core.KindDHCPLease, ProviderDnsmasq)
 	if err != nil {
 		t.Fatalf("looking up the second server: %v", err)
 	}
@@ -518,7 +523,7 @@ func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 		}, second, "dnsmasq"},
 	}
 	for _, lease := range leases {
-		if err := harness.collector.ingestLease(ctx, lease.observation, snapshot,
+		if err := harness.collector.IngestLease(ctx, lease.observation, snapshot,
 			lease.providerID, lease.backend, referenceEpoch()); err != nil {
 			t.Fatalf("ingesting the lease from %s: %v", lease.backend, err)
 		}
@@ -536,8 +541,8 @@ func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 		kind  string
 		label string
 	}{
-		{store.IdentityDHCPClientID, "the server that reported the identifier"},
-		{store.IdentityMAC, "the server that reported none"},
+		{vocab.IdentityDHCPClientID, "the server that reported the identifier"},
+		{vocab.IdentityMAC, "the server that reported none"},
 	} {
 		if resolved := scalarCount(t, harness.store,
 			"SELECT count(*) FROM client WHERE identity_kind = ?", level.kind); resolved != 1 {
@@ -560,7 +565,7 @@ func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 	// produced a fresh client per pass would be a much worse defect hiding behind the same count.
 	for pass := 0; pass < 2; pass++ {
 		for _, lease := range leases {
-			if err := harness.collector.ingestLease(ctx, lease.observation, snapshot,
+			if err := harness.collector.IngestLease(ctx, lease.observation, snapshot,
 				lease.providerID, lease.backend, referenceEpoch()); err != nil {
 				t.Fatalf("re-polling %s: %v", lease.backend, err)
 			}

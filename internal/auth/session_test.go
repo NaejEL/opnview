@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 )
 
 // memorySessions is a session store in a map.
@@ -16,19 +16,19 @@ import (
 // through the real store as well, from internal/web, against a real database and a real
 // HTTP surface.
 type memorySessions struct {
-	rows map[string]store.Session
+	rows map[string]accounts.Session
 }
 
 func newMemorySessions() *memorySessions {
-	return &memorySessions{rows: map[string]store.Session{}}
+	return &memorySessions{rows: map[string]accounts.Session{}}
 }
 
-func (m *memorySessions) CreateSession(_ context.Context, session store.Session) error {
+func (m *memorySessions) CreateSession(_ context.Context, session accounts.Session) error {
 	m.rows[session.TokenDigest] = session
 	return nil
 }
 
-func (m *memorySessions) SessionByTokenDigest(_ context.Context, digest string) (store.Session, bool, error) {
+func (m *memorySessions) SessionByTokenDigest(_ context.Context, digest string) (accounts.Session, bool, error) {
 	session, present := m.rows[digest]
 	return session, present, nil
 }

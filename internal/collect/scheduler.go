@@ -2,10 +2,10 @@ package collect
 
 import (
 	"context"
-	"errors"
-	"sync"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/config"
 )
 
@@ -33,46 +33,6 @@ import (
 // THE CLOCK IS INJECTED, so a test drives every loop deterministically rather than
 // sleeping. Nothing here reads time.Now directly.
 
-// Task is one scheduled loop.
-type Task struct {
-	// Name identifies the loop in an error report. It is English and it names the
-	// source, not the function.
-	Name string
-	// Interval returns how long the loop waits before its next pass. It is asked
-	// again before every wait, which is how a saved interval reaches a running loop;
-	// a value that is not positive leaves the previous one in force, and a task
-	// whose interval is not positive at start is not run at all. FixedInterval
-	// builds one that never changes.
-	Interval func() time.Duration
-	// Run is one pass. An error is reported and the loop continues.
-	Run func(context.Context) error
-	// RunAtStart says whether the first pass happens immediately rather than after
-	// one interval. Discovery and the probe round do; the purge does not, because
-	// there is nothing to purge in the first second of a run.
-	RunAtStart bool
-	// Wake, when it is not nil, runs a pass as soon as it receives, without waiting
-	// for the interval, which then starts again. It is how a save on the settings
-	// surface reaches a loop whose interval is a day long.
-	Wake <-chan struct{}
-	// MinGap, when positive, is the least time between the starts of two passes: a wake that
-	// comes sooner runs its pass once the gap has passed, never earlier. It is how a pass a
-	// notification triggers is held to its declared lower bound.
-	MinGap time.Duration
-}
-
-// ErrorReporter is told about every failed pass. It is an interface-free function so
-// that this package imposes no logging library on the program.
-type ErrorReporter func(taskName string, err error)
-
-// FixedInterval returns an interval function that always answers interval. It is
-// for a task whose cadence is not a setting, and for a test that wants a loop at a
-// known cadence without building a configuration around it.
-//
-// The value is captured once; nothing can change it afterwards.
-func FixedInterval(interval time.Duration) func() time.Duration {
-	return func() time.Duration { return interval }
-}
-
 // Tasks returns the loops, wired to one collector and one live configuration: the
 // collectors, the two reads of the resolver's records, runtime discovery, the probe
 // round and the retention purge.
@@ -85,15 +45,15 @@ func FixedInterval(interval time.Duration) func() time.Duration {
 //
 // The retention purge is this collector's own Purge, so it is ordered against the
 // passes whoever builds the loops (purge.go).
-func (c *Collector) Tasks(settings *config.Live) []Task {
-	tasks := append(c.coreTasks(settings), c.declaredTasks()...)
-	tasks = append(tasks, c.liveTask(settings))
+func (c *Collector) Tasks(settings *config.Live) []core.Task {
+	tasks := append(c.coreTasks(settings), c.DeclaredTasks()...)
+	tasks = append(tasks, c.LiveTask(settings))
 	return append(tasks, c.listenTask()...)
 }
 
 // coreTasks are the loops of the core kinds, discovery, the probe round and the purge.
-func (c *Collector) coreTasks(settings *config.Live) []Task {
-	return []Task{
+func (c *Collector) coreTasks(settings *config.Live) []core.Task {
+	return []core.Task{
 		{
 			Name:       "runtime discovery",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DiscoveryInterval }),
@@ -112,31 +72,31 @@ func (c *Collector) coreTasks(settings *config.Live) []Task {
 		{
 			Name:       "filter log",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.FirewallLogInterval }),
-			Run:        c.afterPass(KindFirewallLog, c.CollectFirewallLog),
+			Run:        c.afterPass(core.KindFirewallLog, c.CollectFirewallLog),
 			RunAtStart: true,
 		},
 		{
 			Name:       "security events",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.SecurityEventInterval }),
-			Run:        c.afterPass(KindSecurityEvent, c.CollectSecurityEvent),
+			Run:        c.afterPass(core.KindSecurityEvent, c.CollectSecurityEvent),
 			RunAtStart: true,
 		},
 		{
 			Name:       "sampled measurement",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.MeasurementInterval }),
-			Run:        c.afterPass(KindMeasurementSample, c.CollectMeasurement),
+			Run:        c.afterPass(core.KindMeasurementSample, c.CollectMeasurement),
 			RunAtStart: true,
 		},
 		{
 			Name:       "DHCP leases",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DHCPLeaseInterval }),
-			Run:        c.afterPass(KindDHCPLease, c.CollectDHCPLease),
+			Run:        c.afterPass(core.KindDHCPLease, c.CollectDHCPLease),
 			RunAtStart: true,
 		},
 		{
 			Name:       "resolver lookups",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DNSLookupInterval }),
-			Run:        c.afterPass(KindDNSLookup, c.CollectDNSLookup),
+			Run:        c.afterPass(core.KindDNSLookup, c.CollectDNSLookup),
 			RunAtStart: true,
 		},
 		{
@@ -145,14 +105,14 @@ func (c *Collector) coreTasks(settings *config.Live) []Task {
 			// gives answer addresses to.
 			Name:       "resolver cache",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.ResolverCacheInterval }),
-			Run:        c.afterPass(KindResolverCache, c.CollectResolverCache),
+			Run:        c.afterPass(core.KindResolverCache, c.CollectResolverCache),
 			RunAtStart: true,
 		},
 		{
 			// The resolver's local data, every five minutes by default: decision 4 again.
 			Name:       "resolver local data",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.ResolverLocalDataInterval }),
-			Run:        c.afterPass(KindResolverLocalData, c.CollectResolverLocalData),
+			Run:        c.afterPass(core.KindResolverLocalData, c.CollectResolverLocalData),
 			RunAtStart: true,
 		},
 		{
@@ -160,15 +120,15 @@ func (c *Collector) coreTasks(settings *config.Live) []Task {
 			// (internal/config, netflow.go): the longest a changed configuration goes unseen.
 			Name:       "NetFlow capture configuration",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.FlowRecordInterval }),
-			Run:        c.afterPass(KindFlowRecord, c.CollectFlowRecordCapture),
+			Run:        c.afterPass(derive.KindFlowRecord, c.CollectFlowRecordCapture),
 			RunAtStart: true,
 		},
 		{
 			// The broker: its scheduler and its stream subscriptions. Its pass returns only when
 			// the run stops.
 			Name:       "firewall broker",
-			Interval:   FixedInterval(time.Minute),
-			Run:        func(ctx context.Context) error { c.broker.Run(ctx); return nil },
+			Interval:   core.FixedInterval(time.Minute),
+			Run:        func(ctx context.Context) error { c.APIBroker.Run(ctx); return nil },
 			RunAtStart: true,
 		},
 		{
@@ -177,95 +137,5 @@ func (c *Collector) coreTasks(settings *config.Live) []Task {
 			Run:        c.Purge,
 			RunAtStart: false,
 		},
-	}
-}
-
-// Run runs every task until the context is cancelled, then returns.
-//
-// It returns nil on a clean cancellation. A cancelled context is how the program
-// stops, not a failure, and returning an error for it would make a normal SIGTERM
-// look like a crash in whatever reads the exit code.
-func Run(ctx context.Context, clock Clock, tasks []Task, report ErrorReporter) error {
-	if clock == nil {
-		clock = SystemClock{}
-	}
-	if report == nil {
-		report = func(string, error) {}
-	}
-
-	var waiting sync.WaitGroup
-	for _, task := range tasks {
-		if task.Run == nil || task.Interval == nil || task.Interval() <= 0 {
-			// A loop with no work or no cadence is a configuration mistake rather than
-			// something to run every zero seconds.
-			continue
-		}
-		waiting.Add(1)
-		go func(task Task) {
-			defer waiting.Done()
-			runLoop(ctx, clock, task, report)
-		}(task)
-	}
-	waiting.Wait()
-
-	if err := ctx.Err(); err != nil && !errors.Is(err, context.Canceled) &&
-		!errors.Is(err, context.DeadlineExceeded) {
-		return err
-	}
-	return nil
-}
-
-// runLoop is one task's loop. The failure isolation is here: a pass that returns an
-// error is reported and the loop waits for the next tick exactly as a successful one
-// does.
-func runLoop(ctx context.Context, clock Clock, task Task, report ErrorReporter) {
-	if task.RunAtStart {
-		if err := task.Run(ctx); err != nil && ctx.Err() == nil {
-			report(task.Name, err)
-		}
-	}
-	// The interval is asked for before every wait, so a saved one takes effect on
-	// the next pass. One that is not positive keeps the last good one rather than
-	// spinning the loop: Run already refused to start a task with none.
-	interval := task.Interval()
-	var lastStart time.Time
-	run := func() {
-		if task.MinGap > 0 && !lastStart.IsZero() {
-			if wait := task.MinGap - clock.Now().Sub(lastStart); wait > 0 {
-				select {
-				case <-ctx.Done():
-					return
-				case <-clock.After(wait):
-				}
-			}
-		}
-		lastStart = clock.Now()
-		if err := task.Run(ctx); err != nil && ctx.Err() == nil {
-			report(task.Name, err)
-		}
-	}
-	if task.RunAtStart {
-		lastStart = clock.Now()
-	}
-	for {
-		if next := task.Interval(); next > 0 {
-			interval = next
-		}
-		// A nil Wake is a channel nothing ever sends on, so a task without one only
-		// ever waits for its interval.
-		select {
-		case <-ctx.Done():
-			return
-		case <-task.Wake:
-			if ctx.Err() != nil {
-				return
-			}
-			run()
-		case <-clock.After(interval):
-			if ctx.Err() != nil {
-				return
-			}
-			run()
-		}
 	}
 }

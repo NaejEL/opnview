@@ -1,28 +1,3 @@
-// Command opnview is the single entry point: flags, wiring, signals, exit codes.
-//
-// WHAT THIS BINARY DOES NOW. It opens the database, applies the schema, creates the
-// key file beside it if there is none, starts the collection loops and serves
-// opnview's own interface. The firewall URL, the API key and secret, the MaxMind
-// licence key and the theme are entered THROUGH THAT INTERFACE and through nothing
-// else: there is no environment variable, no configuration file and no `configure`
-// subcommand, which the maintainer ruled out precisely so that the settings surface
-// has one place.
-//
-// So a first run prints a one-time setup token, and until somebody uses it to create
-// the first account there is no way to configure a firewall and every collector
-// reports that it has no firewall to talk to. That is the intended behaviour and not
-// a defect.
-//
-// WHAT IT STILL CANNOT DO, STATED SO NOBODY LOOKS FOR IT. There is no canvas, no
-// widget and no dashboard: the interface is a handful of surfaces — setup, sign-in,
-// settings, collection, interfaces and sources — and the widget endpoints are step
-// 5, the canvases step 7. The MaxMind GeoLite2 databases are downloaded with the account ID and the
-// licence key entered on the settings surface, kept beside the database, and used to
-// place the addresses the flows carry; the map that shows them is step 7. The Public
-// Suffix List is downloaded from publicsuffix.org once a day, conditionally, to group
-// inferred site names by registrable domain: the third and last outbound call.
-// Classification, site-name attribution and the aggregate refresh run after each
-// collection pass; the widget endpoints that read them are step 5B.
 package main
 
 import (
@@ -39,6 +14,7 @@ import (
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/buildinfo"
 	"github.com/NaejEL/opnview/internal/collect"
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/config"
 	livelease "github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -46,6 +22,7 @@ import (
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/web"
+
 	// Every surface of the interface is a directory below this package that registers itself;
 	// importing it links them all into the binary.
 	_ "github.com/NaejEL/opnview/internal/web/surfaces"
@@ -162,7 +139,7 @@ func run() (err error) {
 	// first pass of every source already sits after it (SPEC-step-5b-widget-api.md, D2).
 	// The clean stop is recorded once the loops have stopped, by this defer, which runs
 	// before the database's own close above it.
-	if absence, err := collect.RecordStart(ctx, database, settings, collect.SystemClock{}); err != nil {
+	if absence, err := collect.RecordStart(ctx, database, settings, core.SystemClock{}); err != nil {
 		return err
 	} else if absence != nil {
 		fmt.Printf("%s was not running from %s to %s; that interval is recorded as a gap of every "+
@@ -173,7 +150,7 @@ func run() (err error) {
 		// The start context is cancelled by the stop signal, so the record gets its own.
 		stopping, cancel := context.WithTimeout(context.Background(), shutdownDeadline)
 		defer cancel()
-		if stopErr := collect.RecordCleanStop(stopping, database, collect.SystemClock{}); stopErr != nil {
+		if stopErr := collect.RecordCleanStop(stopping, database, core.SystemClock{}); stopErr != nil {
 			fmt.Fprintf(os.Stderr, "%s: recording the clean stop: %v\n", buildinfo.AppName, stopErr)
 		}
 	}()
@@ -225,7 +202,7 @@ func run() (err error) {
 	for _, refusal := range plugins.Refusals() {
 		fmt.Fprintf(os.Stderr, "%s: plugin not loaded: %v\n", buildinfo.AppName, &refusal)
 	}
-	collector := collect.NewWithSources(client, database, collect.SystemClock{}, plugins.Set)
+	collector := collect.NewWithSources(client, database, core.SystemClock{}, plugins.Set)
 	// The mirror stores what the loaded plugins read, by plugin and version.
 	loadedReaders := map[string]string{}
 	for _, loaded := range plugins.Plugins() {
@@ -340,9 +317,9 @@ func run() (err error) {
 
 	fmt.Printf("%s: the interface is listening on %s\n", buildinfo.AppName, *listen)
 
-	collectErr := collect.Run(ctx, collect.SystemClock{},
+	collectErr := core.Run(ctx, core.SystemClock{},
 		append(append(collector.Tasks(live), collector.ServiceTasks(live)...),
-			collect.HeartbeatTask(live, database, collect.SystemClock{})), report)
+			collect.HeartbeatTask(live, database, core.SystemClock{})), report)
 	running.Wait()
 	// Every record the push listeners accepted is flushed before the database closes.
 	_ = pushReceiver.Wait()

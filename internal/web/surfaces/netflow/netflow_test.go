@@ -7,6 +7,7 @@ import (
 
 	surface "github.com/NaejEL/opnview/internal/web/surfaces/netflow"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 )
 
 // The NetFlow settings in JSON (PS19 rule 3 of the NetFlow join amendment: the tolerance is set through
@@ -46,8 +47,8 @@ func TestTheJoinToleranceIsSetThroughTheSettingsAPI(t *testing.T) {
 	if answer.StatusCode != http.StatusOK || read.Settings[0].Value != 5 || read.Settings[1].Value != 86400 {
 		t.Errorf("the write answered %d with %+v", answer.StatusCode, read)
 	}
-	if harness.Setting("netflow_join_tolerance_seconds") != "5" {
-		t.Errorf("the tolerance stored is %q", harness.Setting("netflow_join_tolerance_seconds"))
+	if collectiontest.Setting(harness, "netflow_join_tolerance_seconds") != "5" {
+		t.Errorf("the tolerance stored is %q", collectiontest.Setting(harness, "netflow_join_tolerance_seconds"))
 	}
 
 	for body, want := range map[string]string{
@@ -64,7 +65,7 @@ func TestTheJoinToleranceIsSetThroughTheSettingsAPI(t *testing.T) {
 			t.Errorf("%s answered %d %+v, want %s", body, answer.StatusCode, refusal, want)
 		}
 	}
-	if harness.Setting("netflow_join_tolerance_seconds") != "5" {
-		t.Errorf("a refused write changed the tolerance to %q", harness.Setting("netflow_join_tolerance_seconds"))
+	if collectiontest.Setting(harness, "netflow_join_tolerance_seconds") != "5" {
+		t.Errorf("a refused write changed the tolerance to %q", collectiontest.Setting(harness, "netflow_join_tolerance_seconds"))
 	}
 }

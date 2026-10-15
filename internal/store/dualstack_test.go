@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/attribution"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The dual-stack rule: AC37 of specs/SPEC-step-5b-widget-api.md, at the store. Each outcome
@@ -22,7 +25,7 @@ type dualStackCase struct {
 	// family is the lookup's reported querying family, or 0 for none.
 	family int64
 	// records are the local data held for the host.
-	records []ResourceRecord
+	records []attribution.ResourceRecord
 	// leaseAddress, when set, is an address leased under the host name.
 	leaseAddress   string
 	wantResolution string
@@ -37,29 +40,29 @@ const (
 )
 
 func dualStackCases() []dualStackCase {
-	dual := []ResourceRecord{
+	dual := []attribution.ResourceRecord{
 		localAddressRecord(dualStackHost, outside(31, false)),
 		localAddressRecord(dualStackHost, outside(31, true)),
 	}
 	return []dualStackCase{
 		{"IPv4 family reported resolves to the A address", 4, dual, "",
-			ClientResolutionLocalData, outside(31, false)},
+			vocab.ClientResolutionLocalData, outside(31, false)},
 		{"IPv6 family reported resolves to the AAAA address", 6, dual, "",
-			ClientResolutionLocalData, outside(31, true)},
+			vocab.ClientResolutionLocalData, outside(31, true)},
 		{"no family reported is dual_stack_hostname", 0, dual, "",
-			ClientResolutionDualStack, dualStackHost},
-		{"two A records stay ambiguous whatever the family", 4, []ResourceRecord{
+			vocab.ClientResolutionDualStack, dualStackHost},
+		{"two A records stay ambiguous whatever the family", 4, []attribution.ResourceRecord{
 			localAddressRecord(twinFourHost, outside(32, false)),
 			localAddressRecord(twinFourHost, outside(33, false)),
-		}, "", ClientResolutionAmbiguous, twinFourHost},
+		}, "", vocab.ClientResolutionAmbiguous, twinFourHost},
 		{"a lease wins over the local data", 6, dual, "192.0.2.35",
-			ClientResolutionLeased, "192.0.2.35"},
+			vocab.ClientResolutionLeased, "192.0.2.35"},
 	}
 }
 
 // loggedHost is the host name a case's lookup logged.
 func (c dualStackCase) loggedHost() string {
-	if c.wantResolution == ClientResolutionAmbiguous {
+	if c.wantResolution == vocab.ClientResolutionAmbiguous {
 		return twinFourHost
 	}
 	return dualStackHost
@@ -84,9 +87,9 @@ func leaseHostname(t *testing.T, database *Store, address, hostname string) {
 	}
 	name := hostname
 	expires := referenceNow + 86400
-	if err := database.InsertDHCPLease(ctx, provider, DHCPLease{
+	if err := database.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		Backend: "dnsmasq", Address: address, Hostname: &name, LeaseState: "active",
-		GenerationKey: GenerationKeyOf(nil, &expires, referenceNow-86400), ExpiresAt: &expires,
+		GenerationKey: vocab.GenerationKeyOf(nil, &expires, referenceNow-86400), ExpiresAt: &expires,
 		ObservedAt: referenceNow - 86400,
 	}); err != nil {
 		t.Fatalf("writing a lease: %v", err)
@@ -112,7 +115,7 @@ func storeHostLookup(t *testing.T, database *Store, c dualStackCase) {
 	if err != nil {
 		t.Fatalf("resolving %s: %v", logged, err)
 	}
-	if err := database.InsertDNSResolution(ctx, DNSResolution{
+	if err := database.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey: "dual-stack-" + logged, ClientAddress: address, ClientHostname: &logged,
 		ClientResolution: resolution, ClientFamily: c.familyPointer(), Domain: "example-site.example.com",
 		Resolver: "unbound", Action: "pass", LookedUpAt: referenceNow, IngestedAt: referenceNow + 2,
@@ -207,8 +210,8 @@ func TestADualStackHostNameIsResolvedWhenTheEvidenceArrivesLater(t *testing.T) {
 			t.Parallel()
 			database, directory := openTestStore(t)
 			storeHostLookup(t, database, testCase)
-			if resolution, _, _ := storedResolution(t, database, testCase); resolution != ClientResolutionUnknown {
-				t.Fatalf("with no evidence yet the lookup is %s, not %s", resolution, ClientResolutionUnknown)
+			if resolution, _, _ := storedResolution(t, database, testCase); resolution != vocab.ClientResolutionUnknown {
+				t.Fatalf("with no evidence yet the lookup is %s, not %s", resolution, vocab.ClientResolutionUnknown)
 			}
 			reopened := reopen(t, database, directory)
 			storeEvidence(t, reopened, testCase)
@@ -243,7 +246,7 @@ func TestADualStackLookupWaitsForALeaseThatArrivesLater(t *testing.T) {
 		t.Fatalf("examining the lookups: %v", err)
 	}
 	leased := noFamily
-	leased.wantResolution, leased.wantAddress = ClientResolutionLeased, "192.0.2.36"
+	leased.wantResolution, leased.wantAddress = vocab.ClientResolutionLeased, "192.0.2.36"
 	assertOutcome(t, reopened, leased, "after a lease arrived")
 }
 
@@ -254,7 +257,7 @@ func TestTwoAddressesUnderTwoNamesAreNotADualStackPair(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
-	split := []ResourceRecord{
+	split := []attribution.ResourceRecord{
 		localAddressRecord("example-split.one.example.test", outside(41, false)),
 		localAddressRecord("example-split.two.example.test", outside(41, true)),
 	}
@@ -265,7 +268,7 @@ func TestTwoAddressesUnderTwoNamesAreNotADualStackPair(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolution != ClientResolutionAmbiguous || address != "example-split" {
+	if resolution != vocab.ClientResolutionAmbiguous || address != "example-split" {
 		t.Errorf("two names under one label resolved to %q as %s, not ambiguous", address, resolution)
 	}
 }
@@ -277,9 +280,9 @@ func TestTheQueryingFamilyOutsideFourAndSixIsRefused(t *testing.T) {
 	database, _ := openTestStore(t)
 	family := int64(5)
 	logged := dualStackHost
-	if err := database.InsertDNSResolution(context.Background(), DNSResolution{
+	if err := database.InsertDNSResolution(context.Background(), vocab.DNSResolution{
 		LookupKey: "dual-stack-bad-family", ClientAddress: logged, ClientHostname: &logged,
-		ClientResolution: ClientResolutionUnknown, ClientFamily: &family, Domain: "example.com",
+		ClientResolution: vocab.ClientResolutionUnknown, ClientFamily: &family, Domain: "example.com",
 		Resolver: "unbound", Action: "pass", LookedUpAt: referenceNow, IngestedAt: referenceNow,
 	}); err == nil {
 		t.Error("a querying family of 5 was stored")

@@ -13,6 +13,9 @@ import (
 
 	"github.com/NaejEL/opnview/internal/web/surfaces/interfaces"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
+	"github.com/NaejEL/opnview/internal/web/webtest/interfacestest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
 // The Interfaces surface's JSON equivalents (C-AC9): every figure of the page in the JSON answer,
@@ -54,27 +57,27 @@ func TestTheInterfacesJSONEditsMakeThePagesChangeAndRefuseItsInputs(t *testing.T
 		upstream, unknown, refused bool
 		jsonLinkLocal              any
 	}{
-		{what: "add an operator network", action: "add", network: webtest.ExampleOperatorV4(1).String()},
-		{what: "confirm a detected network", action: "confirm", network: webtest.ExampleNetworkV4(0).String()},
-		{what: "remove a detected network", action: "remove", network: webtest.ExampleNetworkV4(0).String()},
+		{what: "add an operator network", action: "add", network: interfacestest.ExampleOperatorV4(1).String()},
+		{what: "confirm a detected network", action: "confirm", network: interfacestest.ExampleNetworkV4(0).String()},
+		{what: "remove a detected network", action: "remove", network: interfacestest.ExampleNetworkV4(0).String()},
 		{what: "turn the link-local rule on", action: "link_local", linkLocal: "yes", jsonLinkLocal: true},
-		{what: "add a network with host bits", action: "add", network: netip.PrefixFrom(webtest.ExampleOperatorV4(1).Addr().Next(), 28).String(), refused: true},
-		{what: "add an IPv4-mapped network", action: "add", network: netip.PrefixFrom(netip.AddrFrom16(webtest.ExampleOperatorV4(1).Addr().As16()), 124).String(), refused: true},
+		{what: "add a network with host bits", action: "add", network: netip.PrefixFrom(interfacestest.ExampleOperatorV4(1).Addr().Next(), 28).String(), refused: true},
+		{what: "add an IPv4-mapped network", action: "add", network: netip.PrefixFrom(netip.AddrFrom16(interfacestest.ExampleOperatorV4(1).Addr().As16()), 124).String(), refused: true},
 		{what: "add something that is no network", action: "add", network: "inside", refused: true},
 		{what: "remove a network the interface does not carry", action: "remove",
-			network: webtest.ExampleOperatorV4(3).String(), refused: true},
+			network: interfacestest.ExampleOperatorV4(3).String(), refused: true},
 		{what: "an action that is none", action: "rename", refused: true},
 		{what: "a link-local rule that is no rule", action: "link_local", linkLocal: "maybe",
 			jsonLinkLocal: "maybe", refused: true},
-		{what: "an edit of the upstream interface", action: "add", network: webtest.ExampleOperatorV4(1).String(),
+		{what: "an edit of the upstream interface", action: "add", network: interfacestest.ExampleOperatorV4(1).String(),
 			upstream: true, refused: true},
 		{what: "an edit of an interface that does not exist", action: "add",
-			network: webtest.ExampleOperatorV4(1).String(), unknown: true, refused: true},
+			network: interfacestest.ExampleOperatorV4(1).String(), unknown: true, refused: true},
 	} {
 		t.Run(input.what, func(t *testing.T) {
-			pageSide, jsonSide := webtest.SignedInHarness(t), webtest.SignedInHarness(t)
-			pageNetwork, jsonNetwork := pageSide.SeedBundleNetwork(1), jsonSide.SeedBundleNetwork(1)
-			target := func(seeded webtest.BundleNetwork) int64 {
+			pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
+			pageNetwork, jsonNetwork := interfacestest.SeedBundleNetwork(pageSide, 1), interfacestest.SeedBundleNetwork(jsonSide, 1)
+			target := func(seeded interfacestest.BundleNetwork) int64 {
 				switch {
 				case input.upstream:
 					return seeded.Upstream
@@ -93,7 +96,7 @@ func TestTheInterfacesJSONEditsMakeThePagesChangeAndRefuseItsInputs(t *testing.T
 			if input.jsonLinkLocal != nil {
 				body["link_local"] = input.jsonLinkLocal
 			}
-			status, decoded := jsonSide.SendJSON(interfaces.PathAPIInterfaceNetworks, body)
+			status, decoded := settingstest.SendJSON(jsonSide, interfaces.PathAPIInterfaceNetworks, body)
 			if input.refused {
 				if answer.StatusCode != http.StatusBadRequest {
 					t.Errorf("the page answered %d rather than refusing", answer.StatusCode)
@@ -121,14 +124,14 @@ func TestTheInterfacesJSONEditsMakeThePagesChangeAndRefuseItsInputs(t *testing.T
 // longer detected.
 func TestTheInterfacesJSONCarriesEveryFigureOfThePage(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
-	seeded := h.SeedBundleNetwork(2)
+	h := collectiontest.SignedInHarness(t)
+	seeded := interfacestest.SeedBundleNetwork(h, 2)
 	for _, edit := range []map[string]any{
-		{"interface": seeded.Inside[0], "action": "add", "network": webtest.ExampleWideV4().String()},
-		{"interface": seeded.Inside[1], "action": "remove", "network": webtest.ExampleNetworkV6(1).String()},
+		{"interface": seeded.Inside[0], "action": "add", "network": interfacestest.ExampleWideV4().String()},
+		{"interface": seeded.Inside[1], "action": "remove", "network": interfacestest.ExampleNetworkV6(1).String()},
 		{"interface": seeded.Inside[1], "action": "link_local", "link_local": true},
 	} {
-		if status, answer := h.SendJSON(interfaces.PathAPIInterfaceNetworks, edit); status != http.StatusOK {
+		if status, answer := settingstest.SendJSON(h, interfaces.PathAPIInterfaceNetworks, edit); status != http.StatusOK {
 			t.Fatalf("the edit %v answered %d %v", edit, status, answer)
 		}
 	}
@@ -136,7 +139,7 @@ func TestTheInterfacesJSONCarriesEveryFigureOfThePage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading the page's figures: %v", err)
 	}
-	answer := h.GetJSON(interfaces.PathAPIInterfaceNetworks)
+	answer := settingstest.GetJSON(h, interfaces.PathAPIInterfaceNetworks)
 	yesNo := func(value any) string {
 		if value == true {
 			return "state.yes"
@@ -144,28 +147,28 @@ func TestTheInterfacesJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		return "state.no"
 	}
 	expected := map[string][]string{}
-	for _, raw := range webtest.Path(answer, "interfaces").([]any) {
-		id := strconv.FormatInt(int64(webtest.Path(raw, "id").(float64)), 10)
-		lines := []string{"description " + webtest.Path(raw, "description").(string),
-			"identifier " + webtest.Path(raw, "identifier").(string), "device " + webtest.Path(raw, "device").(string),
-			"upstream " + yesNo(webtest.Path(raw, "upstream"))}
-		if webtest.Path(raw, "link_local") == true {
+	for _, raw := range settingstest.Path(answer, "interfaces").([]any) {
+		id := strconv.FormatInt(int64(settingstest.Path(raw, "id").(float64)), 10)
+		lines := []string{"description " + settingstest.Path(raw, "description").(string),
+			"identifier " + settingstest.Path(raw, "identifier").(string), "device " + settingstest.Path(raw, "device").(string),
+			"upstream " + yesNo(settingstest.Path(raw, "upstream"))}
+		if settingstest.Path(raw, "link_local") == true {
 			lines = append(lines, "link_local yes")
 		} else {
 			lines = append(lines, "link_local no")
 		}
-		for _, network := range webtest.Path(raw, "networks").([]any) {
+		for _, network := range settingstest.Path(raw, "networks").([]any) {
 			reason := ""
-			if code, ok := webtest.Path(network, "not_counting_reason").(string); ok {
+			if code, ok := settingstest.Path(network, "not_counting_reason").(string); ok {
 				reason = "state.counts." + code
 			}
 			lines = append(lines, fmt.Sprintf("network %s state.origin.%s removed %s counts %s reason %s",
-				webtest.Path(network, "network"), webtest.Path(network, "origin"),
-				yesNo(webtest.Path(network, "removed")), yesNo(webtest.Path(network, "counts")), reason))
+				settingstest.Path(network, "network"), settingstest.Path(network, "origin"),
+				yesNo(settingstest.Path(network, "removed")), yesNo(settingstest.Path(network, "counts")), reason))
 		}
-		for _, overlap := range webtest.Path(raw, "overlaps").([]any) {
-			lines = append(lines, fmt.Sprintf("overlap %s %s %s", webtest.Path(overlap, "network"),
-				webtest.Path(overlap, "other"), webtest.Path(overlap, "other_description")))
+		for _, overlap := range settingstest.Path(raw, "overlaps").([]any) {
+			lines = append(lines, fmt.Sprintf("overlap %s %s %s", settingstest.Path(overlap, "network"),
+				settingstest.Path(overlap, "other"), settingstest.Path(overlap, "other_description")))
 		}
 		expected[id] = lines
 	}

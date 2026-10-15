@@ -2,14 +2,15 @@ package settings
 
 import (
 	"context"
-	"github.com/NaejEL/opnview/internal/web"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
+
 	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store"
 )
 
 // The Public Suffix List card of the settings surface, beside Geolocation and in
@@ -53,7 +54,7 @@ type publicSuffixCard struct {
 	VersionState messageKey
 	Rules        string
 	// IntervalField is the refresh interval's field.
-	IntervalField web.SettingField
+	IntervalField settingfields.SettingField
 }
 
 // publicSuffixStateKey names one refresh probe. A probe this function does not know
@@ -66,7 +67,7 @@ func publicSuffixStateKey(probe string) messageKey {
 		return msgPublicSuffixNotModified
 	case registrabledomain.ProbeMalformed:
 		return msgPublicSuffixMalformed
-	case store.ProbeNotYetProbed:
+	case reads.ProbeNotYetProbed:
 		return msgPublicSuffixNotYetRefreshed
 	default:
 		return msgPublicSuffixFailed
@@ -90,7 +91,7 @@ func (s *surface) fillPublicSuffix(ctx context.Context, built *view) error {
 	card := publicSuffixCard{
 		StateKey: publicSuffixStateKey(probe),
 		InUseKey: msgNo,
-		IntervalField: web.DurationField(fieldPublicSuffixInterval, "public_suffix_interval",
+		IntervalField: settingfields.DurationField(fieldPublicSuffixInterval, "public_suffix_interval",
 			msgFieldPublicSuffixInterval, int64(settings.PublicSuffixRefreshInterval/time.Second), nil),
 	}
 	var confirmedAt int64
@@ -107,7 +108,7 @@ func (s *surface) fillPublicSuffix(ctx context.Context, built *view) error {
 		}
 	}
 	if confirmedAt > 0 {
-		card.Confirmed = web.Instant(confirmedAt)
+		card.Confirmed = settingfields.Instant(confirmedAt)
 	} else {
 		card.ConfirmedState = msgNeverConfirmed
 	}
@@ -125,8 +126,8 @@ func (s *surface) typedPublicSuffixInterval(request *http.Request) (seconds stri
 	if !sent || len(values) == 0 {
 		return "", false, ""
 	}
-	secondsText, refusal := web.TypedDuration(values[0],
-		request.PostFormValue(web.UnitFieldName(fieldPublicSuffixInterval)))
+	secondsText, refusal := settingfields.TypedDuration(values[0],
+		request.PostFormValue(settingfields.UnitFieldName(fieldPublicSuffixInterval)))
 	if refusal != "" {
 		return "", false, refusal
 	}
@@ -138,11 +139,11 @@ func (s *surface) typedPublicSuffixInterval(request *http.Request) (seconds stri
 // changed is false when it is the interval already in force.
 func (s *surface) publicSuffixInterval(ctx context.Context, secondsText string) (seconds string, changed bool,
 	refusal messageKey) {
-	parsed, refusal := web.TypedIntervalSeconds(secondsText)
+	parsed, refusal := settingfields.TypedIntervalSeconds(secondsText)
 	if refusal != "" {
 		return "", false, refusal
 	}
-	if !web.AcceptedByLoad(ctx, s.store,
+	if !settingfields.AcceptedByLoad(ctx, s.store,
 		map[string]string{fieldPublicSuffixInterval: secondsText}) {
 		return "", false, msgCollectionValueInvalid
 	}

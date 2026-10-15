@@ -9,7 +9,8 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // stubSession is a session that answers every call with one body, for the tests of the runtime
@@ -24,9 +25,9 @@ func (s stubSession) Call(_ context.Context, endpoint opnsense.Endpoint, _ opnse
 	return opnsense.Response{Endpoint: endpoint, Outcome: opnsense.OutcomeOK, StatusCode: 200, Body: s.body}, nil
 }
 
-func (s stubSession) ServiceState(context.Context, opnsense.Endpoint) (bool, store.AvailabilityState,
-	store.AvailabilityOutcome, string, error) {
-	return true, store.StateReachable, store.OutcomeHealthy, "", nil
+func (s stubSession) ServiceState(context.Context, opnsense.Endpoint) (bool, vocab.AvailabilityState,
+	vocab.AvailabilityOutcome, string, error) {
+	return true, vocab.StateReachable, vocab.OutcomeHealthy, "", nil
 }
 
 func (s stubSession) ReadObject(context.Context, opnsense.Endpoint) (decode.Object, bool, error) {
@@ -54,14 +55,14 @@ func (s stubSession) Now() int64 { return s.now }
 var _ provider.Session = stubSession{}
 
 // runScript compiles a script and calls one of its functions against a stub session.
-func runScript(t *testing.T, source, namespace, function string, body []byte, arguments ...any) (any, *failure) {
+func runScript(t *testing.T, source, namespace, function string, body []byte, arguments ...any) (any, *runtime.Failure) {
 	t.Helper()
-	compiled, err := compile("example", "example.js", source,
+	compiled, err := runtime.Compile("example", "example.js", source,
 		map[string]opnsense.Endpoint{"rows": {Path: "/api/example/rows/search", Method: "GET"}}, time.Second)
 	if err != nil {
 		t.Fatalf("compiling: %v", err)
 	}
-	answer, _, failed := compiled.call(context.Background(), stubSession{body: body, now: 1750000000}, namespace,
+	answer, _, failed := compiled.Call(context.Background(), stubSession{body: body, now: 1750000000}, namespace,
 		function, arguments...)
 	return answer, failed
 }
@@ -105,14 +106,14 @@ func TestTheFirewallsDecodedValuesReadAsJavaScriptArraysAndObjects(t *testing.T)
 // TestAScriptThatNeverReturnsIsStoppedAtItsBound is the timeout, at the runtime.
 func TestAScriptThatNeverReturnsIsStoppedAtItsBound(t *testing.T) {
 	t.Parallel()
-	compiled, err := compile("example", "example.js", `exports.example = { read: function () { for (;;) {} } };`,
+	compiled, err := runtime.Compile("example", "example.js", `exports.example = { read: function () { for (;;) {} } };`,
 		nil, 50*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
 	started := time.Now()
-	_, _, failed := compiled.call(context.Background(), stubSession{}, "example", "read")
-	if failed == nil || failed.code != failureTimeout {
+	_, _, failed := compiled.Call(context.Background(), stubSession{}, "example", "read")
+	if failed == nil || failed.Code != runtime.FailureTimeout {
 		t.Fatalf("an endless script ended with %v", failed)
 	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
@@ -125,16 +126,16 @@ func TestAThrownErrorAndAMissingFunctionAreScriptFailures(t *testing.T) {
 	t.Parallel()
 	_, failed := runScript(t, `exports.example = { read: function () { throw new Error("broken"); } };`,
 		"example", "read", nil)
-	if failed == nil || failed.code != failureScript {
+	if failed == nil || failed.Code != runtime.FailureScript {
 		t.Errorf("a thrown error ended with %v", failed)
 	}
 	_, failed = runScript(t, `exports.example = {};`, "example", "read", nil)
-	if failed == nil || failed.code != failureScript {
+	if failed == nil || failed.Code != runtime.FailureScript {
 		t.Errorf("a missing function ended with %v", failed)
 	}
 	_, failed = runScript(t, `exports.example = { read: function (host) { host.call("undeclared"); } };`,
 		"example", "read", nil)
-	if failed == nil || failed.code != failureScript {
+	if failed == nil || failed.Code != runtime.FailureScript {
 		t.Errorf("a call to an undeclared endpoint ended with %v", failed)
 	}
 }

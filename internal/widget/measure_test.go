@@ -6,7 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/widget/request"
+	"github.com/NaejEL/opnview/internal/widget/shapes"
+	"github.com/NaejEL/opnview/internal/widget/traffic"
 )
 
 // The measure's own tests that need no database: the twins of the core's statements, and the netflow
@@ -18,13 +22,13 @@ import (
 // plugins' twins are checked by the loader, which would refuse them.
 func TestEveryCoreNetflowTwinBindsItsStatementsParameters(t *testing.T) {
 	t.Parallel()
-	names, err := store.StatementNames()
+	names, err := sqldb.StatementNames()
 	if err != nil {
 		t.Fatal(err)
 	}
 	texts := map[string]string{}
 	for _, name := range names {
-		text, err := store.Statement(name)
+		text, err := sqldb.Statement(name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -32,10 +36,10 @@ func TestEveryCoreNetflowTwinBindsItsStatementsParameters(t *testing.T) {
 	}
 	twins := 0
 	for _, name := range names {
-		if _, isTwin := strings.CutSuffix(name, netflowStatementSuffix); isTwin {
+		if _, isTwin := strings.CutSuffix(name, request.NetflowStatementSuffix); isTwin {
 			twins++
 		}
-		if mismatch := netflowTwinMismatch(texts, name); mismatch != "" {
+		if mismatch := request.NetflowTwinMismatch(texts, name); mismatch != "" {
 			t.Error(mismatch)
 		}
 	}
@@ -61,7 +65,7 @@ func TestNetflowTwinMismatchNamesWhatDiffers(t *testing.T) {
 	}
 	for name, want := range map[string]string{"widget_a_netflow": "", "widget_b_netflow": ":id",
 		"widget_c_netflow": "period template", "widget_orphan_netflow": "", "widget_not_a_twin_other": ""} {
-		got := netflowTwinMismatch(texts, name)
+		got := request.NetflowTwinMismatch(texts, name)
 		if (want == "") != (got == "") || !strings.Contains(got, want) {
 			t.Errorf("%s: the mismatch is %q, want one naming %q", name, got, want)
 		}
@@ -69,8 +73,8 @@ func TestNetflowTwinMismatchNamesWhatDiffers(t *testing.T) {
 }
 
 // exampleNetflowFigures are netflow figures whose every field differs from every other.
-func exampleNetflowFigures() store.VolumeFigures {
-	figures := store.VolumeFigures{Bytes: 600, AllowedBytes: 300, BlockedBytes: 200, UnknownBytes: 100,
+func exampleNetflowFigures() reads.VolumeFigures {
+	figures := reads.VolumeFigures{Bytes: 600, AllowedBytes: 300, BlockedBytes: 200, UnknownBytes: 100,
 		AllowedConnections: 3, BlockedConnections: 2, UnknownConnections: 1, Netflow: true}
 	for index, field := range figures.Parts.Fields() {
 		*field = int64(index + 1)
@@ -84,32 +88,32 @@ func exampleNetflowFigures() store.VolumeFigures {
 func TestScriptFiguresCarryEveryNetflowPartMember(t *testing.T) {
 	t.Parallel()
 	var names []string
-	members := reflect.TypeOf(netflowMembers{})
+	members := reflect.TypeOf(traffic.NetflowMembers{})
 	for index := 0; index < members.NumField(); index++ {
 		tag := strings.Split(members.Field(index).Tag.Get("json"), ",")[0]
 		if members.Field(index).Type == reflect.TypeOf((*int64)(nil)) {
 			names = append(names, tag)
 		}
 	}
-	if strings.Join(names, ",") != strings.Join(store.NetflowPartsColumns(), ",") {
+	if strings.Join(names, ",") != strings.Join(reads.NetflowPartsColumns(), ",") {
 		t.Errorf("the script's netflow members are\n%v\nnot the columns of netflow_parts\n%v", names,
-			store.NetflowPartsColumns())
+			reads.NetflowPartsColumns())
 	}
 	figures := exampleNetflowFigures()
-	encoded, err := json.Marshal(summable(figures))
+	encoded, err := json.Marshal(traffic.Summable(figures))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var read summableFigures
+	var read traffic.SummableFigures
 	if err := json.Unmarshal(encoded, &read); err != nil {
 		t.Fatal(err)
 	}
-	if read.toStore() != figures {
-		t.Errorf("figures handed to a script and back are\n%+v\nnot\n%+v", read.toStore(), figures)
+	if read.ToStore() != figures {
+		t.Errorf("figures handed to a script and back are\n%+v\nnot\n%+v", read.ToStore(), figures)
 	}
 	logged := figures
-	logged.Netflow, logged.Parts = false, store.NetflowParts{}
-	if encoded, _ := json.Marshal(summable(logged)); strings.Contains(string(encoded), "packets") {
+	logged.Netflow, logged.Parts = false, reads.NetflowParts{}
+	if encoded, _ := json.Marshal(traffic.Summable(logged)); strings.Contains(string(encoded), "packets") {
 		t.Errorf("logged figures carry netflow members: %s", encoded)
 	}
 }
@@ -120,30 +124,30 @@ func TestScriptFiguresCarryEveryNetflowPartMember(t *testing.T) {
 func TestANetflowVolumeHandedBackKeepsItsParts(t *testing.T) {
 	t.Parallel()
 	figures := exampleNetflowFigures()
-	volume := netflowVolume(figures)
+	volume := request.NetflowVolume(figures)
 	if *volume.Packets != figures.Packets() || *volume.BlockedPackets != figures.Parts.Blocked.Packets ||
-		volume.BlockedCoverage.storeCoverage() != figures.Parts.Blocked.Coverage ||
-		volume.Coverage.storeCoverage() != figures.Coverage() {
+		volume.BlockedCoverage.StoreCoverage() != figures.Parts.Blocked.Coverage ||
+		volume.Coverage.StoreCoverage() != figures.Coverage() {
 		t.Errorf("the Volume is %+v", volume)
 	}
 	encoded, err := json.Marshal(volume)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var read summableFigures
+	var read traffic.SummableFigures
 	if err := json.Unmarshal(encoded, &read); err != nil {
 		t.Fatal(err)
 	}
-	if read.toStore() != figures {
-		t.Errorf("a Volume handed back is read as\n%+v\nnot\n%+v", read.toStore(), figures)
+	if read.ToStore() != figures {
+		t.Errorf("a Volume handed back is read as\n%+v\nnot\n%+v", read.ToStore(), figures)
 	}
-	blocked := BlockedOnly(figures)
-	if blocked.Parts != (store.NetflowParts{Blocked: figures.Parts.Blocked}) || blocked.Bytes != figures.BlockedBytes ||
+	blocked := shapes.BlockedOnly(figures)
+	if blocked.Parts != (reads.NetflowParts{Blocked: figures.Parts.Blocked}) || blocked.Bytes != figures.BlockedBytes ||
 		blocked.Connections() != figures.BlockedConnections {
 		t.Errorf("the blocked part is %+v", blocked)
 	}
-	allowed := AllowedOnly(figures)
-	if allowed.Parts != (store.NetflowParts{Allowed: figures.Parts.Allowed}) || allowed.Bytes != figures.AllowedBytes {
+	allowed := shapes.AllowedOnly(figures)
+	if allowed.Parts != (reads.NetflowParts{Allowed: figures.Parts.Allowed}) || allowed.Bytes != figures.AllowedBytes {
 		t.Errorf("the allowed part is %+v", allowed)
 	}
 }
@@ -152,16 +156,16 @@ func TestANetflowVolumeHandedBackKeepsItsParts(t *testing.T) {
 // joinable and none of its directions is not_captured, export_gap or not_exported_when_refused.
 func TestCoveredIsPS22sCoverage(t *testing.T) {
 	t.Parallel()
-	covered := store.NetflowCoverage{Measured: 1, Partial: 3, Unmeasured: 1, Directions: store.DirectionStates{
+	covered := reads.NetflowCoverage{Measured: 1, Partial: 3, Unmeasured: 1, Directions: reads.DirectionStates{
 		Measured: 2, InProgress: 1, AwaitingExport: 1, Missing: 2}}
 	if !covered.Covered() {
 		t.Errorf("%+v is not covered", covered)
 	}
-	for name, uncover := range map[string]func(*store.NetflowCoverage){
-		"not_joinable":              func(c *store.NetflowCoverage) { c.NotJoinable = 1 },
-		"not_captured":              func(c *store.NetflowCoverage) { c.Directions.NotCaptured = 1 },
-		"export_gap":                func(c *store.NetflowCoverage) { c.Directions.ExportGap = 1 },
-		"not_exported_when_refused": func(c *store.NetflowCoverage) { c.Directions.NotExportedWhenRefused = 1 },
+	for name, uncover := range map[string]func(*reads.NetflowCoverage){
+		"not_joinable":              func(c *reads.NetflowCoverage) { c.NotJoinable = 1 },
+		"not_captured":              func(c *reads.NetflowCoverage) { c.Directions.NotCaptured = 1 },
+		"export_gap":                func(c *reads.NetflowCoverage) { c.Directions.ExportGap = 1 },
+		"not_exported_when_refused": func(c *reads.NetflowCoverage) { c.Directions.NotExportedWhenRefused = 1 },
 	} {
 		coverage := covered
 		uncover(&coverage)

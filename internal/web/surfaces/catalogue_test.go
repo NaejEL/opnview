@@ -1,11 +1,6 @@
 package surfaces_test
 
 import (
-	"github.com/NaejEL/opnview/internal/auth"
-	"github.com/NaejEL/opnview/internal/plugin"
-	"github.com/NaejEL/opnview/internal/secret"
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"html"
 	"net/http"
 	"net/url"
@@ -15,6 +10,15 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/auth"
+	"github.com/NaejEL/opnview/internal/plugin"
+	"github.com/NaejEL/opnview/internal/secret"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
 // TestNoUserVisibleStringIsALiteral is AC21.
@@ -388,7 +392,7 @@ func TestTheInterfaceFollowsTheOperatingSystemUntilItIsOverridden(t *testing.T) 
 	}
 
 	// The override, and it persists as a setting row.
-	webtest.AssertStatus(t, harness.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
+	accounttest.AssertStatus(t, harness.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
 		"theme": {string(web.ThemeDark)}}), http.StatusSeeOther)
 	overridden := webtest.PageSource(t, harness, web.PathSettings)
 	if !strings.Contains(overridden, `data-theme="industrial-dark"`) {
@@ -661,11 +665,11 @@ func renderEveryPage(t *testing.T) []webtest.RenderedPage {
 		{"the settings surface after an answer it cannot use", http.StatusInternalServerError},
 	} {
 		configured.Fake.Answer(outcome.status, []byte(`{}`))
-		addFollowed(outcome.name, configured, configured.StoreCredentials(apiKey, webtest.RandomHex(t, 16)))
+		addFollowed(outcome.name, configured, settingstest.StoreCredentials(configured, apiKey, webtest.RandomHex(t, 16)))
 	}
 	configured.Fake.GoDown()
 	addFollowed("the settings surface with the firewall unreachable", configured,
-		configured.StoreCredentials(apiKey, webtest.RandomHex(t, 16)))
+		settingstest.StoreCredentials(configured, apiKey, webtest.RandomHex(t, 16)))
 
 	// THE CERTIFICATE REFUSED, WHICH IS NOT THE HOST UNREACHABLE. On its own harness
 	// because its firewall speaks TLS: this is the only state in this list where
@@ -674,7 +678,7 @@ func renderEveryPage(t *testing.T) []webtest.RenderedPage {
 	pinned := webtest.NewTLS(t)
 	pinned.CompleteSetup()
 	addFollowed("the settings surface with the firewall's certificate refused", pinned,
-		pinned.StoreCredentials(webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)))
+		settingstest.StoreCredentials(pinned, webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)))
 	addFollowed("the settings surface with no firewall URL", configured,
 		configured.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardFirewall}}))
 
@@ -740,8 +744,8 @@ func renderEveryPage(t *testing.T) []webtest.RenderedPage {
 		"fetch_certificate": {"1"}, "theme": {string(web.ThemeSystem)},
 	}))
 
-	pages = append(pages, webtest.CollectionPages(t)...)
-	pages = append(pages, webtest.GeoIPPages(t)...)
+	pages = append(pages, collectiontest.CollectionPages(t)...)
+	pages = append(pages, settingstest.GeoIPPages(t)...)
 	pages = append(pages, bundlePages(t)...)
 
 	if len(pages) == 0 {
@@ -808,7 +812,7 @@ func TestOnlyTheThreeFigureFormsThePagesProducePassTheFigureException(t *testing
 	}
 
 	marked := 0
-	for _, page := range webtest.CollectionPages(t) {
+	for _, page := range collectiontest.CollectionPages(t) {
 		for _, match := range figureSpan.FindAllStringSubmatch(page.Document, -1) {
 			marked++
 			if !isFigure(match[1]) {

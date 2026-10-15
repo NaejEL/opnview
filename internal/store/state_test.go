@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The reconciled-state tests.
@@ -58,9 +60,9 @@ func TestADepartureFromAReconciledSetIsDetectable(t *testing.T) {
 
 	// Yesterday: three things in the set, one of them carrying a validity end, because a
 	// decision from the surveyed source carries a TTL and no timestamp at all.
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: yesterday,
-		Items: []StateItem{
+		Items: []vocab.StateItem{
 			{ItemKey: "example-item-stays"},
 			{ItemKey: "example-item-leaves", Attributes: &attributes, ValidUntilAt: &expiry},
 			{ItemKey: "example-item-also-leaves"},
@@ -71,9 +73,9 @@ func TestADepartureFromAReconciledSetIsDetectable(t *testing.T) {
 
 	// Today: one of them is gone, and one thing is new. The new one is not a departure and
 	// must not appear.
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: today,
-		Items: []StateItem{
+		Items: []vocab.StateItem{
 			{ItemKey: "example-item-stays"},
 			{ItemKey: "example-item-arrives"},
 		},
@@ -150,13 +152,13 @@ func TestAnEmptyReconciledSetReportsEveryThingAsDeparted(t *testing.T) {
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
 
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: 1749913600,
-		Items: []StateItem{{ItemKey: "example-item-one"}, {ItemKey: "example-item-two"}},
+		Items: []vocab.StateItem{{ItemKey: "example-item-one"}, {ItemKey: "example-item-two"}},
 	}); err != nil {
 		t.Fatalf("writing the first set: %v", err)
 	}
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: 1750000000,
 	}); err != nil {
 		t.Fatalf("writing the empty set: %v", err)
@@ -179,9 +181,9 @@ func TestASetObservedOnceReportsNoDeparture(t *testing.T) {
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
 
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: 1750000000,
-		Items: []StateItem{{ItemKey: "example-item-one"}},
+		Items: []vocab.StateItem{{ItemKey: "example-item-one"}},
 	}); err != nil {
 		t.Fatalf("writing the only set: %v", err)
 	}
@@ -206,15 +208,15 @@ func TestOneProvidersSetsAreIndependent(t *testing.T) {
 	providerID := exampleStateProvider(t, database)
 
 	for _, setKey := range []string{"example-set-one", "example-set-two"} {
-		if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+		if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 			ProviderID: providerID, SetKey: setKey, CapturedAt: 1749913600,
-			Items: []StateItem{{ItemKey: "example-item"}},
+			Items: []vocab.StateItem{{ItemKey: "example-item"}},
 		}); err != nil {
 			t.Fatalf("writing the first %s: %v", setKey, err)
 		}
 	}
 	// Only one set is polled again, and it is empty this time.
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set-one", CapturedAt: 1750000000,
 	}); err != nil {
 		t.Fatalf("writing the second example-set-one: %v", err)
@@ -245,9 +247,9 @@ func TestRewritingOneSnapshotOfASetIsIdempotent(t *testing.T) {
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
 
-	snapshot := StateSnapshot{
+	snapshot := vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: 1750000000,
-		Items: []StateItem{{ItemKey: "example-item-one"}, {ItemKey: "example-item-two"}},
+		Items: []vocab.StateItem{{ItemKey: "example-item-one"}, {ItemKey: "example-item-two"}},
 	}
 	for pass := 0; pass < 3; pass++ {
 		if err := database.InsertStateSnapshot(ctx, snapshot); err != nil {
@@ -275,32 +277,32 @@ func TestAReconciledSetRefusesAThingWithNoIdentityOrWithAttributesThatAreNotAnOb
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
 
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: 1750000000,
-		Items: []StateItem{{ItemKey: ""}},
+		Items: []vocab.StateItem{{ItemKey: ""}},
 	}); err == nil {
 		t.Error("a set member with no identity was accepted")
 	}
 
 	notAnObject := `"example-bare-string"`
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: 1750000001,
-		Items: []StateItem{{ItemKey: "example-item", Attributes: &notAnObject}},
+		Items: []vocab.StateItem{{ItemKey: "example-item", Attributes: &notAnObject}},
 	}); err == nil {
 		t.Error("a set member whose attributes are not an object was accepted")
 	}
 
 	malformed := `{not json at all`
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: 1750000002,
-		Items: []StateItem{{ItemKey: "example-item", Attributes: &malformed}},
+		Items: []vocab.StateItem{{ItemKey: "example-item", Attributes: &malformed}},
 	}); err == nil {
 		t.Error("a set member whose attributes are not valid JSON was accepted")
 	}
 
 	// A set key with no name would name no set, so one poll of a provider's decisions and one
 	// of its peers would be the same set and each would read as the other's total departure.
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "", CapturedAt: 1750000003,
 	}); err == nil {
 		t.Error("a snapshot of a set with no name was accepted")
@@ -319,9 +321,9 @@ func TestAHalfWrittenReconciledSetIsNotStoredAtAll(t *testing.T) {
 	ctx := context.Background()
 	providerID := exampleStateProvider(t, database)
 
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: 1749913600,
-		Items: []StateItem{{ItemKey: "example-item-one"}, {ItemKey: "example-item-two"}},
+		Items: []vocab.StateItem{{ItemKey: "example-item-one"}, {ItemKey: "example-item-two"}},
 	}); err != nil {
 		t.Fatalf("writing the first set: %v", err)
 	}
@@ -329,9 +331,9 @@ func TestAHalfWrittenReconciledSetIsNotStoredAtAll(t *testing.T) {
 	// The second member carries an instant beyond the upper timestamp bound, so its insert
 	// fails after the first member has already been offered.
 	beyondTheBound := int64(4102444800)
-	if err := database.InsertStateSnapshot(ctx, StateSnapshot{
+	if err := database.InsertStateSnapshot(ctx, vocab.StateSnapshot{
 		ProviderID: providerID, SetKey: "example-set", CapturedAt: 1750000000,
-		Items: []StateItem{
+		Items: []vocab.StateItem{
 			{ItemKey: "example-item-one"},
 			{ItemKey: "example-item-two", ValidUntilAt: &beyondTheBound},
 		},

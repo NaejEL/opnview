@@ -6,8 +6,8 @@ import (
 
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/sizing"
-	"github.com/NaejEL/opnview/internal/store"
-	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/store/attribution"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
 )
 
 // What a save of a card checks and stores, written once for the page and its JSON equivalent
@@ -33,7 +33,7 @@ type kindEdit struct {
 
 // checkSelections reads the selections an edit carried, in the providers' order, and refuses the
 // first that is not one of the three words.
-func checkSelections(providers []store.ProviderOfKind, sent map[string]string) (map[string]config.Selection,
+func checkSelections(providers []attribution.ProviderOfKind, sent map[string]string) (map[string]config.Selection,
 	messageKey, string) {
 	selections := make(map[string]config.Selection, len(providers))
 	for _, provider := range providers {
@@ -53,9 +53,9 @@ func checkSelections(providers []store.ProviderOfKind, sent map[string]string) (
 // checkKindEdit checks an edit of a sized kind: the interval, then the page size where the page is
 // a setting, then the selections. A page size above the firewall's ceiling is not refused: it is
 // stored and reported as above it.
-func checkKindEdit(kind sizing.Kind, providers []store.ProviderOfKind, secondsText, pageText string,
+func checkKindEdit(kind sizing.Kind, providers []attribution.ProviderOfKind, secondsText, pageText string,
 	sent map[string]string) (kindEdit, messageKey, string) {
-	seconds, refusal := web.TypedIntervalSeconds(secondsText)
+	seconds, refusal := settingfields.TypedIntervalSeconds(secondsText)
 	if refusal != "" {
 		return kindEdit{}, refusal, editFieldInterval
 	}
@@ -75,9 +75,9 @@ func checkKindEdit(kind sizing.Kind, providers []store.ProviderOfKind, secondsTe
 
 // checkPolledEdit checks an edit of a polled kind, which has no page: the interval, then the
 // selections.
-func checkPolledEdit(providers []store.ProviderOfKind, secondsText string, sent map[string]string) (kindEdit,
+func checkPolledEdit(providers []attribution.ProviderOfKind, secondsText string, sent map[string]string) (kindEdit,
 	messageKey, string) {
-	seconds, refusal := web.TypedIntervalSeconds(secondsText)
+	seconds, refusal := settingfields.TypedIntervalSeconds(secondsText)
 	if refusal != "" {
 		return kindEdit{}, refusal, editFieldInterval
 	}
@@ -89,7 +89,7 @@ func checkPolledEdit(providers []store.ProviderOfKind, secondsText string, sent 
 }
 
 // saveKindEdit stores a sized kind's checked edit and makes it live.
-func (s *surface) saveKindEdit(ctx context.Context, kind sizing.Kind, providers []store.ProviderOfKind,
+func (s *surface) saveKindEdit(ctx context.Context, kind sizing.Kind, providers []attribution.ProviderOfKind,
 	edit kindEdit) error {
 	now := s.now().UTC().Unix()
 	if kind.PageIsAdjustable() {
@@ -101,7 +101,7 @@ func (s *surface) saveKindEdit(ctx context.Context, kind sizing.Kind, providers 
 }
 
 // savePolledEdit stores a polled kind's checked edit and makes it live.
-func (s *surface) savePolledEdit(ctx context.Context, kind polledKind, providers []store.ProviderOfKind,
+func (s *surface) savePolledEdit(ctx context.Context, kind polledKind, providers []attribution.ProviderOfKind,
 	edit kindEdit) error {
 	return s.saveIntervalAndSelections(ctx, kind.Kind, kind.IntervalKey, providers, edit, s.now().UTC().Unix())
 }
@@ -109,7 +109,7 @@ func (s *surface) savePolledEdit(ctx context.Context, kind polledKind, providers
 // saveIntervalAndSelections stores a kind's interval and selections, then hands the configuration
 // to the running service and applies the selections at once.
 func (s *surface) saveIntervalAndSelections(ctx context.Context, kind, intervalKey string,
-	providers []store.ProviderOfKind, edit kindEdit, now int64) error {
+	providers []attribution.ProviderOfKind, edit kindEdit, now int64) error {
 	if err := s.store.SetSetting(ctx, intervalKey, strconv.FormatInt(edit.seconds, 10), now); err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func checkSettingCard(ctx context.Context, base config.SettingReader, spec setti
 		}
 		values[setting.Key] = seconds
 	}
-	if !web.AcceptedByLoad(ctx, base, values) {
+	if !settingfields.AcceptedByLoad(ctx, base, values) {
 		return nil, spec.Settings[0].RefusalKey, spec.Settings[0].Key
 	}
 	return values, "", ""

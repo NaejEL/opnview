@@ -7,6 +7,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The two legs of one connection: AC7 and AC9 to AC12 of
@@ -48,13 +52,13 @@ func (n *testNetwork) legs(c connection, upstream6 string) (networkFlow, network
 
 // derivePairs classifies what was stored and pairs and refreshes the window, as a
 // derivation does.
-func (n *testNetwork) derivePairs(t *testing.T, addresses []string, from, to int64) Pairing {
+func (n *testNetwork) derivePairs(t *testing.T, addresses []string, from, to int64) flows.Pairing {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := n.db.Reclassify(ctx, addresses, n.now); err != nil {
 		t.Fatalf("classifying: %v", err)
 	}
-	paired, err := n.db.Pair(ctx, from, to, DefaultPairingWindowSeconds)
+	paired, err := n.db.Pair(ctx, from, to, flows.DefaultPairingWindowSeconds)
 	if err != nil {
 		t.Fatalf("pairing: %v", err)
 	}
@@ -124,11 +128,11 @@ func TestANatedPairIsPairedOneToOne(t *testing.T) {
 				at: network.now - 100, ipID: 4242, seq: 77000, lag: 1}, "")
 			addresses := network.insert(t, []networkFlow{first, second})
 			network.derivePairs(t, addresses, network.now-200, network.now)
-			if outcome, partner := outcomeOf(t, network.db, first.device, first.src, first.dst); outcome != PairFirstLeg ||
+			if outcome, partner := outcomeOf(t, network.db, first.device, first.src, first.dst); outcome != flows.PairFirstLeg ||
 				partner != second.device+" "+second.src+" "+second.dst {
 				t.Errorf("the client's record is %s with partner %s", outcome, partner)
 			}
-			if outcome, partner := outcomeOf(t, network.db, second.device, second.src, second.dst); outcome != PairSecondLeg ||
+			if outcome, partner := outcomeOf(t, network.db, second.device, second.src, second.dst); outcome != flows.PairSecondLeg ||
 				partner != first.device+" "+first.src+" "+first.dst {
 				t.Errorf("the upstream record is %s with partner %s", outcome, partner)
 			}
@@ -147,10 +151,10 @@ func TestAnUntranslatedIPv6PairIsPaired(t *testing.T) {
 				at: network.now - 100, seq: 99000, lag: 0}, "")
 			addresses := network.insert(t, []networkFlow{first, second})
 			network.derivePairs(t, addresses, network.now-200, network.now)
-			if outcome, _ := outcomeOf(t, network.db, first.device, first.src, first.dst); outcome != PairFirstLeg {
+			if outcome, _ := outcomeOf(t, network.db, first.device, first.src, first.dst); outcome != flows.PairFirstLeg {
 				t.Errorf("the client's record is %s", outcome)
 			}
-			if outcome, _ := outcomeOf(t, network.db, second.device, second.src, second.dst); outcome != PairSecondLeg {
+			if outcome, _ := outcomeOf(t, network.db, second.device, second.src, second.dst); outcome != flows.PairSecondLeg {
 				t.Errorf("the upstream record is %s", outcome)
 			}
 			if client := queryInt(t, network.db, `SELECT count(*) FROM flow WHERE pair_outcome = 'second_leg'
@@ -262,7 +266,7 @@ func TestAnOutLegIngestedBeforeItsInLegIsPairedAtTheSecondPass(t *testing.T) {
 			if a, b := derivedSnapshot(t, early.db), derivedSnapshot(t, late.db); a != b {
 				t.Error("two ingestion orders give different aggregates")
 			}
-			again, err := early.db.Pair(ctx, early.now-400, early.now, DefaultPairingWindowSeconds)
+			again, err := early.db.Pair(ctx, early.now-400, early.now, flows.DefaultPairingWindowSeconds)
 			if err != nil {
 				t.Fatalf("pairing again: %v", err)
 			}
@@ -303,7 +307,7 @@ func TestPairingReadsOnlyVerifiedFields(t *testing.T) {
 	}
 	verified := map[string]bool{}
 	unverified := map[string]bool{}
-	for _, field := range PairingFields {
+	for _, field := range flows.PairingFields {
 		if field.Verified {
 			if field.Column == "" {
 				t.Errorf("the verified field %s is not stored", field.LogField)
@@ -331,7 +335,7 @@ func TestPairingReadsOnlyVerifiedFields(t *testing.T) {
 		return offending
 	}
 	for _, name := range pairingStatements {
-		text, err := Statement(name)
+		text, err := sqldb.Statement(name)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -368,7 +372,7 @@ func pairedNetwork(t *testing.T, interfaces, clients int) *testNetwork {
 	// The clients looked their peers up just before, so the domain family has rows.
 	ctx := context.Background()
 	for index, client := range network.clients {
-		if err := network.db.InsertDNSResolution(ctx, DNSResolution{
+		if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-paired-lookup-%d", index), ClientAddress: client.address,
 			Domain: fmt.Sprintf("site-%d.example.invalid", index), Resolver: "unbound", Action: "pass",
 			AnswerSource: ptr("Recursion"), LookedUpAt: network.now - 1000 - int64(index)*37 - 1,
@@ -546,8 +550,8 @@ func TestNoRecordIsEverLabelledThisFirewallsOwnTraffic(t *testing.T) {
 			specs = append(specs, own)
 			network.derivePairs(t, network.insert(t, specs), network.now-1000, network.now)
 
-			if outcome, _ := outcomeOf(t, network.db, pairedOut.device, pairedOut.src, pairedOut.dst); outcome != PairSecondLeg {
-				t.Errorf("the paired leg is %s, not %s", outcome, PairSecondLeg)
+			if outcome, _ := outcomeOf(t, network.db, pairedOut.device, pairedOut.src, pairedOut.dst); outcome != flows.PairSecondLeg {
+				t.Errorf("the paired leg is %s, not %s", outcome, flows.PairSecondLeg)
 			}
 			if others := queryInt(t, network.db, `SELECT count(*) FROM flow
 				WHERE pair_outcome IS NOT NULL AND pair_outcome NOT IN ('first_leg', 'second_leg', 'not_paired')`); others != 0 {
@@ -560,11 +564,11 @@ func TestNoRecordIsEverLabelledThisFirewallsOwnTraffic(t *testing.T) {
 				OR f.pair_outcome NOT IN ('second_leg', 'not_paired'))`); wrong != 0 {
 				t.Errorf("%d upstream records sourced by this firewall have no single outcome", wrong)
 			}
-			if outcome, _ := outcomeOf(t, network.db, own.device, own.src, own.dst); outcome != PairNotPaired {
-				t.Errorf("the record no client record matches is %s, not %s", outcome, PairNotPaired)
+			if outcome, _ := outcomeOf(t, network.db, own.device, own.src, own.dst); outcome != flows.PairNotPaired {
+				t.Errorf("the record no client record matches is %s, not %s", outcome, flows.PairNotPaired)
 			}
-			if outcome, _ := outcomeOf(t, network.db, rewrittenOut.device, rewrittenOut.src, rewrittenOut.dst); outcome != PairNotPaired {
-				t.Errorf("the leg whose identification was rewritten is %s, not %s", outcome, PairNotPaired)
+			if outcome, _ := outcomeOf(t, network.db, rewrittenOut.device, rewrittenOut.src, rewrittenOut.dst); outcome != flows.PairNotPaired {
+				t.Errorf("the leg whose identification was rewritten is %s, not %s", outcome, flows.PairNotPaired)
 			}
 			if clients := queryInt(t, network.db, `SELECT count(*) FROM flow
 				WHERE pair_outcome = 'not_paired' AND src_client_id IS NOT NULL`); clients != 0 {

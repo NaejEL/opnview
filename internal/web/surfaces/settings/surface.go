@@ -1,6 +1,3 @@
-// Package settings is the settings surface: where credentials enter the product. Its cards
-// are the OPNsense credentials, the MaxMind geolocation key, the Public Suffix List's
-// refresh and the appearance (theme).
 package settings
 
 import (
@@ -12,6 +9,7 @@ import (
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
@@ -141,7 +139,7 @@ func (built view) hasUnsavedEdits() bool {
 
 // newView returns a view with everything common to every page filled in.
 func (s *surface) newView(writer http.ResponseWriter, request *http.Request,
-	session *store.Session, title messageKey) (view, error) {
+	session *accounts.Session, title messageKey) (view, error) {
 	base, err := s.NewBase(writer, request, session, title)
 	if err != nil {
 		return view{}, err

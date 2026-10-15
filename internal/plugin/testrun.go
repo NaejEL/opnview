@@ -27,10 +27,14 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/plugin/fetch"
 	"github.com/NaejEL/opnview/internal/plugin/mmdbwrite"
+	"github.com/NaejEL/opnview/internal/plugin/runtime"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/accounts"
+	"github.com/NaejEL/opnview/internal/store/plugindecl"
 	"github.com/NaejEL/opnview/internal/widget"
 )
 
@@ -98,12 +102,12 @@ func runTestFile(ctx context.Context, directory, file, source string) ([]TestRes
 	_ = vm.Set("test", func(call goja.FunctionCall) goja.Value {
 		function, isFunction := goja.AssertFunction(call.Argument(1))
 		if !isFunction {
-			throw(vm, "test(name, function (t) {...})")
+			runtime.Throw(vm, "test(name, function (t) {...})")
 		}
 		tests = append(tests, declaredTest{name: call.Argument(0).String(), function: function})
 		return goja.Undefined()
 	})
-	_ = vm.Set("opnview", helpers(vm))
+	_ = vm.Set("opnview", runtime.Helpers(vm))
 	if _, err := vm.RunScript(file, source); err != nil {
 		return nil, fmt.Errorf("plugin: %s does not run: %w", file, err)
 	}
@@ -265,11 +269,11 @@ func (w *testWorld) close() {
 func (w *testWorld) serveFirewall(writer http.ResponseWriter, request *http.Request) {
 	body, _ := io.ReadAll(request.Body)
 	matched, name := "", ""
-	for endpointName, endpoint := range w.plugin.endpoints {
+	for endpointName, endpoint := range w.plugin.Endpoints {
 		// Every route of a versioned endpoint answers with the endpoint's arranged reply.
 		paths := []string{endpoint.Path}
-		for _, held := range w.plugin.routes[endpointName] {
-			paths = append(paths, held.endpoint.Path)
+		for _, held := range w.plugin.Routes[endpointName] {
+			paths = append(paths, held.Endpoint.Path)
 		}
 		for _, path := range paths {
 			if request.URL.Path == path || strings.HasPrefix(request.URL.Path, path+"/") {
@@ -418,7 +422,7 @@ func (w *testWorld) replyOf(vm *goja.Runtime, value goja.Value) testReply {
 	reply := testReply{status: http.StatusOK}
 	object, isObject := value.(*goja.Object)
 	if !isObject {
-		throw(vm, "an answer is an object: {status, fixture | json | body, events}")
+		runtime.Throw(vm, "an answer is an object: {status, fixture | json | body, events}")
 	}
 	if status := object.Get("status"); status != nil && !goja.IsUndefined(status) {
 		reply.status = int(status.ToInteger())
@@ -426,14 +430,14 @@ func (w *testWorld) replyOf(vm *goja.Runtime, value goja.Value) testReply {
 	if fixture := object.Get("fixture"); fixture != nil && !goja.IsUndefined(fixture) {
 		body, err := w.fixture(fixture.String())
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		if object.Get("stream") != nil && object.Get("stream").ToBoolean() {
 			var stream struct {
 				Events []json.RawMessage `json:"events"`
 			}
 			if err := json.Unmarshal(body, &stream); err != nil {
-				throw(vm, "the stream fixture %s holds no events", fixture.String())
+				runtime.Throw(vm, "the stream fixture %s holds no events", fixture.String())
 			}
 			reply.events = [][]byte{}
 			for _, event := range stream.Events {
@@ -449,7 +453,7 @@ func (w *testWorld) replyOf(vm *goja.Runtime, value goja.Value) testReply {
 	if raw := object.Get("json"); raw != nil && !goja.IsUndefined(raw) {
 		encoded, err := json.Marshal(raw.Export())
 		if err != nil {
-			throw(vm, "the json answer cannot be encoded: %v", err)
+			runtime.Throw(vm, "the json answer cannot be encoded: %v", err)
 		}
 		reply.body = encoded
 	}
@@ -459,14 +463,14 @@ func (w *testWorld) replyOf(vm *goja.Runtime, value goja.Value) testReply {
 	if file := object.Get("file"); file != nil && !goja.IsUndefined(file) {
 		raw, err := os.ReadFile(filepath.Join(w.directory, "testdata", filepath.Base(file.String())))
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		reply.body = raw
 	}
 	if archive := object.Get("mmdb_archive"); archive != nil && !goja.IsUndefined(archive) {
 		raw, err := mmdbArchiveOf(archive.Export())
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		reply.body = raw
 	}
@@ -482,7 +486,7 @@ func (w *testWorld) replyOf(vm *goja.Runtime, value goja.Value) testReply {
 			reply.forever = forever.ToBoolean()
 		}
 	}
-	if headers, isMap := exportOf(object.Get("headers")).(map[string]any); isMap {
+	if headers, isMap := runtime.ExportOf(object.Get("headers")).(map[string]any); isMap {
 		reply.headers = map[string]string{}
 		for name, value := range headers {
 			reply.headers[name] = fmt.Sprint(value)
@@ -552,8 +556,8 @@ func (w *testWorld) api(vm *goja.Runtime, result *TestResult) *goja.Object {
 
 	set("answer", func(call goja.FunctionCall) goja.Value {
 		name := call.Argument(0).String()
-		if _, declared := w.plugin.endpoints[name]; !declared {
-			throw(vm, "the endpoint %q is not declared in the plugin's manifest", name)
+		if _, declared := w.plugin.Endpoints[name]; !declared {
+			runtime.Throw(vm, "the endpoint %q is not declared in the plugin's manifest", name)
 		}
 		reply := w.replyOf(vm, call.Argument(1))
 		w.mutex.Lock()
@@ -613,14 +617,14 @@ func (w *testWorld) api(vm *goja.Runtime, result *TestResult) *goja.Object {
 		}
 		if err := w.plugin.WriteSettings(context.Background(), w.settings, w.box, submitted,
 			w.reference.Unix()); err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		return goja.Undefined()
 	})
 	set("settingValues", func(goja.FunctionCall) goja.Value {
 		values, err := w.plugin.SettingValues(context.Background(), w.settings)
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		encoded, _ := json.Marshal(values)
 		var decoded any
@@ -632,14 +636,14 @@ func (w *testWorld) api(vm *goja.Runtime, result *TestResult) *goja.Object {
 	set("dataFile", func(call goja.FunctionCall) goja.Value {
 		name := call.Argument(0).String()
 		if name != filepath.Base(name) || strings.HasPrefix(name, ".") {
-			throw(vm, "%q is not a file name of the plugin's data directory", name)
+			runtime.Throw(vm, "%q is not a file name of the plugin's data directory", name)
 		}
 		directory := fetch.DataDirectory(w.dataDir, w.plugin.Name)
 		if err := os.MkdirAll(directory, 0o750); err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		if err := os.WriteFile(filepath.Join(directory, name), []byte(call.Argument(1).String()), 0o640); err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		return goja.Undefined()
 	})
@@ -660,22 +664,22 @@ func (w *testWorld) api(vm *goja.Runtime, result *TestResult) *goja.Object {
 	})
 	set("value", func(call goja.FunctionCall) goja.Value {
 		if w.plugin.script == nil {
-			throw(vm, "the plugin has no script")
+			runtime.Throw(vm, "the plugin has no script")
 		}
-		value, err := w.plugin.script.exportedValue(call.Argument(0).String(), call.Argument(1).String())
+		value, err := w.plugin.script.ExportedValue(call.Argument(0).String(), call.Argument(1).String())
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		return vm.ToValue(value)
 	})
 	set("helper", func(call goja.FunctionCall) goja.Value {
 		var arguments []any
 		for _, argument := range call.Arguments[1:] {
-			arguments = append(arguments, jsonShape(argument.Export()))
+			arguments = append(arguments, runtime.JSONShape(argument.Export()))
 		}
 		answer, err := w.plugin.Call(context.Background(), nil, "helpers", call.Argument(0).String(), arguments...)
 		if err != nil {
-			throw(vm, "%v", err)
+			runtime.Throw(vm, "%v", err)
 		}
 		return vm.ToValue(answer)
 	})
@@ -696,8 +700,8 @@ func (w *testWorld) api(vm *goja.Runtime, result *TestResult) *goja.Object {
 		return goja.Undefined()
 	})
 	set("equal", func(call goja.FunctionCall) goja.Value {
-		got, _ := json.Marshal(jsonShape(call.Argument(0).Export()))
-		want, _ := json.Marshal(jsonShape(call.Argument(1).Export()))
+		got, _ := json.Marshal(runtime.JSONShape(call.Argument(0).Export()))
+		want, _ := json.Marshal(runtime.JSONShape(call.Argument(1).Export()))
 		if !bytes.Equal(got, want) {
 			fail(fmt.Sprintf("%s: got %s, want %s", call.Argument(2).String(), got, want))
 		}
@@ -757,7 +761,7 @@ func discoveryOf(value goja.Value) provider.Discovery {
 func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, arguments []any) goja.Value {
 	base, found := w.plugin.adapters[kind]
 	if !found {
-		throw(vm, "the plugin provides no %s", kind)
+		runtime.Throw(vm, "the plugin provides no %s", kind)
 	}
 	live := w.plugin.liveOf(kind, function)
 	if kind == "measurement_sample" && (function == "sample" || live != nil) && len(arguments) >= 1 {
@@ -791,7 +795,7 @@ func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, argume
 			maxAge: time.Duration(live.fallback) * time.Second, only: live.only}
 	}
 	if table == "" {
-		throw(vm, "the %s contract has no function %s", kind, function)
+		runtime.Throw(vm, "the %s contract has no function %s", kind, function)
 	}
 	var (
 		checked map[string]any
@@ -799,7 +803,7 @@ func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, argume
 	)
 	if provider.IsServiceKind(kind) {
 		var answerErr error
-		var failed *failure
+		var failed *runtime.Failure
 		checked, answerErr, failed = base.runService(context.Background(), w.session(), function, table, arguments...)
 		if failed != nil {
 			err = failed
@@ -815,8 +819,8 @@ func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, argume
 				}
 			}
 		}
-		adapter := declaredKindAdapter{adapter: base, tables: map[string]store.PluginTable{}}
-		for _, table := range w.plugin.tables {
+		adapter := declaredKindAdapter{adapter: base, tables: map[string]plugindecl.PluginTable{}}
+		for _, table := range w.plugin.OwnTables {
 			adapter.tables[table.Table] = table
 		}
 		pass, result, collectErr := adapter.Collect(context.Background(), w.session(), state)
@@ -832,12 +836,12 @@ func (w *testWorld) callProvider(vm *goja.Runtime, kind, function string, argume
 	for key, value := range checked {
 		reply[key] = value
 	}
-	var failed *failure
+	var failed *runtime.Failure
 	switch {
 	case err == nil:
 	case errors.As(err, &failed):
-		reply["failure"] = string(failed.code)
-		reply["error"] = failed.detail
+		reply["failure"] = string(failed.Code)
+		reply["error"] = failed.Detail
 	case errors.Is(err, provider.ErrUnsupportedRead):
 		reply["unsupported"] = err.Error()
 	default:
@@ -866,23 +870,15 @@ func stopped(err error) bool {
 	return isStop
 }
 
-// exportOf exports a property that may be absent.
-func exportOf(value goja.Value) any {
-	if value == nil {
-		return nil
-	}
-	return value.Export()
-}
-
 // ownsTables reports whether the plugin in a directory needs a database to be tested: it declares
 // tables, or it carries widgets, which read opnview's own. It is read from the manifest before the
 // plugin is loaded; a manifest that does not read is left for the loader to refuse.
 func ownsTables(directory string) bool {
-	raw, err := os.ReadFile(filepath.Join(directory, ManifestFile))
+	raw, err := os.ReadFile(filepath.Join(directory, contract.ManifestFile))
 	if err != nil {
 		return false
 	}
-	manifest, err := decodeManifest(raw)
+	manifest, err := contract.DecodeManifest(raw)
 	return err == nil && (len(manifest.Tables) > 0 || len(manifest.Widgets) > 0)
 }
 
@@ -890,11 +886,11 @@ func ownsTables(directory string) bool {
 type memorySettings struct {
 	mutex       sync.Mutex
 	values      map[string]string
-	credentials map[string]store.EncryptedCredential
+	credentials map[string]accounts.EncryptedCredential
 }
 
 func newMemorySettings() *memorySettings {
-	return &memorySettings{values: map[string]string{}, credentials: map[string]store.EncryptedCredential{}}
+	return &memorySettings{values: map[string]string{}, credentials: map[string]accounts.EncryptedCredential{}}
 }
 
 func (m *memorySettings) Setting(_ context.Context, key string) (string, bool, error) {
@@ -918,14 +914,14 @@ func (m *memorySettings) DeleteSetting(_ context.Context, key string) error {
 	return nil
 }
 
-func (m *memorySettings) Credential(_ context.Context, name string) (store.EncryptedCredential, bool, error) {
+func (m *memorySettings) Credential(_ context.Context, name string) (accounts.EncryptedCredential, bool, error) {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	credential, present := m.credentials[name]
 	return credential, present, nil
 }
 
-func (m *memorySettings) SetCredential(_ context.Context, credential store.EncryptedCredential) error {
+func (m *memorySettings) SetCredential(_ context.Context, credential accounts.EncryptedCredential) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 	m.credentials[credential.Name] = credential

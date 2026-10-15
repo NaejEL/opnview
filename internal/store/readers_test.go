@@ -4,6 +4,10 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // B8d and decision 10 of specs/SPEC-step-5b-widget-api.md: the read functions run on
@@ -22,7 +26,7 @@ func TestTheReadFunctionsRunPreparedStatementsFromOneCache(t *testing.T) {
 		if _, err := network.db.ReadVolumeWindow(ctx, from, to, network.now); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := network.db.ReadConnectionTree(ctx, from, to, TreeRootOwner); err != nil {
+		if _, err := network.db.ReadConnectionTree(ctx, from, to, reads.TreeRootOwner); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := network.db.ReadAttributionRate(ctx, from, to, nil); err != nil {
@@ -37,7 +41,7 @@ func TestTheReadFunctionsRunPreparedStatementsFromOneCache(t *testing.T) {
 		if _, err := network.db.ReadPublicAddresses(ctx); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := network.db.ReadSiteTotals(ctx, PeriodDay, from, to); err != nil {
+		if _, err := network.db.ReadSiteTotals(ctx, vocab.PeriodDay, from, to); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -60,11 +64,11 @@ func TestTheReadConnectionsCannotWrite(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
-	if _, err := database.reader.db.ExecContext(ctx, "DELETE FROM setting"); err == nil ||
+	if _, err := database.Reader.DB.ExecContext(ctx, "DELETE FROM setting"); err == nil ||
 		!strings.Contains(err.Error(), "25006") {
 		t.Errorf("a write on the read connections was not refused as a read-only transaction: %v", err)
 	}
-	connection, err := database.reader.db.Conn(ctx)
+	connection, err := database.Reader.DB.Conn(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +80,7 @@ func TestTheReadConnectionsCannotWrite(t *testing.T) {
 	}
 	_, _ = connection.ExecContext(ctx, "ROLLBACK")
 	_ = connection.Close()
-	if _, err := database.reader.ExecContext(ctx, "DELETE FROM setting"); err == nil {
+	if _, err := database.Reader.ExecContext(ctx, "DELETE FROM setting"); err == nil {
 		t.Error("the read pool's querier accepted a write")
 	}
 	if _, err := database.WidgetRow(ctx, "read_volume_slots", nil); err == nil {
@@ -91,9 +95,9 @@ func TestTheReadRoleCannotReadASecretNorRaiseItself(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
-	for _, object := range unreadableObjects {
+	for _, object := range sqldb.UnreadableObjects {
 		t.Run(object, func(t *testing.T) {
-			if _, err := database.reader.db.QueryContext(ctx, "SELECT * FROM "+object); err == nil ||
+			if _, err := database.Reader.DB.QueryContext(ctx, "SELECT * FROM "+object); err == nil ||
 				!strings.Contains(err.Error(), "42501") {
 				t.Errorf("reading %s on the read connections gave %v, not a permission error", object, err)
 			}
@@ -105,7 +109,7 @@ func TestTheReadRoleCannotReadASecretNorRaiseItself(t *testing.T) {
 		"listing a directory":    "SELECT pg_ls_dir('.')",
 		"reading through a view": "SELECT count(*) FROM pg_catalog.pg_authid",
 	} {
-		rows, err := database.reader.db.QueryContext(ctx, statement)
+		rows, err := database.Reader.DB.QueryContext(ctx, statement)
 		if err == nil {
 			err = rows.Err()
 			for rows.Next() {
@@ -117,8 +121,8 @@ func TestTheReadRoleCannotReadASecretNorRaiseItself(t *testing.T) {
 		}
 	}
 	var role string
-	if err := database.reader.db.QueryRowContext(ctx, "SELECT current_user").Scan(&role); err != nil ||
-		role != database.reader.role {
+	if err := database.Reader.DB.QueryRowContext(ctx, "SELECT current_user").Scan(&role); err != nil ||
+		role != database.Reader.Role {
 		t.Errorf("the read connections run as %q (%v)", role, err)
 	}
 }

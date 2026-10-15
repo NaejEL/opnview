@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/collect/derive"
+	"github.com/NaejEL/opnview/internal/store/netflow"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The capture configuration, the states and loss detectability it gives, and the identity of a record
@@ -35,10 +37,10 @@ func TestCoverageAndStatesFollowTheConfiguration(t *testing.T) {
 		h.deliver(t, at+30, insideReverse)
 		h.logged(t, natLegs("nat", at, "pass")...)
 		connection := h.flowID(t, "nat1")
-		if volume := volumeOf(t, h, connection, store.OrientationForward); volume.state != store.VolumeNotCaptured {
+		if volume := volumeOf(t, h, connection, netflow.OrientationForward); volume.state != netflow.VolumeNotCaptured {
 			t.Errorf("the forward direction of an in leg at an egress-only point is %s", volume.state)
 		}
-		if volume := volumeOf(t, h, connection, store.OrientationReverse); volume.state != store.VolumeMeasured ||
+		if volume := volumeOf(t, h, connection, netflow.OrientationReverse); volume.state != netflow.VolumeMeasured ||
 			volume.bytes != 20000 {
 			t.Errorf("the reverse direction is %+v, want measured", volume)
 		}
@@ -55,7 +57,7 @@ func TestCoverageAndStatesFollowTheConfiguration(t *testing.T) {
 		h.at(netflowReadSecond)
 		h.deliver(t, at+30, insideForward)
 		h.logged(t, natLegs("nat", at, "pass")...)
-		if state := states(t, h)[1000]; state != store.CaptureUnknown {
+		if state := states(t, h)[1000]; state != netflow.CaptureUnknown {
 			t.Errorf("a record under an unreadable configuration is %s", state)
 		}
 		if volumes := h.volumes(t); len(volumes) != 0 {
@@ -76,7 +78,7 @@ func TestCoverageAndStatesFollowTheConfiguration(t *testing.T) {
 		h.deliver(t, at+55)
 		h.recordGaps()
 		h.logged(t, natLegs("nat", at, "pass")...)
-		if volume := volumeOf(t, h, h.flowID(t, "nat1"), store.OrientationForward); volume.state != store.VolumeExportGap {
+		if volume := volumeOf(t, h, h.flowID(t, "nat1"), netflow.OrientationForward); volume.state != netflow.VolumeExportGap {
 			t.Errorf("a direction a sequence gap meets is %s, want export_gap", volume.state)
 		}
 	})
@@ -90,8 +92,8 @@ func TestCoverageAndStatesFollowTheConfiguration(t *testing.T) {
 		legs := natLegs("nat", at, "pass")
 		legs[1].action = "block"
 		h.logged(t, legs...)
-		if volume := volumeOf(t, h, h.flowID(t, "nat1"), store.OrientationForward); volume.state !=
-			store.VolumeNotExportedWhenRefused || orNull(volume.leg) != store.MeasuredAtSecondLeg {
+		if volume := volumeOf(t, h, h.flowID(t, "nat1"), netflow.OrientationForward); volume.state !=
+			netflow.VolumeNotExportedWhenRefused || orNull(volume.leg) != netflow.MeasuredAtSecondLeg {
 			t.Errorf("the forward direction of a refused out leg is %+v (leg %s)", volume, orNull(volume.leg))
 		}
 
@@ -101,8 +103,8 @@ func TestCoverageAndStatesFollowTheConfiguration(t *testing.T) {
 		blocked.at(netflowReadSecond)
 		blocked.deliver(t, at+30, forward(6, 50500, 22, 0x02, 60, at, at))
 		blocked.logged(t, singleLeg("blocked", at, "tcp", 6, 50500, 22, "block"))
-		if volume := volumeOf(t, blocked, blocked.flowID(t, "blocked"), store.OrientationForward); volume.state !=
-			store.VolumeMeasured || volume.bytes != 60 {
+		if volume := volumeOf(t, blocked, blocked.flowID(t, "blocked"), netflow.OrientationForward); volume.state !=
+			netflow.VolumeMeasured || volume.bytes != 60 {
 			t.Errorf("the forward direction of a refused in leg is %+v, want measured", volume)
 		}
 	})
@@ -124,13 +126,13 @@ func TestCoverageAndStatesFollowTheConfiguration(t *testing.T) {
 		for _, record := range h.records(t) {
 			got[record.octets], points[record.octets] = record.captureState, orNull(record.point)
 		}
-		if got[101] != store.CaptureObservationPoint || points[101] != insideIdentifier {
+		if got[101] != netflow.CaptureObservationPoint || points[101] != insideIdentifier {
 			t.Errorf("the record stored before the change is %s at %s, want its earlier point", got[101], points[101])
 		}
-		if got[102] != store.CaptureUnknown {
+		if got[102] != netflow.CaptureUnknown {
 			t.Errorf("a record starting between the two reads is %s, want capture_configuration_unknown", got[102])
 		}
-		if got[103] != store.CaptureObservationPoint || points[103] != upstreamIdentifier {
+		if got[103] != netflow.CaptureObservationPoint || points[103] != upstreamIdentifier {
 			t.Errorf("a record after the new read is %s at %s", got[103], points[103])
 		}
 	})
@@ -150,11 +152,11 @@ func TestMoreOrFewerThanOneCapturedInterfaceIsStoredAndNeverJoined(t *testing.T)
 		state      string
 		count      int64
 	}{
-		{"zero", nil, store.CaptureNotConfigured, 0},
+		{"zero", nil, netflow.CaptureNotConfigured, 0},
 		{"two", []captured{{identifier: insideIdentifier}, {identifier: upstreamIdentifier}},
-			store.CaptureObservationPointHidden, 2},
+			netflow.CaptureObservationPointHidden, 2},
 		{"three", []captured{{identifier: insideIdentifier}, {identifier: "example_if_b"},
-			{identifier: upstreamIdentifier}}, store.CaptureObservationPointHidden, 3},
+			{identifier: upstreamIdentifier}}, netflow.CaptureObservationPointHidden, 3},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
@@ -175,7 +177,7 @@ func TestMoreOrFewerThanOneCapturedInterfaceIsStoredAndNeverJoined(t *testing.T)
 			}
 			for _, record := range records {
 				if record.captureState != scenario.state || record.point != nil || record.device != nil ||
-					record.direction != nil || record.joinState != store.JoinNotJoinable || record.lossDetectable != 0 {
+					record.direction != nil || record.joinState != netflow.JoinNotJoinable || record.lossDetectable != 0 {
 					t.Errorf("a record is %+v, want %s with no Observation Point, not joinable, loss not detectable",
 						record, scenario.state)
 				}
@@ -183,7 +185,7 @@ func TestMoreOrFewerThanOneCapturedInterfaceIsStoredAndNeverJoined(t *testing.T)
 					t.Errorf("a record names %v captured interfaces, want %d", record.captured, scenario.count)
 				}
 			}
-			if changed, err := h.collector.joinFlowRecords(context.Background()); err != nil || changed != 0 {
+			if changed, err := h.collector.JoinFlowRecords(context.Background()); err != nil || changed != 0 {
 				t.Errorf("the join changed %d rows (%v)", changed, err)
 			}
 			if volumes := h.volumes(t); len(volumes) != 0 {
@@ -250,17 +252,17 @@ func TestAnInterleavingStreamSuspendsTheJoinUnderOneInterface(t *testing.T) {
 	// Back: a second counter shares the domain. The stream contradicts the configuration from here.
 	h.deliverRaw(t, datagram(at+12, 11, forward(17, 43002, 53, 0, 3, at+12, at+13)))
 	got := states(t, h)
-	if got[1] != store.CaptureObservationPoint || got[2] != store.CaptureObservationPoint {
+	if got[1] != netflow.CaptureObservationPoint || got[2] != netflow.CaptureObservationPoint {
 		t.Errorf("records before the contradiction are %s and %s, want their Observation Point", got[1], got[2])
 	}
-	if got[3] != store.CaptureUnknown {
+	if got[3] != netflow.CaptureUnknown {
 		t.Errorf("a record after the contradiction is %s, want capture_configuration_unknown", got[3])
 	}
 	// A later read ends the suspension.
 	h.capture(t, at+100, captured{identifier: insideIdentifier})
 	h.at(netflowReadSecond)
 	h.deliverRaw(t, datagram(at+120, 12, forward(17, 43003, 53, 0, 4, at+110, at+111)))
-	if state := states(t, h)[4]; state != store.CaptureObservationPoint {
+	if state := states(t, h)[4]; state != netflow.CaptureObservationPoint {
 		t.Errorf("a record after the next read is %s, want its Observation Point again", state)
 	}
 }
@@ -274,11 +276,11 @@ func TestAnUnavailableConfigurationIsReportedAndNothingIsGuessed(t *testing.T) {
 		name    string
 		status  int
 		body    string
-		outcome store.AvailabilityOutcome
+		outcome vocab.AvailabilityOutcome
 	}{
-		{"not found", http.StatusNotFound, `{"message":"no"}`, store.OutcomeNotFound},
-		{"forbidden", http.StatusForbidden, `{"message":"no"}`, store.OutcomeDenied},
-		{"unparseable", http.StatusOK, `{"netflow": "not the model"}`, store.OutcomeUndecodable},
+		{"not found", http.StatusNotFound, `{"message":"no"}`, vocab.OutcomeNotFound},
+		{"forbidden", http.StatusForbidden, `{"message":"no"}`, vocab.OutcomeDenied},
+		{"unparseable", http.StatusOK, `{"netflow": "not the model"}`, vocab.OutcomeUndecodable},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			t.Parallel()
@@ -288,7 +290,7 @@ func TestAnUnavailableConfigurationIsReportedAndNothingIsGuessed(t *testing.T) {
 			if err := h.collector.CollectFlowRecordCapture(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			providerID, err := h.store.ProviderID(context.Background(), KindFlowRecord, h.key)
+			providerID, err := h.store.ProviderID(context.Background(), derive.KindFlowRecord, h.key)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -307,7 +309,7 @@ func TestAnUnavailableConfigurationIsReportedAndNothingIsGuessed(t *testing.T) {
 			}
 			h.at(netflowReadSecond)
 			h.deliver(t, legInstant+30, forward(17, 44000, 53, 0, 9, legInstant, legInstant+1))
-			if state := states(t, h)[9]; state != store.CaptureUnknown {
+			if state := states(t, h)[9]; state != netflow.CaptureUnknown {
 				t.Errorf("a record is %s, want capture_configuration_unknown", state)
 			}
 			for _, request := range h.fake.Requests() {

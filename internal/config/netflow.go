@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/netflow"
 )
 
 // The NetFlow settings (PS17-PS19 of the NetFlow join amendment to
@@ -19,10 +19,10 @@ const (
 	KeyFlowRecordInterval = "poll_interval_flow_record_seconds"
 	// KeyNetflowJoinTolerance is how far after a leg was logged, in seconds, a flow record may start
 	// and still join it (PS19 rule 3). The schema writes its default row.
-	KeyNetflowJoinTolerance = store.NetflowJoinToleranceKey
+	KeyNetflowJoinTolerance = netflow.NetflowJoinToleranceKey
 	// KeyFlowRecordRetention is how long a flow record is kept, in seconds; 0 follows
 	// retention_seconds (PS17). The schema writes its default row.
-	KeyFlowRecordRetention = store.FlowRecordRetentionKey
+	KeyFlowRecordRetention = netflow.FlowRecordRetentionKey
 )
 
 // DefaultFlowRecordInterval is 60 s. Not a survey cadence: the read is one model's settings, which
@@ -41,7 +41,7 @@ const DefaultFlowRecordInterval = 60 * time.Second
 //     which is measured to the second.
 //
 // LV-NJ measures the distribution of record start minus leg instant and confirms or replaces it.
-const DefaultNetflowJoinToleranceSeconds = store.DefaultNetflowJoinToleranceSeconds
+const DefaultNetflowJoinToleranceSeconds = netflow.DefaultNetflowJoinToleranceSeconds
 
 // MaxNetflowJoinToleranceSeconds is 60 s: a tolerance larger than a minute would let a record join a
 // leg logged a minute before it began, which no resolution explains.

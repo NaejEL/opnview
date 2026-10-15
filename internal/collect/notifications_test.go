@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // TestATriggeredPassRunsAfterTheEventNeverSoonerThanItsBoundNorConcurrently is P-AC14's second
@@ -18,9 +19,9 @@ import (
 func TestATriggeredPassRunsAfterTheEventNeverSoonerThanItsBoundNorConcurrently(t *testing.T) {
 	t.Parallel()
 	clock := newFixedClock(referenceInstant())
-	var routes triggers
-	wake := routes.wakeOn([]string{store.ChannelCollectionPass + ":dhcp_lease"})
-	if channels := routes.channels(); len(channels) != 1 || channels[0] != store.ChannelCollectionPass {
+	var routes core.Triggers
+	wake := routes.WakeOn([]string{sqldb.ChannelCollectionPass + ":dhcp_lease"})
+	if channels := routes.Channels(); len(channels) != 1 || channels[0] != sqldb.ChannelCollectionPass {
 		t.Fatalf("the listener would listen on %v", channels)
 	}
 
@@ -29,7 +30,7 @@ func TestATriggeredPassRunsAfterTheEventNeverSoonerThanItsBoundNorConcurrently(t
 	started := make(chan time.Time, 16)
 	release := make(chan struct{})
 	var holding atomic.Bool
-	task := Task{Name: "example_kind example_reader", Interval: FixedInterval(time.Hour), RunAtStart: true,
+	task := core.Task{Name: "example_kind example_reader", Interval: core.FixedInterval(time.Hour), RunAtStart: true,
 		Wake: wake, MinGap: bound,
 		Run: func(context.Context) error {
 			if running.Add(1) > 1 {
@@ -49,15 +50,15 @@ func TestATriggeredPassRunsAfterTheEventNeverSoonerThanItsBoundNorConcurrently(t
 	finished.Add(1)
 	go func() {
 		defer finished.Done()
-		_ = Run(ctx, clock, []Task{task}, nil)
+		_ = core.Run(ctx, clock, []core.Task{task}, nil)
 	}()
 	first := <-started
 
 	// A notification of another kind wakes nothing.
-	routes.heard(store.Notification{Channel: store.ChannelCollectionPass,
+	routes.Heard(sqldb.Notification{Channel: sqldb.ChannelCollectionPass,
 		Payload: map[string]any{"kind": "firewall_log", "provider_key": "pf"}})
 	// The one it named does, but only once the bound has passed since the first pass began.
-	routes.heard(store.Notification{Channel: store.ChannelCollectionPass,
+	routes.Heard(sqldb.Notification{Channel: sqldb.ChannelCollectionPass,
 		Payload: map[string]any{"kind": "dhcp_lease", "provider_key": "kea"}})
 	clock.awaitWaiters(t, 2) // the abandoned interval wait, and the wait for the bound
 	if got := passes.Load(); got != 1 {
@@ -78,7 +79,7 @@ func TestATriggeredPassRunsAfterTheEventNeverSoonerThanItsBoundNorConcurrently(t
 	clock.releaseAll()
 	<-started
 	for range 3 {
-		routes.heard(store.Notification{Channel: store.ChannelCollectionPass,
+		routes.Heard(sqldb.Notification{Channel: sqldb.ChannelCollectionPass,
 			Payload: map[string]any{"kind": "dhcp_lease"}})
 	}
 	holding.Store(false)

@@ -1,12 +1,14 @@
 package web_test
 
 import (
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"math"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 )
 
 // TestADurationIsSpelledExactly: every unit it holds, longest first, nothing rounded,
@@ -26,8 +28,8 @@ func TestADurationIsSpelledExactly(t *testing.T) {
 		172920:  "2 days 2 minutes",
 	} {
 		var words []string
-		for _, part := range web.SpelledDuration(seconds) {
-			words = append(words, part.Figure, webtest.CatalogueText(t, part.UnitKey))
+		for _, part := range settingfields.SpelledDuration(seconds) {
+			words = append(words, part.Figure, collectiontest.CatalogueText(t, part.UnitKey))
 		}
 		if got := strings.Join(words, " "); got != want {
 			t.Errorf("%d seconds is spelled %q, want %q", seconds, got, want)
@@ -39,16 +41,16 @@ func TestADurationIsSpelledExactly(t *testing.T) {
 func TestADurationFieldHoldsTheValueInItsLongestExactUnit(t *testing.T) {
 	t.Parallel()
 	for seconds, want := range map[int64][2]string{
-		0:       {"0", web.UnitSeconds},
-		5:       {"5", web.UnitSeconds},
-		90:      {"90", web.UnitSeconds},
-		300:     {"5", web.UnitMinutes},
-		3600:    {"1", web.UnitHours},
-		5400:    {"90", web.UnitMinutes},
-		86400:   {"1", web.UnitDays},
-		7776000: {"90", web.UnitDays},
+		0:       {"0", settingfields.UnitSeconds},
+		5:       {"5", settingfields.UnitSeconds},
+		90:      {"90", settingfields.UnitSeconds},
+		300:     {"5", settingfields.UnitMinutes},
+		3600:    {"1", settingfields.UnitHours},
+		5400:    {"90", settingfields.UnitMinutes},
+		86400:   {"1", settingfields.UnitDays},
+		7776000: {"90", settingfields.UnitDays},
 	} {
-		figure, unit := web.FieldDuration(seconds)
+		figure, unit := settingfields.FieldDuration(seconds)
 		if figure != want[0] || unit != want[1] {
 			t.Errorf("%d seconds fills the field with %s %s, want %s %s", seconds, figure, unit,
 				want[0], want[1])
@@ -65,16 +67,16 @@ func TestATypedDurationBecomesSeconds(t *testing.T) {
 		figure, unit, seconds string
 		refusal               web.MessageKey
 	}{
-		{"2", web.UnitHours, "7200", ""},
-		{"90", web.UnitDays, "7776000", ""},
-		{"-1", web.UnitMinutes, "-60", ""},
-		{"1.5", web.UnitSeconds, "1.5", ""},
+		{"2", settingfields.UnitHours, "7200", ""},
+		{"90", settingfields.UnitDays, "7776000", ""},
+		{"-1", settingfields.UnitMinutes, "-60", ""},
+		{"1.5", settingfields.UnitSeconds, "1.5", ""},
 		{"often", "", "often", ""},
-		{"often", web.UnitDays, "often", ""},
+		{"often", settingfields.UnitDays, "often", ""},
 		{"1", "fortnights", "", web.MessageKey("error.duration_unit_unknown")},
-		{strconv.FormatInt(math.MaxInt64/86400+1, 10), web.UnitDays, "", web.MessageKey("error.collection_interval_too_large")},
+		{strconv.FormatInt(math.MaxInt64/86400+1, 10), settingfields.UnitDays, "", web.MessageKey("error.collection_interval_too_large")},
 	} {
-		seconds, refusal := web.TypedDuration(typed.figure, typed.unit)
+		seconds, refusal := settingfields.TypedDuration(typed.figure, typed.unit)
 		if seconds != typed.seconds || refusal != typed.refusal {
 			t.Errorf("%s %s became %q refused %q, want %q refused %q", typed.figure, typed.unit,
 				seconds, refusal, typed.seconds, typed.refusal)

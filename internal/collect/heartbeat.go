@@ -4,8 +4,10 @@ import (
 	"context"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/aggregates"
 )
 
 // opnview's heartbeat (SPEC-step-5b-widget-api.md, D2).
@@ -25,21 +27,21 @@ import (
 
 // RecordStart records the start of the service: the interval since the last heartbeat
 // when it exceeds the threshold, and a heartbeat at now.
-func RecordStart(ctx context.Context, database *store.Store, settings config.Config, clock Clock) (
-	*store.NotRunningInterval, error) {
+func RecordStart(ctx context.Context, database *store.Store, settings config.Config, clock core.Clock) (
+	*aggregates.NotRunningInterval, error) {
 	return database.RecordStart(ctx, clock.Now().UTC().Unix(), settings.DowntimeThresholdSeconds)
 }
 
 // RecordCleanStop records a clean stop at now.
-func RecordCleanStop(ctx context.Context, database *store.Store, clock Clock) error {
+func RecordCleanStop(ctx context.Context, database *store.Store, clock core.Clock) error {
 	return database.RecordCleanStop(ctx, clock.Now().UTC().Unix())
 }
 
 // HeartbeatTask is the loop that records that the service is alive. Its interval and its
 // threshold are read from the live configuration on every turn, so a saved value takes
 // effect without a restart. It does not run at start: RecordStart has just beaten.
-func HeartbeatTask(settings *config.Live, database *store.Store, clock Clock) Task {
-	return Task{
+func HeartbeatTask(settings *config.Live, database *store.Store, clock core.Clock) core.Task {
+	return core.Task{
 		Name: "heartbeat",
 		Interval: settings.Interval(func(s config.Config) time.Duration {
 			return time.Duration(s.HeartbeatIntervalSeconds) * time.Second

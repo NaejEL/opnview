@@ -11,10 +11,13 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
 	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
 	"github.com/NaejEL/opnview/internal/web/surfaces/settings"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
 // The settings surface's JSON equivalents (C-AC9): every figure of the page in the JSON answer,
@@ -70,11 +73,11 @@ func assertSameChange(t *testing.T, cases []pageAndJSON) {
 	t.Helper()
 	for _, input := range cases {
 		t.Run(input.what, func(t *testing.T) {
-			pageSide, jsonSide := webtest.SignedInHarness(t), webtest.SignedInHarness(t)
+			pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
 			pageBefore, jsonBefore := storedRows(t, pageSide), storedRows(t, jsonSide)
 			answer := pageSide.Post(web.PathSettings, input.form(pageSide))
 			webtest.Discard(t, answer)
-			status, decoded := jsonSide.SendJSON(input.path, input.body(jsonSide))
+			status, decoded := settingstest.SendJSON(jsonSide, input.path, input.body(jsonSide))
 			if input.refused {
 				if answer.StatusCode != http.StatusBadRequest {
 					t.Errorf("the page answered %d rather than refusing", answer.StatusCode)
@@ -133,7 +136,7 @@ func TestTheSettingsJSONSavesMakeThePagesChangeAndRefuseItsInputs(t *testing.T) 
 			path: settings.PathAPIPublicSuffix,
 			form: func(*webtest.Harness) url.Values {
 				return url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardPublicSuffix}, field: {seconds},
-					web.UnitFieldName(field): {web.UnitSeconds}}
+					settingfields.UnitFieldName(field): {settingfields.UnitSeconds}}
 			},
 			body: func(*webtest.Harness) map[string]any {
 				if number, err := strconv.ParseInt(seconds, 10, 64); err == nil {
@@ -183,15 +186,15 @@ func TestTheMaxMindCardsJSONEquivalentIsTheMaxMindPluginsSettings(t *testing.T) 
 	})
 
 	t.Run("an emptied account ID is removed by both", func(t *testing.T) {
-		pageSide, jsonSide := webtest.SignedInHarness(t), webtest.SignedInHarness(t)
+		pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
 		for _, h := range []*webtest.Harness{pageSide, jsonSide} {
-			if status, answer := h.SendJSON(path, map[string]any{"account_id": 100001}); status != http.StatusOK {
+			if status, answer := settingstest.SendJSON(h, path, map[string]any{"account_id": 100001}); status != http.StatusOK {
 				t.Fatalf("storing an account ID answered %d %v", status, answer)
 			}
 		}
 		webtest.Discard(t, pageSide.Post(web.PathSettings, url.Values{
 			webtest.FieldSettingsCard: {webtest.SettingsCardGeolocation}, "maxmind_account_id": {""}}))
-		if status, answer := jsonSide.SendJSON(path, map[string]any{"account_id": nil}); status != http.StatusOK {
+		if status, answer := settingstest.SendJSON(jsonSide, path, map[string]any{"account_id": nil}); status != http.StatusOK {
 			t.Fatalf("clearing the account ID answered %d %v", status, answer)
 		}
 		for _, h := range []*webtest.Harness{pageSide, jsonSide} {
@@ -208,7 +211,7 @@ func TestTheFirewallCertificateIsFetchedAndStoredNowhere(t *testing.T) {
 	h := webtest.NewTLS(t)
 	h.CompleteSetup()
 	before := storedRows(t, h)
-	status, answer := h.SendJSON(settings.PathAPIFirewallCertificate, map[string]any{"url": h.Fake.BaseURL()})
+	status, answer := settingstest.SendJSON(h, settings.PathAPIFirewallCertificate, map[string]any{"url": h.Fake.BaseURL()})
 	if status != http.StatusOK || answer["presented_fingerprint"] != h.Fake.Fingerprint() {
 		t.Errorf("fetching the certificate answered %d %v, the firewall presents %s", status, answer,
 			h.Fake.Fingerprint())
@@ -217,7 +220,7 @@ func TestTheFirewallCertificateIsFetchedAndStoredNowhere(t *testing.T) {
 		{"", "firewall_url_required"},
 		{"ftp://firewall.invalid", "firewall_url_invalid"},
 	} {
-		status, answer := h.SendJSON(settings.PathAPIFirewallCertificate, map[string]any{"url": refused.url})
+		status, answer := settingstest.SendJSON(h, settings.PathAPIFirewallCertificate, map[string]any{"url": refused.url})
 		if status != http.StatusBadRequest || answer["condition"] != refused.condition {
 			t.Errorf("fetching from %q answered %d %v rather than %s", refused.url, status, answer, refused.condition)
 		}
@@ -237,18 +240,18 @@ func TestTheSettingsJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reading the page's figures: %v", err)
 		}
-		answer := h.GetJSON(settings.PathAPISettings)
+		answer := settingstest.GetJSON(h, settings.PathAPISettings)
 		text := func(path ...any) string {
-			value, _ := webtest.Path(answer, path...).(string)
+			value, _ := settingstest.Path(answer, path...).(string)
 			return value
 		}
 		number := func(path ...any) (int64, bool) {
-			value, ok := webtest.Path(answer, path...).(float64)
+			value, ok := settingstest.Path(answer, path...).(float64)
 			return int64(value), ok
 		}
 		instant := func(path ...any) string {
 			if value, ok := number(path...); ok {
-				return web.Instant(value)
+				return settingfields.Instant(value)
 			}
 			return ""
 		}
@@ -274,10 +277,10 @@ func TestTheSettingsJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		state("geoip_state", text("geolocation", "download_state"))
 		same("geoip_build", instant("geolocation", "build_at"))
 		state("public_suffix.state", text("public_suffix", "state"))
-		inUse, _ := webtest.Path(answer, "public_suffix", "in_use").(bool)
+		inUse, _ := settingstest.Path(answer, "public_suffix", "in_use").(bool)
 		state("public_suffix.in_use", map[bool]string{true: "yes", false: "no"}[inUse])
 		same("public_suffix.version", text("public_suffix", "version"))
-		stated, _ := webtest.Path(answer, "public_suffix", "version_stated").(bool)
+		stated, _ := settingstest.Path(answer, "public_suffix", "version_stated").(bool)
 		if (figures["public_suffix.version_state"] != "") != (inUse && !stated) {
 			t.Errorf("the page's unstated version (%q) disagrees with the answer's (in use %v, stated %v)",
 				figures["public_suffix.version_state"], inUse, stated)
@@ -288,36 +291,36 @@ func TestTheSettingsJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		}
 		same("public_suffix.rules", rules)
 		same("public_suffix.confirmed", instant("public_suffix", "confirmed_at"))
-		if (figures["public_suffix.confirmed_state"] != "") != (webtest.Path(answer, "public_suffix", "confirmed_at") == nil) {
+		if (figures["public_suffix.confirmed_state"] != "") != (settingstest.Path(answer, "public_suffix", "confirmed_at") == nil) {
 			t.Errorf("the page's never-confirmed state (%q) disagrees with the answer", figures["public_suffix.confirmed_state"])
 		}
 		seconds, _ := number("public_suffix", "refresh_interval_seconds")
-		figure, unit := web.FieldDuration(seconds)
+		figure, unit := settingfields.FieldDuration(seconds)
 		same("public_suffix.interval", figure+" "+unit)
 		same("theme", text("theme", "value"))
 	}
 
 	t.Run("an installation with nothing configured", func(t *testing.T) {
-		check(t, webtest.SignedInHarness(t))
+		check(t, collectiontest.SignedInHarness(t))
 	})
 	t.Run("an installation with everything configured", func(t *testing.T) {
-		h := webtest.SignedInHarness(t)
-		webtest.Discard(t, h.StoreCredentials(webtest.RandomHex(t, 8), webtest.RandomHex(t, 16)))
-		if status, answer := h.SendJSON("/api/plugins/"+settings.GeolocationPlugin+"/settings",
+		h := collectiontest.SignedInHarness(t)
+		webtest.Discard(t, settingstest.StoreCredentials(h, webtest.RandomHex(t, 8), webtest.RandomHex(t, 16)))
+		if status, answer := settingstest.SendJSON(h, "/api/plugins/"+settings.GeolocationPlugin+"/settings",
 			map[string]any{"account_id": 100001, "licence_key": webtest.RandomHex(t, 16)}); status != http.StatusOK {
 			t.Fatalf("storing the MaxMind settings answered %d %v", status, answer)
 		}
 		h.GeoIP.SetBuild(h.Clock.Now().Add(-time.Hour).Unix())
-		h.SetGeoIPProbe(store.StateReachable, ipgeolocation.ProbeCurrent)
+		settingstest.SetGeoIPProbe(h, vocab.StateReachable, ipgeolocation.ProbeCurrent)
 		h.Suffix.Hold("2026-09-20_00-00-00_UTC", 9876, h.Clock.Now().Add(-time.Hour).Unix())
-		h.SetPublicSuffixProbe(store.StateReachable, registrabledomain.ProbeDownloaded, nil)
-		if status, answer := h.SendJSON(settings.PathAPITheme, map[string]any{"theme": "dark"}); status != http.StatusOK {
+		settingstest.SetPublicSuffixProbe(h, vocab.StateReachable, registrabledomain.ProbeDownloaded, nil)
+		if status, answer := settingstest.SendJSON(h, settings.PathAPITheme, map[string]any{"theme": "dark"}); status != http.StatusOK {
 			t.Fatalf("storing the theme answered %d %v", status, answer)
 		}
 		check(t, h)
 	})
 	t.Run("a copy in use that states no version", func(t *testing.T) {
-		h := webtest.SignedInHarness(t)
+		h := collectiontest.SignedInHarness(t)
 		h.Suffix.Hold("", 12, 0)
 		check(t, h)
 	})

@@ -3,15 +3,17 @@ package account_test
 import (
 	"context"
 	"fmt"
-	"github.com/NaejEL/opnview/internal/auth"
-	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/webtest"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/auth"
+	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
 )
 
 // TestAFreshInstallationHasNoAccountAndRunsAnyway is AC3's half that belongs to this
@@ -65,16 +67,16 @@ func TestTheSetupSurfaceDemandsTheTokenAndSpendsItOnce(t *testing.T) {
 	withoutToken := harness.Post(web.PathSetup, url.Values{
 		"login": {"first"}, "password": {password}, "password_again": {password},
 	})
-	webtest.AssertStatus(t, withoutToken, http.StatusForbidden)
-	webtest.AssertNoAccount(t, harness)
+	accounttest.AssertStatus(t, withoutToken, http.StatusForbidden)
+	accounttest.AssertNoAccount(t, harness)
 
 	// With a wrong one: refused, and nothing created.
 	wrongToken := harness.Post(web.PathSetup, url.Values{
 		"setup_token": {webtest.RandomHex(t, 32)},
 		"login":       {"first"}, "password": {password}, "password_again": {password},
 	})
-	webtest.AssertStatus(t, wrongToken, http.StatusForbidden)
-	webtest.AssertNoAccount(t, harness)
+	accounttest.AssertStatus(t, wrongToken, http.StatusForbidden)
+	accounttest.AssertNoAccount(t, harness)
 
 	// With the right one: the account exists and the token is spent.
 	login, _ := harness.CompleteSetup()
@@ -96,8 +98,8 @@ func TestTheSetupSurfaceDemandsTheTokenAndSpendsItOnce(t *testing.T) {
 		"setup_token": {harness.SetupToken.Token()},
 		"login":       {"second"}, "password": {password}, "password_again": {password},
 	})
-	webtest.AssertStatus(t, replay, http.StatusForbidden)
-	webtest.AssertAccountCount(t, harness, 1)
+	accounttest.AssertStatus(t, replay, http.StatusForbidden)
+	accounttest.AssertAccountCount(t, harness, 1)
 
 	// And the token appears in no response body, ever.
 	for _, path := range []string{web.PathSetup, web.PathSignIn, web.PathRecover} {
@@ -161,8 +163,8 @@ func TestTheSetupSurfaceClosesPermanently(t *testing.T) {
 			"login":       {"second-" + webtest.RandomHex(t, 4)},
 			"password":    {password}, "password_again": {password},
 		})
-		webtest.AssertStatus(t, answer, http.StatusForbidden)
-		webtest.AssertAccountCount(t, harness, 1)
+		accounttest.AssertStatus(t, answer, http.StatusForbidden)
+		accounttest.AssertAccountCount(t, harness, 1)
 	})
 
 	t.Run("the GET is closed too", func(t *testing.T) {
@@ -193,8 +195,8 @@ func TestTheSetupSurfaceClosesPermanently(t *testing.T) {
 			"login":       {"second-" + webtest.RandomHex(t, 4)},
 			"password":    {password}, "password_again": {password},
 		})
-		webtest.AssertStatus(t, answer, http.StatusForbidden)
-		webtest.AssertAccountCount(t, restarted, 1)
+		accounttest.AssertStatus(t, answer, http.StatusForbidden)
+		accounttest.AssertAccountCount(t, restarted, 1)
 	})
 
 	t.Run("after a restart, setup cannot reset the first account either", func(t *testing.T) {
@@ -209,7 +211,7 @@ func TestTheSetupSurfaceClosesPermanently(t *testing.T) {
 			"login":       {account.Login},
 			"password":    {password}, "password_again": {password},
 		})
-		webtest.AssertStatus(t, answer, http.StatusForbidden)
+		accounttest.AssertStatus(t, answer, http.StatusForbidden)
 
 		after, _, err := restarted.Store.AnyAccount(context.Background())
 		if err != nil {
@@ -297,7 +299,7 @@ func TestConcurrentSetupsCarryingOneTokenCreateOneAccount(t *testing.T) {
 	if created != 1 {
 		t.Errorf("%d of %d concurrent setups reported creating an account", created, racers)
 	}
-	webtest.AssertAccountCount(t, installation, 1)
+	accounttest.AssertAccountCount(t, installation, 1)
 	if !installation.SetupToken.Spent() {
 		t.Error("the setup token survived a successful setup")
 	}
@@ -324,8 +326,8 @@ func TestSetupRefusesAWeakOrMistypedPassword(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			form.Set("setup_token", harness.SetupToken.Token())
 			answer := harness.Post(web.PathSetup, form)
-			webtest.AssertStatus(t, answer, http.StatusBadRequest)
-			webtest.AssertNoAccount(t, harness)
+			accounttest.AssertStatus(t, answer, http.StatusBadRequest)
+			accounttest.AssertNoAccount(t, harness)
 			if harness.SetupToken.Spent() {
 				t.Error("a rejected password burnt the setup token")
 			}

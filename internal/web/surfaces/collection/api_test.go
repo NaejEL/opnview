@@ -9,10 +9,13 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/settingfields"
 	"github.com/NaejEL/opnview/internal/web/surfaces/collection"
 	"github.com/NaejEL/opnview/internal/web/webtest"
+	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
 // The collection surface's JSON equivalents (C-AC9): every figure of the page in the JSON answer,
@@ -54,11 +57,11 @@ func assertSameCollectionChange(t *testing.T, inputs []collectionInput) {
 	t.Helper()
 	for _, input := range inputs {
 		t.Run(input.what, func(t *testing.T) {
-			pageSide, jsonSide := webtest.SignedInHarness(t), webtest.SignedInHarness(t)
+			pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
 			pageBefore, jsonBefore := settingRows(t, pageSide), settingRows(t, jsonSide)
 			answer := pageSide.Post(input.pagePath, input.form)
 			webtest.Discard(t, answer)
-			status, decoded := jsonSide.SendJSON(input.jsonPath, input.body)
+			status, decoded := settingstest.SendJSON(jsonSide, input.jsonPath, input.body)
 			if input.refused {
 				if answer.StatusCode != http.StatusBadRequest {
 					t.Errorf("the page answered %d rather than refusing", answer.StatusCode)
@@ -94,7 +97,7 @@ func TestTheCollectionJSONSavesMakeThePagesChangeAndRefuseItsInputs(t *testing.T
 	t.Parallel()
 	kindPath := strings.Replace(collection.PathAPICollectionKind, "{kind}", "firewall_log", 1)
 	sized := func(what, pageSize, interval, selection string, refused bool) collectionInput {
-		form := webtest.PairForm("firewall_log", pageSize, interval)
+		form := collectiontest.PairForm("firewall_log", pageSize, interval)
 		body := map[string]any{"page_size": pageSize, "interval_seconds": interval}
 		if number, err := strconv.Atoi(pageSize); err == nil {
 			body["page_size"] = number
@@ -161,14 +164,14 @@ func TestTheCollectionJSONSavesMakeThePagesChangeAndRefuseItsInputs(t *testing.T
 	})
 
 	t.Run("an unknown kind or card is refused by both", func(t *testing.T) {
-		h := webtest.SignedInHarness(t)
+		h := collectiontest.SignedInHarness(t)
 		before := settingRows(t, h)
-		status, answer := h.SendJSON(strings.Replace(collection.PathAPICollectionKind, "{kind}", "no_such_kind", 1),
+		status, answer := settingstest.SendJSON(h, strings.Replace(collection.PathAPICollectionKind, "{kind}", "no_such_kind", 1),
 			map[string]any{"interval_seconds": 30})
 		if status != http.StatusBadRequest || answer["condition"] != "collection_kind_unknown" {
 			t.Errorf("an unknown kind answered %d %v", status, answer)
 		}
-		status, answer = h.SendJSON(cardPath("no_such_card"), map[string]any{})
+		status, answer = settingstest.SendJSON(h, cardPath("no_such_card"), map[string]any{})
 		if status != http.StatusBadRequest || answer["condition"] != "collection_kind_unknown" {
 			t.Errorf("an unknown card answered %d %v", status, answer)
 		}
@@ -182,32 +185,32 @@ func TestTheCollectionJSONSavesMakeThePagesChangeAndRefuseItsInputs(t *testing.T
 // confirmation: a shorter horizon stores nothing until the save confirms that very horizon.
 func TestAShorterRetentionIsConfirmedThroughTheJSONRouteAsOnThePage(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
+	h := collectiontest.SignedInHarness(t)
 	path := strings.Replace(collection.PathAPICollectionSettings, "{card}", "storage", 1)
 	before := settingRows(t, h)
-	status, answer := h.SendJSON(path, map[string]any{config.KeyRetentionSeconds: 86400,
+	status, answer := settingstest.SendJSON(h, path, map[string]any{config.KeyRetentionSeconds: 86400,
 		config.KeyAggregateMode: "no_domains"})
 	if status != http.StatusConflict || answer["condition"] != collection.ConditionRetentionConfirmationRequired ||
 		answer["requested_retention_seconds"] != float64(86400) {
 		t.Fatalf("a shorter horizon answered %d %v rather than asking for its confirmation", status, answer)
 	}
 	changes, _ := answer["changes"].([]any)
-	if len(changes) != 1 || webtest.Path(changes[0], "key") != config.KeyAggregateMode {
+	if len(changes) != 1 || settingstest.Path(changes[0], "key") != config.KeyAggregateMode {
 		t.Errorf("the confirmation lists %v, not the site-name mode the same save changes", changes)
 	}
 	if settingRows(t, h) != before {
 		t.Fatal("a horizon waiting for its confirmation was stored")
 	}
-	status, answer = h.SendJSON(path, map[string]any{config.KeyRetentionSeconds: 86400,
+	status, answer = settingstest.SendJSON(h, path, map[string]any{config.KeyRetentionSeconds: 86400,
 		config.KeyAggregateMode: "full", "confirm": 172800})
 	if status != http.StatusConflict {
 		t.Errorf("a confirmation of another horizon answered %d %v rather than asking again", status, answer)
 	}
-	status, answer = h.SendJSON(path, map[string]any{config.KeyRetentionSeconds: 86400,
+	status, answer = settingstest.SendJSON(h, path, map[string]any{config.KeyRetentionSeconds: 86400,
 		config.KeyAggregateMode: "full", "confirm": 86400})
-	if status != http.StatusOK || h.Setting(config.KeyRetentionSeconds) != "86400" {
+	if status != http.StatusOK || collectiontest.Setting(h, config.KeyRetentionSeconds) != "86400" {
 		t.Errorf("the confirmed horizon answered %d %v and stored %q", status, answer,
-			h.Setting(config.KeyRetentionSeconds))
+			collectiontest.Setting(h, config.KeyRetentionSeconds))
 	}
 }
 
@@ -215,17 +218,17 @@ func TestAShorterRetentionIsConfirmedThroughTheJSONRouteAsOnThePage(t *testing.T
 // is in the JSON answer, compared value by value on a measured installation.
 func TestTheCollectionJSONCarriesEveryFigureOfThePage(t *testing.T) {
 	t.Parallel()
-	h := webtest.SignedInHarness(t)
-	h.SetAvailability("firewall_log", "pf", store.StateReachable)
-	h.SetSelection("dhcp_lease", "kea", config.SelectionOff)
-	h.SetSelection("resolver_cache", "unbound", config.SelectionOn)
+	h := collectiontest.SignedInHarness(t)
+	collectiontest.SetAvailability(h, "firewall_log", "pf", vocab.StateReachable)
+	collectiontest.SetSelection(h, "dhcp_lease", "kea", config.SelectionOff)
+	collectiontest.SetSelection(h, "resolver_cache", "unbound", config.SelectionOn)
 	now := h.Clock.Now().Unix()
 	var instants []int64
 	for minute := int64(60); minute > 0; minute-- {
 		instants = append(instants, now-minute*60, now-minute*60+7)
 	}
-	h.StoreFlows(instants...)
-	h.RecordGap("firewall_log", "pf", store.GapDigestOutsideWindow, now-1800, now-1740)
+	collectiontest.StoreFlows(h, instants...)
+	collectiontest.RecordGap(h, "firewall_log", "pf", vocab.GapDigestOutsideWindow, now-1800, now-1740)
 
 	figures, err := collection.PageFigures(t.Context(), h.Server)
 	if err != nil {
@@ -234,14 +237,14 @@ func TestTheCollectionJSONCarriesEveryFigureOfThePage(t *testing.T) {
 	if len(figures) == 0 {
 		t.Fatal("the page draws no figure, so this assertion is vacuous")
 	}
-	answer := h.GetJSON(collection.PathAPICollection)
+	answer := settingstest.GetJSON(h, collection.PathAPICollection)
 	expected := map[collection.PageFigure]bool{}
 	add := func(card, label, text string) {
 		expected[collection.PageFigure{Card: card, Label: label, Text: text}] = true
 	}
 	spelled := func(value any) string {
 		seconds, _ := value.(float64)
-		return fmt.Sprint(web.SpelledDuration(int64(seconds)))
+		return fmt.Sprint(settingfields.SpelledDuration(int64(seconds)))
 	}
 	whole := func(value any) string {
 		number, _ := value.(float64)
@@ -252,75 +255,75 @@ func TestTheCollectionJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		if !ok {
 			return absent
 		}
-		return web.Instant(int64(number))
+		return settingfields.Instant(int64(number))
 	}
 	field := func(value any) string {
 		number, _ := value.(float64)
-		figure, unit := web.FieldDuration(int64(number))
+		figure, unit := settingfields.FieldDuration(int64(number))
 		return figure + " " + unit
 	}
 	rate := func(value any) string {
-		if state, ok := webtest.Path(value, "state").(string); ok {
+		if state, ok := settingstest.Path(value, "state").(string); ok {
 			return "state:state.sizing." + state
 		}
-		perSecond, _ := webtest.Path(value, "per_second").(float64)
+		perSecond, _ := settingstest.Path(value, "per_second").(float64)
 		return strconv.FormatFloat(perSecond, 'f', 3, 64)
 	}
-	for _, raw := range webtest.Path(answer, "kinds").([]any) {
-		kind, _ := webtest.Path(raw, "kind").(string)
+	for _, raw := range settingstest.Path(answer, "kinds").([]any) {
+		kind, _ := settingstest.Path(raw, "kind").(string)
 		label := func(name string) string { return "collection.label." + name }
-		add(kind, label("source_state"), "state:state.availability."+webtest.Path(raw, "source_state", "availability").(string))
-		add(kind, label("selection"), "state:state.sizing.selection_"+webtest.Path(raw, "source_state", "selection").(string))
-		if webtest.Path(raw, "page_size_adjustable") == true {
-			add(kind, label("page_size_in_force"), whole(webtest.Path(raw, "in_force", "page_size")))
-			if ceiling := webtest.Path(raw, "in_force", "page_ceiling"); ceiling != nil {
+		add(kind, label("source_state"), "state:state.availability."+settingstest.Path(raw, "source_state", "availability").(string))
+		add(kind, label("selection"), "state:state.sizing.selection_"+settingstest.Path(raw, "source_state", "selection").(string))
+		if settingstest.Path(raw, "page_size_adjustable") == true {
+			add(kind, label("page_size_in_force"), whole(settingstest.Path(raw, "in_force", "page_size")))
+			if ceiling := settingstest.Path(raw, "in_force", "page_ceiling"); ceiling != nil {
 				add(kind, label("page_ceiling"), whole(ceiling))
-				add(kind, label("page_state"), "state:state.sizing."+webtest.Path(raw, "in_force", "page_state").(string))
+				add(kind, label("page_state"), "state:state.sizing."+settingstest.Path(raw, "in_force", "page_state").(string))
 			} else {
 				add(kind, label("page_ceiling"), "state:state.sizing.no_page_ceiling")
 			}
 		}
-		add(kind, label("interval_in_force"), spelled(webtest.Path(raw, "in_force", "interval_seconds")))
-		measurement := webtest.Path(raw, "measurement")
-		add(kind, label("window_start"), instant(webtest.Path(measurement, "window_start_at"), ""))
-		add(kind, label("window_end"), instant(webtest.Path(measurement, "window_end_at"), ""))
-		if retention := webtest.Path(measurement, "retention_seconds"); retention != nil {
+		add(kind, label("interval_in_force"), spelled(settingstest.Path(raw, "in_force", "interval_seconds")))
+		measurement := settingstest.Path(raw, "measurement")
+		add(kind, label("window_start"), instant(settingstest.Path(measurement, "window_start_at"), ""))
+		add(kind, label("window_end"), instant(settingstest.Path(measurement, "window_end_at"), ""))
+		if retention := settingstest.Path(measurement, "retention_seconds"); retention != nil {
 			add(kind, label("retention_horizon"), spelled(retention))
 		} else {
 			add(kind, label("retention_horizon"), "state:state.sizing.retention_unlimited")
 		}
-		add(kind, label("covered_from"), instant(webtest.Path(measurement, "covered_from_at"), "state:state.sizing.no_records_in_window"))
-		add(kind, label("covered_to"), instant(webtest.Path(measurement, "covered_to_at"), "state:state.sizing.no_records_in_window"))
-		add(kind, label("record_count"), whole(webtest.Path(measurement, "record_count")))
-		add(kind, label("mean_rate_source"), rate(webtest.Path(measurement, "mean_rate")))
-		add(kind, label("mean_rate_ingested"), rate(webtest.Path(measurement, "ingested_mean_rate")))
-		add(kind, label("peak_rate"), rate(webtest.Path(measurement, "peak_rate")))
-		add(kind, label("gap_count"), whole(webtest.Path(measurement, "gap_count")))
-		add(kind, label("missed_seconds"), spelled(webtest.Path(measurement, "missed_seconds")))
-		for _, gap := range webtest.Path(measurement, "gaps").([]any) {
-			add(kind, "gap_reason."+webtest.Path(gap, "reason").(string),
-				whole(webtest.Path(gap, "count"))+" "+spelled(webtest.Path(gap, "missed_seconds")))
+		add(kind, label("covered_from"), instant(settingstest.Path(measurement, "covered_from_at"), "state:state.sizing.no_records_in_window"))
+		add(kind, label("covered_to"), instant(settingstest.Path(measurement, "covered_to_at"), "state:state.sizing.no_records_in_window"))
+		add(kind, label("record_count"), whole(settingstest.Path(measurement, "record_count")))
+		add(kind, label("mean_rate_source"), rate(settingstest.Path(measurement, "mean_rate")))
+		add(kind, label("mean_rate_ingested"), rate(settingstest.Path(measurement, "ingested_mean_rate")))
+		add(kind, label("peak_rate"), rate(settingstest.Path(measurement, "peak_rate")))
+		add(kind, label("gap_count"), whole(settingstest.Path(measurement, "gap_count")))
+		add(kind, label("missed_seconds"), spelled(settingstest.Path(measurement, "missed_seconds")))
+		for _, gap := range settingstest.Path(measurement, "gaps").([]any) {
+			add(kind, "gap_reason."+settingstest.Path(gap, "reason").(string),
+				whole(settingstest.Path(gap, "count"))+" "+spelled(settingstest.Path(gap, "missed_seconds")))
 		}
-		if pageSize := webtest.Path(raw, "suggestion", "page_size"); pageSize != nil {
+		if pageSize := settingstest.Path(raw, "suggestion", "page_size"); pageSize != nil {
 			add(kind, label("suggested_page_size"), whole(pageSize))
 		}
-		if interval := webtest.Path(raw, "suggestion", "interval_seconds"); interval != nil {
+		if interval := settingstest.Path(raw, "suggestion", "interval_seconds"); interval != nil {
 			add(kind, label("suggested_interval"), spelled(interval))
 		}
-		add(kind, label("suggestion_state"), "state:state.sizing."+webtest.Path(raw, "suggestion", "state").(string))
-		for _, implementation := range webtest.Path(raw, "implementations").([]any) {
-			add(kind, string(web.ProviderLabelKey(kind, webtest.Path(implementation, "provider_key").(string))),
-				webtest.Path(implementation, "selection").(string))
+		add(kind, label("suggestion_state"), "state:state.sizing."+settingstest.Path(raw, "suggestion", "state").(string))
+		for _, implementation := range settingstest.Path(raw, "implementations").([]any) {
+			add(kind, string(web.ProviderLabelKey(kind, settingstest.Path(implementation, "provider_key").(string))),
+				settingstest.Path(implementation, "selection").(string))
 		}
 	}
-	for _, raw := range webtest.Path(answer, "polled_kinds").([]any) {
-		kind, _ := webtest.Path(raw, "kind").(string)
-		for _, implementation := range webtest.Path(raw, "implementations").([]any) {
-			provider := string(web.ProviderLabelKey(kind, webtest.Path(implementation, "provider_key").(string)))
-			add(kind, "availability "+provider, "state:state.availability."+webtest.Path(implementation, "availability").(string))
-			add(kind, provider, webtest.Path(implementation, "selection").(string))
+	for _, raw := range settingstest.Path(answer, "polled_kinds").([]any) {
+		kind, _ := settingstest.Path(raw, "kind").(string)
+		for _, implementation := range settingstest.Path(raw, "implementations").([]any) {
+			provider := string(web.ProviderLabelKey(kind, settingstest.Path(implementation, "provider_key").(string)))
+			add(kind, "availability "+provider, "state:state.availability."+settingstest.Path(implementation, "availability").(string))
+			add(kind, provider, settingstest.Path(implementation, "selection").(string))
 		}
-		add(kind, webtest.CardFieldName(kind, webtest.FieldInterval), field(webtest.Path(raw, "interval_seconds")))
+		add(kind, webtest.CardFieldName(kind, webtest.FieldInterval), field(settingstest.Path(raw, "interval_seconds")))
 	}
 	durations := map[string]bool{}
 	for _, spec := range collection.SettingCardSpecs() {
@@ -328,11 +331,11 @@ func TestTheCollectionJSONCarriesEveryFigureOfThePage(t *testing.T) {
 			durations[setting.Key] = setting.Duration
 		}
 	}
-	for _, raw := range webtest.Path(answer, "settings").([]any) {
-		card, _ := webtest.Path(raw, "card").(string)
-		for _, setting := range webtest.Path(raw, "settings").([]any) {
-			key, _ := webtest.Path(setting, "key").(string)
-			value := webtest.Path(setting, "value")
+	for _, raw := range settingstest.Path(answer, "settings").([]any) {
+		card, _ := settingstest.Path(raw, "card").(string)
+		for _, setting := range settingstest.Path(raw, "settings").([]any) {
+			key, _ := settingstest.Path(setting, "key").(string)
+			value := settingstest.Path(setting, "value")
 			switch {
 			case durations[key]:
 				add(card, key, field(value))

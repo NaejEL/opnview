@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // TestEnsureProviderRegistersAnImplementationTheSchemaDoesNotSeed is what lets a provider be added
@@ -21,11 +23,11 @@ func TestEnsureProviderRegistersAnImplementationTheSchemaDoesNotSeed(t *testing.
 	if err != nil {
 		t.Fatalf("reading its availability row: %v", err)
 	}
-	if state != StateUnavailable || probe != "not_yet_probed" || checkedAt != 0 {
+	if state != vocab.StateUnavailable || probe != "not_yet_probed" || checkedAt != 0 {
 		t.Errorf("the new row starts as %q / %q / %d", state, probe, checkedAt)
 	}
 	outcome, err := database.AvailabilityOutcomeOf(ctx, id)
-	if err != nil || outcome != OutcomeNotYetProbed {
+	if err != nil || outcome != vocab.OutcomeNotYetProbed {
 		t.Errorf("the new row's outcome is %q, %v", outcome, err)
 	}
 	active, err := database.ActiveProviderIDs(ctx, "dhcp_lease")

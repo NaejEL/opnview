@@ -4,7 +4,7 @@ import (
 	"errors"
 
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // ErrUnsupportedRead is returned by an implementation that is registered and probed but
@@ -31,11 +31,11 @@ const AuthenticationFailed = "authentication failed (HTTP 401): the firewall did
 // Result is what one implementation's probe or read concluded.
 type Result struct {
 	// State is the availability state the survey names for what the firewall answered.
-	State store.AvailabilityState
+	State vocab.AvailabilityState
 	// Outcome names what the probe or read turned into, from the closed set the schema
 	// holds (store.AvailabilityOutcomes). It is written beside the detail, so no reader
 	// ever has to parse the detail to tell one absence from another.
-	Outcome store.AvailabilityOutcome
+	Outcome vocab.AvailabilityOutcome
 	// Probe is the endpoint that determined it, recorded so a screen can say how the
 	// conclusion was reached.
 	Probe opnsense.Endpoint

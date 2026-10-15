@@ -1,0 +1,247 @@
+package flows
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+
+	"github.com/NaejEL/opnview/internal/store/sqldb"
+)
+
+// Two legs of one connection.
+//
+// pf writes the packet that creates a state (pf.conf(5), FreeBSD 15.1-RELEASE, `log`:
+// "Only the packet that establishes the state is logged"), and a connection that
+// crosses the firewall creates a state on the interface it arrives on and on the one
+// it leaves by. So a client's connection to the Internet is logged `in` on the
+// client's interface and `out` on the upstream interface: two records of one
+// connection, and 5A counted both. Under outbound NAT the second record's source is
+// already the firewall's address on the upstream interface, because "translation
+// occurs before filtering" (pf.conf(5), "NAT ruleset (pre-FreeBSD 15)"; "NAT rules are
+// always processed before filter rules!", https://docs.opnsense.org/manual/firewall.html,
+// processing order).
+//
+// THE RULE. An `out` record is the second leg of an `in` record on another interface
+// when they carry the same protocol, IP version, destination address and destination
+// port, every logged field verified to cross unchanged is equal (PairingFields), they
+// were logged within the window of setting leg_pairing_window_seconds, the `in`
+// record passed, and each is the other's only candidate. Under outbound NAT the
+// second leg's source is this firewall; without it the two sources and their ports
+// are equal. The decision is taken from the stored records alone, so it does not
+// depend on the order they arrived in, it is taken again when either leg arrives
+// later -- the collector passes the window of every record it stores or places --
+// and it writes a row only when the row's outcome changes.
+//
+// THE OUTCOMES, recorded on each record with its partner (flow.pair_outcome,
+// flow.paired_flow_id): 'first_leg' and 'second_leg' for a pair; and for an unpaired
+// `out` record on an upstream interface whose source is this firewall, 'not_paired',
+// always: it keeps its this-firewall end, but nothing opnview reads tells the firewall's
+// own traffic from a client's NATed connection whose first record it cannot see -- a
+// rule that does not log, an automatic port-forward rule, an `rdr pass` -- so opnview
+// never claims the first (decision 3, as amended on 7 October 2026). No unpaired record
+// is given a client: its source is this firewall, which never is one.
+
+// PairingWindowKey is the setting row holding how far apart, in seconds, the two
+// records of one connection may have been logged, and DefaultPairingWindowSeconds the
+// window when the row is absent: the maintainer's decision 4. The schema writes the
+// default row; internal/config refuses a malformed one.
+const (
+	PairingWindowKey            = "leg_pairing_window_seconds"
+	DefaultPairingWindowSeconds = 1
+)
+
+// The pairing outcomes, stored in flow.pair_outcome. The terms are opnview's own: pf
+// and OPNsense log records and have no word for one being the second of a pair.
+const (
+	PairFirstLeg  = "first_leg"
+	PairSecondLeg = "second_leg"
+	PairNotPaired = "not_paired"
+)
+
+// PairingField is one field the filter log reports that could tell two connections
+// apart, and whether its invariance across the two legs of one connection is verified.
+type PairingField struct {
+	// LogField is the filter log's own field name.
+	LogField string
+	// Column is the flow column holding it, empty when it is not stored.
+	Column string
+	// Verified says the field is shown to cross the firewall unchanged under
+	// OPNsense's defaults. Only a verified field is read by the pairing.
+	Verified bool
+	// Evidence is the source of the verdict, or UNVERIFIED: and why.
+	Evidence string
+}
+
+// PairingFields is every candidate the survey's response shape offers, with its
+// verdict (docs/opnsense-api-survey.md, "Two legs of one connection, read for the
+// step-5A live corrections"). A test fails if a pairing statement reads a field that
+// is not verified here.
+var PairingFields = []PairingField{
+	{LogField: "id", Column: "ip_id", Verified: true,
+		Evidence: "pf rewrites the IPv4 identification field only under scrub random-id (pf.conf(5): " +
+			"\"Replaces the IP identification field with random values\"), which OPNsense adds only when " +
+			"its IP Random id setting is on (opnsense/core 26.7.3, src/etc/inc/filter.inc line 577, scrubrnid), " +
+			"off by default, or a Normalization rule sets Random ID for the traffic it covers (line 563); " +
+			"translation rewrites addresses and ports (pf.conf(5), TRANSLATION)"},
+	{LogField: "seq", Column: "tcp_seq", Verified: true,
+		Evidence: "pf rewrites the TCP sequence number only under modulate state or synproxy state " +
+			"(pf.conf(5), STATE MODULATION), and an OPNsense rule keeps state by default " +
+			"(Firewall/Filter.xml, statetype, <Default>keep</Default>; " +
+			"docs.opnsense.org, manual/firewall.html, State type)"},
+	{LogField: "flow", Verified: false,
+		Evidence: "UNVERIFIED: neither pf.conf(5) nor docs.opnsense.org says whether pf rewrites the IPv6 " +
+			"flow label"},
+	{LogField: "datalen", Verified: false,
+		Evidence: "UNVERIFIED: no source states that the logged payload length is equal on both legs; " +
+			"fragment reassembly by scrub, on by default, can change what a leg logs"},
+	{LogField: "length", Column: "packet_bytes", Verified: false,
+		Evidence: "UNVERIFIED: as datalen, the packet length a leg logs after scrub's reassembly is not " +
+			"shown equal on both legs"},
+	{LogField: "ttl", Verified: false,
+		Evidence: "UNVERIFIED: no cited source states what a forwarded packet's logged ttl is on each " +
+			"leg, and it is expected to differ"},
+	{LogField: "hoplimit", Verified: false,
+		Evidence: "UNVERIFIED: for the reason ttl is"},
+}
+
+// Pairing is what one pairing pass changed.
+type Pairing struct {
+	// FlowInstants are the observed_at instants of every record whose outcome changed:
+	// the slots a refresh must recompute and the flows whose attribution is decided
+	// again.
+	FlowInstants []int64
+	// Pairs is how many pairs the window holds after the pass.
+	Pairs int
+}
+
+// pairRecord is one record's pairing fields.
+type pairRecord struct {
+	id          int64
+	at          int64
+	device      string
+	srcAddress  string
+	srcPort     sql.NullInt64
+	dstAddress  string
+	dstPort     sql.NullInt64
+	protocol    string
+	ipVersion   int64
+	ipID        sql.NullInt64
+	tcpSeq      sql.NullInt64
+	srcFirewall int64
+	outcome     sql.NullString
+	partner     sql.NullInt64
+}
+
+func scanPairRecord(scanner interface{ Scan(...any) error }) (pairRecord, error) {
+	var record pairRecord
+	err := scanner.Scan(&record.id, &record.at, &record.device, &record.srcAddress, &record.srcPort,
+		&record.dstAddress, &record.dstPort, &record.protocol, &record.ipVersion, &record.ipID,
+		&record.tcpSeq, &record.srcFirewall, &record.outcome, &record.partner)
+	return record, err
+}
+
+// parameters renders a record's pairing fields for the candidate statements.
+func (r pairRecord) parameters(window int64) map[string]any {
+	return map[string]any{
+		"dst_address": r.dstAddress, "at": r.at, "window": window, "device": r.device,
+		"protocol": r.protocol, "ip_version": r.ipVersion, "dst_port": nullableValue(r.dstPort),
+		"ip_id": nullableValue(r.ipID), "tcp_seq": nullableValue(r.tcpSeq),
+		"src_is_this_firewall": r.srcFirewall, "src_address": r.srcAddress,
+		"src_port": nullableValue(r.srcPort),
+	}
+}
+
+func nullableValue(value sql.NullInt64) any {
+	if !value.Valid {
+		return nil
+	}
+	return value.Int64
+}
+
+// target is the outcome a record should carry.
+type target struct {
+	outcome *string
+	partner *int64
+}
+
+// PairingChunkSeconds bounds how much history one pairing transaction reads (B8b of
+// specs/SPEC-step-5b-widget-api.md).
+//
+// WHY A BOUND. A reclassification of everything places every stored address again,
+// and the records it moves can span the whole retained history; one Pair over that
+// span read every `out` record of it into memory inside ONE transaction, holding the
+// database's single connection -- and with it every collector's write -- for as long
+// as the history is long. In chunks, each transaction reads and writes one bounded
+// stretch, and the collectors' writes interleave between them.
+//
+// WHY AN HOUR. It is the finest aggregate slot (store.PeriodHour), the unit the
+// refresh already works in, so a chunk never holds more records than the busiest
+// hour the firewall logged; and a pass over a few minutes of new records -- the
+// collectors' everyday case -- stays one chunk, decided and written in one transaction
+// exactly as before. It is a constant rather than a setting because it changes how the
+// work is cut and never what is decided: the result is identical whatever its value,
+// which a test asserts.
+const PairingChunkSeconds = int64(3600)
+
+// Pair decides the pairing of every `out` record observed in [from - window,
+// to + window] and of the `in` records they can pair with, and records what changed.
+// A span longer than PairingChunkSeconds is decided and written in chunks of it.
+func (s *FlowStore) Pair(ctx context.Context, from, to, window int64) (Pairing, error) {
+	return s.PairInChunks(ctx, from, to, window, PairingChunkSeconds)
+}
+
+// pairRecords reads the records one statement returns.
+func pairRecords(ctx context.Context, q sqldb.Querier, name string, parameters map[string]any) (
+	[]pairRecord, error) {
+	text, err := sqldb.Statement(name)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := q.QueryContext(ctx, text, sqldb.Named(text, parameters)...)
+	if err != nil {
+		return nil, fmt.Errorf("store: %s: %w", name, err)
+	}
+	defer func() { _ = rows.Close() }()
+	var records []pairRecord
+	for rows.Next() {
+		record, err := scanPairRecord(rows)
+		if err != nil {
+			return nil, fmt.Errorf("store: %s: %w", name, err)
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: %s: %w", name, err)
+	}
+	return records, nil
+}
+
+// pairRecordByID reads one record's pairing fields.
+func pairRecordByID(ctx context.Context, q sqldb.Querier, id int64) (pairRecord, error) {
+	records, err := pairRecords(ctx, q, "pairing_record_fields", map[string]any{"flow_id": id})
+	if err != nil {
+		return pairRecord{}, err
+	}
+	if len(records) != 1 {
+		return pairRecord{}, fmt.Errorf("store: the flow %d to pair is not stored", id)
+	}
+	return records[0], nil
+}
+
+// upstreamDevices returns the devices of the upstream interfaces.
+func upstreamDevices(ctx context.Context, q sqldb.Querier) (map[string]bool, error) {
+	rows, err := q.QueryContext(ctx, "SELECT device FROM interface WHERE is_upstream = 1")
+	if err != nil {
+		return nil, fmt.Errorf("store: reading the upstream interfaces: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	devices := map[string]bool{}
+	for rows.Next() {
+		var device string
+		if err := rows.Scan(&device); err != nil {
+			return nil, fmt.Errorf("store: reading the upstream interfaces: %w", err)
+		}
+		devices[device] = true
+	}
+	return devices, rows.Err()
+}

@@ -7,9 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The resolver-lookup collector tests.
@@ -36,7 +37,7 @@ func arrangeResolverCollection(t *testing.T) *probeHarness {
 	if err := harness.collector.probeDNSLookup(context.Background()); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
-	if key := harness.activeKeyOf(t, KindDNSLookup); key != ProviderUnbound {
+	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != ProviderUnbound {
 		t.Fatalf("the resolver kind activated %q", key)
 	}
 	return harness
@@ -118,7 +119,7 @@ func TestTheCollectorNeverPresentsWhatItReadAsCoverageOfTheWindow(t *testing.T) 
 		t.Fatalf("collecting: %v", err)
 	}
 
-	detail := harness.detailOf(t, KindDNSLookup, ProviderUnbound)
+	detail := harness.detailOf(t, core.KindDNSLookup, ProviderUnbound)
 	for _, phrase := range []string{
 		"most recent lookups",
 		"ignores timeStart and timeEnd",
@@ -252,7 +253,7 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 	ctx := context.Background()
 
 	oldest := oldestLookupInstant(t, "search_queries_page1.json")
-	if err := harness.store.InsertDNSResolution(ctx, store.DNSResolution{
+	if err := harness.store.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey:     "content:an-earlier-pass-stored-this",
 		ClientAddress: "example-address",
 		Domain:        "example-domain",
@@ -270,7 +271,7 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 
 	gaps := scalarCount(t, harness.store,
 		"SELECT count(*) FROM collection_gap WHERE reason = ?",
-		string(store.GapResolverWindowNotHonoured))
+		string(vocab.GapResolverWindowNotHonoured))
 	if gaps != 1 {
 		t.Fatalf("the pass wrote %d resolver gap rows, want exactly one", gaps)
 	}
@@ -278,7 +279,7 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 	var detail *string
 	if err := harness.store.DB().QueryRowContext(ctx,
 		`SELECT interval_start_at, interval_end_at, detail FROM collection_gap
-		 WHERE reason = ?`, string(store.GapResolverWindowNotHonoured)).
+		 WHERE reason = ?`, string(vocab.GapResolverWindowNotHonoured)).
 		Scan(&start, &end, &detail); err != nil {
 		t.Fatalf("reading the gap back: %v", err)
 	}
