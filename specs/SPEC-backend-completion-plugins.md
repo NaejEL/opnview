@@ -4001,3 +4001,10 @@ Every test runs on the PostgreSQL test instance with a fake clock and small reco
 - The rate of a protocol or service-port member uses the **same shape as the client and interface chips** (`in_*` / `out_*`, `out_measured`, `cadence_seconds`), not a separate forward/reverse shape. The mapping from pf's state directions to that shape is stated in `docs/plugins.md` and `docs/widget-api.md`; a field that cannot be filled is null with `out_measured` false, and the docs say so.
 - `host.datasets.latest`'s absence state is renamed `unknown_dataset`, aligned with the data catalogue API's refusal code.
 - The plugin JS test world keeps the core catalogue only (no built-in datasets).
+
+**Decided (maintainer, 16 October 2026), after the Phase D build:** all five of the builder's proposals are accepted and built in Phase E.
+- **Room under the 15-file rule.** The three directories at exactly 15 files (`internal/plugin`, `internal/web`, `internal/widget/hostareas/readers`) are brought below it: the plugin test harness moves to `plugin/harness`, the message-key files of `internal/web` move to their own package, and `hostareas/readers` is split in two.
+- **Import aliases removed.** The aliases created by name shadowing (`requestpkg`, `contractpkg`, `paramspkg`, `envelopepkg`, `datasetspkg`, `attributionpkg`, `readspkg`, `pluginpkg`, `listingpkg`) go away by renaming the shadowing local variables.
+- **`plugin/runtime` is renamed** so that it no longer collides with the standard library's `runtime` (for example `scripthost`).
+- **Forced exports narrowed.** Each part's tests move into the part's own directory, so that the names exported only for tests left in the composing package become unexported again; the shared test fixtures (notably the store's `testNetwork`) are split as needed.
+- **The move tooling is kept in the repository under `ci/`.**
