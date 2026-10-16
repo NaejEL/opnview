@@ -4370,7 +4370,7 @@ The suite runs once, before commit. The hand-back carries:
 
 # Amendment: the NetFlow join with every interface captured (replaces decision 15b and the single-Observation-Point rule)
 
-Status: PROPOSED
+Status: APPROVED
 
 Cycle kind: standard
 
