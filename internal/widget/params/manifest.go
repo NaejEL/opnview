@@ -113,7 +113,7 @@ type ManifestParameter struct {
 	Required bool `json:"required,omitempty"`
 }
 
-// param converts a validated manifest parameter to the engine's Param.
+// Param converts a validated manifest parameter to the engine's Param.
 func (p ManifestParameter) Param() Param {
 	result := Param{
 		Key: p.Key, Kind: ParamKind(p.Kind), Values: p.Values, Default: p.Default,
@@ -129,7 +129,7 @@ func (p ManifestParameter) Param() Param {
 	return result
 }
 
-// decodeManifest reads one manifest.json strictly: an unknown field is a refusal, because a
+// DecodeManifest reads one manifest.json strictly: an unknown field is a refusal, because a
 // misspelt key would otherwise be silently ignored.
 func DecodeManifest(raw []byte) (Manifest, error) {
 	// What a manifest may leave out takes its stated default: no domain names, and the renderer

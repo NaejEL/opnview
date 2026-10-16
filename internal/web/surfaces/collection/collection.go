@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -489,7 +491,7 @@ func kindAvailability(kind string, rows []reads.SourceRow) messageKey {
 		if row.Kind != kind {
 			continue
 		}
-		availability, _ := web.AvailabilityOf(row)
+		availability, _ := messages.AvailabilityOf(row)
 		found[availability] = true
 	}
 	for _, availability := range []messageKey{msgAvailabilityHealthy, msgAvailabilityNotCollecting,
@@ -626,7 +628,7 @@ func (s *surface) buildCollectionCard(ctx context.Context, kind sizing.Kind,
 			card.Edited = card.Edited || value != string(selection)
 		}
 		card.Implementations = append(card.Implementations, implementationRow{
-			LabelKey: web.ProviderLabelKey(kind.Kind, provider.ProviderKey),
+			LabelKey: messages.ProviderLabelKey(kind.Kind, provider.ProviderKey),
 			Field:    selectionNames[index],
 			Options:  selectionOptions(shown),
 		})

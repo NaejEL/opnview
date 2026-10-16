@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -257,9 +259,9 @@ func (s *surface) fillSources(ctx context.Context, built *view) error {
 	// The outages first: the list the indicator counts, and the rows each is about.
 	counted := map[int]bool{}
 	for _, found := range findOutages(statuses) {
-		drawn := outageRow{KindKey: web.KindLabelKey(found.kind), StateKey: msgOutageKind}
+		drawn := outageRow{KindKey: messages.KindLabelKey(found.kind), StateKey: msgOutageKind}
 		if found.provider != "" {
-			drawn.ProviderKey = web.ProviderLabelKey(found.kind, found.provider)
+			drawn.ProviderKey = messages.ProviderLabelKey(found.kind, found.provider)
 			drawn.StateKey = msgOutageProvider
 		}
 		built.Outages = append(built.Outages, drawn)
@@ -269,10 +271,10 @@ func (s *surface) fillSources(ctx context.Context, built *view) error {
 	}
 	for index, status := range statuses {
 		row := status.row
-		availability, mark := web.AvailabilityOf(row)
+		availability, mark := messages.AvailabilityOf(row)
 		drawn := sourceRow{
-			KindKey:      web.KindLabelKey(row.Kind),
-			ProviderKey:  web.ProviderLabelKey(row.Kind, row.ProviderKey),
+			KindKey:      messages.KindLabelKey(row.Kind),
+			ProviderKey:  messages.ProviderLabelKey(row.Kind, row.ProviderKey),
 			Availability: availability,
 			Mark:         mark,
 			ActiveKey:    yesNo(row.IsActive),
@@ -305,9 +307,9 @@ func (s *surface) fillSources(ctx context.Context, built *view) error {
 	}
 	for _, gap := range gaps {
 		drawn := recentGapRow{
-			KindKey:     web.KindLabelKey(gap.Kind),
-			ProviderKey: web.ProviderLabelKey(gap.Kind, gap.ProviderKey),
-			ReasonKey:   web.GapReasonKey(string(gap.Reason)),
+			KindKey:     messages.KindLabelKey(gap.Kind),
+			ProviderKey: messages.ProviderLabelKey(gap.Kind, gap.ProviderKey),
+			ReasonKey:   messages.GapReasonKey(string(gap.Reason)),
 			Start:       settingfields.Instant(gap.IntervalStartAt),
 			End:         settingfields.Instant(gap.IntervalEndAt),
 			Missed:      settingfields.SpelledDuration(gap.MissedSeconds()),

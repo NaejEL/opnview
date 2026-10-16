@@ -10,7 +10,7 @@ import (
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 )
 
 // One plugin, several OPNsense versions (A19 of the broker amendment to
@@ -69,7 +69,7 @@ func checkRanges(plugin, what string, ranges []contract.VersionRange) *contract.
 
 // declaredRoutes checks an endpoint's versioned routes and returns them, the endpoint's own first.
 // An endpoint with no range has one route, for every version.
-func declaredRoutes(manifest contract.Manifest, declaration contract.EndpointDeclaration, own opnsense.Endpoint) ([]runtime.Route, *contract.Refusal) {
+func declaredRoutes(manifest contract.Manifest, declaration contract.EndpointDeclaration, own opnsense.Endpoint) ([]scripthost.Route, *contract.Refusal) {
 	if len(declaration.Variants) == 0 {
 		if declaration.Versions != nil {
 			if refusal := checkRanges(manifest.Name, "the endpoint "+declaration.Name,
@@ -77,9 +77,9 @@ func declaredRoutes(manifest contract.Manifest, declaration contract.EndpointDec
 				return nil, refusal
 			}
 			held := *declaration.Versions
-			return []runtime.Route{{Versions: &held, Endpoint: own}}, nil
+			return []scripthost.Route{{Versions: &held, Endpoint: own}}, nil
 		}
-		return []runtime.Route{{Endpoint: own}}, nil
+		return []scripthost.Route{{Endpoint: own}}, nil
 	}
 	if declaration.Versions == nil {
 		return nil, contract.Refuse(manifest.Name, RefusalVersionRangeInvalid, "the endpoint %q declares variants and no "+
@@ -93,7 +93,7 @@ func declaredRoutes(manifest contract.Manifest, declaration contract.EndpointDec
 		return nil, refusal
 	}
 	ownRange := *declaration.Versions
-	routes := []runtime.Route{{Versions: &ownRange, Endpoint: own}}
+	routes := []scripthost.Route{{Versions: &ownRange, Endpoint: own}}
 	for index, variant := range declaration.Variants {
 		endpoint := opnsense.Endpoint{Path: variant.Path, Method: variant.Method, Stream: own.Stream,
 			Argument: own.Argument, SurveySection: variant.SurveySection, UpstreamURL: variant.UpstreamURL,
@@ -126,7 +126,7 @@ func declaredRoutes(manifest contract.Manifest, declaration contract.EndpointDec
 				"%q, not a snake_case word", index+1, declaration.Name, variant.Adapter)
 		}
 		held := variant.Versions
-		routes = append(routes, runtime.Route{Versions: &held, Endpoint: endpoint, Fields: variant.Fields,
+		routes = append(routes, scripthost.Route{Versions: &held, Endpoint: endpoint, Fields: variant.Fields,
 			Adapter: variant.Adapter})
 	}
 	return routes, nil
@@ -183,7 +183,7 @@ func loadScriptVariants(plugin *Plugin, directory fs.FS) *contract.Refusal {
 		if refusal := sameExports(plugin, variant.Script, program); refusal != nil {
 			return refusal
 		}
-		plugin.script.Variants = append(plugin.script.Variants, runtime.ScriptVariant{Versions: variant.Versions,
+		plugin.script.Variants = append(plugin.script.Variants, scripthost.ScriptVariant{Versions: variant.Versions,
 			Program: program})
 	}
 	own := *manifest.ScriptVersions

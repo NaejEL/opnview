@@ -7,7 +7,7 @@ import (
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/widget/datasets"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
-	requestpkg "github.com/NaejEL/opnview/internal/widget/request"
+	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // Datasets returns the catalogue the service answers from.
@@ -15,12 +15,12 @@ func (s *Service) Datasets() *dataset.Catalogue { return s.datasets }
 
 // ListDatasets lists every dataset of the catalogue.
 func (s *Service) ListDatasets(ctx context.Context) (datasets.DatasetListing, error) {
-	request := &requestpkg.Request{Ctx: ctx, Db: s.store, Now: s.Now().Unix()}
-	retention, err := datasets.RetentionSeconds(request)
+	widgetRequest := &request.Request{Ctx: ctx, Db: s.store, Now: s.Now().Unix()}
+	retention, err := datasets.RetentionSeconds(widgetRequest)
 	if err != nil {
 		return datasets.DatasetListing{}, err
 	}
-	providers, err := requestpkg.ReadProviders(ctx, s.store)
+	providers, err := request.ReadProviders(ctx, s.store)
 	if err != nil {
 		return datasets.DatasetListing{}, err
 	}
@@ -37,7 +37,7 @@ func (s *Service) ListDatasets(ctx context.Context) (datasets.DatasetListing, er
 				seconds = declaration.Retention.Seconds
 			}
 			if seconds > 0 {
-				horizon := request.Now - seconds
+				horizon := widgetRequest.Now - seconds
 				listed.RetentionSeconds, listed.RetentionHorizonAt = &seconds, &horizon
 			}
 		}
@@ -67,18 +67,18 @@ func (s *Service) QueryDataset(ctx context.Context, name, rawParameters string) 
 	if refusal != nil {
 		return datasets.DatasetResponse{}, refusal, nil
 	}
-	request := &requestpkg.Request{Ctx: ctx, Db: s.store, Now: s.Now().Unix()}
-	mode, err := request.Setting(config.KeyAggregateMode, requestpkg.AggregateModeFull)
+	widgetRequest := &request.Request{Ctx: ctx, Db: s.store, Now: s.Now().Unix()}
+	mode, err := widgetRequest.Setting(config.KeyAggregateMode, request.AggregateModeFull)
 	if err != nil {
 		return datasets.DatasetResponse{}, nil, err
 	}
-	request.Mode = mode
+	widgetRequest.Mode = mode
 	response := datasets.DatasetResponse{Dataset: name, Parameters: query.Effective(), UnknownParameters: query.Unknown,
 		InvalidParameters: query.Invalid, MissingParameters: []string{}, Gaps: []envelope.Gap{},
 		Availability: []envelope.ProviderAvailability{}, Freshness: []envelope.Freshness{}, AggregateMode: mode, Withheld: []string{},
 		States: []string{}}
 	kind := declaration.Freshness.Kind
-	providers, err := requestpkg.ReadProviders(ctx, s.store)
+	providers, err := request.ReadProviders(ctx, s.store)
 	if err != nil {
 		return datasets.DatasetResponse{}, nil, err
 	}
@@ -87,7 +87,7 @@ func (s *Service) QueryDataset(ctx context.Context, name, rawParameters string) 
 			response.Availability = append(response.Availability, provider)
 		}
 	}
-	if request.NoDomains() && query.TouchesDomain(declaration) {
+	if widgetRequest.NoDomains() && query.TouchesDomain(declaration) {
 		response.Condition = envelope.ConditionWithheldByAggregateMode
 		response.Withheld = append(response.Withheld, "data")
 		return response, nil, nil
@@ -96,10 +96,10 @@ func (s *Service) QueryDataset(ctx context.Context, name, rawParameters string) 
 	window := dataset.Window{}
 	var covered *envelope.Interval
 	if _, timed := declaration.TimeColumn(); timed {
-		window = dataset.Window{From: request.Now - dataset.PeriodSeconds[query.Period], To: request.Now}
+		window = dataset.Window{From: widgetRequest.Now - dataset.PeriodSeconds[query.Period], To: widgetRequest.Now}
 		interval := envelope.Interval{From: window.From, To: window.To}
-		report := &envelope.WindowReport{Requested: interval, Coverage: requestpkg.CoverageNone}
-		retention, err := datasets.RetentionSeconds(request)
+		report := &envelope.WindowReport{Requested: interval, Coverage: request.CoverageNone}
+		retention, err := datasets.RetentionSeconds(widgetRequest)
 		if err != nil {
 			return datasets.DatasetResponse{}, nil, err
 		}
@@ -107,30 +107,30 @@ func (s *Service) QueryDataset(ctx context.Context, name, rawParameters string) 
 			retention = declaration.Retention.Seconds
 		}
 		if retention > 0 {
-			horizon := request.Now - retention
+			horizon := widgetRequest.Now - retention
 			report.FlowHorizonAt = &horizon
 		}
-		response.Gaps, err = request.ReadGaps([]string{kind}, interval)
+		response.Gaps, err = widgetRequest.ReadGaps([]string{kind}, interval)
 		if err != nil {
 			return datasets.DatasetResponse{}, nil, err
 		}
-		earliest, has, err := datasets.DatasetEarliest(request, declaration)
+		earliest, has, err := datasets.DatasetEarliest(widgetRequest, declaration)
 		if err != nil {
 			return datasets.DatasetResponse{}, nil, err
 		}
 		if has {
-			candidate := envelope.Interval{From: max(window.From, earliest), To: min(window.To, request.Now)}
+			candidate := envelope.Interval{From: max(window.From, earliest), To: min(window.To, widgetRequest.Now)}
 			if candidate.To > candidate.From {
 				covered = &candidate
 			}
 		}
 		switch {
 		case covered == nil:
-			report.Coverage = requestpkg.CoverageNone
+			report.Coverage = request.CoverageNone
 		case covered.From <= interval.From && covered.To >= interval.To:
-			report.Covered, report.Coverage = covered, requestpkg.CoverageFull
+			report.Covered, report.Coverage = covered, request.CoverageFull
 		default:
-			report.Covered, report.Coverage = covered, requestpkg.CoveragePartial
+			report.Covered, report.Coverage = covered, request.CoveragePartial
 		}
 		response.Window = report
 	}
@@ -152,7 +152,7 @@ func (s *Service) QueryDataset(ctx context.Context, name, rawParameters string) 
 		data = datasets.RowsData(declaration, query, statement.Layout, rows)
 	}
 	hasRows := len(rows) > 0
-	response.Condition = requestpkg.KindCondition(response.Availability, kind)
+	response.Condition = request.KindCondition(response.Availability, kind)
 	if response.Condition == envelope.ConditionReachable && !hasRows {
 		response.Condition = envelope.ConditionReachableNoRows
 	}

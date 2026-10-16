@@ -97,7 +97,7 @@ func FillDatasetSeries(r *request.Request, series *traffic.Series, entry params.
 	return len(rows) > 0, nil
 }
 
-// datasetEarliest reads the instant of a dataset's oldest row.
+// DatasetEarliest reads the instant of a dataset's oldest row.
 func DatasetEarliest(r *request.Request, declaration dataset.Declaration) (int64, bool, error) {
 	text := dataset.EarliestStatement(declaration)
 	if text == "" {

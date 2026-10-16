@@ -32,11 +32,17 @@ const (
 
 // VolumeWindow reads the rolling window, in the measure the request is answered under
 // (internal/widget/request/measure.go), and records its coverage and the freshness of the slots it
-// read.
+// read. The outside peers of its rows are placed (request.Place), so their geolocations are read
+// together at the first a script asks for.
 func VolumeWindow(r *request.Request) (reads.VolumeWindow, error) {
 	window, err := r.Db.ReadVolumeWindowOf(r.Ctx, r.Window.From, r.Window.To, r.Now, r.Netflow())
 	if err != nil {
 		return window, err
+	}
+	for _, row := range window.Rows {
+		if row.PeerAddress != nil {
+			r.Place(*row.PeerAddress)
+		}
 	}
 	if window.Covered != nil {
 		r.Cover(&envelope.Interval{From: window.Covered.From, To: window.Covered.To})
@@ -84,7 +90,7 @@ func FiguresValue(measure string, figures reads.VolumeFigures) float64 {
 	return float64(figures.Bytes)
 }
 
-// summableFigures is summable figures as a script reads and writes them. The members past the seven
+// SummableFigures is summable figures as a script reads and writes them. The members past the seven
 // are a netflow figure's, and are absent from a logged one, which is written as it always was.
 type SummableFigures struct {
 	Bytes              int64 `json:"bytes"`
@@ -97,7 +103,7 @@ type SummableFigures struct {
 	NetflowMembers
 }
 
-// netflowMembers are what a netflow figure carries beyond the seven summable members: its measure and
+// NetflowMembers are what a netflow figure carries beyond the seven summable members: its measure and
 // the thirty-six columns of netflow_parts (store.NetflowPartsColumns), the names a statement read in
 // the netflow measure gives them with (netflow_sum(...)).*.
 type NetflowMembers struct {
@@ -188,7 +194,7 @@ func (m *NetflowMembers) slots() []**int64 {
 	}
 }
 
-// summable is store figures as a script reads them.
+// Summable is store figures as a script reads them.
 func Summable(figures reads.VolumeFigures) SummableFigures {
 	read := SummableFigures{Bytes: figures.Bytes, AllowedBytes: figures.AllowedBytes, BlockedBytes: figures.BlockedBytes,
 		UnknownBytes: figures.UnknownBytes, AllowedConnections: figures.AllowedConnections,
@@ -205,7 +211,7 @@ func Summable(figures reads.VolumeFigures) SummableFigures {
 	return read
 }
 
-// toStore is summable figures as the core reads them.
+// ToStore is summable figures as the core reads them.
 func (f SummableFigures) ToStore() reads.VolumeFigures {
 	figures := reads.VolumeFigures{Bytes: f.Bytes, AllowedBytes: f.AllowedBytes, BlockedBytes: f.BlockedBytes,
 		UnknownBytes: f.UnknownBytes, AllowedConnections: f.AllowedConnections,

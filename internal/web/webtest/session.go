@@ -10,7 +10,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web"
 )
 
-// assertRefusesUnauthenticated fails unless the route turns away a request carrying
+// AssertRefusesUnauthenticated fails unless the route turns away a request carrying
 // no session.
 func AssertRefusesUnauthenticated(t *testing.T, harness *Harness, route web.Route) {
 	t.Helper()
@@ -40,7 +40,7 @@ func AssertRefusesUnauthenticated(t *testing.T, harness *Harness, route web.Rout
 	}
 }
 
-// freshClient returns a second browser against the same server: its own cookie jar,
+// FreshClient returns a second browser against the same server: its own cookie jar,
 // no session, no form token.
 func FreshClient(t *testing.T, from *Harness) *Harness {
 	t.Helper()
@@ -58,7 +58,7 @@ func FreshClient(t *testing.T, from *Harness) *Harness {
 	return &copied
 }
 
-// presentSession puts a session token in this client's jar, which is what somebody
+// PresentSession puts a session token in this client's jar, which is what somebody
 // who copied a cookie has.
 func (h *Harness) PresentSession(token string) {
 	h.T.Helper()
@@ -69,7 +69,7 @@ func (h *Harness) PresentSession(token string) {
 	h.Client.Jar.SetCookies(target, []*http.Cookie{{Name: web.SessionCookieName, Value: token, Path: "/"}})
 }
 
-// statusAndBody reads a response once and closes it.
+// StatusAndBody reads a response once and closes it.
 func StatusAndBody(t *testing.T, answer *http.Response) (int, string) {
 	t.Helper()
 	body := ReadBody(t, answer)
@@ -77,7 +77,7 @@ func StatusAndBody(t *testing.T, answer *http.Response) (int, string) {
 	return answer.StatusCode, body
 }
 
-// assertSameSet fails unless two sets hold the same names.
+// AssertSameSet fails unless two sets hold the same names.
 func AssertSameSet(t *testing.T, what string, expected, seen map[string]bool) {
 	t.Helper()
 	for name := range expected {
@@ -92,7 +92,7 @@ func AssertSameSet(t *testing.T, what string, expected, seen map[string]bool) {
 	}
 }
 
-// pageSource fetches one page's HTML.
+// PageSource fetches one page's HTML.
 func PageSource(t *testing.T, harness *Harness, path string) string {
 	t.Helper()
 	answer := harness.Get(path)
@@ -104,7 +104,7 @@ func PageSource(t *testing.T, harness *Harness, path string) string {
 	return body
 }
 
-// followed reads the answer to a submission: a 303 back to a surface is followed, and
+// Followed reads the answer to a submission: a 303 back to a surface is followed, and
 // the page it lands on returned with the 303; any other answer is read as it is.
 func Followed(t *testing.T, h *Harness, answer *http.Response) (int, string) {
 	t.Helper()

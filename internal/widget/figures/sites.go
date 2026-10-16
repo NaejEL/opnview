@@ -22,7 +22,7 @@ const (
 	methodNotRecorded  = "not_recorded_beyond_flow_horizon"
 )
 
-// siteRow is one row of site figures.
+// SiteRow is one row of site figures.
 type SiteRow struct {
 	Site        string
 	ClientID    *int64
@@ -33,10 +33,10 @@ type SiteRow struct {
 	Operator    *string
 	Flows       int64
 	Bytes       int64
-	// measured holds what a row read under netflow carries beyond its bytes: the measure, the packets
+	// Measured holds what a row read under netflow carries beyond its bytes: the measure, the packets
 	// and the coverage classes of its flows (internal/widget/request/measure.go).
 	Measured reads.VolumeFigures
-	// delaySum and delayMax are the correlation delays of the attributed flows, absent
+	// DelaySum and delayMax are the correlation delays of the attributed flows, absent
 	// for a row read from the slots.
 	DelaySum *int64
 	DelayMax *int64
@@ -219,7 +219,7 @@ const (
 	DestinationKindAddress = "address"
 )
 
-// addressRow is one row of address figures: the eligible flows of one source client and interface
+// AddressRow is one row of address figures: the eligible flows of one source client and interface
 // to one destination address that no site name was inferred for.
 type AddressRow struct {
 	Address     string
@@ -231,7 +231,7 @@ type AddressRow struct {
 	Operator    *string
 	Flows       int64
 	Bytes       int64
-	// measured is as siteRow's.
+	// Measured is as siteRow's.
 	Measured reads.VolumeFigures
 }
 
@@ -293,7 +293,7 @@ type addressTableRow struct {
 	Operator    *string        `json:"operator"`
 }
 
-// accumulateAddress sums the rows of one address into its table row, its counts in the measure of the
+// AccumulateAddress sums the rows of one address into its table row, its counts in the measure of the
 // rows (internal/widget/request/measure.go).
 func AccumulateAddress(r *request.Request, address string, rows []AddressRow) addressTableRow {
 	row := addressTableRow{Kind: DestinationKindAddress, Address: address, ClientIDs: []int64{},
@@ -325,7 +325,7 @@ func AccumulateAddress(r *request.Request, address string, rows []AddressRow) ad
 // figures are a site row's bytes in their measure.
 func (item SiteRow) figures() reads.VolumeFigures { return MeasuredFigures(item.Bytes, item.Measured) }
 
-// measuredFigures are bytes in the measure a row was read in: measured carries the netflow members of
+// MeasuredFigures are bytes in the measure a row was read in: measured carries the netflow members of
 // a row read under netflow, and nothing for a logged one.
 func MeasuredFigures(bytes int64, measured reads.VolumeFigures) reads.VolumeFigures {
 	figures := measured

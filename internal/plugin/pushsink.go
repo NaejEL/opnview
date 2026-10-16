@@ -10,7 +10,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/pluginkind"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -262,15 +262,15 @@ func callParse(ctx context.Context, plugin *Plugin, session provider.Session, fu
 		counts[pushCounterScriptFailed]++
 		return nil, pushCounterScriptFailed
 	}
-	answer, _, failed := plugin.script.RunWith(ctx, session, pushParseNamespace, function, runtime.RunOptions{Plain: true},
+	answer, _, failed := plugin.script.RunWith(ctx, session, pushParseNamespace, function, scripthost.RunOptions{Plain: true},
 		messages)
 	if failed != nil {
 		reason := pushCounterScriptFailed
 		switch failed.Code {
-		case runtime.FailureTimeout:
+		case scripthost.FailureTimeout:
 			reason = pushCounterScriptTimeout
-		case runtime.FailureVersionUnsupported:
-			reason = string(runtime.FailureVersionUnsupported)
+		case scripthost.FailureVersionUnsupported:
+			reason = string(scripthost.FailureVersionUnsupported)
 		}
 		counts[reason]++
 		return nil, reason

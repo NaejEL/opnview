@@ -23,9 +23,9 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	contractpkg "github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/plugin/fetch"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/plugindecl"
@@ -126,18 +126,18 @@ type Plugin struct {
 	// Strings are its catalogue strings, by language and key, read from its locale/ directory.
 	Strings map[string]map[string]string
 
-	Manifest contractpkg.Manifest
-	script   *runtime.Script
-	// adapters are the plugin's providers, by kind, as their tests call them (testrun.go).
+	Manifest contract.Manifest
+	script   *scripthost.Script
+	// adapters are the plugin's providers, by kind, as their tests call them (harnesscalls.go).
 	adapters  map[string]adapter
 	Endpoints map[string]opnsense.Endpoint
-	// routes are each endpoint's routes by OPNsense version (versions.go).
-	Routes    map[string][]runtime.Route
+	// Routes are each endpoint's routes by OPNsense version (versions.go).
+	Routes    map[string][]scripthost.Route
 	OwnTables []plugindecl.PluginTable
 	// datasets are its tables as datasets of the data catalogue (datasets.go).
 	datasets []dataset.Declaration
-	// widgets are the widgets it carries, as the widget service loads them.
-	widgets []widget.Source
+	// Widgets are the widgets it carries, as the widget service loads them.
+	Widgets []widget.Source
 	// lives are its providers' live passes, by provider key (live.go).
 	lives map[string]*liveBinding
 	// pushes are its push entries (push.go), and pushHost the hub they are routed by once one runs.
@@ -172,7 +172,7 @@ type EndpointInfo struct {
 type Loaded struct {
 	Set     *sources.Set
 	Members []*Plugin
-	Refused []contractpkg.Refusal
+	Refused []contract.Refusal
 	push    *pushHost
 }
 
@@ -180,8 +180,8 @@ type Loaded struct {
 func (l *Loaded) Plugins() []*Plugin { return append([]*Plugin(nil), l.Members...) }
 
 // Refusals returns the plugins refused, each with its closed code.
-func (l *Loaded) Refusals() []contractpkg.Refusal {
-	return append([]contractpkg.Refusal(nil), l.Refused...)
+func (l *Loaded) Refusals() []contract.Refusal {
+	return append([]contract.Refusal(nil), l.Refused...)
 }
 
 // Plugin returns a loaded plugin by name.
@@ -291,7 +291,7 @@ func Load(ctx context.Context, options Options) (*Loaded, error) {
 		if err != nil {
 			return nil, fmt.Errorf("plugin: reading the built-in plugin %s: %w", entry.Name(), err)
 		}
-		plugin, refusal := loadOne(ctx, loaded.Set, directory, entry.Name(), OriginBuiltin,
+		plugin, refusal := LoadOne(ctx, loaded.Set, directory, entry.Name(), OriginBuiltin,
 			path.Join(PluginsDirectory, entry.Name()), "", taken, options)
 		if refusal != nil {
 			refusal.Origin = OriginBuiltin
@@ -318,14 +318,14 @@ func Load(ctx context.Context, options Options) (*Loaded, error) {
 			continue
 		}
 		if !entry.IsDir() {
-			notDirectory := contractpkg.Refuse(entry.Name(), contractpkg.RefusalManifestUnreadable,
-				"%s is a file; a plugin is a directory holding %s", entry.Name(), contractpkg.ManifestFile)
+			notDirectory := contract.Refuse(entry.Name(), contract.RefusalManifestUnreadable,
+				"%s is a file; a plugin is a directory holding %s", entry.Name(), contract.ManifestFile)
 			notDirectory.Origin = OriginDataDirectory
 			loaded.Refused = append(loaded.Refused, *notDirectory)
 			continue
 		}
 		onDisk := filepath.Join(root, entry.Name())
-		plugin, refusal := loadOne(ctx, loaded.Set, os.DirFS(onDisk), entry.Name(), OriginDataDirectory, onDisk,
+		plugin, refusal := LoadOne(ctx, loaded.Set, os.DirFS(onDisk), entry.Name(), OriginDataDirectory, onDisk,
 			onDisk, taken, options)
 		if refusal != nil {
 			refusal.Origin = OriginDataDirectory
@@ -338,23 +338,23 @@ func Load(ctx context.Context, options Options) (*Loaded, error) {
 	return loaded, nil
 }
 
-// loadOne validates one plugin directory and, when it is accepted, adds its providers to the set,
+// LoadOne validates one plugin directory and, when it is accepted, adds its providers to the set,
 // admits its endpoints and creates its tables. Nothing of a refused plugin is added anywhere.
-func loadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origin, location, onDisk string,
-	taken map[string]string, options Options) (*Plugin, *contractpkg.Refusal) {
-	raw, err := fs.ReadFile(directory, contractpkg.ManifestFile)
+func LoadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origin, location, onDisk string,
+	taken map[string]string, options Options) (*Plugin, *contract.Refusal) {
+	raw, err := fs.ReadFile(directory, contract.ManifestFile)
 	if err != nil {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalManifestUnreadable, "%s cannot be read: %v", contractpkg.ManifestFile, err)
+		return nil, contract.Refuse(name, contract.RefusalManifestUnreadable, "%s cannot be read: %v", contract.ManifestFile, err)
 	}
-	manifest, err := contractpkg.DecodeManifest(raw)
+	manifest, err := contract.DecodeManifest(raw)
 	if err != nil {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalManifestInvalid, "%s is not a valid manifest: %v", contractpkg.ManifestFile, err)
+		return nil, contract.Refuse(name, contract.RefusalManifestInvalid, "%s is not a valid manifest: %v", contract.ManifestFile, err)
 	}
-	if refusal := contractpkg.ValidateShape(manifest, name); refusal != nil {
+	if refusal := contract.ValidateShape(manifest, name); refusal != nil {
 		return nil, refusal
 	}
 	if owner, collides := taken[manifest.Name]; collides {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalNameCollision,
+		return nil, contract.Refuse(name, contract.RefusalNameCollision,
 			"a plugin named %q is already loaded (%s); the built-in wins and a later one is refused", manifest.Name, owner)
 	}
 	plugin := &Plugin{
@@ -396,7 +396,7 @@ func loadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origi
 	var exports map[string]map[string]string
 	if plugin.script != nil {
 		if exports, err = plugin.script.ExportsOf(); err != nil {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalScriptDoesNotCompile, "%v", err)
+			return nil, contract.Refuse(name, contract.RefusalScriptDoesNotCompile, "%v", err)
 		}
 	}
 	if plugin.pushes, refusal = checkPush(plugin, exports); refusal != nil {
@@ -415,7 +415,7 @@ func loadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origi
 	for index, table := range tables {
 		declared, err := pluginDataset(name, manifest.Tables[index], table, infos, plugin.pushes)
 		if err != nil {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalTableInvalid, "the table %s is not a dataset the catalogue can serve: %v",
+			return nil, contract.Refuse(name, contract.RefusalTableInvalid, "the table %s is not a dataset the catalogue can serve: %v",
 				table.Table, err)
 		}
 		plugin.datasets = append(plugin.datasets, declared)
@@ -427,7 +427,7 @@ func loadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origi
 		for _, table := range tables {
 			event, err := options.Store.EnsurePluginTable(ctx, table)
 			if err != nil {
-				return nil, contractpkg.Refuse(name, contractpkg.RefusalTableInvalid, "%v", err)
+				return nil, contract.Refuse(name, contract.RefusalTableInvalid, "%v", err)
 			}
 			if event != nil {
 				plugin.Events = append(plugin.Events, *event)
@@ -436,19 +436,19 @@ func loadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origi
 	}
 	for _, endpoint := range endpoints {
 		if err := opnsense.AdmitDeclaredEndpoint(endpoint); err != nil {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalEndpointInvalid, "%v", err)
+			return nil, contract.Refuse(name, contract.RefusalEndpointInvalid, "%v", err)
 		}
 	}
 	for _, declared := range routes {
 		for _, held := range declared[1:] {
 			if err := opnsense.AdmitDeclaredEndpoint(held.Endpoint); err != nil {
-				return nil, contractpkg.Refuse(name, contractpkg.RefusalEndpointInvalid, "%v", err)
+				return nil, contract.Refuse(name, contract.RefusalEndpointInvalid, "%v", err)
 			}
 		}
 	}
 	for _, declared := range providers {
 		if err := declared.add(set); err != nil {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalProviderKeyCollision, "%v", err)
+			return nil, contract.Refuse(name, contract.RefusalProviderKeyCollision, "%v", err)
 		}
 		if origin == OriginBuiltin {
 			set.MarkBuiltin(declared.info.Kind, declared.info.Key)
@@ -460,21 +460,21 @@ func loadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origi
 	}
 	plugin.Destinations = append([]string(nil), manifest.Destinations...)
 	// What the plugin declares of its endpoints reaches whichever broker reads this set.
-	set.AddDeclarer(plugin.declareTo)
+	set.AddDeclarer(plugin.DeclareTo)
 	return plugin, nil
 }
 
 // declaredEndpoints checks every endpoint a manifest declares and returns them by name.
-func declaredEndpoints(manifest contractpkg.Manifest) (map[string]opnsense.Endpoint, map[string][]runtime.Route, *contractpkg.Refusal) {
+func declaredEndpoints(manifest contract.Manifest) (map[string]opnsense.Endpoint, map[string][]scripthost.Route, *contract.Refusal) {
 	endpoints := map[string]opnsense.Endpoint{}
-	routes := map[string][]runtime.Route{}
+	routes := map[string][]scripthost.Route{}
 	for _, declaration := range manifest.Endpoints {
-		if !contractpkg.NamePattern.MatchString(declaration.Name) {
-			return nil, nil, contractpkg.Refuse(manifest.Name, contractpkg.RefusalEndpointInvalid, "the endpoint name %q is not a snake_case word",
+		if !contract.NamePattern.MatchString(declaration.Name) {
+			return nil, nil, contract.Refuse(manifest.Name, contract.RefusalEndpointInvalid, "the endpoint name %q is not a snake_case word",
 				declaration.Name)
 		}
 		if _, duplicate := endpoints[declaration.Name]; duplicate {
-			return nil, nil, contractpkg.Refuse(manifest.Name, contractpkg.RefusalEndpointInvalid, "the endpoint %q is declared twice",
+			return nil, nil, contract.Refuse(manifest.Name, contract.RefusalEndpointInvalid, "the endpoint %q is declared twice",
 				declaration.Name)
 		}
 		endpoint := opnsense.Endpoint{Path: declaration.Path, Method: declaration.Method, Stream: declaration.Stream,
@@ -487,7 +487,7 @@ func declaredEndpoints(manifest contractpkg.Manifest) (map[string]opnsense.Endpo
 		case "json":
 			endpoint.Encoding = opnsense.JSONBody
 		default:
-			return nil, nil, contractpkg.Refuse(manifest.Name, contractpkg.RefusalEndpointInvalid, "the endpoint %q has the body %q, not none, "+
+			return nil, nil, contract.Refuse(manifest.Name, contract.RefusalEndpointInvalid, "the endpoint %q has the body %q, not none, "+
 				"form or json", declaration.Name, declaration.Body)
 		}
 		switch declaration.Argument {
@@ -496,17 +496,17 @@ func declaredEndpoints(manifest contractpkg.Manifest) (map[string]opnsense.Endpo
 		case "interface_names":
 			endpoint.Argument = opnsense.InterfaceNameArgument
 		default:
-			return nil, nil, contractpkg.Refuse(manifest.Name, contractpkg.RefusalEndpointInvalid, "the endpoint %q has the argument %q, not none "+
+			return nil, nil, contract.Refuse(manifest.Name, contract.RefusalEndpointInvalid, "the endpoint %q has the argument %q, not none "+
 				"or interface_names", declaration.Name, declaration.Argument)
 		}
 		if endpoint.Method == "" {
 			endpoint.Method = http.MethodGet
 		}
 		if refusal := opnsense.CheckDeclaredEndpoint(endpoint); refusal != nil {
-			return nil, nil, contractpkg.Refuse(manifest.Name, refusal.Code, "the endpoint %q: %s", declaration.Name, refusal.Detail)
+			return nil, nil, contract.Refuse(manifest.Name, refusal.Code, "the endpoint %q: %s", declaration.Name, refusal.Detail)
 		}
 		if reason := broker.CheckRead(endpoint.Method, endpoint.Path); reason != "" {
-			return nil, nil, contractpkg.Refuse(manifest.Name, contractpkg.RefusalEndpointNotReadAction, "the endpoint %q: %s", declaration.Name, reason)
+			return nil, nil, contract.Refuse(manifest.Name, contract.RefusalEndpointNotReadAction, "the endpoint %q: %s", declaration.Name, reason)
 		}
 		if refusal := checkBrokerKeys(manifest, declaration); refusal != nil {
 			return nil, nil, refusal
@@ -529,12 +529,12 @@ func declaredEndpoints(manifest contractpkg.Manifest) (map[string]opnsense.Endpo
 }
 
 // declaredTables checks every table a manifest declares.
-func declaredTables(manifest contractpkg.Manifest) ([]plugindecl.PluginTable, *contractpkg.Refusal) {
+func declaredTables(manifest contract.Manifest) ([]plugindecl.PluginTable, *contract.Refusal) {
 	var tables []plugindecl.PluginTable
 	seen := map[string]bool{}
 	for _, declaration := range manifest.Tables {
 		if seen[declaration.Name] {
-			return nil, contractpkg.Refuse(manifest.Name, contractpkg.RefusalTableInvalid, "the table %q is declared twice", declaration.Name)
+			return nil, contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "the table %q is declared twice", declaration.Name)
 		}
 		seen[declaration.Name] = true
 		table := plugindecl.PluginTable{Plugin: manifest.Name, Table: declaration.Name,
@@ -552,9 +552,9 @@ func declaredTables(manifest contractpkg.Manifest) ([]plugindecl.PluginTable, *c
 		}
 		if err := plugindecl.ValidatePluginTable(table); err != nil {
 			if errors.Is(err, plugindecl.ErrUniqueKeyWithoutTime) {
-				return nil, contractpkg.Refuse(manifest.Name, contractpkg.RefusalUniqueKeyWithoutTime, "%v", err)
+				return nil, contract.Refuse(manifest.Name, contract.RefusalUniqueKeyWithoutTime, "%v", err)
 			}
-			return nil, contractpkg.Refuse(manifest.Name, contractpkg.RefusalTableInvalid, "%v", err)
+			return nil, contract.Refuse(manifest.Name, contract.RefusalTableInvalid, "%v", err)
 		}
 		tables = append(tables, table)
 	}
@@ -563,20 +563,20 @@ func declaredTables(manifest contractpkg.Manifest) ([]plugindecl.PluginTable, *c
 
 // loadScript reads and compiles the script a manifest names, and runs it once to see what it
 // exports.
-func loadScript(plugin *Plugin, directory fs.FS, timeout time.Duration) *contractpkg.Refusal {
+func loadScript(plugin *Plugin, directory fs.FS, timeout time.Duration) *contract.Refusal {
 	if plugin.Manifest.Script == "" {
 		return nil
 	}
 	source, err := fs.ReadFile(directory, plugin.Manifest.Script)
 	if err != nil {
-		return contractpkg.Refuse(plugin.Name, contractpkg.RefusalScriptMissing, "%s cannot be read: %v", plugin.Manifest.Script, err)
+		return contract.Refuse(plugin.Name, contract.RefusalScriptMissing, "%s cannot be read: %v", plugin.Manifest.Script, err)
 	}
-	compiled, err := runtime.Compile(plugin.Name, plugin.Manifest.Script, string(source), plugin.Endpoints, timeout)
+	compiled, err := scripthost.Compile(plugin.Name, plugin.Manifest.Script, string(source), plugin.Endpoints, timeout)
 	if err != nil {
-		return contractpkg.Refuse(plugin.Name, contractpkg.RefusalScriptDoesNotCompile, "%v", err)
+		return contract.Refuse(plugin.Name, contract.RefusalScriptDoesNotCompile, "%v", err)
 	}
 	if _, err := compiled.ExportsOf(); err != nil {
-		return contractpkg.Refuse(plugin.Name, contractpkg.RefusalScriptDoesNotCompile, "running %s to read its exports: %v",
+		return contract.Refuse(plugin.Name, contract.RefusalScriptDoesNotCompile, "running %s to read its exports: %v",
 			plugin.Manifest.Script, err)
 	}
 	compiled.Version = plugin.Manifest.Version
@@ -597,12 +597,12 @@ type checkedProvider struct {
 }
 
 // checkProviders checks every provider a manifest declares and returns how to add each.
-func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contractpkg.Refusal) {
+func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contract.Refusal) {
 	var exports map[string]map[string]string
 	if plugin.script != nil {
 		var err error
 		if exports, err = plugin.script.ExportsOf(); err != nil {
-			return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalScriptDoesNotCompile, "%v", err)
+			return nil, contract.Refuse(plugin.Name, contract.RefusalScriptDoesNotCompile, "%v", err)
 		}
 	}
 	var checked []checkedProvider
@@ -612,11 +612,11 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 		if key == "" {
 			key = plugin.Name
 		}
-		if !contractpkg.NamePattern.MatchString(key) {
-			return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalManifestInvalid, "the provider key %q is not a snake_case word", key)
+		if !contract.NamePattern.MatchString(key) {
+			return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "the provider key %q is not a snake_case word", key)
 		}
 		if strings.TrimSpace(declaration.DisplayName) == "" {
-			return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalManifestInvalid, "the %s provider has no display_name",
+			return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "the %s provider has no display_name",
 				declaration.Kind)
 		}
 		switch declaration.Source {
@@ -624,32 +624,32 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 		case providerSourcePush:
 			if provider.IsCoreKind(declaration.Kind) || declaration.Probe != nil || declaration.Read != nil ||
 				declaration.Live != nil {
-				return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalManifestInvalid, "the %s provider has the source push, which "+
+				return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "the %s provider has the source push, which "+
 					"only a provider of a kind of the plugin's own with no probe, read or live pass may have",
 					declaration.Kind)
 			}
 		default:
-			return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalManifestInvalid, "the %s provider has the source %q; the only "+
+			return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "the %s provider has the source %q; the only "+
 				"source a provider names is push", declaration.Kind, declaration.Source)
 		}
 		if reason, coreOnly := provider.CoreOnly(declaration.Kind); coreOnly {
-			return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalCoreOnlyKind, "the kind %q is %s", declaration.Kind, reason)
+			return nil, contract.Refuse(plugin.Name, contract.RefusalCoreOnlyKind, "the kind %q is %s", declaration.Kind, reason)
 		}
-		contract, core := provider.ContractOf(declaration.Kind)
+		kindContract, core := provider.ContractOf(declaration.Kind)
 		if !core {
-			if !contractpkg.NamePattern.MatchString(declaration.Kind) || len(plugin.OwnTables) == 0 {
-				return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalUnknownKind, "the kind %q is not a core kind (%v), and a kind "+
+			if !contract.NamePattern.MatchString(declaration.Kind) || len(plugin.OwnTables) == 0 {
+				return nil, contract.Refuse(plugin.Name, contract.RefusalUnknownKind, "the kind %q is not a core kind (%v), and a kind "+
 					"of the plugin's own needs tables of its own to write into", declaration.Kind, provider.CoreKinds())
 			}
 			if owner, owned := set.DeclaredKindOwner(declaration.Kind); owned && owner != plugin.Name {
-				return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalUnknownKind, "the kind %q is declared by the plugin %s",
+				return nil, contract.Refuse(plugin.Name, contract.RefusalUnknownKind, "the kind %q is declared by the plugin %s",
 					declaration.Kind, owner)
 			}
-			contract = declaredContract(declaration.Kind)
+			kindContract = declaredContract(declaration.Kind)
 		}
 		identity := [2]string{declaration.Kind, key}
 		if seen[identity] || set.Taken(declaration.Kind, key) {
-			return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalProviderKeyCollision,
+			return nil, contract.Refuse(plugin.Name, contract.RefusalProviderKeyCollision,
 				"the %s provider %q is already declared", declaration.Kind, key)
 		}
 		seen[identity] = true
@@ -666,14 +666,14 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 		switch declaration.ReadStrategy {
 		case "", "full_reread", "time_window", "watermark":
 		default:
-			return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalManifestInvalid, "read_strategy %q is not full_reread, time_window "+
+			return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "read_strategy %q is not full_reread, time_window "+
 				"or watermark", declaration.ReadStrategy)
 		}
 		info := ProviderInfo{Kind: declaration.Kind, Key: key, DisplayName: declaration.DisplayName,
 			ReadStrategy: declaration.ReadStrategy, CadenceSeconds: declaration.CadenceSeconds,
 			MinCadenceSeconds: declaration.MinCadenceSeconds, TriggeredBy: declaration.TriggeredBy,
 			Endpoints: endpointInfos(plugin.Endpoints)}
-		base := adapter{plugin: plugin.Name, contract: contract, endpoints: plugin.Endpoints,
+		base := adapter{plugin: plugin.Name, contract: kindContract, endpoints: plugin.Endpoints,
 			scriptProbe: scriptEndpoint(plugin.Name, plugin.Manifest.Script)}
 		if (declaration.Probe != nil || declaration.Read != nil) && declaration.Live != nil {
 			_, refusal := checkLive(plugin, declaration, exports)
@@ -696,7 +696,7 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 		}
 		if declaration.Probe != nil || declaration.Read != nil {
 			info.Form = FormDeclarative
-			form, refusal := checkDeclarative(plugin, declaration, contract, core)
+			form, refusal := checkDeclarative(plugin, declaration, kindContract, core)
 			if refusal != nil {
 				return nil, refusal
 			}
@@ -704,10 +704,10 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 		} else {
 			info.Form = FormScript
 			if plugin.script == nil {
-				return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalScriptMissing, "the %s provider declares no probe and no read, "+
+				return nil, contract.Refuse(plugin.Name, contract.RefusalScriptMissing, "the %s provider declares no probe and no read, "+
 					"so a script serves it, and the manifest names none", declaration.Kind)
 			}
-			if refusal := checkExports(plugin.Name, exports, declaration.Kind, contract, core); refusal != nil {
+			if refusal := checkExports(plugin.Name, exports, declaration.Kind, kindContract, core); refusal != nil {
 				return nil, refusal
 			}
 			live, refusal := checkLive(plugin, declaration, exports)
@@ -744,50 +744,50 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 
 // checkCadence checks a provider's cadence: a core kind with a surveyed interval declares none,
 // any other kind declares one, at or above its own lower bound.
-func checkCadence(plugin string, declaration contractpkg.ProviderDeclaration, surveyed bool) *contractpkg.Refusal {
+func checkCadence(plugin string, declaration contract.ProviderDeclaration, surveyed bool) *contract.Refusal {
 	if surveyed {
 		if declaration.CadenceSeconds != 0 || declaration.MinCadenceSeconds != 0 {
-			return contractpkg.Refuse(plugin, contractpkg.RefusalCadenceInvalid, "the %s kind runs at the interval the collection surface "+
+			return contract.Refuse(plugin, contract.RefusalCadenceInvalid, "the %s kind runs at the interval the collection surface "+
 				"sets, so its provider declares no cadence", declaration.Kind)
 		}
 		return nil
 	}
 	if declaration.CadenceSeconds <= 0 {
-		return contractpkg.Refuse(plugin, contractpkg.RefusalCadenceInvalid, "the %s provider declares no cadence_seconds, which its kind "+
+		return contract.Refuse(plugin, contract.RefusalCadenceInvalid, "the %s provider declares no cadence_seconds, which its kind "+
 			"needs", declaration.Kind)
 	}
 	if declaration.MinCadenceSeconds < 0 || declaration.CadenceSeconds < declaration.MinCadenceSeconds {
-		return contractpkg.Refuse(plugin, contractpkg.RefusalCadenceInvalid, "cadence_seconds %d is below min_cadence_seconds %d",
+		return contract.Refuse(plugin, contract.RefusalCadenceInvalid, "cadence_seconds %d is below min_cadence_seconds %d",
 			declaration.CadenceSeconds, declaration.MinCadenceSeconds)
 	}
 	return nil
 }
 
 // cadenceOf is a provider's declared cadence.
-func cadenceOf(declaration contractpkg.ProviderDeclaration) time.Duration {
+func cadenceOf(declaration contract.ProviderDeclaration) time.Duration {
 	return time.Duration(declaration.CadenceSeconds) * time.Second
 }
 
 // checkExports checks that a script exports every function and value its kind's contract names.
-func checkExports(plugin string, exports map[string]map[string]string, kind string, contract provider.Contract,
-	core bool) *contractpkg.Refusal {
+func checkExports(plugin string, exports map[string]map[string]string, kind string, kindContract provider.Contract,
+	core bool) *contract.Refusal {
 	members := exports[kind]
 	required := []string{"probe", "collect"}
 	if core {
 		required = nil
-		for _, function := range contract.Functions {
+		for _, function := range kindContract.Functions {
 			required = append(required, function.Name)
 		}
 	}
 	for _, function := range required {
 		if members[function] != "function" {
-			return contractpkg.Refuse(plugin, contractpkg.RefusalScriptMissingFunction, "the script does not export the function %s.%s",
+			return contract.Refuse(plugin, contract.RefusalScriptMissingFunction, "the script does not export the function %s.%s",
 				kind, function)
 		}
 	}
-	for _, value := range contract.Values {
+	for _, value := range kindContract.Values {
 		if members[value.Name] != "value" {
-			return contractpkg.Refuse(plugin, contractpkg.RefusalScriptMissingFunction, "the script does not export the value %s.%s",
+			return contract.Refuse(plugin, contract.RefusalScriptMissingFunction, "the script does not export the value %s.%s",
 				kind, value.Name)
 		}
 	}
@@ -797,7 +797,7 @@ func checkExports(plugin string, exports map[string]map[string]string, kind stri
 // endpointInfos lists a plugin's endpoints, by name.
 func endpointInfos(endpoints map[string]opnsense.Endpoint) []EndpointInfo {
 	infos := make([]EndpointInfo, 0, len(endpoints))
-	for _, name := range runtime.SortedKeys(endpoints) {
+	for _, name := range scripthost.SortedKeys(endpoints) {
 		infos = append(infos, EndpointInfo{Name: name, Method: endpoints[name].Method, Path: endpoints[name].Path})
 	}
 	return infos
@@ -806,23 +806,23 @@ func endpointInfos(endpoints map[string]opnsense.Endpoint) []EndpointInfo {
 // loadWidgets checks that every widget a manifest names has its directory, widgets/<type>/, and
 // keeps it for the widget service. The widget itself is validated by the widget service, which
 // reports a refused widget with the widget's own code -- and, for a built-in, refuses to start.
-func loadWidgets(plugin *Plugin, directory fs.FS, location, onDisk, origin string) *contractpkg.Refusal {
+func loadWidgets(plugin *Plugin, directory fs.FS, location, onDisk, origin string) *contract.Refusal {
 	for _, name := range plugin.Manifest.Widgets {
 		relative := path.Join("widgets", name)
 		info, err := fs.Stat(directory, relative)
 		if err != nil || !info.IsDir() {
-			return contractpkg.Refuse(plugin.Name, contractpkg.RefusalWidgetMissing, "the widget %q has no directory widgets/%s", name, name)
+			return contract.Refuse(plugin.Name, contract.RefusalWidgetMissing, "the widget %q has no directory widgets/%s", name, name)
 		}
 		files, err := fs.Sub(directory, relative)
 		if err != nil {
-			return contractpkg.Refuse(plugin.Name, contractpkg.RefusalWidgetMissing, "the widget %q: %v", name, err)
+			return contract.Refuse(plugin.Name, contract.RefusalWidgetMissing, "the widget %q: %v", name, err)
 		}
 		where := path.Join(location, relative)
 		if onDisk != "" {
 			where = filepath.Join(onDisk, "widgets", name)
 		}
 		plugin.WidgetDirectories = append(plugin.WidgetDirectories, where)
-		plugin.widgets = append(plugin.widgets, widget.Source{Plugin: plugin.Name, Type: name,
+		plugin.Widgets = append(plugin.Widgets, widget.Source{Plugin: plugin.Name, Type: name,
 			Builtin: origin == OriginBuiltin, Location: where, Files: files})
 	}
 	return nil
@@ -833,7 +833,7 @@ func loadWidgets(plugin *Plugin, directory fs.FS, location, onDisk, origin strin
 func (l *Loaded) WidgetSources() []widget.Source {
 	sources := []widget.Source{}
 	for _, plugin := range l.Members {
-		sources = append(sources, plugin.widgets...)
+		sources = append(sources, plugin.Widgets...)
 	}
 	return sources
 }
@@ -848,7 +848,7 @@ func init() {
 // opnview's own catalogue files, {"language": ..., "strings": {key: text}}. A plugin's strings
 // are its own, carried in its directory, so adding one edits no
 // shipped locale file; a key outside the plugin's namespace is refused.
-func loadStrings(plugin *Plugin, directory fs.FS, providers []checkedProvider) *contractpkg.Refusal {
+func loadStrings(plugin *Plugin, directory fs.FS, providers []checkedProvider) *contract.Refusal {
 	owned := map[string]bool{}
 	for _, declared := range providers {
 		owned["provider."+declared.info.Kind+"."+declared.info.Key] = true
@@ -866,24 +866,24 @@ func loadStrings(plugin *Plugin, directory fs.FS, providers []checkedProvider) *
 		}
 		raw, err := fs.ReadFile(directory, path.Join("locale", entry.Name()))
 		if err != nil {
-			return contractpkg.Refuse(plugin.Name, contractpkg.RefusalManifestInvalid, "locale/%s cannot be read: %v", entry.Name(), err)
+			return contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "locale/%s cannot be read: %v", entry.Name(), err)
 		}
 		var catalogue struct {
 			Language string            `json:"language"`
 			Strings  map[string]string `json:"strings"`
 		}
 		if err := json.Unmarshal(raw, &catalogue); err != nil {
-			return contractpkg.Refuse(plugin.Name, contractpkg.RefusalManifestInvalid, "locale/%s is not a catalogue file: %v",
+			return contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "locale/%s is not a catalogue file: %v",
 				entry.Name(), err)
 		}
 		language := strings2Language(entry.Name())
 		if catalogue.Language != language {
-			return contractpkg.Refuse(plugin.Name, contractpkg.RefusalManifestInvalid, "locale/%s declares the language %q",
+			return contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "locale/%s declares the language %q",
 				entry.Name(), catalogue.Language)
 		}
 		for key := range catalogue.Strings {
 			if !owned[key] && !strings.HasPrefix(key, "plugin."+plugin.Name+".") {
-				return contractpkg.Refuse(plugin.Name, contractpkg.RefusalStringOutsideNamespace, "locale/%s defines %q, which is not "+
+				return contract.Refuse(plugin.Name, contract.RefusalStringOutsideNamespace, "locale/%s defines %q, which is not "+
 					"the plugin's own: its keys are plugin.%s.*, provider.<kind>.<key> of its providers and "+
 					"collection.kind.<kind> of its own kinds", entry.Name(), key, plugin.Name)
 			}
@@ -902,12 +902,12 @@ func settingClaim(key string) string { return "setting " + key }
 
 // checkDestinations checks the destinations a manifest declares: each a scheme and a host, and
 // nothing else.
-func checkDestinations(manifest contractpkg.Manifest) *contractpkg.Refusal {
+func checkDestinations(manifest contract.Manifest) *contract.Refusal {
 	for _, destination := range manifest.Destinations {
 		parsed, err := url.Parse(destination)
 		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.Host == "" ||
 			(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.User != nil {
-			return contractpkg.Refuse(manifest.Name, contractpkg.RefusalManifestInvalid, "the destination %q is not a scheme and a host, "+
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the destination %q is not a scheme and a host, "+
 				"such as https://example.org", destination)
 		}
 	}
@@ -916,8 +916,8 @@ func checkDestinations(manifest contractpkg.Manifest) *contractpkg.Refusal {
 
 // extensions are what a plugin's script may reach beyond the firewall, given the options it was
 // loaded with.
-func (p *Plugin) extensions(options Options) *runtime.Extensions {
-	extra := &runtime.Extensions{}
+func (p *Plugin) extensions(options Options) *scripthost.Extensions {
+	extra := &scripthost.Extensions{}
 	settingStore := options.Settings
 	if settingStore == nil && options.Store != nil {
 		settingStore = options.Store
@@ -965,18 +965,18 @@ func (p *Plugin) extensions(options Options) *runtime.Extensions {
 
 // checkTriggers checks a provider's triggered_by: only a provider that states its own cadence may
 // name notifications, each a channel the core publishes, alone or with a subject.
-func checkTriggers(plugin string, declaration contractpkg.ProviderDeclaration, surveyed bool) *contractpkg.Refusal {
+func checkTriggers(plugin string, declaration contract.ProviderDeclaration, surveyed bool) *contract.Refusal {
 	if len(declaration.TriggeredBy) == 0 {
 		return nil
 	}
 	if surveyed {
-		return contractpkg.Refuse(plugin, contractpkg.RefusalTriggerInvalid, "the %s kind runs at the interval the collection surface "+
+		return contract.Refuse(plugin, contract.RefusalTriggerInvalid, "the %s kind runs at the interval the collection surface "+
 			"sets, so its provider names no trigger", declaration.Kind)
 	}
 	for _, name := range declaration.TriggeredBy {
 		channel, subject, hasSubject := strings.Cut(name, ":")
-		if !slices.Contains(sqldb.Channels(), channel) || (hasSubject && !contractpkg.NamePattern.MatchString(subject)) {
-			return contractpkg.Refuse(plugin, contractpkg.RefusalTriggerInvalid, "triggered_by names %q, which is not a channel the core "+
+		if !slices.Contains(sqldb.Channels(), channel) || (hasSubject && !contract.NamePattern.MatchString(subject)) {
+			return contract.Refuse(plugin, contract.RefusalTriggerInvalid, "triggered_by names %q, which is not a channel the core "+
 				"publishes, alone or followed by a subject", name)
 		}
 	}
@@ -989,7 +989,7 @@ func checkTriggers(plugin string, declaration contractpkg.ProviderDeclaration, s
 // otherwise, its columns take the role their type implies when they state none -- an instant is
 // time, a number a measure, anything else a dimension -- and it carries loss_detectable: true only
 // when every entry writing into it accepts nothing but transports whose loss is detected.
-func pluginDataset(plugin string, declaration contractpkg.TableDeclaration, table plugindecl.PluginTable,
+func pluginDataset(plugin string, declaration contract.TableDeclaration, table plugindecl.PluginTable,
 	providers []ProviderInfo, pushes []*pushBinding) (dataset.Declaration, error) {
 	var writers []*pushBinding
 	for _, binding := range pushes {

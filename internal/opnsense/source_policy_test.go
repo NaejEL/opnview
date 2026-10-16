@@ -426,12 +426,14 @@ func readFile(t *testing.T, path string) string {
 	return string(raw)
 }
 
-// testSupportPackages are the packages that exist for tests only: a fake firewall and a
-// harness that must construct HTTP requests and clients to drive a server. They hold
-// non-test Go files because a test of another package imports them, which is why the scans
-// above skip them -- and TestTestSupportPackagesAreNeverLinkedIntoTheBinary is what makes
-// that skip sound: no non-test file may import one.
-var testSupportPackages = []string{"../../internal/web/webtest", "../../internal/collect/providertest"}
+// testSupportPackages are the packages that exist for tests only: a fake firewall, a harness
+// that must construct HTTP requests and clients to drive a server, and the fixtures the store's
+// and the collector's tests share, which carry example addresses. They hold non-test Go files
+// because a test of another package imports them, which is why the scans above skip them -- and
+// TestTestSupportPackagesAreNeverLinkedIntoTheBinary is what makes that skip sound: no non-test
+// file may import one.
+var testSupportPackages = []string{"../../internal/web/webtest", "../../internal/collect/providertest",
+	"../../internal/store/storetest", "../../internal/collect/collecttest"}
 
 // isTestSupportPackage reports whether a directory is one of the test-support packages.
 func isTestSupportPackage(directory string) bool {

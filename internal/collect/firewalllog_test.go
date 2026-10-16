@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -6,61 +6,46 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The filter-log collector tests.
 
-// arrangeFilterLogCollection stands up a harness whose filter log is the active source.
-func arrangeFilterLogCollection(t *testing.T) *probeHarness {
-	t.Helper()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
-	if err := harness.collector.probeFirewallLog(context.Background()); err != nil {
-		t.Fatalf("probing the filter log: %v", err)
-	}
-	if key := harness.activeKeyOf(t, core.KindFirewallLog); key != ProviderPf {
-		t.Fatalf("the filter-log kind activated %q", key)
-	}
-	return harness
-}
-
 // TestAFilterLogPassStoresEveryRecordAndResolvesBothJoinKeys is the ingest, and the two
 // first-class join keys resolving or reporting that they did not.
 func TestAFilterLogPassStoresEveryRecordAndResolvesBothJoinKeys(t *testing.T) {
 	t.Parallel()
-	harness := arrangeFilterLogCollection(t)
+	harness := collecttest.ArrangeFilterLogCollection(t)
 	ctx := context.Background()
 
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	harness.fake.AssertEveryPathIsRegistered()
+	harness.Fake.AssertEveryPathIsRegistered()
 
 	records := len(fixtureRecords(t, "firewall_log.json"))
-	if stored := countRows(t, harness.store, "flow"); stored != records {
+	if stored := collecttest.CountRows(t, harness.Store, "flow"); stored != records {
 		t.Fatalf("stored %d of the %d records in the page", stored, records)
 	}
 
 	// The record whose device is absent from the interface map, and the record whose rid
 	// matches no discovered rule, are both present with their state rather than dropped.
-	notFoundInterfaces := scalarCount(t, harness.store,
+	notFoundInterfaces := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM flow WHERE interface_lookup_state = 'not_found'")
 	if notFoundInterfaces == 0 {
 		t.Error("no flow reports an unmapped device, so the not-found state is untested")
 	}
-	notFoundRules := scalarCount(t, harness.store,
+	notFoundRules := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM flow WHERE rule_lookup_state = 'not_found' AND rid IS NOT NULL")
 	if notFoundRules == 0 {
 		t.Error("no flow reports a rid that matched no rule, so the not-found state is untested")
 	}
-	resolvedRules := scalarCount(t, harness.store,
+	resolvedRules := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM flow WHERE rule_lookup_state = 'resolved' AND rule_id IS NOT NULL")
 	if resolvedRules == 0 {
 		t.Error("no flow resolved its rid to a discovered rule, so the join is untested")
@@ -69,7 +54,7 @@ func TestAFilterLogPassStoresEveryRecordAndResolvesBothJoinKeys(t *testing.T) {
 	// Both address families reach the table, which is the column no address can be
 	// classified without.
 	for _, family := range []int64{4, 6} {
-		if scalarCount(t, harness.store,
+		if collecttest.ScalarCount(t, harness.Store,
 			"SELECT count(*) FROM flow WHERE ip_version = ?", family) == 0 {
 			t.Errorf("no flow carries IP version %d", family)
 		}
@@ -77,16 +62,16 @@ func TestAFilterLogPassStoresEveryRecordAndResolvesBothJoinKeys(t *testing.T) {
 
 	// An action and a direction outside their vocabularies become unknown rather than
 	// being folded into pass or into a definite direction.
-	if scalarCount(t, harness.store, "SELECT count(*) FROM flow WHERE action = 'unknown'") == 0 {
+	if collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM flow WHERE action = 'unknown'") == 0 {
 		t.Error("the record whose action is outside the vocabulary was not stored as unknown")
 	}
-	if scalarCount(t, harness.store, "SELECT count(*) FROM flow WHERE direction = 'unknown'") == 0 {
+	if collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM flow WHERE direction = 'unknown'") == 0 {
 		t.Error("the record whose direction is outside the vocabulary was not stored as unknown")
 	}
 
 	// The reason the line was written is kept, which is the only thing that separates a
 	// packet a rule denied from one the firewall dropped for a reason no rule expresses.
-	if scalarCount(t, harness.store,
+	if collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(DISTINCT log_reason) FROM flow WHERE log_reason IS NOT NULL") < 2 {
 		t.Error("fewer than two distinct log reasons were stored, so a denial and a drop " +
 			"cannot be told apart")
@@ -97,19 +82,19 @@ func TestAFilterLogPassStoresEveryRecordAndResolvesBothJoinKeys(t *testing.T) {
 // The endpoint echoes back records already seen, and every poll re-offers the whole page.
 func TestAFilterLogPassRepeatedStoresNothingNew(t *testing.T) {
 	t.Parallel()
-	harness := arrangeFilterLogCollection(t)
+	harness := collecttest.ArrangeFilterLogCollection(t)
 	ctx := context.Background()
 
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("the first pass: %v", err)
 	}
-	afterOne := countRows(t, harness.store, "flow")
+	afterOne := collecttest.CountRows(t, harness.Store, "flow")
 	for pass := 0; pass < 3; pass++ {
-		if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+		if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 			t.Fatalf("pass %d: %v", pass, err)
 		}
 	}
-	if afterTwo := countRows(t, harness.store, "flow"); afterTwo != afterOne {
+	if afterTwo := collecttest.CountRows(t, harness.Store, "flow"); afterTwo != afterOne {
 		t.Fatalf("four passes of one page stored %d rows, up from %d", afterTwo, afterOne)
 	}
 }
@@ -122,12 +107,12 @@ func TestAFilterLogPassRepeatedStoresNothingNew(t *testing.T) {
 // resume guarantee that does not exist, and would hide the gap detection that replaces it.
 func TestTheCollectorSendsNoDigestBecauseItIsNotACursor(t *testing.T) {
 	t.Parallel()
-	harness := arrangeFilterLogCollection(t)
-	if err := harness.collector.CollectFirewallLog(context.Background()); err != nil {
+	harness := collecttest.ArrangeFilterLogCollection(t)
+	if err := harness.Collector.CollectFirewallLog(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
 
-	requests := harness.fake.RequestsTo(opnsense.FirewallLog)
+	requests := harness.Fake.RequestsTo(opnsense.FirewallLog)
 	if len(requests) == 0 {
 		t.Fatal("the filter log was never requested")
 	}
@@ -151,13 +136,13 @@ func TestTheCollectorSendsNoDigestBecauseItIsNotACursor(t *testing.T) {
 // is a row rather than silence.
 func TestAPageThatBeginsAfterTheNewestStoredRecordWritesAGapRow(t *testing.T) {
 	t.Parallel()
-	harness := arrangeFilterLogCollection(t)
+	harness := collecttest.ArrangeFilterLogCollection(t)
 	ctx := context.Background()
 
 	// A record stored well before the page, standing for a poll that happened and then a
 	// period during which opnview was not running.
 	oldest := oldestFixtureInstant(t, harness)
-	if err := harness.store.InsertFlow(ctx, vocab.Flow{
+	if err := harness.Store.InsertFlow(ctx, vocab.Flow{
 		LogDigest:            "example-digest-from-an-earlier-poll",
 		ObservedAt:           oldest - 3600,
 		IngestedAt:           oldest - 3600,
@@ -170,11 +155,11 @@ func TestAPageThatBeginsAfterTheNewestStoredRecordWritesAGapRow(t *testing.T) {
 		t.Fatalf("seeding an earlier record: %v", err)
 	}
 
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
 
-	gaps := countRows(t, harness.store, "collection_gap")
+	gaps := collecttest.CountRows(t, harness.Store, "collection_gap")
 	if gaps != 1 {
 		t.Fatalf("the pass wrote %d gap rows, want exactly one", gaps)
 	}
@@ -183,7 +168,7 @@ func TestAPageThatBeginsAfterTheNewestStoredRecordWritesAGapRow(t *testing.T) {
 		reason     string
 		detail     *string
 	)
-	if err := harness.store.DB().QueryRowContext(ctx,
+	if err := harness.Store.DB().QueryRowContext(ctx,
 		"SELECT interval_start_at, interval_end_at, reason, detail FROM collection_gap").
 		Scan(&start, &end, &reason, &detail); err != nil {
 		t.Fatalf("reading the gap back: %v", err)
@@ -206,18 +191,18 @@ func TestAPageThatBeginsAfterTheNewestStoredRecordWritesAGapRow(t *testing.T) {
 // healthy poll would be noise nobody reads.
 func TestAPageThatOverlapsTheStoredHistoryWritesNoGap(t *testing.T) {
 	t.Parallel()
-	harness := arrangeFilterLogCollection(t)
+	harness := collecttest.ArrangeFilterLogCollection(t)
 	ctx := context.Background()
 
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("the first pass: %v", err)
 	}
 	// The second pass sees the same page, whose oldest record is now inside the stored
 	// history.
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("the second pass: %v", err)
 	}
-	if gaps := countRows(t, harness.store, "collection_gap"); gaps != 0 {
+	if gaps := collecttest.CountRows(t, harness.Store, "collection_gap"); gaps != 0 {
 		t.Fatalf("a healthy overlapping poll wrote %d gap rows", gaps)
 	}
 }
@@ -265,29 +250,29 @@ func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			harness := newProbeHarness(t)
-			arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
+			harness := collecttest.NewProbeHarness(t)
+			collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 			// The provider is activated from a healthy probe first, so the collector is
 			// exercised rather than skipped.
-			harness.fake.AnswerJSON(opnsense.FirewallLog, []any{})
-			if err := harness.collector.probeFirewallLog(context.Background()); err != nil {
+			harness.Fake.AnswerJSON(opnsense.FirewallLog, []any{})
+			if err := harness.Collector.ProbeFirewallLog(context.Background()); err != nil {
 				t.Fatalf("probing: %v", err)
 			}
 
-			harness.fake.Answer(opnsense.FirewallLog, testCase.status, []byte(testCase.body))
-			err := harness.collector.CollectFirewallLog(context.Background())
+			harness.Fake.Answer(opnsense.FirewallLog, testCase.status, []byte(testCase.body))
+			err := harness.Collector.CollectFirewallLog(context.Background())
 			if testCase.wantState == vocab.StateUnavailable && err == nil {
 				t.Fatalf("%s was collected without an error (%s)", testCase.name, testCase.because)
 			}
 
-			state, probe, checkedAt := harness.availabilityOf(t, core.KindFirewallLog, ProviderPf)
+			state, probe, checkedAt := harness.AvailabilityOf(t, core.KindFirewallLog, collecttest.ProviderPf)
 			if state != testCase.wantState {
 				t.Errorf("the state is %q, want %q (%s)", state, testCase.wantState, testCase.because)
 			}
 			if probe == "" || checkedAt == 0 {
 				t.Error("the state was recorded with no probe or no instant")
 			}
-			if stored := countRows(t, harness.store, "flow"); stored != testCase.wantRows {
+			if stored := collecttest.CountRows(t, harness.Store, "flow"); stored != testCase.wantRows {
 				t.Errorf("%d flows were stored, want %d", stored, testCase.wantRows)
 			}
 		})
@@ -298,17 +283,17 @@ func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
 // probe round has just said opnview cannot read.
 func TestACollectorWithNoActiveProviderDoesNothing(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
-	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness := collecttest.NewProbeHarness(t)
+	harness.Fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
 
-	if err := harness.collector.CollectFirewallLog(context.Background()); err != nil {
+	if err := harness.Collector.CollectFirewallLog(context.Background()); err != nil {
 		t.Fatalf("collecting with no active provider: %v", err)
 	}
-	if harness.fake.RequestCount() != 0 {
+	if harness.Fake.RequestCount() != 0 {
 		t.Fatalf("the collector made %d requests although no provider is active",
-			harness.fake.RequestCount())
+			harness.Fake.RequestCount())
 	}
-	if stored := countRows(t, harness.store, "flow"); stored != 0 {
+	if stored := collecttest.CountRows(t, harness.Store, "flow"); stored != 0 {
 		t.Fatalf("%d flows were stored with no active provider", stored)
 	}
 }
@@ -324,9 +309,9 @@ func fixtureRecords(t *testing.T, name string) []decode.Object {
 }
 
 // oldestFixtureInstant returns the oldest normalised instant in the filter-log fixture.
-func oldestFixtureInstant(t *testing.T, harness *probeHarness) int64 {
+func oldestFixtureInstant(t *testing.T, harness *collecttest.ProbeHarness) int64 {
 	t.Helper()
-	normaliser := decode.Normaliser{Reference: harness.clock.Now()}
+	normaliser := decode.Normaliser{Reference: harness.Clock.Now()}
 	oldest := int64(0)
 	for _, record := range fixtureRecords(t, "firewall_log.json") {
 		stamp, present := decode.String(record, "__timestamp__")
@@ -345,15 +330,4 @@ func oldestFixtureInstant(t *testing.T, harness *probeHarness) int64 {
 		t.Fatal("the fixture carries no readable timestamp")
 	}
 	return oldest
-}
-
-// scalarCount runs a counting query against the test database.
-func scalarCount(t *testing.T, database *store.Store, query string, arguments ...any) int {
-	t.Helper()
-	var value int
-	if err := database.DB().QueryRowContext(context.Background(), query, arguments...).
-		Scan(&value); err != nil {
-		t.Fatalf("running %s: %v", query, err)
-	}
-	return value
 }

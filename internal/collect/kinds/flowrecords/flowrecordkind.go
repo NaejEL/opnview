@@ -219,7 +219,7 @@ func availabilityOutcome(outcome vocab.AvailabilityOutcome) vocab.AvailabilityOu
 	return outcome
 }
 
-// probeFlowRecord probes every implementation of the flow_record kind.
+// ProbeFlowRecord probes every implementation of the flow_record kind.
 func (c *FlowRecordCoordinator) ProbeFlowRecord(ctx context.Context) error {
 	return c.ResolveKind(ctx, derive.KindFlowRecord, core.ProbeablesOf(c.SourceSet.FlowRecord,
 		func(source flowrecord.Source) func(context.Context, provider.Session) (provider.Result, error) {

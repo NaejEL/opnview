@@ -1,11 +1,14 @@
-package store
+package store_test
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store"
+
 	"github.com/NaejEL/opnview/internal/store/attribution"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -41,19 +44,19 @@ const (
 
 func dualStackCases() []dualStackCase {
 	dual := []attribution.ResourceRecord{
-		localAddressRecord(dualStackHost, outside(31, false)),
-		localAddressRecord(dualStackHost, outside(31, true)),
+		localAddressRecord(dualStackHost, storetest.Outside(31, false)),
+		localAddressRecord(dualStackHost, storetest.Outside(31, true)),
 	}
 	return []dualStackCase{
 		{"IPv4 family reported resolves to the A address", 4, dual, "",
-			vocab.ClientResolutionLocalData, outside(31, false)},
+			vocab.ClientResolutionLocalData, storetest.Outside(31, false)},
 		{"IPv6 family reported resolves to the AAAA address", 6, dual, "",
-			vocab.ClientResolutionLocalData, outside(31, true)},
+			vocab.ClientResolutionLocalData, storetest.Outside(31, true)},
 		{"no family reported is dual_stack_hostname", 0, dual, "",
 			vocab.ClientResolutionDualStack, dualStackHost},
 		{"two A records stay ambiguous whatever the family", 4, []attribution.ResourceRecord{
-			localAddressRecord(twinFourHost, outside(32, false)),
-			localAddressRecord(twinFourHost, outside(33, false)),
+			localAddressRecord(twinFourHost, storetest.Outside(32, false)),
+			localAddressRecord(twinFourHost, storetest.Outside(33, false)),
 		}, "", vocab.ClientResolutionAmbiguous, twinFourHost},
 		{"a lease wins over the local data", 6, dual, "192.0.2.35",
 			vocab.ClientResolutionLeased, "192.0.2.35"},
@@ -78,7 +81,7 @@ func (c dualStackCase) familyPointer() *int64 {
 
 // leaseHostname writes one lease of an address under a host name, valid from long before
 // to long after referenceNow.
-func leaseHostname(t *testing.T, database *Store, address, hostname string) {
+func leaseHostname(t *testing.T, database *store.Store, address, hostname string) {
 	t.Helper()
 	ctx := context.Background()
 	provider, err := database.ProviderID(ctx, "dhcp_lease", "dnsmasq")
@@ -86,46 +89,46 @@ func leaseHostname(t *testing.T, database *Store, address, hostname string) {
 		t.Fatalf("looking up a lease provider: %v", err)
 	}
 	name := hostname
-	expires := referenceNow + 86400
+	expires := storetest.ReferenceNow + 86400
 	if err := database.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		Backend: "dnsmasq", Address: address, Hostname: &name, LeaseState: "active",
-		GenerationKey: vocab.GenerationKeyOf(nil, &expires, referenceNow-86400), ExpiresAt: &expires,
-		ObservedAt: referenceNow - 86400,
+		GenerationKey: vocab.GenerationKeyOf(nil, &expires, storetest.ReferenceNow-86400), ExpiresAt: &expires,
+		ObservedAt: storetest.ReferenceNow - 86400,
 	}); err != nil {
 		t.Fatalf("writing a lease: %v", err)
 	}
 }
 
 // storeEvidence writes a case's local data, polled twice around the lookup, and its lease.
-func storeEvidence(t *testing.T, database *Store, c dualStackCase) {
+func storeEvidence(t *testing.T, database *store.Store, c dualStackCase) {
 	t.Helper()
-	pollLocalData(t, database, referenceNow-600, c.records...)
-	pollLocalData(t, database, referenceNow+600, c.records...)
+	pollLocalData(t, database, storetest.ReferenceNow-600, c.records...)
+	pollLocalData(t, database, storetest.ReferenceNow+600, c.records...)
 	if c.leaseAddress != "" {
 		leaseHostname(t, database, c.leaseAddress, c.loggedHost())
 	}
 }
 
 // storeHostLookup writes one lookup logged under a host name, resolved as at ingest.
-func storeHostLookup(t *testing.T, database *Store, c dualStackCase) {
+func storeHostLookup(t *testing.T, database *store.Store, c dualStackCase) {
 	t.Helper()
 	ctx := context.Background()
 	logged := c.loggedHost()
-	address, resolution, err := database.ResolveLoggedHostname(ctx, logged, c.familyPointer(), referenceNow)
+	address, resolution, err := database.ResolveLoggedHostname(ctx, logged, c.familyPointer(), storetest.ReferenceNow)
 	if err != nil {
 		t.Fatalf("resolving %s: %v", logged, err)
 	}
 	if err := database.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey: "dual-stack-" + logged, ClientAddress: address, ClientHostname: &logged,
 		ClientResolution: resolution, ClientFamily: c.familyPointer(), Domain: "example-site.example.com",
-		Resolver: "unbound", Action: "pass", LookedUpAt: referenceNow, IngestedAt: referenceNow + 2,
+		Resolver: "unbound", Action: "pass", LookedUpAt: storetest.ReferenceNow, IngestedAt: storetest.ReferenceNow + 2,
 	}); err != nil {
 		t.Fatalf("writing the lookup: %v", err)
 	}
 }
 
 // storedResolution reads the lookup's resolution, client address and family.
-func storedResolution(t *testing.T, database *Store, c dualStackCase) (string, string, string) {
+func storedResolution(t *testing.T, database *store.Store, c dualStackCase) (string, string, string) {
 	t.Helper()
 	var (
 		resolution, address string
@@ -144,12 +147,12 @@ func storedResolution(t *testing.T, database *Store, c dualStackCase) (string, s
 }
 
 // reopen closes a database and opens the same directory again: a restart.
-func reopen(t *testing.T, database *Store, directory string) *Store {
+func reopen(t *testing.T, database *store.Store, directory string) *store.Store {
 	t.Helper()
 	if err := database.Close(); err != nil {
 		t.Fatalf("closing the database: %v", err)
 	}
-	reopened, err := Open(context.Background(), directory)
+	reopened, err := store.Open(context.Background(), directory)
 	if err != nil {
 		t.Fatalf("reopening the database: %v", err)
 	}
@@ -159,7 +162,7 @@ func reopen(t *testing.T, database *Store, directory string) *Store {
 
 // assertOutcome fails unless the stored lookup carries the case's expected outcome and
 // the family it was given.
-func assertOutcome(t *testing.T, database *Store, c dualStackCase, when string) {
+func assertOutcome(t *testing.T, database *store.Store, c dualStackCase, when string) {
 	t.Helper()
 	resolution, address, family := storedResolution(t, database, c)
 	if resolution != c.wantResolution || address != c.wantAddress {
@@ -190,8 +193,8 @@ func TestADualStackHostNameResolvesByTheQueryingFamilyAtIngest(t *testing.T) {
 
 			reopened := reopen(t, database, directory)
 			assertOutcome(t, reopened, testCase, "after a restart")
-			if _, err := reopened.ResolveLoggedHostnames(context.Background(), referenceNow+3600,
-				referenceNow+3600); err != nil {
+			if _, err := reopened.ResolveLoggedHostnames(context.Background(), storetest.ReferenceNow+3600,
+				storetest.ReferenceNow+3600); err != nil {
 				t.Fatalf("examining the lookups again: %v", err)
 			}
 			assertOutcome(t, reopened, testCase, "examined again after a restart")
@@ -215,8 +218,8 @@ func TestADualStackHostNameIsResolvedWhenTheEvidenceArrivesLater(t *testing.T) {
 			}
 			reopened := reopen(t, database, directory)
 			storeEvidence(t, reopened, testCase)
-			result, err := reopened.ResolveLoggedHostnames(context.Background(), referenceNow+3600,
-				referenceNow+3600)
+			result, err := reopened.ResolveLoggedHostnames(context.Background(), storetest.ReferenceNow+3600,
+				storetest.ReferenceNow+3600)
 			if err != nil {
 				t.Fatalf("examining the lookups: %v", err)
 			}
@@ -241,8 +244,8 @@ func TestADualStackLookupWaitsForALeaseThatArrivesLater(t *testing.T) {
 
 	reopened := reopen(t, database, directory)
 	leaseHostname(t, reopened, "192.0.2.36", dualStackHost)
-	if _, err := reopened.ResolveLoggedHostnames(context.Background(), referenceNow+3600,
-		referenceNow+3600); err != nil {
+	if _, err := reopened.ResolveLoggedHostnames(context.Background(), storetest.ReferenceNow+3600,
+		storetest.ReferenceNow+3600); err != nil {
 		t.Fatalf("examining the lookups: %v", err)
 	}
 	leased := noFamily
@@ -258,13 +261,13 @@ func TestTwoAddressesUnderTwoNamesAreNotADualStackPair(t *testing.T) {
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	split := []attribution.ResourceRecord{
-		localAddressRecord("example-split.one.example.test", outside(41, false)),
-		localAddressRecord("example-split.two.example.test", outside(41, true)),
+		localAddressRecord("example-split.one.example.test", storetest.Outside(41, false)),
+		localAddressRecord("example-split.two.example.test", storetest.Outside(41, true)),
 	}
-	pollLocalData(t, database, referenceNow-600, split...)
-	pollLocalData(t, database, referenceNow+600, split...)
+	pollLocalData(t, database, storetest.ReferenceNow-600, split...)
+	pollLocalData(t, database, storetest.ReferenceNow+600, split...)
 	family := int64(4)
-	address, resolution, err := database.ResolveLoggedHostname(ctx, "example-split", &family, referenceNow)
+	address, resolution, err := database.ResolveLoggedHostname(ctx, "example-split", &family, storetest.ReferenceNow)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +286,7 @@ func TestTheQueryingFamilyOutsideFourAndSixIsRefused(t *testing.T) {
 	if err := database.InsertDNSResolution(context.Background(), vocab.DNSResolution{
 		LookupKey: "dual-stack-bad-family", ClientAddress: logged, ClientHostname: &logged,
 		ClientResolution: vocab.ClientResolutionUnknown, ClientFamily: &family, Domain: "example.com",
-		Resolver: "unbound", Action: "pass", LookedUpAt: referenceNow, IngestedAt: referenceNow,
+		Resolver: "unbound", Action: "pass", LookedUpAt: storetest.ReferenceNow, IngestedAt: storetest.ReferenceNow,
 	}); err == nil {
 		t.Error("a querying family of 5 was stored")
 	}

@@ -66,7 +66,7 @@ const (
 // VolumeMeasures are volume_measure's values, best_available its default.
 var VolumeMeasures = []string{envelope.MeasureLogged, envelope.MeasureNetflow, params.VolumeMeasureBestAvailable}
 
-// volumeMeasureParam is the parameter the core gives every type whose manifest declares volumes.
+// VolumeMeasureParam is the parameter the core gives every type whose manifest declares volumes.
 func VolumeMeasureParam() params.Param {
 	return params.Param{Key: params.VolumeMeasureKey, Kind: params.KindEnum, Values: append([]string(nil), VolumeMeasures...),
 		Default: params.VolumeMeasureBestAvailable, Data: true}
@@ -74,9 +74,9 @@ func VolumeMeasureParam() params.Param {
 
 // measureRun is the measure one run of a widget answers under, and what the run built.
 type measureRun struct {
-	// netflow says the run reads every figure of the netflow measure.
+	// Netflow says the run reads every figure of the netflow measure.
 	Netflow bool
-	// loggedFigure says the run built a figure the core did not read under netflow.
+	// LoggedFigure says the run built a figure the core did not read under netflow.
 	LoggedFigure bool
 	// uncovered says a netflow figure of the run counts a connection with a direction not covered.
 	uncovered bool
@@ -100,7 +100,7 @@ func (r *Request) MeasureInForce() string {
 func (r *Request) VolumeOf(figures reads.VolumeFigures) envelope.Volume {
 	if figures.Netflow || (r.Measure.Netflow && figures == (reads.VolumeFigures{})) {
 		r.judge(figures)
-		return NetflowVolume(figures)
+		return netflowVolume(figures)
 	}
 	if r.Measure.Netflow {
 		r.Measure.LoggedFigure = true
@@ -163,7 +163,7 @@ func (r *Request) judge(figures reads.VolumeFigures) {
 }
 
 // netflowVolume is the Volume of netflow figures, with its packets and coverage, whole and per part.
-func NetflowVolume(figures reads.VolumeFigures) envelope.Volume {
+func netflowVolume(figures reads.VolumeFigures) envelope.Volume {
 	volume := envelope.Logged(figures)
 	volume.Measure = envelope.MeasureNetflow
 	whole := figures.Parts.Whole()
@@ -178,7 +178,7 @@ func NetflowVolume(figures reads.VolumeFigures) envelope.Volume {
 	return volume
 }
 
-// serveMeasured answers a type that declares volumes under the measure volume_measure chooses.
+// ServeMeasured answers a type that declares volumes under the measure volume_measure chooses.
 func (r *Request) ServeMeasured(serve ServeFunc) (any, bool, error) {
 	requested := r.Params.Text(params.VolumeMeasureKey)
 	if requested == envelope.MeasureLogged {
@@ -272,7 +272,7 @@ func (r *Request) netflowWindowRead() (netflowWindow, error) {
 	return window, nil
 }
 
-// netflowState records a named state of a volume answer and, for a state that carries one, its
+// NetflowState records a named state of a volume answer and, for a state that carries one, its
 // detail (state_details): the interfaces captured for observation_point_not_exported, the interval
 // states met for netflow_not_covering_window. coverage says the state is the run's judgment that a
 // connection is not covered rather than the window's: the window then has one Observation Point
@@ -493,14 +493,14 @@ func (r *Request) restore(snapshot responseSnapshot) {
 	r.Override = snapshot.override
 }
 
-// netflowStatementSuffix names a statement's twin of the netflow measure: the same parameters and
+// NetflowStatementSuffix names a statement's twin of the netflow measure: the same parameters and
 // the same rows, with the bytes the NetFlow export reported in place of the logged bytes and, after
 // the seven summable columns, the five netflow ones (store.VolumeFigures.NetflowTargets). A
 // widget's own statement that has a twin is run as its twin under netflow
-// (internal/widget/hostareas/readers/host_query.go); one that has none is run as it is.
+// (internal/widget/hostareas/installation/host_query.go); one that has none is run as it is.
 const NetflowStatementSuffix = "_netflow"
 
-// netflowTwinMismatch says what is wrong with a statement's netflow twin, or "" when nothing is:
+// NetflowTwinMismatch says what is wrong with a statement's netflow twin, or "" when nothing is:
 // texts are statements by name, and twin one of them. A twin, <name>_netflow beside <name>, is run in
 // its statement's place under the netflow measure and bound with the statement's parameters, so it
 // binds exactly the same parameters and is a period template exactly when its statement is. A name
@@ -544,7 +544,7 @@ func describeParameters(parameters []string) string {
 	return ":" + strings.Join(parameters, ", :")
 }
 
-// measured is the name of a core statement in the measure the request is answered under: the
+// Measured is the name of a core statement in the measure the request is answered under: the
 // statement itself, or its netflow twin.
 func (r *Request) Measured(statement string) string {
 	if r.Measure.Netflow {
@@ -591,10 +591,10 @@ func holdsMeasure(data any, measure string) bool {
 	return walk(tree)
 }
 
-// periodToken is the store's period template token (store.PeriodStatement).
+// PeriodToken is the store's period template token (store.PeriodStatement).
 const PeriodToken = "@period@"
 
-// sortedNames returns a map's keys, sorted.
+// SortedNames returns a map's keys, sorted.
 func SortedNames[V any](values map[string]V) []string {
 	names := make([]string, 0, len(values))
 	for name := range values {

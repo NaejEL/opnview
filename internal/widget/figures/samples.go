@@ -31,7 +31,7 @@ var MetricMeasures = map[string]struct {
 	"gateway_loss":    {vocab.SubjectGateway, []vocab.Measure{vocab.MeasureLossRatio}},
 }
 
-// subject is one measured subject.
+// Subject is one measured subject.
 type Subject struct {
 	Kind, Key, Measure, Unit string
 }

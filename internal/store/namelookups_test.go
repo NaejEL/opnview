@@ -1,10 +1,11 @@
-package store
+package store_test
 
 import (
 	"database/sql"
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
 // TestAttributionNameLookupsSearchByNameAndClientOnBothBranches is AC22's Go half
@@ -21,22 +22,22 @@ func TestAttributionNameLookupsSearchByNameAndClientOnBothBranches(t *testing.T)
 	}
 	var arguments []any
 	for _, parameter := range []string{"client_id", "start", "end"} {
-		arguments = append(arguments, sql.Named(parameter, referenceNow))
+		arguments = append(arguments, sql.Named(parameter, storetest.ReferenceNow))
 	}
 	for _, parameter := range []string{"name", "address"} {
 		arguments = append(arguments, sql.Named(parameter, "example"))
 	}
-	plan := planOf(t, database, text, arguments...)
+	plan := storetest.PlanOf(t, database, text, arguments...)
 	// Each branch reads dns_resolution through an index leading on the name. Which of the two name
 	// indexes the planner picks for a branch depends on the table's statistics; the scale checks of
 	// sql/schema-checks.sh assert the choice on the analysed seed.
 	for _, alias := range []string{"r", "a"} {
-		if !usesIndex(plan, "idx_dns_resolution_name_client_id", alias) &&
-			!usesIndex(plan, "idx_dns_resolution_name_client_address", alias) {
+		if !storetest.UsesIndex(plan, "idx_dns_resolution_name_client_id", alias) &&
+			!storetest.UsesIndex(plan, "idx_dns_resolution_name_client_address", alias) {
 			t.Errorf("the branch %s does not read a name index: %+v", alias, plan)
 		}
 	}
-	if scans(plan, "dns_resolution") {
+	if storetest.Scans(plan, "dns_resolution") {
 		t.Errorf("the plan scans dns_resolution: %+v", plan)
 	}
 }
@@ -60,7 +61,7 @@ func TestAttributionNameLookupsKeepBothClientBranches(t *testing.T) {
 		exec(`INSERT INTO dns_resolution (id, resolver, lookup_key, domain, action, answer_source,
 		      client_address, client_id, client_resolution, looked_up_at, ingested_at)
 		      VALUES (?, 'unbound', ?, 'Example.ORG.', 'pass', 'Recursion', ?, ?, 'logged_address', ?, ?)`,
-			id, "example-lookup-"+string(rune('a'+id)), address, clientID, referenceNow-10, referenceNow)
+			id, "example-lookup-"+string(rune('a'+id)), address, clientID, storetest.ReferenceNow-10, storetest.ReferenceNow)
 	}
 	insert(1, int64(1), "192.0.2.10") // the flow's client, by id
 	insert(2, nil, "192.0.2.10")      // the flow's address, no client_id
@@ -73,7 +74,7 @@ func TestAttributionNameLookupsKeepBothClientBranches(t *testing.T) {
 	ids := func(clientID any) []int64 {
 		t.Helper()
 		rows, err := db.Query(text, sql.Named("name", "example.org"), sql.Named("client_id", clientID),
-			sql.Named("address", "192.0.2.10"), sql.Named("start", referenceNow-60), sql.Named("end", referenceNow))
+			sql.Named("address", "192.0.2.10"), sql.Named("start", storetest.ReferenceNow-60), sql.Named("end", storetest.ReferenceNow))
 		if err != nil {
 			t.Fatal(err)
 		}

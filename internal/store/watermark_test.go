@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"context"
@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store"
+
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -22,33 +25,33 @@ import (
 // lookup inserts obey it, and a record at or after the watermark is stored as before.
 func TestARecordOlderThanThePurgeWatermarkIsRefusedByTheInsertItself(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 2, 2)
+	network := storetest.NewNetwork(t, 2, 2)
 	ctx := context.Background()
-	if err := network.db.SetSetting(ctx, "retention_seconds", "600", network.now); err != nil {
+	if err := network.DB.SetSetting(ctx, "retention_seconds", "600", network.Now); err != nil {
 		t.Fatalf("setting the retention: %v", err)
 	}
-	if err := network.db.Purge(ctx, network.now); err != nil {
+	if err := network.DB.Purge(ctx, network.Now); err != nil {
 		t.Fatalf("purging: %v", err)
 	}
-	watermark := network.now - 600
-	client := network.clients[0]
-	network.insert(t, []networkFlow{
+	watermark := network.Now - 600
+	client := network.Clients[0]
+	network.Insert(t, []storetest.Flow{
 		outboundFlow(client, watermark-1, 50, 1, 0),
 		outboundFlow(client, watermark, 70, 2, 0),
 	})
-	if got := queryInt(t, network.db, "SELECT coalesce(sum(packet_bytes), 0) FROM flow"); got != 70 {
+	if got := storetest.QueryInt(t, network.DB, "SELECT coalesce(sum(packet_bytes), 0) FROM flow"); got != 70 {
 		t.Errorf("flow holds %d bytes: the record older than the watermark was stored, or the other was not", got)
 	}
 	for index, at := range []int64{watermark - 1, watermark} {
-		if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
-			LookupKey: fmt.Sprintf("example-watermark-%d", index), ClientAddress: client.address,
+		if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+			LookupKey: fmt.Sprintf("example-watermark-%d", index), ClientAddress: client.Address,
 			Domain: "example.invalid", Resolver: "unbound", Action: "pass",
-			LookedUpAt: at, IngestedAt: network.now,
+			LookedUpAt: at, IngestedAt: network.Now,
 		}); err != nil {
 			t.Fatalf("writing a lookup: %v", err)
 		}
 	}
-	if got := queryInt(t, network.db, "SELECT count(*) FROM dns_resolution"); got != 1 {
+	if got := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM dns_resolution"); got != 1 {
 		t.Errorf("%d lookups are stored, not the one at the watermark", got)
 	}
 }
@@ -57,7 +60,7 @@ func TestARecordOlderThanThePurgeWatermarkIsRefusedByTheInsertItself(t *testing.
 // aggregate tables and families is the schema's.
 func TestTheDataModelCountsTheAggregateFamiliesTheSchemaHas(t *testing.T) {
 	t.Parallel()
-	schema, err := sqlFiles.ReadFile("schema.sql")
+	schema, err := store.SQLFiles.ReadFile("schema.sql")
 	if err != nil {
 		t.Fatalf("reading the schema: %v", err)
 	}
@@ -109,12 +112,12 @@ func TestTheDataModelCountsTheAggregateFamiliesTheSchemaHas(t *testing.T) {
 // previous pass, which a restart lost (step-5A live corrections, H6).
 func TestReResolvingHostNamesIsBoundedToTheLookupsNotYetExamined(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 2, 2)
+	network := storetest.NewNetwork(t, 2, 2)
 	ctx := context.Background()
-	since := network.now - 600
+	since := network.Now - 600
 	for index := 0; index < 50; index++ {
 		hostname := fmt.Sprintf("example-static-%d.example.invalid", index)
-		if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
+		if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
 			LookupKey: fmt.Sprintf("example-old-%d", index), ClientAddress: hostname,
 			ClientHostname: &hostname, ClientResolution: vocab.ClientResolutionUnknown,
 			Domain: "example.invalid", Resolver: "unbound", Action: "pass",
@@ -124,7 +127,7 @@ func TestReResolvingHostNamesIsBoundedToTheLookupsNotYetExamined(t *testing.T) {
 		}
 	}
 	// The previous lease pass examined the fifty.
-	first, err := network.db.ResolveLoggedHostnames(ctx, since, since)
+	first, err := network.DB.ResolveLoggedHostnames(ctx, since, since)
 	if err != nil {
 		t.Fatalf("resolving: %v", err)
 	}
@@ -133,37 +136,37 @@ func TestReResolvingHostNamesIsBoundedToTheLookupsNotYetExamined(t *testing.T) {
 	}
 
 	recent := "example-late.example.invalid"
-	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey: "example-recent", ClientAddress: recent, ClientHostname: &recent,
 		ClientResolution: vocab.ClientResolutionUnknown, Domain: "example.invalid", Resolver: "unbound",
-		Action: "pass", LookedUpAt: network.now - 120, IngestedAt: network.now - 100,
+		Action: "pass", LookedUpAt: network.Now - 120, IngestedAt: network.Now - 100,
 	}); err != nil {
 		t.Fatalf("writing the recent lookup: %v", err)
 	}
-	provider, _ := network.db.ProviderID(ctx, "dhcp_lease", "dnsmasq")
+	provider, _ := network.DB.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 	hostname := "example-late"
-	if err := network.db.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
-		Backend: "dnsmasq", Address: network.clients[1].address, Hostname: &hostname,
-		LeaseState: "reserved", GenerationKey: vocab.GenerationKeyOf(nil, nil, network.now), ObservedAt: network.now,
+	if err := network.DB.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
+		Backend: "dnsmasq", Address: network.Clients[1].Address, Hostname: &hostname,
+		LeaseState: "reserved", GenerationKey: vocab.GenerationKeyOf(nil, nil, network.Now), ObservedAt: network.Now,
 	}); err != nil {
 		t.Fatalf("writing the lease: %v", err)
 	}
 
-	result, err := network.db.ResolveLoggedHostnames(ctx, network.now, network.now)
+	result, err := network.DB.ResolveLoggedHostnames(ctx, network.Now, network.Now)
 	if err != nil {
 		t.Fatalf("resolving: %v", err)
 	}
 	if result.Examined != 1 {
 		t.Errorf("the pass examined %d lookups; only the one no pass has examined is due", result.Examined)
 	}
-	if len(result.Addresses) != 1 || result.Addresses[0] != network.clients[1].address {
-		t.Errorf("the late-leased lookup resolved to %v, not %s", result.Addresses, network.clients[1].address)
+	if len(result.Addresses) != 1 || result.Addresses[0] != network.Clients[1].Address {
+		t.Errorf("the late-leased lookup resolved to %v, not %s", result.Addresses, network.Clients[1].Address)
 	}
-	if resolved := queryInt(t, network.db, `SELECT count(*) FROM dns_resolution
+	if resolved := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM dns_resolution
 		WHERE lookup_key = 'example-recent' AND client_resolution = 'lease_hostname'`); resolved != 1 {
 		t.Error("the lookup read before its lease was not resolved")
 	}
-	again, err := network.db.ResolveLoggedHostnames(ctx, network.now+300, network.now+300)
+	again, err := network.DB.ResolveLoggedHostnames(ctx, network.Now+300, network.Now+300)
 	if err != nil {
 		t.Fatalf("resolving: %v", err)
 	}

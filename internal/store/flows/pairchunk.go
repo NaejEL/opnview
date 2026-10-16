@@ -32,7 +32,7 @@ type pairChunk struct {
 }
 
 // pairChunks tiles [low, high] with chunks of at most size seconds.
-func PairChunks(low, high, size int64) []pairChunk {
+func pairChunks(low, high, size int64) []pairChunk {
 	if size <= 0 || high-low < size {
 		return []pairChunk{{from: low, to: high}}
 	}
@@ -53,7 +53,7 @@ type pairDecision struct {
 
 // pairInChunks is Pair with the chunk size a parameter, so a test can compare a span
 // cut into several chunks with the same span in one.
-func (s *FlowStore) PairInChunks(ctx context.Context, from, to, window, size int64) (Pairing, error) {
+func (s *FlowStore) pairInChunks(ctx context.Context, from, to, window, size int64) (Pairing, error) {
 	var result Pairing
 	if window < 0 {
 		return result, fmt.Errorf("store: the pairing window must be 0 or more seconds, got %d", window)
@@ -61,7 +61,7 @@ func (s *FlowStore) PairInChunks(ctx context.Context, from, to, window, size int
 	if to < from {
 		return result, nil
 	}
-	chunks := PairChunks(from-window, to+window, size)
+	chunks := pairChunks(from-window, to+window, size)
 	if len(chunks) == 1 {
 		// One chunk: decided and written in one transaction, as the pairing always was.
 		return s.pairOneTransaction(ctx, chunks[0], window)

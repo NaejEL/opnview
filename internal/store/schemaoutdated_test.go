@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"context"
@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
@@ -18,7 +20,7 @@ import (
 func TestADatabaseFromBeforeStep5BIsRefusedNamingTheRebuild(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	empty, err := NewEmptyTestDatabase(ctx)
+	empty, err := store.NewEmptyTestDatabase(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,12 +47,12 @@ func TestADatabaseFromBeforeStep5BIsRefusedNamingTheRebuild(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	database, err := Open(ctx, empty.DSN)
+	database, err := store.Open(ctx, empty.DSN)
 	if err == nil {
 		_ = database.Close()
 		t.Fatal("a database from an earlier build opened, so its missing column went unnoticed")
 	}
-	if !errors.Is(err, ErrSchemaOutdated) {
+	if !errors.Is(err, store.ErrSchemaOutdated) {
 		t.Fatalf("the refusal is not ErrSchemaOutdated: %v", err)
 	}
 	if !strings.Contains(err.Error(), "outcome") || !strings.Contains(err.Error(), "rebuild") {
@@ -66,7 +68,7 @@ func TestAFreshDatabaseIsNotReportedOutdated(t *testing.T) {
 	if err := database.Close(); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := Open(context.Background(), directory)
+	reopened, err := store.Open(context.Background(), directory)
 	if err != nil {
 		t.Fatalf("reopening a database this build wrote: %v", err)
 	}
@@ -82,12 +84,12 @@ func TestAHeldCancelledOrUnreachableStartIsNotReportedOutdated(t *testing.T) {
 	database, directory := openTestStore(t)
 
 	t.Run("held", func(t *testing.T) {
-		reopened, err := Open(context.Background(), directory)
+		reopened, err := store.Open(context.Background(), directory)
 		if err == nil {
 			_ = reopened.Close()
 			t.Fatal("the database opened while another store held it")
 		}
-		if errors.Is(err, ErrSchemaOutdated) || !errors.Is(err, ErrAlreadyRunning) {
+		if errors.Is(err, store.ErrSchemaOutdated) || !errors.Is(err, store.ErrAlreadyRunning) {
 			t.Fatalf("a held database was reported as %v", err)
 		}
 	})
@@ -98,25 +100,25 @@ func TestAHeldCancelledOrUnreachableStartIsNotReportedOutdated(t *testing.T) {
 	t.Run("cancelled", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
-		reopened, err := Open(ctx, directory)
+		reopened, err := store.Open(ctx, directory)
 		if err == nil {
 			_ = reopened.Close()
 			return
 		}
-		if errors.Is(err, ErrSchemaOutdated) {
+		if errors.Is(err, store.ErrSchemaOutdated) {
 			t.Fatalf("a cancelled start was reported as an outdated schema: %v", err)
 		}
 	})
 
 	t.Run("refused", func(t *testing.T) {
-		reopened, err := OpenWith(context.Background(), Options{
+		reopened, err := store.OpenWith(context.Background(), store.Options{
 			DSN:  "host=127.0.0.1 port=1 user=opnview dbname=opnview sslmode=disable connect_timeout=1",
 			Wait: 500 * time.Millisecond})
 		if err == nil {
 			_ = reopened.Close()
 			t.Fatal("a refused connection opened")
 		}
-		if errors.Is(err, ErrSchemaOutdated) || !errors.Is(err, ErrDatabaseUnreachable) {
+		if errors.Is(err, store.ErrSchemaOutdated) || !errors.Is(err, store.ErrDatabaseUnreachable) {
 			t.Fatalf("a refused connection was reported as %v", err)
 		}
 	})

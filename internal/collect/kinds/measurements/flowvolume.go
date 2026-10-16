@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/measurement"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -111,4 +113,15 @@ func (c *MeasurementCoordinator) collectMeasurementFrom(ctx context.Context, act
 		outcome = vocab.OutcomePartialReadings
 	}
 	return c.WriteAvailability(ctx, providerID, state, outcome, result.Probe, detail)
+}
+
+// ProbeMeasurement probes every implementation of the measurement_sample kind. The probe round (collect.ProbeAll)
+// runs it with every other kind's.
+func (c *MeasurementCoordinator) ProbeMeasurement(ctx context.Context) error {
+	return c.ResolveKind(ctx, core.KindMeasurementSample, core.ProbeablesOf(c.SourceSet.Measurement, measurementProbe))
+}
+
+// measurementProbe is the probe of one measurement_sample implementation, as core.ProbeablesOf takes it.
+func measurementProbe(source measurement.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
 }

@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -11,11 +11,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect"
+
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
-	attributionpkg "github.com/NaejEL/opnview/internal/store/attribution"
+	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -23,32 +26,6 @@ import (
 // kinds (AC4, AC5), the late arrival of their evidence (AC9, AC10), host names resolved
 // through local data (AC16), the local data's PTR records (scope D1) and the processor's
 // stream (AC18).
-
-// arrangeRecordCollection stands up a harness whose Unbound runs, so the cache and the
-// local data are both active.
-func arrangeRecordCollection(t *testing.T) *probeHarness {
-	t.Helper()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	harness.fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-	harness.fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
-	ctx := context.Background()
-	if err := harness.collector.probeResolverCache(ctx); err != nil {
-		t.Fatalf("probing the cache: %v", err)
-	}
-	if err := harness.collector.probeResolverLocalData(ctx); err != nil {
-		t.Fatalf("probing the local data: %v", err)
-	}
-	for _, kind := range []string{core.KindResolverCache, core.KindResolverLocalData} {
-		if keys := harness.activeKeysOf(t, kind); len(keys) != 1 || keys[0] != ProviderUnbound {
-			t.Fatalf("the %s kind activated %v, not Unbound alone", kind, keys)
-		}
-	}
-	return harness
-}
 
 // fixtureRows returns the data rows of a record-list fixture.
 func fixtureRows(t *testing.T, name string) []map[string]any {
@@ -74,7 +51,7 @@ func answerRecords(fake *providertest.Firewall, endpoint opnsense.Endpoint, rows
 // observationCount counts the stored resolver records.
 func observationCount(t *testing.T, database *store.Store) int {
 	t.Helper()
-	return scalarCount(t, database, "SELECT count(*) FROM resource_record_observation")
+	return collecttest.ScalarCount(t, database, "SELECT count(*) FROM resource_record_observation")
 }
 
 // TestADumpOfEveryRRTypeStoresOnlyAAAAAAndCNAME is AC5: on a dump of every rrtype the
@@ -87,7 +64,7 @@ func TestADumpOfEveryRRTypeStoresOnlyAAAAAAndCNAME(t *testing.T) {
 	t.Parallel()
 	for _, copies := range []int{1, 3} {
 		t.Run(fmt.Sprintf("%d copies", copies), func(t *testing.T) {
-			harness := arrangeRecordCollection(t)
+			harness := collecttest.ArrangeRecordCollection(t)
 			template := fixtureRows(t, "unbound_dumpcache.json")
 			var rows []map[string]any
 			for copy := 0; copy < copies; copy++ {
@@ -107,25 +84,25 @@ func TestADumpOfEveryRRTypeStoresOnlyAAAAAAndCNAME(t *testing.T) {
 				rows = append(rows, map[string]any{"host": fmt.Sprintf("copy-%d.text.example.com.", copy),
 					"ttl": "300", "type": "A", "rrtype": "TXT", "value": "192.0.2.99"})
 			}
-			answerRecords(harness.fake, opnsense.UnboundDumpCache, rows)
-			if err := harness.collector.CollectResolverCache(context.Background()); err != nil {
+			answerRecords(harness.Fake, opnsense.UnboundDumpCache, rows)
+			if err := harness.Collector.CollectResolverCache(context.Background()); err != nil {
 				t.Fatalf("reading the cache: %v", err)
 			}
-			if types := stringColumn(t, harness.store,
+			if types := stringColumn(t, harness.Store,
 				"SELECT DISTINCT rrtype FROM resource_record_observation ORDER BY rrtype"); strings.Join(types, ",") != "A,AAAA,CNAME" {
 				t.Errorf("the stored types are %v, not A, AAAA and CNAME", types)
 			}
 			// Per copy: the CNAME, the edge's A and AAAA; the IPv6-as-A record is skipped,
 			// the message-cache references are not records, and every other type is
 			// counted only.
-			if stored := observationCount(t, harness.store); stored != 3*copies {
+			if stored := observationCount(t, harness.Store); stored != 3*copies {
 				t.Errorf("%d records were stored, not %d", stored, 3*copies)
 			}
-			if text := scalarCount(t, harness.store, `SELECT count(*) FROM resource_record_observation
+			if text := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM resource_record_observation
 				WHERE owner_name LIKE '%text.example.com'`); text != 0 {
 				t.Error("a TXT record whose class field read A was stored: `type` was read as the record type")
 			}
-			detail := harness.detailOf(t, core.KindResolverCache, ProviderUnbound)
+			detail := harness.DetailOf(t, core.KindResolverCache, collecttest.ProviderUnbound)
 			references := 0
 			for _, row := range template {
 				if row["ttl"] == nil {
@@ -143,7 +120,7 @@ func TestADumpOfEveryRRTypeStoresOnlyAAAAAAndCNAME(t *testing.T) {
 					t.Errorf("the detail %q does not say %q", detail, want)
 				}
 			}
-			if state, _, _ := harness.availabilityOf(t, core.KindResolverCache, ProviderUnbound); state != vocab.StateReachable {
+			if state, _, _ := harness.AvailabilityOf(t, core.KindResolverCache, collecttest.ProviderUnbound); state != vocab.StateReachable {
 				t.Errorf("a cache read that answered is %q", state)
 			}
 		})
@@ -161,7 +138,7 @@ func TestMessageCacheReferencesAreNamedForWhatTheyAreAndNotCountedAsABadTTL(t *t
 	t.Parallel()
 	for _, references := range []int{1, 4} {
 		t.Run(fmt.Sprintf("%d references per rrtype", references), func(t *testing.T) {
-			harness := arrangeRecordCollection(t)
+			harness := collecttest.ArrangeRecordCollection(t)
 			var rows []map[string]any
 			for _, v6 := range []bool{false, true} {
 				family, rrtype, address := "v4", "A", "192.0.2.20"
@@ -185,19 +162,19 @@ func TestMessageCacheReferencesAreNamedForWhatTheyAreAndNotCountedAsABadTTL(t *t
 						map[string]any{"host": edge, "ttl": nil, "type": "IN", "rrtype": rrtype, "value": "0"})
 				}
 			}
-			answerRecords(harness.fake, opnsense.UnboundDumpCache, rows)
-			if err := harness.collector.CollectResolverCache(context.Background()); err != nil {
+			answerRecords(harness.Fake, opnsense.UnboundDumpCache, rows)
+			if err := harness.Collector.CollectResolverCache(context.Background()); err != nil {
 				t.Fatalf("reading the cache: %v", err)
 			}
 			// The CNAME and the address of each family, the address with its ttl of 0.
-			if stored := observationCount(t, harness.store); stored != 4 {
+			if stored := observationCount(t, harness.Store); stored != 4 {
 				t.Errorf("%d records were stored, not the 4 whose ttl is a string of digits", stored)
 			}
-			if zero := scalarCount(t, harness.store, `SELECT count(*) FROM resource_record_observation
+			if zero := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM resource_record_observation
 				WHERE rrtype IN ('A', 'AAAA') AND covered_until_at = last_seen_at`); zero != 2 {
 				t.Errorf("%d address records were stored with their ttl of 0, not 2", zero)
 			}
-			detail := harness.detailOf(t, core.KindResolverCache, ProviderUnbound)
+			detail := harness.DetailOf(t, core.KindResolverCache, collecttest.ProviderUnbound)
 			for _, want := range []string{
 				"read 12 records",
 				fmt.Sprintf("skipped %d message-cache references: lines of the dump's message-cache section",
@@ -221,10 +198,10 @@ func TestEachRecordReadAbsenceHasItsOwnWordingAndStoresNothing(t *testing.T) {
 	for _, endpoint := range []struct {
 		endpoint opnsense.Endpoint
 		kind     string
-		collect  func(*Collector, context.Context) error
+		collect  func(*collect.Collector, context.Context) error
 	}{
-		{opnsense.UnboundDumpCache, core.KindResolverCache, (*Collector).CollectResolverCache},
-		{opnsense.UnboundListLocalData, core.KindResolverLocalData, (*Collector).CollectResolverLocalData},
+		{opnsense.UnboundDumpCache, core.KindResolverCache, (*collect.Collector).CollectResolverCache},
+		{opnsense.UnboundListLocalData, core.KindResolverLocalData, (*collect.Collector).CollectResolverLocalData},
 	} {
 		details := map[string]string{}
 		for _, absence := range []struct {
@@ -241,12 +218,12 @@ func TestEachRecordReadAbsenceHasItsOwnWordingAndStoresNothing(t *testing.T) {
 			{"no data list", http.StatusOK, `{"status":"ok"}`, "no data list"},
 			{"failed status", http.StatusOK, `{"status":"failed"}`, `status "failed"`},
 		} {
-			harness := arrangeRecordCollection(t)
-			harness.fake.Answer(endpoint.endpoint, absence.status, []byte(absence.body))
-			if err := endpoint.collect(harness.collector, context.Background()); err == nil {
+			harness := collecttest.ArrangeRecordCollection(t)
+			harness.Fake.Answer(endpoint.endpoint, absence.status, []byte(absence.body))
+			if err := endpoint.collect(harness.Collector, context.Background()); err == nil {
 				t.Errorf("%s %s: the pass reported no failure", endpoint.endpoint.Path, absence.name)
 			}
-			detail := harness.detailOf(t, endpoint.kind, ProviderUnbound)
+			detail := harness.DetailOf(t, endpoint.kind, collecttest.ProviderUnbound)
 			if !strings.Contains(detail, absence.want) || !strings.Contains(detail, "nothing was stored") {
 				t.Errorf("%s %s: the detail %q does not say %q and that nothing was stored",
 					endpoint.endpoint.Path, absence.name, detail, absence.want)
@@ -257,13 +234,13 @@ func TestEachRecordReadAbsenceHasItsOwnWordingAndStoresNothing(t *testing.T) {
 				t.Errorf("%s %s: the detail %q blames a privilege for a failed authentication",
 					endpoint.endpoint.Path, absence.name, detail)
 			}
-			if state, _, _ := harness.availabilityOf(t, endpoint.kind, ProviderUnbound); state != vocab.StateUnavailable {
+			if state, _, _ := harness.AvailabilityOf(t, endpoint.kind, collecttest.ProviderUnbound); state != vocab.StateUnavailable {
 				t.Errorf("%s %s: the state is %q", endpoint.endpoint.Path, absence.name, state)
 			}
-			if stored := observationCount(t, harness.store); stored != 0 {
+			if stored := observationCount(t, harness.Store); stored != 0 {
 				t.Errorf("%s %s stored %d observations", endpoint.endpoint.Path, absence.name, stored)
 			}
-			if polls := countRows(t, harness.store, "resource_record_read"); polls != 0 {
+			if polls := collecttest.CountRows(t, harness.Store, "resource_record_read"); polls != 0 {
 				t.Errorf("%s %s recorded a successful poll", endpoint.endpoint.Path, absence.name)
 			}
 			details[absence.name] = detail
@@ -284,30 +261,30 @@ func TestEachRecordReadAbsenceHasItsOwnWordingAndStoresNothing(t *testing.T) {
 // round or a pass meets it, and stores nothing.
 func TestDnsmasqReportsItsNamedNoReadStates(t *testing.T) {
 	t.Parallel()
-	harness := arrangeRecordCollection(t)
+	harness := collecttest.ArrangeRecordCollection(t)
 	ctx := context.Background()
 	for _, kind := range []struct {
 		kind, want string
 		collect    func(context.Context) error
 	}{
-		{core.KindResolverCache, "this resolver offers no cache read through the API", harness.collector.CollectResolverCache},
-		{core.KindResolverLocalData, "this resolver offers no local-data read through the API", harness.collector.CollectResolverLocalData},
+		{core.KindResolverCache, "this resolver offers no cache read through the API", harness.Collector.CollectResolverCache},
+		{core.KindResolverLocalData, "this resolver offers no local-data read through the API", harness.Collector.CollectResolverLocalData},
 	} {
-		if detail := harness.detailOf(t, kind.kind, ProviderDnsmasq); !strings.Contains(detail, kind.want) {
+		if detail := harness.DetailOf(t, kind.kind, collecttest.ProviderDnsmasq); !strings.Contains(detail, kind.want) {
 			t.Errorf("after the probe round the %s Dnsmasq detail is %q", kind.kind, detail)
 		}
 		// The operator turns it on: the pass meets the refusal and records it.
-		if err := harness.store.SetActiveProviders(ctx, kind.kind, ProviderDnsmasq); err != nil {
+		if err := harness.Store.SetActiveProviders(ctx, kind.kind, collecttest.ProviderDnsmasq); err != nil {
 			t.Fatal(err)
 		}
 		if err := kind.collect(ctx); err != nil {
 			t.Errorf("a resolver read the API does not offer is a state, not a failed pass: %v", err)
 		}
-		if detail := harness.detailOf(t, kind.kind, ProviderDnsmasq); !strings.Contains(detail, kind.want) {
+		if detail := harness.DetailOf(t, kind.kind, collecttest.ProviderDnsmasq); !strings.Contains(detail, kind.want) {
 			t.Errorf("after a pass the %s Dnsmasq detail is %q", kind.kind, detail)
 		}
 	}
-	if stored := observationCount(t, harness.store); stored != 0 {
+	if stored := observationCount(t, harness.Store); stored != 0 {
 		t.Errorf("%d observations were stored from a resolver that offers none", stored)
 	}
 }
@@ -316,34 +293,34 @@ func TestDnsmasqReportsItsNamedNoReadStates(t *testing.T) {
 // failure never overwrites the query report's availability, and the reverse.
 func TestTheCacheAndTheQueryReportKeepTheirOwnAvailability(t *testing.T) {
 	t.Parallel()
-	harness := arrangeRecordCollection(t)
+	harness := collecttest.ArrangeRecordCollection(t)
 	ctx := context.Background()
-	if err := harness.collector.probeDNSLookup(ctx); err != nil {
+	if err := harness.Collector.ProbeDNSLookup(ctx); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
-	answerLookups(harness.fake, lookupRow("198.51.100.10", "example-site.example.invalid", referenceEpoch()-30))
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	answerLookups(harness.Fake, lookupRow("198.51.100.10", "example-site.example.invalid", collecttest.ReferenceEpoch()-30))
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("reading the query report: %v", err)
 	}
-	harness.fake.Answer(opnsense.UnboundDumpCache, http.StatusForbidden, []byte(`{}`))
-	_ = harness.collector.CollectResolverCache(ctx)
-	if state, _, _ := harness.availabilityOf(t, core.KindDNSLookup, ProviderUnbound); state != vocab.StateReachable {
+	harness.Fake.Answer(opnsense.UnboundDumpCache, http.StatusForbidden, []byte(`{}`))
+	_ = harness.Collector.CollectResolverCache(ctx)
+	if state, _, _ := harness.AvailabilityOf(t, core.KindDNSLookup, collecttest.ProviderUnbound); state != vocab.StateReachable {
 		t.Errorf("a refused cache read moved the query report to %q", state)
 	}
-	if state, _, _ := harness.availabilityOf(t, core.KindResolverCache, ProviderUnbound); state != vocab.StateUnavailable {
+	if state, _, _ := harness.AvailabilityOf(t, core.KindResolverCache, collecttest.ProviderUnbound); state != vocab.StateUnavailable {
 		t.Errorf("the refused cache read is %q", state)
 	}
 
-	answerRecords(harness.fake, opnsense.UnboundDumpCache, fixtureRows(t, "unbound_dumpcache.json"))
-	if err := harness.collector.CollectResolverCache(ctx); err != nil {
+	answerRecords(harness.Fake, opnsense.UnboundDumpCache, fixtureRows(t, "unbound_dumpcache.json"))
+	if err := harness.Collector.CollectResolverCache(ctx); err != nil {
 		t.Fatalf("reading the cache: %v", err)
 	}
-	harness.fake.Answer(opnsense.SearchQueries, http.StatusInternalServerError, []byte(`{}`))
-	_ = harness.collector.CollectDNSLookup(ctx)
-	if state, _, _ := harness.availabilityOf(t, core.KindResolverCache, ProviderUnbound); state != vocab.StateReachable {
+	harness.Fake.Answer(opnsense.SearchQueries, http.StatusInternalServerError, []byte(`{}`))
+	_ = harness.Collector.CollectDNSLookup(ctx)
+	if state, _, _ := harness.AvailabilityOf(t, core.KindResolverCache, collecttest.ProviderUnbound); state != vocab.StateReachable {
 		t.Errorf("a failed query report moved the cache to %q", state)
 	}
-	if state, _, _ := harness.availabilityOf(t, core.KindDNSLookup, ProviderUnbound); state != vocab.StateUnavailable {
+	if state, _, _ := harness.AvailabilityOf(t, core.KindDNSLookup, collecttest.ProviderUnbound); state != vocab.StateUnavailable {
 		t.Errorf("the failed query report is %q", state)
 	}
 }
@@ -353,63 +330,63 @@ func TestTheCacheAndTheQueryReportKeepTheirOwnAvailability(t *testing.T) {
 // with no attribution, and the cache pass that stores the evidence names it, at that pass.
 func TestACacheReadNamesAFlowThatThreeLookupsCouldNot(t *testing.T) {
 	t.Parallel()
-	harness := arrangeRecordCollection(t)
+	harness := collecttest.ArrangeRecordCollection(t)
 	ctx := context.Background()
-	if err := harness.collector.probeDNSLookup(ctx); err != nil {
+	if err := harness.Collector.ProbeDNSLookup(ctx); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
-	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
-	if err := harness.collector.probeFirewallLog(ctx); err != nil {
+	harness.Fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
+	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
-	answerLookups(harness.fake)
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	answerLookups(harness.Fake)
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting the filter log: %v", err)
 	}
 	source, destination := "198.51.100.10", "203.0.113.20"
 	var flowID, observedAt int64
-	if err := harness.store.DB().QueryRow(`SELECT id, observed_at FROM flow
+	if err := harness.Store.DB().QueryRow(`SELECT id, observed_at FROM flow
 		WHERE src_address = ? AND dst_address = ?`, source, destination).Scan(&flowID, &observedAt); err != nil {
 		t.Fatalf("reading the flow: %v", err)
 	}
-	answerLookups(harness.fake,
+	answerLookups(harness.Fake,
 		lookupRow(source, "example-first.example.com", observedAt-3),
 		lookupRow(source, "example-second.example.com", observedAt-2),
 		lookupRow(source, "example-third.example.com", observedAt-1))
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting the lookups: %v", err)
 	}
-	attribution := func() (int, string) {
+	attributionOf := func() (int, string) {
 		var method string
-		count := scalarCount(t, harness.store, "SELECT count(*) FROM domain_attribution WHERE flow_id = ?", flowID)
+		count := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM domain_attribution WHERE flow_id = ?", flowID)
 		if count == 1 {
-			if err := harness.store.DB().QueryRow("SELECT method FROM domain_attribution WHERE flow_id = ?",
+			if err := harness.Store.DB().QueryRow("SELECT method FROM domain_attribution WHERE flow_id = ?",
 				flowID).Scan(&method); err != nil {
 				t.Fatal(err)
 			}
 		}
 		return count, method
 	}
-	if count, _ := attribution(); count != 0 {
+	if count, _ := attributionOf(); count != 0 {
 		t.Fatal("three domains in the window attributed the flow before any cache read")
 	}
 
 	// The cache is read a minute before the flow: the first poll's coverage starts at its
 	// own instant, so it covers the lookups and the flow.
-	setClock(harness, time.Unix(observedAt-60, 0))
-	answerRecords(harness.fake, opnsense.UnboundDumpCache, []map[string]any{
+	collecttest.SetClock(harness, time.Unix(observedAt-60, 0))
+	answerRecords(harness.Fake, opnsense.UnboundDumpCache, []map[string]any{
 		{"host": "example-second.example.com.", "ttl": "3600", "type": "IN", "rrtype": "CNAME",
 			"value": "edge.example.net."},
 		{"host": "edge.example.net.", "ttl": "3600", "type": "IN", "rrtype": "A", "value": destination},
 	})
-	if err := harness.collector.CollectResolverCache(ctx); err != nil {
+	if err := harness.Collector.CollectResolverCache(ctx); err != nil {
 		t.Fatalf("reading the cache: %v", err)
 	}
-	if count, method := attribution(); count != 1 || method != attributionpkg.MethodResolverCacheAnswer {
+	if count, method := attributionOf(); count != 1 || method != attribution.MethodResolverCacheAnswer {
 		t.Fatalf("the cache pass left the flow with %d attributions by %q", count, method)
 	}
 	var site string
-	if err := harness.store.DB().QueryRow("SELECT site_name FROM domain_attribution WHERE flow_id = ?",
+	if err := harness.Store.DB().QueryRow("SELECT site_name FROM domain_attribution WHERE flow_id = ?",
 		flowID).Scan(&site); err != nil {
 		t.Fatal(err)
 	}
@@ -420,10 +397,10 @@ func TestACacheReadNamesAFlowThatThreeLookupsCouldNot(t *testing.T) {
 
 // unresolvedHostLookup makes the query report return one lookup whose client is a host
 // name, and stores it.
-func unresolvedHostLookup(t *testing.T, harness *probeHarness, hostname string, at int64) {
+func unresolvedHostLookup(t *testing.T, harness *collecttest.ProbeHarness, hostname string, at int64) {
 	t.Helper()
-	answerLookups(harness.fake, lookupRow(hostname, "example-site.example.com", at))
-	if err := harness.collector.CollectDNSLookup(context.Background()); err != nil {
+	answerLookups(harness.Fake, lookupRow(hostname, "example-site.example.com", at))
+	if err := harness.Collector.CollectDNSLookup(context.Background()); err != nil {
 		t.Fatalf("collecting the lookup: %v", err)
 	}
 }
@@ -476,45 +453,45 @@ func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			harness := arrangeRecordCollection(t)
+			harness := collecttest.ArrangeRecordCollection(t)
 			ctx := context.Background()
-			if err := harness.collector.probeDNSLookup(ctx); err != nil {
+			if err := harness.Collector.ProbeDNSLookup(ctx); err != nil {
 				t.Fatalf("probing the resolver: %v", err)
 			}
 			hostname := "example-host.example.test"
 			// A first local-data poll, before the lookup, that does not name the host.
-			setClock(harness, referenceInstant().Add(-5*time.Minute))
-			answerRecords(harness.fake, opnsense.UnboundListLocalData, localDataRows("other-host.example.test", "192.0.2.50"))
-			if err := harness.collector.CollectResolverLocalData(ctx); err != nil {
+			collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(-5*time.Minute))
+			answerRecords(harness.Fake, opnsense.UnboundListLocalData, localDataRows("other-host.example.test", "192.0.2.50"))
+			if err := harness.Collector.CollectResolverLocalData(ctx); err != nil {
 				t.Fatalf("the first local-data pass: %v", err)
 			}
-			setClock(harness, referenceInstant())
-			unresolvedHostLookup(t, harness, hostname, referenceEpoch()-120)
-			if resolution, _ := resolutionOf(t, harness.store, hostname); resolution != vocab.ClientResolutionUnknown {
+			collecttest.SetClock(harness, collecttest.ReferenceInstant())
+			unresolvedHostLookup(t, harness, hostname, collecttest.ReferenceEpoch()-120)
+			if resolution, _ := resolutionOf(t, harness.Store, hostname); resolution != vocab.ClientResolutionUnknown {
 				t.Fatalf("the lookup was stored %s before any data named its host", resolution)
 			}
 
-			collector := harness.collector
+			collector := harness.Collector
 			if testCase.restart {
-				collector = newTestCollector(t, providertest.NewClient(t, harness.fake), harness.store,
-					newFixedClock(referenceInstant().Add(time.Hour)))
+				collector = collecttest.NewTestCollector(t, providertest.NewClient(t, harness.Fake), harness.Store,
+					collecttest.NewFixedClock(collecttest.ReferenceInstant().Add(time.Hour)))
 			} else {
-				setClock(harness, referenceInstant().Add(5*time.Minute))
+				collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(5*time.Minute))
 			}
 			var rows []map[string]any
 			for _, address := range testCase.addresses {
 				rows = append(rows, localDataRows(hostname, address)[0])
 			}
-			answerRecords(harness.fake, opnsense.UnboundListLocalData, rows)
+			answerRecords(harness.Fake, opnsense.UnboundListLocalData, rows)
 			if err := collector.CollectResolverLocalData(ctx); err != nil {
 				t.Fatalf("the local-data pass: %v", err)
 			}
-			resolution, address := resolutionOf(t, harness.store, hostname)
+			resolution, address := resolutionOf(t, harness.Store, hostname)
 			if resolution != testCase.want {
 				t.Errorf("the lookup is %s, not %s", resolution, testCase.want)
 			}
 			if testCase.want == vocab.ClientResolutionLocalData {
-				if canonical, _ := attributionpkg.CanonicalAddress(testCase.addresses[0]); address != canonical.String() {
+				if canonical, _ := attribution.CanonicalAddress(testCase.addresses[0]); address != canonical.String() {
 					t.Errorf("the lookup's client is %q, not the one address the local data named", address)
 				}
 			}
@@ -527,35 +504,35 @@ func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 // it was ingested, so a lease pass alone does not spend it.
 func TestALeasePassWaitsForTheLocalDataBeforeExaminingALookup(t *testing.T) {
 	t.Parallel()
-	harness := arrangeLeaseCollection(t)
+	harness := collecttest.ArrangeLeaseCollection(t)
 	ctx := context.Background()
-	harness.fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	harness.fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-	if err := harness.collector.probeResolverLocalData(ctx); err != nil {
+	harness.Fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
+	harness.Fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
+	if err := harness.Collector.ProbeResolverLocalData(ctx); err != nil {
 		t.Fatalf("probing the local data: %v", err)
 	}
 	// The local data's first poll ever, before the lookup: it vouches for no instant
 	// before its own, so it is not yet a read the lookup can wait for.
-	setClock(harness, referenceInstant().Add(-5*time.Minute))
-	answerRecords(harness.fake, opnsense.UnboundListLocalData, localDataRows("other-host.example.test", "192.0.2.61"))
-	if err := harness.collector.CollectResolverLocalData(ctx); err != nil {
+	collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(-5*time.Minute))
+	answerRecords(harness.Fake, opnsense.UnboundListLocalData, localDataRows("other-host.example.test", "192.0.2.61"))
+	if err := harness.Collector.CollectResolverLocalData(ctx); err != nil {
 		t.Fatalf("the first local-data pass: %v", err)
 	}
-	setClock(harness, referenceInstant())
-	unresolvedLookup(t, harness.store, "example-key-waits", "example-host-waits.example.test",
-		referenceEpoch()-120, referenceEpoch()-100)
-	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
+	collecttest.SetClock(harness, collecttest.ReferenceInstant())
+	collecttest.UnresolvedLookup(t, harness.Store, "example-key-waits", "example-host-waits.example.test",
+		collecttest.ReferenceEpoch()-120, collecttest.ReferenceEpoch()-100)
+	if err := harness.Collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("the lease pass: %v", err)
 	}
-	if done, _ := examined(t, harness.store, "example-key-waits"); done {
+	if done, _ := collecttest.Examined(t, harness.Store, "example-key-waits"); done {
 		t.Fatal("a lease pass examined the lookup before the local data had been read after it")
 	}
-	setClock(harness, referenceInstant().Add(time.Minute))
-	answerRecords(harness.fake, opnsense.UnboundListLocalData, localDataRows("example-host-waits.example.test", "192.0.2.60"))
-	if err := harness.collector.CollectResolverLocalData(ctx); err != nil {
+	collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(time.Minute))
+	answerRecords(harness.Fake, opnsense.UnboundListLocalData, localDataRows("example-host-waits.example.test", "192.0.2.60"))
+	if err := harness.Collector.CollectResolverLocalData(ctx); err != nil {
 		t.Fatalf("the local-data pass: %v", err)
 	}
-	if done, resolution := examined(t, harness.store, "example-key-waits"); !done ||
+	if done, resolution := collecttest.Examined(t, harness.Store, "example-key-waits"); !done ||
 		resolution != vocab.ClientResolutionLocalData {
 		t.Errorf("the pass that read both sources left the lookup examined %t, %s; want examined and "+
 			"resolved by the local data", done, resolution)
@@ -564,14 +541,14 @@ func TestALeasePassWaitsForTheLocalDataBeforeExaminingALookup(t *testing.T) {
 
 // arrangeProcessorStream stands up a measurement harness and answers the processor's
 // stream with these events, held open as the firewall's is.
-func arrangeProcessorStream(t *testing.T, events ...string) *probeHarness {
+func arrangeProcessorStream(t *testing.T, events ...string) *collecttest.ProbeHarness {
 	t.Helper()
 	harness := arrangeMeasurementCollection(t)
 	payloads := make([][]byte, 0, len(events))
 	for _, event := range events {
 		payloads = append(payloads, []byte(event))
 	}
-	harness.fake.AnswerStream(opnsense.CPUUsageStream, payloads, true)
+	harness.Fake.AnswerStream(opnsense.CPUUsageStream, payloads, true)
 	return harness
 }
 
@@ -601,7 +578,7 @@ func processorReadings(t *testing.T, database *store.Store) []float64 {
 func TestTheProcessorReadingIsTheDocumentedDerivationOfTheSecondEvent(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
 	var body struct {
@@ -611,10 +588,10 @@ func TestTheProcessorReadingIsTheDocumentedDerivationOfTheSecondEvent(t *testing
 		t.Fatal(err)
 	}
 	want := body.Events[1].Total / (body.Events[1].Total + body.Events[1].Idle)
-	if got := processorReadings(t, harness.store); len(got) != 1 || got[0] != want {
+	if got := processorReadings(t, harness.Store); len(got) != 1 || got[0] != want {
 		t.Errorf("the processor readings are %v, want the second event's %v", got, want)
 	}
-	if requests := harness.fake.RequestsTo(opnsense.CPUUsageStream); len(requests) != 1 {
+	if requests := harness.Fake.RequestsTo(opnsense.CPUUsageStream); len(requests) != 1 {
 		t.Errorf("the stream was requested %d times", len(requests))
 	}
 	// getActivity carries no processor figure, so it is not registered at all
@@ -674,19 +651,19 @@ func TestEachProcessorAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 			harness := arrangeMeasurementCollection(t)
 			// The stream answer of the arrangement is replaced; a plain answer needs the
 			// stream entry gone.
-			harness.fake.RemoveStream(opnsense.CPUUsageStream)
-			testCase.arrange(harness.fake)
+			harness.Fake.RemoveStream(opnsense.CPUUsageStream)
+			testCase.arrange(harness.Fake)
 			started := time.Now()
-			if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+			if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 				t.Fatalf("sampling: %v", err)
 			}
 			if elapsed := time.Since(started); elapsed > processorStreamWithin+5*time.Second {
 				t.Errorf("the pass took %v, beyond the stream's bound", elapsed)
 			}
-			if got := processorReadings(t, harness.store); len(got) != 0 {
+			if got := processorReadings(t, harness.Store); len(got) != 0 {
 				t.Errorf("an absence wrote the readings %v", got)
 			}
-			detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
+			detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 			if !strings.Contains(detail, testCase.want) {
 				t.Errorf("the detail %q does not say %q", detail, testCase.want)
 			}
@@ -743,7 +720,7 @@ func TestTheUnverifiedProcessorPathIsGone(t *testing.T) {
 // name that encodes no address is counted as skipped and not stored.
 func TestLocalDataPTRRecordsMapTheirReverseNameToAnAddressAndTheirTargetToAHost(t *testing.T) {
 	t.Parallel()
-	harness := arrangeRecordCollection(t)
+	harness := collecttest.ArrangeRecordCollection(t)
 	rows := fixtureRows(t, "unbound_listlocaldata.json")
 	// Reverse names that encode no address, each pointing at a target of its own so a
 	// stored one would be seen. The code skips them as values not valid for their type.
@@ -763,12 +740,12 @@ func TestLocalDataPTRRecordsMapTheirReverseNameToAnAddressAndTheirTargetToAHost(
 		rows = append(rows, map[string]any{"name": name, "ttl": "3600", "type": "IN",
 			"rrtype": "PTR", "value": fmt.Sprintf("malformed-%d.example.test.", index)})
 	}
-	answerRecords(harness.fake, opnsense.UnboundListLocalData, rows)
-	if err := harness.collector.CollectResolverLocalData(context.Background()); err != nil {
+	answerRecords(harness.Fake, opnsense.UnboundListLocalData, rows)
+	if err := harness.Collector.CollectResolverLocalData(context.Background()); err != nil {
 		t.Fatalf("reading the local data: %v", err)
 	}
 
-	ptr := stringColumn(t, harness.store, `SELECT owner_name || ' | ' || value || ' | ' ||
+	ptr := stringColumn(t, harness.Store, `SELECT owner_name || ' | ' || value || ' | ' ||
 		coalesce(CAST(address AS TEXT), 'NULL') || ' | ' || coalesce(CAST(host_label AS TEXT), 'NULL')
 		FROM resource_record_observation WHERE rrtype = 'PTR' ORDER BY address`)
 	want := []string{
@@ -779,22 +756,22 @@ func TestLocalDataPTRRecordsMapTheirReverseNameToAnAddressAndTheirTargetToAHost(
 	if strings.Join(ptr, "\n") != strings.Join(want, "\n") {
 		t.Errorf("the stored PTR records are\n%s\nnot\n%s", strings.Join(ptr, "\n"), strings.Join(want, "\n"))
 	}
-	if types := stringColumn(t, harness.store,
+	if types := stringColumn(t, harness.Store,
 		"SELECT DISTINCT rrtype FROM resource_record_observation ORDER BY rrtype"); strings.Join(types, ",") != "A,AAAA,PTR" {
 		t.Errorf("the stored types are %v, not A, AAAA and PTR", types)
 	}
-	if stored := observationCount(t, harness.store); stored != 4 {
+	if stored := observationCount(t, harness.Store); stored != 4 {
 		t.Errorf("%d records were stored, not the A, the AAAA and the two PTR records", stored)
 	}
-	if text := scalarCount(t, harness.store, `SELECT count(*) FROM resource_record_observation
+	if text := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM resource_record_observation
 		WHERE owner_name = 'example.test'`); text != 0 {
 		t.Error("the TXT record was stored")
 	}
-	if bad := scalarCount(t, harness.store, `SELECT count(*) FROM resource_record_observation
+	if bad := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM resource_record_observation
 		WHERE value LIKE 'malformed-%' OR owner_name = 'host-b.example.test'`); bad != 0 {
 		t.Errorf("%d PTR records whose owner encodes no address were stored", bad)
 	}
-	detail := harness.detailOf(t, core.KindResolverLocalData, ProviderUnbound)
+	detail := harness.DetailOf(t, core.KindResolverLocalData, collecttest.ProviderUnbound)
 	for _, wantDetail := range []string{
 		fmt.Sprintf("read %d records of the local data", len(rows)),
 		fmt.Sprintf("PTR %d", 2+len(malformed)), "TXT 1", "A 1", "AAAA 1",

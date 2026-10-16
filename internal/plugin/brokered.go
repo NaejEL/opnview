@@ -99,9 +99,9 @@ func joinSteps(steps []string) string {
 	return path
 }
 
-// declareTo tells a broker what the plugin declares of its endpoints, and records the endpoints
+// DeclareTo tells a broker what the plugin declares of its endpoints, and records the endpoints
 // whose corrections lost to another plugin's.
-func (p *Plugin) declareTo(gate *broker.Broker) {
+func (p *Plugin) DeclareTo(gate *broker.Broker) {
 	if gate == nil {
 		return
 	}

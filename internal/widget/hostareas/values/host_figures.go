@@ -119,7 +119,7 @@ func init() {
 			if counted := arguments.Argument(2); !script.Absent(counted) {
 				if _, isObject := counted.(*goja.Object); isObject {
 					var count envelope.Count
-					call.DecodeArgument(counted, "the count dropped", &count)
+					call.DecodeFlat(counted, "the count dropped", &count)
 					remainder.Count = &count
 				} else {
 					count := r.LoggedCountOf(call.IntegerOf(counted, "the count dropped"))
@@ -157,17 +157,17 @@ func init() {
 	})
 }
 
-// figuresOf reads summable figures a script hands the host.
+// FiguresOf reads summable figures a script hands the host.
 func FiguresOf(c *script.ScriptCall, value goja.Value, what string) reads.VolumeFigures {
 	if script.Absent(value) {
 		c.Throw("%s are %s, not summable figures", what, script.Describe(value))
 	}
 	var figures traffic.SummableFigures
-	c.DecodeArgument(value, what, &figures)
+	c.DecodeFlat(value, what, &figures)
 	return FromScript(c, figures)
 }
 
-// fromScript is figures a script hands back, as the core reads them. Under a netflow run, figures
+// FromScript is figures a script hands back, as the core reads them. Under a netflow run, figures
 // holding anything that are not netflow were not read by the core in that measure: the run cannot be
 // served as netflow (internal/widget/request/measure.go).
 func FromScript(c *script.ScriptCall, figures traffic.SummableFigures) reads.VolumeFigures {
@@ -178,7 +178,7 @@ func FromScript(c *script.ScriptCall, figures traffic.SummableFigures) reads.Vol
 	return read
 }
 
-// measuredOf is the netflow members of a row a script hands back, as a row's measured figures
+// MeasuredOf is the netflow members of a row a script hands back, as a row's measured figures
 // (internal/widget/figures/sites.go): judged as figuresOf judges figures holding bytes.
 func MeasuredOf(c *script.ScriptCall, members traffic.NetflowMembers, bytes int64) reads.VolumeFigures {
 	read := FromScript(c, traffic.SummableFigures{Bytes: bytes, NetflowMembers: members})

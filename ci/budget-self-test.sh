@@ -6,7 +6,12 @@
 # runs checks.sh with OPNVIEW_BUDGET_PROBE_SECONDS one second past it. That
 # switch is read by ci/budgetprobe and by nothing else: the probe test sleeps that
 # long, so the measured time is over the budget by construction, whatever the
-# rest of the suite costs. Run inside the development container, as part of
+# rest of the suite costs. OPNVIEW_BUDGET_PROBE_ONLY restricts checks.sh's go test
+# to that probe package (Q3 of the Phase E amendment to
+# specs/SPEC-backend-completion-plugins.md): the check is of the budget's
+# enforcement, which the probe alone exercises, and the whole suite already ran
+# once in the same command. checks.sh still formats, vets and builds the whole
+# tree. Run inside the development container, as part of
 #
 #     docker compose run --rm pre-deployment
 #
@@ -24,7 +29,7 @@ fi
 probe=$(( budget + 1 ))
 printf -- '== checks.sh with the budget probe sleeping %d s (test budget: %d s)\n' "$probe" "$budget"
 
-output="$(cd "$REPO_ROOT" && OPNVIEW_BUDGET_PROBE_SECONDS="$probe" bash "$CHECKS" 2>&1)"
+output="$(cd "$REPO_ROOT" && OPNVIEW_BUDGET_PROBE_SECONDS="$probe" OPNVIEW_BUDGET_PROBE_ONLY=1 bash "$CHECKS" 2>&1)"
 status=$?
 printf -- '%s\n' "$output" | tail -n 5
 

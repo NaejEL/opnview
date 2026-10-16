@@ -4,6 +4,7 @@ package widget
 // (internal/widget/script, RegisterHostArea). Importing their packages links every area into the
 // service; adding an area is adding a file to one of them.
 import (
-	_ "github.com/NaejEL/opnview/internal/widget/hostareas/readers"
+	_ "github.com/NaejEL/opnview/internal/widget/hostareas/installation"
+	_ "github.com/NaejEL/opnview/internal/widget/hostareas/traffic"
 	_ "github.com/NaejEL/opnview/internal/widget/hostareas/values"
 )

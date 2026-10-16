@@ -10,7 +10,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web/webtest"
 )
 
-// storeCredentials types a firewall URL and a key/secret pair into the settings
+// StoreCredentials types a firewall URL and a key/secret pair into the settings
 // surface. Every value is generated per run, and the URL is the loopback fake's,
 // chosen by the operating system.
 func StoreCredentials(h *webtest.Harness, apiKey, apiSecret string) *http.Response {
@@ -24,7 +24,7 @@ func StoreCredentials(h *webtest.Harness, apiKey, apiSecret string) *http.Respon
 	})
 }
 
-// text resolves one catalogue key, so an assertion compares against the string the
+// Text resolves one catalogue key, so an assertion compares against the string the
 // reader actually sees rather than a copy of it written in a test.
 func Text(t *testing.T, catalogue web.Catalogue, key webtest.MessageKey) string {
 	t.Helper()
@@ -35,7 +35,7 @@ func Text(t *testing.T, catalogue web.Catalogue, key webtest.MessageKey) string 
 	return value
 }
 
-// assertContains fails unless every value appears.
+// AssertContains fails unless every value appears.
 func AssertContains(t *testing.T, body string, values ...string) {
 	t.Helper()
 	for _, value := range values {

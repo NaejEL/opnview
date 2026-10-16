@@ -4,16 +4,19 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/testtiming"
 )
 
 // Databases for the tests (P9 of specs/SPEC-backend-completion-plugins.md).
@@ -36,6 +39,31 @@ import (
 // TestDatabaseVariable is the environment variable naming the test instance.
 const TestDatabaseVariable = "OPNVIEW_TEST_DATABASE"
 
+// CloneStrategyVariable names the CREATE DATABASE strategy a test database is cloned from the
+// template with: FILE_COPY, the default, or WAL_LOG. docker-compose.yml sets it per instance, from
+// measured figures: the PostgreSQL 17 documentation of CREATE DATABASE says FILE_COPY "will force the
+// system to perform a checkpoint both before and after the creation of the new database"
+// (https://www.postgresql.org/docs/17/sql-createdatabase.html). On the everyday instance, whose
+// data is on a tmpfs with durability off, a checkpoint costs next to nothing and FILE_COPY copies a
+// small template fastest (11 ms a clone against 18 ms for WAL_LOG, 64 clones 16 at a time, measured
+// on 16 October 2026); on the pre-deployment instance, a disk with production durability, each of
+// those checkpoints writes and syncs every dirty page of the instance, and 64 create-then-drop
+// cycles 16 at a time took 38.3 s with FILE_COPY and 2.6 s with WAL_LOG.
+const CloneStrategyVariable = "OPNVIEW_TEST_CLONE_STRATEGY"
+
+// cloneStrategy is the strategy CloneStrategyVariable names; an unset variable is FILE_COPY, and
+// any value but the two is refused rather than read as one of them.
+func cloneStrategy() (string, error) {
+	switch strategy := os.Getenv(CloneStrategyVariable); strategy {
+	case "", "FILE_COPY":
+		return "FILE_COPY", nil
+	case "WAL_LOG":
+		return strategy, nil
+	default:
+		return "", fmt.Errorf("store: %s is %q, neither FILE_COPY nor WAL_LOG", CloneStrategyVariable, strategy)
+	}
+}
+
 // testTemplateRevision is raised when what Open writes into a fresh database changes for a reason
 // the schema's digest does not see.
 const testTemplateRevision = "2"
@@ -52,6 +80,17 @@ type TestDatabase struct {
 	DSN   string
 	name  string
 	admin string
+	// pkg is the package of the test it was created for, and created the instant it was, for the
+	// suite's breakdown (internal/testtiming): its drop runs where no test is on the stack.
+	pkg     string
+	created time.Time
+}
+
+// newTestDatabase is a created database, its clone recorded for the suite's breakdown.
+func newTestDatabase(dsn, name, admin string, cloneStarted time.Time) *TestDatabase {
+	database := &TestDatabase{DSN: dsn, name: name, admin: admin, pkg: testtiming.Package(), created: time.Now()}
+	testtiming.RecordFor(database.pkg, testtiming.StepClone, database.created.Sub(cloneStarted))
+	return database
 }
 
 // NewTestDatabase creates an empty database with the schema applied, cloned from the template.
@@ -69,6 +108,7 @@ func NewTestDatabase(ctx context.Context) (*TestDatabase, error) {
 	if err != nil {
 		return nil, err
 	}
+	started := time.Now()
 	if err := createDatabase(ctx, admin, name, templateName); err != nil {
 		return nil, err
 	}
@@ -76,7 +116,7 @@ func NewTestDatabase(ctx context.Context) (*TestDatabase, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &TestDatabase{DSN: dsn, name: name, admin: admin}, nil
+	return newTestDatabase(dsn, name, admin, started), nil
 }
 
 // NewEmptyTestDatabase creates a database with nothing in it, not even the schema, for a test of
@@ -90,6 +130,7 @@ func NewEmptyTestDatabase(ctx context.Context) (*TestDatabase, error) {
 	if err != nil {
 		return nil, err
 	}
+	started := time.Now()
 	if err := createDatabase(ctx, admin, name, ""); err != nil {
 		return nil, err
 	}
@@ -97,7 +138,7 @@ func NewEmptyTestDatabase(ctx context.Context) (*TestDatabase, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &TestDatabase{DSN: dsn, name: name, admin: admin}, nil
+	return newTestDatabase(dsn, name, admin, started), nil
 }
 
 // Name is the database's name.
@@ -105,11 +146,15 @@ func (d *TestDatabase) Name() string { return d.name }
 
 // Drop drops the database and its read role, by their exact names.
 func (d *TestDatabase) Drop(ctx context.Context) error {
-	db, err := sqldb.OpenPool(d.admin)
+	started := time.Now()
+	if !d.created.IsZero() {
+		testtiming.RecordFor(d.pkg, testtiming.StepLifetime, started.Sub(d.created))
+		defer func() { testtiming.RecordFor(d.pkg, testtiming.StepDrop, time.Since(started)) }()
+	}
+	db, err := adminPool(d.admin)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }()
 	if _, err := db.ExecContext(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{d.name}.Sanitize()+
 		" WITH (FORCE)"); err != nil {
 		return fmt.Errorf("store: dropping the test database %s: %w", d.name, err)
@@ -128,11 +173,10 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 	}
 	digest := sha256.Sum256(append(schema, []byte(testTemplateRevision)...))
 	name := "opnview_template_" + hex.EncodeToString(digest[:])[:16]
-	db, err := sqldb.OpenPool(admin)
+	db, err := adminPool(admin)
 	if err != nil {
 		return "", err
 	}
-	defer func() { _ = db.Close() }()
 	var exists bool
 	if err := db.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = ?)", name).
 		Scan(&exists); err != nil {
@@ -175,22 +219,65 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 	return name, nil
 }
 
+// adminPool is the process's pool on the test instance's maintenance database, shared by every clone
+// and every drop: one pool a process, kept open, rather than a new connection for each database
+// created and each dropped.
+func adminPool(admin string) (*sql.DB, error) {
+	adminPools.mutex.Lock()
+	defer adminPools.mutex.Unlock()
+	if pool, found := adminPools.byDSN[admin]; found {
+		return pool, nil
+	}
+	pool, err := sqldb.OpenPool(admin)
+	if err != nil {
+		return nil, err
+	}
+	pool.SetMaxIdleConns(adminIdleConnections)
+	adminPools.byDSN[admin] = pool
+	return pool, nil
+}
+
+// adminIdleConnections is how many maintenance connections a process keeps between uses: a package's
+// tests create and drop databases from as many goroutines as run in parallel.
+const adminIdleConnections = 4
+
+var adminPools = struct {
+	mutex sync.Mutex
+	byDSN map[string]*sql.DB
+}{byDSN: map[string]*sql.DB{}}
+
+// The bounded backoff of a clone whose template another session holds.
+const (
+	cloneRetryFirst   = 5 * time.Millisecond
+	cloneRetryLongest = 200 * time.Millisecond
+	cloneRetryBound   = 10 * time.Second
+)
+
 // createDatabase creates a database, from a template or from template1 (which carries the
 // TimescaleDB extension), with byte-order text.
 func createDatabase(ctx context.Context, admin, name, template string) error {
-	db, err := sqldb.OpenPool(admin)
+	db, err := adminPool(admin)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = db.Close() }()
 	statement := "CREATE DATABASE " + pgx.Identifier{name}.Sanitize()
 	if template != "" {
-		statement += " TEMPLATE " + pgx.Identifier{template}.Sanitize() + " STRATEGY FILE_COPY"
+		strategy, err := cloneStrategy()
+		if err != nil {
+			return err
+		}
+		statement += " TEMPLATE " + pgx.Identifier{template}.Sanitize() + " STRATEGY " + strategy
 	} else {
 		statement += " ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C' TEMPLATE template0"
 	}
+	// 55006, the template being accessed by another session (a concurrent clone), is retried after a
+	// pause that doubles from cloneRetryFirst up to cloneRetryLongest, for at most cloneRetryBound in
+	// all: a busy template is a matter of milliseconds, and a retry that does not wait only adds to
+	// the contention it meets.
 	var lastErr error
-	for attempt := 0; attempt < 20; attempt++ {
+	pause := cloneRetryFirst
+	deadline := time.Now().Add(cloneRetryBound)
+	for {
 		_, lastErr = db.ExecContext(ctx, statement)
 		if lastErr == nil {
 			if template == "" {
@@ -198,10 +285,18 @@ func createDatabase(ctx context.Context, admin, name, template string) error {
 			}
 			return nil
 		}
-		// 55006: the template is being accessed by another session (a concurrent clone).
 		if !strings.Contains(lastErr.Error(), "55006") && !strings.Contains(lastErr.Error(), "being accessed") {
 			break
 		}
+		if time.Now().Add(pause).After(deadline) {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("store: creating the test database %s: %w", name, ctx.Err())
+		case <-time.After(pause):
+		}
+		pause = min(2*pause, cloneRetryLongest)
 	}
 	return fmt.Errorf("store: creating the test database %s: %w", name, lastErr)
 }
@@ -266,6 +361,7 @@ func NewTestDatabaseFrom(ctx context.Context, template *TestDatabase) (*TestData
 	if err != nil {
 		return nil, err
 	}
+	started := time.Now()
 	if err := createDatabase(ctx, template.admin, name, template.name); err != nil {
 		return nil, err
 	}
@@ -273,5 +369,5 @@ func NewTestDatabaseFrom(ctx context.Context, template *TestDatabase) (*TestData
 	if err != nil {
 		return nil, err
 	}
-	return &TestDatabase{DSN: dsn, name: name, admin: template.admin}, nil
+	return newTestDatabase(dsn, name, template.admin, started), nil
 }

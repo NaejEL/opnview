@@ -31,20 +31,31 @@ func DatabaseContains(t *testing.T, harness *Harness, value string) string {
 	if value == "" {
 		t.Fatal("scanning the database for the empty string would match everything")
 	}
+	// One statement per table, a count per column side by side, rather than one per column; the
+	// first column holding the value, in the scan's order, is the one named.
 	for _, table := range databaseTables(t, harness.Store.DB()) {
+		counts := make([]string, 0, len(table.columns))
+		arguments := make([]any, 0, len(table.columns))
 		for _, column := range table.columns {
-			var hits int
-			query := fmt.Sprintf(`SELECT count(*) FROM %s WHERE strpos(CAST(%s AS TEXT), ?) > 0`,
-				table.name, quoteIdentifier(column.name))
+			condition := fmt.Sprintf("strpos(CAST(%s AS TEXT), ?) > 0", quoteIdentifier(column.name))
 			if column.dataType == "bytea" {
-				query = fmt.Sprintf(`SELECT count(*) FROM %s WHERE position(convert_to(?, 'UTF8') IN %s) > 0`,
-					table.name, quoteIdentifier(column.name))
+				condition = fmt.Sprintf("position(convert_to(?, 'UTF8') IN %s) > 0", quoteIdentifier(column.name))
 			}
-			if err := harness.Store.DB().QueryRow(query, value).Scan(&hits); err != nil {
-				t.Fatalf("scanning %s.%s: %v", table.name, column.name, err)
-			}
-			if hits > 0 {
-				return table.name + "." + column.name
+			counts = append(counts, "count(*) FILTER (WHERE "+condition+")")
+			arguments = append(arguments, value)
+		}
+		hits := make([]int, len(table.columns))
+		destinations := make([]any, len(table.columns))
+		for index := range hits {
+			destinations[index] = &hits[index]
+		}
+		if err := harness.Store.DB().QueryRow("SELECT "+strings.Join(counts, ", ")+" FROM "+table.name,
+			arguments...).Scan(destinations...); err != nil {
+			t.Fatalf("scanning %s: %v", table.name, err)
+		}
+		for index, found := range hits {
+			if found > 0 {
+				return table.name + "." + table.columns[index].name
 			}
 		}
 	}
@@ -127,26 +138,45 @@ func DatabaseBytesExcept(t *testing.T, harness *Harness, skipped ...string) stri
 		if slices.Contains(skipped, table.name) || slices.Contains(skipped, bare) {
 			continue
 		}
+		// ONE READ OF THE TABLE, its columns side by side, and the rendering column by column as
+		// before: every value of the first column, then every value of the second. One statement
+		// per table rather than one per column, which made a scan of the whole database cost about
+		// as many statements as the database has columns.
+		expressions := make([]string, 0, len(table.columns))
 		for _, column := range table.columns {
 			expression := "CAST(" + quoteIdentifier(column.name) + " AS TEXT)"
 			if column.dataType == "bytea" {
 				expression = "encode(" + quoteIdentifier(column.name) + ", 'escape')"
 			}
-			rows, err := harness.Store.DB().Query("SELECT " + expression + " FROM " + table.name)
-			if err != nil {
-				t.Fatalf("rendering %s.%s: %v", table.name, column.name, err)
+			expressions = append(expressions, expression)
+		}
+		rows, err := harness.Store.DB().Query("SELECT " + strings.Join(expressions, ", ") + " FROM " + table.name)
+		if err != nil {
+			t.Fatalf("rendering %s: %v", table.name, err)
+		}
+		rendered := make([]strings.Builder, len(table.columns))
+		values := make([]sql.NullString, len(table.columns))
+		destinations := make([]any, len(table.columns))
+		for index := range values {
+			destinations[index] = &values[index]
+		}
+		for rows.Next() {
+			if err := rows.Scan(destinations...); err != nil {
+				t.Fatalf("rendering %s: %v", table.name, err)
 			}
-			for rows.Next() {
-				var value sql.NullString
-				if err := rows.Scan(&value); err != nil {
-					t.Fatalf("rendering %s.%s: %v", table.name, column.name, err)
-				}
+			for index, value := range values {
 				if value.Valid {
-					builder.WriteString(value.String)
-					builder.WriteByte('\n')
+					rendered[index].WriteString(value.String)
+					rendered[index].WriteByte('\n')
 				}
 			}
-			_ = rows.Close()
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("rendering %s: %v", table.name, err)
+		}
+		_ = rows.Close()
+		for index := range rendered {
+			builder.WriteString(rendered[index].String())
 		}
 	}
 	return builder.String()

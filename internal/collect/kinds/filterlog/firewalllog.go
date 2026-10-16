@@ -7,6 +7,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/firewalllog"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -90,7 +91,7 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 	now, ingest := derive.On(c.Collector).BeginIngest()
 	defer derive.On(c.Collector).EndIngest(ingest)
 	var stored derive.Derivation
-	passErr := c.StoreFirewallLog(ctx, records, plan, snapshot, now, providerID, newestStored, hasStored,
+	passErr := c.storeFirewallLog(ctx, records, plan, snapshot, now, providerID, newestStored, hasStored,
 		&stored)
 	if passErr == nil && plan.path != nil {
 		// An overlap ends once polling has read up to a second the push path covers.
@@ -123,7 +124,7 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 //
 // THE SOURCE PERIODS DECIDE WHICH RECORDS ARE KEPT (plan, pushpaths.go): a record of an instant a
 // push path covers is superseded, and a gap is clipped by what the push path stored.
-func (c *FilterLogCoordinator) StoreFirewallLog(ctx context.Context, records []firewalllog.Record, plan PullPlan,
+func (c *FilterLogCoordinator) storeFirewallLog(ctx context.Context, records []firewalllog.Record, plan pullPlan,
 	snapshot core.Discovery, now, providerID, newestStored int64, hasStored bool, stored *derive.Derivation) error {
 	oldestReturned := int64(0)
 	for index, record := range records {
@@ -131,7 +132,7 @@ func (c *FilterLogCoordinator) StoreFirewallLog(ctx context.Context, records []f
 			oldestReturned = record.ObservedAt
 		}
 	}
-	for _, record := range plan.Keep {
+	for _, record := range plan.keep {
 		seen, err := c.Store.HasFlowDigest(ctx, record.Digest)
 		if err != nil {
 			return err
@@ -242,4 +243,15 @@ func buildFlow(record firewalllog.Record, snapshot core.Discovery, now int64) vo
 		IPID:                 record.IPID,
 		TCPSeq:               record.TCPSeq,
 	}
+}
+
+// ProbeFirewallLog probes every implementation of the firewall_log kind. The probe round (collect.ProbeAll)
+// runs it with every other kind's.
+func (c *FilterLogCoordinator) ProbeFirewallLog(ctx context.Context) error {
+	return c.ResolveKind(ctx, core.KindFirewallLog, core.ProbeablesOf(c.SourceSet.FirewallLog, firewallLogProbe))
+}
+
+// firewallLogProbe is the probe of one firewall_log implementation, as core.ProbeablesOf takes it.
+func firewallLogProbe(source firewalllog.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
 }

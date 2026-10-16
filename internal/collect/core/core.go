@@ -94,7 +94,7 @@ func (SystemClock) After(d time.Duration) <-chan time.Time { return time.After(d
 // It is declared in the provider contract, because the measurement sampler is handed it.
 type Discovery = provider.Discovery
 
-// newDiscovery returns an empty snapshot. Empty is the honest starting state: on
+// NewDiscovery returns an empty snapshot. Empty is the honest starting state: on
 // the first pass nothing is discovered, so every join key reports `pending`
 // rather than `not_found`.
 func NewDiscovery() Discovery {
@@ -110,7 +110,7 @@ func NewDiscovery() Discovery {
 // Broker is the collector's broker: the one path to the firewall API.
 func (c *Collector) Broker() *broker.Broker { return c.APIBroker }
 
-// vocabulary is the installation's interface identifiers and devices, which mark an object keyed
+// Vocabulary is the installation's interface identifiers and devices, which mark an object keyed
 // by them as value-keyed in the mirror. They are read from discovery, never written into a schema.
 func (c *Collector) Vocabulary() []string {
 	snapshot := c.Discovery()
@@ -157,7 +157,7 @@ func (c *Collector) Configure(settings config.Config) {
 	}
 }
 
-// setSampleAbsence records what one measurement provider's last pass could not read.
+// SetSampleAbsence records what one measurement provider's last pass could not read.
 func (c *Collector) SetSampleAbsence(providerID int64, absent string) {
 	c.Mutex.Lock()
 	defer c.Mutex.Unlock()
@@ -171,7 +171,7 @@ func (c *Collector) SetSampleAbsence(providerID int64, absent string) {
 	c.SampleAbsences[providerID] = absent
 }
 
-// setReadDetail records what one resolver-record provider's last read said.
+// SetReadDetail records what one resolver-record provider's last read said.
 //
 // The outcome is kept beside the words for the same reason: a probe round restating a
 // read's refusal in the detail must not stamp the row `healthy` beside it.
@@ -189,7 +189,7 @@ func (c *Collector) SetReadDetail(providerID int64, outcome vocab.AvailabilityOu
 }
 
 // readDetail is what one resolver-record provider's last read said, or empty.
-func (c *Collector) ReadDetail(providerID int64) string {
+func (c *Collector) readDetail(providerID int64) string {
 	c.Mutex.RLock()
 	defer c.Mutex.RUnlock()
 	return c.ReadDetails[providerID]
@@ -216,7 +216,7 @@ func (c *Collector) sampleAbsence(providerID int64) string {
 // are the truth, and this is what the collectors were last told.
 func (c *Collector) PageSizes() config.PageSizes { return c.Pages() }
 
-// pages returns the page sizes in force.
+// Pages returns the page sizes in force.
 func (c *Collector) Pages() config.PageSizes {
 	c.Mutex.RLock()
 	defer c.Mutex.RUnlock()
@@ -230,14 +230,14 @@ func (c *Collector) Discovery() Discovery {
 	return c.DiscoverySnapshot
 }
 
-// setDiscovery replaces the snapshot.
+// SetDiscovery replaces the snapshot.
 func (c *Collector) SetDiscovery(snapshot Discovery) {
 	c.Mutex.Lock()
 	defer c.Mutex.Unlock()
 	c.DiscoverySnapshot = snapshot
 }
 
-// measureNormaliser returns the timestamp normaliser for this instant, carrying the
+// MeasureNormaliser returns the timestamp normaliser for this instant, carrying the
 // reference time the year-less filter-log shape needs and the firewall's offset
 // from UTC.
 //
@@ -267,7 +267,7 @@ func (c *Collector) FirewallOffsetSeconds() int {
 	return c.OffsetSeconds
 }
 
-// now is the current instant as the UTC epoch every column stores.
+// Now is the current instant as the UTC epoch every column stores.
 func (c *Collector) Now() int64 { return c.Clock.Now().UTC().Unix() }
 
 // recordOutcome turns one response into the availability state the survey names
@@ -305,7 +305,7 @@ func (c *Collector) recordOutcome(ctx context.Context, providerID int64,
 	return c.WriteAvailability(ctx, providerID, state, provider.ResponseOutcome(response), response.Endpoint, detail)
 }
 
-// writeAvailability records a state determined by one probe endpoint, with the outcome
+// WriteAvailability records a state determined by one probe endpoint, with the outcome
 // code that names why. An empty outcome is refused rather than defaulted: a code nobody
 // chose is a code that would have to be guessed back from the detail.
 func (c *Collector) WriteAvailability(ctx context.Context, providerID int64,
@@ -327,7 +327,7 @@ func (c *Collector) WriteAvailability(ctx context.Context, providerID int64,
 	return nil
 }
 
-// joinErrors folds several failures into one error without losing any of them.
+// JoinErrors folds several failures into one error without losing any of them.
 //
 // It stayed in this package when the decoding layer moved out: a pass that reads five kinds
 // reports every failure it met rather than the first, and that is a fact about how collection
@@ -346,7 +346,7 @@ func JoinErrors(errs []error) error {
 // Sources returns the implementations this collector reads.
 func (c *Collector) Sources() *sources.Set { return c.SourceSet }
 
-// discoverClock measures the firewall's offset from UTC from its own clock, survey
+// DiscoverClock measures the firewall's offset from UTC from its own clock, survey
 // gap 7, and puts it in force for every timestamp read after it. A failure leaves
 // the last measurement in force rather than falling back to zero: a zone does not
 // change because one request failed.
@@ -375,7 +375,7 @@ func (c *Collector) DiscoverClock(ctx context.Context) error {
 	return nil
 }
 
-// storing marks the start of a pass's store-and-derive: it waits for a purge in
+// Storing marks the start of a pass's store-and-derive: it waits for a purge in
 // progress, and keeps the next one waiting until the returned function is called,
 // once the pass's derivation has ended.
 func (c *Collector) Storing() func() {
@@ -383,7 +383,7 @@ func (c *Collector) Storing() func() {
 	return c.PurgeMutex.RUnlock
 }
 
-// sortedKeys returns a map's keys, sorted.
+// SortedKeys returns a map's keys, sorted.
 func SortedKeys[V any](values map[string]V) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {

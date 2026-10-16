@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// assertDefaultButtonNamesNoCard holds a page's one form to its first button -- the
+// AssertDefaultButtonNamesNoCard holds a page's one form to its first button -- the
 // one the Enter key presses -- being a hidden one that names no card.
 func AssertDefaultButtonNamesNoCard(t *testing.T, page, action string) {
 	t.Helper()

@@ -124,7 +124,7 @@ func (c *Discoverer) discoverInterfaces(ctx context.Context, snapshot *core.Disc
 			Identifier:  identifier,
 			Device:      device,
 			Description: description,
-			// status and enabled are stored verbatim, with no normalisation: the
+			// Status and enabled are stored verbatim, with no normalisation: the
 			// survey establishes the two fields and NOT their encoding, and a
 			// vocabulary written here would be invented rather than discovered.
 			Status:   decode.StringPointer(row, "status"),

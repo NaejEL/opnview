@@ -35,9 +35,14 @@ WHERE id = :client_id;
 SELECT id, pf_label, description, action, is_automatic FROM rule WHERE id = :rule_id;
 
 
+-- The geolocations of a set of addresses, :addresses a JSON array of them, read together: every
+-- outside peer a request places, at the first geolocation a script asks for (installation.go,
+-- Geolocation), so a widget placing a thousand peers reads them in one statement rather than one
+-- statement a peer. The set is bounded by the caller (geolocationBatch), and each address is a
+-- search of geo_asn's primary key.
 -- statement: widget_geo
 SELECT address, lookup_state, country_code, country_name, latitude, longitude, asn, operator,
        dataset_build_at
 FROM geo_asn
-WHERE address = :address;
+WHERE address IN (SELECT j.value FROM jsonb_array_elements_text(CAST(:addresses AS jsonb)) AS j(value));
 

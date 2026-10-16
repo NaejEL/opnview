@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -22,25 +23,25 @@ import (
 
 // arrangeMeasurementCollection stands up a harness whose volume source is active and whose
 // telemetry answers.
-func arrangeMeasurementCollection(t *testing.T) *probeHarness {
+func arrangeMeasurementCollection(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.AnswerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_local.json")
-	harness.fake.AnswerFixture(opnsense.TrafficTop, "traffic_top.json")
-	harness.fake.AnswerFixture(opnsense.TrafficInterface, "traffic_interface.json")
-	harness.fake.AnswerFixture(opnsense.SystemResources, "system_resources.json")
-	harness.fake.AnswerFixture(opnsense.SystemTemperature, "system_temperature.json")
-	harness.fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
-	harness.fake.AnswerFixture(opnsense.SystemDisk, "system_disk.json")
+	harness := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
+	harness.Fake.AnswerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_local.json")
+	harness.Fake.AnswerFixture(opnsense.TrafficTop, "traffic_top.json")
+	harness.Fake.AnswerFixture(opnsense.TrafficInterface, "traffic_interface.json")
+	harness.Fake.AnswerFixture(opnsense.SystemResources, "system_resources.json")
+	harness.Fake.AnswerFixture(opnsense.SystemTemperature, "system_temperature.json")
+	harness.Fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
+	harness.Fake.AnswerFixture(opnsense.SystemDisk, "system_disk.json")
 	// The processor figure's source since the resolver-cache cycle: a stream that never ends.
-	harness.fake.AnswerStreamFixture(opnsense.CPUUsageStream, "cpu_usage_stream.json")
-	harness.fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status.json")
-	harness.fake.AnswerFixture(opnsense.SystemSwap, "system_swap.json")
-	if err := harness.collector.probeMeasurement(context.Background()); err != nil {
+	harness.Fake.AnswerStreamFixture(opnsense.CPUUsageStream, "cpu_usage_stream.json")
+	harness.Fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status.json")
+	harness.Fake.AnswerFixture(opnsense.SystemSwap, "system_swap.json")
+	if err := harness.Collector.ProbeMeasurement(context.Background()); err != nil {
 		t.Fatalf("probing the volume source: %v", err)
 	}
-	if key := harness.activeKeyOf(t, core.KindMeasurementSample); key != ProviderInsight {
+	if key := harness.ActiveKeyOf(t, core.KindMeasurementSample); key != collecttest.ProviderInsight {
 		t.Fatalf("the volume kind activated %q", key)
 	}
 	return harness
@@ -55,12 +56,12 @@ func arrangeMeasurementCollection(t *testing.T) *probeHarness {
 func TestThePerPairSamplerSendsInterfaceNamesAndNeverADeviceName(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	harness.fake.AssertEveryPathIsRegistered()
+	harness.Fake.AssertEveryPathIsRegistered()
 
-	snapshot := harness.collector.Discovery()
+	snapshot := harness.Collector.Discovery()
 	if len(snapshot.Identifiers) == 0 || len(snapshot.Devices) == 0 {
 		t.Fatal("discovery found no identifier or no device, so this assertion is vacuous")
 	}
@@ -73,7 +74,7 @@ func TestThePerPairSamplerSendsInterfaceNamesAndNeverADeviceName(t *testing.T) {
 		}
 	}
 
-	requests := harness.fake.RequestsTo(opnsense.TrafficTop)
+	requests := harness.Fake.RequestsTo(opnsense.TrafficTop)
 	if len(requests) == 0 {
 		t.Fatal("the per-pair endpoint was never requested")
 	}
@@ -110,28 +111,28 @@ func TestASamplerRefusalIsRecordedRatherThanLookingLikeSilence(t *testing.T) {
 	ctx := context.Background()
 
 	// A snapshot with the defect, installed behind the collector's back.
-	broken := harness.collector.Discovery()
+	broken := harness.Collector.Discovery()
 	broken.Identifiers = nil
 	for device := range broken.Devices {
 		broken.Identifiers = append(broken.Identifiers, opnsense.InterfaceName(device))
 	}
-	harness.collector.SetDiscovery(broken)
+	harness.Collector.SetDiscovery(broken)
 
-	if err := harness.collector.CollectMeasurement(ctx); err != nil {
+	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	state, _, _ := harness.availabilityOf(t, core.KindMeasurementSample, ProviderInsight)
+	state, _, _ := harness.AvailabilityOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	if state != vocab.StateUnavailable {
 		t.Errorf("a refused sample left the volume source reading %q", state)
 	}
-	detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
+	detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	if !strings.Contains(detail, "device name") {
 		t.Errorf("the detail is %q, which does not say why the sample was refused", detail)
 	}
-	if stored := countRows(t, harness.store, "measurement_sample"); stored == 0 {
+	if stored := collecttest.CountRows(t, harness.Store, "measurement_sample"); stored == 0 {
 		t.Error("the refusal also stopped the firewall-health readings, which are unrelated")
 	}
-	if pairs := scalarCount(t, harness.store,
+	if pairs := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'interface_endpoint_pair'"); pairs != 0 {
 		t.Errorf("%d pair readings were stored from a refused sample", pairs)
 	}
@@ -142,7 +143,7 @@ func TestASamplerRefusalIsRecordedRatherThanLookingLikeSilence(t *testing.T) {
 func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
 
@@ -168,7 +169,7 @@ func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 		{"gateway", vocab.MeasureDelayMilliseconds, vocab.UnitMillisecond, "a gateway round-trip time"},
 		{"gateway", vocab.MeasureLossRatio, vocab.UnitRatio, "a gateway packet loss"},
 	} {
-		stored := scalarCount(t, harness.store,
+		stored := collecttest.ScalarCount(t, harness.Store,
 			"SELECT count(*) FROM measurement_sample WHERE subject_kind = ? AND measure = ? AND unit = ?",
 			expected.subjectKind, string(expected.measure), string(expected.unit))
 		if stored == 0 {
@@ -180,10 +181,10 @@ func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 	// A pair subject names the device it was read on, then the local address, then the peer:
 	// the two facts the canonical pair used to drop.
 	devices := map[string]bool{}
-	for _, device := range stringColumn(t, harness.store, "SELECT device FROM interface") {
+	for _, device := range stringColumn(t, harness.Store, "SELECT device FROM interface") {
 		devices[device] = true
 	}
-	for _, key := range stringColumn(t, harness.store,
+	for _, key := range stringColumn(t, harness.Store,
 		"SELECT DISTINCT subject_key FROM measurement_sample WHERE subject_kind = 'interface_endpoint_pair'") {
 		parts := strings.Split(key, " ")
 		if len(parts) != 3 {
@@ -198,12 +199,12 @@ func TestAReadingOfEachKindRoundTripsThroughTheOneTable(t *testing.T) {
 	// The firewall's own telemetry belongs to no provider kind, so those rows name none.
 	// Attributing them to the volume provider would say the volume source measured the
 	// temperature.
-	if attributed := scalarCount(t, harness.store,
+	if attributed := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'firewall' AND provider_id IS NOT NULL"); attributed != 0 {
 		t.Errorf("%d firewall readings name a provider", attributed)
 	}
 	// The pair readings do name one: that volume is the measurement_sample kind's material.
-	if unattributed := scalarCount(t, harness.store,
+	if unattributed := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'interface_endpoint_pair' AND provider_id IS NULL"); unattributed != 0 {
 		t.Errorf("%d pair readings name no provider", unattributed)
 	}
@@ -216,19 +217,19 @@ func TestASamplingPassRepeatedStoresNothingNew(t *testing.T) {
 	harness := arrangeMeasurementCollection(t)
 	ctx := context.Background()
 
-	if err := harness.collector.CollectMeasurement(ctx); err != nil {
+	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("the first pass: %v", err)
 	}
-	afterOne := countRows(t, harness.store, "measurement_sample")
+	afterOne := collecttest.CountRows(t, harness.Store, "measurement_sample")
 	if afterOne == 0 {
 		t.Fatal("the first pass stored nothing")
 	}
 	for pass := 0; pass < 2; pass++ {
-		if err := harness.collector.CollectMeasurement(ctx); err != nil {
+		if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 			t.Fatalf("pass %d: %v", pass, err)
 		}
 	}
-	if repeated := countRows(t, harness.store, "measurement_sample"); repeated != afterOne {
+	if repeated := collecttest.CountRows(t, harness.Store, "measurement_sample"); repeated != afterOne {
 		t.Fatalf("three passes at one instant stored %d readings, up from %d", repeated, afterOne)
 	}
 }
@@ -247,28 +248,28 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 	// An empty array: the endpoint answered and reported no sensor, which is a fact about
 	// the hardware. Written here rather than as a fixture because the empty value is the
 	// whole of what it says.
-	harness.fake.AnswerJSON(opnsense.SystemTemperature, []any{})
+	harness.Fake.AnswerJSON(opnsense.SystemTemperature, []any{})
 
-	before := harness.availabilityInstant(t, core.KindMeasurementSample, ProviderInsight)
+	before := harness.AvailabilityInstant(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	// The clock is advanced so "the row moved" is an observable fact rather than an
 	// identical rewrite: a state recorded at the same instant is indistinguishable from one
 	// that was never re-examined.
-	harness.clock.advance(time.Minute)
-	if err := harness.collector.CollectMeasurement(ctx); err != nil {
+	harness.Clock.Advance(time.Minute)
+	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
 
-	if temperatures := scalarCount(t, harness.store,
+	if temperatures := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM measurement_sample WHERE measure = ?",
 		string(vocab.MeasureTemperatureCelsius)); temperatures != 0 {
 		t.Errorf("%d temperature readings were written for a firewall that reports no sensor",
 			temperatures)
 	}
-	after := harness.availabilityInstant(t, core.KindMeasurementSample, ProviderInsight)
+	after := harness.AvailabilityInstant(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	if after == before {
 		t.Error("the availability row did not move, so the absent sensor was recorded nowhere")
 	}
-	detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
+	detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	if !strings.Contains(detail, "temperature") ||
 		!strings.Contains(detail, "not written as zeroes") {
 		t.Errorf("the detail is %q, which does not record that the temperature reading did not "+
@@ -278,7 +279,7 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 	// And the readings that did answer are still there: one absent sensor does not cost the
 	// rest of the pass.
 	for _, measure := range []vocab.Measure{vocab.MeasureUptimeSeconds, vocab.MeasureMemoryUseRatio} {
-		if scalarCount(t, harness.store,
+		if collecttest.ScalarCount(t, harness.Store,
 			"SELECT count(*) FROM measurement_sample WHERE measure = ?", string(measure)) == 0 {
 			t.Errorf("the %s reading was lost along with the temperature", measure)
 		}
@@ -302,22 +303,22 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 	for _, endpoint := range []opnsense.Endpoint{
 		opnsense.SystemResources, opnsense.SystemTime,
 	} {
-		harness.fake.AnswerJSON(endpoint, map[string]any{
+		harness.Fake.AnswerJSON(endpoint, map[string]any{
 			"a_key_no_candidate_list_names": 1, "another": "two",
 		})
 	}
 	// The processor's stream answers too, with events whose fields are none of the two
 	// the reading is derived from.
-	harness.fake.AnswerStream(opnsense.CPUUsageStream, [][]byte{
+	harness.Fake.AnswerStream(opnsense.CPUUsageStream, [][]byte{
 		[]byte(`{"a_key_no_candidate_list_names":1}`), []byte(`{"another":"two"}`),
 	}, true)
-	harness.fake.AnswerJSON(opnsense.SystemDisk,
+	harness.Fake.AnswerJSON(opnsense.SystemDisk,
 		map[string]any{"devices": []any{map[string]any{"a_key_no_candidate_list_names": 1}}})
-	harness.fake.AnswerJSON(opnsense.TrafficInterface, map[string]any{
+	harness.Fake.AnswerJSON(opnsense.TrafficInterface, map[string]any{
 		"example_if_a": map[string]any{"a_key_no_candidate_list_names": 1},
 	})
 
-	if err := harness.collector.CollectMeasurement(ctx); err != nil {
+	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
 
@@ -325,13 +326,13 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 		vocab.MeasureMemoryUseRatio, vocab.MeasureCPUUseRatio, vocab.MeasureUptimeSeconds,
 		vocab.MeasureLoadAverage, vocab.MeasureDiskUseRatio, vocab.MeasureBytesIn,
 	} {
-		if stored := scalarCount(t, harness.store,
+		if stored := collecttest.ScalarCount(t, harness.Store,
 			"SELECT count(*) FROM measurement_sample WHERE measure = ?", string(measure)); stored != 0 {
 			t.Errorf("%d %s readings were written from a body that carries no figure this code "+
 				"can read", stored, measure)
 		}
 	}
-	detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
+	detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	for _, phrase := range []string{"memory", "processor", "uptime", "disk", "interface counters"} {
 		if !strings.Contains(detail, phrase) {
 			t.Errorf("the detail is %q, which does not name the %s reading as absent", detail, phrase)
@@ -345,26 +346,19 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 func TestAnEmptyTrafficSnapshotIsNotReportedAsAnAbsenceOfTraffic(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.fake.AnswerJSON(opnsense.TrafficTop, map[string]any{})
+	harness.Fake.AnswerJSON(opnsense.TrafficTop, map[string]any{})
 
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
+	detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	if !strings.Contains(detail, "not an absence of traffic") ||
 		!strings.Contains(detail, "wrong interface argument") {
 		t.Errorf("the detail is %q, which does not say that an empty snapshot is not an "+
 			"absence of traffic and that a wrong argument answers the same way", detail)
 	}
-	if pairs := scalarCount(t, harness.store,
+	if pairs := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'interface_endpoint_pair'"); pairs != 0 {
 		t.Errorf("%d pair readings were invented from an empty snapshot", pairs)
 	}
-}
-
-// availabilityInstant reads when one provider's state was last determined.
-func (h *probeHarness) availabilityInstant(t *testing.T, kind, providerKey string) int64 {
-	t.Helper()
-	_, _, checkedAt := h.availabilityOf(t, kind, providerKey)
-	return checkedAt
 }

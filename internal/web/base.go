@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/store/accounts"
 )
 
@@ -201,7 +203,7 @@ func (s *Server) RenderRefusal(writer http.ResponseWriter, request *http.Request
 // line is the one place the detail goes.
 func (s *Server) FailInternal(writer http.ResponseWriter, request *http.Request, err error) {
 	fmt.Fprintf(os.Stderr, "opnview: web: %s %s: %v\n", request.Method, request.URL.Path, err)
-	text, lookupErr := s.renderer.catalogue.translate(string(msgInternal))
+	text, lookupErr := s.renderer.catalogue.translate(string(messages.MsgInternal))
 	if lookupErr != nil {
 		// The catalogue itself is unusable. There is nothing left to say in the
 		// reader's language, so say nothing but the status.

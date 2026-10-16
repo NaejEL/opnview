@@ -71,7 +71,7 @@ func (c *LeaseCoordinator) CollectDHCPLease(ctx context.Context) error {
 	// The instant the lease read begins. A lookup ingested at or after it may postdate the
 	// leases this pass reads, so it is left for the next lease pass.
 	leasesReadAt := c.Now()
-	complete, err := c.CollectLeases(ctx, &seen)
+	complete, err := c.collectLeases(ctx, &seen)
 	if err != nil {
 		failures = append(failures, err)
 	}
@@ -135,7 +135,7 @@ func (c *LeaseCoordinator) CollectDHCPLease(ctx context.Context) error {
 // interface. One failing backend does not stop the others: they are separate
 // servers behind separate endpoints, and letting the first failure end the pass
 // would turn one unreadable server into two.
-func (c *LeaseCoordinator) CollectLeases(ctx context.Context, seen *[]string) (bool, error) {
+func (c *LeaseCoordinator) collectLeases(ctx context.Context, seen *[]string) (bool, error) {
 	sources, err := c.ActiveSources(ctx, core.KindDHCPLease)
 	if err != nil {
 		return false, err
@@ -257,7 +257,7 @@ func (c *LeaseCoordinator) collectLeasesFrom(ctx context.Context, active core.Ac
 	snapshot := c.Discovery()
 	now := c.Now()
 	for _, observation := range observations {
-		if err := c.IngestLease(ctx, observation, snapshot, providerID, providerKey, now); err != nil {
+		if err := c.ingestLease(ctx, observation, snapshot, providerID, providerKey, now); err != nil {
 			// A failed pass for the host-name retry, exactly as a read failure is: the
 			// leases this pass would have contributed are not in the store.
 			failed, limit := c.noteLeaseFailure(providerID)
@@ -289,7 +289,7 @@ func (c *LeaseCoordinator) collectLeasesFrom(ctx context.Context, active core.Ac
 // implementation has one backend; the row keeps both so that a second
 // implementation reading the same shape somewhere else does not collapse into the
 // first.
-func (c *LeaseCoordinator) IngestLease(ctx context.Context, observation dhcplease.Observation,
+func (c *LeaseCoordinator) ingestLease(ctx context.Context, observation dhcplease.Observation,
 	snapshot core.Discovery, providerID int64, backend string, now int64) error {
 	// The lease endpoints report the interface under up to three names. Only two of them are
 	// join keys opnview already holds — the configuration key and the device — so both are
@@ -463,8 +463,19 @@ func (c *LeaseCoordinator) ingestNeighbour(ctx context.Context, row decode.Objec
 }
 
 // leaseFailurePasses is how many lease passes in a row one backend has failed.
-func (c *LeaseCoordinator) LeaseFailurePasses(providerID int64) int64 {
+func (c *LeaseCoordinator) leaseFailurePasses(providerID int64) int64 {
 	c.Mutex.RLock()
 	defer c.Mutex.RUnlock()
 	return c.LeaseFailures[providerID]
+}
+
+// ProbeDHCPLease probes every implementation of the dhcp_lease kind. The probe round (collect.ProbeAll)
+// runs it with every other kind's.
+func (c *LeaseCoordinator) ProbeDHCPLease(ctx context.Context) error {
+	return c.ResolveKind(ctx, core.KindDHCPLease, core.ProbeablesOf(c.SourceSet.DHCPLease, leaseProbe))
+}
+
+// leaseProbe is the probe of one dhcp_lease implementation, as core.ProbeablesOf takes it.
+func leaseProbe(source dhcplease.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
 }

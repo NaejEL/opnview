@@ -68,10 +68,12 @@ type fixtureClient struct {
 	v6      bool
 }
 
-// fixtureSpec are a fixture's counts.
+// fixtureSpec are a fixture's counts. peers is the number of distinct outside peers, twelve when
+// it is zero.
 type fixtureSpec struct {
 	interfaces, clients, flows int
 	span                       int64
+	peers                      int
 }
 
 // defaultSpec is the fixture most tests share.
@@ -185,7 +187,11 @@ func buildFixture(t *testing.T, spec fixtureSpec, dsn string) fixture {
 	}
 
 	// Peers: v4 and v6, a few per family.
-	for k := 0; k < 12; k++ {
+	peerCount := spec.peers
+	if peerCount == 0 {
+		peerCount = 12
+	}
+	for k := 0; k < peerCount; k++ {
 		if k%2 == 0 {
 			f.peers = append(f.peers, fmt.Sprintf("198.51.100.%d", k+10))
 		} else {

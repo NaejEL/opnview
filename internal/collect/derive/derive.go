@@ -26,9 +26,9 @@ import (
 // any derivation that rewrote a stored flow or an attribution, with those slots
 // forced.
 
-// derivation is what one pass asks to be derived.
+// Derivation is what one pass asks to be derived.
 type Derivation struct {
-	// addresses are placed, and every row naming them rewritten.
+	// Addresses are placed, and every row naming them rewritten.
 	Addresses []string
 	// attributeFrom and attributeTo bound the flows whose attribution is decided
 	// again; attribute says whether there are any.
@@ -47,7 +47,7 @@ type Derivation struct {
 	// derive sets it itself when what classification reads of the interfaces has
 	// changed since the last derivation that placed every address.
 	everything bool
-	// hostnames resolves again the lookups whose logged host name named no single
+	// Hostnames resolves again the lookups whose logged host name named no single
 	// address, which a lease pass that read every active backend calls for, and only
 	// those ingested before hostnamesBefore, the instant its lease read began: a lookup
 	// ingested since may postdate the leases read, and waits for the next pass.
@@ -55,7 +55,7 @@ type Derivation struct {
 	HostnamesBefore int64
 }
 
-// widen extends the attribution window to cover [from, to].
+// Widen extends the attribution window to cover [from, to].
 func (d *Derivation) Widen(from, to int64) {
 	if !d.Attribute {
 		d.Attribute, d.attributeFrom, d.attributeTo = true, from, to
@@ -65,7 +65,7 @@ func (d *Derivation) Widen(from, to int64) {
 	d.attributeTo = max(d.attributeTo, to)
 }
 
-// widenPairing extends the pairing window to cover [from, to].
+// WidenPairing extends the pairing window to cover [from, to].
 func (d *Derivation) WidenPairing(from, to int64) {
 	if !d.pair {
 		d.pair, d.pairFrom, d.pairTo = true, from, to
@@ -87,7 +87,7 @@ func spanOf(instants []int64) (int64, int64, bool) {
 	return low, high, true
 }
 
-// derive runs one derivation. Derivations are serialised: two passes finishing
+// Derive runs one derivation. Derivations are serialised: two passes finishing
 // together must not refresh the same slot from two half-classified states.
 func (c *Deriver) Derive(ctx context.Context, request Derivation) error {
 	c.DeriveMutex.Lock()
@@ -95,11 +95,11 @@ func (c *Deriver) Derive(ctx context.Context, request Derivation) error {
 	return c.DeriveLocked(ctx, request)
 }
 
-// deriveLocked is derive for a caller already holding deriveMutex: the retention
+// DeriveLocked is derive for a caller already holding deriveMutex: the retention
 // purge, which places what it is about to remove inside its own critical section
 // (purge.go).
 func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
-	now, watermark := c.RefreshInstant()
+	now, watermark := c.refreshInstant()
 	windows := c.AttributionWindows()
 	// How far after a lookup a flow may lie and still be named by it, under either
 	// method: a lookup whose client changed may now name any flow that far after it.
@@ -186,7 +186,7 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 	// The NetFlow join and the measured volume (flowrecord.go, measuredvolume.go), only where a flow_record
 	// provider is active: after the pairing, which says which legs make a connection, and before the
 	// refresh, which rewrites the slots of every connection whose measured volume changed (PS21).
-	if _, err := c.JoinFlowRecords(ctx); err != nil {
+	if _, err := c.joinFlowRecords(ctx); err != nil {
 		return fmt.Errorf("collect: joining the flow records: %w", err)
 	}
 	measured, err := c.deriveMeasuredVolumes(ctx, request)
@@ -217,7 +217,7 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 	return nil
 }
 
-// onLinkChanged reports whether what classification reads of the interfaces has
+// OnLinkChanged reports whether what classification reads of the interfaces has
 // changed since the last derivation that placed every address.
 func (c *Deriver) OnLinkChanged(ctx context.Context) (bool, error) {
 	onLink, err := c.Store.OnLinkFingerprint(ctx)
@@ -229,7 +229,7 @@ func (c *Deriver) OnLinkChanged(ctx context.Context) (bool, error) {
 	return onLink != c.OnLinkFingerprint, nil
 }
 
-// deriveAfter runs the derivation of what a pass stored, whether or not the pass
+// DeriveAfter runs the derivation of what a pass stored, whether or not the pass
 // failed part-way. A pass that stored rows and then failed -- a page that could not
 // be written to the end, a gap that could not be recorded -- still leaves those
 // rows placed, attributed and in their slots, and its own error is still returned,
@@ -268,7 +268,7 @@ func (c *Deriver) setRefreshedSince(at int64) {
 	c.LastRefreshAt = at
 }
 
-// beginIngest returns the instant a pass stamps its rows' ingested_at with, and
+// BeginIngest returns the instant a pass stamps its rows' ingested_at with, and
 // records it as in flight until endIngest.
 //
 // WHY THE WATERMARK NEEDS IT. A pass stamps every row with the instant it began
@@ -292,7 +292,7 @@ func (c *Deriver) BeginIngest() (int64, uint64) {
 	return now, c.IngestSequence
 }
 
-// endIngest records that the pass holding token has written every row it stamped.
+// EndIngest records that the pass holding token has written every row it stamped.
 // Ending twice is harmless.
 func (c *Deriver) EndIngest(token uint64) {
 	c.Mutex.Lock()
@@ -305,7 +305,7 @@ func (c *Deriver) EndIngest(token uint64) {
 // still in flight when the refresh began, whichever is earlier. Both are read under
 // one lock, so an ingestion that begins after this call stamps an instant no
 // earlier than the refresh's own.
-func (c *Deriver) RefreshInstant() (int64, int64) {
+func (c *Deriver) refreshInstant() (int64, int64) {
 	c.Mutex.Lock()
 	defer c.Mutex.Unlock()
 	now := c.Now()
@@ -316,14 +316,14 @@ func (c *Deriver) RefreshInstant() (int64, int64) {
 	return now, watermark
 }
 
-// attributionMaxDelay is the attribution_max_delay_seconds setting in force.
+// AttributionMaxDelay is the attribution_max_delay_seconds setting in force.
 func (c *Deriver) AttributionMaxDelay() int64 {
 	c.Mutex.RLock()
 	defer c.Mutex.RUnlock()
 	return c.MaxDelaySeconds
 }
 
-// attributionWindows are the two attribution settings in force: the timing delay and the
+// AttributionWindows are the two attribution settings in force: the timing delay and the
 // cache-answer cap.
 func (c *Deriver) AttributionWindows() attribution.AttributionWindows {
 	c.Mutex.RLock()

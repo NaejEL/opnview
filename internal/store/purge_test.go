@@ -1,9 +1,12 @@
-package store
+package store_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store"
+
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -180,7 +183,7 @@ func TestThePurgeLeavesTheForeignKeysConsistent(t *testing.T) {
 		t.Fatalf("purging: %v", err)
 	}
 
-	if violations := foreignKeyViolations(t, database); violations != 0 {
+	if violations := storetest.ForeignKeyViolations(t, database); violations != 0 {
 		t.Fatalf("%d rows name a missing row after the purge", violations)
 	}
 }
@@ -205,7 +208,7 @@ func purgeableTables() map[string]string {
 
 // seedForPurge writes, into every purgeable table, one row older than the horizon and one
 // newer, and returns the two counts per table so the assertions can be exact.
-func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]int, map[string]int) {
+func seedForPurge(t *testing.T, database *store.Store, now, cutoff int64) (map[string]int, map[string]int) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -327,14 +330,14 @@ func seedForPurge(t *testing.T, database *Store, now, cutoff int64) (map[string]
 }
 
 // countOlderThan counts the rows of one table before an instant.
-func countOlderThan(t *testing.T, database *Store, table, column string, cutoff int64) int {
+func countOlderThan(t *testing.T, database *store.Store, table, column string, cutoff int64) int {
 	t.Helper()
 	return scalar(t, database,
 		"SELECT count(*) FROM \""+table+"\" WHERE \""+column+"\" < ?", cutoff)
 }
 
 // countAtLeast counts the rows of one table at or after an instant.
-func countAtLeast(t *testing.T, database *Store, table, column string, cutoff int64) int {
+func countAtLeast(t *testing.T, database *store.Store, table, column string, cutoff int64) int {
 	t.Helper()
 	return scalar(t, database,
 		"SELECT count(*) FROM \""+table+"\" WHERE \""+column+"\" >= ?", cutoff)
@@ -342,7 +345,7 @@ func countAtLeast(t *testing.T, database *Store, table, column string, cutoff in
 
 // scalar runs a counting query. The table and column names come from the map above, which
 // holds constants; no user input reaches this.
-func scalar(t *testing.T, database *Store, query string, argument int64) int {
+func scalar(t *testing.T, database *store.Store, query string, argument int64) int {
 	t.Helper()
 	var value int
 	if err := database.DB().QueryRowContext(context.Background(), query, argument).Scan(&value); err != nil {

@@ -9,6 +9,8 @@ import (
 	"net/url"
 	"sort"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/store/accounts"
 	"github.com/NaejEL/opnview/internal/widget"
@@ -368,7 +370,7 @@ func (s *Server) refuseUnauthenticated(writer http.ResponseWriter, request *http
 	reason error) {
 	clearSessionCookie(writer)
 	if errors.Is(reason, auth.ErrSessionExpired) {
-		s.redirectWithError(writer, request, PathSignIn, msgSessionExpired)
+		s.redirectWithError(writer, request, PathSignIn, messages.MsgSessionExpired)
 		return
 	}
 	exists, err := s.AccountExists(request.Context())
@@ -388,10 +390,10 @@ func (s *Server) refuseUnauthenticated(writer http.ResponseWriter, request *http
 // about it can read as having half-succeeded.
 func (s *Server) refuseSetupClosed(writer http.ResponseWriter, request *http.Request) {
 	if request.Method == http.MethodGet {
-		s.redirectWithError(writer, request, PathSignIn, msgSetupClosed)
+		s.redirectWithError(writer, request, PathSignIn, messages.MsgSetupClosed)
 		return
 	}
-	s.RenderRefusal(writer, request, http.StatusForbidden, PageSignIn, msgSetupClosed)
+	s.RenderRefusal(writer, request, http.StatusForbidden, PageSignIn, messages.MsgSetupClosed)
 }
 
 // RefuseSetupClosed is refuseSetupClosed for a surface: the account surface answers a lost
@@ -404,12 +406,12 @@ func (s *Server) RefuseSetupClosed(writer http.ResponseWriter, request *http.Req
 // wrong, or another session's. The refusal is drawn on the page the route names, so the
 // reader lands on the form they were filling in.
 func (s *Server) refuseFormToken(writer http.ResponseWriter, request *http.Request, route Route) {
-	s.RenderRefusal(writer, request, http.StatusForbidden, pageOf(route), msgFormTokenRefused)
+	s.RenderRefusal(writer, request, http.StatusForbidden, pageOf(route), messages.MsgFormTokenRefused)
 }
 
 // refuseKeyFile turns away a reset that did not present the key file.
 func (s *Server) refuseKeyFile(writer http.ResponseWriter, request *http.Request, route Route) {
-	s.RenderRefusal(writer, request, http.StatusForbidden, pageOf(route), msgKeyFileRefused)
+	s.RenderRefusal(writer, request, http.StatusForbidden, pageOf(route), messages.MsgKeyFileRefused)
 }
 
 // pageOf is the page a refusal on this route is drawn on: the one the route names, or the

@@ -41,7 +41,7 @@ type Notification struct {
 	Payload map[string]any
 }
 
-// notify publishes a notification inside the caller's transaction, or at once on q when it is the
+// Notify publishes a notification inside the caller's transaction, or at once on q when it is the
 // pool.
 func Notify(ctx context.Context, q Querier, channel string, payload any) error {
 	encoded, err := json.Marshal(payload)

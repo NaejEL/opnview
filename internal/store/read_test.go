@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"context"
@@ -6,15 +6,18 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store"
+
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/samples"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The read functions: AC2, AC12, AC15, AC16, AC22, AC23, AC24, AC25 and AC30.
 
 // directWindow computes a window's totals over flow alone, independently of the slots.
-func directWindow(t *testing.T, database *Store, from, to int64) map[string]reads.VolumeFigures {
+func directWindow(t *testing.T, database *store.Store, from, to int64) map[string]reads.VolumeFigures {
 	t.Helper()
 	rows, err := database.DB().Query(`SELECT traffic_direction,
 		sum(packet_bytes), sum(CASE WHEN action = 'pass' THEN packet_bytes ELSE 0 END),
@@ -47,17 +50,17 @@ func directWindow(t *testing.T, database *Store, from, to int64) map[string]read
 // TestTheRollingWindowEqualsADirectComputationInsideTheHorizon is AC22, both halves.
 func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) {
 	t.Parallel()
-	network := populated(t, 3, 10, 1200, 10*86400)
+	network := storetest.Populated(t, 3, 10, 1200, 10*86400)
 	ctx := context.Background()
 	random := rand.New(rand.NewSource(5))
 	for draw := 0; draw < 60; draw++ {
-		from := network.now - random.Int63n(10*86400)
+		from := network.Now - random.Int63n(10*86400)
 		to := from + 1 + random.Int63n(3*86400)
-		window, err := network.db.ReadVolumeWindow(ctx, from, to, network.now)
+		window, err := network.DB.ReadVolumeWindow(ctx, from, to, network.Now)
 		if err != nil {
 			t.Fatalf("reading a window: %v", err)
 		}
-		direct := directWindow(t, network.db, from, to)
+		direct := directWindow(t, network.DB, from, to)
 		got := window.ByDirection()
 		for _, direction := range []string{"outbound", "inbound", "inter_interface"} {
 			if got[direction] != direct[direction] {
@@ -69,14 +72,14 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 
 	// Beyond the horizon: the flows are purged, the slots survive, and the function reads
 	// them and says what it covers.
-	horizon := network.now - 4*86400
+	horizon := network.Now - 4*86400
 	whole := vocab.PeriodHour.SlotStart(horizon) + 3600
-	if _, err := network.db.DB().Exec("DELETE FROM flow WHERE observed_at < ?", whole); err != nil {
+	if _, err := network.DB.DB().Exec("DELETE FROM flow WHERE observed_at < ?", whole); err != nil {
 		t.Fatalf("purging the old flows: %v", err)
 	}
-	from := network.now - 8*86400 + 1234
-	to := network.now - 2*86400 + 77
-	window, err := network.db.ReadVolumeWindow(ctx, from, to, network.now)
+	from := network.Now - 8*86400 + 1234
+	to := network.Now - 2*86400 + 77
+	window, err := network.DB.ReadVolumeWindow(ctx, from, to, network.Now)
 	if err != nil {
 		t.Fatalf("reading a window across the horizon: %v", err)
 	}
@@ -92,11 +95,11 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 		t.Error("the slots beyond the horizon contributed nothing")
 	}
 	var slotBytes int64
-	if err := network.db.DB().QueryRow(`SELECT sum(bytes) FROM volume_aggregate_1h
+	if err := network.DB.DB().QueryRow(`SELECT sum(bytes) FROM volume_aggregate_1h
 		WHERE period_start_at >= ? AND period_start_at < ?`, firstHour, vocab.PeriodHour.SlotStart(to)).Scan(&slotBytes); err != nil {
 		t.Fatalf("summing the slots: %v", err)
 	}
-	right := directWindow(t, network.db, vocab.PeriodHour.SlotStart(to), to)
+	right := directWindow(t, network.DB, vocab.PeriodHour.SlotStart(to), to)
 	var rightBytes int64
 	for _, figures := range right {
 		rightBytes += figures.Bytes
@@ -107,7 +110,7 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 	}
 
 	// A window before anything was kept covers nothing.
-	empty, err := network.db.ReadVolumeWindow(ctx, network.now-400*86400, network.now-300*86400, network.now)
+	empty, err := network.DB.ReadVolumeWindow(ctx, network.Now-400*86400, network.Now-300*86400, network.Now)
 	if err != nil {
 		t.Fatalf("reading an empty window: %v", err)
 	}
@@ -119,36 +122,36 @@ func TestTheRollingWindowEqualsADirectComputationInsideTheHorizon(t *testing.T) 
 // TestASeriesSumsToItsWindowAndMarksItsGaps is AC23.
 func TestASeriesSumsToItsWindowAndMarksItsGaps(t *testing.T) {
 	t.Parallel()
-	network := populated(t, 2, 6, 600, 3*86400)
+	network := storetest.Populated(t, 2, 6, 600, 3*86400)
 	ctx := context.Background()
-	from := network.now - 2*86400 - 1700
-	to := network.now + 2*3600
+	from := network.Now - 2*86400 - 1700
+	to := network.Now + 2*3600
 	// A collection gap over two hours of the window.
-	gapStart := vocab.PeriodHour.SlotStart(network.now-30*3600) + 600
-	providerID, _ := network.db.ProviderID(ctx, "firewall_log", "pf")
-	if err := network.db.RecordCollectionGap(ctx, vocab.CollectionGap{ProviderID: providerID,
+	gapStart := vocab.PeriodHour.SlotStart(network.Now-30*3600) + 600
+	providerID, _ := network.DB.ProviderID(ctx, "firewall_log", "pf")
+	if err := network.DB.RecordCollectionGap(ctx, vocab.CollectionGap{ProviderID: providerID,
 		IntervalStartAt: gapStart, IntervalEndAt: gapStart + 3600, Reason: vocab.GapDigestOutsideWindow,
-		DetectedAt: network.now}); err != nil {
+		DetectedAt: network.Now}); err != nil {
 		t.Fatalf("recording a gap: %v", err)
 	}
 	// And an hour with no flow at all inside the covered interval.
-	silent := vocab.PeriodHour.SlotStart(network.now - 10*3600)
-	if _, err := network.db.DB().Exec("DELETE FROM flow WHERE observed_at >= ? AND observed_at < ?",
+	silent := vocab.PeriodHour.SlotStart(network.Now - 10*3600)
+	if _, err := network.DB.DB().Exec("DELETE FROM flow WHERE observed_at >= ? AND observed_at < ?",
 		silent, silent+3600); err != nil {
 		t.Fatalf("emptying an hour: %v", err)
 	}
 	// A flow is removed only by the retention purge, which removes the slots with it; this
 	// test removes some by hand, so it forces their hour.
-	if _, err := network.db.RefreshAggregates(ctx, 0, network.now,
-		append(allFlowInstants(t, network.db), silent)); err != nil {
+	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now,
+		append(allFlowInstants(t, network.DB), silent)); err != nil {
 		t.Fatalf("recomputing: %v", err)
 	}
 
-	buckets, err := network.db.ReadVolumeSeries(ctx, from, to, vocab.PeriodHour, network.now)
+	buckets, err := network.DB.ReadVolumeSeries(ctx, from, to, vocab.PeriodHour, network.Now)
 	if err != nil {
 		t.Fatalf("reading the series: %v", err)
 	}
-	window, err := network.db.ReadVolumeWindow(ctx, from, to, network.now)
+	window, err := network.DB.ReadVolumeWindow(ctx, from, to, network.Now)
 	if err != nil {
 		t.Fatalf("reading the window: %v", err)
 	}
@@ -162,14 +165,14 @@ func TestASeriesSumsToItsWindowAndMarksItsGaps(t *testing.T) {
 			sum += bucket.Total.Bytes
 		}
 		overlapsGap := bucket.From < gapStart+3600 && bucket.To >= gapStart
-		future := bucket.To > network.now
+		future := bucket.To > network.Now
 		switch {
 		case overlapsGap || future:
 			gaps++
 			if !bucket.Gap {
 				t.Errorf("the bucket [%d, %d) is not marked a gap", bucket.From, bucket.To)
 			}
-			if future && bucket.From >= network.now && bucket.Total != nil {
+			if future && bucket.From >= network.Now && bucket.Total != nil {
 				t.Errorf("a bucket after now carries a figure: %+v", *bucket.Total)
 			}
 		case bucket.From == silent:
@@ -192,37 +195,37 @@ func TestASeriesSumsToItsWindowAndMarksItsGaps(t *testing.T) {
 // first level sums to every flow of the window.
 func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
 	t.Parallel()
-	network := populated(t, 3, 9, 700, 2*86400)
+	network := storetest.Populated(t, 3, 9, 700, 2*86400)
 	attributeNetwork(t, network)
 	ctx := context.Background()
-	if _, err := network.db.DB().Exec(`INSERT INTO owner (id, display_name, created_at, updated_at)
+	if _, err := network.DB.DB().Exec(`INSERT INTO owner (id, display_name, created_at, updated_at)
 		VALUES (1, 'example owner', 0, 0)`); err != nil {
 		t.Fatalf("writing an owner: %v", err)
 	}
-	if _, err := network.db.DB().Exec(`UPDATE client SET owner_id = 1, owner_assigned_at = 0 WHERE id % 3 = 0`); err != nil {
+	if _, err := network.DB.DB().Exec(`UPDATE client SET owner_id = 1, owner_assigned_at = 0 WHERE id % 3 = 0`); err != nil {
 		t.Fatalf("assigning an owner: %v", err)
 	}
-	if _, err := network.db.DB().Exec(`INSERT INTO geo_asn (address, provider_id, lookup_state,
+	if _, err := network.DB.DB().Exec(`INSERT INTO geo_asn (address, provider_id, lookup_state,
 		country_code, asn, operator, dataset_build_at, looked_up_at)
 		SELECT DISTINCT dst_address, (SELECT id FROM provider WHERE kind = 'ip_geolocation'), 'resolved', 'ZZ',
 		       64500 + (length(dst_address) % 3), 'example operator', 1, 1
 		FROM flow WHERE dst_interface_id IS NULL AND id % 3 = 0`); err != nil {
 		t.Fatalf("placing addresses: %v", err)
 	}
-	if _, err := network.db.DB().Exec(`INSERT INTO geo_asn (address, lookup_state, looked_up_at)
+	if _, err := network.DB.DB().Exec(`INSERT INTO geo_asn (address, lookup_state, looked_up_at)
 		SELECT DISTINCT dst_address, 'miss', 1 FROM flow WHERE dst_interface_id IS NULL AND id % 3 = 1
 		ON CONFLICT DO NOTHING`); err != nil {
 		t.Fatalf("recording misses: %v", err)
 	}
-	from, to := network.now-86400, network.now
+	from, to := network.Now-86400, network.Now
 	var flows, bytes, blocked int64
-	if err := network.db.DB().QueryRow(`SELECT count(*), sum(packet_bytes),
+	if err := network.DB.DB().QueryRow(`SELECT count(*), sum(packet_bytes),
 		sum(CASE WHEN action IN ('block', 'reject') THEN 1 ELSE 0 END) FROM flow
 		WHERE observed_at >= ? AND observed_at < ?`, from, to).Scan(&flows, &bytes, &blocked); err != nil {
 		t.Fatalf("counting the window: %v", err)
 	}
 	for _, root := range []reads.TreeRoot{reads.TreeRootInterface, reads.TreeRootClient, reads.TreeRootOwner} {
-		tree, err := network.db.ReadConnectionTree(ctx, from, to, root)
+		tree, err := network.DB.ReadConnectionTree(ctx, from, to, root)
 		if err != nil {
 			t.Fatalf("reading the %s tree: %v", root, err)
 		}
@@ -272,7 +275,7 @@ func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
 			}
 		}
 	}
-	if _, err := network.db.ReadConnectionTree(ctx, from, to, reads.TreeRoot("example-root")); err == nil {
+	if _, err := network.DB.ReadConnectionTree(ctx, from, to, reads.TreeRoot("example-root")); err == nil {
 		t.Error("an unknown root was accepted")
 	}
 }
@@ -280,21 +283,21 @@ func TestEveryFlowLandsInExactlyOneNodePerLevelOfTheTree(t *testing.T) {
 // TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary is AC25.
 func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 	t.Parallel()
-	network := populated(t, 2, 6, 400, 86400)
+	network := storetest.Populated(t, 2, 6, 400, 86400)
 	ctx := context.Background()
 	purposes := []any{"advertising", "tracking", "threat", "parental", "other", nil}
 	for index, purpose := range purposes {
 		var assigned any
 		if purpose != nil {
-			assigned = network.now
+			assigned = network.Now
 		}
-		if _, err := network.db.DB().Exec(`INSERT INTO blocklist (id, name, purpose, purpose_assigned_at,
+		if _, err := network.DB.DB().Exec(`INSERT INTO blocklist (id, name, purpose, purpose_assigned_at,
 			first_seen_at, last_seen_at) VALUES (?, ?, ?, ?, 0, 0)`,
 			index+1, fmt.Sprintf("example-list-%d", index), purpose, assigned); err != nil {
 			t.Fatalf("writing a list: %v", err)
 		}
 	}
-	client := network.clients[0]
+	client := network.Clients[0]
 	for index := 0; index < 14; index++ {
 		var listID any
 		if index%7 != 6 {
@@ -304,24 +307,24 @@ func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 		if index%2 == 1 {
 			action = "drop"
 		}
-		if _, err := network.db.DB().Exec(`INSERT INTO dns_resolution (lookup_key, client_address, domain,
+		if _, err := network.DB.DB().Exec(`INSERT INTO dns_resolution (lookup_key, client_address, domain,
 			resolver, action, blocklist_id, looked_up_at, ingested_at)
 			VALUES (?, ?, 'blocked.example.invalid', 'unbound', ?, ?, ?, ?)`,
-			fmt.Sprintf("example-blocked-%d", index), client.address, action, listID,
-			network.now-100-int64(index), network.now); err != nil {
+			fmt.Sprintf("example-blocked-%d", index), client.Address, action, listID,
+			network.Now-100-int64(index), network.Now); err != nil {
 			t.Fatalf("writing a blocked lookup: %v", err)
 		}
 	}
-	eventProvider, _ := network.db.ProviderID(ctx, "security_event", "suricata")
+	eventProvider, _ := network.DB.ProviderID(ctx, "security_event", "suricata")
 	for index := 0; index < 4; index++ {
 		action := "blocked"
 		if index == 3 {
 			action = "allowed"
 		}
-		if err := network.db.InsertSecurityEvent(ctx, eventProvider, vocab.SecurityEvent{
-			ProviderEventKey: fmt.Sprintf("example-blocked-event-%d", index), OccurredAt: network.now - 50,
-			IngestedAt: network.now, RuleIdentity: "1", Signature: "example", EventAction: action,
-			SrcAddress: outside(index, false), DstAddress: network.upstream.address,
+		if err := network.DB.InsertSecurityEvent(ctx, eventProvider, vocab.SecurityEvent{
+			ProviderEventKey: fmt.Sprintf("example-blocked-event-%d", index), OccurredAt: network.Now - 50,
+			IngestedAt: network.Now, RuleIdentity: "1", Signature: "example", EventAction: action,
+			SrcAddress: storetest.Outside(index, false), DstAddress: network.Upstream.Address,
 		}); err != nil {
 			t.Fatalf("writing an event: %v", err)
 		}
@@ -329,7 +332,7 @@ func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 
 	direct := map[string]int64{}
 	add := func(kind string, query string) {
-		direct[kind] += queryInt(t, network.db, query)
+		direct[kind] += storetest.QueryInt(t, network.DB, query)
 	}
 	add("firewall_rule", "SELECT count(*) FROM flow WHERE action IN ('block', 'reject') AND log_reason = 'match'")
 	add("firewall_no_rule", "SELECT count(*) FROM flow WHERE action IN ('block', 'reject') AND log_reason = 'state-mismatch'")
@@ -343,7 +346,7 @@ func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 	add("dns_list_not_recorded", "SELECT count(*) FROM dns_resolution WHERE action IN ('block', 'drop') AND blocklist_id IS NULL")
 	add("security_engine", "SELECT count(*) FROM security_event WHERE event_action = 'blocked'")
 
-	counts, err := network.db.ReadBlockedDecisionCounts(ctx, 0, network.now+1)
+	counts, err := network.DB.ReadBlockedDecisionCounts(ctx, 0, network.Now+1)
 	if err != nil {
 		t.Fatalf("counting the refusals: %v", err)
 	}
@@ -360,17 +363,17 @@ func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 			t.Errorf("blocked_decision invents the kind %s", kind)
 		}
 	}
-	if duplicates := queryInt(t, network.db, `SELECT count(*) FROM (SELECT source_table, source_id
+	if duplicates := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM (SELECT source_table, source_id
 		FROM blocked_decision GROUP BY 1, 2 HAVING count(*) > 1)`); duplicates != 0 {
 		t.Errorf("%d refusals appear more than once", duplicates)
 	}
-	total := queryInt(t, network.db, "SELECT count(*) FROM flow WHERE action IN ('block', 'reject')") +
-		queryInt(t, network.db, "SELECT count(*) FROM dns_resolution WHERE action IN ('block', 'drop')") +
-		queryInt(t, network.db, "SELECT count(*) FROM security_event WHERE event_action = 'blocked'")
-	if all := queryInt(t, network.db, "SELECT count(*) FROM blocked_decision"); all != total {
+	total := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM flow WHERE action IN ('block', 'reject')") +
+		storetest.QueryInt(t, network.DB, "SELECT count(*) FROM dns_resolution WHERE action IN ('block', 'drop')") +
+		storetest.QueryInt(t, network.DB, "SELECT count(*) FROM security_event WHERE event_action = 'blocked'")
+	if all := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM blocked_decision"); all != total {
 		t.Errorf("blocked_decision holds %d rows for %d refusals", all, total)
 	}
-	if toFirewall := queryInt(t, network.db, `SELECT count(*) FROM blocked_decision
+	if toFirewall := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM blocked_decision
 		WHERE source_table = 'security_event' AND target_is_this_firewall = 1`); toFirewall != 3 {
 		t.Errorf("%d refusals aimed at the firewall's own address say so, not 3", toFirewall)
 	}
@@ -379,18 +382,18 @@ func TestEveryRefusalAppearsOnceUnderTheExtendedVocabulary(t *testing.T) {
 // TestTheAttributionRateIsUndefinedWithoutAReachableResolver is AC30.
 func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 	t.Parallel()
-	network := populated(t, 2, 4, 300, 5*86400)
+	network := storetest.Populated(t, 2, 4, 300, 5*86400)
 	ctx := context.Background()
 	// A record with both ends outside, logged on the upstream interface: the unsolicited
 	// packet to the firewall's own address that used to be one is this firewall's now
 	// (step-5A live corrections, item 1), so the case is written explicitly.
 	port := int64(443)
-	network.classifyAndRefresh(t, network.insert(t, []networkFlow{
-		{observedAt: network.now - 50, device: network.upstream.device, direction: "in",
-			src: outside(3, false), dst: outside(4, false), dstPort: &port, protocol: "tcp",
-			action: "pass", bytes: 90},
+	network.ClassifyAndRefresh(t, network.Insert(t, []storetest.Flow{
+		{ObservedAt: network.Now - 50, Device: network.Upstream.Device, Direction: "in",
+			Src: storetest.Outside(3, false), Dst: storetest.Outside(4, false), DstPort: &port, Protocol: "tcp",
+			Action: "pass", Bytes: 90},
 	}))
-	rate, err := network.db.ReadAttributionRate(ctx, network.now-86400, network.now+1, nil)
+	rate, err := network.DB.ReadAttributionRate(ctx, network.Now-86400, network.Now+1, nil)
 	if err != nil {
 		t.Fatalf("reading the rate: %v", err)
 	}
@@ -403,25 +406,25 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 	// The eligible flows are those a client sent outside, and no others: a flow with both
 	// ends outside, which classified_flow may call inbound, is not one, and the count is the
 	// one the per-client diagnostic sums to.
-	unsent := queryInt(t, network.db, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
-		AND dst_interface_id IS NULL AND src_client_id IS NULL`, network.now-86400, network.now+1)
+	unsent := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
+		AND dst_interface_id IS NULL AND src_client_id IS NULL`, network.Now-86400, network.Now+1)
 	if unsent == 0 {
 		t.Fatal("the window holds no flow with both ends outside, so the eligibility rule has no teeth")
 	}
-	if toFirewall := queryInt(t, network.db, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
-		AND (src_is_this_firewall = 1 OR dst_is_this_firewall = 1)`, network.now-86400, network.now+1); toFirewall == 0 {
+	if toFirewall := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
+		AND (src_is_this_firewall = 1 OR dst_is_this_firewall = 1)`, network.Now-86400, network.Now+1); toFirewall == 0 {
 		t.Fatal("the window holds no flow from or to this firewall, so that half of the rule has no teeth")
 	}
-	if sent := queryInt(t, network.db, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
+	if sent := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM flow WHERE observed_at >= ? AND observed_at < ?
 		AND dst_interface_id IS NULL AND src_client_id IS NOT NULL
-		AND src_is_this_firewall = 0 AND dst_is_this_firewall = 0`, network.now-86400, network.now+1); rate.EligibleFlows != sent {
+		AND src_is_this_firewall = 0 AND dst_is_this_firewall = 0`, network.Now-86400, network.Now+1); rate.EligibleFlows != sent {
 		t.Errorf("the rate counts %d eligible flows, not the %d a client sent outside", rate.EligibleFlows, sent)
 	}
-	unbound, _ := network.db.ProviderID(ctx, "dns_lookup", "unbound")
-	if err := network.db.SetAvailability(ctx, unbound, vocab.StateReachable, vocab.OutcomeHealthy, "example probe", nil, network.now); err != nil {
+	unbound, _ := network.DB.ProviderID(ctx, "dns_lookup", "unbound")
+	if err := network.DB.SetAvailability(ctx, unbound, vocab.StateReachable, vocab.OutcomeHealthy, "example probe", nil, network.Now); err != nil {
 		t.Fatalf("recording the resolver reachable: %v", err)
 	}
-	rate, err = network.db.ReadAttributionRate(ctx, network.now-86400, network.now+1, nil)
+	rate, err = network.DB.ReadAttributionRate(ctx, network.Now-86400, network.Now+1, nil)
 	if err != nil {
 		t.Fatalf("reading the rate: %v", err)
 	}
@@ -434,8 +437,8 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 
 	// OVER THE WINDOW, not now. A past window holding no lookup is undefined although the
 	// resolver is reachable now: nothing says it answered then.
-	past := network.now - 3*86400
-	rate, err = network.db.ReadAttributionRate(ctx, past, past+86400, nil)
+	past := network.Now - 3*86400
+	rate, err = network.DB.ReadAttributionRate(ctx, past, past+86400, nil)
 	if err != nil {
 		t.Fatalf("reading a past rate: %v", err)
 	}
@@ -446,24 +449,24 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 		t.Errorf("a past window with no lookup reads %v although only today's probe was reachable", rate.Rate)
 	}
 	// And a past window holding a lookup is defined although the resolver is unreachable now.
-	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
-		LookupKey: "example-past-lookup", ClientAddress: network.clients[0].address,
+	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+		LookupKey: "example-past-lookup", ClientAddress: network.Clients[0].Address,
 		Domain: "past.example.invalid", Resolver: "unbound", Action: "pass",
-		AnswerSource: ptr("Recursion"), LookedUpAt: past + 600, IngestedAt: past + 700,
+		AnswerSource: storetest.Ptr("Recursion"), LookedUpAt: past + 600, IngestedAt: past + 700,
 	}); err != nil {
 		t.Fatalf("writing a past lookup: %v", err)
 	}
-	if err := network.db.SetAvailability(ctx, unbound, vocab.StateUnavailable, vocab.OutcomeTransportFailure, "example probe", nil, network.now); err != nil {
+	if err := network.DB.SetAvailability(ctx, unbound, vocab.StateUnavailable, vocab.OutcomeTransportFailure, "example probe", nil, network.Now); err != nil {
 		t.Fatalf("recording the resolver unavailable: %v", err)
 	}
-	rate, err = network.db.ReadAttributionRate(ctx, past, past+86400, nil)
+	rate, err = network.DB.ReadAttributionRate(ctx, past, past+86400, nil)
 	if err != nil {
 		t.Fatalf("reading a past rate: %v", err)
 	}
 	if !rate.ResolverCovered || rate.Rate == nil {
 		t.Errorf("a past window holding a lookup reads %v, as if the resolver had not answered then", rate.Rate)
 	}
-	rate, err = network.db.ReadAttributionRate(ctx, network.now-86400, network.now+1, nil)
+	rate, err = network.DB.ReadAttributionRate(ctx, network.Now-86400, network.Now+1, nil)
 	if err != nil {
 		t.Fatalf("reading the rate: %v", err)
 	}
@@ -475,29 +478,29 @@ func TestTheAttributionRateIsUndefinedWithoutAReachableResolver(t *testing.T) {
 // TestAChangeOfPublicAddressIsANewRowAndTheOldOneKeepsItsLastSighting is AC12.
 func TestAChangeOfPublicAddressIsANewRowAndTheOldOneKeepsItsLastSighting(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 1, 1)
+	network := storetest.NewNetwork(t, 1, 1)
 	ctx := context.Background()
 	bits := int64(24)
 	for _, step := range []struct {
 		at      int64
 		address string
 	}{
-		{network.now + 100, "203.0.113.2"},
-		{network.now + 200, "203.0.113.2"},
-		{network.now + 300, "192.0.2.77"},
-		{network.now + 400, "192.0.2.77"},
+		{network.Now + 100, "203.0.113.2"},
+		{network.Now + 200, "203.0.113.2"},
+		{network.Now + 300, "192.0.2.77"},
+		{network.Now + 400, "192.0.2.77"},
 	} {
-		if err := network.db.UpsertInterfaceAddress(ctx, vocab.InterfaceAddress{
-			InterfaceID: network.upstream.id, SourceField: vocab.SourceFieldAddr4, Address: step.address,
+		if err := network.DB.UpsertInterfaceAddress(ctx, vocab.InterfaceAddress{
+			InterfaceID: network.Upstream.ID, SourceField: vocab.SourceFieldAddr4, Address: step.address,
 			PrefixLength: &bits, AddressFamily: 4}, nil, step.at); err != nil {
 			t.Fatalf("writing an address: %v", err)
 		}
 	}
-	addresses, err := network.db.ReadPublicAddresses(ctx)
+	addresses, err := network.DB.ReadPublicAddresses(ctx)
 	if err != nil {
 		t.Fatalf("reading the public addresses: %v", err)
 	}
-	if len(addresses) != 1 || addresses[0].InterfaceID != network.upstream.id {
+	if len(addresses) != 1 || addresses[0].InterfaceID != network.Upstream.ID {
 		t.Fatalf("the public addresses are %+v", addresses)
 	}
 	var current, previous *reads.AddressHistory
@@ -516,10 +519,10 @@ func TestAChangeOfPublicAddressIsANewRowAndTheOldOneKeepsItsLastSighting(t *test
 	if current == nil || previous == nil {
 		t.Fatalf("the history does not hold both addresses: %+v", addresses[0].History)
 	}
-	if current.FirstSeenAt != network.now+300 || current.LastSeenAt != network.now+400 {
+	if current.FirstSeenAt != network.Now+300 || current.LastSeenAt != network.Now+400 {
 		t.Errorf("the current address was first seen %d and last seen %d", current.FirstSeenAt, current.LastSeenAt)
 	}
-	if previous.FirstSeenAt != network.now-86400 || previous.LastSeenAt != network.now+200 {
+	if previous.FirstSeenAt != network.Now-86400 || previous.LastSeenAt != network.Now+200 {
 		t.Errorf("the previous address keeps first %d and last %d", previous.FirstSeenAt, previous.LastSeenAt)
 	}
 	if addresses[0].History[0].Address != "192.0.2.77" {
@@ -528,7 +531,7 @@ func TestAChangeOfPublicAddressIsANewRowAndTheOldOneKeepsItsLastSighting(t *test
 }
 
 // insertReading writes one measurement.
-func insertReading(t *testing.T, database *Store, kind vocab.SubjectKind, key string, measure vocab.Measure,
+func insertReading(t *testing.T, database *store.Store, kind vocab.SubjectKind, key string, measure vocab.Measure,
 	unit vocab.Unit, value float64, at int64) {
 	t.Helper()
 	providerID, _ := database.ProviderID(context.Background(), "measurement_sample", "insight")
@@ -551,56 +554,56 @@ func insertReading(t *testing.T, database *Store, kind vocab.SubjectKind, key st
 // the bound is twice the measurement interval the store reads from the setting row.
 func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 2, 4)
+	network := storetest.NewNetwork(t, 2, 4)
 	ctx := context.Background()
 	const interval = 300
-	if err := network.db.SetSetting(ctx, samples.MeasurementIntervalKey, fmt.Sprint(interval), network.now); err != nil {
+	if err := network.DB.SetSetting(ctx, samples.MeasurementIntervalKey, fmt.Sprint(interval), network.Now); err != nil {
 		t.Fatalf("writing the interval: %v", err)
 	}
-	bound, err := network.db.CurrentSampleBound(ctx)
+	bound, err := network.DB.CurrentSampleBound(ctx)
 	if err != nil || bound != 2*interval {
 		t.Fatalf("the bound is %d, %v, not twice the interval", bound, err)
 	}
-	leased := network.clients[0]
-	clientID := queryInt(t, network.db, "SELECT id FROM client WHERE last_address = ?", leased.address)
-	older, latest := network.now-500, network.now-200
-	peers := []string{outside(1, leased.v6), outside(2, leased.v6)}
+	leased := network.Clients[0]
+	clientID := storetest.QueryInt(t, network.DB, "SELECT id FROM client WHERE last_address = ?", leased.Address)
+	older, latest := network.Now-500, network.Now-200
+	peers := []string{storetest.Outside(1, leased.V6), storetest.Outside(2, leased.V6)}
 
 	endpoint := func(device, local string, at int64, in float64, out *float64) {
 		key := vocab.InterfaceEndpointKey(device, local)
-		insertReading(t, network.db, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
+		insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
 		if out != nil {
-			insertReading(t, network.db, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsOut, vocab.UnitBitPerSecond, *out, at)
+			insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureRateBitsOut, vocab.UnitBitPerSecond, *out, at)
 		}
 	}
 	pair := func(device, local, peer string, at int64, in float64) {
-		insertReading(t, network.db, vocab.SubjectInterfaceEndpointPair, vocab.InterfaceEndpointPairKey(device, local, peer),
+		insertReading(t, network.DB, vocab.SubjectInterfaceEndpointPair, vocab.InterfaceEndpointPairKey(device, local, peer),
 			vocab.MeasureRateBitsIn, vocab.UnitBitPerSecond, in, at)
 	}
 	figure := func(value float64) *float64 { return &value }
 
 	// Two peers, so no per-peer outbound figure exists: the total is the client's outbound.
-	endpoint(leased.device, leased.address, older, 1000, figure(2000))
-	endpoint(leased.device, leased.address, latest, 130, figure(240))
-	pair(leased.device, leased.address, peers[0], latest, 100)
-	pair(leased.device, leased.address, peers[1], latest, 30)
+	endpoint(leased.Device, leased.Address, older, 1000, figure(2000))
+	endpoint(leased.Device, leased.Address, latest, 130, figure(240))
+	pair(leased.Device, leased.Address, peers[0], latest, 100)
+	pair(leased.Device, leased.Address, peers[1], latest, 30)
 	// The same conversation read on the upstream interface, whose local address is the
 	// firewall's own: counted per device, never per client.
-	endpoint(network.upstream.device, network.upstream.address, latest, 5000, figure(5000))
-	pair(network.upstream.device, network.upstream.address, peers[0], latest, 5000)
+	endpoint(network.Upstream.Device, network.Upstream.Address, latest, 5000, figure(5000))
+	pair(network.Upstream.Device, network.Upstream.Address, peers[0], latest, 5000)
 	// A client whose peers lie outside AND behind an interface: its outbound total cannot be
 	// split, and is reported whole.
-	mixed, inner := network.clients[1], network.clients[2]
-	endpoint(mixed.device, mixed.address, latest, 50, figure(70))
-	pair(mixed.device, mixed.address, outside(3, mixed.v6), latest, 20)
-	pair(mixed.device, mixed.address, inner.address, latest, 30)
+	mixed, inner := network.Clients[1], network.Clients[2]
+	endpoint(mixed.Device, mixed.Address, latest, 50, figure(70))
+	pair(mixed.Device, mixed.Address, storetest.Outside(3, mixed.V6), latest, 20)
+	pair(mixed.Device, mixed.Address, inner.Address, latest, 30)
 	// A record that carried no outbound total: the client's outbound is unmeasured, not 0.
-	silent := network.clients[3]
-	silentID := queryInt(t, network.db, "SELECT id FROM client WHERE last_address = ?", silent.address)
-	endpoint(silent.device, silent.address, latest, 10, nil)
-	pair(silent.device, silent.address, outside(4, silent.v6), latest, 10)
+	silent := network.Clients[3]
+	silentID := storetest.QueryInt(t, network.DB, "SELECT id FROM client WHERE last_address = ?", silent.Address)
+	endpoint(silent.Device, silent.Address, latest, 10, nil)
+	pair(silent.Device, silent.Address, storetest.Outside(4, silent.V6), latest, 10)
 
-	rate, state, err := network.db.ReadClientCurrentRate(ctx, clientID, network.now)
+	rate, state, err := network.DB.ReadClientCurrentRate(ctx, clientID, network.Now)
 	if err != nil {
 		t.Fatalf("reading the rate: %v", err)
 	}
@@ -610,7 +613,7 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 	if rate.SampledAt != latest {
 		t.Errorf("the rate carries the instant %d, not %d", rate.SampledAt, latest)
 	}
-	rates, err := network.db.ReadCurrentRates(ctx, network.now)
+	rates, err := network.DB.ReadCurrentRates(ctx, network.Now)
 	if err != nil {
 		t.Fatalf("reading the rates: %v", err)
 	}
@@ -628,12 +631,12 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 	if silentRate := rates.ByClient[silentID]; silentRate.OutMeasured || silentRate.InBitsPerSecond != 10 {
 		t.Errorf("a client whose record carried no outbound figure reads %+v, as if it had been measured", silentRate)
 	}
-	if rates.ByDevice[network.upstream.device].Total() != 10000 {
-		t.Errorf("the upstream device's rate is %v", rates.ByDevice[network.upstream.device])
+	if rates.ByDevice[network.Upstream.Device].Total() != 10000 {
+		t.Errorf("the upstream device's rate is %v", rates.ByDevice[network.Upstream.Device])
 	}
 
 	// Beyond the bound there is no current sample, which is a state and not a zero.
-	_, state, err = network.db.ReadClientCurrentRate(ctx, clientID, network.now+bound+1)
+	_, state, err = network.DB.ReadClientCurrentRate(ctx, clientID, network.Now+bound+1)
 	if err != nil {
 		t.Fatalf("reading the rate: %v", err)
 	}
@@ -641,10 +644,10 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 		t.Errorf("beyond the bound the state is %s", state)
 	}
 	// A setting that is not a positive whole number is refused rather than bounding nothing.
-	if err := network.db.SetSetting(ctx, samples.MeasurementIntervalKey, "0", network.now); err != nil {
+	if err := network.DB.SetSetting(ctx, samples.MeasurementIntervalKey, "0", network.Now); err != nil {
 		t.Fatalf("writing the interval: %v", err)
 	}
-	if _, err := network.db.CurrentSampleBound(ctx); err == nil {
+	if _, err := network.DB.CurrentSampleBound(ctx); err == nil {
 		t.Error("an interval of 0 was accepted")
 	}
 }
@@ -652,17 +655,17 @@ func TestAClientsCurrentRateIsItsLatestPairReadingsWithinTheBound(t *testing.T) 
 // TestAThroughputIsDerivedFromConsecutiveCountersAndAResetIsNotANegativeRate is AC16.
 func TestAThroughputIsDerivedFromConsecutiveCountersAndAResetIsNotANegativeRate(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 1, 1)
-	device := network.inside[0].device
+	network := storetest.NewNetwork(t, 1, 1)
+	device := network.Inside[0].Device
 	for _, sample := range []struct {
 		at    int64
 		value float64
 	}{{100, 1000}, {400, 4000}, {700, 500}, {1000, 3500}} {
-		insertReading(t, network.db, vocab.SubjectInterface, device, vocab.MeasureBytesIn, vocab.UnitByte, sample.value,
-			network.now+sample.at)
+		insertReading(t, network.DB, vocab.SubjectInterface, device, vocab.MeasureBytesIn, vocab.UnitByte, sample.value,
+			network.Now+sample.at)
 	}
-	points, err := network.db.ReadInterfaceThroughput(context.Background(), device, vocab.MeasureBytesIn,
-		network.now, network.now+2000)
+	points, err := network.DB.ReadInterfaceThroughput(context.Background(), device, vocab.MeasureBytesIn,
+		network.Now, network.Now+2000)
 	if err != nil {
 		t.Fatalf("reading the throughput: %v", err)
 	}
@@ -688,19 +691,19 @@ func TestAThroughputIsDerivedFromConsecutiveCountersAndAResetIsNotANegativeRate(
 // TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero is AC2's code half.
 func TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 1, 2)
+	network := storetest.NewNetwork(t, 1, 2)
 	ctx := context.Background()
-	client := network.clients[0]
-	key := vocab.InterfaceEndpointKey(client.device, client.address)
+	client := network.Clients[0]
+	key := vocab.InterfaceEndpointKey(client.Device, client.Address)
 	for _, at := range []int64{100, 400} {
-		insertReading(t, network.db, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureCumulativeBytesIn, vocab.UnitByte, 300, network.now+at)
-		insertReading(t, network.db, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureCumulativeBytesOut, vocab.UnitByte, 200, network.now+at)
+		insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureCumulativeBytesIn, vocab.UnitByte, 300, network.Now+at)
+		insertReading(t, network.DB, vocab.SubjectInterfaceEndpoint, key, vocab.MeasureCumulativeBytesOut, vocab.UnitByte, 200, network.Now+at)
 	}
 	// A per-peer reading is not counted again: the totals already hold it.
-	insertReading(t, network.db, vocab.SubjectInterfaceEndpointPair,
-		vocab.InterfaceEndpointPairKey(client.device, client.address, outside(1, client.v6)),
-		vocab.MeasureCumulativeBytesIn, vocab.UnitByte, 300, network.now+100)
-	sampled, state, err := network.db.ReadSampledBytes(ctx, network.now, network.now+1000)
+	insertReading(t, network.DB, vocab.SubjectInterfaceEndpointPair,
+		vocab.InterfaceEndpointPairKey(client.Device, client.Address, storetest.Outside(1, client.V6)),
+		vocab.MeasureCumulativeBytesIn, vocab.UnitByte, 300, network.Now+100)
+	sampled, state, err := network.DB.ReadSampledBytes(ctx, network.Now, network.Now+1000)
 	if err != nil {
 		t.Fatalf("reading the sampled bytes: %v", err)
 	}
@@ -708,7 +711,7 @@ func TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero(t *testi
 		sampled[0].SampledSeconds != 2*vocab.SampleSeconds {
 		t.Errorf("the sampled bytes are %s %+v", state, sampled)
 	}
-	_, state, err = network.db.ReadSampledBytes(ctx, network.now+2000, network.now+3000)
+	_, state, err = network.DB.ReadSampledBytes(ctx, network.Now+2000, network.Now+3000)
 	if err != nil {
 		t.Fatalf("reading an unsampled period: %v", err)
 	}
@@ -722,30 +725,30 @@ func TestSampledBytesAreBytesSeenInSamplesAndAnUnsampledPeriodIsNotZero(t *testi
 // count.
 func TestNonLoggingRulesAreCountedPerInterfaceByKey(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 3, 3)
+	network := storetest.NewNetwork(t, 3, 3)
 	ctx := context.Background()
 	no, yes, legacy := false, true, true
 	for index, rule := range []vocab.Rule{
-		{Interface: ptr("example_if_0"), LogsMatches: &no},
-		{Interface: ptr("example_if_0,example_if_2"), LogsMatches: &no},
-		{Interface: ptr("example_if_1"), LogsMatches: &yes},
-		{Interface: ptr(""), LogsMatches: &no},
-		{Interface: ptr("example description 0"), Legacy: &legacy, LogsMatches: &no},
-		{Interface: ptr("example_if_0")},
+		{Interface: storetest.Ptr("example_if_0"), LogsMatches: &no},
+		{Interface: storetest.Ptr("example_if_0,example_if_2"), LogsMatches: &no},
+		{Interface: storetest.Ptr("example_if_1"), LogsMatches: &yes},
+		{Interface: storetest.Ptr(""), LogsMatches: &no},
+		{Interface: storetest.Ptr("example description 0"), Legacy: &legacy, LogsMatches: &no},
+		{Interface: storetest.Ptr("example_if_0")},
 	} {
 		rule.PfLabel = fmt.Sprintf("example-logging-rule-%d", index)
 		rule.Action = "pass"
-		if _, err := network.db.UpsertRule(ctx, rule, network.now); err != nil {
+		if _, err := network.DB.UpsertRule(ctx, rule, network.Now); err != nil {
 			t.Fatalf("writing a rule: %v", err)
 		}
 	}
-	logging, err := network.db.ReadRuleLogging(ctx)
+	logging, err := network.DB.ReadRuleLogging(ctx)
 	if err != nil {
 		t.Fatalf("counting: %v", err)
 	}
-	first, third := network.inside[0].id, network.inside[2].id
+	first, third := network.Inside[0].ID, network.Inside[2].ID
 	if logging.NotLoggingByInterface[first] != 2 || logging.NotLoggingByInterface[third] != 1 ||
-		logging.NotLoggingByInterface[network.inside[1].id] != 0 {
+		logging.NotLoggingByInterface[network.Inside[1].ID] != 0 {
 		t.Errorf("the per-interface counts are %v", logging.NotLoggingByInterface)
 	}
 	if logging.FloatingNotLogging != 1 || logging.UnresolvedNotLogging != 1 {

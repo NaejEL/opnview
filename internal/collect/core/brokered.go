@@ -21,7 +21,7 @@ import (
 // what changed is that a pass's requests are served by the broker, from its mirror when an answer
 // is young enough, and that nothing coalesced two requests before.
 
-// read asks the broker for one core reader's answer, read whole.
+// Read asks the broker for one core reader's answer, read whole.
 func (c *Collector) Read(ctx context.Context, reader string, endpoint opnsense.Endpoint,
 	options opnsense.RequestOptions, maxAge time.Duration) (opnsense.Response, error) {
 	return c.APIBroker.GateCall(ctx, broker.Core(reader).Name, endpoint, options, maxAge)
@@ -34,10 +34,10 @@ func (c *Collector) intervals() config.Config {
 	return c.Cadences
 }
 
-// discoveryMaxAge is discovery's and the probe round's max age: the discovery interval.
+// DiscoveryMaxAge is discovery's and the probe round's max age: the discovery interval.
 func (c *Collector) DiscoveryMaxAge() time.Duration { return c.intervals().DiscoveryInterval }
 
-// leaseMaxAge is the lease kind's readers' max age.
+// LeaseMaxAge is the lease kind's readers' max age.
 func (c *Collector) LeaseMaxAge() time.Duration { return c.intervals().DHCPLeaseInterval }
 
 // KindMaxAge is a core kind's readers' max age: its interval setting. The probe round reads at the
@@ -67,7 +67,7 @@ func (c *Collector) KindMaxAge(kind, function string) time.Duration {
 	return 0
 }
 
-// declareCoreEndpoints tells the broker what the core knows of the endpoints it reads itself: an
+// DeclareCoreEndpoints tells the broker what the core knows of the endpoints it reads itself: an
 // answer keyed by interface devices is value-keyed from its root, so no device name ever becomes
 // a column (A10). Each correction cites the survey section establishing the shape.
 func (c *Collector) DeclareCoreEndpoints() {
@@ -76,7 +76,7 @@ func (c *Collector) DeclareCoreEndpoints() {
 		Corrections: infer.Corrections{ValueKeyed: []string{""}}})
 }
 
-// knownNormaliser is the timestamp normaliser the broker's inference reads: the firewall's offset
+// KnownNormaliser is the timestamp normaliser the broker's inference reads: the firewall's offset
 // as far as it is known, measured by nothing. Measuring it is a firewall call, which the broker must
 // never make from inside another one; a cursor read before the offset is known is ordered by it
 // alike, and the records a pass stores are normalised by the pass, which measures it first.
@@ -92,7 +92,7 @@ const (
 	KeyMirrorStreamDetailRetentionSeconds = "mirror_stream_detail_retention_seconds"
 )
 
-// purgeMirror purges the broker's mirror and its stream recordings, to the exact second.
+// PurgeMirror purges the broker's mirror and its stream recordings, to the exact second.
 func (c *Collector) PurgeMirror(ctx context.Context, now int64) error {
 	if c.APIBroker.Mirror() == nil {
 		return nil
@@ -110,7 +110,7 @@ func (c *Collector) PurgeMirror(ctx context.Context, now int64) error {
 	return c.APIBroker.PurgeStreams(ctx, now, detail, retention)
 }
 
-// settingSeconds reads a whole number of seconds from a setting, the fallback when it is absent
+// SettingSeconds reads a whole number of seconds from a setting, the fallback when it is absent
 // or unreadable.
 func (c *Collector) SettingSeconds(ctx context.Context, key string, fallback int64) int64 {
 	text, present, err := c.Store.Setting(ctx, key)

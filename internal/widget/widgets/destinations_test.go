@@ -14,7 +14,7 @@ import (
 	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/figures"
 	"github.com/NaejEL/opnview/internal/widget/params"
-	requestpkg "github.com/NaejEL/opnview/internal/widget/request"
+	"github.com/NaejEL/opnview/internal/widget/request"
 	"github.com/NaejEL/opnview/internal/widget/traffic"
 )
 
@@ -202,29 +202,29 @@ func TestUnderNoDomainsEveryDestinationIsInAddressForm(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t, defaultSpec)
 	ctx := context.Background()
-	type request struct {
+	type widgetRequest struct {
 		widgetType string
 		parameters map[string]any
 	}
-	var requests []request
+	var requests []widgetRequest
 	for _, period := range []string{"1h", "24h", "30d"} {
 		for _, root := range []string{"interface", "client", "owner"} {
 			for _, depth := range []int{1, 2, 3} {
-				requests = append(requests, request{"connection_tree",
+				requests = append(requests, widgetRequest{"connection_tree",
 					map[string]any{"period": period, "root": root, "depth": depth}})
 			}
 		}
 		for _, mac := range []string{"00:00:5e:00:53:00", "00:00:5e:00:53:04"} {
-			requests = append(requests, request{"client_traffic_detail", map[string]any{"period": period,
+			requests = append(requests, widgetRequest{"client_traffic_detail", map[string]any{"period": period,
 				"client": map[string]any{"kind": "client", "by": "mac", "value": mac}}})
 		}
 	}
-	answer := func(item request) []byte {
+	answer := func(item widgetRequest) []byte {
 		encoded, err := json.Marshal(f.respond(t, item.widgetType, item.parameters))
 		check(t, err)
 		return encoded
 	}
-	dataOf := func(item request) []byte {
+	dataOf := func(item widgetRequest) []byte {
 		encoded, err := json.Marshal(f.respond(t, item.widgetType, item.parameters).Data)
 		check(t, err)
 		return encoded
@@ -232,7 +232,7 @@ func TestUnderNoDomainsEveryDestinationIsInAddressForm(t *testing.T) {
 	if f.scalar(t, "SELECT count(*) FROM domain_attribution") == 0 {
 		t.Fatal("the fixture names nothing, so this test is vacuous")
 	}
-	check(t, f.db.SetSetting(ctx, config.KeyAggregateMode, requestpkg.AggregateModeNoDomains, f.now))
+	check(t, f.db.SetSetting(ctx, config.KeyAggregateMode, request.AggregateModeNoDomains, f.now))
 	withNames := map[int][]byte{}
 	for index, item := range requests {
 		withNames[index] = answer(item)

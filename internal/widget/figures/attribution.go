@@ -14,7 +14,7 @@ const (
 	rateUndefinedNoFlow     = "undefined_no_eligible_flow"
 )
 
-// attributionRow is one client's attribution.
+// AttributionRow is one client's attribution.
 type AttributionRow struct {
 	Client        request.ClientInfo `json:"client"`
 	EligibleFlows envelope.Count     `json:"eligible_flows"`
@@ -28,7 +28,7 @@ type AttributionRow struct {
 	MaxDelaySeconds  *int64   `json:"max_delay_seconds"`
 }
 
-// clientAttribution is one client's counts from widget_attribution_rate_by_client.
+// ClientAttribution is one client's counts from widget_attribution_rate_by_client.
 type ClientAttribution struct {
 	Eligible, Named, Cache, Timing, Bytes int64
 	Mean                                  *float64

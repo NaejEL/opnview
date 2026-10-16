@@ -133,7 +133,7 @@ func (r *Refusal) Error() string {
 	return fmt.Sprintf("plugin %q refused (%s): %s", r.Plugin, r.Code, r.Detail)
 }
 
-// refuse builds a Refusal.
+// Refuse builds a Refusal.
 func Refuse(plugin, code, format string, arguments ...any) *Refusal {
 	return &Refusal{Plugin: plugin, Code: code, Detail: fmt.Sprintf(format, arguments...)}
 }

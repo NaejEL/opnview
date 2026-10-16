@@ -1,10 +1,13 @@
-package collect
+package declared_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect"
+
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/pluginkind"
 )
@@ -15,8 +18,8 @@ import (
 // cadence in force. The override reaches a running loop, because the interval is asked before
 // every wait.
 func TestADeclaredCadenceIsOverriddenNeverBelowItsBound(t *testing.T) {
-	database := newTestStore(t)
-	collector := NewWithSources(nil, database, core.SystemClock{}, nil)
+	database := collecttest.NewTestStore(t)
+	collector := collect.NewWithSources(nil, database, core.SystemClock{}, nil)
 	key := pluginkind.CadenceSettingKey("example_inventory", "example_inventory", "example_inventory")
 	interval := collector.OverriddenCadence(key, 10*time.Minute, 2*time.Minute)
 	ctx := context.Background()

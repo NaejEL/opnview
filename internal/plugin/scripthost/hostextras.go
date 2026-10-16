@@ -1,4 +1,4 @@
-package runtime
+package scripthost
 
 import (
 	"context"
@@ -14,13 +14,13 @@ import (
 // thing it reaches -- declared settings, declared tables, a data directory -- so a script that
 // declares none of them sees the bare port, and the listing of what a plugin may do is its manifest.
 
-// extensions are what a loaded plugin's script may reach beyond the firewall.
+// Extensions are what a loaded plugin's script may reach beyond the firewall.
 type Extensions struct {
-	// settings reads the plugin's declared settings.
+	// Settings reads the plugin's declared settings.
 	Settings func(ctx context.Context) (map[string]any, map[string]string, error)
-	// query runs a read-only query against the plugin's own tables.
+	// Query runs a read-only query against the plugin's own tables.
 	Query func(ctx context.Context, text string, parameters map[string]any) ([]map[string]any, error)
-	// facility is the fetch facility and the data directory.
+	// Facility is the fetch facility and the data directory.
 	Facility *fetch.Facility
 }
 

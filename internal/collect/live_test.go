@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/live"
@@ -21,14 +22,14 @@ import (
 
 // arrangeLive is a sampling harness whose collector holds a lease of 30 s, its baseline interval
 // the measurement default, so the broker's mirror serves the baseline what a live pass just read.
-func arrangeLive(t *testing.T) (*probeHarness, *live.Interest) {
+func arrangeLive(t *testing.T) (*collecttest.ProbeHarness, *live.Interest) {
 	t.Helper()
 	harness := arrangeMeasurementCollection(t)
 	settings := config.Defaults()
 	settings.DiscoveryInterval = 0
-	harness.collector.Configure(settings)
+	harness.Collector.Configure(settings)
 	interest := live.New(func() time.Duration { return 30 * time.Second })
-	harness.collector.SetLiveInterest(interest)
+	harness.Collector.SetLiveInterest(interest)
 	return harness, interest
 }
 
@@ -47,65 +48,65 @@ func TestLiveCadenceAndInterestThePassRunsOnlyWhileTheLeaseHolds(t *testing.T) {
 	t.Parallel()
 	harness, interest := arrangeLive(t)
 	ctx := context.Background()
-	calls := func() int { return len(harness.fake.RequestsTo(opnsense.TrafficTop)) }
+	calls := func() int { return len(harness.Fake.RequestsTo(opnsense.TrafficTop)) }
 	before := calls()
 
 	// Nobody has asked for a live figure: no live pass, no call.
-	if err := harness.collector.CollectLive(ctx); err != nil {
+	if err := harness.Collector.CollectLive(ctx); err != nil {
 		t.Fatalf("a live tick with no lease: %v", err)
 	}
-	if harness.collector.LivePasses() != 0 || calls() != before {
-		t.Fatalf("a tick with no lease ran %d live passes and made %d calls", harness.collector.LivePasses(),
+	if harness.Collector.LivePasses() != 0 || calls() != before {
+		t.Fatalf("a tick with no lease ran %d live passes and made %d calls", harness.Collector.LivePasses(),
 			calls()-before)
 	}
 
 	// A request for a live figure renews the lease: the next tick samples, as a fine sample.
-	interest.Renew(harness.clock.Now())
-	if err := harness.collector.CollectLive(ctx); err != nil {
+	interest.Renew(harness.Clock.Now())
+	if err := harness.Collector.CollectLive(ctx); err != nil {
 		t.Fatalf("a live pass: %v", err)
 	}
-	if harness.collector.LivePasses() != 1 || calls() != before+1 {
+	if harness.Collector.LivePasses() != 1 || calls() != before+1 {
 		t.Fatalf("a tick under the lease ran %d live passes and %d calls, want 1 and 1",
-			harness.collector.LivePasses(), calls()-before)
+			harness.Collector.LivePasses(), calls()-before)
 	}
-	if fineRows(t, harness.store) == 0 {
+	if fineRows(t, harness.Store) == 0 {
 		t.Fatal("the live pass stored no fine sample")
 	}
 
 	// Before the cadence has elapsed, a tick runs nothing.
-	harness.clock.advance(5 * time.Second)
-	if err := harness.collector.CollectLive(ctx); err != nil {
+	harness.Clock.Advance(5 * time.Second)
+	if err := harness.Collector.CollectLive(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if harness.collector.LivePasses() != 1 {
+	if harness.Collector.LivePasses() != 1 {
 		t.Fatalf("a tick 5 s after a live pass at a 10 s cadence ran one more")
 	}
 
 	// Past the cadence, the next one runs and asks the firewall again.
-	harness.clock.advance(6 * time.Second)
-	if err := harness.collector.CollectLive(ctx); err != nil {
+	harness.Clock.Advance(6 * time.Second)
+	if err := harness.Collector.CollectLive(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if harness.collector.LivePasses() != 2 || calls() != before+2 {
+	if harness.Collector.LivePasses() != 2 || calls() != before+2 {
 		t.Fatalf("a tick 11 s after the last ran %d live passes and %d calls, want 2 and 2",
-			harness.collector.LivePasses(), calls()-before)
+			harness.Collector.LivePasses(), calls()-before)
 	}
 
 	// The lease lapses live_interest_seconds after its last renewal: the live pass stops.
-	harness.clock.advance(20 * time.Second)
-	if err := harness.collector.CollectLive(ctx); err != nil {
+	harness.Clock.Advance(20 * time.Second)
+	if err := harness.Collector.CollectLive(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if harness.collector.LivePasses() != 2 || calls() != before+2 {
+	if harness.Collector.LivePasses() != 2 || calls() != before+2 {
 		t.Fatalf("a tick 31 s after the last renewal ran a live pass")
 	}
 
 	// The baseline pass runs whether or not the lease holds.
-	if err := harness.collector.CollectMeasurement(ctx); err != nil {
+	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("the baseline pass with the lease lapsed: %v", err)
 	}
 	var baseline int
-	if err := harness.store.DB().QueryRowContext(ctx,
+	if err := harness.Store.DB().QueryRowContext(ctx,
 		"SELECT count(*) FROM measurement_sample WHERE live_cadence_seconds IS NULL").Scan(&baseline); err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +119,7 @@ func TestLiveCadenceAndInterestTheLoopTicksAtTheLiveCadence(t *testing.T) {
 	t.Parallel()
 	harness, _ := arrangeLive(t)
 	var task *core.Task
-	for _, candidate := range harness.collector.Tasks(config.NewLive(config.Defaults())) {
+	for _, candidate := range harness.Collector.Tasks(config.NewLive(config.Defaults())) {
 		if candidate.Name == "live sampling" {
 			candidate := candidate
 			task = &candidate
@@ -131,16 +132,16 @@ func TestLiveCadenceAndInterestTheLoopTicksAtTheLiveCadence(t *testing.T) {
 		t.Errorf("the live loop ticks every %s, want the insight plugin's default live cadence of 10s", got)
 	}
 	// A saved cadence reaches the loop at its next wait.
-	if err := harness.store.SetSetting(context.Background(), "insight_live_cadence_seconds", "4",
-		referenceEpoch()); err != nil {
+	if err := harness.Store.SetSetting(context.Background(), "insight_live_cadence_seconds", "4",
+		collecttest.ReferenceEpoch()); err != nil {
 		t.Fatal(err)
 	}
 	if got := task.Interval(); got != 4*time.Second {
 		t.Errorf("after saving 4 s the live loop ticks every %s", got)
 	}
 	// Never below the lower bound of the setting, nor below traffic/top's 2-second capture.
-	if err := harness.store.SetSetting(context.Background(), "insight_live_cadence_seconds", "1",
-		referenceEpoch()); err != nil {
+	if err := harness.Store.SetSetting(context.Background(), "insight_live_cadence_seconds", "1",
+		collecttest.ReferenceEpoch()); err != nil {
 		t.Fatal(err)
 	}
 	if got := task.Interval(); got != 2*time.Second {
@@ -152,21 +153,21 @@ func TestLiveCadenceAndInterestNParallelReadersMakeOneRoundOfCallsPerCadence(t *
 	t.Parallel()
 	harness, interest := arrangeLive(t)
 	ctx := context.Background()
-	before := len(harness.fake.RequestsTo(opnsense.TrafficTop))
+	before := len(harness.Fake.RequestsTo(opnsense.TrafficTop))
 	// Eight readers renew the lease at the same instant, and as many ticks run at once.
 	var group sync.WaitGroup
 	for reader := 0; reader < 8; reader++ {
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			interest.Renew(harness.clock.Now())
-			if err := harness.collector.CollectLive(ctx); err != nil {
+			interest.Renew(harness.Clock.Now())
+			if err := harness.Collector.CollectLive(ctx); err != nil {
 				t.Errorf("a live tick: %v", err)
 			}
 		}()
 	}
 	group.Wait()
-	if got := len(harness.fake.RequestsTo(opnsense.TrafficTop)) - before; got != 1 {
+	if got := len(harness.Fake.RequestsTo(opnsense.TrafficTop)) - before; got != 1 {
 		t.Errorf("eight readers in one cadence made %d calls to traffic/top, want 1", got)
 	}
 }
@@ -175,25 +176,25 @@ func TestLivePersistenceOneRoundOfCallsServesTheLiveAndTheBaselinePass(t *testin
 	t.Parallel()
 	harness, interest := arrangeLive(t)
 	ctx := context.Background()
-	interest.Renew(harness.clock.Now())
-	if err := harness.collector.CollectLive(ctx); err != nil {
+	interest.Renew(harness.Clock.Now())
+	if err := harness.Collector.CollectLive(ctx); err != nil {
 		t.Fatal(err)
 	}
-	fine := fineRows(t, harness.store)
-	calls := len(harness.fake.RequestsTo(opnsense.TrafficTop))
+	fine := fineRows(t, harness.Store)
+	calls := len(harness.Fake.RequestsTo(opnsense.TrafficTop))
 	// The baseline pass falls due during live mode: the broker serves it the live pass's answer.
-	harness.clock.advance(3 * time.Second)
-	if err := harness.collector.CollectMeasurement(ctx); err != nil {
+	harness.Clock.Advance(3 * time.Second)
+	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if got := len(harness.fake.RequestsTo(opnsense.TrafficTop)); got != calls {
+	if got := len(harness.Fake.RequestsTo(opnsense.TrafficTop)); got != calls {
 		t.Errorf("the baseline pass made %d more calls to traffic/top; the live pass's answer serves it", got-calls)
 	}
-	if got := fineRows(t, harness.store); got != 0 {
+	if got := fineRows(t, harness.Store); got != 0 {
 		t.Errorf("%d of the %d fine samples were not promoted by the baseline pass reading their capture", got, fine)
 	}
 	var duplicates int
-	if err := harness.store.DB().QueryRowContext(ctx, `SELECT count(*) FROM (
+	if err := harness.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM (
 		SELECT subject_kind, subject_key, measure, value FROM measurement_sample
 		WHERE subject_kind IN ('interface_endpoint', 'interface_endpoint_pair', 'interface')
 		GROUP BY 1, 2, 3, 4 HAVING count(*) > 1) AS d`).Scan(&duplicates); err != nil {
@@ -208,24 +209,24 @@ func TestLiveEndpointsVerifiedAFailedLivePassYieldsAClosedOutcome(t *testing.T) 
 	t.Parallel()
 	harness, interest := arrangeLive(t)
 	ctx := context.Background()
-	harness.fake.Answer(opnsense.TrafficTop, http.StatusInternalServerError, []byte(`{}`))
-	interest.Renew(harness.clock.Now())
-	_ = harness.collector.CollectLive(ctx)
-	state, _, _ := harness.availabilityOf(t, core.KindMeasurementSample, ProviderInsight)
+	harness.Fake.Answer(opnsense.TrafficTop, http.StatusInternalServerError, []byte(`{}`))
+	interest.Renew(harness.Clock.Now())
+	_ = harness.Collector.CollectLive(ctx)
+	state, _, _ := harness.AvailabilityOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	if state != vocab.StateUnavailable {
 		t.Errorf("a live pass the firewall did not answer left the provider %q", state)
 	}
 	var outcome string
-	if err := harness.store.DB().QueryRowContext(ctx, `SELECT a.outcome FROM source_availability AS a
+	if err := harness.Store.DB().QueryRowContext(ctx, `SELECT a.outcome FROM source_availability AS a
 		JOIN provider AS p ON p.id = a.provider_id WHERE p.kind = 'measurement_sample' AND p.provider_key = ?`,
-		ProviderInsight).Scan(&outcome); err != nil {
+		collecttest.ProviderInsight).Scan(&outcome); err != nil {
 		t.Fatal(err)
 	}
 	if !vocab.AvailabilityOutcome(outcome).Valid() {
 		t.Errorf("the outcome %q is not one of the closed availability outcomes", outcome)
 	}
 	var pairs int
-	if err := harness.store.DB().QueryRowContext(ctx, `SELECT count(*) FROM measurement_sample
+	if err := harness.Store.DB().QueryRowContext(ctx, `SELECT count(*) FROM measurement_sample
 		WHERE live_cadence_seconds IS NOT NULL AND subject_kind IN ('interface_endpoint', 'interface_endpoint_pair')`).
 		Scan(&pairs); err != nil {
 		t.Fatal(err)

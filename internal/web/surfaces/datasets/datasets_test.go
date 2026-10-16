@@ -25,11 +25,10 @@ import (
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
-	"github.com/NaejEL/opnview/internal/web/surfaces/datasets"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 	"github.com/NaejEL/opnview/internal/widget"
-	datasetspkg "github.com/NaejEL/opnview/internal/widget/datasets"
+	"github.com/NaejEL/opnview/internal/widget/datasets"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/params"
 	"github.com/NaejEL/opnview/internal/widget/request"
@@ -134,12 +133,12 @@ func query(t *testing.T, harness *webtest.Harness, name string, parameters any) 
 }
 
 // answered decodes a 200 answer.
-func answered(t *testing.T, status int, body string) datasetspkg.DatasetResponse {
+func answered(t *testing.T, status int, body string) datasets.DatasetResponse {
 	t.Helper()
 	if status != http.StatusOK {
 		t.Fatalf("the query answered %d: %.400s", status, body)
 	}
-	var response datasetspkg.DatasetResponse
+	var response datasets.DatasetResponse
 	if err := json.Unmarshal([]byte(body), &response); err != nil {
 		t.Fatalf("the answer is not the envelope: %v", err)
 	}
@@ -147,10 +146,10 @@ func answered(t *testing.T, status int, body string) datasetspkg.DatasetResponse
 }
 
 // timeSeries decodes a time-axis answer's data.
-func timeSeries(t *testing.T, response datasetspkg.DatasetResponse) datasetspkg.DatasetTimeData {
+func timeSeries(t *testing.T, response datasets.DatasetResponse) datasets.DatasetTimeData {
 	t.Helper()
 	encoded, _ := json.Marshal(response.Data)
-	var data datasetspkg.DatasetTimeData
+	var data datasets.DatasetTimeData
 	if err := json.Unmarshal(encoded, &data); err != nil || len(data.Series) == 0 {
 		t.Fatalf("the data is not a time axis: %s", encoded)
 	}
@@ -158,10 +157,10 @@ func timeSeries(t *testing.T, response datasetspkg.DatasetResponse) datasetspkg.
 }
 
 // rowsOf decodes a dimension-axis answer's data.
-func rowsOf(t *testing.T, response datasetspkg.DatasetResponse) datasetspkg.DatasetRowsData {
+func rowsOf(t *testing.T, response datasets.DatasetResponse) datasets.DatasetRowsData {
 	t.Helper()
 	encoded, _ := json.Marshal(response.Data)
-	var data datasetspkg.DatasetRowsData
+	var data datasets.DatasetRowsData
 	if err := json.Unmarshal(encoded, &data); err != nil {
 		t.Fatalf("the data is not a dimension axis: %s", encoded)
 	}
@@ -186,16 +185,16 @@ func TestTheListingCarriesTheCustomChartSourcesAndEveryPluginTable(t *testing.T)
 		t.Fatalf("setting the table aside gave %v, %v", event, err)
 	}
 
-	answer := harness.Get(datasets.PathDatasets)
+	answer := harness.Get(webtest.PathDatasets)
 	body := webtest.ReadBody(t, answer)
 	if answer.StatusCode != http.StatusOK {
 		t.Fatalf("the listing answered %d: %.300s", answer.StatusCode, body)
 	}
-	var listing datasetspkg.DatasetListing
+	var listing datasets.DatasetListing
 	if err := json.Unmarshal([]byte(body), &listing); err != nil {
 		t.Fatal(err)
 	}
-	byName := map[string]datasetspkg.ListedDataset{}
+	byName := map[string]datasets.ListedDataset{}
 	for _, listed := range listing.Datasets {
 		byName[listed.Name] = listed
 	}
@@ -244,7 +243,7 @@ func TestTheListingCarriesTheCustomChartSourcesAndEveryPluginTable(t *testing.T)
 		t.Errorf("the dns dataset does not say its domain carries a domain name: %+v", dns.Columns)
 	}
 
-	anonymous, err := http.Get(harness.HTTP.URL + datasets.PathDatasets)
+	anonymous, err := http.Get(harness.HTTP.URL + webtest.PathDatasets)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +262,7 @@ func TestTheListingCarriesTheCustomChartSourcesAndEveryPluginTable(t *testing.T)
 	}
 }
 
-func carriesDomain(listed datasetspkg.ListedDataset, name string) bool {
+func carriesDomain(listed datasets.ListedDataset, name string) bool {
 	for _, column := range listed.Columns {
 		if column.Name == name {
 			return column.CarriesDomain

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/config"
 )
 
@@ -61,9 +63,9 @@ type ThemeChoice struct {
 // catalogue key that names it.
 func ThemeChoices() []ThemeChoice {
 	return []ThemeChoice{
-		{ThemeSystem, msgThemeSystem},
-		{ThemeLight, msgThemeLight},
-		{ThemeDark, msgThemeDark},
+		{ThemeSystem, messages.MsgThemeSystem},
+		{ThemeLight, messages.MsgThemeLight},
+		{ThemeDark, messages.MsgThemeDark},
 	}
 }
 

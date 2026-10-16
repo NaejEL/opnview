@@ -67,7 +67,7 @@ func (s *ReadStore) WidgetRows(ctx context.Context, name string, period vocab.Pe
 // WidgetQuery runs one widget statement exactly as WidgetRows does and returns its result columns
 // and its rows, each cell an int64, a float64, a string or nil (the connection's own conversions,
 // internal/store/sqldb/driver.go): what a widget script's host hands the script
-// (internal/widget/hostareas/readers/host_query.go).
+// (internal/widget/hostareas/installation/host_query.go).
 func (s *ReadStore) WidgetQuery(ctx context.Context, name string, period vocab.Period, parameters map[string]any) (
 	[]string, [][]any, error) {
 	var (

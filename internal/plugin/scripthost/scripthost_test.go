@@ -1,4 +1,4 @@
-package plugin
+package scripthost
 
 import (
 	"context"
@@ -9,7 +9,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -55,9 +54,9 @@ func (s stubSession) Now() int64 { return s.now }
 var _ provider.Session = stubSession{}
 
 // runScript compiles a script and calls one of its functions against a stub session.
-func runScript(t *testing.T, source, namespace, function string, body []byte, arguments ...any) (any, *runtime.Failure) {
+func runScript(t *testing.T, source, namespace, function string, body []byte, arguments ...any) (any, *Failure) {
 	t.Helper()
-	compiled, err := runtime.Compile("example", "example.js", source,
+	compiled, err := Compile("example", "example.js", source,
 		map[string]opnsense.Endpoint{"rows": {Path: "/api/example/rows/search", Method: "GET"}}, time.Second)
 	if err != nil {
 		t.Fatalf("compiling: %v", err)
@@ -106,14 +105,14 @@ func TestTheFirewallsDecodedValuesReadAsJavaScriptArraysAndObjects(t *testing.T)
 // TestAScriptThatNeverReturnsIsStoppedAtItsBound is the timeout, at the runtime.
 func TestAScriptThatNeverReturnsIsStoppedAtItsBound(t *testing.T) {
 	t.Parallel()
-	compiled, err := runtime.Compile("example", "example.js", `exports.example = { read: function () { for (;;) {} } };`,
+	compiled, err := Compile("example", "example.js", `exports.example = { read: function () { for (;;) {} } };`,
 		nil, 50*time.Millisecond)
 	if err != nil {
 		t.Fatal(err)
 	}
 	started := time.Now()
 	_, _, failed := compiled.Call(context.Background(), stubSession{}, "example", "read")
-	if failed == nil || failed.Code != runtime.FailureTimeout {
+	if failed == nil || failed.Code != FailureTimeout {
 		t.Fatalf("an endless script ended with %v", failed)
 	}
 	if elapsed := time.Since(started); elapsed > 5*time.Second {
@@ -126,16 +125,16 @@ func TestAThrownErrorAndAMissingFunctionAreScriptFailures(t *testing.T) {
 	t.Parallel()
 	_, failed := runScript(t, `exports.example = { read: function () { throw new Error("broken"); } };`,
 		"example", "read", nil)
-	if failed == nil || failed.Code != runtime.FailureScript {
+	if failed == nil || failed.Code != FailureScript {
 		t.Errorf("a thrown error ended with %v", failed)
 	}
 	_, failed = runScript(t, `exports.example = {};`, "example", "read", nil)
-	if failed == nil || failed.Code != runtime.FailureScript {
+	if failed == nil || failed.Code != FailureScript {
 		t.Errorf("a missing function ended with %v", failed)
 	}
 	_, failed = runScript(t, `exports.example = { read: function (host) { host.call("undeclared"); } };`,
 		"example", "read", nil)
-	if failed == nil || failed.Code != runtime.FailureScript {
+	if failed == nil || failed.Code != FailureScript {
 		t.Errorf("a call to an undeclared endpoint ended with %v", failed)
 	}
 }
@@ -171,5 +170,26 @@ func TestTheScriptHostGrantsOnlyThePort(t *testing.T) {
 	}
 	if globals, _ := object["globals"].([]any); len(globals) != 0 {
 		t.Errorf("a script sees the globals %v", globals)
+	}
+}
+
+// TestAPluginWithNoRangeIsUnaffectedByTheVersion is BR24's last part: a plugin declaring no range
+// runs the same whatever the firewall's version, known or not -- every built-in plugin is one, and
+// their own tests run with no version at all.
+func TestAPluginWithNoRangeIsUnaffectedByTheVersion(t *testing.T) {
+	t.Parallel()
+	compiled, err := Compile("example", "example.js", `exports.example = { pass: function (host) {
+			return { version: host.firewall.version, rows: host.call("rows", {}).value.rows.length };
+		} };`, map[string]opnsense.Endpoint{"rows": {Path: "/api/example/rows/search", Method: "GET"}}, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer, _, failed := compiled.Call(context.Background(), stubSession{body: []byte(`{"rows": [{"a": 1}]}`),
+		now: 1750000000}, "example", "pass")
+	if failed != nil {
+		t.Fatalf("a plugin with no range failed on an unknown version: %+v", failed)
+	}
+	if got := answer.(map[string]any); got["rows"] != int64(1) && got["rows"] != float64(1) || got["version"] != nil {
+		t.Errorf("the pass answered %v", got)
 	}
 }

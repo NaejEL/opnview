@@ -1,10 +1,10 @@
-package collect
+package collect_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/collect/dnslookup"
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 
@@ -30,8 +30,8 @@ func interfaceIDOf(t *testing.T, database *store.Store, identifier string) int64
 // stored before the failure -- is placed, with its scope, and in its slots.
 func TestAFilterLogPassThatFailsPartWayStillPlacesWhatItStored(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
+	harness := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	page := []any{
 		map[string]any{"__digest__": "exampledigest0000000000000000201", "__timestamp__": "2026-09-26T23:50:01",
 			"interface": "exdev0", "action": "pass", "dir": "in", "ipversion": "4", "protoname": "tcp",
@@ -43,24 +43,24 @@ func TestAFilterLogPassThatFailsPartWayStillPlacesWhatItStored(t *testing.T) {
 			"length": "60", "src": "198.51.100.11", "dst": "203.0.113.78", "srcport": "40001", "dstport": "443",
 			"reason": "match"},
 	}
-	harness.fake.AnswerJSON(opnsense.FirewallLog, page)
+	harness.Fake.AnswerJSON(opnsense.FirewallLog, page)
 	ctx := context.Background()
-	if err := harness.collector.probeFirewallLog(ctx); err != nil {
+	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing: %v", err)
 	}
-	if err := harness.collector.CollectFirewallLog(ctx); err == nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err == nil {
 		t.Fatal("the pass stored a record the schema refuses and returned no error")
 	}
-	if stored := countRows(t, harness.store, "flow"); stored != 1 {
+	if stored := collecttest.CountRows(t, harness.Store, "flow"); stored != 1 {
 		t.Fatalf("%d flows were stored, not the one before the failure", stored)
 	}
-	inside := interfaceIDOf(t, harness.store, "example_if_a")
+	inside := interfaceIDOf(t, harness.Store, "example_if_a")
 	var (
 		srcInterface *int64
 		srcClient    *int64
 		scope        string
 	)
-	if err := harness.store.DB().QueryRow(`SELECT src_interface_id, src_client_id, traffic_scope FROM flow`).
+	if err := harness.Store.DB().QueryRow(`SELECT src_interface_id, src_client_id, traffic_scope FROM flow`).
 		Scan(&srcInterface, &srcClient, &scope); err != nil {
 		t.Fatalf("reading the flow: %v", err)
 	}
@@ -70,7 +70,7 @@ func TestAFilterLogPassThatFailsPartWayStillPlacesWhatItStored(t *testing.T) {
 	if scope != "north_south" {
 		t.Errorf("the stored record is %s, not north-south", scope)
 	}
-	if slots := scalarCount(t, harness.store, "SELECT count(*) FROM volume_aggregate_1h WHERE bytes = 60"); slots != 1 {
+	if slots := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM volume_aggregate_1h WHERE bytes = 60"); slots != 1 {
 		t.Errorf("the stored record is in %d hour slots, not one", slots)
 	}
 }
@@ -80,8 +80,8 @@ func TestAFilterLogPassThatFailsPartWayStillPlacesWhatItStored(t *testing.T) {
 // the networks they cover are proposed as detected, a link-local one never.
 func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
+	harness := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	body := interfacesBody(t)
 	for _, row := range body["rows"].([]any) {
 		object := row.(map[string]any)
@@ -98,12 +98,12 @@ func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing
 			map[string]any{"ipaddr": "not an address"},
 		}
 	}
-	harness.fake.AnswerJSON(opnsense.InterfacesInfo, body)
+	harness.Fake.AnswerJSON(opnsense.InterfacesInfo, body)
 	ctx := context.Background()
-	if err := harness.collector.RefreshDiscovery(ctx); err != nil {
+	if err := harness.Collector.RefreshDiscovery(ctx); err != nil {
 		t.Fatalf("discovering: %v", err)
 	}
-	inside := interfaceIDOf(t, harness.store, "example_if_a")
+	inside := interfaceIDOf(t, harness.Store, "example_if_a")
 	for _, want := range []struct {
 		field, address string
 		bits           int64
@@ -113,17 +113,17 @@ func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing
 		{vocab.SourceFieldIPv6, "2001:db8::1", 64},
 		{vocab.SourceFieldIPv6, "fe80::1", 64},
 	} {
-		if rows := scalarCount(t, harness.store, `SELECT count(*) FROM interface_address
+		if rows := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM interface_address
 			WHERE interface_id = ? AND source_field = ? AND address = ? AND prefix_length = ?`,
 			inside, want.field, want.address, want.bits); rows != 1 {
 			t.Errorf("%s %s/%d is stored %d times under its own field", want.field, want.address, want.bits, rows)
 		}
 	}
-	if rows := scalarCount(t, harness.store, `SELECT count(*) FROM interface_address
+	if rows := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM interface_address
 		WHERE interface_id = ? AND source_field IN ('ipv4', 'ipv6')`, inside); rows != 4 {
 		t.Errorf("%d secondary-field rows are stored, not the four entries that parse", rows)
 	}
-	networks, err := harness.store.InterfaceNetworks(ctx)
+	networks, err := harness.Store.InterfaceNetworks(ctx)
 	if err != nil {
 		t.Fatalf("reading the networks: %v", err)
 	}
@@ -153,33 +153,33 @@ func TestDiscoveryStoresTheSecondaryAddressesAndProposesTheirNetworks(t *testing
 // runs it, and the slots then equal a direct computation over the reclassified flows.
 func TestAnOperatorNetworkChangesClassificationAtTheNextDerivation(t *testing.T) {
 	t.Parallel()
-	harness := arrangeFilterLogCollection(t)
+	harness := collecttest.ArrangeFilterLogCollection(t)
 	ctx := context.Background()
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
 	target := "203.0.113.20"
-	if placed := scalarCount(t, harness.store,
+	if placed := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM flow WHERE dst_address = ? AND dst_interface_id IS NOT NULL", target); placed != 0 {
 		t.Fatalf("the destination %s is placed before any edit", target)
 	}
-	flowsToTarget := scalarCount(t, harness.store, "SELECT count(*) FROM flow WHERE dst_address = ?", target)
+	flowsToTarget := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM flow WHERE dst_address = ?", target)
 	if flowsToTarget == 0 {
 		t.Fatalf("no flow names %s", target)
 	}
-	second := interfaceIDOf(t, harness.store, "example_if_b")
-	if _, err := harness.store.AddInterfaceNetwork(ctx, second, target+"/32", referenceEpoch()); err != nil {
+	second := interfaceIDOf(t, harness.Store, "example_if_b")
+	if _, err := harness.Store.AddInterfaceNetwork(ctx, second, target+"/32", collecttest.ReferenceEpoch()); err != nil {
 		t.Fatalf("adding the network: %v", err)
 	}
 	// The edit alone changes nothing stored; the next derivation does.
-	if err := harness.collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
 		t.Fatalf("deriving: %v", err)
 	}
-	if placed := scalarCount(t, harness.store,
+	if placed := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM flow WHERE dst_address = ? AND dst_interface_id = ?", target, second); placed != flowsToTarget {
 		t.Errorf("%d of the %d flows to %s are placed on the operator's network", placed, flowsToTarget, target)
 	}
-	mismatches := scalarCount(t, harness.store, `SELECT count(*) FROM (
+	mismatches := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM (
 		SELECT (observed_at / 3600) * 3600 AS slot, traffic_direction, sum(packet_bytes) AS bytes
 		FROM classified_flow GROUP BY 1, 2) AS f
 		LEFT JOIN (SELECT period_start_at AS slot, traffic_direction, sum(bytes) AS bytes
@@ -189,103 +189,8 @@ func TestAnOperatorNetworkChangesClassificationAtTheNextDerivation(t *testing.T)
 	if mismatches != 0 {
 		t.Errorf("%d hour slots differ from a direct computation over the reclassified flows", mismatches)
 	}
-	if eastWest := scalarCount(t, harness.store, `SELECT count(*) FROM volume_aggregate_1h
+	if eastWest := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM volume_aggregate_1h
 		WHERE traffic_direction = 'inter_interface'`); eastWest == 0 {
 		t.Error("no slot carries the flows the edit moved between interfaces")
-	}
-}
-
-// TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt is AC8.
-func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.T) {
-	t.Parallel()
-	harness := arrangeFilterLogCollection(t)
-	ctx := context.Background()
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
-		t.Fatalf("collecting: %v", err)
-	}
-	source, destination := "198.51.100.10", "203.0.113.20"
-	var flowID, observedAt int64
-	if err := harness.store.DB().QueryRow(`SELECT id, observed_at FROM flow
-		WHERE src_address = ? AND dst_address = ?`, source, destination).Scan(&flowID, &observedAt); err != nil {
-		t.Fatalf("reading the flow: %v", err)
-	}
-	provider, err := harness.store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
-	if err != nil {
-		t.Fatalf("looking up a lease provider: %v", err)
-	}
-	expires := referenceEpoch() + 3600
-	for index, lease := range []struct{ address, hostname string }{
-		{source, "example-host"}, {"198.51.100.21", "example-twin"}, {"198.51.100.22", "example-twin"},
-	} {
-		hostname := lease.hostname
-		if err := harness.store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
-			Backend: "dnsmasq", Address: lease.address, Hostname: &hostname, LeaseState: "active",
-			GenerationKey: vocab.GenerationKeyOf(nil, &expires, int64(index)), ExpiresAt: &expires,
-			ObservedAt: referenceEpoch(),
-		}); err != nil {
-			t.Fatalf("writing a lease: %v", err)
-		}
-	}
-	answer := "Recursion"
-	decide := func(logged string) (vocab.DNSResolution, int64) {
-		t.Helper()
-		record := dnslookup.Record{DeduplicationKey: "example-key-" + logged, ClientAddress: logged,
-			Domain: "example-site.example.invalid", Action: "pass", AnswerSource: &answer,
-			LookedUpAt: observedAt - 2}
-		lookup, err := harness.collector.BuildDNSResolution(ctx, record, "unbound", referenceEpoch())
-		if err != nil {
-			t.Fatalf("building the lookup: %v", err)
-		}
-		if err := harness.store.InsertDNSResolution(ctx, lookup); err != nil {
-			t.Fatalf("writing the lookup: %v", err)
-		}
-		if _, err := harness.store.Reclassify(ctx, []string{lookup.ClientAddress}, referenceEpoch()); err != nil {
-			t.Fatalf("classifying: %v", err)
-		}
-		if _, err := harness.store.Attribute(ctx, observedAt-60, observedAt, 5, referenceEpoch()); err != nil {
-			t.Fatalf("attributing: %v", err)
-		}
-		attributed := scalarCount(t, harness.store, "SELECT count(*) FROM domain_attribution WHERE flow_id = ?", flowID)
-		if _, err := harness.store.DB().Exec("DELETE FROM dns_resolution WHERE lookup_key = ?",
-			record.DeduplicationKey); err != nil {
-			t.Fatalf("clearing the lookup: %v", err)
-		}
-		return lookup, int64(attributed)
-	}
-
-	for _, step := range []struct {
-		logged, resolution string
-		attributes         bool
-	}{
-		{"example-twin.example.invalid", vocab.ClientResolutionAmbiguous, false},
-		{"example-nobody.example.invalid", vocab.ClientResolutionUnknown, false},
-		{"example-host.example.invalid", vocab.ClientResolutionLeased, true},
-	} {
-		lookup, attributed := decide(step.logged)
-		if lookup.ClientResolution != step.resolution {
-			t.Errorf("%s was recorded as %s, not %s", step.logged, lookup.ClientResolution, step.resolution)
-		}
-		if lookup.ClientHostname == nil || *lookup.ClientHostname != step.logged {
-			t.Errorf("%s did not keep the logged name: %v", step.logged, lookup.ClientHostname)
-		}
-		if step.attributes != (attributed == 1) {
-			t.Errorf("%s gives the flow %d attributions", step.logged, attributed)
-		}
-		if step.attributes && lookup.ClientAddress != source {
-			t.Errorf("%s resolved to %s, not %s", step.logged, lookup.ClientAddress, source)
-		}
-		if !step.attributes && lookup.ClientID != nil {
-			t.Errorf("%s, which names no single machine, was given client %d", step.logged, *lookup.ClientID)
-		}
-	}
-
-	// A lookup that logged an address is recorded as such.
-	lookup, attributed := decide(source)
-	if lookup.ClientResolution != vocab.ClientResolutionLoggedAddress || lookup.ClientHostname != nil {
-		t.Errorf("an address lookup was recorded as %s with host name %v", lookup.ClientResolution,
-			lookup.ClientHostname)
-	}
-	if attributed != 1 {
-		t.Errorf("an address lookup gives the flow %d attributions", attributed)
 	}
 }

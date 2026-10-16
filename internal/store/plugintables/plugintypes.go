@@ -22,7 +22,7 @@ import (
 // (internal/store/sqldb/driver.go) holds for every column.
 
 // maxBoundParameters bounds the parameters of one statement, below PostgreSQL's 65535.
-const MaxBoundParameters = 60000
+const maxBoundParameters = 60000
 
 // InsertPluginRows writes rows into one plugin table in ONE transaction, as multi-row INSERTs of at
 // most maxBoundParameters parameters each: a push batch of n rows is ceil(n * columns / 60000)
@@ -37,7 +37,7 @@ func (s *PluginTableStore) InsertPluginRows(ctx context.Context, table plugindec
 	}
 	table = held
 	rows = plugindecl.LastPerKey(table, rows)
-	perStatement := max(1, MaxBoundParameters/len(table.Columns))
+	perStatement := max(1, maxBoundParameters/len(table.Columns))
 	transaction, err := s.SQL.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing into %s: %w", table.SQLName(), err)
@@ -453,7 +453,7 @@ func (s *PluginTableStore) PluginState(ctx context.Context, plugin string) (map[
 	return state, rows.Err()
 }
 
-// retentionHorizon is the instant before which a table's rows are purged, or false when nothing
+// RetentionHorizon is the instant before which a table's rows are purged, or false when nothing
 // is: a table's own retention, or the installation's.
 func RetentionHorizon(ctx context.Context, q sqldb.Querier, now, retention int64) (int64, bool, error) {
 	if retention > 0 {
@@ -465,7 +465,7 @@ func RetentionHorizon(ctx context.Context, q sqldb.Querier, now, retention int64
 	return horizon, found, err
 }
 
-// purgeTimeTable purges one table with a time column to the exact second: on a hypertable, every
+// PurgeTimeTable purges one table with a time column to the exact second: on a hypertable, every
 // chunk entirely before the horizon is dropped whole first, and the rows before it in the chunk the
 // horizon falls in are deleted.
 func PurgeTimeTable(ctx context.Context, transaction *sql.Tx, qualified, column string, horizon int64) error {
@@ -499,7 +499,7 @@ func PurgeTimeTable(ctx context.Context, transaction *sql.Tx, qualified, column 
 	return nil
 }
 
-// purgePluginTables purges every plugin table with a time column by its retention, inside the
+// PurgePluginTables purges every plugin table with a time column by its retention, inside the
 // purge's transaction. A table with no time column is never purged; one whose retention is zero
 // follows retention_seconds, under which zero deletes nothing.
 func (s *PluginTableStore) PurgePluginTables(ctx context.Context, transaction *sql.Tx, now int64) error {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"sync"
 
@@ -40,7 +41,7 @@ var hostAreas = struct {
 	failures []error
 }{areas: map[string]hostArea{}}
 
-// registerHostArea registers one area of the host, from the init() of its own file. An area
+// RegisterHostArea registers one area of the host, from the init() of its own file. An area
 // registered twice is recorded, and the service is not built.
 func RegisterHostArea(name string, install func(call *ScriptCall, area *goja.Object)) {
 	hostAreas.Lock()
@@ -52,7 +53,7 @@ func RegisterHostArea(name string, install func(call *ScriptCall, area *goja.Obj
 	hostAreas.areas[name] = hostArea{name: name, install: install}
 }
 
-// hostAreaFailures joins the registration failures of the host's areas.
+// HostAreaFailures joins the registration failures of the host's areas.
 func HostAreaFailures() error {
 	hostAreas.Lock()
 	defer hostAreas.Unlock()
@@ -72,21 +73,21 @@ func HostAreas() []string {
 	return names
 }
 
-// scriptCall is one request's host: the request, the runtime, and the first failure of a read.
+// ScriptCall is one request's host: the request, the runtime, and the first failure of a read.
 type ScriptCall struct {
 	Request *request.Request
 	VM      *goja.Runtime
 	Widget  *ScriptWidget
 	// err is the first read that failed: the store's, which ends the request as the store's.
 	err error
-	// mapMarker marks an object the script declares to be a map, written with its keys sorted
+	// MapMarker marks an object the script declares to be a map, written with its keys sorted
 	// as Go writes a map's (internal/widget/hostareas/values/host_json.go, script_json.go).
 	MapMarker *goja.Symbol
 	parse     goja.Callable
 }
 
 // newScriptCall prepares one request's host.
-func NewScriptCall(r *request.Request, vm *goja.Runtime, widget *ScriptWidget) *ScriptCall {
+func newScriptCall(r *request.Request, vm *goja.Runtime, widget *ScriptWidget) *ScriptCall {
 	call := &ScriptCall{Request: r, VM: vm, Widget: widget, MapMarker: goja.NewSymbol("opnview.map")}
 	if object, isObject := vm.Get("JSON").(*goja.Object); isObject {
 		call.parse, _ = goja.AssertFunction(object.Get("parse"))
@@ -95,7 +96,7 @@ func NewScriptCall(r *request.Request, vm *goja.Runtime, widget *ScriptWidget) *
 }
 
 // host builds the host object: every registered area, each on an object of its own.
-func (c *ScriptCall) Host() *goja.Object {
+func (c *ScriptCall) host() *goja.Object {
 	hostAreas.Lock()
 	areas := make([]hostArea, 0, len(hostAreas.areas))
 	for _, area := range hostAreas.areas {
@@ -112,7 +113,7 @@ func (c *ScriptCall) Host() *goja.Object {
 	return host
 }
 
-// fail records a failed read and stops the script: an interrupt, which no try/catch of the script
+// Fail records a failed read and stops the script: an interrupt, which no try/catch of the script
 // can swallow.
 func (c *ScriptCall) Fail(err error) goja.Value {
 	if c.err == nil {
@@ -122,19 +123,34 @@ func (c *ScriptCall) Fail(err error) goja.Value {
 	return goja.Undefined()
 }
 
-// throw raises a TypeError for a script that called a host function wrongly.
+// Throw raises a TypeError for a script that called a host function wrongly.
 func (c *ScriptCall) Throw(format string, arguments ...any) {
 	panic(c.VM.NewTypeError(fmt.Sprintf(format, arguments...)))
 }
 
-// function sets one host function on an area.
+// Function sets one host function on an area.
 func (c *ScriptCall) Function(area *goja.Object, name string, body func(goja.FunctionCall) goja.Value) {
 	_ = area.Set(name, body)
 }
 
-// value hands a Go value to the script as the JSON it would be written as, so a struct's fields
-// keep their order and their JSON names, and a map's keys are sorted as Go writes them.
+// Value hands a Go value to the script as the JSON it would be written as, so a struct's fields
+// keep their order and their JSON names, and a map's keys are sorted as Go writes them. A struct
+// whose members allow it -- the figures, the rows of the window -- is built member by member to the
+// same result rather than written and parsed (script_flat.go).
 func (c *ScriptCall) Value(v any) goja.Value {
+	if v == nil {
+		return goja.Null()
+	}
+	if c.parse != nil {
+		if crossed, flat := c.flatValue(reflect.ValueOf(v)); flat {
+			return crossed
+		}
+	}
+	return c.jsonValue(v)
+}
+
+// jsonValue hands a Go value to the script through its JSON.
+func (c *ScriptCall) jsonValue(v any) goja.Value {
 	if v == nil {
 		return goja.Null()
 	}
@@ -152,7 +168,7 @@ func (c *ScriptCall) Value(v any) goja.Value {
 	return parsed
 }
 
-// exportOf is a script's value as Go reads it: nil for undefined and null.
+// ExportOf is a script's value as Go reads it: nil for undefined and null.
 func ExportOf(value goja.Value) any {
 	if value == nil || goja.IsUndefined(value) || goja.IsNull(value) {
 		return nil
@@ -160,12 +176,12 @@ func ExportOf(value goja.Value) any {
 	return value.Export()
 }
 
-// absent reports whether an argument is undefined or null.
+// Absent reports whether an argument is undefined or null.
 func Absent(value goja.Value) bool {
 	return value == nil || goja.IsUndefined(value) || goja.IsNull(value)
 }
 
-// integerOf reads an argument that must be a whole number.
+// IntegerOf reads an argument that must be a whole number.
 func (c *ScriptCall) IntegerOf(value goja.Value, what string) int64 {
 	number, ok := WholeNumber(ExportOf(value))
 	if !ok {
@@ -174,7 +190,7 @@ func (c *ScriptCall) IntegerOf(value goja.Value, what string) int64 {
 	return number
 }
 
-// optionalIntegerOf reads an argument that is a whole number or null.
+// OptionalIntegerOf reads an argument that is a whole number or null.
 func (c *ScriptCall) OptionalIntegerOf(value goja.Value, what string) *int64 {
 	if Absent(value) {
 		return nil
@@ -183,7 +199,7 @@ func (c *ScriptCall) OptionalIntegerOf(value goja.Value, what string) *int64 {
 	return &number
 }
 
-// textOf reads an argument that must be a string.
+// TextOf reads an argument that must be a string.
 func (c *ScriptCall) TextOf(value goja.Value, what string) string {
 	text, ok := ExportOf(value).(string)
 	if !ok {
@@ -192,7 +208,7 @@ func (c *ScriptCall) TextOf(value goja.Value, what string) string {
 	return text
 }
 
-// textsOf reads an argument that must be an array of strings.
+// TextsOf reads an argument that must be an array of strings.
 func (c *ScriptCall) TextsOf(value goja.Value, what string) []string {
 	list, ok := ExportOf(value).([]any)
 	if !ok {
@@ -209,7 +225,7 @@ func (c *ScriptCall) TextsOf(value goja.Value, what string) []string {
 	return texts
 }
 
-// integersOf reads an argument that must be an array of whole numbers.
+// IntegersOf reads an argument that must be an array of whole numbers.
 func (c *ScriptCall) IntegersOf(value goja.Value, what string) []int64 {
 	list, ok := ExportOf(value).([]any)
 	if !ok {
@@ -226,7 +242,7 @@ func (c *ScriptCall) IntegersOf(value goja.Value, what string) []int64 {
 	return numbers
 }
 
-// intervalOf reads an argument that must be an interval, {from, to}.
+// IntervalOf reads an argument that must be an interval, {from, to}.
 func (c *ScriptCall) IntervalOf(value goja.Value, what string) envelope.Interval {
 	object, isObject := value.(*goja.Object)
 	if !isObject {
@@ -235,7 +251,7 @@ func (c *ScriptCall) IntervalOf(value goja.Value, what string) envelope.Interval
 	return envelope.Interval{From: c.IntegerOf(object.Get("from"), what+".from"), To: c.IntegerOf(object.Get("to"), what+".to")}
 }
 
-// optionalIntervalOf reads an argument that is an interval or null.
+// OptionalIntervalOf reads an argument that is an interval or null.
 func (c *ScriptCall) OptionalIntervalOf(value goja.Value, what string) *envelope.Interval {
 	if Absent(value) {
 		return nil
@@ -244,7 +260,7 @@ func (c *ScriptCall) OptionalIntervalOf(value goja.Value, what string) *envelope
 	return &interval
 }
 
-// decodeArgument reads an argument the script built into a Go value of a JSON shape, through JSON.
+// DecodeArgument reads an argument the script built into a Go value of a JSON shape, through JSON.
 func (c *ScriptCall) DecodeArgument(value goja.Value, what string, into any) {
 	encoded, err := c.Encode(value)
 	if err != nil {
@@ -255,7 +271,7 @@ func (c *ScriptCall) DecodeArgument(value goja.Value, what string, into any) {
 	}
 }
 
-// wholeNumber reads an exported number that holds a whole value.
+// WholeNumber reads an exported number that holds a whole value.
 func WholeNumber(value any) (int64, bool) {
 	switch typed := value.(type) {
 	case int64:
@@ -270,7 +286,7 @@ func WholeNumber(value any) (int64, bool) {
 	return 0, false
 }
 
-// describe names what a value is, for a message.
+// Describe names what a value is, for a message.
 func Describe(value goja.Value) string {
 	switch {
 	case value == nil || goja.IsUndefined(value):

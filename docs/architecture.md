@@ -322,8 +322,12 @@ and its restore. The pin is changed deliberately, never floated.
 **`opnview` uses no TSL feature.** What it uses -- hypertables (`create_hypertable`),
 `show_chunks` and `drop_chunks` -- is Apache-2.0; it uses no continuous aggregate, no
 compression or columnstore, no background job or policy (*Storage fit*, `docs/data-model.md`).
-Every test database runs with `timescaledb.license=apache`, the Apache edition alone, so a TSL
-feature reached by mistake fails the suite.
+Every database runs with `timescaledb.license=apache`, the Apache edition alone -- the test
+databases and the installation's (`docker-compose.serve.yml`) -- so a TSL feature reached by
+mistake fails the suite, and `sql/schema-checks.sh` asserts the edition the database runs with. The
+decision of 12 October 2026 to enable the Timescale License was superseded on 16 October 2026: no
+continuous aggregate is exactly equivalent to the table it would replace (*Storage fit*), and an
+unused licence would be a placeholder.
 
 **Telemetry is off, and enforced.** Every database service runs with
 `timescaledb.telemetry_level=off`, and `opnview` refuses to start against a database where it is
@@ -370,6 +374,7 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/broker/schedule` — when each mirrored datum is refreshed, and in what order calls leave.
 - `internal/buildinfo` — the few facts the program knows about itself.
 - `internal/collect` — the collector: composes its parts, runs the probe round, orders the purge and lists the scheduler's tasks.
+- `internal/collect/collecttest` — what the collector's tests share: the stopped clock, the probe harness and the NetFlow join's test world.
 - `internal/collect/core` — the state every part of the collector shares, and what every part uses.
 - `internal/collect/derive` — the derivation every pass ends with, the NetFlow join and the measured volumes included.
 - `internal/collect/dhcplease` — the dhcp_lease kind's contract.
@@ -410,13 +415,14 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/measurecost` — the LV-C measuring tool.
 - `internal/modularity` — the tests that keep the modular rule true: an implementation is a directory, never a hand-kept list.
 - `internal/opnsense` — the only package that constructs an HTTP request: the client and the endpoints it may call.
-- `internal/plugin` — the plugin host: discovery, loading and validation, the kinds' adapters, settings, and a plugin's own tests.
+- `internal/plugin` — the plugin host: discovery, loading and validation, the kinds' adapters, settings, and the calls a plugin's own tests make.
 - `internal/plugin/contract` — the plugin manifest and the refusal codes.
 - `internal/plugin/fetch` — the plugin host's facility for fetching over HTTP(S), and a plugin's files.
+- `internal/plugin/harness` — the runner of a plugin's own tests, `opnview plugin test`'s and the Go suite's.
 - `internal/plugin/listing` — what the API surfaces read of the loaded plugins.
 - `internal/plugin/mmdbwrite` — small MaxMind DB files and their archives, for a plugin's tests.
 - `internal/plugin/plugintest` — what the built-in plugins' own tests share.
-- `internal/plugin/runtime` — the bindings of a plugin's JavaScript to the host.
+- `internal/plugin/scripthost` — the bindings of a plugin's JavaScript to the host.
 - `internal/push` — what the firewall sends to opnview: the listeners, the routing and the batching.
 - `internal/push/ipfixregistry` — the IANA IPFIX Information Elements registry.
 - `internal/push/protocols` — the generated link of every push protocol into the binary.
@@ -440,10 +446,12 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/store/reads` — the read paths, on the read-only connections.
 - `internal/store/samples` — measurement samples and the current rates read from them.
 - `internal/store/sqldb` — the handle every part of the store runs on: pools, driver, statement registry, query check.
-- `internal/store/storetest` — a database of its own for each test.
+- `internal/store/storetest` — what the store's tests share: a database of its own for each test, and the test network.
 - `internal/store/vocab` — the store's closed vocabularies and row types.
 - `internal/suffixlist` — the Public Suffix List format, and a name's registrable domain.
+- `internal/testtiming` — where the everyday suite's time goes, per package, recorded while a CI-only switch is on.
 - `internal/web` — the HTTP core: the server, the route table, sessions and CSRF, the layout, the themes, the string catalogue and the surfaces' seam.
+- `internal/web/messages` — the catalogue keys the core chooses, and the keys composed from a registry row.
 - `internal/web/settingfields` — the fields of the settings forms.
 - `internal/web/surfaces` — the generated link of every surface into the binary.
 - `internal/web/surfaces/account` — the surface that creates the first account and signs readers in and out.
@@ -470,7 +478,8 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/widget/datasets` — the data catalogue served to widgets.
 - `internal/widget/envelope` — the response every widget answers with.
 - `internal/widget/figures` — the figures several widgets share: sites, attribution, rates, samples, peers.
-- `internal/widget/hostareas/readers` — the script host's areas that read the installation's data.
+- `internal/widget/hostareas/installation` — the script host's areas reading the installation's own state: interfaces, rates, samples, datasets and the widget's statements.
+- `internal/widget/hostareas/traffic` — the script host's areas reading the logged traffic of a window: flows, volumes, series, sites, attribution, addresses and peers.
 - `internal/widget/hostareas/values` — the script host's areas that work on values a script holds.
 - `internal/widget/params` — a widget's manifest and parameters.
 - `internal/widget/request` — one widget request being served.

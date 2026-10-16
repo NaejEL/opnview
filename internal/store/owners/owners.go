@@ -746,7 +746,7 @@ type reassignedHours struct {
 	Hours []int64
 }
 
-// readReassignedHours reads every hour a change of ownership recorded.
+// ReadReassignedHours reads every hour a change of ownership recorded.
 func ReadReassignedHours(ctx context.Context, q sqldb.Querier) (reassignedHours, error) {
 	var read reassignedHours
 	text, err := sqldb.Statement("reassigned_hours")
@@ -769,7 +769,7 @@ func ReadReassignedHours(ctx context.Context, q sqldb.Querier) (reassignedHours,
 	return read, rows.Err()
 }
 
-// forgetReassignedHours deletes exactly the rows a refresh read, once it has rewritten their slots;
+// ForgetReassignedHours deletes exactly the rows a refresh read, once it has rewritten their slots;
 // a row a change recorded while the refresh ran is kept for the next one.
 func ForgetReassignedHours(ctx context.Context, q sqldb.Querier, ids []int64) error {
 	if len(ids) == 0 {

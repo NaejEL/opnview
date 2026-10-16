@@ -1,6 +1,9 @@
 package request
 
 import (
+	"encoding/json"
+	"sort"
+
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -189,7 +192,36 @@ func ScanClient(row reads.RowScanner) (*ClientInfo, error) {
 	return &info, nil
 }
 
-// Geolocation returns the geolocation of an address, no_row when none is stored.
+// geolocationBatch bounds the addresses one widget_geo statement reads. A window placing more outside
+// peers than this reads them in as many statements as it takes, each a bounded set of primary-key
+// searches; at the 1 000 000-row seed a 30-day window places fewer.
+const geolocationBatch = 20000
+
+// PeerAddressColumn is the column a row names an outside peer by, in the core's reads and in a
+// widget's own statements alike: a row a widget's statement returns with a text in it is placed
+// (Place), so its geolocation is read with the others.
+const PeerAddressColumn = "peer_address"
+
+// Place records outside peers the request is placing: the geolocations of every address placed and
+// not yet read are read together at the first one a script asks for (Geolocation), in one statement
+// rather than one statement a peer. The core places the peers of every row it reads -- the rolling
+// window (internal/widget/traffic/volume.go), the destinations (internal/widget/traffic/flows.go) and
+// the peer_address column of a widget's own statement (host.query) -- so a widget that places peers
+// is served by the batch without naming it.
+func (r *Request) Place(addresses ...string) {
+	for _, address := range addresses {
+		if address == "" {
+			continue
+		}
+		if r.placed == nil {
+			r.placed = map[string]bool{}
+		}
+		r.placed[address] = true
+	}
+}
+
+// Geolocation returns the geolocation of an address, no_row when none is stored. A miss reads the
+// address together with every address placed and not yet read (Place).
 func (r *Request) Geolocation(address string) (*GeoInfo, error) {
 	cache, err := r.Install()
 	if err != nil {
@@ -198,16 +230,40 @@ func (r *Request) Geolocation(address string) (*GeoInfo, error) {
 	if info, present := cache.geo[address]; present {
 		return info, nil
 	}
-	info := &GeoInfo{LookupState: GeoNoRow}
-	err = r.Db.WidgetRows(r.Ctx, "widget_geo", vocab.Period{}, map[string]any{"address": address},
+	pending := []string{address}
+	for placed := range r.placed {
+		if _, read := cache.geo[placed]; !read && placed != address {
+			pending = append(pending, placed)
+		}
+	}
+	r.placed = nil
+	// In a stable order, so a batch boundary falls where it fell on the last run.
+	sort.Strings(pending)
+	for start := 0; start < len(pending); start += geolocationBatch {
+		if err := r.readGeolocations(cache, pending[start:min(start+geolocationBatch, len(pending))]); err != nil {
+			return nil, err
+		}
+	}
+	return cache.geo[address], nil
+}
+
+// readGeolocations reads the geolocations of a bounded set of addresses into the cache: an address no
+// row holds is cached as no_row, as a read of it alone answered.
+func (r *Request) readGeolocations(cache *installation, addresses []string) error {
+	encoded, err := json.Marshal(addresses)
+	if err != nil {
+		return err
+	}
+	err = r.Db.WidgetRows(r.Ctx, "widget_geo", vocab.Period{}, map[string]any{"addresses": string(encoded)},
 		func(row reads.RowScanner) error {
 			var (
-				ignored                 string
+				info                    GeoInfo
+				address                 string
 				country, name, operator reads.NullString
 				latitude, longitude     reads.NullFloat64
 				asn, build              reads.NullInt64
 			)
-			if err := row.Scan(&ignored, &info.LookupState, &country, &name, &latitude, &longitude, &asn,
+			if err := row.Scan(&address, &info.LookupState, &country, &name, &latitude, &longitude, &asn,
 				&operator, &build); err != nil {
 				return err
 			}
@@ -218,13 +274,18 @@ func (r *Request) Geolocation(address string) (*GeoInfo, error) {
 			info.ASN = NullableNumber(asn)
 			info.Operator = NullableText(operator)
 			info.DatasetBuildAt = NullableNumber(build)
+			cache.geo[address] = &info
 			return nil
 		})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	cache.geo[address] = info
-	return info, nil
+	for _, address := range addresses {
+		if _, read := cache.geo[address]; !read {
+			cache.geo[address] = &GeoInfo{LookupState: GeoNoRow}
+		}
+	}
+	return nil
 }
 
 // Rule returns one rule, or nil when no row holds the id.

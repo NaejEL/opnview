@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/NaejEL/opnview/internal/store"
-	readspkg "github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/params"
@@ -293,17 +293,17 @@ func checkReadStatement(ctx context.Context, database *store.Store, widgetType, 
 	if _, err := database.CheckQuery(ctx, text, parameters); err != nil {
 		return checkedStatement{refusal: queryRefusal(widgetType, fmt.Sprintf("the statement %s", statement), err)}
 	}
-	reads, err := database.Reads(ctx, text, parameters)
+	relations, err := database.Reads(ctx, text, parameters)
 	if err != nil {
 		return checkedStatement{refusal: params.Refuse(widgetType, params.RefusalQueryDoesNotPlan, "the statement %s: %v",
 			statement, err)}
 	}
-	if credential := readspkg.CredentialTablesRead(reads); len(credential) > 0 {
+	if credential := reads.CredentialTablesRead(relations); len(credential) > 0 {
 		return checkedStatement{refusal: params.Refuse(widgetType, params.RefusalQueryReadsCredential,
 			"the statement %s reads %v, which hold a credential, a session or a setting row; no widget reads them",
 			statement, credential)}
 	}
-	return checkedStatement{domain: database.CarriesDomain(reads)}
+	return checkedStatement{domain: database.CarriesDomain(relations)}
 }
 
 // queryRefusal names a refusal of the store's query check with the widget's code.

@@ -14,20 +14,58 @@
 #
 # THE TEST BUDGET. The everyday suite is what builders and verifiers run on every
 # iteration, and its go test wall time must stay under one minute (the
-# maintainer's budget of 7 October 2026,
-# specs/SPEC-test-budget-and-two-live-defects.md). go test runs with -count=1 so
-# the time measured is the suite's and never a cache hit's. The -race run, the
-# tests moved out of this suite and the schema checks with their scale seeds and
-# query plans run before a deployment instead:
+# maintainer's budget of 7 October 2026). go test runs with -count=1 so the time
+# measured is the suite's and never a cache hit's. The timed span also builds,
+# vets and tests ci/mover, the move tooling, which is a module of its own. The
+# -race run, the tests moved out of this suite and the schema checks with their scale seeds and query plans run
+# before a deployment instead:
 #
 #     docker compose run --rm pre-deployment
 #
 # The container's CPU count is printed beside the time, so a run on a slower or
 # busier machine is identifiable as such.
+#
+# TWO CI-ONLY SWITCHES, both off by default and set by nothing but what is named here:
+#
+#   OPNVIEW_TEST_BREAKDOWN=1  records where the suite's time goes -- per package, each
+#                             test database's clone, Open's schema apply and read-role
+#                             grants, every wait for the database and its retries, the
+#                             drop, and the test bodies (internal/testtiming) -- and
+#                             prints the table after go test (ci/testtiming):
+#
+#                                 docker compose run --rm -e OPNVIEW_TEST_BREAKDOWN=1 checks
+#
+#   OPNVIEW_BUDGET_PROBE_ONLY=1  restricts go test to ci/budgetprobe. ci/budget-self-test.sh
+#                             sets it, with the probe's sleep past the budget, so the budget's
+#                             own check costs the probe's sleep and not a second whole suite.
 set -uo pipefail
 
 # The test budget, in seconds: the one place it is written.
 TEST_BUDGET_SECONDS=60
+
+# THE COMMANDS RUN ON A COPY OF THE WORKING TREE IN /tmp, a tmpfs here. The working tree reaches
+# the container through a bind mount from the host, and every file read through it crosses the
+# host's file sharing: measured on 16 October 2026, the source-policy tests of internal/opnsense
+# took 9.6 s reading the tree through the mount and 2.7 s reading a copy, and every compile reads
+# the tree the same way. The copy holds everything but .git and .claude, takes a few seconds, is
+# timed and printed apart, and is removed by its exact path at the end. Nothing is written back:
+# the four commands read the tree, and gofmt -l lists, it does not rewrite.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+TREE_COPY=/tmp/opnview-checks-tree
+copy_started="$(date +%s%N)"
+rm -rf -- "$TREE_COPY"
+mkdir -p "$TREE_COPY"
+tar -C "$REPO_ROOT" --exclude=./.git --exclude=./.claude -cf - . | tar -C "$TREE_COPY" -xf -
+copy_status=$?
+copy_elapsed_ms=$(( ( $(date +%s%N) - copy_started ) / 1000000 ))
+printf -- '-- copying the working tree to %s: exit %s, %d.%03d s\n' "$TREE_COPY" "$copy_status" \
+  $(( copy_elapsed_ms / 1000 )) $(( copy_elapsed_ms % 1000 ))
+if [ "$copy_status" -ne 0 ]; then
+  printf -- 'checks: FAILED, the working tree could not be copied\n' >&2
+  exit 1
+fi
+cd "$TREE_COPY" || exit 1
+trap 'cd / && rm -rf -- "$TREE_COPY"' EXIT
 
 failed=0
 
@@ -60,12 +98,45 @@ printf -- '== go build ./...\n'
 go build ./...
 report 'go build ./...' "$?"
 
-printf -- '== go test -count=1 ./...\n'
+test_packages=(./...)
+if [ -n "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
+  test_packages=(./ci/budgetprobe)
+fi
+breakdown_dir=''
+if [ -n "${OPNVIEW_TEST_BREAKDOWN:-}" ]; then
+  breakdown_dir="$(mktemp -d)"
+  export OPNVIEW_TEST_TIMING_DIR="$breakdown_dir"
+fi
+
 test_started="$(date +%s%N)"
-go test -count=1 ./...
-test_status=$?
+# The move tooling, its own module, is built, vetted and tested inside the timed span, beside the
+# suite rather than after it; its output is printed once the suite's is.
+mover_log="$(mktemp)"
+mover_pid=''
+if [ -z "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
+  (cd ci/mover && go build ./... && go vet ./... && go test -count=1 ./...) > "$mover_log" 2>&1 &
+  mover_pid=$!
+fi
+printf -- '== go test -count=1 %s\n' "${test_packages[*]}"
+go test -count=1 "${test_packages[@]}"
+report "go test -count=1 ${test_packages[*]}" "$?"
+if [ -n "$mover_pid" ]; then
+  wait "$mover_pid"
+  mover_status=$?
+  printf -- '== ci/mover: go build, go vet, go test -count=1\n'
+  cat "$mover_log"
+  report 'ci/mover' "$mover_status"
+fi
+rm -f -- "$mover_log"
 test_elapsed_ms=$(( ( $(date +%s%N) - test_started ) / 1000000 ))
-report 'go test -count=1 ./...' "$test_status"
+
+if [ -n "$breakdown_dir" ]; then
+  unset OPNVIEW_TEST_TIMING_DIR
+  printf -- '== the breakdown of the go test time, per package (seconds summed over parallel tests)\n'
+  go run ./ci/testtiming "$breakdown_dir"
+  report 'ci/testtiming' "$?"
+  rm -rf -- "$breakdown_dir"
+fi
 
 cpus="$(nproc)"
 printf -- '-- go test wall time: %d.%03d s on %s CPUs (test budget: %d s)\n' \

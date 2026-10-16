@@ -1,10 +1,11 @@
-package collect
+package collect_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 )
@@ -14,7 +15,7 @@ import (
 // systemTimeAt is a systemTime answer whose wall clock is the reference instant as a
 // firewall at offset seconds from UTC writes it, in the shape the survey records.
 func systemTimeAt(offset time.Duration, zone string) map[string]any {
-	wall := referenceInstant().Add(offset)
+	wall := collecttest.ReferenceInstant().Add(offset)
 	return map[string]any{
 		"uptime":   "11 days, 10:17:36",
 		"datetime": wall.Format("Mon Jan _2 15:04:05 ") + zone + wall.Format(" 2006"),
@@ -23,9 +24,9 @@ func systemTimeAt(offset time.Duration, zone string) map[string]any {
 }
 
 // oldestObserved is the earliest observed_at stored.
-func oldestObserved(t *testing.T, harness *probeHarness) int64 {
+func oldestObserved(t *testing.T, harness *collecttest.ProbeHarness) int64 {
 	t.Helper()
-	return int64(scalarCount(t, harness.store, "SELECT min(observed_at) FROM flow"))
+	return int64(collecttest.ScalarCount(t, harness.Store, "SELECT min(observed_at) FROM flow"))
 }
 
 // TestTheFilterLogIsStoredInUTCWhateverTheFirewallsZone: the same page read from a
@@ -35,20 +36,20 @@ func TestTheFilterLogIsStoredInUTCWhateverTheFirewallsZone(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 
-	onUTC := arrangeFilterLogCollection(t)
-	if err := onUTC.collector.CollectFirewallLog(ctx); err != nil {
+	onUTC := collecttest.ArrangeFilterLogCollection(t)
+	if err := onUTC.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting from the firewall on UTC: %v", err)
 	}
 
-	onCEST := arrangeFilterLogCollection(t)
-	onCEST.fake.AnswerJSON(opnsense.SystemTime, systemTimeAt(2*time.Hour, "CEST"))
-	if err := onCEST.collector.RefreshDiscovery(ctx); err != nil {
+	onCEST := collecttest.ArrangeFilterLogCollection(t)
+	onCEST.Fake.AnswerJSON(opnsense.SystemTime, systemTimeAt(2*time.Hour, "CEST"))
+	if err := onCEST.Collector.RefreshDiscovery(ctx); err != nil {
 		t.Fatalf("rediscovering: %v", err)
 	}
-	if offset := onCEST.collector.FirewallOffsetSeconds(); offset != 7200 {
+	if offset := onCEST.Collector.FirewallOffsetSeconds(); offset != 7200 {
 		t.Fatalf("a CEST wall clock measured %ds from UTC, want 7200", offset)
 	}
-	if err := onCEST.collector.CollectFirewallLog(ctx); err != nil {
+	if err := onCEST.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting from the firewall on CEST: %v", err)
 	}
 
@@ -64,10 +65,10 @@ func TestTheFilterLogIsStoredInUTCWhateverTheFirewallsZone(t *testing.T) {
 func TestNoFilterLogLineIsStoredBeforeTheOffsetIsKnown(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	harness := arrangeFilterLogCollection(t)
+	harness := collecttest.ArrangeFilterLogCollection(t)
 
-	fresh := newTestCollector(t, providertest.NewClient(t, harness.fake), harness.store, harness.clock)
-	harness.fake.AnswerJSON(opnsense.SystemTime, systemTimeAt(2*time.Hour, "CEST"))
+	fresh := collecttest.NewTestCollector(t, providertest.NewClient(t, harness.Fake), harness.Store, harness.Clock)
+	harness.Fake.AnswerJSON(opnsense.SystemTime, systemTimeAt(2*time.Hour, "CEST"))
 	if err := fresh.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting before discovery: %v", err)
 	}
@@ -75,13 +76,13 @@ func TestNoFilterLogLineIsStoredBeforeTheOffsetIsKnown(t *testing.T) {
 		t.Errorf("the collector measured %ds before its first read, want 7200", offset)
 	}
 
-	silent := arrangeFilterLogCollection(t)
-	blind := newTestCollector(t, providertest.NewClient(t, silent.fake), silent.store, silent.clock)
-	silent.fake.Answer(opnsense.SystemTime, 404, nil)
+	silent := collecttest.ArrangeFilterLogCollection(t)
+	blind := collecttest.NewTestCollector(t, providertest.NewClient(t, silent.Fake), silent.Store, silent.Clock)
+	silent.Fake.Answer(opnsense.SystemTime, 404, nil)
 	if err := blind.CollectFirewallLog(ctx); err == nil {
 		t.Error("a pass with no way to know the firewall's zone succeeded")
 	}
-	if stored := countRows(t, silent.store, "flow"); stored != 0 {
+	if stored := collecttest.CountRows(t, silent.Store, "flow"); stored != 0 {
 		t.Errorf("%d records were stored at a guessed time", stored)
 	}
 }

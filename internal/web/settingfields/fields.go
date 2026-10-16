@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/web"
 )
@@ -57,10 +59,10 @@ const (
 // DurationUnits are the units, longest first: the order a duration is spelled in.
 func DurationUnits() []DurationUnit {
 	return []DurationUnit{
-		{Value: UnitDays, Seconds: 86400, One: web.MsgUnitDay, Other: web.MsgUnitDays, FieldKey: web.MsgUnitDays},
-		{Value: UnitHours, Seconds: 3600, One: web.MsgUnitHour, Other: web.MsgUnitHours, FieldKey: web.MsgUnitHours},
-		{Value: UnitMinutes, Seconds: 60, One: web.MsgUnitMinute, Other: web.MsgUnitMinutes, FieldKey: web.MsgUnitMinutes},
-		{Value: UnitSeconds, Seconds: 1, One: web.MsgUnitSecond, Other: web.MsgUnitSeconds, FieldKey: web.MsgUnitSeconds},
+		{Value: UnitDays, Seconds: 86400, One: messages.MsgUnitDay, Other: messages.MsgUnitDays, FieldKey: messages.MsgUnitDays},
+		{Value: UnitHours, Seconds: 3600, One: messages.MsgUnitHour, Other: messages.MsgUnitHours, FieldKey: messages.MsgUnitHours},
+		{Value: UnitMinutes, Seconds: 60, One: messages.MsgUnitMinute, Other: messages.MsgUnitMinutes, FieldKey: messages.MsgUnitMinutes},
+		{Value: UnitSeconds, Seconds: 1, One: messages.MsgUnitSecond, Other: messages.MsgUnitSeconds, FieldKey: messages.MsgUnitSeconds},
 	}
 }
 
@@ -141,11 +143,11 @@ func TypedDuration(figure, unit string) (seconds string, refusal web.MessageKey)
 			return figure, ""
 		}
 		if count > math.MaxInt64/candidate.Seconds || count < math.MinInt64/candidate.Seconds {
-			return "", web.MsgCollectionIntervalTooLarge
+			return "", messages.MsgCollectionIntervalTooLarge
 		}
 		return strconv.FormatInt(count*candidate.Seconds, 10), ""
 	}
-	return "", web.MsgDurationUnitUnknown
+	return "", messages.MsgDurationUnitUnknown
 }
 
 // ChoiceOption is one option of a select whose options are not the source selection's
@@ -271,10 +273,10 @@ func AcceptedByLoad(ctx context.Context, base config.SettingReader, values map[s
 func TypedIntervalSeconds(typed string) (int64, web.MessageKey) {
 	seconds, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
 	if err != nil || seconds <= 0 {
-		return 0, web.MsgCollectionValueInvalid
+		return 0, messages.MsgCollectionValueInvalid
 	}
 	if seconds > config.MaxIntervalSeconds {
-		return 0, web.MsgCollectionIntervalTooLarge
+		return 0, messages.MsgCollectionIntervalTooLarge
 	}
 	return seconds, ""
 }

@@ -147,18 +147,19 @@ services:
         chmod 0600 "$$secrets/pgpass"
         exec docker-entrypoint.sh "$$@"
       - "db-serve"
-    # Telemetry off, as on every database of this project. The Timescale License
-    # features are on: continuous aggregates, compression and native retention
-    # policies, free for self-hosted use under that licence (the maintainer's
-    # decision of 12 October 2026, recorded at the end of
-    # specs/SPEC-backend-completion-plugins.md). Background workers run, as they
-    # do in production.
+    # Telemetry off, as on every database of this project. The Apache-2.0
+    # edition alone, as every test database runs: opnview uses no feature of the
+    # Timescale License. The decision of 12 October 2026 to enable it for
+    # continuous aggregates is superseded by Phase E (16 October 2026): no
+    # continuous aggregate is exactly equivalent to the table it would replace
+    # (docs/data-model.md, "Storage fit"), and enabling an unused licence would be
+    # a placeholder. Background workers run, as they do in production.
     command:
       - "postgres"
       - "-c"
       - "timescaledb.telemetry_level=off"
       - "-c"
-      - "timescaledb.license=timescale"
+      - "timescaledb.license=apache"
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "opnview", "-d", "opnview"]
       interval: 1s

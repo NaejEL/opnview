@@ -74,7 +74,7 @@ func (r *Refusal) Error() string {
 	return fmt.Sprintf("widget %q refused (%s): %s", r.Type, r.Code, r.Detail)
 }
 
-// refuse builds a Refusal.
+// Refuse builds a Refusal.
 func Refuse(widgetType, code, format string, arguments ...any) *Refusal {
 	return &Refusal{Type: widgetType, Code: code, Detail: fmt.Sprintf(format, arguments...)}
 }
@@ -101,7 +101,7 @@ var (
 	queryFilePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*\.sql$`)
 	// scriptFilePattern is a widget's script file name: a plain file of its own directory.
 	scriptFilePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*\.js$`)
-	// statementNamePattern is the name of a statement a widget's query files declare.
+	// StatementNamePattern is the name of a statement a widget's query files declare.
 	StatementNamePattern = regexp.MustCompile(`^widget_[a-z0-9]+(_[a-z0-9]+)*$`)
 )
 

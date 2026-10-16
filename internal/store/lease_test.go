@@ -1,8 +1,10 @@
-package store
+package store_test
 
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -16,7 +18,7 @@ import (
 // identity cascade is responsible for is in internal/collect.
 
 // leaseProviders returns the ids of the two DHCP servers the schema registers.
-func leaseProviders(t *testing.T, database *Store) (int64, int64) {
+func leaseProviders(t *testing.T, database *store.Store) (int64, int64) {
 	t.Helper()
 	ctx := context.Background()
 	first, err := database.ProviderID(ctx, "dhcp_lease", "kea")

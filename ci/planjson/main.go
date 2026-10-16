@@ -15,9 +15,10 @@
 //
 // reads EXPLAIN (FORMAT JSON) output on its standard input and prints one line per plan node,
 // of every subplan and init plan too, as six tab-separated fields: the node type, the relation
-// it reads (or "-"), its alias (or "-"), the index it reads (or "-"), its index condition
-// (or "-"), and the type of the node above it (or "-"). A view does not appear: PostgreSQL
-// plans the tables beneath it.
+// it reads -- for a Function Scan, the function it calls -- (or "-"), its alias (or "-"), the
+// index it reads (or "-"), its index condition (or "-"), and the type of the node above it (or
+// "-"). A view does not appear: PostgreSQL plans the tables beneath it, and a SQL function the
+// planner inlined does not either: only one it calls as a function is a Function Scan of it.
 package main
 
 import (
@@ -140,6 +141,7 @@ func isIdentifierPart(character byte) bool {
 type node struct {
 	NodeType     string `json:"Node Type"`
 	RelationName string `json:"Relation Name"`
+	FunctionName string `json:"Function Name"`
 	Alias        string `json:"Alias"`
 	IndexName    string `json:"Index Name"`
 	IndexCond    string `json:"Index Cond"`
@@ -175,7 +177,11 @@ func nodes(input io.Reader, output io.Writer) error {
 }
 
 func walk(writer *bufio.Writer, current node, parent string) {
-	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n", current.NodeType, dash(current.RelationName),
+	relation := current.RelationName
+	if relation == "" {
+		relation = current.FunctionName
+	}
+	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n", current.NodeType, dash(relation),
 		dash(current.Alias), dash(current.IndexName), dash(strings.Join(strings.Fields(current.IndexCond), " ")),
 		dash(parent))
 	for _, child := range current.Plans {

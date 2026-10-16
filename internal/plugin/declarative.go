@@ -9,8 +9,8 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	contractpkg "github.com/NaejEL/opnview/internal/plugin/contract"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/store/plugindecl"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -48,8 +48,8 @@ type declarativeForm struct {
 	plugin    string
 	kind      string
 	endpoints map[string]opnsense.Endpoint
-	probe     contractpkg.ProbeDeclaration
-	read      *contractpkg.ReadDeclaration
+	probe     contract.ProbeDeclaration
+	read      *contract.ReadDeclaration
 	// function is the kind's read function and recordsField the field of its answer the
 	// records go under; table is the record table they are checked against, or, for a kind of
 	// the plugin's own, the plugin table they are written into.
@@ -60,49 +60,49 @@ type declarativeForm struct {
 }
 
 // checkDeclarative checks a provider's declarative probe and read, and returns the form.
-func checkDeclarative(plugin *Plugin, declaration contractpkg.ProviderDeclaration, contract provider.Contract, core bool) (
-	*declarativeForm, *contractpkg.Refusal) {
+func checkDeclarative(plugin *Plugin, declaration contract.ProviderDeclaration, kindContract provider.Contract, core bool) (
+	*declarativeForm, *contract.Refusal) {
 	name := plugin.Name
 	form := &declarativeForm{plugin: name, kind: declaration.Kind, endpoints: plugin.Endpoints,
 		read: declaration.Read, columns: map[string]string{}}
 	if declaration.Read == nil {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "a declarative %s provider declares its read", declaration.Kind)
+		return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "a declarative %s provider declares its read", declaration.Kind)
 	}
 	read := declaration.Read
 	readEndpoint, declared := plugin.Endpoints[read.Endpoint]
 	if !declared {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "the read names the endpoint %q, which the manifest does not "+
+		return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the read names the endpoint %q, which the manifest does not "+
 			"declare", read.Endpoint)
 	}
 	if readEndpoint.Stream {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "the endpoint %q streams; a declarative read reads rows",
+		return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the endpoint %q streams; a declarative read reads rows",
 			read.Endpoint)
 	}
-	form.probe = contractpkg.ProbeDeclaration{Endpoint: read.Endpoint, Check: "answers"}
+	form.probe = contract.ProbeDeclaration{Endpoint: read.Endpoint, Check: "answers"}
 	if declaration.Probe != nil {
 		form.probe = *declaration.Probe
 	}
 	if probeEndpoint, declared := plugin.Endpoints[form.probe.Endpoint]; !declared || probeEndpoint.Stream {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "the probe names the endpoint %q, which the manifest does not "+
+		return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the probe names the endpoint %q, which the manifest does not "+
 			"declare as an endpoint answering once", form.probe.Endpoint)
 	}
 	if form.probe.Check != "answers" && form.probe.Check != "service_running" {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "the probe check %q is not answers or service_running",
+		return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the probe check %q is not answers or service_running",
 			form.probe.Check)
 	}
 
 	if core {
-		function, recordsField, table, ok := declarativeShape(contract)
+		function, recordsField, table, ok := declarativeShape(kindContract)
 		if !ok {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "the %s kind has no declarative form: its records are not "+
+			return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the %s kind has no declarative form: its records are not "+
 				"one row per row of one endpoint, so a script serves it", declaration.Kind)
 		}
 		if read.Table != "" {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "a read of the core kind %s writes its records to the kind, "+
+			return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "a read of the core kind %s writes its records to the kind, "+
 				"never into a table", declaration.Kind)
 		}
 		form.function, form.recordsField = function, recordsField
-		record, _ := provider.LookupRecord(contract, table)
+		record, _ := provider.LookupRecord(kindContract, table)
 		for _, field := range record.Fields {
 			form.columns[field.Name] = string(field.Type)
 			if field.Required {
@@ -118,7 +118,7 @@ func checkDeclarative(plugin *Plugin, declaration contractpkg.ProviderDeclaratio
 			}
 		}
 		if table == nil {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "the read writes into %q, which is not a table the plugin "+
+			return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the read writes into %q, which is not a table the plugin "+
 				"declares", read.Table)
 		}
 		for _, column := range table.Columns {
@@ -129,28 +129,28 @@ func checkDeclarative(plugin *Plugin, declaration contractpkg.ProviderDeclaratio
 			}
 		}
 	}
-	for _, field := range runtime.SortedKeys(read.Fields) {
+	for _, field := range scripthost.SortedKeys(read.Fields) {
 		mapping := read.Fields[field]
 		if _, known := form.columns[field]; !known {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingFieldUnknown, "the read maps %q, which is not a field of the %s "+
+			return nil, contract.Refuse(name, contract.RefusalMappingFieldUnknown, "the read maps %q, which is not a field of the %s "+
 				"record", field, declaration.Kind)
 		}
 		if mapping.As != "" {
 			if _, known := readings[mapping.As]; !known {
-				return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "the field %q is read as %q, which is not a reading "+
-					"(%s)", field, mapping.As, strings.Join(runtime.SortedKeys(readings), ", "))
+				return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the field %q is read as %q, which is not a reading "+
+					"(%s)", field, mapping.As, strings.Join(scripthost.SortedKeys(readings), ", "))
 			}
 		}
 		switch {
 		case mapping.Value != nil && (mapping.From != "" || mapping.As != ""):
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "the field %q is both a constant and read from a row", field)
+			return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the field %q is both a constant and read from a row", field)
 		case mapping.Value == nil && mapping.From == "" && mapping.As != "now":
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingInvalid, "the field %q names neither a row field nor a value", field)
+			return nil, contract.Refuse(name, contract.RefusalMappingInvalid, "the field %q names neither a row field nor a value", field)
 		}
 	}
 	for _, field := range form.required {
 		if _, mapped := read.Fields[field]; !mapped {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalMappingFieldMissing, "the read leaves %q unmapped, and the %s record "+
+			return nil, contract.Refuse(name, contract.RefusalMappingFieldMissing, "the read leaves %q unmapped, and the %s record "+
 				"requires it", field, declaration.Kind)
 		}
 	}
@@ -160,9 +160,9 @@ func checkDeclarative(plugin *Plugin, declaration contractpkg.ProviderDeclaratio
 // declarativeShape is a core kind's read in the declarative form: its read function, the answer
 // field the records go under and their table. A kind whose records nest -- a set of items -- or
 // whose read is not one function has none.
-func declarativeShape(contract provider.Contract) (string, string, string, bool) {
+func declarativeShape(kindContract provider.Contract) (string, string, string, bool) {
 	var reads []provider.Function
-	for _, function := range contract.Functions {
+	for _, function := range kindContract.Functions {
 		if function.Name != "probe" && function.Name != "rotation" {
 			reads = append(reads, function)
 		}
@@ -170,7 +170,7 @@ func declarativeShape(contract provider.Contract) (string, string, string, bool)
 	if len(reads) != 1 {
 		return "", "", "", false
 	}
-	answer, found := contract.Record(reads[0].Returns)
+	answer, found := kindContract.Record(reads[0].Returns)
 	if !found {
 		return "", "", "", false
 	}
@@ -178,7 +178,7 @@ func declarativeShape(contract provider.Contract) (string, string, string, bool)
 		if field.Type != provider.FieldRecords || field.Of == "not_record_count" {
 			continue
 		}
-		record, found := contract.Record(field.Of)
+		record, found := kindContract.Record(field.Of)
 		if !found {
 			return "", "", "", false
 		}
@@ -194,7 +194,7 @@ func declarativeShape(contract provider.Contract) (string, string, string, bool)
 
 // invoke answers one function of the kind, as a script would.
 func (f *declarativeForm) invoke(ctx context.Context, session provider.Session, function string,
-	arguments ...any) (any, []error, *runtime.Failure) {
+	arguments ...any) (any, []error, *scripthost.Failure) {
 	switch function {
 	case "probe":
 		return f.runProbe(ctx, session), nil, nil
@@ -207,7 +207,7 @@ func (f *declarativeForm) invoke(ctx context.Context, session provider.Session, 
 	case f.function:
 		return f.runRead(ctx, session, function, arguments), nil, nil
 	}
-	return nil, nil, &runtime.Failure{Code: runtime.FailureScript, Detail: fmt.Sprintf("the declarative form answers no %s", function)}
+	return nil, nil, &scripthost.Failure{Code: scripthost.FailureScript, Detail: fmt.Sprintf("the declarative form answers no %s", function)}
 }
 
 // runProbe asks the probe endpoint.
@@ -335,7 +335,7 @@ func (f *declarativeForm) runRead(ctx context.Context, session provider.Session,
 func (f *declarativeForm) mapRow(ctx context.Context, session provider.Session, row decode.Object, now int64,
 	normaliser **decode.Normaliser) (map[string]any, bool) {
 	record := map[string]any{}
-	for _, field := range runtime.SortedKeys(f.read.Fields) {
+	for _, field := range scripthost.SortedKeys(f.read.Fields) {
 		mapping := f.read.Fields[field]
 		value, present := f.mapField(ctx, session, row, field, mapping, now, normaliser)
 		if !present {
@@ -353,7 +353,7 @@ func (f *declarativeForm) mapRow(ctx context.Context, session provider.Session, 
 
 // mapField reads one field of a row.
 func (f *declarativeForm) mapField(ctx context.Context, session provider.Session, row decode.Object, field string,
-	mapping contractpkg.FieldMapping, now int64, normaliser **decode.Normaliser) (any, bool) {
+	mapping contract.FieldMapping, now int64, normaliser **decode.Normaliser) (any, bool) {
 	if mapping.Value != nil {
 		return mapping.Value, true
 	}
@@ -402,7 +402,7 @@ func (f *declarativeForm) mapField(ctx context.Context, session provider.Session
 		return *mac, true
 	case "shape":
 		_, shape := decode.TextField(container, key)
-		return runtime.ShapeName(shape), true
+		return scripthost.ShapeName(shape), true
 	case "iso_time":
 		return timestamp(decode.Normaliser.NormaliseISO)
 	case "syslog_time":

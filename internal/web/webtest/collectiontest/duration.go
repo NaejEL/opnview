@@ -7,7 +7,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web/settingfields"
 )
 
-// durationText is the markup a duration is drawn as, built from the catalogue: what a
+// DurationText is the markup a duration is drawn as, built from the catalogue: what a
 // test compares a rendered page against.
 func DurationText(t *testing.T, seconds int64) string {
 	t.Helper()

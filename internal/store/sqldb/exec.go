@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// querier is what both *sql.DB and *sql.Tx offer. The derivations run inside one transaction
+// Querier is what both *sql.DB and *sql.Tx offer. The derivations run inside one transaction
 // each, and a helper that went back to s.db in the middle of one would read outside it, so every
 // helper the derivations share takes the querier it runs on.
 type Querier interface {
@@ -19,13 +19,13 @@ type Querier interface {
 	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
-// named turns a parameter map into the named arguments database/sql binds,
+// Named turns a parameter map into the named arguments database/sql binds,
 // keeping only those the statement names: an argument a statement does not use
 // is refused by the driver, and one parameter map serves several statements.
 func Named(text string, parameters map[string]any) []any {
 	arguments := make([]any, 0, len(parameters))
 	for name, value := range parameters {
-		if !UsesParameter(text, name) {
+		if !usesParameter(text, name) {
 			continue
 		}
 		arguments = append(arguments, sql.Named(name, value))
@@ -33,7 +33,7 @@ func Named(text string, parameters map[string]any) []any {
 	return arguments
 }
 
-// execNamed runs one named statement and returns how many rows it changed.
+// ExecNamed runs one named statement and returns how many rows it changed.
 func ExecNamed(ctx context.Context, q Querier, name string, parameters map[string]any) (int64, error) {
 	text, err := Statement(name)
 	if err != nil {
@@ -42,7 +42,7 @@ func ExecNamed(ctx context.Context, q Querier, name string, parameters map[strin
 	return ExecText(ctx, q, name, text, parameters)
 }
 
-// execText runs a statement text and returns how many rows it changed.
+// ExecText runs a statement text and returns how many rows it changed.
 func ExecText(ctx context.Context, q Querier, name, text string, parameters map[string]any) (int64, error) {
 	result, err := q.ExecContext(ctx, text, Named(text, parameters)...)
 	if err != nil {
@@ -55,7 +55,7 @@ func ExecText(ctx context.Context, q Querier, name, text string, parameters map[
 	return affected, nil
 }
 
-// queryInts runs a named statement whose rows are one integer column and returns
+// QueryInts runs a named statement whose rows are one integer column and returns
 // them; a NULL is skipped.
 func QueryInts(ctx context.Context, q Querier, name string, parameters map[string]any) ([]int64, error) {
 	text, err := Statement(name)
@@ -83,7 +83,7 @@ func QueryInts(ctx context.Context, q Querier, name string, parameters map[strin
 	return values, nil
 }
 
-// queryOptionalInt runs a named statement returning at most one integer, and
+// QueryOptionalInt runs a named statement returning at most one integer, and
 // reports whether it returned a non-NULL one.
 func QueryOptionalInt(ctx context.Context, q Querier, name string, parameters map[string]any) (
 	int64, bool, error) {
@@ -94,7 +94,7 @@ func QueryOptionalInt(ctx context.Context, q Querier, name string, parameters ma
 	return QueryOptionalIntText(ctx, q, name, text, parameters)
 }
 
-// queryOptionalIntText is queryOptionalInt over a statement text already
+// QueryOptionalIntText is queryOptionalInt over a statement text already
 // expanded.
 func QueryOptionalIntText(ctx context.Context, q Querier, name, text string,
 	parameters map[string]any) (int64, bool, error) {
@@ -109,7 +109,7 @@ func QueryOptionalIntText(ctx context.Context, q Querier, name, text string,
 	return value.Int64, value.Valid, nil
 }
 
-// optional renders a nullable id as a bindable value.
+// Optional renders a nullable id as a bindable value.
 func Optional(value *int64) any {
 	if value == nil {
 		return nil
@@ -119,7 +119,7 @@ func Optional(value *int64) any {
 
 // usesParameter reports whether a statement names :name, as a whole parameter
 // rather than as the start of a longer one.
-func UsesParameter(text, name string) bool {
+func usesParameter(text, name string) bool {
 	token := ":" + name
 	for offset := 0; ; {
 		index := strings.Index(text[offset:], token)
@@ -153,7 +153,7 @@ func IsUniqueViolation(err error) bool {
 	return errors.As(err, &failure) && failure.Code == "23505"
 }
 
-// nullableInt turns a nullable integer into a pointer.
+// NullableInt turns a nullable integer into a pointer.
 func NullableInt(value sql.NullInt64) *int64 {
 	if !value.Valid {
 		return nil
@@ -162,7 +162,7 @@ func NullableInt(value sql.NullInt64) *int64 {
 	return &copied
 }
 
-// nullableText is NULL for an empty string.
+// NullableText is NULL for an empty string.
 func NullableText(text string) any {
 	if text == "" {
 		return nil
@@ -178,7 +178,7 @@ func NullInt(value sql.NullInt64) *int64 {
 	return &number
 }
 
-// optionalText renders a nullable text as a bindable value.
+// OptionalText renders a nullable text as a bindable value.
 func OptionalText(value *string) any {
 	if value == nil {
 		return nil

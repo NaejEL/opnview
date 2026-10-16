@@ -12,7 +12,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/pluginkind"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/secret"
 	"github.com/NaejEL/opnview/internal/store/accounts"
 )
@@ -284,7 +284,7 @@ func (p *Plugin) WriteSettings(ctx context.Context, database SettingStore, seale
 		clear bool
 	}
 	var writes []write
-	for _, key := range runtime.SortedKeys(submitted) {
+	for _, key := range scripthost.SortedKeys(submitted) {
 		setting, known := declared[key]
 		if !known {
 			return &SettingRefusal{Code: SettingRefusalUnknownKey, Key: key}

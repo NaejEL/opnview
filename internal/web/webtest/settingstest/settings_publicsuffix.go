@@ -7,7 +7,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web/webtest/sourcestest"
 )
 
-// setPublicSuffixProbe records a refresh outcome, with a detail.
+// SetPublicSuffixProbe records a refresh outcome, with a detail.
 func SetPublicSuffixProbe(h *webtest.Harness, state vocab.AvailabilityState, probe string, detail *string) {
 	h.T.Helper()
 	sourcestest.SetAvailabilityDetail(h, registrabledomain.Kind, registrabledomain.BuiltinKey, state, probe, detail)

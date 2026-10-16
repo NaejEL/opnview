@@ -31,7 +31,7 @@ import (
 // one request to the next.
 //
 // WHAT THE HOST GRANTS, AND WHAT IT DOES NOT. The widget's own declared statements, run on the
-// read-only role with bound parameters (internal/widget/hostareas/readers/host_query.go), the
+// read-only role with bound parameters (internal/widget/hostareas/installation/host_query.go), the
 // shared figures of the core, and the envelope's states and conditions. No firewall call, no
 // outbound fetch, no write: nothing here can reach one. There is no sandbox beyond that, and none
 // is claimed: a widget plugin runs with the service's privileges, as a source plugin does.
@@ -46,13 +46,13 @@ import (
 // and the sum of its statements.
 const scriptCallTimeout = 20 * time.Second
 
-// scriptLogger receives what a widget script logs and why one failed, prefixed with its plugin's
+// ScriptLogger receives what a widget script logs and why one failed, prefixed with its plugin's
 // name. It writes to standard error; a test may replace it.
 var ScriptLogger = func(plugin, message string) {
 	fmt.Fprintf(os.Stderr, "opnview: widget plugin %s: %s\n", plugin, message)
 }
 
-// errWithheldUnderNoDomains ends the call of a widget that is not built in when it runs a statement
+// ErrWithheldUnderNoDomains ends the call of a widget that is not built in when it runs a statement
 // reading a column that carries a domain name under aggregate_mode = no_domains. The maintainer's
 // decision of 12 October 2026: the core withholds what carries a domain from every widget answer,
 // built-in and third-party alike, and a third-party author has nothing to do. The statement is not
@@ -64,26 +64,26 @@ var ErrWithheldUnderNoDomains = errors.New("a statement carrying a domain name u
 // errScriptTimeout is what a call is interrupted with at its deadline.
 var errScriptTimeout = errors.New("the widget script ran past its time bound")
 
-// scriptWidget is one widget's compiled script and the statements it may run.
+// ScriptWidget is one widget's compiled script and the statements it may run.
 type ScriptWidget struct {
 	Plugin     string
 	File       string
 	Program    *goja.Program
 	Statements map[string]WidgetStatement
-	// builtin says the widget ships in the binary. A built-in withholds its own domain fields under
+	// Builtin says the widget ships in the binary. A built-in withholds its own domain fields under
 	// aggregate_mode = no_domains, field by field, and its tests prove it; any other widget is held to
 	// the core's rule instead (errWithheldUnderNoDomains).
 	Builtin bool
 }
 
-// compileWidgetScript compiles a widget's script and runs it once, in a runtime of its own, to see
+// CompileWidgetScript compiles a widget's script and runs it once, in a runtime of its own, to see
 // that it exports widget.serve.
 func CompileWidgetScript(file, source string) (*goja.Program, error) {
 	program, err := goja.Compile(file, source, false)
 	if err != nil {
 		return nil, err
 	}
-	vm, exports := NewWidgetRuntime("")
+	vm, exports := newWidgetRuntime("")
 	if _, err := vm.RunProgram(program); err != nil {
 		return nil, fmt.Errorf("running %s to read what it exports: %w", file, err)
 	}
@@ -95,7 +95,7 @@ func CompileWidgetScript(file, source string) (*goja.Program, error) {
 
 // newWidgetRuntime creates a runtime with the globals a widget script sees: exports, module and
 // console.
-func NewWidgetRuntime(plugin string) (*goja.Runtime, *goja.Object) {
+func newWidgetRuntime(plugin string) (*goja.Runtime, *goja.Object) {
 	vm := goja.New()
 	exports := vm.NewObject()
 	module := vm.NewObject()
@@ -124,7 +124,7 @@ func serveFunction(exports *goja.Object) (goja.Callable, bool) {
 	return goja.AssertFunction(namespace.Get("serve"))
 }
 
-// serve answers one request: the ServeFunc of a script widget.
+// Serve answers one request: the ServeFunc of a script widget.
 func (w *ScriptWidget) Serve(r *request.Request) (data any, hasRows bool, err error) {
 	ctx, cancel := context.WithTimeout(r.Ctx, scriptCallTimeout)
 	defer cancel()
@@ -134,8 +134,8 @@ func (w *ScriptWidget) Serve(r *request.Request) (data any, hasRows bool, err er
 	r.Ctx = ctx
 	defer func() { r.Ctx = requestCtx }()
 
-	vm, exports := NewWidgetRuntime(w.Plugin)
-	call := NewScriptCall(r, vm, w)
+	vm, exports := newWidgetRuntime(w.Plugin)
+	call := newScriptCall(r, vm, w)
 	finished := make(chan struct{})
 	defer close(finished)
 	go func() {
@@ -161,7 +161,7 @@ func (w *ScriptWidget) Serve(r *request.Request) (data any, hasRows bool, err er
 	if !found {
 		return nil, false, failed("%s exports no function widget.serve", w.File)
 	}
-	result, err := serve(goja.Undefined(), call.Host())
+	result, err := serve(goja.Undefined(), call.host())
 	if err != nil {
 		return nil, false, w.runFailure(call, failed, err)
 	}
@@ -203,14 +203,14 @@ func (w *ScriptWidget) runFailure(call *ScriptCall, failed func(string, ...any) 
 	return failed("%v", err)
 }
 
-// widgetStatement is one statement a plugin widget declares.
+// WidgetStatement is one statement a plugin widget declares.
 type WidgetStatement struct {
-	// registered is the name it is registered under.
+	// Registered is the name it is registered under.
 	Registered string
-	// template says it is a period template (@period@), run for the period a script names.
+	// Template says it is a period template (@period@), run for the period a script names.
 	Template bool
-	// domain says it reads a column carrying a domain name.
+	// Domain says it reads a column carrying a domain name.
 	Domain bool
-	// parameters are the names it binds, without the colon.
+	// Parameters are the names it binds, without the colon.
 	Parameters []string
 }

@@ -8,9 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/vocab"
-	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/settingfields"
 	"github.com/NaejEL/opnview/internal/web/surfaces/collection"
 	"github.com/NaejEL/opnview/internal/web/webtest"
@@ -312,14 +313,14 @@ func TestTheCollectionJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		}
 		add(kind, label("suggestion_state"), "state:state.sizing."+settingstest.Path(raw, "suggestion", "state").(string))
 		for _, implementation := range settingstest.Path(raw, "implementations").([]any) {
-			add(kind, string(web.ProviderLabelKey(kind, settingstest.Path(implementation, "provider_key").(string))),
+			add(kind, string(messages.ProviderLabelKey(kind, settingstest.Path(implementation, "provider_key").(string))),
 				settingstest.Path(implementation, "selection").(string))
 		}
 	}
 	for _, raw := range settingstest.Path(answer, "polled_kinds").([]any) {
 		kind, _ := settingstest.Path(raw, "kind").(string)
 		for _, implementation := range settingstest.Path(raw, "implementations").([]any) {
-			provider := string(web.ProviderLabelKey(kind, settingstest.Path(implementation, "provider_key").(string)))
+			provider := string(messages.ProviderLabelKey(kind, settingstest.Path(implementation, "provider_key").(string)))
 			add(kind, "availability "+provider, "state:state.availability."+settingstest.Path(implementation, "availability").(string))
 			add(kind, provider, settingstest.Path(implementation, "selection").(string))
 		}

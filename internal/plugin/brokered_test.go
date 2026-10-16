@@ -16,7 +16,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
@@ -81,7 +81,7 @@ func TestAFieldTheMirrorDoesNotHoldIsReadFromTheFirewall(t *testing.T) {
 	if err := opnsense.AdmitDeclaredEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := runtime.Compile("example_brokered", "example.js", brokeredScript,
+	compiled, err := scripthost.Compile("example_brokered", "example.js", brokeredScript,
 		map[string]opnsense.Endpoint{"rows": endpoint}, 10*time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +121,7 @@ func TestHostCatalogueIsTheBrokersCatalogue(t *testing.T) {
 	if err := opnsense.AdmitDeclaredEndpoint(endpoint); err != nil {
 		t.Fatal(err)
 	}
-	compiled, err := runtime.Compile("example_catalogue", "example.js", `exports.example = { pass: function (host) {
+	compiled, err := scripthost.Compile("example_catalogue", "example.js", `exports.example = { pass: function (host) {
 			host.call("rows", {}).value.rows.length;
 			return { catalogue: host.catalogue() };
 		} };`, map[string]opnsense.Endpoint{"rows": endpoint}, 10*time.Second)

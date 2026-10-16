@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-// stripCSSComments removes /* … */ from a stylesheet, so what is scanned is the rules
+// StripCSSComments removes /* … */ from a stylesheet, so what is scanned is the rules
 // rather than the prose explaining them.
 func StripCSSComments(source string) string {
 	var builder strings.Builder
@@ -25,13 +25,13 @@ func StripCSSComments(source string) string {
 	}
 }
 
-// renderedPage is one surface in one state, named so a failure says which.
+// RenderedPage is one surface in one state, named so a failure says which.
 type RenderedPage struct {
 	Name     string
 	Document string
 }
 
-// discard reads and closes a response nothing asserts on. It is the redirect that
+// Discard reads and closes a response nothing asserts on. It is the redirect that
 // carries a message to the page the reader lands on: the body is empty and the page
 // that matters is the next one.
 func Discard(t *testing.T, answer *http.Response) {

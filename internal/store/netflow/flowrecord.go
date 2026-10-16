@@ -1036,7 +1036,7 @@ func (s *NetflowStore) ProviderGapsBetween(ctx context.Context, providerID, from
 	return gaps, rows.Err()
 }
 
-// purgeNetflow purges the NetFlow tables inside the retention purge's transaction: the flow records by
+// PurgeNetflow purges the NetFlow tables inside the retention purge's transaction: the flow records by
 // their own retention (chunks then rows), the measured volume with the connections it belongs to, and
 // the configurations and conditions older than the records' horizon -- the newest configuration of
 // each provider kept, since it is the one in force.

@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/decode"
@@ -56,8 +57,8 @@ func upstreamByIdentifier(t *testing.T, database *store.Store) map[string]bool {
 // TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway is AC8.
 func TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
+	harness := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	expected := func(body map[string]any) map[string]bool {
 		result := map[string]bool{}
 		for _, row := range body["rows"].([]any) {
@@ -69,7 +70,7 @@ func TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway(t *testing.T) {
 	}
 	check := func(body map[string]any, what string) {
 		t.Helper()
-		got := upstreamByIdentifier(t, harness.store)
+		got := upstreamByIdentifier(t, harness.Store)
 		for identifier, want := range expected(body) {
 			if got[identifier] != want {
 				t.Errorf("%s: %s is upstream %t, the response says %t", what, identifier, got[identifier], want)
@@ -78,7 +79,7 @@ func TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway(t *testing.T) {
 	}
 	original := interfacesBody(t)
 	check(original, "the fixture")
-	if count := scalarCount(t, harness.store, "SELECT count(*) FROM interface WHERE is_upstream = 1"); count != 1 {
+	if count := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM interface WHERE is_upstream = 1"); count != 1 {
 		t.Fatalf("%d interfaces are upstream from a fixture with one gateway", count)
 	}
 
@@ -92,15 +93,15 @@ func TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway(t *testing.T) {
 			object["gateways"] = []any{"192.0.2.254"}
 		}
 	}
-	harness.fake.AnswerJSON(opnsense.InterfacesInfo, moved)
-	if err := harness.collector.RefreshDiscovery(context.Background()); err != nil {
+	harness.Fake.AnswerJSON(opnsense.InterfacesInfo, moved)
+	if err := harness.Collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("discovering: %v", err)
 	}
 	check(moved, "after moving the gateway")
 
 	// Rewriting every description, every user label and every identifier changes nothing:
 	// the property follows gateways[] wherever the names go.
-	if _, err := harness.store.DB().Exec("UPDATE interface SET user_label = 'example label ' || id"); err != nil {
+	if _, err := harness.Store.DB().Exec("UPDATE interface SET user_label = 'example label ' || id"); err != nil {
 		t.Fatalf("labelling: %v", err)
 	}
 	renamed := interfacesBody(t)
@@ -110,8 +111,8 @@ func TestAnInterfaceIsUpstreamExactlyWhenItReportsAGateway(t *testing.T) {
 		object["identifier"] = fmt.Sprintf("example_renamed_%d", index)
 		object["device"] = fmt.Sprintf("exrenamed%d", index)
 	}
-	harness.fake.AnswerJSON(opnsense.InterfacesInfo, renamed)
-	if err := harness.collector.RefreshDiscovery(context.Background()); err != nil {
+	harness.Fake.AnswerJSON(opnsense.InterfacesInfo, renamed)
+	if err := harness.Collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("discovering: %v", err)
 	}
 	check(renamed, "after renaming everything")
@@ -177,16 +178,16 @@ func TestTheClassificationDoesNotDependOnTheOrderRecordsArrive(t *testing.T) {
 
 	results := []map[string]flowClassification{}
 	for _, page := range [][]any{records, reversed} {
-		harness := newProbeHarness(t)
-		arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-		harness.fake.AnswerJSON(opnsense.FirewallLog, page)
-		if err := harness.collector.probeFirewallLog(context.Background()); err != nil {
+		harness := collecttest.NewProbeHarness(t)
+		collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
+		harness.Fake.AnswerJSON(opnsense.FirewallLog, page)
+		if err := harness.Collector.ProbeFirewallLog(context.Background()); err != nil {
 			t.Fatalf("probing: %v", err)
 		}
-		if err := harness.collector.CollectFirewallLog(context.Background()); err != nil {
+		if err := harness.Collector.CollectFirewallLog(context.Background()); err != nil {
 			t.Fatalf("collecting: %v", err)
 		}
-		results = append(results, classifications(t, harness.store))
+		results = append(results, classifications(t, harness.Store))
 	}
 	if len(results[0]) != len(records) || len(results[1]) != len(records) {
 		t.Fatalf("the two databases hold %d and %d flows of %d records", len(results[0]), len(results[1]), len(records))
@@ -212,12 +213,12 @@ func TestTheClassificationDoesNotDependOnTheOrderRecordsArrive(t *testing.T) {
 // TestNonLoggingRulesPerInterfaceEqualADirectCountOverTheFixture is AC13.
 func TestNonLoggingRulesPerInterfaceEqualADirectCountOverTheFixture(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	if stored := scalarCount(t, harness.store, "SELECT count(*) FROM rule WHERE interface IS NOT NULL"); stored == 0 {
+	harness := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
+	if stored := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM rule WHERE interface IS NOT NULL"); stored == 0 {
 		t.Fatal("no rule's interface was stored")
 	}
-	if stored := scalarCount(t, harness.store,
+	if stored := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM rule WHERE pf_label = 'example-rule-label-2' AND interface = 'example_if_a,example_if_b'"); stored != 1 {
 		t.Error("a rule's interface field was not stored verbatim")
 	}
@@ -237,13 +238,13 @@ func TestNonLoggingRulesPerInterfaceEqualADirectCountOverTheFixture(t *testing.T
 			}
 		}
 	}
-	logging, err := harness.store.ReadRuleLogging(context.Background())
+	logging, err := harness.Store.ReadRuleLogging(context.Background())
 	if err != nil {
 		t.Fatalf("counting: %v", err)
 	}
 	ids := map[string]int64{}
-	for identifier := range upstreamByIdentifier(t, harness.store) {
-		ids[identifier] = int64(scalarCount(t, harness.store, "SELECT id FROM interface WHERE identifier = ?", identifier))
+	for identifier := range upstreamByIdentifier(t, harness.Store) {
+		ids[identifier] = int64(collecttest.ScalarCount(t, harness.Store, "SELECT id FROM interface WHERE identifier = ?", identifier))
 	}
 	if len(direct) == 0 {
 		t.Fatal("the fixture holds no model rule that does not log")
@@ -270,22 +271,22 @@ func TestOnePairReadOnTwoInterfacesAtOneInstantIsTwoReadings(t *testing.T) {
 			"details": []any{map[string]any{"address": "203.0.113.9", "rate_bits": 100, "cumulative_bytes": 25}},
 		}}}
 	}
-	harness.fake.AnswerJSON(opnsense.TrafficTop, map[string]any{"example_if_a": pair(), "example_if_b": pair()})
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	harness.Fake.AnswerJSON(opnsense.TrafficTop, map[string]any{"example_if_a": pair(), "example_if_b": pair()})
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	keys := stringColumn(t, harness.store, `SELECT DISTINCT subject_key FROM measurement_sample
+	keys := stringColumn(t, harness.Store, `SELECT DISTINCT subject_key FROM measurement_sample
 		WHERE subject_kind = 'interface_endpoint_pair' AND measure = 'rate_bits_in' ORDER BY subject_key`)
 	want := []string{"exdev0 198.51.100.10 203.0.113.9", "exdev1 198.51.100.10 203.0.113.9"}
 	if strings.Join(keys, "|") != strings.Join(want, "|") {
 		t.Errorf("one pair on two interfaces stored the subjects %v, not %v", keys, want)
 	}
-	if rows := scalarCount(t, harness.store, `SELECT count(*) FROM measurement_sample
+	if rows := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM measurement_sample
 		WHERE subject_kind = 'interface_endpoint_pair' AND measure = 'rate_bits_in'`); rows != 2 {
 		t.Errorf("%d inbound rate readings were stored, not 2", rows)
 	}
 	// With one peer, the record's own outbound figure is the pair's.
-	if rows := scalarCount(t, harness.store, `SELECT count(*) FROM measurement_sample
+	if rows := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM measurement_sample
 		WHERE subject_kind = 'interface_endpoint_pair' AND measure = 'rate_bits_out' AND value = 50`); rows != 2 {
 		t.Errorf("%d outbound readings were stored for a record with one peer, not 2", rows)
 	}
@@ -295,12 +296,12 @@ func TestOnePairReadOnTwoInterfacesAtOneInstantIsTwoReadings(t *testing.T) {
 func TestTelemetryIsSampledFromVerifiedFieldsAndAMissingFieldIsNoSample(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
 	reading := func(kind, key, measure string) []float64 {
 		var values []float64
-		rows, err := harness.store.DB().Query(`SELECT value FROM measurement_sample
+		rows, err := harness.Store.DB().Query(`SELECT value FROM measurement_sample
 			WHERE subject_kind = ? AND subject_key = ? AND measure = ?`, kind, key, measure)
 		if err != nil {
 			t.Fatalf("reading %s: %v", measure, err)
@@ -371,24 +372,24 @@ func TestTelemetryIsSampledFromVerifiedFieldsAndAMissingFieldIsNoSample(t *testi
 func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.fake.Answer(opnsense.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	harness.Fake.Answer(opnsense.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
+	detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	if !strings.Contains(detail, "gateway latency and loss (not found, HTTP 404") {
 		t.Errorf("the availability detail is %q, which does not record the gateway endpoint", detail)
 	}
-	if rows := scalarCount(t, harness.store,
+	if rows := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM measurement_sample WHERE subject_kind = 'gateway'"); rows != 0 {
 		t.Errorf("%d gateway readings were stored from an endpoint that did not answer", rows)
 	}
 
-	harness.fake.AnswerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "failed"})
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	harness.Fake.AnswerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "failed"})
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	if detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight); !strings.Contains(detail,
 		"gateway latency and loss (the endpoint answered \"status\": \"failed\"") {
 		t.Errorf("an answer reporting a failure left the detail %q", detail)
 	}
@@ -402,30 +403,30 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.fake.Answer(opnsense.SystemSwap, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	harness.Fake.Answer(opnsense.SystemSwap, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
+	detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	if !strings.Contains(detail, "swap (the endpoint did not answer)") {
 		t.Errorf("the availability detail is %q, which does not record the swap endpoint", detail)
 	}
-	if rows := scalarCount(t, harness.store,
+	if rows := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM measurement_sample WHERE measure IN ('swap_total_bytes', 'swap_used_bytes')"); rows != 0 {
 		t.Errorf("%d swap readings were stored from an endpoint that did not answer", rows)
 	}
 
 	// A firewall with no swap device is a fact about the machine, recorded, never a zero.
-	harness.clock.advance(time.Minute)
-	harness.fake.AnswerJSON(opnsense.SystemSwap, map[string]any{"swap": []any{}})
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	harness.Clock.Advance(time.Minute)
+	harness.Fake.AnswerJSON(opnsense.SystemSwap, map[string]any{"swap": []any{}})
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	if detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight); !strings.Contains(detail,
 		"swap (this firewall reports no swap device)") {
 		t.Errorf("an answer with no swap device left the detail %q", detail)
 	}
-	if rows := scalarCount(t, harness.store,
+	if rows := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM measurement_sample WHERE measure IN ('swap_total_bytes', 'swap_used_bytes')"); rows != 0 {
 		t.Errorf("%d swap readings were stored for a firewall with no swap device", rows)
 	}
@@ -434,81 +435,31 @@ func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 // TestTheRefreshRunsAfterEachFilterLogPass is the last part of AC20.
 func TestTheRefreshRunsAfterEachFilterLogPass(t *testing.T) {
 	t.Parallel()
-	harness := arrangeFilterLogCollection(t)
-	if err := harness.collector.CollectFirewallLog(context.Background()); err != nil {
+	harness := collecttest.ArrangeFilterLogCollection(t)
+	if err := harness.Collector.CollectFirewallLog(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	now := harness.clock.Now().UTC().Unix()
+	now := harness.Clock.Now().UTC().Unix()
 	for _, period := range vocab.Periods() {
 		table := "volume_aggregate_" + period.Name
-		if rows := scalarCount(t, harness.store, "SELECT count(*) FROM "+table+" WHERE computed_at = ?", now); rows == 0 {
+		if rows := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM "+table+" WHERE computed_at = ?", now); rows == 0 {
 			t.Errorf("%s holds no slot computed by the pass", table)
 		}
 	}
-	if derived := scalarCount(t, harness.store, "SELECT count(*) FROM pair_volume_observation"); derived == 0 {
+	if derived := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM pair_volume_observation"); derived == 0 {
 		t.Error("the pass derived no per-pair volume")
 	}
 	// A pass that reads nothing still refreshes the current slots.
-	harness.fake.AnswerJSON(opnsense.FirewallLog, []any{})
-	harness.clock.advance(time.Minute)
-	if err := harness.collector.CollectFirewallLog(context.Background()); err != nil {
+	harness.Fake.AnswerJSON(opnsense.FirewallLog, []any{})
+	harness.Clock.Advance(time.Minute)
+	if err := harness.Collector.CollectFirewallLog(context.Background()); err != nil {
 		t.Fatalf("collecting an empty page: %v", err)
 	}
-	later := harness.clock.Now().UTC().Unix()
+	later := harness.Clock.Now().UTC().Unix()
 	current := vocab.PeriodMonth.SlotStart(later)
-	if rows := scalarCount(t, harness.store, `SELECT count(*) FROM volume_aggregate_30d
+	if rows := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM volume_aggregate_30d
 		WHERE period_start_at = ? AND computed_at = ?`, current, later); rows == 0 {
 		t.Error("an empty pass did not rewrite the current month")
-	}
-}
-
-// TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot is the race behind AC20.
-//
-// A pass stamps its rows with the instant it began and commits them afterwards, while
-// another pass's derivation runs in its own goroutine. That derivation must not move the
-// refresh watermark past the stamp, or the rows commit "before" the watermark, no later
-// refresh selects their slot, and a flow whose classification changes nothing -- here both
-// ends outside, the shape of a blocked scan of the firewall's own address -- is never
-// forced either. Its closed slot would stay empty for ever.
-func TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot(t *testing.T) {
-	t.Parallel()
-	harness := arrangeFilterLogCollection(t)
-	ctx := context.Background()
-	if err := harness.collector.RefreshAggregates(ctx); err != nil {
-		t.Fatalf("the first refresh: %v", err)
-	}
-
-	stamped, token := harness.collector.BeginIngest()
-	harness.clock.advance(5 * time.Second)
-	// Another pass finishes meanwhile, and its derivation refreshes.
-	if err := harness.collector.RefreshAggregates(ctx); err != nil {
-		t.Fatalf("the concurrent refresh: %v", err)
-	}
-
-	// The stamped row commits only now, in an hour that closed long ago.
-	closedHour := vocab.PeriodHour.SlotStart(stamped) - 3*3600
-	if err := harness.store.InsertFlow(ctx, vocab.Flow{
-		LogDigest: "refresh-race-probe", ObservedAt: closedHour + 60, IngestedAt: stamped,
-		InterfaceDevice: "example-unmapped-device", InterfaceLookupState: vocab.LookupNotFound,
-		SrcAddress: "203.0.113.7", DstAddress: "203.0.113.8", Protocol: "tcp", IPVersion: 4,
-		Action: "block", Direction: "in", PacketBytes: 60, RuleLookupState: vocab.LookupNotFound,
-	}); err != nil {
-		t.Fatalf("inserting the stamped flow: %v", err)
-	}
-	harness.collector.EndIngest(token)
-
-	harness.clock.advance(5 * time.Second)
-	if err := harness.collector.RefreshAggregates(ctx); err != nil {
-		t.Fatalf("the next refresh: %v", err)
-	}
-	if bytes := scalarCount(t, harness.store, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h
-		WHERE period_start_at = ?`, closedHour); bytes != 60 {
-		t.Errorf("the closed hour holds %d bytes after the next refresh, not the 60 of the flow "+
-			"committed during the concurrent refresh", bytes)
-	}
-	// And the watermark is free again once nothing is in flight.
-	if _, watermark := harness.collector.RefreshInstant(); watermark != harness.clock.Now().UTC().Unix() {
-		t.Errorf("the watermark is held at %d with nothing in flight", watermark)
 	}
 }
 
@@ -524,17 +475,17 @@ func TestARefreshRunningDuringAnIngestionDoesNotLoseItsSlot(t *testing.T) {
 // counts as stale.
 func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 	t.Parallel()
-	harness := arrangeFilterLogCollection(t)
+	harness := collecttest.ArrangeFilterLogCollection(t)
 	ctx := context.Background()
-	if err := harness.collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
 		t.Fatalf("the first refresh: %v", err)
 	}
 
-	stamped, token := harness.collector.BeginIngest()
+	stamped, token := harness.Collector.BeginIngest()
 	closedHour := vocab.PeriodHour.SlotStart(stamped) - 3*3600
 	insert := func(digest string) {
 		t.Helper()
-		if err := harness.store.InsertFlow(ctx, vocab.Flow{
+		if err := harness.Store.InsertFlow(ctx, vocab.Flow{
 			LogDigest: digest, ObservedAt: closedHour + 60, IngestedAt: stamped,
 			InterfaceDevice: "example-unmapped-device", InterfaceLookupState: vocab.LookupNotFound,
 			SrcAddress: "203.0.113.7", DstAddress: "203.0.113.8", Protocol: "tcp", IPVersion: 4,
@@ -544,38 +495,38 @@ func TestARefreshBetweenTwoRowsOfOnePassDoesNotFreezeTheSlot(t *testing.T) {
 		}
 	}
 	insert("refresh-race-first")
-	harness.clock.advance(5 * time.Second)
+	harness.Clock.Advance(5 * time.Second)
 	// Another pass's derivation runs between the two rows, and finds the slot holding the first.
-	if err := harness.collector.RefreshAggregates(ctx); err != nil {
+	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
 		t.Fatalf("the concurrent refresh: %v", err)
 	}
-	if bytes := scalarCount(t, harness.store, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h
+	if bytes := collecttest.ScalarCount(t, harness.Store, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h
 		WHERE period_start_at = ?`, closedHour); bytes != 60 {
 		t.Fatalf("the concurrent refresh left %d bytes in the slot, not the first row's 60, so the "+
 			"slot did not hold rows when it ran", bytes)
 	}
 	insert("refresh-race-second")
-	harness.collector.EndIngest(token)
+	harness.Collector.EndIngest(token)
 
-	harness.clock.advance(5 * time.Second)
-	if err := harness.collector.RefreshAggregates(ctx); err != nil {
+	harness.Clock.Advance(5 * time.Second)
+	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
 		t.Fatalf("the next refresh: %v", err)
 	}
-	flowBytes := scalarCount(t, harness.store, `SELECT sum(packet_bytes) FROM flow
+	flowBytes := collecttest.ScalarCount(t, harness.Store, `SELECT sum(packet_bytes) FROM flow
 		WHERE observed_at >= ? AND observed_at < ?`, closedHour, closedHour+3600)
 	if flowBytes != 120 {
 		t.Fatalf("the closed hour's flows hold %d bytes, not the two rows' 120", flowBytes)
 	}
-	if bytes := scalarCount(t, harness.store, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h
+	if bytes := collecttest.ScalarCount(t, harness.Store, `SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_1h
 		WHERE period_start_at = ?`, closedHour); bytes != flowBytes {
 		t.Errorf("the closed hour holds %d bytes while its flows hold %d", bytes, flowBytes)
 	}
 	// And a refresh with nothing in flight stamps the slot later than its rows, so it rests.
-	harness.clock.advance(5 * time.Second)
-	if err := harness.collector.RefreshAggregates(ctx); err != nil {
+	harness.Clock.Advance(5 * time.Second)
+	if err := harness.Collector.RefreshAggregates(ctx); err != nil {
 		t.Fatalf("a quiet refresh: %v", err)
 	}
-	if computed := scalarCount(t, harness.store, `SELECT max(computed_at) FROM volume_aggregate_1h
+	if computed := collecttest.ScalarCount(t, harness.Store, `SELECT max(computed_at) FROM volume_aggregate_1h
 		WHERE period_start_at = ?`, closedHour); int64(computed) <= stamped {
 		t.Errorf("the slot is stamped %d, not later than its rows' %d, so it would never rest", computed, stamped)
 	}

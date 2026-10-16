@@ -1,10 +1,17 @@
-package store
+package store_test
 
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/NaejEL/opnview/internal/store"
+	"github.com/NaejEL/opnview/internal/testtiming"
 
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -12,10 +19,10 @@ import (
 
 // openTestStore opens a database of the test's own on the test instance (testdatabase.go), and
 // returns its connection parameter, which reopens the same database.
-func openTestStore(t *testing.T) (*Store, string) {
+func openTestStore(t *testing.T) (*store.Store, string) {
 	t.Helper()
 	directory := testDatabase(t)
-	database, err := Open(context.Background(), directory)
+	database, err := store.Open(context.Background(), directory)
 	if err != nil {
 		t.Fatalf("opening the database: %v", err)
 	}
@@ -25,6 +32,70 @@ func openTestStore(t *testing.T) (*Store, string) {
 		_ = database.Close()
 	})
 	return database, directory
+}
+
+// forgetAppliedSchema clears the digest the database records, so the next Open applies the schema for
+// real rather than finding it recorded (internal/store/schema.go): what the tests below assert is
+// what a second apply does.
+func forgetAppliedSchema(t *testing.T, database *store.Store) {
+	t.Helper()
+	if _, err := database.DB().ExecContext(context.Background(), "DELETE FROM applied_schema"); err != nil {
+		t.Fatalf("forgetting the applied schema: %v", err)
+	}
+}
+
+// requireSchemaApplied fails unless the database records the schema's digest again: the reopen
+// applied the schema, rather than skipping it.
+func requireSchemaApplied(t *testing.T, database *store.Store) {
+	t.Helper()
+	var recorded int
+	if err := database.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM applied_schema WHERE digest ~ '^[0-9a-f]{64}$'").Scan(&recorded); err != nil || recorded != 1 {
+		t.Fatalf("the reopen did not apply the schema: %d digests recorded (%v)", recorded, err)
+	}
+}
+
+// TestAReopenAppliesTheSchemaOnlyWhenItsDigestIsNotRecorded is the digest's whole contract (Phase E,
+// E.1.2): a database recording this schema's digest is opened without an apply; one recording another
+// digest -- another build's schema -- is applied, and records this one.
+func TestAReopenAppliesTheSchemaOnlyWhenItsDigestIsNotRecorded(t *testing.T) {
+	t.Parallel()
+	database, directory := openTestStore(t)
+	ctx := context.Background()
+	reopen := func() []string {
+		var steps []string
+		reopened, err := store.OpenWith(ctx, store.Options{DSN: directory, Timed: func(step string, _ time.Duration) {
+			steps = append(steps, step)
+		}})
+		if err != nil {
+			t.Fatalf("reopening: %v", err)
+		}
+		requireSchemaApplied(t, reopened)
+		if err := reopened.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return steps
+	}
+	if err := database.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if steps := strings.Join(reopen(), ", "); !strings.Contains(steps, store.StepSchemaRecorded) ||
+		strings.Contains(steps, store.StepSchemaApplied) {
+		t.Errorf("a database recording this schema was opened with the steps %s", steps)
+	}
+	again, err := store.Open(ctx, directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := again.DB().ExecContext(ctx, "UPDATE applied_schema SET digest = repeat('0', 64)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := again.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if steps := strings.Join(reopen(), ", "); !strings.Contains(steps, store.StepSchemaApplied) {
+		t.Errorf("a database recording another schema was opened with the steps %s", steps)
+	}
 }
 
 // TestApplyingTheSchemaTwiceChangesNothing is what makes a schema with no migration
@@ -41,15 +112,17 @@ func TestApplyingTheSchemaTwiceChangesNothing(t *testing.T) {
 	ctx := context.Background()
 
 	before := schemaFingerprint(t, database)
+	forgetAppliedSchema(t, database)
 	if err := database.Close(); err != nil {
 		t.Fatalf("closing before the second apply: %v", err)
 	}
 
-	reopened, err := Open(ctx, directory)
+	reopened, err := store.Open(ctx, directory)
 	if err != nil {
 		t.Fatalf("reopening the database, which applies the schema again: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
+	requireSchemaApplied(t, reopened)
 
 	after := schemaFingerprint(t, reopened)
 	if before != after {
@@ -68,15 +141,17 @@ func TestASettingSurvivesTheSchemaBeingAppliedAgain(t *testing.T) {
 	if err := database.SetSetting(ctx, "retention_seconds", "3600", 1750000000); err != nil {
 		t.Fatalf("changing the horizon: %v", err)
 	}
+	forgetAppliedSchema(t, database)
 	if err := database.Close(); err != nil {
 		t.Fatalf("closing: %v", err)
 	}
 
-	reopened, err := Open(ctx, directory)
+	reopened, err := store.Open(ctx, directory)
 	if err != nil {
 		t.Fatalf("reopening: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
+	requireSchemaApplied(t, reopened)
 
 	value, present, err := reopened.Setting(ctx, "retention_seconds")
 	if err != nil || !present {
@@ -105,15 +180,17 @@ func TestAProbedAvailabilityRowSurvivesTheSchemaBeingAppliedAgain(t *testing.T) 
 		"GET /api/diagnostics/firewall/log", &detail, 1750000000); err != nil {
 		t.Fatalf("recording availability: %v", err)
 	}
+	forgetAppliedSchema(t, database)
 	if err := database.Close(); err != nil {
 		t.Fatalf("closing: %v", err)
 	}
 
-	reopened, err := Open(ctx, directory)
+	reopened, err := store.Open(ctx, directory)
 	if err != nil {
 		t.Fatalf("reopening: %v", err)
 	}
 	t.Cleanup(func() { _ = reopened.Close() })
+	requireSchemaApplied(t, reopened)
 
 	state, probe, checkedAt, err := reopened.Availability(ctx, providerID)
 	if err != nil {
@@ -138,7 +215,7 @@ func TestClosingReleasesTheDatabaseForTheNextStart(t *testing.T) {
 	if err := database.SetSetting(ctx, "example_setting", "example value", 1750000000); err != nil {
 		t.Fatalf("writing a setting: %v", err)
 	}
-	if second, err := Open(ctx, directory); !errors.Is(err, ErrAlreadyRunning) {
+	if second, err := store.Open(ctx, directory); !errors.Is(err, store.ErrAlreadyRunning) {
 		if second != nil {
 			_ = second.Close()
 		}
@@ -151,7 +228,7 @@ func TestClosingReleasesTheDatabaseForTheNextStart(t *testing.T) {
 		t.Fatalf("closing: %v", err)
 	}
 
-	reopened, err := Open(ctx, directory)
+	reopened, err := store.Open(ctx, directory)
 	if err != nil {
 		t.Fatalf("reopening after a clean close: %v", err)
 	}
@@ -179,9 +256,39 @@ func TestClosingTwiceIsNotAnError(t *testing.T) {
 // (P-AC3).
 func TestOpeningWithNoDatabaseIsRefused(t *testing.T) {
 	t.Parallel()
-	_, err := Open(context.Background(), "")
-	if !errors.Is(err, ErrNoDatabase) || !strings.Contains(err.Error(), "--database") {
+	_, err := store.Open(context.Background(), "")
+	if !errors.Is(err, store.ErrNoDatabase) || !strings.Contains(err.Error(), "--database") {
 		t.Fatalf("opening with no database connection gave %v", err)
+	}
+}
+
+// TestARetryOfTheWaitForTheDatabaseIsReportedNotSlept is E4's second half (Phase E): a start
+// against a database that refuses the connection retries, and each retry is an event -- told to
+// Options.Log and recorded for the suite's breakdown (internal/testtiming) -- never a silent sleep.
+func TestARetryOfTheWaitForTheDatabaseIsReportedNotSlept(t *testing.T) {
+	directory := t.TempDir()
+	t.Setenv(testtiming.Variable, directory)
+	var logged []string
+	opened, err := store.OpenWith(context.Background(), store.Options{
+		DSN:  "host=127.0.0.1 port=1 user=opnview dbname=opnview sslmode=disable connect_timeout=1",
+		Wait: 1500 * time.Millisecond, Log: func(message string) { logged = append(logged, message) }})
+	if err == nil {
+		_ = opened.Close()
+		t.Fatal("a refused connection opened")
+	}
+	if !errors.Is(err, store.ErrDatabaseUnreachable) {
+		t.Fatalf("a refused connection was reported as %v", err)
+	}
+	if len(logged) < 2 {
+		t.Fatalf("the wait told %d attempts, not one per retry: %q", len(logged), logged)
+	}
+	raw, err := os.ReadFile(filepath.Join(directory, fmt.Sprintf("%d.tsv", os.Getpid())))
+	if err != nil {
+		t.Fatalf("no retry was recorded: %v", err)
+	}
+	recorded := strings.Count(string(raw), "github.com/NaejEL/opnview/internal/store\t"+testtiming.StepRetry+"\t")
+	if recorded != len(logged) {
+		t.Errorf("%d retries were recorded for %d attempts told:\n%s", recorded, len(logged), raw)
 	}
 }
 
@@ -306,7 +413,7 @@ func TestSplitStatementsKeepsASemicolonInsideAString(t *testing.T) {
 }
 
 // schemaFingerprint renders the facts a second apply must not change.
-func schemaFingerprint(t *testing.T, database *Store) string {
+func schemaFingerprint(t *testing.T, database *store.Store) string {
 	t.Helper()
 	ctx := context.Background()
 
@@ -375,11 +482,11 @@ func itoa(value int) string {
 func TestADatabaseWithTelemetryOnIsRefused(t *testing.T) {
 	t.Parallel()
 	dsn := testDatabase(t) + " options='-c timescaledb.telemetry_level=basic'"
-	database, err := Open(context.Background(), dsn)
+	database, err := store.Open(context.Background(), dsn)
 	if err == nil {
 		_ = database.Close()
 	}
-	if !errors.Is(err, ErrTelemetryOn) || !strings.Contains(err.Error(), "timescaledb.telemetry_level") {
+	if !errors.Is(err, store.ErrTelemetryOn) || !strings.Contains(err.Error(), "timescaledb.telemetry_level") {
 		t.Fatalf("a database with telemetry on gave %v, not ErrTelemetryOn", err)
 	}
 }

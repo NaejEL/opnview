@@ -10,6 +10,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/config"
@@ -389,7 +391,7 @@ func (s *Server) assemble(contributed map[string][]Route) {
 	s.pages = map[string]Page{}
 	s.notices = map[MessageKey]struct{}{}
 	s.refusals = map[MessageKey]struct{}{
-		msgSetupClosed: {}, msgSessionExpired: {}, msgKeyFileRefused: {},
+		messages.MsgSetupClosed: {}, messages.MsgSessionExpired: {}, messages.MsgKeyFileRefused: {},
 	}
 	for _, accepted := range s.surfaces {
 		surface := accepted.surface

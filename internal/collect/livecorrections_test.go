@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
@@ -22,8 +23,8 @@ import (
 // gatewayReadings counts the stored gateway readings, and those whose value is 0.
 func gatewayReadings(t *testing.T, database *store.Store) (int, int) {
 	t.Helper()
-	return scalarCount(t, database, "SELECT count(*) FROM measurement_sample WHERE subject_kind = 'gateway'"),
-		scalarCount(t, database, "SELECT count(*) FROM measurement_sample WHERE subject_kind = 'gateway' AND value = 0")
+	return collecttest.ScalarCount(t, database, "SELECT count(*) FROM measurement_sample WHERE subject_kind = 'gateway'"),
+		collecttest.ScalarCount(t, database, "SELECT count(*) FROM measurement_sample WHERE subject_kind = 'gateway' AND value = 0")
 }
 
 // TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading is AC15's second and third
@@ -60,11 +61,11 @@ func TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 	for _, one := range cases {
 		t.Run(one.name, func(t *testing.T) {
 			harness := arrangeMeasurementCollection(t)
-			one.arrange(harness.fake)
-			if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+			one.arrange(harness.Fake)
+			if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 				t.Fatalf("sampling: %v", err)
 			}
-			detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight)
+			detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 			if !strings.Contains(detail, one.wording) {
 				t.Errorf("the detail is %q, which does not name the absence as %q", detail, one.wording)
 			}
@@ -74,7 +75,7 @@ func TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 				}
 			}
 			seen[one.name] = one.wording
-			if rows, zeroes := gatewayReadings(t, harness.store); rows != 0 || zeroes != 0 {
+			if rows, zeroes := gatewayReadings(t, harness.Store); rows != 0 || zeroes != 0 {
 				t.Errorf("%d gateway readings, %d of them 0, were written for an absence", rows, zeroes)
 			}
 		})
@@ -87,21 +88,21 @@ func TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 func TestTheGatewayMeasuresOfTheLiveShapeAreStoredPerGatewayWithFigures(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	if err := harness.collector.CollectMeasurement(context.Background()); err != nil {
+	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	if measured := scalarCount(t, harness.store, `SELECT count(*) FROM measurement_sample
+	if measured := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM measurement_sample
 		WHERE subject_kind = 'gateway' AND subject_key = 'EXAMPLE_GW_A'`); measured != 3 {
 		t.Errorf("the gateway with figures has %d readings, not its three measures", measured)
 	}
-	if unmeasured := scalarCount(t, harness.store, `SELECT count(*) FROM measurement_sample
+	if unmeasured := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM measurement_sample
 		WHERE subject_kind = 'gateway' AND subject_key = 'EXAMPLE_GW_B'`); unmeasured != 0 {
 		t.Errorf("the gateway listed with ~ has %d readings", unmeasured)
 	}
-	if _, zeroes := gatewayReadings(t, harness.store); zeroes != 0 {
+	if _, zeroes := gatewayReadings(t, harness.Store); zeroes != 0 {
 		t.Errorf("%d gateway readings are 0", zeroes)
 	}
-	if detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight); !strings.Contains(detail,
 		"1 of 2 gateways listed with no figure") {
 		t.Errorf("the detail %q does not name the gateway listed with no figure", detail)
 	}
@@ -114,15 +115,15 @@ func TestTheGatewayMeasuresOfTheLiveShapeAreStoredPerGatewayWithFigures(t *testi
 func TestTheProbeRoundKeepsWhatTheLastSamplingPassCouldNotRead(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status_unmonitored.json")
+	harness.Fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status_unmonitored.json")
 	ctx := context.Background()
-	if err := harness.collector.CollectMeasurement(ctx); err != nil {
+	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	if err := harness.collector.probeMeasurement(ctx); err != nil {
+	if err := harness.Collector.ProbeMeasurement(ctx); err != nil {
 		t.Fatalf("probing: %v", err)
 	}
-	if detail := harness.detailOf(t, core.KindMeasurementSample, ProviderInsight); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight); !strings.Contains(detail,
 		"gateways listed with no figure") {
 		t.Errorf("after the probe round the detail is %q, which has lost the gateways with no figure", detail)
 	}
@@ -150,39 +151,39 @@ func answerLookups(fake *providertest.Firewall, rows ...map[string]any) {
 func TestALateLookupAttributesAFlowWithNoFurtherFlowPass(t *testing.T) {
 	t.Parallel()
 	harness := arrangeResolverCollection(t)
-	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness.Fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
 	ctx := context.Background()
-	if err := harness.collector.probeFirewallLog(ctx); err != nil {
+	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
-	answerLookups(harness.fake)
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	answerLookups(harness.Fake)
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting the filter log: %v", err)
 	}
 	source, destination := "198.51.100.10", "203.0.113.20"
 	var flowID, observedAt int64
-	if err := harness.store.DB().QueryRow(`SELECT id, observed_at FROM flow
+	if err := harness.Store.DB().QueryRow(`SELECT id, observed_at FROM flow
 		WHERE src_address = ? AND dst_address = ?`, source, destination).Scan(&flowID, &observedAt); err != nil {
 		t.Fatalf("reading the flow: %v", err)
 	}
 	attributed := func() int {
-		return scalarCount(t, harness.store, "SELECT count(*) FROM domain_attribution WHERE flow_id = ?", flowID)
+		return collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM domain_attribution WHERE flow_id = ?", flowID)
 	}
 	if attributed() != 0 {
 		t.Fatal("the flow is attributed before any lookup was stored")
 	}
 
-	answerLookups(harness.fake, lookupRow(source, "example-late.example.invalid", observedAt-2))
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	answerLookups(harness.Fake, lookupRow(source, "example-late.example.invalid", observedAt-2))
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting the lookups: %v", err)
 	}
 	if attributed() != 1 {
 		t.Fatal("the lookup stored after the flow did not attribute it")
 	}
 
-	answerLookups(harness.fake, lookupRow(source, "example-late.example.invalid", observedAt-2),
+	answerLookups(harness.Fake, lookupRow(source, "example-late.example.invalid", observedAt-2),
 		lookupRow(source, "example-other.example.invalid", observedAt-1))
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting the lookups: %v", err)
 	}
 	if attributed() != 0 {
@@ -196,27 +197,27 @@ func TestALookupAtTheNewestStoredInstantIsInsertedWhenItsKeyIsNew(t *testing.T) 
 	t.Parallel()
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
-	at := referenceEpoch() - 100
-	answerLookups(harness.fake, lookupRow("198.51.100.10", "example-first.example.invalid", at))
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	at := collecttest.ReferenceEpoch() - 100
+	answerLookups(harness.Fake, lookupRow("198.51.100.10", "example-first.example.invalid", at))
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	before := countRows(t, harness.store, "dns_resolution")
+	before := collecttest.CountRows(t, harness.Store, "dns_resolution")
 	// The same lookup again, and a different one at the same instant: the newest stored.
-	answerLookups(harness.fake, lookupRow("198.51.100.10", "example-first.example.invalid", at),
+	answerLookups(harness.Fake, lookupRow("198.51.100.10", "example-first.example.invalid", at),
 		lookupRow("198.51.100.10", "example-second.example.invalid", at))
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	if after := countRows(t, harness.store, "dns_resolution"); after != before+1 {
+	if after := collecttest.CountRows(t, harness.Store, "dns_resolution"); after != before+1 {
 		t.Errorf("the pass stored %d rows; the new lookup at the newest instant is one, and the known one none",
 			after-before)
 	}
-	if second := scalarCount(t, harness.store, `SELECT count(*) FROM dns_resolution
+	if second := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM dns_resolution
 		WHERE domain = 'example-second.example.invalid'`); second != 1 {
 		t.Errorf("the lookup sharing the newest instant is stored %d times, not once", second)
 	}
-	if first := scalarCount(t, harness.store, `SELECT count(*) FROM dns_resolution
+	if first := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM dns_resolution
 		WHERE domain = 'example-first.example.invalid'`); first != 1 {
 		t.Errorf("the known lookup is stored %d times, not once", first)
 	}
@@ -231,36 +232,36 @@ func TestAnUnresolvedLookupStoredBeforeARestartIsResolvedByTheFirstLeasePassAfte
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
 	logged := "example-restart-host.example.invalid"
-	answerLookups(harness.fake, lookupRow(logged, "example-site.example.invalid", referenceEpoch()-120))
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	answerLookups(harness.Fake, lookupRow(logged, "example-site.example.invalid", collecttest.ReferenceEpoch()-120))
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	if unknown := scalarCount(t, harness.store, `SELECT count(*) FROM dns_resolution
+	if unknown := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM dns_resolution
 		WHERE client_hostname = ? AND client_resolution = 'unknown_hostname'`, logged); unknown != 1 {
 		t.Fatalf("the lookup was not stored as an unknown host name (%d)", unknown)
 	}
 
 	// The restart: a new collector over the same database, an hour later.
-	restarted := newTestCollector(t, providertest.NewClient(t, harness.fake), harness.store,
-		newFixedClock(referenceInstant().Add(time.Hour)))
-	provider, err := harness.store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
+	restarted := collecttest.NewTestCollector(t, providertest.NewClient(t, harness.Fake), harness.Store,
+		collecttest.NewFixedClock(collecttest.ReferenceInstant().Add(time.Hour)))
+	provider, err := harness.Store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 	if err != nil {
 		t.Fatalf("looking up a lease provider: %v", err)
 	}
 	hostname := "example-restart-host"
-	expires := referenceEpoch() + 86400
-	if err := harness.store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
+	expires := collecttest.ReferenceEpoch() + 86400
+	if err := harness.Store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		Backend: "dnsmasq", Address: "198.51.100.30", Hostname: &hostname, LeaseState: "active",
 		GenerationKey: vocab.GenerationKeyOf(nil, &expires, 0), ExpiresAt: &expires,
-		ObservedAt: referenceEpoch() + 3600,
+		ObservedAt: collecttest.ReferenceEpoch() + 3600,
 	}); err != nil {
 		t.Fatalf("writing the lease: %v", err)
 	}
 	// What the first lease pass after the restart derives.
-	if err := restarted.Derive(ctx, derive.Derivation{Hostnames: true, HostnamesBefore: referenceEpoch() + 3600}); err != nil {
+	if err := restarted.Derive(ctx, derive.Derivation{Hostnames: true, HostnamesBefore: collecttest.ReferenceEpoch() + 3600}); err != nil {
 		t.Fatalf("deriving the lease pass: %v", err)
 	}
-	if resolved := scalarCount(t, harness.store, `SELECT count(*) FROM dns_resolution
+	if resolved := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM dns_resolution
 		WHERE client_hostname = ? AND client_resolution = 'lease_hostname'
 		  AND client_address = '198.51.100.30'`, logged); resolved != 1 {
 		t.Error("the lookup stored before the restart was not resolved by the first lease pass after it")
@@ -272,8 +273,8 @@ func TestAnUnresolvedLookupStoredBeforeARestartIsResolvedByTheFirstLeasePassAfte
 // logged on two interfaces is paired by the collector's own derivation.
 func TestTheFilterLogStoresTheTwoPairingFieldsAndPairsTheTwoLegs(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
+	harness := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	rows := []any{
 		map[string]any{"__digest__": "exampledigestpair0000000000000001", "__timestamp__": "2026-09-26T23:58:01",
 			"interface": "exdev3", "action": "pass", "dir": "out", "ipversion": "4", "protoname": "tcp",
@@ -288,23 +289,23 @@ func TestTheFilterLogStoresTheTwoPairingFieldsAndPairsTheTwoLegs(t *testing.T) {
 			"length": "80", "src": "2001:db8::10", "dst": "2001:db8:ffff::53", "srcport": "40002",
 			"dstport": "53", "rid": "example-rule-label-1", "reason": "match"},
 	}
-	harness.fake.AnswerJSON(opnsense.FirewallLog, rows)
+	harness.Fake.AnswerJSON(opnsense.FirewallLog, rows)
 	ctx := context.Background()
-	if err := harness.collector.probeFirewallLog(ctx); err != nil {
+	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	if stored := scalarCount(t, harness.store, `SELECT count(*) FROM flow
+	if stored := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM flow
 		WHERE ip_id = 4242 AND tcp_seq = 123456789`); stored != 2 {
 		t.Errorf("%d records carry the identification and the sequence number, not 2", stored)
 	}
-	if v6 := scalarCount(t, harness.store, `SELECT count(*) FROM flow
+	if v6 := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM flow
 		WHERE ip_version = 6 AND ip_id IS NULL AND tcp_seq IS NULL`); v6 != 1 {
 		t.Error("the IPv6 UDP record carries a field it does not have")
 	}
-	if paired := scalarCount(t, harness.store, `SELECT count(*) FROM flow AS f JOIN flow AS p
+	if paired := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM flow AS f JOIN flow AS p
 		ON p.id = f.paired_flow_id AND p.paired_flow_id = f.id
 		WHERE f.pair_outcome = 'second_leg' AND f.src_is_this_firewall = 1 AND p.pair_outcome = 'first_leg'`); paired != 1 {
 		t.Error("the two legs of the NATed connection were not paired by the collector's derivation")
@@ -345,29 +346,29 @@ func TestAReacquiredAddressIsANewHoldingWhateverTheOrderInterfacesAreListed(t *t
 	t.Parallel()
 	for _, heldFirst := range []bool{true, false} {
 		t.Run(map[bool]string{true: "listed first", false: "listed last"}[heldFirst], func(t *testing.T) {
-			harness := newProbeHarness(t)
+			harness := collecttest.NewProbeHarness(t)
 			ctx := context.Background()
-			harness.fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")
-			harness.fake.AnswerFixture(opnsense.SearchRule, "search_rule.json")
-			harness.fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
+			harness.Fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")
+			harness.Fake.AnswerFixture(opnsense.SearchRule, "search_rule.json")
+			harness.Fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
 			held := "192.0.2.1"
 			for index, read := range []bool{true, true, false, false, true} {
-				setClock(harness, referenceInstant().Add(time.Duration(index)*5*time.Minute))
+				collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(time.Duration(index)*5*time.Minute))
 				address := ""
 				if read {
 					address = held
 				}
-				harness.fake.AnswerJSON(opnsense.InterfacesInfo, interfacesInfoBody(heldFirst, address))
-				if err := harness.collector.RefreshDiscovery(ctx); err != nil {
+				harness.Fake.AnswerJSON(opnsense.InterfacesInfo, interfacesInfoBody(heldFirst, address))
+				if err := harness.Collector.RefreshDiscovery(ctx); err != nil {
 					t.Fatalf("discovery %d: %v", index, err)
 				}
 			}
-			if holdings := scalarCount(t, harness.store, `SELECT count(*) FROM interface_address
+			if holdings := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM interface_address
 				WHERE address = ? AND source_field = 'addr4'`, held); holdings != 2 {
 				t.Errorf("the address released and re-acquired is %d rows, not two holdings", holdings)
 			}
-			gap := referenceEpoch() + int64((12*time.Minute + 30*time.Second).Seconds())
-			if spanned := scalarCount(t, harness.store, `SELECT count(*) FROM this_firewall_address
+			gap := collecttest.ReferenceEpoch() + int64((12*time.Minute + 30*time.Second).Seconds())
+			if spanned := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM this_firewall_address
 				WHERE address = ? AND first_seen_at - 300 <= ? AND (is_current = 1 OR last_seen_at + 300 >= ?)`,
 				held, gap, gap); spanned != 0 {
 				t.Error("a holding of the address spans the gap between its two holdings")
@@ -376,68 +377,41 @@ func TestAReacquiredAddressIsANewHoldingWhateverTheOrderInterfacesAreListed(t *t
 	}
 }
 
-// unresolvedLookup stores one lookup whose logged host name named no lease.
-func unresolvedLookup(t *testing.T, database *store.Store, key, hostname string, lookedUpAt, ingestedAt int64) {
-	t.Helper()
-	name := hostname
-	if err := database.InsertDNSResolution(context.Background(), vocab.DNSResolution{
-		LookupKey: key, ClientAddress: name, ClientHostname: &name,
-		ClientResolution: vocab.ClientResolutionUnknown, Domain: "example-site.example.invalid",
-		Resolver: "unbound", Action: "pass", LookedUpAt: lookedUpAt, IngestedAt: ingestedAt,
-	}); err != nil {
-		t.Fatalf("writing the lookup: %v", err)
-	}
-}
-
-// examined reads whether a lease pass has examined one lookup, and its resolution.
-func examined(t *testing.T, database *store.Store, key string) (bool, string) {
-	t.Helper()
-	var (
-		at         *int64
-		resolution string
-	)
-	if err := database.DB().QueryRow(`SELECT hostname_examined_at, client_resolution FROM dns_resolution
-		WHERE lookup_key = ?`, key).Scan(&at, &resolution); err != nil {
-		t.Fatalf("reading %s: %v", key, err)
-	}
-	return at != nil, resolution
-}
-
 // TestAFailedLeasePassDoesNotUseUpALookupsRetry is H6 against a failed lease read: a
 // pass that could not read the active backend examines nothing, so the lookup is still
 // resolved by the first pass that does read it.
 func TestAFailedLeasePassDoesNotUseUpALookupsRetry(t *testing.T) {
 	t.Parallel()
-	harness := arrangeLeaseCollection(t)
+	harness := collecttest.ArrangeLeaseCollection(t)
 	ctx := context.Background()
-	unresolvedLookup(t, harness.store, "example-key-failed-pass", "example-host-failed.example.invalid",
-		referenceEpoch()-120, referenceEpoch()-100)
+	collecttest.UnresolvedLookup(t, harness.Store, "example-key-failed-pass", "example-host-failed.example.invalid",
+		collecttest.ReferenceEpoch()-120, collecttest.ReferenceEpoch()-100)
 
-	harness.fake.Answer(opnsense.DnsmasqLeases, http.StatusInternalServerError, []byte(`{}`))
-	if err := harness.collector.CollectDHCPLease(ctx); err == nil {
+	harness.Fake.Answer(opnsense.DnsmasqLeases, http.StatusInternalServerError, []byte(`{}`))
+	if err := harness.Collector.CollectDHCPLease(ctx); err == nil {
 		t.Fatal("a lease pass whose backend answered 500 reported no failure")
 	}
-	if done, _ := examined(t, harness.store, "example-key-failed-pass"); done {
+	if done, _ := collecttest.Examined(t, harness.Store, "example-key-failed-pass"); done {
 		t.Fatal("a lease pass that read no lease examined the lookup, using up its retry")
 	}
 
-	harness.fake.AnswerFixture(opnsense.DnsmasqLeases, "dnsmasq_leases.json")
-	provider, err := harness.store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
+	harness.Fake.AnswerFixture(opnsense.DnsmasqLeases, "dnsmasq_leases.json")
+	provider, err := harness.Store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 	if err != nil {
 		t.Fatalf("looking up the provider: %v", err)
 	}
 	hostname := "example-host-failed"
-	if err := harness.store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
+	if err := harness.Store.InsertDHCPLease(ctx, provider, vocab.DHCPLease{
 		Backend: "dnsmasq", Address: "198.51.100.41", Hostname: &hostname, LeaseState: "reserved",
-		GenerationKey: vocab.GenerationKeyOf(nil, nil, referenceEpoch()), ObservedAt: referenceEpoch(),
+		GenerationKey: vocab.GenerationKeyOf(nil, nil, collecttest.ReferenceEpoch()), ObservedAt: collecttest.ReferenceEpoch(),
 	}); err != nil {
 		t.Fatalf("writing the lease: %v", err)
 	}
-	setClock(harness, referenceInstant().Add(5*time.Minute))
-	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
+	collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(5*time.Minute))
+	if err := harness.Collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("the lease pass: %v", err)
 	}
-	if done, resolution := examined(t, harness.store, "example-key-failed-pass"); !done ||
+	if done, resolution := collecttest.Examined(t, harness.Store, "example-key-failed-pass"); !done ||
 		resolution != vocab.ClientResolutionLeased {
 		t.Errorf("the first lease pass that read the backend left the lookup examined %t, %s", done, resolution)
 	}
@@ -448,21 +422,21 @@ func TestAFailedLeasePassDoesNotUseUpALookupsRetry(t *testing.T) {
 // not examine it and the next one does.
 func TestALookupIngestedAfterTheLeaseReadBeganWaitsForTheNextPass(t *testing.T) {
 	t.Parallel()
-	harness := arrangeLeaseCollection(t)
+	harness := collecttest.ArrangeLeaseCollection(t)
 	ctx := context.Background()
-	unresolvedLookup(t, harness.store, "example-key-late", "example-host-late.example.invalid",
-		referenceEpoch()-10, referenceEpoch())
-	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
+	collecttest.UnresolvedLookup(t, harness.Store, "example-key-late", "example-host-late.example.invalid",
+		collecttest.ReferenceEpoch()-10, collecttest.ReferenceEpoch())
+	if err := harness.Collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("the lease pass: %v", err)
 	}
-	if done, _ := examined(t, harness.store, "example-key-late"); done {
+	if done, _ := collecttest.Examined(t, harness.Store, "example-key-late"); done {
 		t.Fatal("a lookup ingested as the lease read began was examined against those leases")
 	}
-	setClock(harness, referenceInstant().Add(5*time.Minute))
-	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
+	collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(5*time.Minute))
+	if err := harness.Collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("the next lease pass: %v", err)
 	}
-	if done, _ := examined(t, harness.store, "example-key-late"); !done {
+	if done, _ := collecttest.Examined(t, harness.Store, "example-key-late"); !done {
 		t.Error("the next lease pass did not examine the lookup")
 	}
 }

@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -24,20 +25,20 @@ import (
 // never presents what it read as coverage of the window it asked for.
 
 // arrangeResolverCollection stands up a harness whose resolver is the active source.
-func arrangeResolverCollection(t *testing.T) *probeHarness {
+func arrangeResolverCollection(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	harness.fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-	harness.fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
-	harness.fake.AnswerFixture(opnsense.SearchQueries, "search_queries_page1.json")
-	if err := harness.collector.probeDNSLookup(context.Background()); err != nil {
+	harness := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
+	harness.Fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
+	harness.Fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
+	harness.Fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
+	harness.Fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(opnsense.SearchQueries, "search_queries_page1.json")
+	if err := harness.Collector.ProbeDNSLookup(context.Background()); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
-	if key := harness.activeKeyOf(t, core.KindDNSLookup); key != ProviderUnbound {
+	if key := harness.ActiveKeyOf(t, core.KindDNSLookup); key != collecttest.ProviderUnbound {
 		t.Fatalf("the resolver kind activated %q", key)
 	}
 	return harness
@@ -51,12 +52,12 @@ func arrangeResolverCollection(t *testing.T) *probeHarness {
 func TestTheResolverQueryIsAJSONPostWithIntegerBounds(t *testing.T) {
 	t.Parallel()
 	harness := arrangeResolverCollection(t)
-	if err := harness.collector.CollectDNSLookup(context.Background()); err != nil {
+	if err := harness.Collector.CollectDNSLookup(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	harness.fake.AssertEveryPathIsRegistered()
+	harness.Fake.AssertEveryPathIsRegistered()
 
-	requests := harness.fake.RequestsTo(opnsense.SearchQueries)
+	requests := harness.Fake.RequestsTo(opnsense.SearchQueries)
 	if len(requests) == 0 {
 		t.Fatal("the query report was never requested")
 	}
@@ -115,11 +116,11 @@ func TestTheCollectorNeverPresentsWhatItReadAsCoverageOfTheWindow(t *testing.T) 
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
 
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
 
-	detail := harness.detailOf(t, core.KindDNSLookup, ProviderUnbound)
+	detail := harness.DetailOf(t, core.KindDNSLookup, collecttest.ProviderUnbound)
 	for _, phrase := range []string{
 		"most recent lookups",
 		"ignores timeStart and timeEnd",
@@ -157,25 +158,25 @@ func TestTheDeduplicationKeyIsComposedFromTheRowContentBecauseTheIdentifierIsNul
 		}
 	}
 
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("the first pass: %v", err)
 	}
-	afterOne := countRows(t, harness.store, "dns_resolution")
+	afterOne := collecttest.CountRows(t, harness.Store, "dns_resolution")
 	if afterOne == 0 {
 		t.Fatal("the first pass stored no lookup")
 	}
 	for pass := 0; pass < 3; pass++ {
-		if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+		if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 			t.Fatalf("pass %d: %v", pass, err)
 		}
 	}
-	if repeated := countRows(t, harness.store, "dns_resolution"); repeated != afterOne {
+	if repeated := collecttest.CountRows(t, harness.Store, "dns_resolution"); repeated != afterOne {
 		t.Fatalf("four passes over the ring buffer stored %d lookups, up from %d",
 			repeated, afterOne)
 	}
 
 	// The stored key is content-addressed rather than an identifier the endpoint supplied.
-	for _, key := range stringColumn(t, harness.store,
+	for _, key := range stringColumn(t, harness.Store,
 		"SELECT lookup_key FROM dns_resolution") {
 		if !strings.HasPrefix(key, "content:") {
 			t.Errorf("the stored key %q does not say that it was composed from the row content",
@@ -195,13 +196,13 @@ func TestABlockedLookupNamingNoListIsItsOwnState(t *testing.T) {
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
 
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
 
-	attributed := scalarCount(t, harness.store,
+	attributed := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM dns_resolution WHERE action IN ('block','drop') AND blocklist_id IS NOT NULL")
-	unattributed := scalarCount(t, harness.store,
+	unattributed := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM dns_resolution WHERE action IN ('block','drop') AND blocklist_id IS NULL")
 	if attributed == 0 {
 		t.Error("no blocked lookup names the list that refused it")
@@ -210,12 +211,12 @@ func TestABlockedLookupNamingNoListIsItsOwnState(t *testing.T) {
 		t.Error("no blocked lookup carries the list-not-recorded state, so it is untested")
 	}
 	// A passed lookup names no list, and that is a third thing again.
-	if passedWithList := scalarCount(t, harness.store,
+	if passedWithList := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM dns_resolution WHERE action = 'pass' AND blocklist_id IS NOT NULL"); passedWithList != 0 {
 		t.Errorf("%d passed lookups were attributed to a list", passedWithList)
 	}
 	// The name is observed and the purpose is user input, so nothing here assigns one.
-	if classified := scalarCount(t, harness.store,
+	if classified := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM blocklist WHERE purpose IS NOT NULL"); classified != 0 {
 		t.Errorf("the collector assigned a purpose to %d lists; that is the user's to assign",
 			classified)
@@ -228,12 +229,12 @@ func TestABlockedLookupNamingNoListIsItsOwnState(t *testing.T) {
 func TestALookupWhoseVerdictWasNotReportedStaysDistinguishable(t *testing.T) {
 	t.Parallel()
 	harness := arrangeResolverCollection(t)
-	if err := harness.collector.CollectDNSLookup(context.Background()); err != nil {
+	if err := harness.Collector.CollectDNSLookup(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	reported := scalarCount(t, harness.store,
+	reported := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM dns_resolution WHERE dnssec_status IS NOT NULL")
-	notReported := scalarCount(t, harness.store,
+	notReported := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM dns_resolution WHERE dnssec_status IS NULL")
 	if reported == 0 || notReported == 0 {
 		t.Fatalf("%d lookups carry a verdict and %d carry none; both are needed for the "+
@@ -253,11 +254,11 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 	ctx := context.Background()
 
 	oldest := oldestLookupInstant(t, "search_queries_page1.json")
-	if err := harness.store.InsertDNSResolution(ctx, vocab.DNSResolution{
+	if err := harness.Store.InsertDNSResolution(ctx, vocab.DNSResolution{
 		LookupKey:     "content:an-earlier-pass-stored-this",
 		ClientAddress: "example-address",
 		Domain:        "example-domain",
-		Resolver:      ProviderUnbound,
+		Resolver:      collecttest.ProviderUnbound,
 		Action:        "pass",
 		LookedUpAt:    oldest - 3600,
 		IngestedAt:    oldest - 3600,
@@ -265,11 +266,11 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 		t.Fatalf("seeding a lookup from an earlier pass: %v", err)
 	}
 
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
 
-	gaps := scalarCount(t, harness.store,
+	gaps := collecttest.ScalarCount(t, harness.Store,
 		"SELECT count(*) FROM collection_gap WHERE reason = ?",
 		string(vocab.GapResolverWindowNotHonoured))
 	if gaps != 1 {
@@ -277,7 +278,7 @@ func TestLookupsThatRotatedOutOfTheRingBufferWriteAGapRow(t *testing.T) {
 	}
 	var start, end int64
 	var detail *string
-	if err := harness.store.DB().QueryRowContext(ctx,
+	if err := harness.Store.DB().QueryRowContext(ctx,
 		`SELECT interval_start_at, interval_end_at, detail FROM collection_gap
 		 WHERE reason = ?`, string(vocab.GapResolverWindowNotHonoured)).
 		Scan(&start, &end, &detail); err != nil {
@@ -302,10 +303,10 @@ func TestTheCollectorWalksTheRingBufferAndStopsWhenAPageIsAllKnown(t *testing.T)
 	// The fake serves one page whatever is asked, so the second request sees rows it has
 	// just stored and the walk stops — which is the behaviour, not a limitation of the fake:
 	// a real second page walks further back and is also eventually all known.
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	requests := harness.fake.RequestsTo(opnsense.SearchQueries)
+	requests := harness.Fake.RequestsTo(opnsense.SearchQueries)
 	if len(requests) < 2 {
 		t.Fatalf("the collector made %d requests; it must page rather than read one page", len(requests))
 	}
@@ -336,10 +337,10 @@ func TestTheStoredKeysDoNotChangeWhenThePollInstantDoes(t *testing.T) {
 	harness := arrangeResolverCollection(t)
 	ctx := context.Background()
 
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("the first pass: %v", err)
 	}
-	firstKeys := stringColumn(t, harness.store,
+	firstKeys := stringColumn(t, harness.Store,
 		"SELECT lookup_key FROM dns_resolution ORDER BY lookup_key")
 	if len(firstKeys) == 0 {
 		t.Fatal("the first pass stored nothing")
@@ -347,11 +348,11 @@ func TestTheStoredKeysDoNotChangeWhenThePollInstantDoes(t *testing.T) {
 
 	// An hour later, the same ring buffer. Nothing new may be stored, and no key may
 	// change: the rows are the same rows.
-	harness.clock.advance(time.Hour)
-	if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+	harness.Clock.Advance(time.Hour)
+	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("the pass an hour later: %v", err)
 	}
-	secondKeys := stringColumn(t, harness.store,
+	secondKeys := stringColumn(t, harness.Store,
 		"SELECT lookup_key FROM dns_resolution ORDER BY lookup_key")
 
 	if strings.Join(firstKeys, ",") != strings.Join(secondKeys, ",") {

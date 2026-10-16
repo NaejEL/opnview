@@ -1,4 +1,4 @@
-package runtime
+package scripthost
 
 import (
 	"errors"
@@ -13,14 +13,14 @@ import (
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
-// failureVersionUnsupported is the outcome of a call on a firewall whose version no range covers.
+// FailureVersionUnsupported is the outcome of a call on a firewall whose version no range covers.
 const FailureVersionUnsupported = vocab.OutcomeFirewallVersionUnsupported
 
-// route is one way of calling an endpoint: for every version when versions is nil.
+// Route is one way of calling an endpoint: for every version when versions is nil.
 type Route struct {
 	Versions *contract.VersionRange
 	Endpoint opnsense.Endpoint
-	// fields maps a name the script reads to the firewall's; adapter is an exported adapter's name.
+	// Fields maps a name the script reads to the firewall's; adapter is an exported adapter's name.
 	Fields  map[string]string
 	Adapter string
 }
@@ -62,7 +62,7 @@ type versionSignal struct{ detail string }
 
 func (v *versionSignal) Error() string { return v.detail }
 
-// scriptVariant is one compiled script file and the range it runs on.
+// ScriptVariant is one compiled script file and the range it runs on.
 type ScriptVariant struct {
 	Versions contract.VersionRange
 	Program  *goja.Program

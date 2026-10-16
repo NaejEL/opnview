@@ -41,7 +41,7 @@ const driverName = "opnview-postgres"
 
 var registerDriver sync.Once
 
-// openPool opens a database/sql pool over the connection string.
+// OpenPool opens a database/sql pool over the connection string.
 func OpenPool(dsn string) (*sql.DB, error) {
 	config, err := pgx.ParseConfig(dsn)
 	if err != nil {
@@ -108,7 +108,7 @@ func (c *rewritingConn) Prepare(query string) (driver.Stmt, error) {
 // cache the first time a connection runs its bound text, so a second call prepares nothing new on
 // that connection.
 func (c *rewritingConn) PrepareContext(_ context.Context, query string) (driver.Stmt, error) {
-	rewritten, err := RewriteParameters(query)
+	rewritten, err := rewriteParameters(query)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ func (c *rewritingConn) CheckNamedValue(value *driver.NamedValue) error {
 }
 
 func (c *rewritingConn) QueryContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Rows, error) {
-	rewritten, err := RewriteParameters(query)
+	rewritten, err := rewriteParameters(query)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +176,7 @@ func (c *rewritingConn) QueryContext(ctx context.Context, query string, args []d
 }
 
 func (c *rewritingConn) ExecContext(ctx context.Context, query string, args []driver.NamedValue) (driver.Result, error) {
-	rewritten, err := RewriteParameters(query)
+	rewritten, err := rewriteParameters(query)
 	if err != nil {
 		return nil, err
 	}
@@ -258,7 +258,7 @@ type rewrittenStatement struct {
 	// dollarNumbered is a statement written in PostgreSQL's own numbering, bound as it is.
 	dollarNumbered bool
 	// names[k] is the name bound to $(k+1), or "" for the k-th positional ? (or $n) parameter.
-	Names []string
+	names []string
 	// positional is how many positional parameters the statement takes.
 	positional int
 }
@@ -280,9 +280,9 @@ func (r rewrittenStatement) arguments(args []driver.NamedValue) ([]driver.NamedV
 		}
 		positional = append(positional, arg.Value)
 	}
-	ordered := make([]driver.NamedValue, 0, len(options)+len(r.Names))
+	ordered := make([]driver.NamedValue, 0, len(options)+len(r.names))
 	ordered = append(ordered, options...)
-	if len(r.Names) == 0 {
+	if len(r.names) == 0 {
 		for index, value := range positional {
 			ordered = append(ordered, driver.NamedValue{Ordinal: len(ordered) + 1, Value: value})
 			_ = index
@@ -290,7 +290,7 @@ func (r rewrittenStatement) arguments(args []driver.NamedValue) ([]driver.NamedV
 		return renumber(ordered), nil
 	}
 	next := 0
-	for _, name := range r.Names {
+	for _, name := range r.names {
 		if name == "" {
 			if next >= len(positional) {
 				return nil, fmt.Errorf("store: the statement takes more positional arguments than the %d it was handed",
@@ -317,7 +317,7 @@ func (r rewrittenStatement) bind(args []driver.NamedValue) (string, []driver.Nam
 	if err != nil {
 		return "", nil, err
 	}
-	if r.dollarNumbered || len(r.Names) == 0 {
+	if r.dollarNumbered || len(r.names) == 0 {
 		return r.text, ordered, nil
 	}
 	var options []driver.NamedValue
@@ -328,7 +328,7 @@ func (r rewrittenStatement) bind(args []driver.NamedValue) (string, []driver.Nam
 		options = append(options, ordered[0])
 		ordered = ordered[1:]
 	}
-	numbers := make([]int, len(r.Names))
+	numbers := make([]int, len(r.names))
 	bound := make([]driver.NamedValue, 0, len(options)+len(ordered))
 	bound = append(bound, options...)
 	var text strings.Builder
@@ -381,7 +381,7 @@ var rewriteCache sync.Map
 
 // rewriteParameters rewrites a statement's :name and ? parameters to PostgreSQL's $n. A statement
 // already in PostgreSQL's numbering, or with no parameter, is returned unchanged.
-func RewriteParameters(query string) (rewrittenStatement, error) {
+func rewriteParameters(query string) (rewrittenStatement, error) {
 	if cached, found := rewriteCache.Load(query); found {
 		return cached.(rewrittenStatement), nil
 	}
@@ -477,23 +477,23 @@ func rewrite(query string) (rewrittenStatement, error) {
 			name := query[i+1 : end]
 			number, seen := numberOf[name]
 			if !seen {
-				result.Names = append(result.Names, name)
-				number = len(result.Names)
+				result.names = append(result.names, name)
+				number = len(result.names)
 				numberOf[name] = number
 			}
 			slot(number)
 			i = end
 		case character == '?':
-			result.Names = append(result.Names, "")
+			result.names = append(result.names, "")
 			result.positional++
-			slot(len(result.Names))
+			slot(len(result.names))
 			i++
 		default:
 			out.WriteByte(character)
 			i++
 		}
 	}
-	if dollarNumbered && len(result.Names) > 0 {
+	if dollarNumbered && len(result.names) > 0 {
 		return rewrittenStatement{}, fmt.Errorf("store: a statement mixes $n with :name or ? parameters")
 	}
 	result.text = out.String()

@@ -244,6 +244,7 @@ everything else is a table.
 ```
 account
 address_classification
+applied_schema
 blocked_decision
 blocked_event
 blocklist
@@ -275,6 +276,15 @@ interface_address
 interface_map
 interface_network
 measurement_sample
+opnsense.mirror_column
+opnsense.mirror_correction
+opnsense.mirror_datum
+opnsense.mirror_endpoint
+opnsense.mirror_gap
+opnsense.mirror_parameter
+opnsense.mirror_read
+opnsense.mirror_schema_version
+opnsense.mirror_table
 opnview_downtime
 opnview_heartbeat
 owner
@@ -370,6 +380,7 @@ flow_record_condition
 geo_asn
 interface_address
 measurement_sample
+opnsense.mirror_gap
 opnview_downtime
 owner_volume_aggregate_1h
 owner_volume_aggregate_24h
@@ -380,6 +391,7 @@ peer_volume_aggregate_1h
 peer_volume_aggregate_24h
 peer_volume_aggregate_30d
 peer_volume_aggregate_7d
+provider_source_period
 purged_flow_hour
 resource_record_observation
 rule_volume_aggregate_1h
@@ -403,6 +415,7 @@ volume_aggregate_7d
 <!-- bounded-tables:begin -->
 ```
 account
+applied_schema
 blocklist
 capture_configuration
 capture_interface
@@ -411,6 +424,14 @@ eve_ingest_cursor
 interface
 interface_map
 interface_network
+opnsense.mirror_column
+opnsense.mirror_correction
+opnsense.mirror_datum
+opnsense.mirror_endpoint
+opnsense.mirror_parameter
+opnsense.mirror_read
+opnsense.mirror_schema_version
+opnsense.mirror_table
 opnview_heartbeat
 owner
 owner_reassigned_hour
@@ -419,7 +440,6 @@ plugin_state
 plugin_table
 provider
 provider_rule_info
-provider_source_period
 push_listener
 resource_record_read
 retention_purge
@@ -456,8 +476,21 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `plugin_table` | one row per table a plugin declares |
 | `plugin_aside_table` | one row per plugin table set aside by a schema change; one with a time column is purged by its recorded retention and dropped, with its row, when empty |
 | `capture_configuration`, `capture_interface` | one row per run of reads that found the same NetFlow capture configuration, and its captured interfaces: a new row only when the configuration changes, a handful a year; purged by its last read, the newest kept |
-| `provider_source_period` | one row per handover of a provider between polling and a push path, which happens when a push source starts or stops |
 | `push_listener` | one row per push protocol and transport, a handful in all |
+| `applied_schema` | exactly one row, the digest of the `schema.sql` last applied in full, which lets a start skip an apply that would change nothing |
+| `opnsense.mirror_endpoint`, `opnsense.mirror_parameter` | one row per firewall endpoint a reader has called, and per request parameter of one; a firewall's API has hundreds of endpoints, and only those some plugin reads are ever called |
+| `opnsense.mirror_datum`, `opnsense.mirror_read`, `opnsense.mirror_correction` | one row per endpoint and set of identifying parameters a reader asked for, per path a reader read of one, per reader correcting one: set by what the installed plugins read, not by time |
+| `opnsense.mirror_table`, `opnsense.mirror_column` | one row per table the mirror learned, one per endpoint and row set, and per field some reader read of it |
+| `opnsense.mirror_schema_version` | one row per change of an endpoint's answer shape, which a firewall upgrade brings: a handful a year |
+
+`provider_source_period` is classified as growing, not bounded: a period is opened at every
+handover between polling and a push path (`internal/store/push/push.go`, `OpenSourcePeriod`), and
+every start of `opnview` whose last period was a push one opens a pull period
+(`internal/collect/kinds/filterlog/pushpaths.go`, `loadPushPath`) -- one row a restart and two a
+push source's coming and going, without bound. It is purged at the flows' horizon: a closed period
+that ended before it goes, and the open one, the period in force, is kept however old
+(`purge.sql`). `opnsense.mirror_gap` is growing for the same reason -- one row a failed call or a
+cut stream -- and the mirror purges it by its end (`internal/broker/mirror`).
 
 `client` is classified as growing, not bounded: an address reissued to another
 machine creates a new identity rather than updating an existing one, so the
@@ -500,6 +533,7 @@ foreign key, which a hypertable cannot be.
 | `flow_record` | **yes**, chunked by day on `start_at` | -- its one unique key, `(identity, start_at)`, holds the time column, and nothing references it | `drop_chunks` of the whole chunks past its own horizon (`retention_flow_record_seconds`, 0 following `retention_seconds`), then row `DELETE` to the exact second | `TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention` |
 | `connection_measured_volume` | no | keyed on the connection's first leg and the direction, not on time; rewritten in place as a figure grows | row `DELETE` with its connection, at the flows' horizon | `TestTheMeasuresAreCountedOnceAndNeverSummed` |
 | `flow_record_condition` | no | `id` is unique without `observed_at` | row `DELETE` at the flow records' horizon | `TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention` |
+| `provider_source_period` | no | keyed on the provider and the period's start, a period spanning any length of time | row `DELETE` of closed periods ended before the flows' horizon; the open period kept | `sql/schema-checks.sh`, E21 and E22 |
 | `unmatched_record_aggregate_*` | no | keyed on the slot and the record's Observation Point, direction, protocol, version and reason; accumulated by the join, not recomputed | row `DELETE` of slots ended before the flows' horizon | `TestAnUnmatchedRecordIsCountedInNoFigure` |
 | a plugin's table with a time column | **yes**, chunked by day | its declaration may not hold a unique key without the time column (`unique_key_without_time`) | `drop_chunks` of the whole chunks past the horizon, then row `DELETE` to the exact second | `TestAPluginHypertableIsPurgedByChunkToTheExactSecond` |
 
@@ -514,6 +548,42 @@ foreign key, which a hypertable cannot be.
 | `peer` | 1h, 24h, 7d, 30d | hand-refreshed table | `distinct_peers` is exact in a composed and a rolled-up slot, which a summed continuous aggregate cannot be | the same, and `TestDistinctPeersIsExactInAComposedAndARolledUpSlot` |
 | `domain` | 1h, 24h, 7d, 30d | hand-refreshed table | the attribution of a flow changes after it is stored | the same |
 | `rule` | 1h, 24h, 7d, 30d | hand-refreshed table | the second leg counts under its exit leg; a purged hour keeps its purged part | the same, and `TestARetentionShorterThanAnHourStillFillsTheCurrentSlots` |
+
+**Continuous aggregates: the verdict for every candidate** (Phase E, 16 October 2026). A
+continuous aggregate replaces a hand-built table only where it is exactly equivalent: every slot equal
+to the hand-built one across late ingestion, reclassification, purge and the existing fixtures. **None
+qualifies**, for the reasons below, each resting on TimescaleDB 2.30.2 as its source at that tag
+says; so **no continuous aggregate exists, and the installation stays on the Apache-2.0 edition**
+(`timescaledb.license=apache`). The licence decision of 12 October 2026 -- enable the Timescale
+License and use continuous aggregates wherever they are exactly equivalent -- is superseded: with
+nothing equivalent to use them for, enabling it would be a placeholder.
+
+Two facts every verdict below shares:
+
+- **A continuous aggregate is a Timescale License feature.** Every file of
+  `tsl/src/continuous_aggs/` is "licensed under the Timescale License"
+  ([create.c](https://github.com/timescale/timescaledb/blob/2.30.2/tsl/src/continuous_aggs/create.c#L1-L5)),
+  and under the Apache edition creating or refreshing one fails, "functionality not supported under
+  the current "apache" license"
+  ([cross_module_fn.c](https://github.com/timescale/timescaledb/blob/2.30.2/src/cross_module_fn.c#L124-L188)).
+- **A refresh recomputes a bucket from the raw rows that remain, and deletes a bucket left with
+  none.** Its materialisation deletes the window and re-inserts it from the defining query
+  ([materialize.c](https://github.com/timescale/timescaledb/blob/2.30.2/tsl/src/continuous_aggs/materialize.c#L520-L534),
+  and L625-L652 for the merge path), and a `drop_chunks` or a row `DELETE` of raw data invalidates
+  its range so that the next refresh does exactly that
+  ([chunk.c](https://github.com/timescale/timescaledb/blob/2.30.2/src/chunk.c#L4055-L4073);
+  [insert.c](https://github.com/timescale/timescaledb/blob/2.30.2/tsl/src/continuous_aggs/insert.c#L32-L49)).
+  An aggregate that must keep what its raw rows no longer hold cannot be one.
+
+| Candidate | Verdict | Reason, verified at 2.30.2 |
+|---|---|---|
+| The 24 family tables (`volume`, `owner`, `client`, `peer`, `domain`, `rule` × `1h`, `24h`, `7d`, `30d`) | no | A continuous aggregate must query a hypertable: a plain table is refused, "table ... is not a hypertable" ([common.c](https://github.com/timescale/timescaledb/blob/2.30.2/tsl/src/continuous_aggs/common.c#L1209-L1214)); and `flow` cannot become one, its `id` and `log_digest` being unique without `observed_at` while a hypertable's every unique key must hold its time column ([indexing.c](https://github.com/timescale/timescaledb/blob/2.30.2/src/indexing.c#L84-L108)). The reasons of the table above stand besides: the families are keyed on joined, mutable attributes, and the week and month are rolled up from days. |
+| `unmatched_record_aggregate_*` | no | Its source, `flow_record`, is a hypertable, but the family is **accumulated from the join's decisions**, which are no column a query could re-read, and it **outlives the purge of its records** (`flow_record` purged at `retention_flow_record_seconds`, the family at the flows' horizon): the first refresh over a purged range would recompute its slots from the records left, or delete them. |
+| The broker's `#minute` and `#hour` stream aggregates | no | Five reasons, each enough: (1) `last` is the value of the event received last, in insertion order, at one-second resolution (`internal/broker/recording.go`), while TimescaleDB's `last(value, time)` keeps the row with the greatest time and resolves a tie by whichever row the scan fed first -- no insertion order exists ([agg_bookend.c](https://github.com/timescale/timescaledb/blob/2.30.2/src/agg_bookend.c#L366-L370)); (2) columns are added at run time, one per numeric field a reader starts reading, and a continuous aggregate takes only an added aggregate `GENERATED ALWAYS AS (...) STORED` column, left NULL until a forced refresh recomputes it from the raw rows ([add_column.c](https://github.com/timescale/timescaledb/blob/2.30.2/tsl/src/continuous_aggs/add_column.c#L76-L92), [CHANGELOG](https://github.com/timescale/timescaledb/blob/2.30.2/CHANGELOG.md#L233)), which no longer exist past the detail's retention; (3) the aggregates are kept for `retention_seconds`, the detail for `mirror_stream_detail_retention_seconds`, and a refresh over the dropped detail loses them (above); (4) each event is visible in the aggregates at once, where a continuous aggregate is materialised only by a refresh, real-time aggregation being off by default ([create_materialized_view_with_clause.c](https://github.com/timescale/timescaledb/blob/2.30.2/src/with_clause/create_materialized_view_with_clause.c#L32-L36), [CHANGELOG 2.13.0](https://github.com/timescale/timescaledb/blob/2.30.2/CHANGELOG.md#L1837)); (5) a refresh cannot run inside a transaction block, `PreventInTransactionBlock(nonatomic, "refresh_continuous_aggregate()")` ([refresh.c](https://github.com/timescale/timescaledb/blob/2.30.2/tsl/src/continuous_aggs/refresh.c#L1137-L1144)), so the aggregate could not move with the event that changes it. |
+
+Since nothing qualified, no equivalence test was written: a continuous aggregate that does not exist
+has nothing to be equivalent to. `sql/schema-checks.sh` asserts the edition the database runs with
+(E15).
 
 **The mirror.** The `opnsense` schema holds the broker's mirror of the firewall API (A10 of the
 broker amendment): its own bookkeeping tables (`mirror_endpoint`, `mirror_parameter`,
@@ -2962,8 +3032,13 @@ boundaries: from polling to push once both paths delivered an overlap, at the la
 whole; from push to polling at the last second the push path delivered. A gap polling detects is clipped
 by the push period before it.
 
-**Retention:** never purged; one row per handover. **Indexes:** the primary key, and a unique partial
-index holding at most one open period per provider.
+**Retention:** a growing table -- one row per handover, and a pull period opened at every start of
+`opnview` whose last period was a push one (`loadPushPath`) -- purged at the flows' horizon
+(`purge.sql`): a closed period that ended before the horizon is deleted, the open one is kept however
+old, and one straddling the horizon is kept whole. An instant older than every remaining period reads
+as polled, which only a record older than the horizon could meet, and such a record is refused before
+it is stored. **Indexes:** the primary key, and a unique partial index holding at most one open period
+per provider.
 
 ### NetFlow volumes — `flow_record`, the capture configuration, the join and the measured volume
 

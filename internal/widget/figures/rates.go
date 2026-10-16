@@ -57,12 +57,12 @@ type CurrentRates struct {
 	ByMember        []KeyedRate `json:"by_member"`
 }
 
-// renewLive renews the live-interest lease: this request carries a live figure.
+// RenewLive renews the live-interest lease: this request carries a live figure.
 func RenewLive(r *request.Request) {
 	r.LiveInterest.Renew(time.Unix(r.Now, 0))
 }
 
-// readCurrentRates reads the current rates for a live figure, renewing the lease.
+// ReadCurrentRates reads the current rates for a live figure, renewing the lease.
 func ReadCurrentRates(r *request.Request) (samples.CurrentRates, error) {
 	RenewLive(r)
 	return r.Db.ReadCurrentRates(r.Ctx, r.Now)

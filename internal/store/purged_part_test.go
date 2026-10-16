@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -19,28 +20,28 @@ import (
 // watermark only moves forward, even when the retention is lengthened later.
 func TestThePurgeRecordsHowFarBackItHasPurged(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 2, 2)
+	network := storetest.NewNetwork(t, 2, 2)
 	ctx := context.Background()
-	if _, found, err := network.db.PurgedBefore(ctx); err != nil || found {
+	if _, found, err := network.DB.PurgedBefore(ctx); err != nil || found {
 		t.Fatalf("before any purge the watermark reads %v, %v", found, err)
 	}
-	if err := network.db.SetSetting(ctx, "retention_seconds", "600", network.now); err != nil {
+	if err := network.DB.SetSetting(ctx, "retention_seconds", "600", network.Now); err != nil {
 		t.Fatalf("setting the retention: %v", err)
 	}
-	if err := network.db.Purge(ctx, network.now); err != nil {
+	if err := network.DB.Purge(ctx, network.Now); err != nil {
 		t.Fatalf("purging: %v", err)
 	}
-	if before, found, err := network.db.PurgedBefore(ctx); err != nil || !found || before != network.now-600 {
-		t.Errorf("after a purge the watermark reads %d, %v, %v, not %d", before, found, err, network.now-600)
+	if before, found, err := network.DB.PurgedBefore(ctx); err != nil || !found || before != network.Now-600 {
+		t.Errorf("after a purge the watermark reads %d, %v, %v, not %d", before, found, err, network.Now-600)
 	}
 	// A longer retention purges less far back; the watermark keeps the furthest point.
-	if err := network.db.SetSetting(ctx, "retention_seconds", "86400", network.now); err != nil {
+	if err := network.DB.SetSetting(ctx, "retention_seconds", "86400", network.Now); err != nil {
 		t.Fatalf("setting the retention: %v", err)
 	}
-	if err := network.db.Purge(ctx, network.now+60); err != nil {
+	if err := network.DB.Purge(ctx, network.Now+60); err != nil {
 		t.Fatalf("purging: %v", err)
 	}
-	if before, _, _ := network.db.PurgedBefore(ctx); before != network.now-600 {
+	if before, _, _ := network.DB.PurgedBefore(ctx); before != network.Now-600 {
 		t.Errorf("a longer retention moved the watermark back to %d", before)
 	}
 }
@@ -50,55 +51,55 @@ func TestThePurgeRecordsHowFarBackItHasPurged(t *testing.T) {
 // flows would have, and the client, peer and owner families keep every byte and every peer.
 func TestALeaseNamingAPurgedAddressMovesItsPurgedPart(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 2, 4)
+	network := storetest.NewNetwork(t, 2, 4)
 	ctx := context.Background()
-	var client testClient
-	for _, candidate := range network.clients {
-		if !candidate.leased {
+	var client storetest.Client
+	for _, candidate := range network.Clients {
+		if !candidate.Leased {
 			client = candidate
 			break
 		}
 	}
-	hour := vocab.PeriodHour.SlotStart(network.now)
-	if err := network.db.SetSetting(ctx, "retention_seconds", fmt.Sprint(network.now-(hour+400)),
-		network.now); err != nil {
+	hour := vocab.PeriodHour.SlotStart(network.Now)
+	if err := network.DB.SetSetting(ctx, "retention_seconds", fmt.Sprint(network.Now-(hour+400)),
+		network.Now); err != nil {
 		t.Fatalf("setting the retention: %v", err)
 	}
-	addresses := network.insert(t, []networkFlow{
+	addresses := network.Insert(t, []storetest.Flow{
 		outboundFlow(client, hour+100, 100, 1, 0),
 		outboundFlow(client, hour+200, 200, 2, 0),
 	})
-	network.classifyAndRefresh(t, addresses)
-	if err := network.db.Purge(ctx, network.now); err != nil {
+	network.ClassifyAndRefresh(t, addresses)
+	if err := network.DB.Purge(ctx, network.Now); err != nil {
 		t.Fatalf("purging: %v", err)
 	}
 
 	mac := "00:00:00:00:fe:03"
-	leased, err := network.db.UpsertClient(ctx, vocab.Client{
-		Identity: vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: mac}, InterfaceID: &client.interfaceID,
-		MAC: &mac, LastAddress: &client.address,
-	}, network.now)
+	leased, err := network.DB.UpsertClient(ctx, vocab.Client{
+		Identity: vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: mac}, InterfaceID: &client.InterfaceID,
+		MAC: &mac, LastAddress: &client.Address,
+	}, network.Now)
 	if err != nil {
 		t.Fatalf("writing the leased client: %v", err)
 	}
-	result, err := network.db.Reclassify(ctx, []string{client.address}, network.now)
+	result, err := network.DB.Reclassify(ctx, []string{client.Address}, network.Now)
 	if err != nil {
 		t.Fatalf("classifying: %v", err)
 	}
-	if _, err := network.db.RefreshAggregates(ctx, 0, network.now+5, result.FlowInstants); err != nil {
+	if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now+5, result.FlowInstants); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
 	for _, period := range []vocab.Period{vocab.PeriodHour, vocab.PeriodDay} {
 		for _, family := range []string{"volume", "client", "peer", "owner"} {
-			if got := slotBytes(t, network.db, family, period, hour); got != 300 {
+			if got := slotBytes(t, network.DB, family, period, hour); got != 300 {
 				t.Errorf("the %s %s slot holds %d bytes after the lease, not 300", period.Name, family, got)
 			}
 		}
-		if got := queryInt(t, network.db, "SELECT coalesce(sum(bytes), 0) FROM client_volume_aggregate_"+
+		if got := storetest.QueryInt(t, network.DB, "SELECT coalesce(sum(bytes), 0) FROM client_volume_aggregate_"+
 			period.Name+" WHERE period_start_at = ? AND client_id = ?", period.SlotStart(hour), leased); got != 300 {
 			t.Errorf("the %s client slot of the better identity holds %d bytes, not 300", period.Name, got)
 		}
-		if peers := queryInt(t, network.db, "SELECT coalesce(max(distinct_peers), 0) FROM client_volume_aggregate_"+
+		if peers := storetest.QueryInt(t, network.DB, "SELECT coalesce(max(distinct_peers), 0) FROM client_volume_aggregate_"+
 			period.Name+" WHERE period_start_at = ?", period.SlotStart(hour)); peers != 2 {
 			t.Errorf("the %s client slot counts %d distinct peers, not 2", period.Name, peers)
 		}
@@ -113,30 +114,30 @@ func TestAPurgeUnderAShortRetentionKeepsEveryFamilyWhole(t *testing.T) {
 	t.Parallel()
 	for _, retention := range []int64{1800, 600, 1} {
 		t.Run(fmt.Sprintf("retention %d", retention), func(t *testing.T) {
-			network := newTestNetwork(t, 2, 6)
+			network := storetest.NewNetwork(t, 2, 6)
 			ctx := context.Background()
-			addresses := network.insert(t, network.flowsFor(200, 6*3600))
-			network.classifyAndRefresh(t, addresses)
+			addresses := network.Insert(t, network.FlowsFor(200, 6*3600))
+			network.ClassifyAndRefresh(t, addresses)
 			attributeNetwork(t, network)
-			flows := readFlows(t, network.db)
-			instants := allFlowInstants(t, network.db)
+			flows := readFlows(t, network.DB)
+			instants := allFlowInstants(t, network.DB)
 
-			if err := network.db.SetSetting(ctx, "retention_seconds", fmt.Sprint(retention), network.now); err != nil {
+			if err := network.DB.SetSetting(ctx, "retention_seconds", fmt.Sprint(retention), network.Now); err != nil {
 				t.Fatalf("setting the retention: %v", err)
 			}
-			if err := network.db.Purge(ctx, network.now); err != nil {
+			if err := network.DB.Purge(ctx, network.Now); err != nil {
 				t.Fatalf("purging: %v", err)
 			}
-			if left := queryInt(t, network.db, "SELECT count(*) FROM flow"); left >= int64(len(flows)) {
+			if left := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM flow"); left >= int64(len(flows)) {
 				t.Fatalf("the purge removed no flow (%d left)", left)
 			}
-			if _, err := network.db.RefreshAggregates(ctx, 0, network.now+5, instants); err != nil {
+			if _, err := network.DB.RefreshAggregates(ctx, 0, network.Now+5, instants); err != nil {
 				t.Fatalf("refreshing: %v", err)
 			}
 			for _, period := range vocab.Periods() {
 				for _, family := range allFamilies {
 					expected := expectedFamily(flows, period, family)
-					stored := storedFamily(t, network.db, period, family)
+					stored := storedFamily(t, network.DB, period, family)
 					for key, want := range expected {
 						if got := stored[key]; got != want {
 							t.Errorf("after the purge the %s slot %s of the %s family holds %+v, every flow "+

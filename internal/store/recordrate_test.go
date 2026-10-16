@@ -1,10 +1,12 @@
-package store
+package store_test
 
 import (
 	"context"
 	"math"
 	"strconv"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -26,7 +28,7 @@ var flowSpec = attribution.RecordRateSpec{
 // insertFlowsAt stores one synthesised flow per source instant, each ingested
 // lag seconds after it. Nothing here is an address or an identifier read off a
 // network.
-func insertFlowsAt(t *testing.T, database *Store, lag int64, observedAt ...int64) {
+func insertFlowsAt(t *testing.T, database *store.Store, lag int64, observedAt ...int64) {
 	t.Helper()
 	for index, instant := range observedAt {
 		flow := exampleFlow(0)
@@ -40,7 +42,7 @@ func insertFlowsAt(t *testing.T, database *Store, lag int64, observedAt ...int64
 }
 
 // recordGap stores one collection gap of the filter log's pf implementation.
-func recordGap(t *testing.T, database *Store, reason vocab.GapReason, start, end, detectedAt int64) {
+func recordGap(t *testing.T, database *store.Store, reason vocab.GapReason, start, end, detectedAt int64) {
 	t.Helper()
 	ctx := context.Background()
 	providerID, err := database.ProviderID(ctx, "firewall_log", "pf")

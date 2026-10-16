@@ -82,3 +82,13 @@ func TestNoBuiltinScriptReadsABodyWhole(t *testing.T) {
 		}
 	}
 }
+
+// repositoryPlugins is the built-in plugin tree on disk, found from this package's directory.
+func repositoryPlugins(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", "..", "plugins"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}

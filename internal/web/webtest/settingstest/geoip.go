@@ -12,7 +12,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web/webtest"
 )
 
-// setGeoIPProbe records an availability row for the MaxMind provider, as a refresh
+// SetGeoIPProbe records an availability row for the MaxMind provider, as a refresh
 // would.
 func SetGeoIPProbe(h *webtest.Harness, state vocab.AvailabilityState, probe string) {
 	h.T.Helper()
@@ -26,7 +26,7 @@ func SetGeoIPProbe(h *webtest.Harness, state vocab.AvailabilityState, probe stri
 	}
 }
 
-// geoIPPages renders the settings surface in every MaxMind state, for the catalogue's
+// GeoIPPages renders the settings surface in every MaxMind state, for the catalogue's
 // assertions.
 func GeoIPPages(t *testing.T) []webtest.RenderedPage {
 	t.Helper()

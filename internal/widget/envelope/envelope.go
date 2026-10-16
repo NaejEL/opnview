@@ -239,7 +239,7 @@ type VolumeDirectionStates struct {
 	NotExportedWhenRefused int64 `json:"not_exported_when_refused"`
 }
 
-// coverageOf is a store coverage as a Volume carries it.
+// CoverageOf is a store coverage as a Volume carries it.
 func CoverageOf(coverage reads.NetflowCoverage) *VolumeCoverage {
 	d := coverage.Directions
 	return &VolumeCoverage{Measured: coverage.Measured, Partial: coverage.Partial, Unmeasured: coverage.Unmeasured,
@@ -248,7 +248,7 @@ func CoverageOf(coverage reads.NetflowCoverage) *VolumeCoverage {
 			ExportGap: d.ExportGap, NotExportedWhenRefused: d.NotExportedWhenRefused}}
 }
 
-// storeCoverage is a Volume's coverage as the store holds it.
+// StoreCoverage is a Volume's coverage as the store holds it.
 func (c VolumeCoverage) StoreCoverage() reads.NetflowCoverage {
 	d := c.DirectionStates
 	return reads.NetflowCoverage{Measured: c.Measured, Partial: c.Partial, Unmeasured: c.Unmeasured,

@@ -1,10 +1,11 @@
-package collect
+package collect_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -36,42 +37,42 @@ func TestALoggedHostNameWithAnAAndAnAAAAIsResolvedByTheReportedFamily(t *testing
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			harness := arrangeRecordCollection(t)
+			harness := collecttest.ArrangeRecordCollection(t)
 			ctx := context.Background()
-			if err := harness.collector.probeDNSLookup(ctx); err != nil {
+			if err := harness.Collector.ProbeDNSLookup(ctx); err != nil {
 				t.Fatalf("probing the resolver: %v", err)
 			}
 			// The local data is read after the lookup, so the lookup waits for it, across a
 			// restart where the case says so.
-			setClock(harness, referenceInstant().Add(-5*time.Minute))
-			answerRecords(harness.fake, opnsense.UnboundListLocalData,
+			collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(-5*time.Minute))
+			answerRecords(harness.Fake, opnsense.UnboundListLocalData,
 				localDataRows("other-host.example.test", "192.0.2.61"))
-			if err := harness.collector.CollectResolverLocalData(ctx); err != nil {
+			if err := harness.Collector.CollectResolverLocalData(ctx); err != nil {
 				t.Fatalf("the first local-data pass: %v", err)
 			}
-			setClock(harness, referenceInstant())
-			row := lookupRow(hostname, "example-site.example.com", referenceEpoch()-120)
+			collecttest.SetClock(harness, collecttest.ReferenceInstant())
+			row := lookupRow(hostname, "example-site.example.com", collecttest.ReferenceEpoch()-120)
 			if testCase.family != "" {
 				row["family"] = testCase.family
 			}
-			answerLookups(harness.fake, row)
-			if err := harness.collector.CollectDNSLookup(ctx); err != nil {
+			answerLookups(harness.Fake, row)
+			if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 				t.Fatalf("collecting the lookup: %v", err)
 			}
 
-			collector := harness.collector
+			collector := harness.Collector
 			if testCase.restart {
-				collector = newTestCollector(t, providertest.NewClient(t, harness.fake), harness.store,
-					newFixedClock(referenceInstant().Add(time.Hour)))
+				collector = collecttest.NewTestCollector(t, providertest.NewClient(t, harness.Fake), harness.Store,
+					collecttest.NewFixedClock(collecttest.ReferenceInstant().Add(time.Hour)))
 			} else {
-				setClock(harness, referenceInstant().Add(5*time.Minute))
+				collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(5*time.Minute))
 			}
-			answerRecords(harness.fake, opnsense.UnboundListLocalData, []map[string]any{
+			answerRecords(harness.Fake, opnsense.UnboundListLocalData, []map[string]any{
 				localDataRows(hostname, v4)[0], localDataRows(hostname, v6)[0]})
 			if err := collector.CollectResolverLocalData(ctx); err != nil {
 				t.Fatalf("the local-data pass: %v", err)
 			}
-			resolution, address := resolutionOf(t, harness.store, hostname)
+			resolution, address := resolutionOf(t, harness.Store, hostname)
 			if resolution != testCase.wantResolution || address != testCase.wantAddress {
 				t.Errorf("the lookup is %s at %q; want %s at %q", resolution, address,
 					testCase.wantResolution, testCase.wantAddress)

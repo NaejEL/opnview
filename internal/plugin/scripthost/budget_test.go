@@ -1,6 +1,6 @@
 //go:build brokerbudget
 
-package plugin
+package scripthost
 
 import (
 	"context"
@@ -27,7 +27,7 @@ func TestObservedReadBudget(t *testing.T) {
 			` "f6": true, "f7": "g", "f8": 8.5, "f9": "i"}`, index, index))
 	}
 	body := []byte(`{"rows": [` + strings.Join(rows, ",") + `]}`)
-	compiled, err := compile("example", "example.js", `exports.example = { pass: function (host, mode) {
+	compiled, err := Compile("example", "example.js", `exports.example = { pass: function (host, mode) {
 			var answer = host.call("rows", {});
 			var rows = mode === "plain" ? JSON.parse(answer.body).rows : answer.value.rows;
 			var total = 0;
@@ -46,7 +46,7 @@ func TestObservedReadBudget(t *testing.T) {
 		var runs []time.Duration
 		for run := 0; run < 15; run++ {
 			started := time.Now()
-			if _, _, failed := compiled.call(context.Background(), session, "example", "pass", mode); failed != nil {
+			if _, _, failed := compiled.Call(context.Background(), session, "example", "pass", mode); failed != nil {
 				t.Fatalf("the %s pass failed: %+v", mode, failed)
 			}
 			runs = append(runs, time.Since(started))

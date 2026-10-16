@@ -55,7 +55,7 @@ const (
 	unresolvedKindNotAccepted = "kind_not_accepted_here"
 	unresolvedNoMatch         = "no_match"
 	unresolvedAmbiguous       = "ambiguous"
-	// unresolvedWithheld is a site reference under aggregate_mode = no_domains (A10 and
+	// UnresolvedWithheld is a site reference under aggregate_mode = no_domains (A10 and
 	// decision 6). A domain name may not select, scope or probe anything while names are
 	// withheld, so the reference is not looked up at all: the answer is the same whether
 	// or not the name was ever seen, and nothing can be learnt from it.
@@ -95,7 +95,7 @@ func referenceValue(reference Reference) map[string]any {
 	return echoed
 }
 
-// resolveReference resolves one reference expected to be of kind expected.
+// ResolveReference resolves one reference expected to be of kind expected.
 func ResolveReference(ctx context.Context, database *store.Store, at referenceAt, noDomains bool) (
 	Resolved, string, error) {
 	reference := at.Reference

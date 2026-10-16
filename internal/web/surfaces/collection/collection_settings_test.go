@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/settingfields"
@@ -55,7 +57,7 @@ func TestTheResolverCardsAreDrawnExactlyWhenTheRegistryHoldsTheirKind(t *testing
 			}
 		}
 		for _, row := range []string{"unbound", "dnsmasq"} {
-			if !collectiontest.StateShown(t, card, web.ProviderLabelKey(kind, row), msgAvailabilityNotYetProbed) {
+			if !collectiontest.StateShown(t, card, messages.ProviderLabelKey(kind, row), msgAvailabilityNotYetProbed) {
 				t.Errorf("the %s card does not show the availability of %s", kind, row)
 			}
 		}

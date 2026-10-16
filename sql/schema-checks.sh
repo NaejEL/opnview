@@ -472,18 +472,19 @@ to_nodes() {
 # The statistics are changed inside a transaction the plan is read in and that is rolled
 # back, so no later statement sees them. The "index_paths" mode reads that second plan.
 GROWING_TABLE_ROWS=1000000000000
+# The growing tables are named by their qualified names (growing_qualified.txt, written under AC10):
+# the core's, the mirror's and every plugin's its manifest makes growing.
 index_paths_settings() {
     local names
-    names="$(sed "s/.*/'&'/" "$WORK/growing.txt" | paste -sd, -)"
+    names="$(sed "s/.*/'&'/" "$WORK/growing_qualified.txt" | paste -sd, -)"
     printf -- 'SET LOCAL enable_seqscan = off;
 SET LOCAL enable_hashjoin = off;
 SET LOCAL enable_mergejoin = off;
 UPDATE pg_class SET reltuples = %s
-WHERE oid IN (SELECT t.oid FROM pg_class AS t
-              WHERE t.relnamespace = %s::regnamespace AND t.relkind = %s AND t.relname IN (%s))
-   OR oid IN (SELECT x.indexrelid FROM pg_index AS x JOIN pg_class AS t ON t.oid = x.indrelid
-              WHERE t.relnamespace = %s::regnamespace AND t.relkind = %s AND t.relname IN (%s));
-' "$GROWING_TABLE_ROWS" "'opnview'" "'r'" "$names" "'opnview'" "'r'" "$names"
+WHERE oid IN (SELECT to_regclass(g.name) FROM unnest(ARRAY[%s]) AS g (name))
+   OR oid IN (SELECT x.indexrelid FROM pg_index AS x
+              WHERE x.indrelid IN (SELECT to_regclass(g.name) FROM unnest(ARRAY[%s]) AS g (name)));
+' "$GROWING_TABLE_ROWS" "$names" "$names"
 }
 # explain_query <db> <query file> [index_paths] — the plan of a query, as nodes.
 explain_query() {
@@ -519,7 +520,8 @@ index_map() {
                 pg_get_indexdef(c.oid, 1, true))
             FROM pg_index AS x JOIN pg_class AS c ON c.oid = x.indexrelid
             JOIN pg_class AS t ON t.oid = x.indrelid
-            JOIN pg_namespace AS n ON n.oid = t.relnamespace WHERE n.nspname = 'opnview';" > "$map"
+            JOIN pg_namespace AS n ON n.oid = t.relnamespace
+            WHERE n.nspname = 'opnview' OR n.nspname = 'opnsense' OR n.nspname LIKE 'plugin\\_%';" > "$map"
     fi
     printf -- '%s' "$map"
 }
@@ -533,7 +535,7 @@ index_map() {
 # database's index map: with "scanned", prints every growing table the plan scans; with
 # "uses", exits 0 when the plan searches that index.
 read_scans() {
-    awk -F'\t' -v growing="$WORK/growing.txt" -v indexes="$(index_map "$1")" -v mode="$3" -v wanted="${4:-}" '
+    awk -F'\t' -v growing="$WORK/growing_relations.txt" -v indexes="$(index_map "$1")" -v mode="$3" -v wanted="${4:-}" '
         BEGIN {
             while ((getline line < growing) > 0) { grow[line] = 1 }
             while ((getline line < indexes) > 0) { split(line, p, "\t"); table[p[1]] = p[2]; key[p[1]] = p[3] }
@@ -570,10 +572,12 @@ printf -- 'psql            : %s\n' "$(psql --version)"
 printf -- 'server          : %s\n' "$(admin 'SHOW server_version;')"
 printf -- 'timescaledb     : %s\n' "$(admin "SELECT default_version FROM pg_available_extensions WHERE name = 'timescaledb';")"
 
-# The two programs the checks read plans and reference rows with, built once.
+# The programs the checks read plans and reference rows with, find the statements files with,
+# and create, seed and purge the plugins' tables with, built once.
 mkdir -p "$WORK/bin"
-if ! (cd "$REPO_ROOT" && go build -o "$WORK/bin/" ./ci/planjson ./ci/referencerows); then
-    printf -- 'schema-checks: the plan and reference readers under ci/ do not build\n' >&2
+if ! (cd "$REPO_ROOT" && go build -o "$WORK/bin/" ./ci/planjson ./ci/referencerows ./ci/statementfiles \
+        ./ci/plugintables); then
+    printf -- 'schema-checks: the programs under ci/ the checks run do not build\n' >&2
     exit 1
 fi
 
@@ -620,9 +624,93 @@ DROP_PATTERN='DROP ''DATABASE'
 check 'RC-AC19 no wildcard drop exists: every database is dropped by one quoted name' '1' \
     "$(grep -c "$DROP_PATTERN" "$REPO_ROOT/sql/schema-checks.sh")"
 
-# The seeded databases are started now, in the background: the main one is built in the
+# THE 1 000 000-ROW SEED IS BUILT COLD ONCE AND REUSED WHILE ITS DIGEST HOLDS (E.2.6 of the
+# Phase E amendment to specs/SPEC-backend-completion-plugins.md, decided 16 October 2026). A cold
+# build takes minutes, past the pre-deployment budget on its own, so the analysed seed is kept, as
+# the one database a run leaves behind, under its exact name, SCALE_SEED_DB, with the digest of
+# everything it was built from written on it: schema.sql, seed.sql, the seed's parameters, and the
+# server's PostgreSQL and TimescaleDB versions. A run whose digest matches clones it into SCALE_DB,
+# which every consumer below reads and the checks that write may rewrite; a run whose digest
+# differs drops the kept seed by its exact name, builds it cold, prints the build's breakdown and
+# its time apart, and records the digest only once the build is whole.
+SCALE_SEED_DB=schema_checks_scale_seed
+scale_seed_digest() {
+    {
+        cat "$SCHEMA_FILE" "$REPO_ROOT/sql/seed.sql"
+        printf -- 'now=%s interfaces=%s clients=%s rules=%s flow_rows=%s alerts=%s pair_rows=%s owners=%s ipv6_every=%s\n' \
+            "$NOW" "$INTERFACES" "$CLIENTS" "$RULES" "$SCALE_FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS" "$IPV6_EVERY"
+        admin 'SELECT version();'
+        admin "SELECT extversion FROM pg_extension WHERE extname = 'timescaledb';"
+        admin "SELECT default_version FROM pg_available_extensions WHERE name = 'timescaledb';"
+    } | sha256sum | cut -c 1-64
+}
+SCALE_SEED_DIGEST="$(scale_seed_digest)"
+# The digest the kept seed carries, empty when there is none.
+scale_seed_recorded() {
+    admin "SELECT substr(shobj_description(oid, 'pg_database'), length('seed-digest:') + 1)
+        FROM pg_database WHERE datname = '$SCALE_SEED_DB';"
+}
+# seed_breakdown <db> <params...> — the seed, with psql's timing of every statement, summed by the
+# table each one generates: the build's breakdown.
+seed_breakdown() {
+    local db="$1"
+    "${PSQL[@]}" -e -d "$(dsn "$db")" -v now="$NOW" -v interfaces="$2" -v clients="$3" -v rules="$4" \
+        -v flow_rows="$5" -v alerts="$6" -v pair_rows="$7" -v owners="$8" -v ipv6_every="$IPV6_EVERY" \
+        -c '\timing on' -f "$REPO_ROOT/sql/seed.sql" > "$WORK/scale_seed_timing.log" || return 1
+    awk '
+        /^Time: / {
+            table = "(transaction and generator statements)"
+            if (match(text, /INSERT INTO [a-z_0-9.]+/)) { table = substr(text, RSTART + 12, RLENGTH - 12) }
+            else if (match(text, /UPDATE [a-z_0-9.]+/)) { table = substr(text, RSTART + 7, RLENGTH - 7) " (update)" }
+            else if (match(text, /DO \$[a-z_]+\$/)) { table = substr(text, RSTART, RLENGTH) }
+            spent[table] += $2
+            text = ""
+            next
+        }
+        { text = text " " $0 }
+        END { for (table in spent) printf "%10.1f s  %s\n", spent[table] / 1000, table }' \
+        "$WORK/scale_seed_timing.log" | sort -rn > "$WORK/scale_seed_breakdown.txt"
+}
+# build_scale_seed — the cold build of the kept seed, each step timed.
+build_scale_seed() {
+    local begun
+    drop_database "$SCALE_SEED_DB"
+    create_database "$SCALE_SEED_DB" || return 9
+    begun="$(date +%s%N)"
+    apply_schema "$SCALE_SEED_DB" "$WORK/apply_$SCALE_SEED_DB.err" || return 10
+    printf -- 'schema apply\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) > "$WORK/scale_seed_steps.txt"
+    begun="$(date +%s%N)"
+    seed_breakdown "$SCALE_SEED_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$SCALE_FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" \
+        "$OWNERS" || return 11
+    printf -- 'generation, every index maintained as rows arrive\t%d\n' \
+        $(( ( $(date +%s%N) - begun ) / 1000000 )) >> "$WORK/scale_seed_steps.txt"
+    begun="$(date +%s%N)"
+    analyse "$SCALE_SEED_DB" || return 12
+    printf -- 'VACUUM (ANALYZE)\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) >> "$WORK/scale_seed_steps.txt"
+    admin "COMMENT ON DATABASE \"$SCALE_SEED_DB\" IS 'seed-digest:$SCALE_SEED_DIGEST';" > /dev/null
+}
+# prepare_scale — the kept seed, built if its digest does not hold, cloned into SCALE_DB.
+prepare_scale() {
+    local begun status
+    if [ "$(scale_seed_recorded)" = "$SCALE_SEED_DIGEST" ]; then
+        printf -- 'reused\n' > "$WORK/scale_seed_origin.txt"
+    else
+        printf -- 'built\n' > "$WORK/scale_seed_origin.txt"
+        begun="$(date +%s%N)"
+        build_scale_seed
+        status=$?
+        printf -- '%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) > "$WORK/scale_seed_build_ms.txt"
+        [ "$status" -eq 0 ] || return "$status"
+    fi
+    begun="$(date +%s%N)"
+    copy_database "$SCALE_SEED_DB" "$SCALE_DB" || return 13
+    printf -- '%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) > "$WORK/scale_clone_ms.txt"
+}
+prepare_scale > "$WORK/build_$SCALE_DB.log" 2>&1 &
+BUILD_PIDS[$SCALE_DB]=$!
+
+# The other seeded databases are started now, in the background: the main one is built in the
 # foreground below, because its first apply is what AC1 asserts.
-start_build "$SCALE_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$SCALE_FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"
 start_build "$REPEAT_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"
 start_build "$ALT_DB" "$ALT_INTERFACES" "$ALT_CLIENTS" "$ALT_RULES" "$ALT_FLOW_ROWS" \
     "$ALT_ALERTS" "$ALT_PAIR_ROWS" "$ALT_OWNERS" "$ALT_IPV6_EVERY"
@@ -843,6 +931,13 @@ if [ -f "$SCHEMA_FILE" ] && [ -f "$PURGE_FILE" ]; then
 else
     fail 'AC4 the schema or the purge is missing from internal/store and internal/store/purge'
 fi
+# E15: the installation runs TimescaleDB's Apache-2.0 edition, and nothing of it needs another:
+# no continuous aggregate qualified (docs/data-model.md, "Storage fit"). The value asserted is the
+# one the database runs with, which docker-compose.yml and docker-compose.serve.yml set.
+check 'E15 the database runs TimescaleDB under the apache licence' 'apache' \
+    "$(q "$MAIN_DB" 'SHOW timescaledb.license;')"
+check 'E15 no continuous aggregate exists in the applied schema' '0' \
+    "$(q "$MAIN_DB" 'SELECT count(*) FROM timescaledb_information.continuous_aggregates;')"
 
 # ===========================================================================
 section 'AC7 — deterministic seed, and the baseline row count'
@@ -898,6 +993,54 @@ expect_sql_failure 'AC3 a security event whose provider does not exist is reject
      VALUES (999999999, 'ac3-key-2', $NOW, $NOW, '1', 'ac3', 'allowed', 'a', 'b');"
 
 # ===========================================================================
+section 'E21 — the plugins'"'"' tables, created by the plugin loader'
+# ===========================================================================
+# The built-in plugins' tables are created as the product creates them, by the plugin loader
+# (ci/plugintables), and so is the table of a plugin this run adds the way a user adds one: the
+# fixture plugin of testdata/plugins, copied into a data directory's plugin tree. Nothing ships a
+# list of either: the loader reads the manifests, and each table's class -- growing with a time
+# column, bounded without -- is the manifest's. Each table is seeded from its declared columns, with
+# instants on both sides of its retention horizon, and the data catalogue's statements on each
+# plugin dataset are written for the plan sweep below. Every later section reads these tables as it
+# reads the core's: the foreign keys, the plans at both seeds, and the purge.
+PLUGIN_DATA="$WORK/plugin-data"
+mkdir -p "$PLUGIN_DATA/plugins"
+cp -R "$REPO_ROOT/testdata/plugins/example_peers" "$PLUGIN_DATA/plugins/"
+# plugin_tables <db> <rows> <tag> — creates and seeds the plugin tables of a database, and writes
+# "<schema>.<table> TAB <class> TAB <time column>" to $WORK/plugin_tables_<tag>.txt and the
+# plugin datasets' statements to $WORK/plugin_datasets_<tag>.statements.sql.
+plugin_tables() {
+    "$WORK/bin/plugintables" -database "$(dsn "$1")" -now "$NOW" -seed "$2" -data-dir "$PLUGIN_DATA" \
+        -statements "$WORK/plugin_datasets_$3.statements.sql" > "$WORK/plugin_tables_$3.txt"
+}
+if plugin_tables "$MAIN_DB" 400 main; then
+    pass 'E21 the plugin loader created and seeded the plugin tables of the 100 000-row seed'
+else
+    fail 'E21 the plugin loader failed on the 100 000-row seed'
+fi
+analyse "$MAIN_DB"
+printf -- '  plugin tables, by the class their manifest gives them:\n'
+sed 's/^/    /' "$WORK/plugin_tables_main.txt"
+cut -f1 "$WORK/plugin_tables_main.txt" | sort > "$WORK/plugin_tables_printed.txt"
+q "$MAIN_DB" "SELECT schemaname || '.' || tablename FROM pg_tables
+    WHERE schemaname LIKE 'plugin\\_%' ORDER BY 1;" | sort > "$WORK/plugin_tables_catalogue.txt"
+check_ge 'E21 the built-in plugins and the added one declare tables' 3 \
+    "$(wc -l < "$WORK/plugin_tables_printed.txt" | tr -d ' ')"
+check 'E21 every table of a plugin schema is one the loader declared, and each declared one exists' '' \
+    "$(diff "$WORK/plugin_tables_printed.txt" "$WORK/plugin_tables_catalogue.txt" | tr '\n' ' ')"
+check 'E21 the added plugin'"'"'s table is classified growing, from the time column its manifest declares' \
+    'plugin_example_peers.sighting|growing|seen_at' \
+    "$(awk -F'\t' '$1 == "plugin_example_peers.sighting" { print $1 "|" $2 "|" $3 }' "$WORK/plugin_tables_main.txt")"
+check 'E21 every plugin table without a time column is bounded, and every one with one is growing' '' \
+    "$(awk -F'\t' '($3 == "-") != ($2 == "bounded") { print $1 }' "$WORK/plugin_tables_main.txt" | tr '\n' ' ')"
+EMPTY_PLUGIN_TABLES=''
+while IFS=$'\t' read -r table _ _; do
+    [ "$(q "$MAIN_DB" "SELECT count(*) FROM $table;")" -gt 0 ] || EMPTY_PLUGIN_TABLES="$EMPTY_PLUGIN_TABLES $table"
+done < "$WORK/plugin_tables_main.txt"
+check 'E21 the seed fills every plugin table' '' "$EMPTY_PLUGIN_TABLES"
+check 'E21 every foreign key holds once the plugin tables are seeded' '' "$(fk_violations "$MAIN_DB")"
+
+# ===========================================================================
 section 'AC5, AC6 — the entity list, and the absence of a TLS/HTTP entity'
 # ===========================================================================
 DOC="$REPO_ROOT/docs/data-model.md"
@@ -909,7 +1052,13 @@ extract_block() {
     ' "$1"
 }
 extract_block "$DOC" '<!-- entity-list:begin -->' '<!-- entity-list:end -->' | sort > "$WORK/doc_entities.txt"
-q "$MAIN_DB" "SELECT name FROM $CORE_ENTITIES ORDER BY name;" | sort > "$WORK/db_entities.txt"
+# The core's entities by their own names, and the mirror's bookkeeping tables, which schema.sql
+# declares in the schema `opnsense`, by their qualified names (E.7 of the Phase E amendment). The
+# tables the mirror learns at run time are not declared by any file and are not listed; a seeded
+# database holds none.
+q "$MAIN_DB" "SELECT name FROM $CORE_ENTITIES ORDER BY name;
+    SELECT 'opnsense.' || tablename FROM pg_tables WHERE schemaname = 'opnsense' ORDER BY 1;" |
+    sort > "$WORK/db_entities.txt"
 if diff -u "$WORK/doc_entities.txt" "$WORK/db_entities.txt" > "$WORK/entities.diff"; then
     pass "AC5 the documented entity list matches sqlite_master ($(wc -l < "$WORK/db_entities.txt" | tr -d ' ') entities)"
 else
@@ -928,12 +1077,32 @@ sort -u "$WORK/growing.txt" "$WORK/bounded.txt" > "$WORK/classified.txt"
 # are views rather than naming the one that existed when this check was written,
 # which is stricter: a second view added without being documented would have
 # slipped past a hardcoded name and now cannot.
-q "$MAIN_DB" "SELECT name FROM $CORE_TABLES ORDER BY name;" | sort > "$WORK/db_tables.txt"
+q "$MAIN_DB" "SELECT name FROM $CORE_TABLES ORDER BY name;
+    SELECT 'opnsense.' || tablename FROM pg_tables WHERE schemaname = 'opnsense' ORDER BY 1;" |
+    sort > "$WORK/db_tables.txt"
 if diff -u "$WORK/db_tables.txt" "$WORK/classified.txt" > "$WORK/classified.diff"; then
-    pass 'AC10 every table is classified growing or bounded in the document'
+    pass 'AC10 every table of the opnview and opnsense schemas is classified growing or bounded in the document'
 else
     fail "AC10 the growing/bounded classification is incomplete: $(cat "$WORK/classified.diff")"
 fi
+check 'AC10 no table is classified both growing and bounded' '' \
+    "$(sort "$WORK/growing.txt" "$WORK/bounded.txt" | uniq -d | tr '\n' ' ')"
+# E21: a plugin table's class is its manifest's, never the document's: no plugin table is listed.
+check 'E21 no plugin table is classified in the document: its class is its manifest'"'"'s' '' \
+    "$(grep -Fxf "$WORK/plugin_tables_printed.txt" "$WORK/classified.txt" | tr '\n' ' ')"
+# THE GROWING TABLES A PLAN MAY NOT SCAN: the document's, and every plugin table its manifest makes
+# growing. A plan names a relation without its schema, so the scan check reads each by its own
+# name; a bounded table sharing a growing one's name would be held to the growing rule, which is the
+# safe side.
+{
+    sed 's/^[a-z_]*\.//' "$WORK/growing.txt"
+    awk -F'\t' '$2 == "growing" { sub(/^[^.]*\./, "", $1); print $1 }' "$WORK/plugin_tables_main.txt"
+} | sort -u > "$WORK/growing_relations.txt"
+# And by qualified name, for the statistics the index-path plans are read with.
+{
+    awk '{ print (index($0, ".") ? $0 : "opnview." $0) }' "$WORK/growing.txt"
+    awk -F'\t' '$2 == "growing" { print $1 }' "$WORK/plugin_tables_main.txt"
+} | sort -u > "$WORK/growing_qualified.txt"
 
 # ===========================================================================
 section 'AC8, AC9 — the seven screen queries'
@@ -2234,6 +2403,7 @@ rc_ac14_after() {
 }
 rc_ac14_before "$PURGE_DB" 'schema-checks-main'
 OLD_OBSERVATIONS_NAMED="$RC14_NAMED"
+PERIODS_OLDER_BEFORE="$(q "$PURGE_DB" "SELECT count(*) FROM provider_source_period WHERE to_at < $CUTOFF;")"
 run_purge "$PURGE_DB"
 PURGE_STATUS=$?
 rc_ac14_after "$PURGE_DB" 'schema-checks-main' "$PURGE_STATUS"
@@ -2351,6 +2521,61 @@ check 'AC32 the purge leaves no attribution without its lookup or its flow' '0' 
     "$(q "$PURGE_DB" 'SELECT count(*) FROM domain_attribution a
         WHERE NOT EXISTS (SELECT 1 FROM flow f WHERE f.id = a.flow_id)
            OR NOT EXISTS (SELECT 1 FROM dns_resolution r WHERE r.id = a.dns_resolution_id);')"
+# E21, E22: the purge.sql run above is the core's part of the retention purge; the product's whole
+# purge also purges the plugin tables by their declared retention and the NetFlow tables by theirs
+# (internal/store/purge/purge.go). It is run here as the product runs it, at the same instant, and
+# then no row older than its horizon remains in a growing table added since Phase C, nor in a
+# growing plugin table -- each of which held such rows before, so the check proves something.
+"$WORK/bin/plugintables" -database "$(dsn "$PURGE_DB")" -now "$NOW" -data-dir "$PLUGIN_DATA" -older \
+    > "$WORK/plugin_older_before.txt"
+E22_HORIZONS="flow_record:start_at:flow_record flow_record_condition:observed_at:flow_record
+connection_measured_volume:connection_start_at:installation unmatched_record_aggregate_1h:period_end_at:installation
+unmatched_record_aggregate_24h:period_end_at:installation unmatched_record_aggregate_7d:period_end_at:installation
+unmatched_record_aggregate_30d:period_end_at:installation provider_source_period:to_at:installation"
+# e22_horizon <installation|flow_record> — the horizon the product purges a table at: the flow
+# records' own retention where one is set, the installation's otherwise.
+e22_horizon() {
+    if [ "$1" = 'flow_record' ]; then
+        q "$PURGE_DB" "SELECT $NOW - coalesce(
+            (SELECT CAST(value AS BIGINT) FROM setting WHERE key = 'retention_flow_record_seconds'
+                 AND CAST(value AS BIGINT) > 0),
+            (SELECT CAST(value AS BIGINT) FROM setting WHERE key = 'retention_seconds'));"
+    else
+        q "$PURGE_DB" "SELECT $NOW - CAST(value AS BIGINT) FROM setting WHERE key = 'retention_seconds';"
+    fi
+}
+for entry in $E22_HORIZONS; do
+    table="${entry%%:*}"; rest="${entry#*:}"; column="${rest%%:*}"
+    # purge.sql, run above, purges the source periods; the copy held one past the horizon then.
+    [ "$table" != 'provider_source_period' ] || continue
+    check_ge "E22 $table holds rows older than its horizon before the purge" 1 \
+        "$(q "$PURGE_DB" "SELECT count(*) FROM $table WHERE $column < $(e22_horizon "${rest#*:}");")"
+done
+check_ge 'E21 the seed held a closed source period older than the horizon before purge.sql ran' 1 \
+    "$PERIODS_OLDER_BEFORE"
+OPEN_PERIODS_BEFORE="$(q "$PURGE_DB" 'SELECT count(*) FROM provider_source_period WHERE to_at IS NULL;')"
+if "$WORK/bin/plugintables" -database "$(dsn "$PURGE_DB")" -now "$NOW" -data-dir "$PLUGIN_DATA" -purge \
+        > /dev/null 2> "$WORK/whole_purge.err"; then
+    pass 'E22 the product'"'"'s whole retention purge ran on the purged copy'
+else
+    fail "E22 the product's whole retention purge failed: $(head -n 3 "$WORK/whole_purge.err")"
+fi
+for entry in $E22_HORIZONS; do
+    table="${entry%%:*}"; rest="${entry#*:}"; column="${rest%%:*}"
+    check "E22 no row older than its horizon remains in $table after the purge" '0' \
+        "$(q "$PURGE_DB" "SELECT count(*) FROM $table WHERE $column < $(e22_horizon "${rest#*:}");")"
+done
+check 'E21 the purge keeps every open source period, however old: it is the one in force' \
+    "$OPEN_PERIODS_BEFORE" "$(q "$PURGE_DB" 'SELECT count(*) FROM provider_source_period WHERE to_at IS NULL;')"
+"$WORK/bin/plugintables" -database "$(dsn "$PURGE_DB")" -now "$NOW" -data-dir "$PLUGIN_DATA" -older \
+    > "$WORK/plugin_older_after.txt"
+check 'E21 every growing plugin table held rows older than its horizon before the purge' '' \
+    "$(awk -F'\t' '$1 == "older" && $3 == 0 { print $2 }' "$WORK/plugin_older_before.txt" | tr '\n' ' ')"
+check 'E21 no growing plugin table keeps a row older than its horizon after the purge' '' \
+    "$(awk -F'\t' '$1 == "older" && $3 != 0 { print $2 }' "$WORK/plugin_older_after.txt" | tr '\n' ' ')"
+check_ge 'E21 the purge covered every growing plugin table, the added plugin'"'"'s included' \
+    "$(awk -F'\t' '$2 == "growing"' "$WORK/plugin_tables_main.txt" | wc -l | tr -d ' ')" \
+    "$(grep -c '^older' "$WORK/plugin_older_after.txt")"
 run_query "$PURGE_DB" "$WORK/diag/02_Aggregate_coverage_per_period.sql" > "$WORK/coverage_after.txt"
 printf -- '  aggregate coverage after the purge:\n'
 sed 's/^/    /' "$WORK/coverage_after.txt"
@@ -2387,8 +2612,7 @@ section 'AC34 — no address, CIDR or discovered name as a literal'
 # ===========================================================================
 # The statement files of the core (internal/) and of the built-in plugins (plugins/, where a widget
 # plugin keeps its statements beside its script).
-STATEMENT_FILES="$(grep -rl --include='*.sql' '^-- statement: ' "$REPO_ROOT/internal" "$REPO_ROOT/plugins" |
-    grep -v /testdata/ | sort)"
+STATEMENT_FILES="$("$WORK/bin/statementfiles" "$REPO_ROOT/internal" "$REPO_ROOT/plugins")"
 CYCLE_FILES="$SCHEMA_FILE
 $PURGE_FILE
 $REPO_ROOT/sql/queries/screens.sql
@@ -3576,6 +3800,32 @@ printf -- '  waiting for the %s-row seed started in the background...\n' "$SCALE
 SCALE_WAIT_STARTED="$(date +%s)"
 wait_build "$SCALE_DB" || fail 'PN-AC30 the scale database failed to take the schema'
 printf -- '  the scale seed was ready %d s after this point was reached\n' $(( $(date +%s) - SCALE_WAIT_STARTED ))
+# E10: one build or one reuse a run, its digest, and the build's breakdown when it was built.
+if [ "$(cat "$WORK/scale_seed_origin.txt" 2> /dev/null)" = 'reused' ]; then
+    printf -- '  the 1 000 000-row seed was REUSED: %s carries the digest %s\n' "$SCALE_SEED_DB" "$SCALE_SEED_DIGEST"
+else
+    printf -- '  the 1 000 000-row seed was BUILT cold, its digest now %s, in %d.%03d s (apart from the budgeted run):\n' \
+        "$SCALE_SEED_DIGEST" $(( $(cat "$WORK/scale_seed_build_ms.txt") / 1000 )) \
+        $(( $(cat "$WORK/scale_seed_build_ms.txt") % 1000 ))
+    awk -F'\t' '{ printf "    %10.1f s  %s\n", $2 / 1000, $1 }' "$WORK/scale_seed_steps.txt"
+    printf -- '    the generation, by table:\n'
+    sed 's/^/      /' "$WORK/scale_seed_breakdown.txt"
+fi
+printf -- '  the seed was cloned into %s in %d ms\n' "$SCALE_DB" "$(cat "$WORK/scale_clone_ms.txt" 2> /dev/null || echo 0)"
+check 'E10 the kept 1 000 000-row seed carries the digest of what it was built from' "$SCALE_SEED_DIGEST" \
+    "$(scale_seed_recorded)"
+# The plugins' tables of the scale seed, as of the 100 000-row one, ten times the rows; only they
+# are analysed again, the clone carrying the seed's statistics.
+if plugin_tables "$SCALE_DB" 4000 scale; then
+    pass 'E21 the plugin loader created and seeded the plugin tables of the scale seed'
+else
+    fail 'E21 the plugin loader failed on the scale seed'
+fi
+while IFS=$'\t' read -r table _ _; do
+    q "$SCALE_DB" "ANALYZE $table;" > /dev/null
+done < "$WORK/plugin_tables_scale.txt"
+printf -- '  consumers of the 1 000 000-row seed (E10): the screen plans and the statement sweep, the widget and\n'
+printf -- '  data catalogue budgets, the live budget, and the reclassification on a copy, each named below\n'
 SCALE_COUNT="$(q "$SCALE_DB" 'SELECT count(*) FROM flow;')"
 check_ge 'PN-AC30 the scale database holds 1 000 000 rows in flow' 1000000 "$SCALE_COUNT"
 check 'PN-AC30 the scale database is consistent' '' "$(fk_violations "$SCALE_DB")"
@@ -3690,10 +3940,36 @@ split_statements() {
 }
 # Kept by decision 9: one exact path inside this run's own mktemp directory, no glob.
 rm -rf "$WORK/statements"
+# Beside the shipped files: the statements files of the plugin this run added the way a user adds
+# one (E21), found by the same program; the statements the data catalogue runs on every plugin
+# dataset, as ci/plugintables compiled them (E21); and every core dataset's relation.sql and
+# earliest.sql, each one statement under its dataset's name, with :from and :to bound like every
+# other parameter (E20).
+ADDED_STATEMENT_FILES="$("$WORK/bin/statementfiles" "$PLUGIN_DATA/plugins")"
+check_ge 'E21 the plan sweep finds the statements file of the plugin this run added' 1 \
+    "$(printf -- '%s\n' "$ADDED_STATEMENT_FILES" | grep -c 'example_peers')"
+mkdir -p "$WORK/dataset-statements"
+DATASET_STATEMENTS=0
+while IFS= read -r dataset_file; do
+    [ -n "$dataset_file" ] || continue
+    dataset="$(basename "$(dirname "$dataset_file")")"
+    {
+        printf -- '-- statement: dataset_%s_%s\n' "$dataset" "$(basename "$dataset_file" .sql)"
+        cat "$dataset_file"
+    } > "$WORK/dataset-statements/${dataset}_$(basename "$dataset_file")"
+    DATASET_STATEMENTS=$((DATASET_STATEMENTS + 1))
+done <<< "$(find "$REPO_ROOT/internal/dataset" -path '*/testdata' -prune -o \
+    \( -name relation.sql -o -name earliest.sql \) -type f -print | sort)"
+check_ge 'E20 every core dataset gives its relation.sql and earliest.sql to the sweep' 2 "$DATASET_STATEMENTS"
 while IFS= read -r statement_file; do
     [ -n "$statement_file" ] || continue
     split_statements "$statement_file" "$WORK/statements"
-done <<< "$STATEMENT_FILES"
+done <<< "$STATEMENT_FILES
+$ADDED_STATEMENT_FILES
+$WORK/plugin_datasets_main.statements.sql
+$(find "$WORK/dataset-statements" -name '*.sql' -type f | sort)"
+check_ge 'E21 the sweep holds the data catalogue'"'"'s statements on the added plugin'"'"'s dataset' 1 \
+    "$(find "$WORK/statements" -name 'plugin_dataset_example_peers_*' | wc -l | tr -d ' ')"
 STATEMENT_COUNT="$(find "$WORK/statements" -name '*.sql' | wc -l | tr -d ' ')"
 check_ge 'S5A-AC35 the statement files hold the derivation and read statements' 40 "$STATEMENT_COUNT"
 
@@ -3711,6 +3987,14 @@ plan_statement() {
         printf -- 'ROLLBACK;\n'
     } > "$WORK/plan_statement.sql"
     "${PSQL[@]}" -d "$(dsn "$db")" -f "$WORK/plan_statement.sql" | to_nodes "$db"
+}
+# netflow_statement <statement file> — a statement of the netflow measure: a _netflow twin, or one
+# that reads connection_netflow.
+netflow_statement() {
+    case "$(basename "$1" .sql)" in
+        *_netflow) return 0 ;;
+    esac
+    grep -q 'connection_netflow(' "$1"
 }
 PLANNED=0
 SCANNING=''
@@ -3746,6 +4030,13 @@ for stmt in "$WORK"/statements/*.sql; do
             if [ -n "$scanned" ]; then
                 SCANNING="$SCANNING $label@$(tag_of "$db"):$scanned"
             fi
+            # E18: a statement of the netflow measure -- a _netflow twin, or one that reads
+            # connection_netflow -- keeps its plan beside the others, for the checks below.
+            if netflow_statement "$stmt"; then
+                mkdir -p "$WORK/netflow-plans"
+                cp "$WORK/stmt_plan.txt" "$WORK/netflow-plans/$(tag_of "$db")_${label}.txt"
+                printf -- '%s\n' "$label" >> "$WORK/netflow-plans/labels_$(tag_of "$db").txt"
+            fi
         done
     done
 done
@@ -3754,6 +4045,76 @@ check_ge 'S5A-AC35 every statement and every period of every template was planne
 check 'S5A-AC35 every statement plans against the schema' '' "$UNPLANNABLE"
 check 'S5A-AC35 no derivation or read statement scans a growing table, at either seed size' \
     '' "$SCANNING"
+
+# E18: every statement of the netflow measure, at both seeds. connection_netflow is a SQL function
+# PostgreSQL inlines where it is called (a single SELECT, LANGUAGE sql, STABLE, no SET clause --
+# https://wiki.postgresql.org/wiki/Inlining_of_SQL_functions), so its body is planned in the
+# statement and the measured volume is read through its primary key, connection by connection; a
+# Function Scan of it is the function called once per row as a black box. netflow_sum is an
+# aggregate, planned as an Aggregate node: its cost is per row, in its transition function, and is
+# timed under the widget budgets below.
+NETFLOW_FUNCTION_SCANS=''
+NETFLOW_NOT_BY_KEY=''
+NETFLOW_SHAPE_CHANGED=''
+NETFLOW_PLANNED=0
+while IFS= read -r label; do
+    [ -n "$label" ] || continue
+    NETFLOW_PLANNED=$((NETFLOW_PLANNED + 1))
+    for tag in "$(tag_of "$MAIN_DB")" "$(tag_of "$SCALE_DB")"; do
+        plan="$WORK/netflow-plans/${tag}_${label}.txt"
+        [ -f "$plan" ] || continue
+        if awk -F'\t' '$1 == "Function Scan" && $2 == "connection_netflow" { found = 1 } END { exit !found }' "$plan"; then
+            NETFLOW_FUNCTION_SCANS="$NETFLOW_FUNCTION_SCANS $label@$tag"
+        fi
+        if awk -F'\t' '$2 == "connection_measured_volume" && $4 != "connection_measured_volume_pkey" { found = 1 }
+                END { exit !found }' "$plan"; then
+            NETFLOW_NOT_BY_KEY="$NETFLOW_NOT_BY_KEY $label@$tag"
+        fi
+    done
+    main_plan="$WORK/netflow-plans/$(tag_of "$MAIN_DB")_${label}.txt"
+    scale_plan="$WORK/netflow-plans/$(tag_of "$SCALE_DB")_${label}.txt"
+    if [ -f "$main_plan" ] && [ -f "$scale_plan" ] &&
+            ! diff -q <(awk -F'\t' '$4 != "-" { print $4 }' "$main_plan" | sort -u) \
+                      <(awk -F'\t' '$4 != "-" { print $4 }' "$scale_plan" | sort -u) > /dev/null; then
+        NETFLOW_SHAPE_CHANGED="$NETFLOW_SHAPE_CHANGED $label"
+    fi
+done < <(sort -u "$WORK/netflow-plans/labels_$(tag_of "$MAIN_DB").txt" 2> /dev/null)
+check_ge 'E18 the sweep planned the statements of the netflow measure' 19 "$NETFLOW_PLANNED"
+check 'E18 no statement of the netflow measure calls connection_netflow as a Function Scan, at either seed' \
+    '' "$NETFLOW_FUNCTION_SCANS"
+check 'E18 every statement of the netflow measure reads connection_measured_volume through its primary key' \
+    '' "$NETFLOW_NOT_BY_KEY"
+check 'E18 every statement of the netflow measure uses the same indexes at 100 000 and at 1 000 000 rows' \
+    '' "$NETFLOW_SHAPE_CHANGED"
+# And the check has teeth: a copy of connection_netflow that cannot be inlined -- the same body,
+# with a SET clause, which PostgreSQL never inlines -- called by the first statement that calls the
+# function, is a Function Scan the check above catches. The copy lives in a transaction rolled back.
+TEETH_SOURCE="$(grep -l 'connection_netflow(' "$WORK"/statements/*.sql | grep -v '/expanded_' | head -n 1)"
+{
+    printf -- 'BEGIN;\n'
+    printf -- "DO \$teeth\$ BEGIN EXECUTE replace(replace(pg_get_functiondef(CAST('connection_netflow' AS regproc)),\n"
+    printf -- "    'FUNCTION opnview.connection_netflow(', 'FUNCTION opnview.connection_netflow_not_inlined('),\n"
+    printf -- "    ' LANGUAGE sql', ' LANGUAGE sql SET search_path TO opnview, public'); END \$teeth\$;\n"
+    sed -e 's/@period@/24h/g' -e 's/@child@/1h/g' -e 's/connection_netflow(/connection_netflow_not_inlined(/g' \
+        "$TEETH_SOURCE" > "$WORK/statements/teeth_netflow.sql.txt"
+    "$WORK/bin/planjson" explain "$WORK/statements/teeth_netflow.sql.txt" "$NOW"
+    printf -- 'ROLLBACK;\n'
+} > "$WORK/teeth_netflow.sql"
+"${PSQL[@]}" -d "$(dsn "$MAIN_DB")" -f "$WORK/teeth_netflow.sql" 2> "$WORK/teeth_netflow.err" |
+    to_nodes "$MAIN_DB" > "$WORK/teeth_netflow_plan.txt"
+check "E18 the check catches a call of a non-inlinable copy of connection_netflow ($(basename "$TEETH_SOURCE" .sql))" \
+    'connection_netflow_not_inlined' \
+    "$(awk -F'\t' '$1 == "Function Scan" { print $2 }' "$WORK/teeth_netflow_plan.txt" | sort -u | tr -d '\n')"
+
+# E12: the geolocations a widget places are read by one named statement, which the sweep planned
+# above at both seeds; it searches geo_asn's primary key, and scans no growing table.
+for db in "$MAIN_DB" "$SCALE_DB"; do
+    plan_statement "$db" "$WORK/statements/widget_geo.sql" index_paths > "$WORK/stmt_plan.txt" 2>&1
+    check "E12 $(tag_of "$db"): the batched geolocation read searches geo_asn by its primary key" 1 \
+        "$(awk -F'\t' '$4 == "geo_asn_pkey" && $5 ~ /address/' "$WORK/stmt_plan.txt" | head -n 1 | grep -c .)"
+    check "E12 $(tag_of "$db"): the batched geolocation read scans no growing table" '' \
+        "$(scanned_growing "$db" "$WORK/stmt_plan.txt" | tr '\n' ' ')"
+done
 # B2 of specs/SPEC-step-5b-widget-api.md (AC22): the exact attribution's search for
 # the lookups of one name by one client is bounded by name AND client on both
 # branches of its client predicate -- by client_id, and by the address -- at both
@@ -3977,6 +4338,52 @@ for db in "$MAIN_DB" "$ALT_DB"; do
             WHERE subject_kind = 'interface_endpoint';")"
     check "S5A-AC35 $tag: the seed is consistent" '' "$(fk_violations "$db")"
 done
+# E17: the NetFlow tables, the push bookkeeping and the mirror's are seeded at both sizes, in
+# proportion to the flows, in both address families where a table carries an address.
+for db in "$MAIN_DB" "$SCALE_DB"; do
+    tag="$(tag_of "$db")"
+    for t in capture_configuration capture_interface flow_record flow_record_condition connection_measured_volume \
+             unmatched_record_aggregate_1h unmatched_record_aggregate_24h unmatched_record_aggregate_7d \
+             unmatched_record_aggregate_30d provider_source_period push_listener \
+             opnsense.mirror_endpoint opnsense.mirror_parameter opnsense.mirror_datum opnsense.mirror_table \
+             opnsense.mirror_column opnsense.mirror_schema_version opnsense.mirror_read opnsense.mirror_correction \
+             opnsense.mirror_gap; do
+        check_ge "E17 $tag: $t holds rows" 1 "$(q "$db" "SELECT count(*) FROM $t;")"
+    done
+    check "E17 $tag: flow_record carries both families" '4,6' \
+        "$(q "$db" "SELECT string_agg(CAST(ip_version AS text), ',' ORDER BY ip_version) FROM
+            (SELECT DISTINCT ip_version FROM flow_record ORDER BY 1);")"
+    check "E17 $tag: flow_record's addresses are of the family the record names" '0' \
+        "$(q "$db" "SELECT count(*) FROM flow_record
+            WHERE (strpos(src_address, ':') > 0) <> (ip_version = 6) OR (strpos(dst_address, ':') > 0) <> (ip_version = 6)
+               OR (strpos(exporter_address, ':') > 0) <> (ip_version = 6);")"
+    check "E17 $tag: one Observation Point, and an interval capturing on two interfaces" '1,2' \
+        "$(q "$db" "SELECT string_agg(CAST(n AS text), ',' ORDER BY n) FROM
+            (SELECT DISTINCT count(*) AS n FROM capture_interface GROUP BY capture_configuration_id) AS c;")"
+    check "E17 $tag: connection_measured_volume carries every state its CHECK allows" \
+        'awaiting_export,export_gap,in_progress,measured,missing,not_captured,not_exported_when_refused' \
+        "$(q "$db" "SELECT string_agg(state, ',' ORDER BY state) FROM
+            (SELECT DISTINCT state FROM connection_measured_volume) AS s;")"
+    check "E17 $tag: flow_record carries every join state" 'joined,not_joinable,pending,unmatched' \
+        "$(q "$db" "SELECT string_agg(join_state, ',' ORDER BY join_state) FROM
+            (SELECT DISTINCT join_state FROM flow_record) AS s;")"
+    check "E17 $tag: one pull period and one push period, the push one open" 'pull:closed,push:open' \
+        "$(q "$db" "SELECT string_agg(path || ':' || CASE WHEN to_at IS NULL THEN 'open' ELSE 'closed' END, ','
+            ORDER BY path) FROM provider_source_period;")"
+    for p in 1h 24h 7d 30d; do
+        for t in "volume_aggregate_$p" "owner_volume_aggregate_$p" "client_volume_aggregate_$p" \
+                 "domain_volume_aggregate_$p" "rule_volume_aggregate_$p" "peer_volume_aggregate_$p"; do
+            check_ge "E17 $tag: $t fills the netflow columns" 1 \
+                "$(q "$db" "SELECT count(*) FROM $t WHERE netflow_bytes > 0
+                    AND (netflow_parts).allowed_packets + (netflow_parts).blocked_packets > 0;")"
+        done
+    done
+    check_ge "E17 $tag: purged_flow_hour fills the netflow columns" 1 \
+        "$(q "$db" "SELECT count(*) FROM purged_flow_hour WHERE netflow_bytes > 0;")"
+done
+check_ge 'E17 the NetFlow tables grow with the flows: the scale seed holds more records than the baseline' \
+    "$(( $(q "$MAIN_DB" 'SELECT count(*) FROM flow_record;') + 1 ))" \
+    "$(q "$SCALE_DB" 'SELECT count(*) FROM flow_record;')"
 
 # ===========================================================================
 section 'S5A-AC19, S5A-AC25, S5A-AC26 — the seeded aggregates, refusals and directions'

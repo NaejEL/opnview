@@ -92,14 +92,14 @@ const (
 	reasonNotAReference   = "not_a_reference_object"
 )
 
-// parsedParameters is the result of parsing one request's parameters against a type.
+// ParsedParameters is the result of parsing one request's parameters against a type.
 type ParsedParameters struct {
 	Effective map[string]any
 	Unknown   map[string]json.RawMessage
 	Invalid   []InvalidValue
-	// references are the reference objects to resolve, by path.
+	// References are the reference objects to resolve, by path.
 	References []referenceAt
-	// missing names a required key that was absent or invalid.
+	// Missing names a required key that was absent or invalid.
 	Missing []string
 }
 
@@ -110,7 +110,7 @@ type referenceAt struct {
 	Series    int // -1 outside a series entry
 	Reference Reference
 	expected  string
-	// echo is the reference as the effective parameters echo it, so a reference the
+	// Echo is the reference as the effective parameters echo it, so a reference the
 	// aggregate mode withholds can have its value removed from the echo too.
 	Echo map[string]any
 }

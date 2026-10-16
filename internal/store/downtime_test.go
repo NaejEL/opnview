@@ -1,8 +1,10 @@
-package store
+package store_test
 
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store"
 )
 
 // The intervals during which opnview was not running (SPEC-step-5b-widget-api.md, D2,
@@ -14,7 +16,7 @@ const (
 )
 
 // downtimeCount counts the recorded intervals.
-func downtimeCount(t *testing.T, database *Store) int {
+func downtimeCount(t *testing.T, database *store.Store) int {
 	t.Helper()
 	var count int
 	if err := database.DB().QueryRow("SELECT count(*) FROM opnview_downtime").Scan(&count); err != nil {

@@ -11,7 +11,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/measurement"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -92,7 +92,7 @@ func checkLive(plugin *Plugin, declaration contract.ProviderDeclaration, exports
 		return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the live cadence setting %q is not a declared "+
 			"integer setting with a default and a min of at least 1 second", live.CadenceSetting)
 	}
-	fallback, ok := runtime.IntegerOf(setting.Default)
+	fallback, ok := scripthost.IntegerOf(setting.Default)
 	if !ok || float64(fallback) < *setting.Min {
 		return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the live cadence setting %q has a default below "+
 			"its min", live.CadenceSetting)
@@ -137,7 +137,7 @@ func listedLive(declaration contract.ProviderDeclaration) *ListedLive {
 // measurement.LiveSource.
 type liveMeasurementAdapter struct {
 	measurementAdapter
-	script *runtime.Script
+	script *scripthost.Script
 	live   *liveBinding
 }
 
@@ -156,14 +156,14 @@ func (a liveMeasurementAdapter) Live(ctx context.Context, session provider.Sessi
 
 // liveInvoker calls a live function: the script's, under the live pass's max age and endpoints.
 type liveInvoker struct {
-	script    *runtime.Script
+	script    *scripthost.Script
 	namespace string
 	maxAge    time.Duration
 	only      map[string]bool
 }
 
 func (i liveInvoker) invoke(ctx context.Context, session provider.Session, function string,
-	arguments ...any) (any, []error, *runtime.Failure) {
+	arguments ...any) (any, []error, *scripthost.Failure) {
 	return i.script.CallLive(ctx, session, i.namespace, function, i.maxAge, i.only, arguments...)
 }
 
@@ -232,7 +232,7 @@ func (l *Loaded) LivePasses() []LivePass {
 }
 
 // liveOf is the live pass of the plugin's provider of a kind whose function it is, nil otherwise:
-// what a plugin's own test calls when it calls that function (testrun.go).
+// what a plugin's own test calls when it calls that function (harnesscalls.go).
 func (p *Plugin) liveOf(kind, function string) *liveBinding {
 	for _, binding := range p.lives {
 		if binding.kind == kind && binding.function == function {

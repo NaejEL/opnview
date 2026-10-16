@@ -283,7 +283,7 @@ func (s *FlowStore) UpsertInterface(ctx context.Context, iface vocab.Interface, 
 		     is_upstream  = excluded.is_upstream,
 		     last_seen_at = excluded.last_seen_at`,
 		iface.Identifier, iface.Device, iface.Description, iface.Status, iface.Enabled,
-		iface.LinkType, iface.LinkKind, iface.VLANTag, BoolToInt(iface.IsUpstream), now, now)
+		iface.LinkType, iface.LinkKind, iface.VLANTag, boolToInt(iface.IsUpstream), now, now)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing interface %s: %w", iface.Identifier, err)
 	}
@@ -391,7 +391,7 @@ func (s *FlowStore) UpsertRule(ctx context.Context, rule vocab.Rule, now int64) 
 		     destination_net = excluded.destination_net`,
 		rule.PfLabel, rule.Description, rule.Action, rule.Direction, rule.Interface,
 		boolToNullableInt(rule.Legacy), boolToNullableInt(rule.LogsMatches), boolToNullableInt(rule.Enabled),
-		BoolToInt(rule.IsAutomatic), now, rule.DestinationNet)
+		boolToInt(rule.IsAutomatic), now, rule.DestinationNet)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing rule %s: %w", rule.PfLabel, err)
 	}
@@ -949,7 +949,7 @@ func (s *FlowStore) CountRows(ctx context.Context, table string) (int, error) {
 }
 
 // boolToInt renders a Go bool as the 0 or 1 the schema's CHECK expects.
-func BoolToInt(value bool) int64 {
+func boolToInt(value bool) int64 {
 	if value {
 		return 1
 	}
@@ -961,7 +961,7 @@ func boolToNullableInt(value *bool) *int64 {
 	if value == nil {
 		return nil
 	}
-	rendered := BoolToInt(*value)
+	rendered := boolToInt(*value)
 	return &rendered
 }
 

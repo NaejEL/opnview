@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"context"
@@ -7,7 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store"
+
 	"github.com/NaejEL/opnview/internal/store/owners"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -25,7 +28,7 @@ func refusalCode(err error) string {
 }
 
 // ownerRows is the owner table as text, so a test can assert that a refusal changed no row.
-func ownerRows(t *testing.T, database *Store) string {
+func ownerRows(t *testing.T, database *store.Store) string {
 	t.Helper()
 	var text string
 	if err := database.DB().QueryRowContext(context.Background(),
@@ -37,7 +40,7 @@ func ownerRows(t *testing.T, database *Store) string {
 }
 
 // clientOwnership is every client's owner and instant, as text.
-func clientOwnership(t *testing.T, database *Store) string {
+func clientOwnership(t *testing.T, database *store.Store) string {
 	t.Helper()
 	var text string
 	if err := database.DB().QueryRowContext(context.Background(),
@@ -49,7 +52,7 @@ func clientOwnership(t *testing.T, database *Store) string {
 }
 
 // exampleClient writes one client by MAC and returns its id.
-func exampleClient(t *testing.T, database *Store, mac, hostname, vendor string, at int64) int64 {
+func exampleClient(t *testing.T, database *store.Store, mac, hostname, vendor string, at int64) int64 {
 	t.Helper()
 	client := vocab.Client{Identity: vocab.ClientIdentity{Kind: vocab.IdentityMAC, Key: mac}, MAC: &mac}
 	if hostname != "" {
@@ -321,14 +324,14 @@ func TestAssigningAClientNeverInfersAnotherClientsOwner(t *testing.T) {
 // flow ever named is listed beside one with traffic, with every field the listing carries.
 func TestTheClientListingCarriesEveryClientWithOrWithoutTraffic(t *testing.T) {
 	t.Parallel()
-	network := populated(t, 2, 4, 40, 7200)
+	network := storetest.Populated(t, 2, 4, 40, 7200)
 	ctx := context.Background()
-	silent := exampleClient(t, network.db, "00:00:5e:00:53:31", "quiet.example", "", network.now-50)
-	clients, err := network.db.Clients(ctx)
+	silent := exampleClient(t, network.DB, "00:00:5e:00:53:31", "quiet.example", "", network.Now-50)
+	clients, err := network.DB.Clients(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	count := queryInt(t, network.db, "SELECT count(*) FROM client")
+	count := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM client")
 	if int64(len(clients)) != count {
 		t.Fatalf("the listing holds %d clients, the table %d", len(clients), count)
 	}
@@ -337,7 +340,7 @@ func TestTheClientListingCarriesEveryClientWithOrWithoutTraffic(t *testing.T) {
 		if client.ID == silent {
 			found = true
 			if client.IdentityKind != "mac" || client.IdentityKey != "00:00:5e:00:53:31" || *client.MAC != client.IdentityKey ||
-				*client.Hostname != "quiet.example" || client.LastSeenAt != network.now-50 || client.OwnerID != nil {
+				*client.Hostname != "quiet.example" || client.LastSeenAt != network.Now-50 || client.OwnerID != nil {
 				t.Errorf("the silent client is listed as %+v", client)
 			}
 		}
@@ -372,10 +375,10 @@ func TestAnAssignedClientSurvivesThePurgeAndAnUnassignedOneIsPurgedAsBefore(t *t
 	if err := database.Purge(ctx, now); err != nil {
 		t.Fatalf("purging: %v", err)
 	}
-	if queryInt(t, database, "SELECT count(*) FROM client WHERE id = ?", assigned) != 1 {
+	if storetest.QueryInt(t, database, "SELECT count(*) FROM client WHERE id = ?", assigned) != 1 {
 		t.Error("the purge removed a client somebody assigned to a person")
 	}
-	if queryInt(t, database, "SELECT count(*) FROM client WHERE id = ?", unassigned) != 0 {
+	if storetest.QueryInt(t, database, "SELECT count(*) FROM client WHERE id = ?", unassigned) != 0 {
 		t.Error("the purge kept an unassigned client older than the horizon")
 	}
 	// Unassigned, it goes at the next purge like any other.
@@ -385,20 +388,20 @@ func TestAnAssignedClientSurvivesThePurgeAndAnUnassignedOneIsPurgedAsBefore(t *t
 	if err := database.Purge(ctx, now+1); err != nil {
 		t.Fatal(err)
 	}
-	if queryInt(t, database, "SELECT count(*) FROM client WHERE id = ?", assigned) != 0 {
+	if storetest.QueryInt(t, database, "SELECT count(*) FROM client WHERE id = ?", assigned) != 0 {
 		t.Error("an unassigned client older than the horizon survived the purge")
 	}
 }
 
 // ownerFamilyBytes sums one owner's bytes, or the unassigned bucket's for a nil owner, over a
 // period's slots.
-func ownerFamilyBytes(t *testing.T, database *Store, period string, owner *int64) int64 {
+func ownerFamilyBytes(t *testing.T, database *store.Store, period string, owner *int64) int64 {
 	t.Helper()
 	if owner == nil {
-		return queryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period+
+		return storetest.QueryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period+
 			" WHERE owner_id IS NULL")
 	}
-	return queryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period+
+	return storetest.QueryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period+
 		" WHERE owner_id = ?", *owner)
 }
 
@@ -409,34 +412,34 @@ func ownerFamilyBytes(t *testing.T, database *Store, period string, owner *int64
 // the unassigned bucket the same way.
 func TestAReassignmentForcesTheOwnerFamilyToBeRecomputed(t *testing.T) {
 	t.Parallel()
-	network := populated(t, 2, 4, 200, 3*86400)
+	network := storetest.Populated(t, 2, 4, 200, 3*86400)
 	ctx := context.Background()
-	database := network.db
-	first, err := database.CreateOwner(ctx, "Example Person A", network.now)
+	database := network.DB
+	first, err := database.CreateOwner(ctx, "Example Person A", network.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := database.CreateOwner(ctx, "Example Person B", network.now)
+	second, err := database.CreateOwner(ctx, "Example Person B", network.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := queryInt(t, database, `SELECT client_id FROM client_volume_aggregate_1h
+	client := storetest.QueryInt(t, database, `SELECT client_id FROM client_volume_aggregate_1h
 		GROUP BY client_id ORDER BY count(*) DESC, client_id LIMIT 1`)
-	clientBytes := queryInt(t, database, "SELECT sum(bytes) FROM client_volume_aggregate_30d WHERE client_id = ?", client)
+	clientBytes := storetest.QueryInt(t, database, "SELECT sum(bytes) FROM client_volume_aggregate_30d WHERE client_id = ?", client)
 	totals := map[string]int64{}
 	for _, period := range vocab.Periods() {
-		totals[period.Name] = queryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period.Name)
+		totals[period.Name] = storetest.QueryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period.Name)
 	}
 	refresh := func() {
 		t.Helper()
-		if _, err := database.RefreshAggregates(ctx, network.now, network.now, nil); err != nil {
+		if _, err := database.RefreshAggregates(ctx, network.Now, network.Now, nil); err != nil {
 			t.Fatalf("refreshing: %v", err)
 		}
-		if pending := queryInt(t, database, "SELECT count(*) FROM owner_reassigned_hour"); pending != 0 {
+		if pending := storetest.QueryInt(t, database, "SELECT count(*) FROM owner_reassigned_hour"); pending != 0 {
 			t.Errorf("%d recorded hours survive the refresh that rewrote them", pending)
 		}
 		for _, period := range vocab.Periods() {
-			if got := queryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period.Name); got != totals[period.Name] {
+			if got := storetest.QueryInt(t, database, "SELECT coalesce(sum(bytes), 0) FROM owner_volume_aggregate_"+period.Name); got != totals[period.Name] {
 				t.Errorf("the %s owner family sums %d bytes, %d before", period.Name, got, totals[period.Name])
 			}
 		}
@@ -445,14 +448,14 @@ func TestAReassignmentForcesTheOwnerFamilyToBeRecomputed(t *testing.T) {
 	for step, owner := range []*int64{&first.ID, &second.ID, nil} {
 		var err error
 		if owner == nil {
-			_, err = database.DeleteOwner(ctx, second.ID, network.now)
+			_, err = database.DeleteOwner(ctx, second.ID, network.Now)
 		} else {
-			_, err = database.AssignClients(ctx, *owner, []int64{client}, network.now)
+			_, err = database.AssignClients(ctx, *owner, []int64{client}, network.Now)
 		}
 		if err != nil {
 			t.Fatalf("step %d: %v", step, err)
 		}
-		hours := queryInt(t, database, "SELECT count(DISTINCT hour_start_at) FROM owner_reassigned_hour")
+		hours := storetest.QueryInt(t, database, "SELECT count(DISTINCT hour_start_at) FROM owner_reassigned_hour")
 		if hours == 0 {
 			t.Fatalf("step %d recorded no hour for the refresh", step)
 		}
@@ -470,7 +473,7 @@ func TestAReassignmentForcesTheOwnerFamilyToBeRecomputed(t *testing.T) {
 			t.Errorf("the previous owner still holds the client's bytes")
 		}
 	}
-	if violations := foreignKeyViolations(t, database); violations != 0 {
+	if violations := storetest.ForeignKeyViolations(t, database); violations != 0 {
 		t.Errorf("%d rows name a row that does not exist", violations)
 	}
 }
@@ -478,22 +481,22 @@ func TestAReassignmentForcesTheOwnerFamilyToBeRecomputed(t *testing.T) {
 // TestALabelIsSetTrimmedAndClearedAndAnUnknownInterfaceIsRefused is C1's labels.
 func TestALabelIsSetTrimmedAndClearedAndAnUnknownInterfaceIsRefused(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 1, 0)
+	network := storetest.NewNetwork(t, 1, 0)
 	ctx := context.Background()
-	id := network.inside[0].id
+	id := network.Inside[0].ID
 	label := "  Example label "
-	labelled, err := network.db.SetInterfaceUserLabel(ctx, id, &label)
+	labelled, err := network.DB.SetInterfaceUserLabel(ctx, id, &label)
 	if err != nil || labelled.UserLabel == nil || *labelled.UserLabel != "Example label" || labelled.ID != id {
 		t.Fatalf("labelling answered %+v (%v)", labelled, err)
 	}
 	empty := " "
-	if _, err := network.db.SetInterfaceUserLabel(ctx, id, &empty); refusalCode(err) != owners.RefusalLabelEmpty {
+	if _, err := network.DB.SetInterfaceUserLabel(ctx, id, &empty); refusalCode(err) != owners.RefusalLabelEmpty {
 		t.Errorf("an empty label answered %v", err)
 	}
-	if _, err := network.db.SetInterfaceUserLabel(ctx, id+1000, &label); refusalCode(err) != owners.RefusalUnknownInterface {
+	if _, err := network.DB.SetInterfaceUserLabel(ctx, id+1000, &label); refusalCode(err) != owners.RefusalUnknownInterface {
 		t.Errorf("labelling no interface answered %v", err)
 	}
-	cleared, err := network.db.SetInterfaceUserLabel(ctx, id, nil)
+	cleared, err := network.DB.SetInterfaceUserLabel(ctx, id, nil)
 	if err != nil || cleared.UserLabel != nil {
 		t.Errorf("clearing answered %+v (%v)", cleared, err)
 	}

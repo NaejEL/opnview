@@ -1,16 +1,20 @@
-package store
+package store_test
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -26,7 +30,7 @@ import (
 var testWindows = attribution.AttributionWindows{LookupTimingDelay: 5, CacheAnswerDelay: attribution.DefaultCacheAnswerDelaySeconds}
 
 // recordProvider returns the Unbound provider of one resolver-record kind.
-func recordProvider(t *testing.T, database *Store, kind string) int64 {
+func recordProvider(t *testing.T, database *store.Store, kind string) int64 {
 	t.Helper()
 	id, err := database.ProviderID(context.Background(), kind, "unbound")
 	if err != nil {
@@ -59,7 +63,7 @@ func localAddressRecord(owner, address string) attribution.ResourceRecord {
 }
 
 // pollCache stores one successful poll of the cache.
-func pollCache(t *testing.T, database *Store, at int64, records ...attribution.ResourceRecord) attribution.RecordStorage {
+func pollCache(t *testing.T, database *store.Store, at int64, records ...attribution.ResourceRecord) attribution.RecordStorage {
 	t.Helper()
 	storage, err := database.StoreResourceRecords(context.Background(), attribution.ResourceRecordRead{
 		ProviderID: recordProvider(t, database, "resolver_cache"), HeldIn: attribution.HeldInCache,
@@ -72,7 +76,7 @@ func pollCache(t *testing.T, database *Store, at int64, records ...attribution.R
 }
 
 // pollLocalData stores one successful poll of the local data.
-func pollLocalData(t *testing.T, database *Store, at int64, records ...attribution.ResourceRecord) {
+func pollLocalData(t *testing.T, database *store.Store, at int64, records ...attribution.ResourceRecord) {
 	t.Helper()
 	if _, err := database.StoreResourceRecords(context.Background(), attribution.ResourceRecordRead{
 		ProviderID: recordProvider(t, database, "resolver_local_data"), HeldIn: attribution.HeldInLocalData,
@@ -89,7 +93,7 @@ type observation struct {
 }
 
 // observationsOf reads the observations of one owner name, oldest first.
-func observationsOf(t *testing.T, database *Store, owner string) []observation {
+func observationsOf(t *testing.T, database *store.Store, owner string) []observation {
 	t.Helper()
 	rows, err := database.DB().Query(`SELECT owner_name, rrtype, value, first_seen_at, last_seen_at,
 		covered_from_at, covered_until_at FROM resource_record_observation WHERE owner_name = ?
@@ -121,15 +125,15 @@ func TestUnchangedPollsStoreAsManyObservationsAsOnePoll(t *testing.T) {
 			var dump []attribution.ResourceRecord
 			for index := 0; index < records; index++ {
 				owner := fmt.Sprintf("name-%d.example.com", index)
-				dump = append(dump, addressRecord(owner, outside(index, index%2 == 1), 300))
+				dump = append(dump, addressRecord(owner, storetest.Outside(index, index%2 == 1), 300))
 				if index%3 == 0 {
 					dump = append(dump, cnameRecord(fmt.Sprintf("alias-%d.example.com", index), owner, 300))
 				}
 			}
 			for poll := 0; poll < polls; poll++ {
-				pollCache(t, database, referenceNow+int64(poll*60), dump...)
+				pollCache(t, database, storetest.ReferenceNow+int64(poll*60), dump...)
 			}
-			if stored := queryInt(t, database, "SELECT count(*) FROM resource_record_observation"); stored != int64(len(dump)) {
+			if stored := storetest.QueryInt(t, database, "SELECT count(*) FROM resource_record_observation"); stored != int64(len(dump)) {
 				t.Errorf("%d polls of %d records stored %d observations, not %d", polls, len(dump), stored, len(dump))
 			}
 		})
@@ -141,14 +145,14 @@ func TestCoverageIsExtendedAtEachPoll(t *testing.T) {
 	t.Parallel()
 	for _, v6 := range []bool{false, true} {
 		database, _ := openTestStore(t)
-		record := addressRecord("extended.example.com", outside(1, v6), 300)
+		record := addressRecord("extended.example.com", storetest.Outside(1, v6), 300)
 		for poll := int64(0); poll < 3; poll++ {
-			pollCache(t, database, referenceNow+poll*60, record)
+			pollCache(t, database, storetest.ReferenceNow+poll*60, record)
 			got := observationsOf(t, database, "extended.example.com")
 			if len(got) != 1 {
 				t.Fatalf("after poll %d there are %d observations, not one", poll, len(got))
 			}
-			if got[0].lastSeen != referenceNow+poll*60 || got[0].until != referenceNow+poll*60+300 {
+			if got[0].lastSeen != storetest.ReferenceNow+poll*60 || got[0].until != storetest.ReferenceNow+poll*60+300 {
 				t.Errorf("after poll %d the observation was last seen at %d and covers until %d",
 					poll, got[0].lastSeen, got[0].until)
 			}
@@ -160,19 +164,19 @@ func TestCoverageIsExtendedAtEachPoll(t *testing.T) {
 func TestAnAbsentRecordThatReappearsStartsANewObservation(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
-	record := addressRecord("returning.example.com", outside(2, false), 30)
-	other := addressRecord("other.example.com", outside(3, true), 30)
-	pollCache(t, database, referenceNow, record, other)
-	pollCache(t, database, referenceNow+60, other)
-	pollCache(t, database, referenceNow+120, record, other)
+	record := addressRecord("returning.example.com", storetest.Outside(2, false), 30)
+	other := addressRecord("other.example.com", storetest.Outside(3, true), 30)
+	pollCache(t, database, storetest.ReferenceNow, record, other)
+	pollCache(t, database, storetest.ReferenceNow+60, other)
+	pollCache(t, database, storetest.ReferenceNow+120, record, other)
 	got := observationsOf(t, database, "returning.example.com")
 	if len(got) != 2 {
 		t.Fatalf("a record absent from one poll and back at the next is %d observations, not two", len(got))
 	}
-	if got[1].coveredFrom != referenceNow+60 || got[1].firstSeen != referenceNow+120 {
+	if got[1].coveredFrom != storetest.ReferenceNow+60 || got[1].firstSeen != storetest.ReferenceNow+120 {
 		t.Errorf("the reappearance is covered from %d and first seen at %d", got[1].coveredFrom, got[1].firstSeen)
 	}
-	if got[0].until != referenceNow+30 {
+	if got[0].until != storetest.ReferenceNow+30 {
 		t.Errorf("the first observation covers until %d, not its own poll plus its ttl", got[0].until)
 	}
 }
@@ -181,20 +185,20 @@ func TestAnAbsentRecordThatReappearsStartsANewObservation(t *testing.T) {
 func TestTheCoverageLowerBoundIsThePreviousSuccessfulPollAcrossAFailureAndARestart(t *testing.T) {
 	t.Parallel()
 	database, directory := openTestStore(t)
-	held := addressRecord("held.example.com", outside(4, false), 100)
+	held := addressRecord("held.example.com", storetest.Outside(4, false), 100)
 
 	// The first poll ever: with no earlier poll, the lower bound is the poll's own instant.
-	pollCache(t, database, referenceNow, held)
-	if got := observationsOf(t, database, "held.example.com"); got[0].coveredFrom != referenceNow {
+	pollCache(t, database, storetest.ReferenceNow, held)
+	if got := observationsOf(t, database, "held.example.com"); got[0].coveredFrom != storetest.ReferenceNow {
 		t.Errorf("the first observation is covered from %d, not its own poll", got[0].coveredFrom)
 	}
 	// A failed poll at +60 stores nothing (the collector never calls the store for one), so
 	// the poll at +120 follows the poll at 0: the record seen at both is one observation, and
 	// a new record is covered from 0.
 	held.TTLSeconds = 30
-	appeared := addressRecord("appeared.example.com", outside(5, true), 300)
-	pollCache(t, database, referenceNow+120, held, appeared)
-	if got := observationsOf(t, database, "appeared.example.com"); got[0].coveredFrom != referenceNow {
+	appeared := addressRecord("appeared.example.com", storetest.Outside(5, true), 300)
+	pollCache(t, database, storetest.ReferenceNow+120, held, appeared)
+	if got := observationsOf(t, database, "appeared.example.com"); got[0].coveredFrom != storetest.ReferenceNow {
 		t.Errorf("across a failed poll the new record is covered from %d, not the last successful poll", got[0].coveredFrom)
 	}
 	got := observationsOf(t, database, "held.example.com")
@@ -202,7 +206,7 @@ func TestTheCoverageLowerBoundIsThePreviousSuccessfulPollAcrossAFailureAndAResta
 		t.Fatalf("across a failed poll the held record is %d observations", len(got))
 	}
 	// The upper bound is the LATEST poll plus the ttl it reported: 120 + 30, beyond 0 + 100.
-	if got[0].until != referenceNow+150 {
+	if got[0].until != storetest.ReferenceNow+150 {
 		t.Errorf("the held record covers until %d, not the latest poll plus its ttl", got[0].until)
 	}
 
@@ -210,13 +214,13 @@ func TestTheCoverageLowerBoundIsThePreviousSuccessfulPollAcrossAFailureAndAResta
 	if err := database.Close(); err != nil {
 		t.Fatalf("closing: %v", err)
 	}
-	reopened, err := Open(context.Background(), directory)
+	reopened, err := store.Open(context.Background(), directory)
 	if err != nil {
 		t.Fatalf("reopening: %v", err)
 	}
 	defer func() { _ = reopened.Close() }()
-	pollCache(t, reopened, referenceNow+600, addressRecord("after-restart.example.com", outside(6, false), 60))
-	if got := observationsOf(t, reopened, "after-restart.example.com"); got[0].coveredFrom != referenceNow+120 {
+	pollCache(t, reopened, storetest.ReferenceNow+600, addressRecord("after-restart.example.com", storetest.Outside(6, false), 60))
+	if got := observationsOf(t, reopened, "after-restart.example.com"); got[0].coveredFrom != storetest.ReferenceNow+120 {
 		t.Errorf("after a restart the new record is covered from %d, not the last successful poll", got[0].coveredFrom)
 	}
 }
@@ -227,9 +231,9 @@ func TestACNAMEChainGivesTheAddressWhileEveryLinkCoversTheInstant(t *testing.T) 
 	for _, v6 := range []bool{false, true} {
 		database, _ := openTestStore(t)
 		ctx := context.Background()
-		address := outside(7, v6)
+		address := storetest.Outside(7, v6)
 		// D -> CNAME -> CNAME -> A, the middle link covering the shortest interval.
-		pollCache(t, database, referenceNow,
+		pollCache(t, database, storetest.ReferenceNow,
 			cnameRecord("Site.Example.COM.", "first.example.net", 600),
 			cnameRecord("first.example.net", "second.example.org", 120),
 			addressRecord("second.example.org", address, 600))
@@ -237,8 +241,8 @@ func TestACNAMEChainGivesTheAddressWhileEveryLinkCoversTheInstant(t *testing.T) 
 			at   int64
 			want bool
 		}{
-			{referenceNow, true}, {referenceNow + 120, true}, {referenceNow + 121, false},
-			{referenceNow - 1, false},
+			{storetest.ReferenceNow, true}, {storetest.ReferenceNow + 120, true}, {storetest.ReferenceNow + 121, false},
+			{storetest.ReferenceNow - 1, false},
 		} {
 			got, err := database.AnswerAddresses(ctx, "site.example.com", instant.at)
 			if err != nil {
@@ -246,7 +250,7 @@ func TestACNAMEChainGivesTheAddressWhileEveryLinkCoversTheInstant(t *testing.T) 
 			}
 			found := len(got) == 1 && got[0] == address
 			if found != instant.want {
-				t.Errorf("at %+d the chain gives %v; want the address %v", instant.at-referenceNow, got, instant.want)
+				t.Errorf("at %+d the chain gives %v; want the address %v", instant.at-storetest.ReferenceNow, got, instant.want)
 			}
 		}
 	}
@@ -257,10 +261,10 @@ func TestACNAMELoopAndAChainOverTheBoundGiveNothing(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
 	ctx := context.Background()
-	pollCache(t, database, referenceNow,
+	pollCache(t, database, storetest.ReferenceNow,
 		cnameRecord("loop-a.example.com", "loop-b.example.com", 300),
 		cnameRecord("loop-b.example.com", "loop-a.example.com", 300))
-	if got, err := database.AnswerAddresses(ctx, "loop-a.example.com", referenceNow); err != nil || len(got) != 0 {
+	if got, err := database.AnswerAddresses(ctx, "loop-a.example.com", storetest.ReferenceNow); err != nil || len(got) != 0 {
 		t.Errorf("a loop gives %v, %v", got, err)
 	}
 	// A chain of exactly MaxCNAMELinks links is followed; one link more is not.
@@ -271,9 +275,9 @@ func TestACNAMELoopAndAChainOverTheBoundGiveNothing(t *testing.T) {
 			records = append(records, cnameRecord(fmt.Sprintf("%s-%d.example.com", prefix, link),
 				fmt.Sprintf("%s-%d.example.com", prefix, link+1), 300))
 		}
-		records = append(records, addressRecord(fmt.Sprintf("%s-%d.example.com", prefix, links), outside(8, false), 300))
-		pollCache(t, database, referenceNow+1, records...)
-		got, err := database.AnswerAddresses(ctx, prefix+"-0.example.com", referenceNow+1)
+		records = append(records, addressRecord(fmt.Sprintf("%s-%d.example.com", prefix, links), storetest.Outside(8, false), 300))
+		pollCache(t, database, storetest.ReferenceNow+1, records...)
+		got, err := database.AnswerAddresses(ctx, prefix+"-0.example.com", storetest.ReferenceNow+1)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -286,8 +290,8 @@ func TestACNAMELoopAndAChainOverTheBoundGiveNothing(t *testing.T) {
 // cacheScenario is one client, one flow to an outside destination, and whatever lookups
 // and resolver records a test arranges around it.
 type cacheScenario struct {
-	network     *testNetwork
-	client      testClient
+	network     *storetest.Network
+	client      storetest.Client
 	flowAt      int64
 	destination string
 	addresses   []string
@@ -298,28 +302,28 @@ type cacheScenario struct {
 // another interface instead.
 func newCacheScenario(t *testing.T, v6, eastWest bool) *cacheScenario {
 	t.Helper()
-	network := newTestNetwork(t, 2, 6)
-	scenario := &cacheScenario{network: network, flowAt: network.now - 100}
-	var other testClient
-	for _, candidate := range network.clients {
-		if candidate.v6 != v6 {
+	network := storetest.NewNetwork(t, 2, 6)
+	scenario := &cacheScenario{network: network, flowAt: network.Now - 100}
+	var other storetest.Client
+	for _, candidate := range network.Clients {
+		if candidate.V6 != v6 {
 			continue
 		}
-		if scenario.client.address == "" {
+		if scenario.client.Address == "" {
 			scenario.client = candidate
-		} else if other.address == "" || candidate.interfaceID != scenario.client.interfaceID {
+		} else if other.Address == "" || candidate.InterfaceID != scenario.client.InterfaceID {
 			// Another client of the family, on another interface where there is one.
 			other = candidate
 		}
 	}
-	scenario.destination = outside(40, v6)
+	scenario.destination = storetest.Outside(40, v6)
 	if eastWest {
-		scenario.destination = other.address
+		scenario.destination = other.Address
 	}
 	port := int64(443)
-	scenario.addresses = network.insert(t, []networkFlow{{observedAt: scenario.flowAt,
-		device: scenario.client.device, direction: "in", src: scenario.client.address,
-		dst: scenario.destination, dstPort: &port, protocol: "tcp", action: "pass", bytes: 100}})
+	scenario.addresses = network.Insert(t, []storetest.Flow{{ObservedAt: scenario.flowAt,
+		Device: scenario.client.Device, Direction: "in", Src: scenario.client.Address,
+		Dst: scenario.destination, DstPort: &port, Protocol: "tcp", Action: "pass", Bytes: 100}})
 	return scenario
 }
 
@@ -327,10 +331,10 @@ func newCacheScenario(t *testing.T, v6, eastWest bool) *cacheScenario {
 func (s *cacheScenario) lookup(t *testing.T, domain string, secondsBefore int64, source, action string) {
 	t.Helper()
 	s.lookups++
-	if err := s.network.db.InsertDNSResolution(context.Background(), vocab.DNSResolution{
-		LookupKey: fmt.Sprintf("example-scenario-lookup-%d", s.lookups), ClientAddress: s.client.address,
-		Domain: domain, Resolver: "unbound", Action: action, AnswerSource: ptr(source),
-		LookedUpAt: s.flowAt - secondsBefore, IngestedAt: s.network.now,
+	if err := s.network.DB.InsertDNSResolution(context.Background(), vocab.DNSResolution{
+		LookupKey: fmt.Sprintf("example-scenario-lookup-%d", s.lookups), ClientAddress: s.client.Address,
+		Domain: domain, Resolver: "unbound", Action: action, AnswerSource: storetest.Ptr(source),
+		LookedUpAt: s.flowAt - secondsBefore, IngestedAt: s.network.Now,
 	}); err != nil {
 		t.Fatalf("writing a lookup: %v", err)
 	}
@@ -340,10 +344,10 @@ func (s *cacheScenario) lookup(t *testing.T, domain string, secondsBefore int64,
 func (s *cacheScenario) attribute(t *testing.T) attribution.Attribution {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := s.network.db.Reclassify(ctx, append(s.addresses, s.client.address), s.network.now); err != nil {
+	if _, err := s.network.DB.Reclassify(ctx, append(s.addresses, s.client.Address), s.network.Now); err != nil {
 		t.Fatalf("classifying: %v", err)
 	}
-	result, err := s.network.db.AttributeWith(ctx, s.flowAt-3600, s.flowAt+60, testWindows, s.network.now)
+	result, err := s.network.DB.AttributeWith(ctx, s.flowAt-3600, s.flowAt+60, testWindows, s.network.Now)
 	if err != nil {
 		t.Fatalf("attributing: %v", err)
 	}
@@ -359,11 +363,11 @@ type attributionRow struct {
 // rows reads the scenario's attributions.
 func (s *cacheScenario) rows(t *testing.T) []attributionRow {
 	t.Helper()
-	return attributionRows(t, s.network.db)
+	return attributionRows(t, s.network.DB)
 }
 
 // attributionRows reads every attribution, by content.
-func attributionRows(t *testing.T, database *Store) []attributionRow {
+func attributionRows(t *testing.T, database *store.Store) []attributionRow {
 	t.Helper()
 	rows, err := database.DB().Query(`SELECT a.site_name, a.method, coalesce(o.owner_name, ''),
 		a.correlation_delay_seconds
@@ -398,9 +402,9 @@ func TestThreeDomainsInTheWindowOneAnsweringTheDestinationAreAttributedByTheCach
 		if got := scenario.rows(t); len(got) != 0 {
 			t.Fatalf("with no resolver record, three domains in the window give %v; 5A gave no row", got)
 		}
-		pollCache(t, scenario.network.db, scenario.flowAt-30,
+		pollCache(t, scenario.network.DB, scenario.flowAt-30,
 			addressRecord("second.example.com", scenario.destination, 300),
-			addressRecord("first.example.com", outside(41, v6), 300))
+			addressRecord("first.example.com", storetest.Outside(41, v6), 300))
 		scenario.attribute(t)
 		got := scenario.rows(t)
 		if len(got) != 1 || got[0].site != "second.example.com" || got[0].method != attribution.MethodResolverCacheAnswer {
@@ -420,7 +424,7 @@ func TestTwoExactCandidatesWithDistinctDomainsGiveNoRow(t *testing.T) {
 		scenario := newCacheScenario(t, v6, false)
 		scenario.lookup(t, "shared-a.example.com", 900, "Recursion", "pass")
 		scenario.lookup(t, "shared-b.example.com", 2, "Recursion", "pass")
-		pollCache(t, scenario.network.db, scenario.flowAt-1000,
+		pollCache(t, scenario.network.DB, scenario.flowAt-1000,
 			addressRecord("shared-a.example.com", scenario.destination, 3600),
 			addressRecord("shared-b.example.com", scenario.destination, 3600))
 		scenario.attribute(t)
@@ -438,7 +442,7 @@ func TestOneExactCandidateIsAttributedWithItsEvidenceNamed(t *testing.T) {
 	for _, v6 := range []bool{false, true} {
 		scenario := newCacheScenario(t, v6, false)
 		scenario.lookup(t, "Www.Example.COM.", 600, "Recursion", "pass")
-		pollCache(t, scenario.network.db, scenario.flowAt-700,
+		pollCache(t, scenario.network.DB, scenario.flowAt-700,
 			cnameRecord("www.example.com", "edge.example.net", 3600),
 			addressRecord("edge.example.net", scenario.destination, 3600))
 		scenario.attribute(t)
@@ -461,8 +465,8 @@ func TestNoCacheEvidenceAndOneTimingCandidateIsLookupTiming(t *testing.T) {
 		scenario := newCacheScenario(t, v6, false)
 		scenario.lookup(t, "timing.example.com", 3, "Recursion", "pass")
 		// A record of the other family is no evidence about this destination.
-		other := outside(42, !v6)
-		pollCache(t, scenario.network.db, scenario.flowAt-30, addressRecord("timing.example.com", other, 300))
+		other := storetest.Outside(42, !v6)
+		pollCache(t, scenario.network.DB, scenario.flowAt-30, addressRecord("timing.example.com", other, 300))
 		scenario.attribute(t)
 		got := scenario.rows(t)
 		if len(got) != 1 || got[0].method != attribution.MethodLookupTiming || got[0].observedOwner != "" ||
@@ -479,8 +483,8 @@ func TestContradictingEvidenceGivesNoRow(t *testing.T) {
 	for _, v6 := range []bool{false, true} {
 		scenario := newCacheScenario(t, v6, false)
 		scenario.lookup(t, "contradicted.example.com", 3, "Recursion", "pass")
-		pollCache(t, scenario.network.db, scenario.flowAt-30,
-			addressRecord("contradicted.example.com", outside(43, v6), 300))
+		pollCache(t, scenario.network.DB, scenario.flowAt-30,
+			addressRecord("contradicted.example.com", storetest.Outside(43, v6), 300))
 		scenario.attribute(t)
 		if got := scenario.rows(t); len(got) != 0 {
 			t.Errorf("IPv6 %t: the cache held the name's answers without the destination, and the flow "+
@@ -497,7 +501,7 @@ func TestIneligibleLookupsAndFlowsGetNoRowUnderEitherMethod(t *testing.T) {
 	for _, v6 := range []bool{false, true} {
 		blocked := newCacheScenario(t, v6, false)
 		blocked.lookup(t, "blocked.example.com", 2, "Local", "block")
-		pollCache(t, blocked.network.db, blocked.flowAt-30, addressRecord("blocked.example.com", blocked.destination, 300))
+		pollCache(t, blocked.network.DB, blocked.flowAt-30, addressRecord("blocked.example.com", blocked.destination, 300))
 		blocked.attribute(t)
 		if got := blocked.rows(t); len(got) != 0 {
 			t.Errorf("IPv6 %t: a blocked lookup named a flow: %v", v6, got)
@@ -505,8 +509,8 @@ func TestIneligibleLookupsAndFlowsGetNoRowUnderEitherMethod(t *testing.T) {
 
 		eastWest := newCacheScenario(t, v6, true)
 		eastWest.lookup(t, "inside.example.com", 2, "Local-data", "pass")
-		pollLocalData(t, eastWest.network.db, eastWest.flowAt-30, localAddressRecord("inside.example.com", eastWest.destination))
-		pollCache(t, eastWest.network.db, eastWest.flowAt-30, addressRecord("inside.example.com", eastWest.destination, 300))
+		pollLocalData(t, eastWest.network.DB, eastWest.flowAt-30, localAddressRecord("inside.example.com", eastWest.destination))
+		pollCache(t, eastWest.network.DB, eastWest.flowAt-30, addressRecord("inside.example.com", eastWest.destination, 300))
 		eastWest.attribute(t)
 		if got := eastWest.rows(t); len(got) != 0 {
 			t.Errorf("IPv6 %t: an east-west flow was named: %v", v6, got)
@@ -516,14 +520,14 @@ func TestIneligibleLookupsAndFlowsGetNoRowUnderEitherMethod(t *testing.T) {
 	firewall := newCacheScenario(t, false, false)
 	network := firewall.network
 	dns := int64(53)
-	network.insert(t, []networkFlow{{observedAt: firewall.flowAt + 10, device: firewall.client.device,
-		direction: "in", src: firewall.client.address, dst: network.inside[0].address, dstPort: &dns,
-		protocol: "udp", action: "pass", bytes: 70}})
-	firewall.addresses = append(firewall.addresses, network.inside[0].address)
+	network.Insert(t, []storetest.Flow{{ObservedAt: firewall.flowAt + 10, Device: firewall.client.Device,
+		Direction: "in", Src: firewall.client.Address, Dst: network.Inside[0].Address, DstPort: &dns,
+		Protocol: "udp", Action: "pass", Bytes: 70}})
+	firewall.addresses = append(firewall.addresses, network.Inside[0].Address)
 	firewall.lookup(t, "firewall.example.com", -8, "Recursion", "pass")
-	pollCache(t, network.db, firewall.flowAt-30, addressRecord("firewall.example.com", network.inside[0].address, 300))
+	pollCache(t, network.DB, firewall.flowAt-30, addressRecord("firewall.example.com", network.Inside[0].Address, 300))
 	firewall.attribute(t)
-	if named := queryInt(t, network.db, `SELECT count(*) FROM domain_attribution AS a
+	if named := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM domain_attribution AS a
 		JOIN flow AS f ON f.id = a.flow_id WHERE f.dst_is_this_firewall = 1`); named != 0 {
 		t.Errorf("%d flows to this firewall were named", named)
 	}
@@ -538,13 +542,13 @@ func TestIneligibleLookupsAndFlowsGetNoRowUnderEitherMethod(t *testing.T) {
 // from secondsBefore before the scenario's flow to 30 s after it.
 func (s *cacheScenario) pollLocalDataAround(t *testing.T, secondsBefore int64, records ...attribution.ResourceRecord) {
 	t.Helper()
-	pollLocalData(t, s.network.db, s.flowAt-secondsBefore, records...)
-	pollLocalData(t, s.network.db, s.flowAt+30, records...)
+	pollLocalData(t, s.network.DB, s.flowAt-secondsBefore, records...)
+	pollLocalData(t, s.network.DB, s.flowAt+30, records...)
 }
 
 // namedObservationHeldIn reads where the observation each attribution names was held,
 // "" for an attribution that names none.
-func namedObservationHeldIn(t *testing.T, database *Store) []string {
+func namedObservationHeldIn(t *testing.T, database *store.Store) []string {
 	t.Helper()
 	rows, err := database.DB().Query(`SELECT coalesce(o.held_in, '') FROM domain_attribution AS a
 		LEFT JOIN resource_record_observation AS o ON o.id = a.address_observation_id
@@ -581,7 +585,7 @@ func TestALocalDataLookupIsAttributedByItsLocalDataRecord(t *testing.T) {
 			t.Fatalf("IPv6 %t: the attribution is %v; want override.example.test by resolver_cache_answer, "+
 				"naming its local-data observation, with a delay of 600", v6, got)
 		}
-		if heldIn := namedObservationHeldIn(t, scenario.network.db); len(heldIn) != 1 || heldIn[0] != attribution.HeldInLocalData {
+		if heldIn := namedObservationHeldIn(t, scenario.network.DB); len(heldIn) != 1 || heldIn[0] != attribution.HeldInLocalData {
 			t.Errorf("IPv6 %t: the observation named is held in %v, not the local data", v6, heldIn)
 		}
 	}
@@ -631,7 +635,7 @@ func TestLocalDataAnswersExcludingTheDestinationContradictOnlyALocalDataLookup(t
 		} {
 			scenario := newCacheScenario(t, v6, false)
 			scenario.lookup(t, "elsewhere.example.test", 2, testCase.source, "pass")
-			scenario.pollLocalDataAround(t, 700, localAddressRecord("elsewhere.example.test", outside(46, v6)))
+			scenario.pollLocalDataAround(t, 700, localAddressRecord("elsewhere.example.test", storetest.Outside(46, v6)))
 			scenario.attribute(t)
 			if got := scenario.rows(t); fmt.Sprint(got) != fmt.Sprint(testCase.want) {
 				t.Errorf("%s, IPv6 %t: with local-data answers excluding the destination the attribution is %v, want %v",
@@ -651,7 +655,7 @@ func TestLocalDataAnswersExcludingTheDestinationContradictOnlyALocalDataLookup(t
 // covering the flow's instant, and the target's local-data record of address.
 func (s *cacheScenario) cnameIntoLocalData(t *testing.T, name, target, address string) {
 	t.Helper()
-	pollCache(t, s.network.db, s.flowAt-700, cnameRecord(name, target, 3600))
+	pollCache(t, s.network.DB, s.flowAt-700, cnameRecord(name, target, 3600))
 	s.pollLocalDataAround(t, 700, localAddressRecord(target, address))
 }
 
@@ -682,7 +686,7 @@ func TestTheContradictionDoesNotFollowACNAMEIntoLocalData(t *testing.T) {
 		for _, v6 := range []bool{false, true} {
 			scenario := newCacheScenario(t, v6, false)
 			scenario.lookup(t, "alias.example.com", 2, source, "pass")
-			scenario.cnameIntoLocalData(t, "alias.example.com", "host.example.test", outside(48, v6))
+			scenario.cnameIntoLocalData(t, "alias.example.com", "host.example.test", storetest.Outside(48, v6))
 			scenario.attribute(t)
 			want := []attributionRow{{site: "alias.example.com", method: attribution.MethodLookupTiming, delay: 2}}
 			if got := scenario.rows(t); fmt.Sprint(got) != fmt.Sprint(want) {
@@ -698,7 +702,7 @@ func TestTheContradictionDoesNotFollowACNAMEIntoLocalData(t *testing.T) {
 func (s *cacheScenario) otherFamilyDiagnostic(t *testing.T) int64 {
 	t.Helper()
 	var counted int64
-	if err := s.network.db.DB().QueryRow(
+	if err := s.network.DB.DB().QueryRow(
 		diagnosticText(t, "live_timing_fallback_other_family_cached"),
 		sql.Named("window_start", s.flowAt-600), sql.Named("window_end", s.flowAt+1),
 	).Scan(&counted); err != nil {
@@ -725,9 +729,9 @@ func TestTheOtherFamilyDiagnosticDoesNotFollowACNAMEIntoLocalData(t *testing.T) 
 			scenario := newCacheScenario(t, v6, false)
 			scenario.lookup(t, "alias.example.test", 2, "Local-data", "pass")
 			if testCase.through {
-				scenario.cnameIntoLocalData(t, "alias.example.test", "host.example.test", outside(49, !v6))
+				scenario.cnameIntoLocalData(t, "alias.example.test", "host.example.test", storetest.Outside(49, !v6))
 			} else {
-				scenario.pollLocalDataAround(t, 700, localAddressRecord("alias.example.test", outside(49, !v6)))
+				scenario.pollLocalDataAround(t, 700, localAddressRecord("alias.example.test", storetest.Outside(49, !v6)))
 			}
 			scenario.attribute(t)
 			if got := scenario.rows(t); len(got) != 1 || got[0].method != attribution.MethodLookupTiming {
@@ -743,22 +747,22 @@ func TestTheOtherFamilyDiagnosticDoesNotFollowACNAMEIntoLocalData(t *testing.T) 
 
 // orderingData is the flows, lookups and resolver polls the six-order test stores.
 type orderingData struct {
-	flows   []networkFlow
+	flows   []storetest.Flow
 	lookups []vocab.DNSResolution
 	polls   []attribution.ResourceRecordRead
 }
 
 // orderingFixture builds, on one network, one flow per outcome in each family: named by
 // the cache through a chain, named by timing, contradicted, and ambiguous.
-func orderingFixture(network *testNetwork, cacheProvider int64) orderingData {
+func orderingFixture(network *storetest.Network, cacheProvider int64) orderingData {
 	var data orderingData
 	port := int64(443)
 	var records []attribution.ResourceRecord
-	pollAt := network.now - 4000
+	pollAt := network.Now - 4000
 	for _, v6 := range []bool{false, true} {
-		var client testClient
-		for _, candidate := range network.clients {
-			if candidate.v6 == v6 {
+		var client storetest.Client
+		for _, candidate := range network.Clients {
+			if candidate.V6 == v6 {
 				client = candidate
 				break
 			}
@@ -773,16 +777,16 @@ func orderingFixture(network *testNetwork, cacheProvider int64) orderingData {
 			{"contradicted.example.com"},
 			{"ambiguous-a.example.com", "ambiguous-b.example.com"},
 		} {
-			flowAt := network.now - int64(600*(outcome+1)) - int64(family)
-			destination := outside(60+outcome+family, v6)
-			data.flows = append(data.flows, networkFlow{observedAt: flowAt, device: client.device,
-				direction: "in", src: client.address, dst: destination, dstPort: &port, protocol: "tcp",
-				action: "pass", bytes: int64(100 + outcome)})
+			flowAt := network.Now - int64(600*(outcome+1)) - int64(family)
+			destination := storetest.Outside(60+outcome+family, v6)
+			data.flows = append(data.flows, storetest.Flow{ObservedAt: flowAt, Device: client.Device,
+				Direction: "in", Src: client.Address, Dst: destination, DstPort: &port, Protocol: "tcp",
+				Action: "pass", Bytes: int64(100 + outcome)})
 			for index, domain := range domains {
 				data.lookups = append(data.lookups, vocab.DNSResolution{
-					LookupKey: fmt.Sprintf("example-order-%t-%d-%d", v6, outcome, index), ClientAddress: client.address,
-					Domain: domain, Resolver: "unbound", Action: "pass", AnswerSource: ptr("Recursion"),
-					LookedUpAt: flowAt - int64(2+index), IngestedAt: network.now,
+					LookupKey: fmt.Sprintf("example-order-%t-%d-%d", v6, outcome, index), ClientAddress: client.Address,
+					Domain: domain, Resolver: "unbound", Action: "pass", AnswerSource: storetest.Ptr("Recursion"),
+					LookedUpAt: flowAt - int64(2+index), IngestedAt: network.Now,
 				})
 			}
 			switch outcome {
@@ -790,7 +794,7 @@ func orderingFixture(network *testNetwork, cacheProvider int64) orderingData {
 				records = append(records, cnameRecord("chained.example.com", fmt.Sprintf("edge-%t.example.net", v6), 7200),
 					addressRecord(fmt.Sprintf("edge-%t.example.net", v6), destination, 7200))
 			case 2:
-				records = append(records, addressRecord("contradicted.example.com", outside(90+family, v6), 7200))
+				records = append(records, addressRecord("contradicted.example.com", storetest.Outside(90+family, v6), 7200))
 			case 3:
 				records = append(records, addressRecord("ambiguous-a.example.com", destination, 7200),
 					addressRecord("ambiguous-b.example.com", destination, 7200))
@@ -811,7 +815,7 @@ type fullAttributionRow struct {
 }
 
 // fullAttributionRows reads every attribution by content.
-func fullAttributionRows(t *testing.T, database *Store) []fullAttributionRow {
+func fullAttributionRows(t *testing.T, database *store.Store) []fullAttributionRow {
 	t.Helper()
 	rows, err := database.DB().Query(`SELECT f.log_digest, r.lookup_key, a.site_name, a.method,
 		coalesce(o.owner_name || ' ' || o.rrtype || ' ' || o.value || ' ' || o.first_seen_at, ''),
@@ -838,30 +842,30 @@ func fullAttributionRows(t *testing.T, database *Store) []fullAttributionRow {
 }
 
 // storeOrderingBatch stores one batch and derives the attributions, as a pass would.
-func storeOrderingBatch(t *testing.T, network *testNetwork, data orderingData, batch string, addresses *[]string) attribution.Attribution {
+func storeOrderingBatch(t *testing.T, network *storetest.Network, data orderingData, batch string, addresses *[]string) attribution.Attribution {
 	t.Helper()
 	ctx := context.Background()
 	switch batch {
 	case "flows":
-		*addresses = append(*addresses, network.insert(t, data.flows)...)
+		*addresses = append(*addresses, network.Insert(t, data.flows)...)
 	case "lookups":
 		for _, lookup := range data.lookups {
-			if err := network.db.InsertDNSResolution(ctx, lookup); err != nil {
+			if err := network.DB.InsertDNSResolution(ctx, lookup); err != nil {
 				t.Fatalf("writing a lookup: %v", err)
 			}
 			*addresses = append(*addresses, lookup.ClientAddress)
 		}
 	case "observations":
 		for _, poll := range data.polls {
-			if _, err := network.db.StoreResourceRecords(ctx, poll); err != nil {
+			if _, err := network.DB.StoreResourceRecords(ctx, poll); err != nil {
 				t.Fatalf("storing a poll: %v", err)
 			}
 		}
 	}
-	if _, err := network.db.Reclassify(ctx, *addresses, network.now); err != nil {
+	if _, err := network.DB.Reclassify(ctx, *addresses, network.Now); err != nil {
 		t.Fatalf("classifying: %v", err)
 	}
-	result, err := network.db.AttributeWith(ctx, network.now-7200, network.now, testWindows, network.now)
+	result, err := network.DB.AttributeWith(ctx, network.Now-7200, network.Now, testWindows, network.Now)
 	if err != nil {
 		t.Fatalf("attributing: %v", err)
 	}
@@ -879,13 +883,13 @@ func TestAllSixOrdersOfFlowsLookupsAndObservationsGiveIdenticalRows(t *testing.T
 	}
 	var reference []fullAttributionRow
 	for index, order := range orders {
-		network := newTestNetwork(t, 2, 6)
-		data := orderingFixture(network, recordProvider(t, network.db, "resolver_cache"))
+		network := storetest.NewNetwork(t, 2, 6)
+		data := orderingFixture(network, recordProvider(t, network.DB, "resolver_cache"))
 		var addresses []string
 		for _, batch := range order {
 			storeOrderingBatch(t, network, data, batch, &addresses)
 		}
-		got := fullAttributionRows(t, network.db)
+		got := fullAttributionRows(t, network.DB)
 		if index == 0 {
 			reference = got
 			methods := map[string]int{}
@@ -899,8 +903,8 @@ func TestAllSixOrdersOfFlowsLookupsAndObservationsGiveIdenticalRows(t *testing.T
 		} else if fmt.Sprint(got) != fmt.Sprint(reference) {
 			t.Errorf("the order %v gives\n%v\nand %v gives\n%v", order, got, orders[0], reference)
 		}
-		again, err := network.db.AttributeWith(context.Background(), network.now-7200, network.now,
-			testWindows, network.now)
+		again, err := network.DB.AttributeWith(context.Background(), network.Now-7200, network.Now,
+			testWindows, network.Now)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -913,12 +917,12 @@ func TestAllSixOrdersOfFlowsLookupsAndObservationsGiveIdenticalRows(t *testing.T
 // TestAnObservationStoredAPassLaterChangesTheAttributionAtThatPass is AC10's second point.
 func TestAnObservationStoredAPassLaterChangesTheAttributionAtThatPass(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 2, 6)
-	data := orderingFixture(network, recordProvider(t, network.db, "resolver_cache"))
+	network := storetest.NewNetwork(t, 2, 6)
+	data := orderingFixture(network, recordProvider(t, network.DB, "resolver_cache"))
 	var addresses []string
 	storeOrderingBatch(t, network, data, "flows", &addresses)
 	storeOrderingBatch(t, network, data, "lookups", &addresses)
-	before := fullAttributionRows(t, network.db)
+	before := fullAttributionRows(t, network.DB)
 	for _, row := range before {
 		if row.method != attribution.MethodLookupTiming {
 			t.Fatalf("before any resolver record an attribution is %v", row)
@@ -928,7 +932,7 @@ func TestAnObservationStoredAPassLaterChangesTheAttributionAtThatPass(t *testing
 	if len(changed.FlowInstants) == 0 {
 		t.Fatal("the pass that stored the observations changed no attribution")
 	}
-	after := fullAttributionRows(t, network.db)
+	after := fullAttributionRows(t, network.DB)
 	if fmt.Sprint(after) == fmt.Sprint(before) {
 		t.Fatal("the observations stored a pass later left every attribution as it was")
 	}
@@ -948,16 +952,16 @@ func TestAnObservationStoredAPassLaterChangesTheAttributionAtThatPass(t *testing
 // -- the live validation's V2 query, which must count nothing.
 func TestNoAttributionInventsADomain(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 2, 6)
-	data := orderingFixture(network, recordProvider(t, network.db, "resolver_cache"))
+	network := storetest.NewNetwork(t, 2, 6)
+	data := orderingFixture(network, recordProvider(t, network.DB, "resolver_cache"))
 	var addresses []string
 	for _, batch := range []string{"observations", "flows", "lookups"} {
 		storeOrderingBatch(t, network, data, batch, &addresses)
 	}
-	if total := queryInt(t, network.db, "SELECT count(*) FROM domain_attribution"); total == 0 {
+	if total := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM domain_attribution"); total == 0 {
 		t.Fatal("nothing was attributed, so the check has nothing to hold")
 	}
-	invented := queryInt(t, network.db, `SELECT count(*) FROM domain_attribution a
+	invented := storetest.QueryInt(t, network.DB, `SELECT count(*) FROM domain_attribution a
 		JOIN dns_resolution r ON r.id = a.dns_resolution_id
 		JOIN flow f ON f.id = a.flow_id
 		WHERE a.site_name <> r.domain OR r.looked_up_at > f.observed_at
@@ -983,7 +987,7 @@ func TestTheMethodCheckRefusesAnUnknownValue(t *testing.T) {
 		"UPDATE domain_attribution SET method = 'suricata_dns'",
 		"UPDATE domain_attribution SET method = 'resolver_cache_answer'",
 	} {
-		_, err := scenario.network.db.DB().Exec(statement)
+		_, err := scenario.network.DB.DB().Exec(statement)
 		if !sqldb.IsConstraintViolation(err) {
 			t.Errorf("%s gave %v, not a constraint failure", statement, err)
 		}
@@ -1010,7 +1014,7 @@ func diagnosticText(t *testing.T, name string) string {
 }
 
 // perMethodFromDiagnostic sums the per-client diagnostic's per-method columns.
-func perMethodFromDiagnostic(t *testing.T, database *Store, from, to int64) (int64, int64, int64, int64) {
+func perMethodFromDiagnostic(t *testing.T, database *store.Store, from, to int64) (int64, int64, int64, int64) {
 	t.Helper()
 	rows, err := database.DB().Query(diagnosticText(t, "Attribution rate per client"),
 		sql.Named("window_start", from), sql.Named("window_end", to))
@@ -1051,7 +1055,7 @@ func perMethodFromDiagnostic(t *testing.T, database *Store, from, to int64) (int
 
 // checkRateAgreesWithTheDiagnostic holds ReadAttributionRate and the diagnostic to the
 // same per-method counts, summing to the named total.
-func checkRateAgreesWithTheDiagnostic(t *testing.T, database *Store, rate reads.AttributionRate, from, to int64) {
+func checkRateAgreesWithTheDiagnostic(t *testing.T, database *store.Store, rate reads.AttributionRate, from, to int64) {
 	t.Helper()
 	eligible, named, cache, timing := perMethodFromDiagnostic(t, database, from, to)
 	if rate.NamedByCacheAnswer+rate.NamedByLookupTiming != rate.NamedFlows {
@@ -1086,16 +1090,16 @@ func TestTheOtherFamilyTimingFallbackDiagnosticCountsAPlantedCase(t *testing.T) 
 			scenario.lookup(t, "other-family.example.com", 3, "Recursion", "pass")
 			if testCase.otherFamily {
 				// Through a CNAME, so the diagnostic follows the chain as the rule does.
-				pollCache(t, scenario.network.db, scenario.flowAt-30,
+				pollCache(t, scenario.network.DB, scenario.flowAt-30,
 					cnameRecord("other-family.example.com", "edge-other-family.example.net", 300),
-					addressRecord("edge-other-family.example.net", outside(47, !v6), 300))
+					addressRecord("edge-other-family.example.net", storetest.Outside(47, !v6), 300))
 			}
 			scenario.attribute(t)
 			if got := scenario.rows(t); len(got) != 1 || got[0].method != attribution.MethodLookupTiming {
 				t.Fatalf("IPv6 %t, %s: the attribution is %v, want one by lookup_timing", v6, testCase.name, got)
 			}
 			var counted int64
-			if err := scenario.network.db.DB().QueryRow(
+			if err := scenario.network.DB.DB().QueryRow(
 				diagnosticText(t, "live_timing_fallback_other_family_cached"),
 				sql.Named("window_start", scenario.flowAt-600), sql.Named("window_end", scenario.flowAt+1),
 			).Scan(&counted); err != nil {
@@ -1119,9 +1123,9 @@ func TestTheOtherFamilyDiagnosticDoesNotCountANameHeldInBothFamilies(t *testing.
 	for _, v6 := range []bool{false, true} {
 		scenario := newCacheScenario(t, v6, false)
 		scenario.lookup(t, "both-families.example.com", 3, "Recursion", "pass")
-		pollCache(t, scenario.network.db, scenario.flowAt-1,
+		pollCache(t, scenario.network.DB, scenario.flowAt-1,
 			addressRecord("both-families.example.com", scenario.destination, 300),
-			addressRecord("both-families.example.com", outside(50, !v6), 300))
+			addressRecord("both-families.example.com", storetest.Outside(50, !v6), 300))
 		scenario.attribute(t)
 		if got := scenario.rows(t); len(got) != 1 || got[0].method != attribution.MethodLookupTiming {
 			t.Fatalf("IPv6 %t: the attribution is %v, want one by lookup_timing", v6, got)
@@ -1138,14 +1142,14 @@ func TestTheRateWithNoResolverIsUndefined(t *testing.T) {
 	scenario := newCacheScenario(t, true, false)
 	scenario.attribute(t)
 	from, to := scenario.flowAt-600, scenario.flowAt+1
-	rate, err := scenario.network.db.ReadAttributionRate(context.Background(), from, to, nil)
+	rate, err := scenario.network.DB.ReadAttributionRate(context.Background(), from, to, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rate.Rate != nil || rate.ResolverCovered || rate.CacheCovered || rate.EligibleFlows == 0 {
 		t.Errorf("with no resolver the rate reads %+v; want undefined, no coverage of either kind, and the eligible flow", rate)
 	}
-	checkRateAgreesWithTheDiagnostic(t, scenario.network.db, rate, from, to)
+	checkRateAgreesWithTheDiagnostic(t, scenario.network.DB, rate, from, to)
 }
 
 // TestTheRateWithTheQueryReportOnlyCountsTiming is AC13's second state.
@@ -1155,7 +1159,7 @@ func TestTheRateWithTheQueryReportOnlyCountsTiming(t *testing.T) {
 	scenario.lookup(t, "report-only.example.com", 2, "Recursion", "pass")
 	scenario.attribute(t)
 	from, to := scenario.flowAt-600, scenario.flowAt+1
-	rate, err := scenario.network.db.ReadAttributionRate(context.Background(), from, to, nil)
+	rate, err := scenario.network.DB.ReadAttributionRate(context.Background(), from, to, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1163,20 +1167,20 @@ func TestTheRateWithTheQueryReportOnlyCountsTiming(t *testing.T) {
 		rate.NamedByCacheAnswer != 0 {
 		t.Errorf("with the query report alone the rate reads %+v", rate)
 	}
-	checkRateAgreesWithTheDiagnostic(t, scenario.network.db, rate, from, to)
+	checkRateAgreesWithTheDiagnostic(t, scenario.network.DB, rate, from, to)
 }
 
 // TestTheRateWithTheQueryReportAndTheCacheCountsBothMethods is AC13's third state.
 func TestTheRateWithTheQueryReportAndTheCacheCountsBothMethods(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 2, 6)
-	data := orderingFixture(network, recordProvider(t, network.db, "resolver_cache"))
+	network := storetest.NewNetwork(t, 2, 6)
+	data := orderingFixture(network, recordProvider(t, network.DB, "resolver_cache"))
 	var addresses []string
 	for _, batch := range []string{"flows", "lookups", "observations"} {
 		storeOrderingBatch(t, network, data, batch, &addresses)
 	}
-	from, to := network.now-7200, network.now+1
-	rate, err := network.db.ReadAttributionRate(context.Background(), from, to, nil)
+	from, to := network.Now-7200, network.Now+1
+	rate, err := network.DB.ReadAttributionRate(context.Background(), from, to, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1184,7 +1188,7 @@ func TestTheRateWithTheQueryReportAndTheCacheCountsBothMethods(t *testing.T) {
 		rate.NamedByLookupTiming != 2 {
 		t.Errorf("with the query report and the cache the rate reads %+v", rate)
 	}
-	checkRateAgreesWithTheDiagnostic(t, network.db, rate, from, to)
+	checkRateAgreesWithTheDiagnostic(t, network.DB, rate, from, to)
 }
 
 // TestResolverRecordsAreStoredWhateverTheAggregateModeSays is AC14's first point, decision
@@ -1192,13 +1196,13 @@ func TestTheRateWithTheQueryReportAndTheCacheCountsBothMethods(t *testing.T) {
 func TestResolverRecordsAreStoredWhateverTheAggregateModeSays(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
-	if err := database.SetSetting(context.Background(), "aggregate_mode", "no_domains", referenceNow); err != nil {
+	if err := database.SetSetting(context.Background(), "aggregate_mode", "no_domains", storetest.ReferenceNow); err != nil {
 		t.Fatal(err)
 	}
-	pollCache(t, database, referenceNow, addressRecord("mode.example.com", outside(9, false), 60),
-		addressRecord("mode.example.com", outside(9, true), 60))
-	pollLocalData(t, database, referenceNow, localAddressRecord("host.example.test", outside(10, false)))
-	if stored := queryInt(t, database, "SELECT count(*) FROM resource_record_observation"); stored != 3 {
+	pollCache(t, database, storetest.ReferenceNow, addressRecord("mode.example.com", storetest.Outside(9, false), 60),
+		addressRecord("mode.example.com", storetest.Outside(9, true), 60))
+	pollLocalData(t, database, storetest.ReferenceNow, localAddressRecord("host.example.test", storetest.Outside(10, false)))
+	if stored := storetest.QueryInt(t, database, "SELECT count(*) FROM resource_record_observation"); stored != 3 {
 		t.Errorf("no_domains stored %d resolver records, not the 3 read", stored)
 	}
 }
@@ -1207,13 +1211,13 @@ func TestResolverRecordsAreStoredWhateverTheAggregateModeSays(t *testing.T) {
 func TestThePurgeRemovesEndedObservationsAndKeepsReferencedOnes(t *testing.T) {
 	t.Parallel()
 	scenario := newCacheScenario(t, false, false)
-	database := scenario.network.db
+	database := scenario.network.DB
 	scenario.lookup(t, "kept.example.com", 2, "Recursion", "pass")
 	// An unreferenced record whose coverage ends long before the flow, the record that
 	// names the flow, and a record covering past the horizon below.
-	pollCache(t, database, scenario.flowAt-1000, addressRecord("ended.example.com", outside(44, false), 40))
+	pollCache(t, database, scenario.flowAt-1000, addressRecord("ended.example.com", storetest.Outside(44, false), 40))
 	pollCache(t, database, scenario.flowAt-30, addressRecord("kept.example.com", scenario.destination, 40))
-	pollCache(t, database, scenario.flowAt+5000, addressRecord("current.example.com", outside(45, false), 300))
+	pollCache(t, database, scenario.flowAt+5000, addressRecord("current.example.com", storetest.Outside(45, false), 300))
 	scenario.attribute(t)
 	if got := scenario.rows(t); len(got) != 1 || got[0].method != attribution.MethodResolverCacheAnswer {
 		t.Fatalf("the scenario gives %v", got)
@@ -1228,7 +1232,7 @@ func TestThePurgeRemovesEndedObservationsAndKeepsReferencedOnes(t *testing.T) {
 		scenario.flowAt-1000, scenario.flowAt-900); err != nil {
 		t.Fatalf("ageing the referenced observation: %v", err)
 	}
-	if err := database.SetSetting(context.Background(), "retention_seconds", "3000", scenario.network.now); err != nil {
+	if err := database.SetSetting(context.Background(), "retention_seconds", "3000", scenario.network.Now); err != nil {
 		t.Fatal(err)
 	}
 	if err := database.Purge(context.Background(), scenario.flowAt+2500); err != nil {
@@ -1239,7 +1243,7 @@ func TestThePurgeRemovesEndedObservationsAndKeepsReferencedOnes(t *testing.T) {
 			t.Errorf("after the purge %s has %d observations, not %d", owner, got, want)
 		}
 	}
-	if violations := foreignKeyViolations(t, database); violations != 0 {
+	if violations := storetest.ForeignKeyViolations(t, database); violations != 0 {
 		t.Errorf("after the purge, %d rows name a row that does not exist", violations)
 	}
 }
@@ -1254,31 +1258,31 @@ func TestALoggedHostNameNoLeaseNamesResolvesThroughTheLocalData(t *testing.T) {
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 	records := []attribution.ResourceRecord{
-		localAddressRecord("single.example.test", outside(11, true)),
-		localAddressRecord("double.example.test", outside(12, false)),
-		localAddressRecord("double.example.test", outside(13, true)),
-		localAddressRecord("twofour.example.test", outside(14, false)),
-		localAddressRecord("twofour.example.test", outside(15, false)),
+		localAddressRecord("single.example.test", storetest.Outside(11, true)),
+		localAddressRecord("double.example.test", storetest.Outside(12, false)),
+		localAddressRecord("double.example.test", storetest.Outside(13, true)),
+		localAddressRecord("twofour.example.test", storetest.Outside(14, false)),
+		localAddressRecord("twofour.example.test", storetest.Outside(15, false)),
 	}
-	pollLocalData(t, database, referenceNow, records...)
-	pollLocalData(t, database, referenceNow+300, records...)
+	pollLocalData(t, database, storetest.ReferenceNow, records...)
+	pollLocalData(t, database, storetest.ReferenceNow+300, records...)
 	for _, testCase := range []struct {
 		logged, wantResolution, wantAddress string
 		at                                  int64
 	}{
-		{"SINGLE.example.test.", vocab.ClientResolutionLocalData, outside(11, true), referenceNow + 100},
-		{"single", vocab.ClientResolutionLocalData, outside(11, true), referenceNow + 300},
-		{"double.example.test", vocab.ClientResolutionDualStack, "double.example.test", referenceNow + 100},
-		{"twofour.example.test", vocab.ClientResolutionAmbiguous, "twofour.example.test", referenceNow + 100},
-		{"single.example.test", vocab.ClientResolutionUnknown, "single.example.test", referenceNow + 301},
-		{"absent.example.test", vocab.ClientResolutionUnknown, "absent.example.test", referenceNow + 100},
+		{"SINGLE.example.test.", vocab.ClientResolutionLocalData, storetest.Outside(11, true), storetest.ReferenceNow + 100},
+		{"single", vocab.ClientResolutionLocalData, storetest.Outside(11, true), storetest.ReferenceNow + 300},
+		{"double.example.test", vocab.ClientResolutionDualStack, "double.example.test", storetest.ReferenceNow + 100},
+		{"twofour.example.test", vocab.ClientResolutionAmbiguous, "twofour.example.test", storetest.ReferenceNow + 100},
+		{"single.example.test", vocab.ClientResolutionUnknown, "single.example.test", storetest.ReferenceNow + 301},
+		{"absent.example.test", vocab.ClientResolutionUnknown, "absent.example.test", storetest.ReferenceNow + 100},
 	} {
 		address, resolution, err := database.ResolveLoggedHostname(ctx, testCase.logged, nil, testCase.at)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if resolution != testCase.wantResolution || address != testCase.wantAddress {
-			t.Errorf("%s at %+d resolves to %s, %s; want %s, %s", testCase.logged, testCase.at-referenceNow,
+			t.Errorf("%s at %+d resolves to %s, %s; want %s, %s", testCase.logged, testCase.at-storetest.ReferenceNow,
 				address, resolution, testCase.wantAddress, testCase.wantResolution)
 		}
 	}
@@ -1302,19 +1306,19 @@ func TestTheNewStatementsSearchAnIndex(t *testing.T) {
 		var arguments []any
 		for _, parameter := range []string{"address", "at", "name", "start", "end", "client_id", "label",
 			"provider_id", "owner_name", "rrtype", "value", "previous_at", "from", "to"} {
-			if !sqldb.UsesParameter(text, parameter) {
+			if !slices.Contains(sqldb.LexSQL(text).Parameters, parameter) {
 				continue
 			}
 			switch parameter {
 			case "address", "name", "label", "owner_name", "rrtype", "value":
 				arguments = append(arguments, sql.Named(parameter, "example"))
 			default:
-				arguments = append(arguments, sql.Named(parameter, referenceNow))
+				arguments = append(arguments, sql.Named(parameter, storetest.ReferenceNow))
 			}
 		}
-		plan := planOf(t, database, text, arguments...)
+		plan := storetest.PlanOf(t, database, text, arguments...)
 		for _, table := range []string{"resource_record_observation", "dns_resolution", "flow"} {
-			if scans(plan, table) {
+			if storetest.Scans(plan, table) {
 				t.Errorf("%s scans %s: %+v", name, table, plan)
 			}
 		}

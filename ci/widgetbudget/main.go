@@ -7,7 +7,9 @@
 // seed's own instant, three times; the median is reported beside its budget (decision 9). Each
 // core dataset is queried the same way: its default query, which is the 24h period, and the same
 // query for {"period": "30d"}, under the same two budgets; a dataset with no time column has no
-// period, so it is timed once, under the 24h budget. A figure over its budget makes the command
+// period, so it is timed once, under the 24h budget. A type whose preset offers a volume measure is
+// also timed answering in the netflow measure, as "<type>+netflow", under the same budgets and the
+// same rule on an empty answer (E19 of the Phase E amendment). A figure over its budget makes the command
 // exit non-zero, which fails the run. It is a program rather than a test so the everyday suite
 // never meets it and no test has to skip itself when no seed is there.
 //
@@ -40,6 +42,8 @@ import (
 	"github.com/NaejEL/opnview/internal/widget"
 	"github.com/NaejEL/opnview/internal/widget/datasets"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/request"
 	"github.com/NaejEL/opnview/internal/widget/traffic"
 	_ "github.com/NaejEL/opnview/internal/widget/widgets"
 )
@@ -142,6 +146,18 @@ func timeWidgets(ctx context.Context, database *store.Store, service *widget.Ser
 			cases = append(cases, timedCase{name: "custom_chart+every_source", widgetType: widgetType,
 				parameters: map[string]any{"series": everySourceSeries}})
 		}
+		// E19 of the Phase E amendment: a type whose preset offers a volume measure is timed a
+		// second time answering in the netflow measure, under the same budgets and the same rule on
+		// an empty answer; beside the logged line, the difference is what reading the measured
+		// volumes -- connection_netflow and netflow_sum -- costs.
+		if preset, found := service.Preset(widgetType); found && offersVolumeMeasure(preset) {
+			netflow := map[string]any{"volume_measure": "netflow"}
+			for key, value := range parameters {
+				netflow[key] = value
+			}
+			cases = append(cases, timedCase{name: widgetType + "+netflow", widgetType: widgetType,
+				parameters: netflow})
+		}
 	}
 	for _, timed := range cases {
 		preset, _ := service.Preset(timed.widgetType)
@@ -156,10 +172,17 @@ func timeWidgets(ctx context.Context, database *store.Store, service *widget.Ser
 				}
 			}
 			encoded, _ := json.Marshal(parameters)
-			var response envelope.Response
+			var (
+				response   envelope.Response
+				statements int64
+				waited     time.Duration
+			)
 			median, err := medianOfThree(func() error {
 				var respondErr error
+				countedBefore, waitedBefore := database.Reader.Executed()
 				response, respondErr = service.Respond(ctx, timed.widgetType, string(encoded))
+				countedAfter, waitedAfter := database.Reader.Executed()
+				statements, waited = countedAfter-countedBefore, waitedAfter-waitedBefore
 				return respondErr
 			})
 			if err != nil {
@@ -170,8 +193,11 @@ func timeWidgets(ctx context.Context, database *store.Store, service *widget.Ser
 				verdict += "; EMPTY: " + reason
 				counts.empty++
 			}
-			fmt.Printf("  widget-budget %s %-30s %-3s %8.1f ms (budget %v, condition %s) %s\n", label, timed.name,
-				period, float64(median.Microseconds())/1000, budgets[period], response.Condition, verdict)
+			// The profile of the last of the three answers: its statements on the read connections,
+			// and the time until they answered; the rest of its time is the script's and the host's.
+			fmt.Printf("  widget-budget %s %-30s %-3s %8.1f ms (budget %v, condition %s, %d statements, %.1f ms in SQL) %s\n",
+				label, timed.name, period, float64(median.Microseconds())/1000, budgets[period], response.Condition,
+				statements, float64(waited.Microseconds())/1000, verdict)
 		}
 	}
 	return nil
@@ -297,4 +323,15 @@ func anyClient(ctx context.Context, database *store.Store) (map[string]any, erro
 		return nil, fmt.Errorf("finding a client of the seed: %w", err)
 	}
 	return map[string]any{"kind": "client", "by": kind, "value": key}, nil
+}
+
+// offersVolumeMeasure reports whether a preset takes the volume_measure parameter: a type serving a
+// Volume or a byte Count, which may be answered in the netflow measure.
+func offersVolumeMeasure(preset request.Preset) bool {
+	for _, param := range preset.Params {
+		if param.Key == params.VolumeMeasureKey {
+			return true
+		}
+	}
+	return false
 }

@@ -17,6 +17,8 @@ import (
 const (
 	// PathCollection is the collection surface.
 	PathCollection = "/collection"
+	// PathDatasets is the data catalogue's listing.
+	PathDatasets = "/api/datasets"
 	// PathCollectionSettings is where a settings card of the collection surface is saved.
 	PathCollectionSettings = "/collection/settings"
 	// PathInterfaces is the Interfaces surface.

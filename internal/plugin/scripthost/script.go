@@ -1,4 +1,4 @@
-package runtime
+package scripthost
 
 import (
 	"context"
@@ -77,7 +77,7 @@ const (
 	FailureRecords = vocab.OutcomeRecordsInvalid
 )
 
-// failure is a call that did not answer usably: its closed code and what happened.
+// Failure is a call that did not answer usably: its closed code and what happened.
 type Failure struct {
 	Code   vocab.AvailabilityOutcome
 	Detail string
@@ -87,29 +87,29 @@ type Failure struct {
 
 func (f *Failure) Error() string { return fmt.Sprintf("plugin: %s: %s", f.Code, f.Detail) }
 
-// script is one plugin's compiled program and what its calls need.
+// Script is one plugin's compiled program and what its calls need.
 type Script struct {
 	plugin    string
 	file      string
 	Program   *goja.Program
 	endpoints map[string]opnsense.Endpoint
 	timeout   time.Duration
-	// extra is what the script may reach beyond the firewall, nil for none.
+	// Extra is what the script may reach beyond the firewall, nil for none.
 	Extra *Extensions
-	// version is the plugin's version, which the broker records reads under; cadences are the
+	// Version is the plugin's version, which the broker records reads under; cadences are the
 	// cadences its providers of a kind of its own declare, the max age of their calls.
 	Version  string
 	Cadences map[string]time.Duration
-	// observe is handed every host function's answer; nil but under `opnview plugin test`.
+	// Observe is handed every host function's answer; nil but under `opnview plugin test`.
 	Observe func(function string, answer any)
-	// routes are each endpoint's routes by version; versions and variants are the main script's
+	// Routes are each endpoint's routes by version; versions and variants are the main script's
 	// range and the script files of other ranges (A19, versions.go).
 	Routes   map[string][]Route
 	Versions *contract.VersionRange
 	Variants []ScriptVariant
 }
 
-// compile compiles a plugin's script.
+// Compile compiles a plugin's script.
 func Compile(plugin, file, source string, endpoints map[string]opnsense.Endpoint, timeout time.Duration) (
 	*Script, error) {
 	program, err := goja.Compile(file, source, false)
@@ -122,7 +122,7 @@ func Compile(plugin, file, source string, endpoints map[string]opnsense.Endpoint
 	return &Script{plugin: plugin, file: file, Program: program, endpoints: endpoints, timeout: timeout}, nil
 }
 
-// exportsOf runs the program once, in a runtime of its own, and returns what it exports: the
+// ExportsOf runs the program once, in a runtime of its own, and returns what it exports: the
 // load-time check that the script defines what its kinds' contracts require.
 func (s *Script) ExportsOf() (map[string]map[string]string, error) {
 	vm, exports := s.newRuntime(nil, nil)
@@ -150,7 +150,7 @@ func (s *Script) ExportsOf() (map[string]map[string]string, error) {
 	return shape, nil
 }
 
-// exportedValue returns a plain value a namespace exports, such as dns_lookup.page_bound.
+// ExportedValue returns a plain value a namespace exports, such as dns_lookup.page_bound.
 func (s *Script) ExportedValue(namespace, name string) (any, error) {
 	vm, exports := s.newRuntime(nil, nil)
 	if _, err := vm.RunProgram(s.Program); err != nil {
@@ -167,27 +167,27 @@ func (s *Script) ExportedValue(namespace, name string) (any, error) {
 	return value.Export(), nil
 }
 
-// call runs one exported function and returns its answer -- an object -- exported to Go values,
+// Call runs one exported function and returns its answer -- an object -- exported to Go values,
 // with the host errors the answer may name.
 func (s *Script) Call(ctx context.Context, session provider.Session, namespace, function string,
 	arguments ...any) (any, []error, *Failure) {
 	return s.run(ctx, session, namespace, function, false, arguments...)
 }
 
-// callAny runs one exported function and returns whatever it returns, exported to Go values.
+// CallAny runs one exported function and returns whatever it returns, exported to Go values.
 func (s *Script) CallAny(ctx context.Context, session provider.Session, namespace, function string,
 	arguments ...any) (any, []error, *Failure) {
 	return s.run(ctx, session, namespace, function, true, arguments...)
 }
 
-// callLive runs a provider's live pass (live.go): its requests carry the live cadence as their
+// CallLive runs a provider's live pass (live.go): its requests carry the live cadence as their
 // max age, and it may read only the endpoints its declaration names.
 func (s *Script) CallLive(ctx context.Context, session provider.Session, namespace, function string,
 	maxAge time.Duration, only map[string]bool, arguments ...any) (any, []error, *Failure) {
 	return s.RunWith(ctx, session, namespace, function, RunOptions{maxAge: maxAge, only: only}, arguments...)
 }
 
-// runOptions are what a live pass changes of a call: its max age and the endpoints it may read.
+// RunOptions are what a live pass changes of a call: its max age and the endpoints it may read.
 type RunOptions struct {
 	Plain  bool
 	maxAge time.Duration
@@ -207,7 +207,7 @@ func (s *Script) run(ctx context.Context, session provider.Session, namespace, f
 	return s.RunWith(ctx, session, namespace, function, RunOptions{Plain: plain}, arguments...)
 }
 
-// runWith is run with the options of a live pass.
+// RunWith is run with the options of a live pass.
 func (s *Script) RunWith(ctx context.Context, session provider.Session, namespace, function string,
 	options RunOptions, arguments ...any) (any, []error, *Failure) {
 	plain := options.Plain
@@ -475,7 +475,7 @@ func (h *hostCalls) errors() []error {
 	return append([]error(nil), h.hostErrors...)
 }
 
-// throw raises a JS TypeError for a script that called a host function wrongly: a programming
+// Throw raises a JS TypeError for a script that called a host function wrongly: a programming
 // error of the script, which ends the call as script_failed.
 func Throw(vm *goja.Runtime, format string, arguments ...any) {
 	panic(vm.NewTypeError(fmt.Sprintf(format, arguments...)))
@@ -761,7 +761,7 @@ func errorOf(value goja.Value, calls *hostCalls) error {
 	return errors.New(value.String())
 }
 
-// helpers is the global `opnview`: the field readers of internal/decode and the normalisations
+// Helpers is the global `opnview`: the field readers of internal/decode and the normalisations
 // the kinds publish for their implementations. Each is the Go function itself, so a script reads
 // a field exactly as the core does.
 func Helpers(vm *goja.Runtime) *goja.Object {
@@ -989,7 +989,7 @@ func leaseRecord(observation dhcplease.Observation) map[string]any {
 	}
 }
 
-// shapeName is a field shape as a script reads it.
+// ShapeName is a field shape as a script reads it.
 func ShapeName(shape decode.Shape) string {
 	switch shape {
 	case decode.ShapeNull:
@@ -1003,7 +1003,7 @@ func ShapeName(shape decode.Shape) string {
 	}
 }
 
-// shapeOf is the decode.Shape of a script's ttl_shape.
+// ShapeOf is the decode.Shape of a script's ttl_shape.
 func ShapeOf(name string) (decode.Shape, bool) {
 	switch name {
 	case "absent":
@@ -1018,7 +1018,7 @@ func ShapeOf(name string) (decode.Shape, bool) {
 	return decode.ShapeAbsent, false
 }
 
-// jsonShape returns a value as encoding/json decodes it -- every number a float64 -- which is
+// JSONShape returns a value as encoding/json decodes it -- every number a float64 -- which is
 // the shape internal/decode reads. A value the firewall answered is already in that shape and is
 // returned as it is; a value a script built may hold integers, which are converted.
 func JSONShape(value any) any {
@@ -1069,7 +1069,7 @@ func needsJSONShape(value any) bool {
 	return false
 }
 
-// sortedKeys returns a map's keys, sorted.
+// SortedKeys returns a map's keys, sorted.
 func SortedKeys[V any](values map[string]V) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -1079,7 +1079,7 @@ func SortedKeys[V any](values map[string]V) []string {
 	return keys
 }
 
-// exportOf exports a property that may be absent.
+// ExportOf exports a property that may be absent.
 func ExportOf(value goja.Value) any {
 	if value == nil {
 		return nil

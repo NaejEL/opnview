@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/widget"
-	envelopepkg "github.com/NaejEL/opnview/internal/widget/envelope"
+	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/params"
 	"github.com/NaejEL/opnview/internal/widget/request"
 )
@@ -236,9 +236,9 @@ func TestEveryBadOperatorWidgetIsRefusedWithItsOwnReasonAndTheServiceKeepsRunnin
 	if got := service.OperatorTypes(); len(got) != 1 || got[0] != "example_good" {
 		t.Errorf("the operator widgets that loaded are %v", got)
 	}
-	status, envelope := serve(t, service, "example_good", nil)
-	if status != http.StatusOK || envelope["condition"] != envelopepkg.ConditionReachable {
-		t.Errorf("the good widget answered %d %v", status, envelope["condition"])
+	status, answer := serve(t, service, "example_good", nil)
+	if status != http.StatusOK || answer["condition"] != envelope.ConditionReachable {
+		t.Errorf("the good widget answered %d %v", status, answer["condition"])
 	}
 	// Every built-in is as served as before, including the one an operator tried to shadow.
 	for _, widgetType := range f.service.Types() {
@@ -273,10 +273,10 @@ func TestASemicolonInAStringOrAComment(t *testing.T) {
 	if len(service.Refusals()) != 0 {
 		t.Fatalf("a semicolon inside a string or a comment was taken for a statement: %v", service.Refusals())
 	}
-	_, envelope := serve(t, service, "example_semicolons", nil)
-	bars := list(t, object(t, envelope, "data"), "bars")
+	_, answer := serve(t, service, "example_semicolons", nil)
+	bars := list(t, object(t, answer, "data"), "bars")
 	if len(bars) != 1 || bars[0].(map[string]any)["key"] != "a;b" {
-		t.Errorf("the widget with semicolons in its text answered %v", envelope["data"])
+		t.Errorf("the widget with semicolons in its text answered %v", answer["data"])
 	}
 }
 

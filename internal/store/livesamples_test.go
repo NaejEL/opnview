@@ -1,8 +1,10 @@
-package store
+package store_test
 
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/samples"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -21,7 +23,7 @@ func liveSample(providerID int64, at int64, cadence *int64) vocab.MeasurementSam
 
 // fineCadences reads the live cadence of every reading of the subject, by instant; -1 is a
 // baseline reading.
-func fineCadences(t *testing.T, database *Store) map[int64]int64 {
+func fineCadences(t *testing.T, database *store.Store) map[int64]int64 {
 	t.Helper()
 	rows, err := database.DB().QueryContext(context.Background(),
 		`SELECT sampled_at, coalesce(live_cadence_seconds, -1) FROM measurement_sample WHERE subject_key = ?`,

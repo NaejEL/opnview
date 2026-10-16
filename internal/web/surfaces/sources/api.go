@@ -4,6 +4,8 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/widget/request"
@@ -118,7 +120,7 @@ func (s *surface) sourcesAnswer(ctx context.Context) (SourcesAnswer, error) {
 	answer.OutageCount = len(outages)
 	for index, status := range statuses {
 		row := status.row
-		availability, _ := web.AvailabilityOf(row)
+		availability, _ := messages.AvailabilityOf(row)
 		drawn := ProviderState{Kind: row.Kind, ProviderKey: row.ProviderKey, DisplayName: row.DisplayName,
 			Availability: web.ConditionOf(availability), Active: row.IsActive,
 			Selection: string(status.selection), InOutage: counted[index], Probe: row.Probe,

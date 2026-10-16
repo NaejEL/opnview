@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
@@ -48,8 +50,8 @@ func gapsCard(t *testing.T, page string) string {
 // the line beneath it carrying its probe and its detail.
 func sourceRowOf(t *testing.T, table, kind, providerKey string) string {
 	t.Helper()
-	marker := "<td>" + collectiontest.CatalogueText(t, web.KindLabelKey(kind)) + "</td>\n<td>" +
-		collectiontest.CatalogueText(t, web.ProviderLabelKey(kind, providerKey)) + "</td>"
+	marker := "<td>" + collectiontest.CatalogueText(t, messages.KindLabelKey(kind)) + "</td>\n<td>" +
+		collectiontest.CatalogueText(t, messages.ProviderLabelKey(kind, providerKey)) + "</td>"
 	start := strings.Index(table, marker)
 	if start < 0 {
 		t.Fatalf("the table has no row for %s/%s", kind, providerKey)
@@ -80,7 +82,7 @@ func TestSourcesDrawsOneRowPerProviderWithEveryColumn(t *testing.T) {
 	}
 	for _, source := range rows {
 		row := sourceRowOf(t, table, source.Kind, source.ProviderKey)
-		availability, _ := web.AvailabilityOf(source)
+		availability, _ := messages.AvailabilityOf(source)
 		for _, expected := range []string{
 			collectiontest.CatalogueText(t, availability),
 			"<td>" + collectiontest.CatalogueText(t, webtest.YesNo(source.IsActive)) + "</td>",
@@ -197,7 +199,7 @@ func TestEveryRecentGapRendersWithItsReasonKey(t *testing.T) {
 	now := h.Clock.Now().Unix()
 	reasons := sourcestest.GapReasonsOfSchema(t, h)
 	for index, reason := range reasons {
-		if _, present := catalogue.Strings[string(web.GapReasonKey(reason))]; !present {
+		if _, present := catalogue.Strings[string(messages.GapReasonKey(reason))]; !present {
 			t.Errorf("the gap reason %s has no catalogue key", reason)
 		}
 		start := now - int64(3600*(index+1))
@@ -213,7 +215,7 @@ func TestEveryRecentGapRendersWithItsReasonKey(t *testing.T) {
 	}
 	for index, reason := range reasons {
 		start := now - int64(3600*(index+1))
-		row := "<td>" + collectiontest.CatalogueText(t, web.GapReasonKey(reason)) + "</td>\n<td><span class=\"figure\">" +
+		row := "<td>" + collectiontest.CatalogueText(t, messages.GapReasonKey(reason)) + "</td>\n<td><span class=\"figure\">" +
 			settingfields.Instant(start) + "</span></td>\n<td><span class=\"figure\">" + settingfields.Instant(start+60) +
 			"</span></td>\n<td><span class=\"duration-part\"><span class=\"figure\">1</span> " +
 			collectiontest.CatalogueText(t, msgUnitMinute) + "</span></td>"
@@ -339,7 +341,7 @@ func TestEveryKindAndProviderHasACatalogueLabel(t *testing.T) {
 		t.Fatal("the registry is empty, so this assertion is vacuous")
 	}
 	for _, row := range rows {
-		for _, key := range []messageKey{web.KindLabelKey(row.Kind), web.ProviderLabelKey(row.Kind, row.ProviderKey)} {
+		for _, key := range []messageKey{messages.KindLabelKey(row.Kind), messages.ProviderLabelKey(row.Kind, row.ProviderKey)} {
 			if _, present := catalogue.Strings[string(key)]; !present {
 				t.Errorf("%s/%s has no catalogue label %s", row.Kind, row.ProviderKey, key)
 			}
@@ -485,11 +487,11 @@ func TestSourcesMarksExactlyTheRowsTheIndicatorCounts(t *testing.T) {
 		t.Errorf("the outage list has %d lines, the indicator counts %d", got, expected)
 	}
 	for _, line := range []string{
-		collectiontest.CatalogueText(t, web.KindLabelKey("firewall_log")) + `</span> <span class="outage-state">` +
+		collectiontest.CatalogueText(t, messages.KindLabelKey("firewall_log")) + `</span> <span class="outage-state">` +
 			collectiontest.CatalogueText(t, msgOutageKind),
-		collectiontest.CatalogueText(t, web.KindLabelKey("security_event")) + `</span> <span class="outage-state">` +
+		collectiontest.CatalogueText(t, messages.KindLabelKey("security_event")) + `</span> <span class="outage-state">` +
 			collectiontest.CatalogueText(t, msgOutageKind),
-		`<span class="outage-provider">` + collectiontest.CatalogueText(t, web.ProviderLabelKey("dhcp_lease", "isc")) +
+		`<span class="outage-provider">` + collectiontest.CatalogueText(t, messages.ProviderLabelKey("dhcp_lease", "isc")) +
 			`</span> <span class="outage-state">` + collectiontest.CatalogueText(t, msgOutageProvider),
 	} {
 		if !strings.Contains(list, line) {

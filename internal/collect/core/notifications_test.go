@@ -1,4 +1,4 @@
-package collect
+package core_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
@@ -18,7 +19,7 @@ import (
 // not name wakes nothing.
 func TestATriggeredPassRunsAfterTheEventNeverSoonerThanItsBoundNorConcurrently(t *testing.T) {
 	t.Parallel()
-	clock := newFixedClock(referenceInstant())
+	clock := collecttest.NewFixedClock(collecttest.ReferenceInstant())
 	var routes core.Triggers
 	wake := routes.WakeOn([]string{sqldb.ChannelCollectionPass + ":dhcp_lease"})
 	if channels := routes.Channels(); len(channels) != 1 || channels[0] != sqldb.ChannelCollectionPass {
@@ -60,12 +61,12 @@ func TestATriggeredPassRunsAfterTheEventNeverSoonerThanItsBoundNorConcurrently(t
 	// The one it named does, but only once the bound has passed since the first pass began.
 	routes.Heard(sqldb.Notification{Channel: sqldb.ChannelCollectionPass,
 		Payload: map[string]any{"kind": "dhcp_lease", "provider_key": "kea"}})
-	clock.awaitWaiters(t, 2) // the abandoned interval wait, and the wait for the bound
+	clock.AwaitWaiters(t, 2) // the abandoned interval wait, and the wait for the bound
 	if got := passes.Load(); got != 1 {
 		t.Fatalf("a woken pass ran before its lower bound: %d passes", got)
 	}
-	clock.advance(bound)
-	clock.releaseAll()
+	clock.Advance(bound)
+	clock.ReleaseAll()
 	second := <-started
 	if gap := second.Sub(first); gap < bound {
 		t.Errorf("two passes began %v apart, below the bound of %v", gap, bound)
@@ -74,9 +75,9 @@ func TestATriggeredPassRunsAfterTheEventNeverSoonerThanItsBoundNorConcurrently(t
 	// Three notifications heard while a pass runs make one pass more, not three, and none of
 	// them starts while the pass runs.
 	holding.Store(true)
-	clock.advance(time.Hour)
-	clock.awaitWaiters(t, 1)
-	clock.releaseAll()
+	clock.Advance(time.Hour)
+	clock.AwaitWaiters(t, 1)
+	clock.ReleaseAll()
 	<-started
 	for range 3 {
 		routes.Heard(sqldb.Notification{Channel: sqldb.ChannelCollectionPass,
@@ -84,11 +85,11 @@ func TestATriggeredPassRunsAfterTheEventNeverSoonerThanItsBoundNorConcurrently(t
 	}
 	holding.Store(false)
 	release <- struct{}{}
-	clock.awaitWaiters(t, 2) // the abandoned interval wait, and the wait for the bound
-	clock.advance(bound)
-	clock.releaseAll()
+	clock.AwaitWaiters(t, 2) // the abandoned interval wait, and the wait for the bound
+	clock.Advance(bound)
+	clock.ReleaseAll()
 	<-started
-	clock.awaitWaiters(t, 1)
+	clock.AwaitWaiters(t, 1)
 	if got := passes.Load(); got != 4 {
 		t.Errorf("three notifications during a pass gave %d passes in all, want 4", got)
 	}
@@ -96,6 +97,6 @@ func TestATriggeredPassRunsAfterTheEventNeverSoonerThanItsBoundNorConcurrently(t
 		t.Error("two passes of one provider ran at once")
 	}
 	cancel()
-	clock.releaseAll()
+	clock.ReleaseAll()
 	finished.Wait()
 }

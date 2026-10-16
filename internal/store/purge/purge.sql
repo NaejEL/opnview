@@ -612,4 +612,23 @@ WHERE captured_at < (
     WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
 );
 
+-- ---------------------------------------------------------------------------
+-- Source periods. A period is written at every handover between polling and a
+-- push path (internal/store/push/push.go, OpenSourcePeriod), and every start of
+-- opnview whose last period was a push one writes a pull period
+-- (internal/collect/kinds/filterlog/pushpaths.go, loadPushPath): the table grows
+-- with the restarts and with the push source's comings and goings, so it is
+-- purged at the flows' horizon. A closed period that ended before it goes; the
+-- open period is never purged, however old, since it is the one in force, and a
+-- period straddling the horizon is kept whole: it still says which path
+-- delivered the records the retention keeps.
+-- ---------------------------------------------------------------------------
+DELETE FROM provider_source_period
+WHERE to_at IS NOT NULL
+  AND to_at < (
+    SELECT :now - CAST(value AS BIGINT)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
+);
+
 COMMIT;

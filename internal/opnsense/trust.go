@@ -129,7 +129,7 @@ func NewTrustingTransport(source CredentialSource) http.RoundTripper {
 		standard: &http.Transport{},
 		pinned: &http.Transport{
 			TLSClientConfig: &tls.Config{
-				// INSECURESKIPVERIFY IS NOT "DO NOT VERIFY" HERE, and it is the only
+				// InsecureSkipVerify IS NOT "DO NOT VERIFY" HERE, and it is the only
 				// way to say what this needs to say. It switches off the verification
 				// Go would do against the system roots — which is exactly the
 				// verification that cannot succeed against a certificate OPNsense

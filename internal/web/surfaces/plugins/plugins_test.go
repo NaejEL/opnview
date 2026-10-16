@@ -13,14 +13,14 @@ import (
 
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
-	listingpkg "github.com/NaejEL/opnview/internal/plugin/listing"
+	"github.com/NaejEL/opnview/internal/plugin/listing"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/surfaces/plugins"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 )
 
 // listing reads the plugin listing as the signed-in reader.
-func listing(t *testing.T, harness *webtest.Harness) (plugins.Listing, string) {
+func readListing(t *testing.T, harness *webtest.Harness) (plugins.Listing, string) {
 	t.Helper()
 	answer := harness.Get(plugins.PathPlugins)
 	body := webtest.ReadBody(t, answer)
@@ -34,13 +34,13 @@ func listing(t *testing.T, harness *webtest.Harness) (plugins.Listing, string) {
 	return listed, body
 }
 
-func find(listed plugins.Listing, name string) (listingpkg.ListedPlugin, bool) {
+func find(listed plugins.Listing, name string) (listing.ListedPlugin, bool) {
 	for _, entry := range listed.Plugins {
 		if entry.Name == name {
 			return entry, true
 		}
 	}
-	return listingpkg.ListedPlugin{}, false
+	return listing.ListedPlugin{}, false
 }
 
 // condition reads a JSON answer's condition.
@@ -64,7 +64,7 @@ func TestThePluginListingListsEveryBuiltinAndCarriesNoSecret(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
 	harness.CompleteSetup()
-	listed, body := listing(t, harness)
+	listed, body := readListing(t, harness)
 	for _, name := range []string{"pf", "suricata", "kea", "isc", "dnsmasq", "unbound", "insight", "maxmind",
 		"publicsuffix"} {
 		entry, found := find(listed, name)
@@ -72,7 +72,7 @@ func TestThePluginListingListsEveryBuiltinAndCarriesNoSecret(t *testing.T) {
 			t.Errorf("the built-in plugin %s is not listed", name)
 			continue
 		}
-		if entry.State != listingpkg.StateLoaded || entry.Origin != plugin.OriginBuiltin || entry.Version == "" ||
+		if entry.State != listing.StateLoaded || entry.Origin != plugin.OriginBuiltin || entry.Version == "" ||
 			entry.APIVersion != 1 || len(entry.Providers) == 0 {
 			t.Errorf("%s is listed as %+v", name, entry)
 		}
@@ -161,7 +161,7 @@ func TestAPluginSettingIsWrittenWithinItsBoundsAndItsSecretIsNeverServed(t *test
 	if strings.Contains(string(sealed.Ciphertext), licence) {
 		t.Error("the licence key is stored in the clear")
 	}
-	_, listed := listing(t, harness)
+	_, listed := readListing(t, harness)
 	for name, served := range map[string]string{"the write's answer": written, "the listing": listed} {
 		for _, forbidden := range []string{licence, base64.StdEncoding.EncodeToString(sealed.Ciphertext),
 			hex.EncodeToString(sealed.Ciphertext), base64.StdEncoding.EncodeToString(sealed.Nonce)} {
@@ -170,7 +170,7 @@ func TestAPluginSettingIsWrittenWithinItsBoundsAndItsSecretIsNeverServed(t *test
 			}
 		}
 	}
-	decoded, _ := listing(t, harness)
+	decoded, _ := readListing(t, harness)
 	maxmind, _ := find(decoded, "maxmind")
 	for _, setting := range maxmind.Settings {
 		if setting.Key == "licence_key" && (!setting.Set || setting.Value != nil) {
@@ -260,14 +260,14 @@ func TestAThirdPartyPluginIsListedAndARefusedOneSaysWhy(t *testing.T) {
 		options.Plugins = loaded
 	})
 	harness.CompleteSetup()
-	listed, _ := listing(t, harness)
+	listed, _ := readListing(t, harness)
 	reader, found := find(listed, "example_reader")
-	if !found || reader.State != listingpkg.StateLoaded || reader.Origin != plugin.OriginDataDirectory ||
+	if !found || reader.State != listing.StateLoaded || reader.Origin != plugin.OriginDataDirectory ||
 		len(reader.Providers) != 1 || reader.Providers[0].Kind != "dhcp_lease" {
 		t.Errorf("the third-party plugin is listed as %+v (found %v)", reader, found)
 	}
 	broken, found := find(listed, "broken_example")
-	if !found || broken.State != listingpkg.StateRefused || broken.Reason == nil ||
+	if !found || broken.State != listing.StateRefused || broken.Reason == nil ||
 		broken.Reason.Code != contract.RefusalManifestInvalid || broken.Origin != plugin.OriginDataDirectory {
 		t.Errorf("the broken plugin is listed as %+v (found %v)", broken, found)
 	}

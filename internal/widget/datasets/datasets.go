@@ -95,7 +95,7 @@ func FreshnessOf(freshness dataset.Freshness, providers []envelope.ProviderAvail
 	return result
 }
 
-// retentionSeconds reads the retention_seconds setting; 0 is unlimited.
+// RetentionSeconds reads the retention_seconds setting; 0 is unlimited.
 func RetentionSeconds(r *request.Request) (int64, error) {
 	text, err := r.Setting(config.KeyRetentionSeconds, strconv.FormatInt(config.DefaultRetentionSeconds, 10))
 	if err != nil {
@@ -257,7 +257,7 @@ type splitIdentity struct {
 	value any
 }
 
-// timeData turns a time axis' rows into series.
+// TimeData turns a time axis' rows into series.
 func TimeData(declaration dataset.Declaration, query *dataset.Query, layout dataset.Layout, rows [][]any,
 	window envelope.Interval, covered *envelope.Interval, gaps []envelope.Gap) DatasetTimeData {
 	_, width, alignment := query.TimeAxis()
@@ -352,7 +352,7 @@ func TimeData(declaration dataset.Declaration, query *dataset.Query, layout data
 	return data
 }
 
-// rowsData turns a dimension axis' rows into ranked rows.
+// RowsData turns a dimension axis' rows into ranked rows.
 func RowsData(declaration dataset.Declaration, query *dataset.Query, layout dataset.Layout,
 	rows [][]any) DatasetRowsData {
 	data := DatasetRowsData{X: DatasetDimensionAxis{Column: query.X.Column}, Measures: []DatasetMeasure{},

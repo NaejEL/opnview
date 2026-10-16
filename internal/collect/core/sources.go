@@ -11,7 +11,7 @@ import (
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
-// probeable is one implementation reduced to what activation needs: its registry key and its
+// Probeable is one implementation reduced to what activation needs: its registry key and its
 // probe. It is what lets this file treat five kinds identically without any of them knowing
 // about the others.
 type Probeable struct {
@@ -19,7 +19,7 @@ type Probeable struct {
 	Run         func(ctx context.Context, host provider.Session) (provider.Result, error)
 }
 
-// probeablesOf returns the implementations of one kind in the collector's source set, each
+// ProbeablesOf returns the implementations of one kind in the collector's source set, each
 // reduced to its key and its probe.
 func ProbeablesOf[S any](registry *sources.Registry[S], probe func(S) func(context.Context,
 	provider.Session) (provider.Result, error)) []Probeable {
@@ -31,7 +31,7 @@ func ProbeablesOf[S any](registry *sources.Registry[S], probe func(S) func(conte
 	return SortedProbeables(probeables)
 }
 
-// sortedProbeables orders implementations by their registry key.
+// SortedProbeables orders implementations by their registry key.
 //
 // It is ordering for REPRODUCIBILITY and not for preference: a Go map iterates in a random
 // order, and a probe round that visited two implementations in a different order each time
@@ -45,7 +45,7 @@ func SortedProbeables(probeables []Probeable) []Probeable {
 	return probeables
 }
 
-// resolveKind probes each implementation of one kind, records what the firewall said about
+// ResolveKind probes each implementation of one kind, records what the firewall said about
 // each, and activates the one the firewall's own configuration separates — or none, twice
 // over: none when nothing qualifies, and none when more than one does.
 func (c *Collector) ResolveKind(ctx context.Context, kind string, probeables []Probeable) error {
@@ -101,7 +101,7 @@ func (c *Collector) ResolveKind(ctx context.Context, kind string, probeables []P
 		}
 		// And what the last read of a resolver's records said, for the same reason: the
 		// counts, the size and the time of the dump, or the absence that stopped it.
-		if read := c.ReadDetail(entry.providerID); read != "" {
+		if read := c.readDetail(entry.providerID); read != "" {
 			if detail == "" {
 				detail = read
 			} else {
@@ -143,7 +143,7 @@ func (c *Collector) ResolveKind(ctx context.Context, kind string, probeables []P
 	return nil
 }
 
-// loadSelections reads the operator's selection of each implementation: off, on, or auto,
+// LoadSelections reads the operator's selection of each implementation: off, on, or auto,
 // which is what a missing row means. A selection that cannot be read is returned among the
 // failures and given no value, so the decision treats that implementation as auto; the error
 // names the setting key, so the operator can find the row.
@@ -162,7 +162,7 @@ func (c *Collector) LoadSelections(ctx context.Context, kind string,
 	return selections, failures
 }
 
-// decideActive is the activation decision for one kind: the implementations opnview reads,
+// DecideActive is the activation decision for one kind: the implementations opnview reads,
 // and the sentence recording an ambiguity, empty when there is none. It reads nothing, so a
 // probe round and Reselect cannot decide differently from the same facts.
 func DecideActive(kind string, outcomes []ProbedSource,
@@ -212,14 +212,14 @@ func DecideActive(kind string, outcomes []ProbedSource,
 	return append(append([]string{}, forced...), separable...), ambiguity
 }
 
-// activeSource is one implementation opnview reads for a kind: its registry key and its
+// ActiveSource is one implementation opnview reads for a kind: its registry key and its
 // registry id.
 type ActiveSource struct {
 	ProviderKey string
 	ProviderID  int64
 }
 
-// activeSources returns every implementation opnview reads for one kind.
+// ActiveSources returns every implementation opnview reads for one kind.
 //
 // For an exclusive kind the answer holds at most one. For a kind that admits several — the
 // security_event stack, the measurement sources — it holds every one the probe round
@@ -243,7 +243,7 @@ func (c *Collector) ActiveSources(ctx context.Context, kind string) ([]ActiveSou
 	return sources, nil
 }
 
-// activeSourceKey returns the provider key of the implementation opnview reads for one
+// ActiveSourceKey returns the provider key of the implementation opnview reads for one
 // EXCLUSIVE kind, its registry id, and whether there is one. A kind that admits several active
 // providers has no single answer, and asking for one here is a programming error rather than a
 // state to report, so it is refused.
@@ -272,7 +272,7 @@ func joinWithComma(names []string) string {
 	return joined
 }
 
-// ensureProviders creates the registry row of every implementation that declared itself and has
+// EnsureProviders creates the registry row of every implementation that declared itself and has
 // none yet, with the availability row the schema gives every registry row.
 //
 // THIS IS WHAT MAKES ADDING AN IMPLEMENTATION A DIRECTORY AND NOTHING ELSE. The schema seeds the

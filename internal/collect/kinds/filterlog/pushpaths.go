@@ -232,11 +232,11 @@ func (c *FilterLogCoordinator) storeRecords(ctx context.Context, records []firew
 }
 
 // pullPlan is what the source periods decide of one pull pass.
-type PullPlan struct {
+type pullPlan struct {
 	// skip is set while a push period is open: the pass reads nothing.
 	skip bool
 	// keep is the pulled records stored; superseded how many are not.
-	Keep       []firewalllog.Record
+	keep       []firewalllog.Record
 	superseded int64
 	// pushFloor is the end of the newest closed push period, which clips a gap the pull path detects.
 	pushFloor int64
@@ -246,17 +246,17 @@ type PullPlan struct {
 // planPull applies the periods to a pull pass of a firewall_log provider. A provider never fed by
 // two paths keeps every record.
 func (c *FilterLogCoordinator) planPull(ctx context.Context, key string, providerID int64, records []firewalllog.Record) (
-	PullPlan, error) {
+	pullPlan, error) {
 	path, known := c.PushPaths.Known(core.KindFirewallLog, key)
 	if !known {
-		return PullPlan{Keep: records}, nil
+		return pullPlan{keep: records}, nil
 	}
 	path.Mutex.Lock()
 	defer path.Mutex.Unlock()
 	if err := c.loadPushPath(ctx, path, providerID); err != nil {
-		return PullPlan{}, err
+		return pullPlan{}, err
 	}
-	plan := PullPlan{path: path}
+	plan := pullPlan{path: path}
 	for _, period := range path.Periods {
 		if period.Path == push.PathPush && period.ToAt != nil && *period.ToAt > plan.pushFloor {
 			plan.pushFloor = *period.ToAt
@@ -281,7 +281,7 @@ func (c *FilterLogCoordinator) planPull(ctx context.Context, key string, provide
 			plan.superseded++
 			continue
 		}
-		plan.Keep = append(plan.Keep, record)
+		plan.keep = append(plan.keep, record)
 	}
 	path.Superseded += plan.superseded
 	return plan, nil

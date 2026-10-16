@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -38,21 +40,24 @@ const readStatementTimeout = "10s"
 const readConnectionLimit = 8
 
 // The objects the read role holds no privilege on.
-var UnreadableObjects = []string{"account", "session", "encrypted_credential", "plugin_state"}
+var unreadableObjects = []string{"account", "session", "encrypted_credential", "plugin_state"}
 
-// readConnections is the read role's pool and the texts it has run.
+// ReadConnections is the read role's pool and the texts it has run.
 type ReadConnections struct {
 	DB   *sql.DB
-	Role string
+	role string
 
 	mu    sync.Mutex
 	texts map[string]struct{}
+	// statements counts every statement run, and waited the time spent until each answered.
+	statements atomic.Int64
+	waited     atomic.Int64
 }
 
-// readRoleName is the read role of a database: its name and _reader, quoted where used.
+// ReadRoleName is the read role of a database: its name and _reader, quoted where used.
 func ReadRoleName(database string) string { return database + "_reader" }
 
-// openReaders creates or refreshes the read role and opens its pool.
+// OpenReaders creates or refreshes the read role and opens its pool.
 func OpenReaders(ctx context.Context, s *Handle) (*ReadConnections, error) {
 	var database string
 	if err := s.SQL.QueryRowContext(ctx, "SELECT current_database()").Scan(&database); err != nil {
@@ -82,7 +87,7 @@ func OpenReaders(ctx context.Context, s *Handle) (*ReadConnections, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("store: reaching the database as the read role: %w", err)
 	}
-	return &ReadConnections{DB: db, Role: role, texts: map[string]struct{}{}}, nil
+	return &ReadConnections{DB: db, role: role, texts: map[string]struct{}{}}, nil
 }
 
 // grantReadRole creates the read role when it is absent and gives it exactly what it may read.
@@ -113,7 +118,7 @@ func (s *Handle) grantReadRole(ctx context.Context, role, password string) error
 		"GRANT USAGE ON SCHEMA "+CoreSchema+" TO "+quoted,
 		"GRANT SELECT ON ALL TABLES IN SCHEMA "+CoreSchema+" TO "+quoted,
 	)
-	for _, object := range UnreadableObjects {
+	for _, object := range unreadableObjects {
 		statements = append(statements, "REVOKE ALL ON "+CoreSchema+"."+object+" FROM "+quoted)
 	}
 	for _, statement := range statements {
@@ -133,7 +138,7 @@ func (s *Handle) GrantReadOnSchema(ctx context.Context, schema string) error {
 	if s.Reader == nil {
 		return nil
 	}
-	quotedRole := pgx.Identifier{s.Reader.Role}.Sanitize()
+	quotedRole := pgx.Identifier{s.Reader.role}.Sanitize()
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	for _, statement := range []string{
 		"GRANT USAGE ON SCHEMA " + quotedSchema + " TO " + quotedRole,
@@ -152,7 +157,7 @@ func (s *Handle) GrantReadOnTable(ctx context.Context, schema, table string) err
 	if s.Reader == nil {
 		return nil
 	}
-	quotedRole := pgx.Identifier{s.Reader.Role}.Sanitize()
+	quotedRole := pgx.Identifier{s.Reader.role}.Sanitize()
 	quotedSchema := pgx.Identifier{schema}.Sanitize()
 	for _, statement := range []string{
 		"GRANT USAGE ON SCHEMA " + quotedSchema + " TO " + quotedRole,
@@ -177,21 +182,21 @@ func randomPassword() (string, error) {
 // quoteLiteral quotes a string as a SQL literal.
 func quoteLiteral(text string) string { return "'" + strings.ReplaceAll(text, "'", "''") + "'" }
 
-// note records a text the read connections ran.
+// Note records a text the read connections ran.
 func (r *ReadConnections) Note(query string) {
 	r.mu.Lock()
 	r.texts[query] = struct{}{}
 	r.mu.Unlock()
 }
 
-// runCount reports how many distinct texts the read connections have run.
+// RunCount reports how many distinct texts the read connections have run.
 func (r *ReadConnections) RunCount() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.texts)
 }
 
-// runTexts returns every distinct text the read connections have run.
+// RunTexts returns every distinct text the read connections have run.
 func (r *ReadConnections) RunTexts() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -214,11 +219,28 @@ func (r *ReadConnections) ExecContext(context.Context, string, ...any) (sql.Resu
 // QueryContext runs a query on the read connections.
 func (r *ReadConnections) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
 	r.Note(query)
+	started := time.Now()
+	defer r.counted(started)
 	return r.DB.QueryContext(ctx, query, args...)
 }
 
 // QueryRowContext runs a one-row query on the read connections.
 func (r *ReadConnections) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
 	r.Note(query)
+	started := time.Now()
+	defer r.counted(started)
 	return r.DB.QueryRowContext(ctx, query, args...)
+}
+
+// counted counts one statement and the time it took to answer.
+func (r *ReadConnections) counted(started time.Time) {
+	r.statements.Add(1)
+	r.waited.Add(int64(time.Since(started)))
+}
+
+// Executed reports how many statements the read connections have run, and the time spent until
+// each answered, since they were opened: what a response costs in statements, which
+// ci/widgetbudget reports beside each response's time, and a test holds to a bound.
+func (r *ReadConnections) Executed() (int64, time.Duration) {
+	return r.statements.Load(), time.Duration(r.waited.Load())
 }

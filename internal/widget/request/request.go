@@ -74,7 +74,7 @@ const (
 	OriginOperator = "operator"
 )
 
-// isSeriesPath reports whether a reference path is inside a series entry, whose failure
+// IsSeriesPath reports whether a reference path is inside a series entry, whose failure
 // concerns its own series only.
 func IsSeriesPath(path string) bool {
 	return len(path) > len("series[") && path[:len("series[")] == "series["
@@ -90,38 +90,41 @@ type Request struct {
 	Params   params.ParsedParameters
 	Response *envelope.Response
 
-	// refs are the resolved top-level references, by key; entries the resolved series
+	// Refs are the resolved top-level references, by key; entries the resolved series
 	// references, by entry index and key; failed the entries with an unresolved one.
 	Refs    map[string][]params.Resolved
 	Entries map[int]map[string]params.Resolved
 	Failed  map[int]bool
-	// withheldSeries are the entries whose unresolved reference is a site reference the
+	// WithheldSeries are the entries whose unresolved reference is a site reference the
 	// aggregate mode withholds, a subset of failed.
 	WithheldSeries map[int]bool
 
-	// window is the requested window of a windowed preset.
+	// Window is the requested window of a windowed preset.
 	Window envelope.Interval
-	// retention is the retention_seconds setting; 0 is unlimited.
+	// Retention is the retention_seconds setting; 0 is unlimited.
 	Retention int64
 	Mode      string
-	// override replaces the computed condition, for a preset with a condition of its own.
+	// Override replaces the computed condition, for a preset with a condition of its own.
 	Override string
 
-	// datasets is the data catalogue, which a custom_chart series may read
+	// Datasets is the data catalogue, which a custom_chart series may read
 	// (internal/widget/datasets/datasetseries.go).
 	Datasets *dataset.Catalogue
-	// liveInterest is the lease a live figure renews (live.go).
+	// LiveInterest is the lease a live figure renews (live.go).
 	LiveInterest *live.Interest
 
 	installation *installation
+	// placed are the outside peers placed and whose geolocation is not read yet (installation.go,
+	// Place).
+	placed map[string]bool
 
-	// measure is the measure the request is being answered under, and what the run built (measure.go).
+	// Measure is the measure the request is being answered under, and what the run built (measure.go).
 	Measure measureRun
 	// netflowWindow is what the window says of NetFlow, once read (measure.go).
 	netflowWindow *netflowWindow
 }
 
-// prepare reads what every response carries: the aggregate mode, the window, the
+// Prepare reads what every response carries: the aggregate mode, the window, the
 // references, the availability and the gaps.
 func (r *Request) Prepare() error {
 	mode, err := r.Setting(config.KeyAggregateMode, AggregateModeFull)
@@ -224,7 +227,7 @@ const (
 // records (docs/data-model.md, collection_gap).
 const gapResolverWindowNotHonoured = "resolver_window_not_honoured"
 
-// setting reads one setting row, or the fallback when it is absent.
+// Setting reads one setting row, or the fallback when it is absent.
 func (r *Request) Setting(key, fallback string) (string, error) {
 	var value string
 	found, err := r.Db.WidgetRow(r.Ctx, "widget_setting", map[string]any{"key": key}, &value)
@@ -375,7 +378,7 @@ func (r *Request) CoverFlowsState(beyondHorizonState string) error {
 	return nil
 }
 
-// condition computes the widget's condition from the primary provider kind and whether
+// Condition computes the widget's condition from the primary provider kind and whether
 // the data holds a row.
 func (r *Request) Condition(hasRows bool) string {
 	if r.Preset.Primary == "" {
@@ -421,7 +424,7 @@ func KindCondition(availability []envelope.ProviderAvailability, kind string) st
 	return best
 }
 
-// readAvailability reads every registered provider of the given kinds.
+// ReadAvailability reads every registered provider of the given kinds.
 func (r *Request) ReadAvailability(kinds []string) error {
 	providers, err := ReadProviders(r.Ctx, r.Db)
 	if err != nil {
@@ -567,7 +570,7 @@ func NullableNumber(value reads.NullInt64) *int64 {
 	return &number
 }
 
-// nullableFloat turns a nullable real into a pointer.
+// NullableFloat turns a nullable real into a pointer.
 func NullableFloat(value reads.NullFloat64) *float64 {
 	if !value.Valid {
 		return nil

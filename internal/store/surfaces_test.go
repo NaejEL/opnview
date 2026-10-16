@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"context"
@@ -9,8 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store/flows"
-	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -20,20 +19,6 @@ import (
 // example identifiers, the availability through SetAvailability and the gaps through
 // RecordCollectionGap, at instants chosen here; the number of interfaces is a
 // parameter.
-
-// TestTheRecentGapsAreReadThroughTheirIndex is AC20's plan half: the read is a search
-// of idx_collection_gap_detected_at, and never a scan of collection_gap.
-func TestTheRecentGapsAreReadThroughTheirIndex(t *testing.T) {
-	t.Parallel()
-	database, _ := openTestStore(t)
-	plan := planOf(t, database, reads.RecentGapsStatement, int64(0))
-	if !usesIndex(plan, "idx_collection_gap_detected_at", "") {
-		t.Errorf("the read does not search the detected_at index: %+v", plan)
-	}
-	if scans(plan, "collection_gap") {
-		t.Errorf("the read scans collection_gap: %+v", plan)
-	}
-}
 
 // TestRecentGapsAreTheWindowNewestFirst: a gap detected before the instant given is
 // left out, and the rest come newest first with their provider.
@@ -46,18 +31,18 @@ func TestRecentGapsAreTheWindowNewestFirst(t *testing.T) {
 		t.Fatalf("looking up the provider: %v", err)
 	}
 	detail := "example detail"
-	for _, detected := range []int64{referenceNow - 7200, referenceNow - 60, referenceNow - 90000} {
+	for _, detected := range []int64{storetest.ReferenceNow - 7200, storetest.ReferenceNow - 60, storetest.ReferenceNow - 90000} {
 		if err := database.RecordCollectionGap(ctx, vocab.CollectionGap{ProviderID: providerID,
 			IntervalStartAt: detected - 30, IntervalEndAt: detected, Reason: vocab.GapDigestOutsideWindow,
 			Detail: &detail, DetectedAt: detected}); err != nil {
 			t.Fatalf("recording a gap: %v", err)
 		}
 	}
-	gaps, err := database.RecentCollectionGaps(ctx, referenceNow-86400)
+	gaps, err := database.RecentCollectionGaps(ctx, storetest.ReferenceNow-86400)
 	if err != nil {
 		t.Fatalf("reading the gaps: %v", err)
 	}
-	if len(gaps) != 2 || gaps[0].DetectedAt != referenceNow-60 || gaps[1].DetectedAt != referenceNow-7200 {
+	if len(gaps) != 2 || gaps[0].DetectedAt != storetest.ReferenceNow-60 || gaps[1].DetectedAt != storetest.ReferenceNow-7200 {
 		t.Fatalf("read %+v, want the two gaps of the window newest first", gaps)
 	}
 	if gaps[0].Kind != "firewall_log" || gaps[0].ProviderKey != "pf" || gaps[0].MissedSeconds() != 30 ||
@@ -79,7 +64,7 @@ func TestSourceAvailabilityIsTheDiagnosticQuery(t *testing.T) {
 	}
 	detail := "HTTP 403 from the example endpoint"
 	if err := database.SetAvailability(ctx, providerID, vocab.StateUnavailable, vocab.OutcomeDenied, "GET /example", &detail,
-		referenceNow); err != nil {
+		storetest.ReferenceNow); err != nil {
 		t.Fatalf("recording availability: %v", err)
 	}
 	missing, err := database.ProviderID(ctx, "dhcp_lease", "isc")
@@ -120,12 +105,20 @@ func TestSourceAvailabilityIsTheDiagnosticQuery(t *testing.T) {
 	for _, row := range read {
 		got = append(got, fmt.Sprintf("%s|%s|%s|%t|%s|%s|%s|%t|%s|%d|%d", row.Kind, row.ProviderKey,
 			row.DisplayName, row.HasAvailability, row.State, row.Outcome, row.Probe, row.HasDetail, row.Detail,
-			row.CheckedAt, flows.BoolToInt(row.IsActive)))
+			row.CheckedAt, zeroOrOne(row.IsActive)))
 	}
 	if strings.Join(got, "\n") != strings.Join(expected, "\n") || len(got) == 0 {
 		t.Errorf("the read differs from the diagnostic:\nread:\n%s\ndiagnostic:\n%s",
 			strings.Join(got, "\n"), strings.Join(expected, "\n"))
 	}
+}
+
+// zeroOrOne writes a flag as the diagnostic query prints it.
+func zeroOrOne(value bool) int64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 // diagnosticQuery returns one query of sql/queries/diagnostics.sql by its name.
@@ -160,7 +153,7 @@ func TestInterfacesAreReadInTheOrderTheyWereStored(t *testing.T) {
 				Identifier: fmt.Sprintf("example_if_%d", index), Device: fmt.Sprintf("exdev%d", index),
 				Description: fmt.Sprintf("inside-%d.example", index), LinkType: "example-link",
 				LinkKind: "other", IsUpstream: index == 0,
-			}, referenceNow)
+			}, storetest.ReferenceNow)
 			if err != nil {
 				t.Fatalf("writing an interface: %v", err)
 			}

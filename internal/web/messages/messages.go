@@ -1,4 +1,9 @@
-package web
+package messages
+
+// Key is a catalogue key. A handler chooses a key, never a string, and a template resolves it; its
+// own type keeps a plain string from being handed to a template where a key belongs. internal/web
+// names it MessageKey.
+type Key string
 
 // The catalogue keys the core chooses.
 //
@@ -10,45 +15,45 @@ package web
 
 // The refusals the middleware gives, whichever surface the request was for.
 const (
-	// msgSetupClosed refuses the setup surface once an account exists.
-	msgSetupClosed messageKey = "error.setup_closed"
-	// msgSessionExpired is the sentence for a session that ended, as opposed to none.
-	msgSessionExpired messageKey = "error.session_expired"
-	// msgFormTokenRefused turns away a mutating request with a missing or wrong form token.
-	msgFormTokenRefused messageKey = "error.form_token_refused"
-	// msgKeyFileRefused turns away a reset that did not present the key file.
-	msgKeyFileRefused messageKey = "error.key_file_refused"
-	// msgInternal is what a reader is told when opnview could not do something at all.
-	msgInternal messageKey = "error.internal"
+	// MsgSetupClosed refuses the setup surface once an account exists.
+	MsgSetupClosed Key = "error.setup_closed"
+	// MsgSessionExpired is the sentence for a session that ended, as opposed to none.
+	MsgSessionExpired Key = "error.session_expired"
+	// MsgFormTokenRefused turns away a mutating request with a missing or wrong form token.
+	MsgFormTokenRefused Key = "error.form_token_refused"
+	// MsgKeyFileRefused turns away a reset that did not present the key file.
+	MsgKeyFileRefused Key = "error.key_file_refused"
+	// MsgInternal is what a reader is told when opnview could not do something at all.
+	MsgInternal Key = "error.internal"
 )
 
 // The units a duration is spelled and typed in, a count of one and any other count; and the
 // refusals of a typed duration.
 const (
-	MsgUnitDay     messageKey = "unit.day.one"
-	MsgUnitDays    messageKey = "unit.day.other"
-	MsgUnitHour    messageKey = "unit.hour.one"
-	MsgUnitHours   messageKey = "unit.hour.other"
-	MsgUnitMinute  messageKey = "unit.minute.one"
-	MsgUnitMinutes messageKey = "unit.minute.other"
-	MsgUnitSecond  messageKey = "unit.second.one"
-	MsgUnitSeconds messageKey = "unit.second.other"
-	// msgDurationUnitUnknown refuses a unit that is not one of the four.
-	MsgDurationUnitUnknown messageKey = "error.duration_unit_unknown"
-	// msgCollectionIntervalTooLarge refuses an interval no duration can hold. It is a
+	MsgUnitDay     Key = "unit.day.one"
+	MsgUnitDays    Key = "unit.day.other"
+	MsgUnitHour    Key = "unit.hour.one"
+	MsgUnitHours   Key = "unit.hour.other"
+	MsgUnitMinute  Key = "unit.minute.one"
+	MsgUnitMinutes Key = "unit.minute.other"
+	MsgUnitSecond  Key = "unit.second.one"
+	MsgUnitSeconds Key = "unit.second.other"
+	// MsgDurationUnitUnknown refuses a unit that is not one of the four.
+	MsgDurationUnitUnknown Key = "error.duration_unit_unknown"
+	// MsgCollectionIntervalTooLarge refuses an interval no duration can hold. It is a
 	// refusal of its own rather than "not a number", because the figure IS a number
 	// and telling the operator otherwise would send them looking for a typo.
-	MsgCollectionIntervalTooLarge messageKey = "error.collection_interval_too_large"
-	// msgCollectionValueInvalid refuses an interval that is not a positive whole number.
-	MsgCollectionValueInvalid messageKey = "error.collection_value_invalid"
+	MsgCollectionIntervalTooLarge Key = "error.collection_interval_too_large"
+	// MsgCollectionValueInvalid refuses an interval that is not a positive whole number.
+	MsgCollectionValueInvalid Key = "error.collection_value_invalid"
 )
 
 // The theme names. The theme is one setting row for the installation, so these
 // are the three values that row may hold.
 const (
-	msgThemeSystem messageKey = "theme.system"
-	msgThemeLight  messageKey = "theme.light"
-	msgThemeDark   messageKey = "theme.dark"
+	MsgThemeSystem Key = "theme.system"
+	MsgThemeLight  Key = "theme.light"
+	MsgThemeDark   Key = "theme.dark"
 )
 
 // CoreKeys is every key the core's Go code chooses, in one place, so a test can assert that
@@ -56,11 +61,11 @@ const (
 // vocabulary (messages_registry.go) is included.
 //
 // It is a function rather than a variable so nothing can append to it at run time.
-func CoreKeys() []MessageKey {
-	return append([]MessageKey{
-		msgSetupClosed, msgSessionExpired, msgFormTokenRefused, msgKeyFileRefused, msgInternal,
+func CoreKeys() []Key {
+	return append([]Key{
+		MsgSetupClosed, MsgSessionExpired, MsgFormTokenRefused, MsgKeyFileRefused, MsgInternal,
 		MsgUnitDay, MsgUnitDays, MsgUnitHour, MsgUnitHours, MsgUnitMinute, MsgUnitMinutes,
 		MsgUnitSecond, MsgUnitSeconds, MsgDurationUnitUnknown, MsgCollectionIntervalTooLarge, MsgCollectionValueInvalid,
-		msgThemeSystem, msgThemeLight, msgThemeDark,
+		MsgThemeSystem, MsgThemeLight, MsgThemeDark,
 	}, append(vocabularyKeys(), availabilityKeys()...)...)
 }

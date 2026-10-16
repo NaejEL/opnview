@@ -22,6 +22,7 @@ import (
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/samples"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/testtiming"
 )
 
 // The schema, embedded. It lives in this directory rather than under sql/ because Go's embed
@@ -103,17 +104,45 @@ type Options struct {
 	Wait time.Duration
 	// Log, when set, is told each attempt to reach the database.
 	Log func(message string)
+	// Timed, when set, is told how long each step of the open took: StepWait, StepSchema (with
+	// whether the schema was applied or already recorded) and StepReadRole.
+	Timed func(step string, took time.Duration)
 }
+
+// The steps of an open, as Options.Timed names them.
+const (
+	// StepWait is the wait for the database to answer.
+	StepWait = "wait"
+	// StepSchemaApplied is the apply of the schema to a database that did not record it.
+	StepSchemaApplied = "schema applied"
+	// StepSchemaRecorded is the check that the database records this schema already, with no apply.
+	StepSchemaRecorded = "schema already recorded"
+	// StepReadRole is the creation of the read role and its grants.
+	StepReadRole = "read role"
+)
+
+// timingSteps names each step of an open as the suite's breakdown counts it.
+var timingSteps = map[string]string{StepWait: testtiming.StepWait, StepSchemaApplied: testtiming.StepSchema,
+	StepSchemaRecorded: testtiming.StepSchema, StepReadRole: testtiming.StepRole}
 
 // DefaultWait is how long a start waits for the database: long enough for a database container
 // started beside opnview to finish its own start, short enough that a misconfigured connection
 // is reported within a minute.
 const DefaultWait = 60 * time.Second
 
+// mainIdleConnections is how many connections the main pool keeps open between uses. The default of
+// database/sql, two, closed every connection beyond the second as soon as it was handed back, so the
+// collector's concurrent passes opened a connection for most statements and prepared every statement
+// again on it (the driver prepares each text once per connection, internal/store/sqldb/driver.go).
+// Measured on 16 October 2026, keeping eight took the everyday suite's database CPU down by about a
+// tenth. The pool stays unbounded in connections it may open; this bounds only those it keeps.
+const mainIdleConnections = 8
+
 // instanceLock is the key of the session advisory lock one opnview holds on its database.
 const instanceLock = 7_115_118_105_101_119
 
-// Open opens the database the connection parameter names and applies the schema.
+// Open opens the database the connection parameter names and applies the schema, unless the
+// database records it already.
 func Open(ctx context.Context, dsn string) (*Store, error) {
 	return OpenWith(ctx, Options{DSN: dsn})
 }
@@ -123,14 +152,26 @@ func OpenWith(ctx context.Context, options Options) (*Store, error) {
 	if strings.TrimSpace(options.DSN) == "" {
 		return nil, ErrNoDatabase
 	}
+	// Each step is also recorded for the suite's breakdown, which does nothing unless the CI-only
+	// switch is on (internal/testtiming).
+	timed := func(step string, started time.Time) {
+		took := time.Since(started)
+		if options.Timed != nil {
+			options.Timed(step, took)
+		}
+		testtiming.Record(timingSteps[step], took)
+	}
 	db, err := sqldb.OpenPool(options.DSN)
 	if err != nil {
 		return nil, err
 	}
+	db.SetMaxIdleConns(mainIdleConnections)
+	started := time.Now()
 	if err := waitForDatabase(ctx, db, options); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
+	timed(StepWait, started)
 	store := compose(&sqldb.Handle{SQL: db, ConnectionString: options.DSN})
 	if err := store.checkDatabase(ctx); err != nil {
 		_ = db.Close()
@@ -153,15 +194,24 @@ func OpenWith(ctx context.Context, options Options) (*Store, error) {
 		return nil, ErrAlreadyRunning
 	}
 	store.Instance = instance
-	if err := store.applySchema(ctx); err != nil {
+	started = time.Now()
+	applied, err := store.applySchema(ctx)
+	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
+	if applied {
+		timed(StepSchemaApplied, started)
+	} else {
+		timed(StepSchemaRecorded, started)
+	}
+	started = time.Now()
 	reader, err := sqldb.OpenReaders(ctx, store.Handle)
 	if err != nil {
 		_ = store.Close()
 		return nil, err
 	}
+	timed(StepReadRole, started)
 	store.Reader = reader
 	return store, nil
 }
@@ -184,6 +234,8 @@ func waitForDatabase(ctx context.Context, db *sql.DB, options Options) error {
 		if options.Log != nil {
 			options.Log(fmt.Sprintf("waiting for the database (attempt %d): %v", attempt, err))
 		}
+		// A retry is an event, never a silent sleep: the suite's breakdown counts it.
+		testtiming.Record(testtiming.StepRetry, time.Second)
 		if time.Now().After(deadline) || ctx.Err() != nil {
 			return fmt.Errorf("%w within %s: %w", ErrDatabaseUnreachable, wait, err)
 		}

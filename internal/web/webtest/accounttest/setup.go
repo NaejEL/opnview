@@ -8,7 +8,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web/webtest"
 )
 
-// assertStatus fails unless the response carries the status expected, and always
+// AssertStatus fails unless the response carries the status expected, and always
 // closes the body.
 func AssertStatus(t *testing.T, answer *http.Response, expected int) {
 	t.Helper()
@@ -19,13 +19,13 @@ func AssertStatus(t *testing.T, answer *http.Response, expected int) {
 	}
 }
 
-// assertNoAccount fails if any account exists.
+// AssertNoAccount fails if any account exists.
 func AssertNoAccount(t *testing.T, harness *webtest.Harness) {
 	t.Helper()
 	AssertAccountCount(t, harness, 0)
 }
 
-// assertAccountCount fails unless exactly expected accounts exist.
+// AssertAccountCount fails unless exactly expected accounts exist.
 func AssertAccountCount(t *testing.T, harness *webtest.Harness, expected int) {
 	t.Helper()
 	count, err := harness.Store.CountAccounts(context.Background())

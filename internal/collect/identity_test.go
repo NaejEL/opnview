@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"testing"

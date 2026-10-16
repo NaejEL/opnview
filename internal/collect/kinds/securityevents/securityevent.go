@@ -7,6 +7,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/collect/securityevent"
 	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -207,4 +208,15 @@ func buildSecurityEvent(record securityevent.Alert, now int64) vocab.SecurityEve
 		Protocol:           record.Protocol,
 		InInterfaceDevice:  record.InInterfaceDevice,
 	}
+}
+
+// ProbeSecurityEvent probes every implementation of the security_event kind. The probe round (collect.ProbeAll)
+// runs it with every other kind's.
+func (c *SecurityEventCoordinator) ProbeSecurityEvent(ctx context.Context) error {
+	return c.ResolveKind(ctx, core.KindSecurityEvent, core.ProbeablesOf(c.SourceSet.SecurityEvent, securityEventProbe))
+}
+
+// securityEventProbe is the probe of one security_event implementation, as core.ProbeablesOf takes it.
+func securityEventProbe(source securityevent.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
 }

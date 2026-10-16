@@ -29,7 +29,7 @@ import (
 // (store.InsertStateSnapshot), the rows of the plugin's own tables and its durable state, in one
 // transaction, for a declared kind (store.WritePluginPass).
 
-// probeReconciledState probes every implementation of the reconciled_state kind.
+// ProbeReconciledState probes every implementation of the reconciled_state kind.
 func (c *DeclaredKindCoordinator) ProbeReconciledState(ctx context.Context) error {
 	registered := c.SourceSet.ReconciledState.Sources()
 	probeables := make([]core.Probeable, 0, len(registered))
@@ -42,7 +42,7 @@ func (c *DeclaredKindCoordinator) ProbeReconciledState(ctx context.Context) erro
 	return c.ResolveKind(ctx, reconciledstate.Kind, core.SortedProbeables(probeables))
 }
 
-// probeDeclaredKinds probes every implementation of every kind a plugin declared.
+// ProbeDeclaredKinds probes every implementation of every kind a plugin declared.
 func (c *DeclaredKindCoordinator) ProbeDeclaredKinds(ctx context.Context) error {
 	byKind := map[string][]core.Probeable{}
 	for _, registration := range c.SourceSet.PluginKindRegistrations() {
@@ -63,7 +63,7 @@ func (c *DeclaredKindCoordinator) ProbeDeclaredKinds(ctx context.Context) error 
 	return core.JoinErrors(failures)
 }
 
-// declaredTasks are the loops of the implementations that state their own cadence: one per
+// DeclaredTasks are the loops of the implementations that state their own cadence: one per
 // implementation, named for it.
 func (c *DeclaredKindCoordinator) DeclaredTasks() []core.Task {
 	var tasks []core.Task
@@ -71,7 +71,7 @@ func (c *DeclaredKindCoordinator) DeclaredTasks() []core.Task {
 		registration, _ := c.SourceSet.ReconciledState.Lookup(key)
 		tasks = append(tasks, core.Task{
 			Name: fmt.Sprintf("%s %s", reconciledstate.Kind, key),
-			Interval: c.OverriddenCadence(pluginkind.CadenceSettingKey(registration.Plugin, reconciledstate.Kind, key),
+			Interval: c.overriddenCadence(pluginkind.CadenceSettingKey(registration.Plugin, reconciledstate.Kind, key),
 				registration.Cadence, registration.MinCadence),
 			Run:        func(ctx context.Context) error { return c.CollectReconciledState(ctx, key) },
 			RunAtStart: true,
@@ -83,7 +83,7 @@ func (c *DeclaredKindCoordinator) DeclaredTasks() []core.Task {
 		kind, key := registration.Kind, registration.Key
 		tasks = append(tasks, core.Task{
 			Name: fmt.Sprintf("%s %s", kind, key),
-			Interval: c.OverriddenCadence(pluginkind.CadenceSettingKey(registration.Plugin, kind, key),
+			Interval: c.overriddenCadence(pluginkind.CadenceSettingKey(registration.Plugin, kind, key),
 				registration.Cadence, registration.MinCadence),
 			Run:        func(ctx context.Context) error { return c.CollectDeclaredKind(ctx, kind, key) },
 			RunAtStart: true,
@@ -106,7 +106,7 @@ func cadenceOrDefault(cadence time.Duration) time.Duration {
 // overriddenCadence is a provider's interval, asked before every wait: the operator's override
 // (pluginkind.CadenceSettingKey), never below the declared lower bound, or the declared cadence. A
 // value that cannot be read leaves the declared cadence in force.
-func (c *DeclaredKindCoordinator) OverriddenCadence(settingKey string, declared, minimum time.Duration) func() time.Duration {
+func (c *DeclaredKindCoordinator) overriddenCadence(settingKey string, declared, minimum time.Duration) func() time.Duration {
 	declared = cadenceOrDefault(declared)
 	return func() time.Duration {
 		ctx, cancel := context.WithTimeout(context.Background(), cadenceReadBound)

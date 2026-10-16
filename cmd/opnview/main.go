@@ -112,6 +112,8 @@ func run() (err error) {
 
 	database, err := store.OpenWith(ctx, store.Options{DSN: *databaseConnection, Log: func(message string) {
 		fmt.Printf("%s: %s\n", buildinfo.AppName, message)
+	}, Timed: func(step string, took time.Duration) {
+		fmt.Printf("%s: opening the database: %s in %s\n", buildinfo.AppName, step, took.Round(time.Millisecond))
 	}})
 	if err != nil {
 		return err

@@ -38,7 +38,7 @@ import (
 // maxDataDepth bounds the nesting of a script's data, so a cycle is refused rather than followed.
 const maxDataDepth = 64
 
-// encode writes a value as JSON.
+// Encode writes a value as JSON.
 func (c *ScriptCall) Encode(value goja.Value) ([]byte, error) {
 	var buffer bytes.Buffer
 	if err := c.encodeValue(&buffer, value, 0); err != nil {

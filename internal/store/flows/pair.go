@@ -187,7 +187,7 @@ const PairingChunkSeconds = int64(3600)
 // to + window] and of the `in` records they can pair with, and records what changed.
 // A span longer than PairingChunkSeconds is decided and written in chunks of it.
 func (s *FlowStore) Pair(ctx context.Context, from, to, window int64) (Pairing, error) {
-	return s.PairInChunks(ctx, from, to, window, PairingChunkSeconds)
+	return s.pairInChunks(ctx, from, to, window, PairingChunkSeconds)
 }
 
 // pairRecords reads the records one statement returns.

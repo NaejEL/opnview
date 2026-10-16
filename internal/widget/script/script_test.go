@@ -1,12 +1,8 @@
-package widget
+package script_test
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"regexp"
-	"sort"
-	"strings"
+	"math"
 	"testing"
 
 	"github.com/dop251/goja"
@@ -15,6 +11,9 @@ import (
 	"github.com/NaejEL/opnview/internal/widget/params"
 	"github.com/NaejEL/opnview/internal/widget/request"
 	"github.com/NaejEL/opnview/internal/widget/script"
+
+	// The host's areas register from their own packages; a script here reads host.json.
+	_ "github.com/NaejEL/opnview/internal/widget/hostareas/values"
 )
 
 // The widget script host's own tests: what the data writer writes, what the loader refuses, and
@@ -139,55 +138,172 @@ func TestAScriptThatCannotServeIsRefusedAtLoad(t *testing.T) {
 	}
 }
 
-// TestAScriptManifestIsValidatedLikeEveryOther: script names a .js file of the widget's own
-// directory.
-func TestAScriptManifestIsValidatedLikeEveryOther(t *testing.T) {
+// flatExample is a flat struct as the figures are: whole numbers, a string, pointers to whole
+// numbers, some left out when empty, and an embedded struct JSON flattens.
+type flatExample struct {
+	Bytes   int64 `json:"bytes"`
+	Allowed int64 `json:"allowed"`
+	flatEmbedded
+}
+
+// flatEmbedded is flatExample's embedded members.
+type flatEmbedded struct {
+	Measure string `json:"measure,omitempty"`
+	Packets *int64 `json:"packets,omitempty"`
+	Kept    *int64 `json:"kept"`
+	// Coverage is nested, as the figures' coverage is: crossed member by member only while nil.
+	Coverage *flatCoverage `json:"coverage,omitempty"`
+}
+
+// flatCoverage is a nested member.
+type flatCoverage struct {
+	Measured int64 `json:"measured"`
+}
+
+// flatWindow holds rows of flat structs and members of other kinds, as the volume window does.
+type flatWindow struct {
+	Requested flatCoverage  `json:"requested"`
+	Covered   *flatCoverage `json:"covered"`
+	Rows      []flatExample `json:"rows"`
+	Names     []string      `json:"names,omitempty"`
+	Share     float64       `json:"share"`
+	Latitude  *float64      `json:"latitude"`
+	Spread    float64       `json:"spread,omitempty"`
+	Label     *string       `json:"label"`
+	When      json.Number   `json:"when,omitempty"`
+}
+
+// TestAFlatValueCrossesMemberByMemberAsItCrossesThroughJSON is the figures' fast crossing (E.3 of
+// the Phase E amendment): a flat struct handed to the script member by member is written exactly as
+// the same struct handed through JSON, and an object read back member by member is the struct JSON
+// would read -- or, for anything the member path does not read exactly as JSON, the JSON path's own
+// answer, its refusal included.
+func TestAFlatValueCrossesMemberByMemberAsItCrossesThroughJSON(t *testing.T) {
 	t.Parallel()
-	base := `{"manifest_version": 1, "type": "example_script", "shape": "table", "queries": ["q.sql"], `
-	for text, accepted := range map[string]bool{
-		base + `"script": "example.js"}`:    true,
-		base + `"script": "../example.js"}`: false,
-		base + `"script": "example.ts"}`:    false,
+	call, _ := scriptCallFor(t, "var value = null;")
+	seven := int64(7)
+	for _, value := range []flatExample{
+		{},
+		{Bytes: 1500, Allowed: 3},
+		{Bytes: 1 << 60, flatEmbedded: flatEmbedded{Measure: "netflow", Packets: &seven, Kept: &seven}},
+		{Bytes: 3, flatEmbedded: flatEmbedded{Coverage: &flatCoverage{Measured: 2}}},
 	} {
-		manifest, err := params.DecodeManifest([]byte(text))
+		flat, err := call.Encode(call.Value(value))
 		if err != nil {
-			t.Fatalf("%s: %v", text, err)
+			t.Fatal(err)
 		}
-		refusal := params.ValidateManifest(manifest)
-		if (refusal == nil) != accepted {
-			t.Errorf("%s: accepted %v, refusal %v", text, refusal == nil, refusal)
+		viaJSON, err := call.Encode(call.ValueThroughJSON(value))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(flat) != string(viaJSON) {
+			t.Errorf("member by member %s, through JSON %s", flat, viaJSON)
+		}
+	}
+	label := "a <label> & more"
+	negativeZero, third := math.Copysign(0, -1), 1.0/3
+	for _, window := range []flatWindow{
+		{},
+		{Requested: flatCoverage{Measured: 1}, Rows: []flatExample{{Bytes: 1}, {Allowed: 2}}, Share: 0.25,
+			Names: []string{"one"}, Label: &label, When: "12"},
+		{Covered: &flatCoverage{Measured: 3}, Rows: []flatExample{}, Share: 2},
+		{Share: -0.5, Latitude: &negativeZero, Spread: 1e21},
+		{Share: 1.0 / 3, Latitude: &third, Spread: 48},
+	} {
+		flat, err := call.Encode(call.Value(window))
+		if err != nil {
+			t.Fatal(err)
+		}
+		viaJSON, err := call.Encode(call.ValueThroughJSON(window))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(flat) != string(viaJSON) {
+			t.Errorf("member by member %s, through JSON %s", flat, viaJSON)
+		}
+	}
+	vm := call.VM
+	for _, source := range []string{
+		`({bytes: 10, allowed: 2})`,
+		`({bytes: 10, measure: "netflow", packets: 4, kept: null})`,
+		`({bytes: null, extra: "ignored", other: 3})`,
+		`({Bytes: 10})`,
+		`({bytes: 10, extra: {nested: 1}})`,
+		`({bytes: 2.5})`,
+		`({bytes: "10"})`,
+		`({bytes: 10, extra: NaN})`,
+		`({measure: 4})`,
+		`({bytes: 1, coverage: {measured: 2}})`,
+		`({bytes: 1, coverage: null})`,
+	} {
+		argument, err := vm.RunString(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var flat, viaJSON flatExample
+		flatRefusal := refusalOf(func() { call.DecodeFlat(argument, "the figures", &flat) })
+		jsonRefusal := refusalOf(func() { call.DecodeArgument(argument, "the figures", &viaJSON) })
+		flatEncoded, _ := json.Marshal(flat)
+		jsonEncoded, _ := json.Marshal(viaJSON)
+		if flatRefusal != jsonRefusal || string(flatEncoded) != string(jsonEncoded) {
+			t.Errorf("%s: member by member %s (%q), through JSON %s (%q)", source, flatEncoded, flatRefusal,
+				jsonEncoded, jsonRefusal)
+		}
+	}
+	// Arrays of rows are read as JSON reads them, member by member when they can be.
+	for _, source := range []string{
+		`[{bytes: 1}, null, {allowed: 2, measure: "netflow"}]`,
+		`[]`,
+		`[{bytes: 1}, 4]`,
+		`[{bytes: 1.5}]`,
+		`[{Bytes: 1}]`,
+	} {
+		argument, err := vm.RunString(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var flat, viaJSON []flatExample
+		flatRefusal := refusalOf(func() { call.DecodeFlat(argument, "the rows", &flat) })
+		jsonRefusal := refusalOf(func() { call.DecodeArgument(argument, "the rows", &viaJSON) })
+		flatEncoded, _ := json.Marshal(flat)
+		jsonEncoded, _ := json.Marshal(viaJSON)
+		if flatRefusal != jsonRefusal || string(flatEncoded) != string(jsonEncoded) {
+			t.Errorf("%s: member by member %s (%q), through JSON %s (%q)", source, flatEncoded, flatRefusal,
+				jsonEncoded, jsonRefusal)
+		}
+	}
+	if !call.CrossesFlat(flatExample{}) || !call.CrossesFlat(flatWindow{}) || !call.CrossesFlat([]flatExample{}) {
+		t.Error("a flat struct, or a slice of them, is handed through JSON, not member by member")
+	}
+	// And the member path is the one taken for what a widget hands the figures: a row of the
+	// window, its keys and its nulls beside the figures, and figures the host built.
+	for _, source := range []string{
+		`({src_interface_id: 1, dst_interface_id: null, peer_address: null, traffic_scope: "north_south",
+		   exit_leg_device: null, bytes: 10, allowed: 2})`,
+		`({bytes: 10, measure: "netflow", packets: 4, kept: null})`,
+	} {
+		argument, err := vm.RunString(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var read flatExample
+		if !call.ReadsFlat(argument, &read) {
+			t.Errorf("%s is read through JSON, not member by member", source)
 		}
 	}
 }
 
-// TestEveryHostAreaIsDocumented: every area of the widget host has its section in docs/plugins.md,
-// and the document describes no area the host does not have.
-func TestEveryHostAreaIsDocumented(t *testing.T) {
-	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "plugins.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	documented := map[string]bool{}
-	for _, match := range regexp.MustCompile("(?m)^#### `host\\.([a-z_]+)`$").FindAllStringSubmatch(string(raw), -1) {
-		documented[match[1]] = true
-	}
-	areas := script.HostAreas()
-	if len(areas) == 0 {
-		t.Fatal("the host has no area")
-	}
-	for _, area := range areas {
-		if !documented[area] {
-			t.Errorf("the host area %s has no section in docs/plugins.md", area)
+// refusalOf runs a host read and returns the message of the TypeError it threw, or "".
+func refusalOf(read func()) (message string) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			if exception, isValue := recovered.(goja.Value); isValue {
+				message = exception.String()
+				return
+			}
+			panic(recovered)
 		}
-		delete(documented, area)
-	}
-	var extra []string
-	for area := range documented {
-		extra = append(extra, area)
-	}
-	sort.Strings(extra)
-	if len(extra) > 0 {
-		t.Errorf("docs/plugins.md documents host areas that do not exist: %s", strings.Join(extra, ", "))
-	}
+	}()
+	read()
+	return ""
 }

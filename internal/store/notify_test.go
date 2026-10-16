@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"context"
@@ -9,13 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/store"
+
 	"github.com/NaejEL/opnview/internal/store/plugintables"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 )
 
 // listening starts a listener on every channel and returns what it hears, once it is known to be
 // listening: it publishes a probe until the probe comes back, and drops it.
-func listening(t *testing.T, database *Store) <-chan sqldb.Notification {
+func listening(t *testing.T, database *store.Store) <-chan sqldb.Notification {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	heard := make(chan sqldb.Notification, 64)

@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/reconciledstate"
 	"github.com/NaejEL/opnview/internal/config"
@@ -31,9 +32,9 @@ import (
 // from the loaded built-ins. This comment and the test's name state no count to fall out of date.
 func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
+	harness := collecttest.NewProbeHarness(t)
 	settings := config.Defaults()
-	tasks := harness.collector.Tasks(config.NewLive(settings))
+	tasks := harness.Collector.Tasks(config.NewLive(settings))
 
 	wanted := map[string]time.Duration{
 		"runtime discovery":   settings.DiscoveryInterval,
@@ -115,7 +116,7 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 // TestACollectorThatFailsDoesNotStopTheOthers is the isolation, driven by an injected clock.
 func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
 	t.Parallel()
-	clock := newFixedClock(referenceInstant())
+	clock := collecttest.NewFixedClock(collecttest.ReferenceInstant())
 	failing := errors.New("collect_test: this source is unavailable on this firewall")
 
 	var counts [4]atomic.Int64
@@ -147,16 +148,16 @@ func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
 	// stalled would be visible as a missing waiter rather than as a low count.
 	const rounds = 3
 	for round := 0; round < rounds; round++ {
-		clock.awaitWaiters(t, len(tasks))
-		if woken := clock.releaseAll(); woken != len(tasks) {
+		clock.AwaitWaiters(t, len(tasks))
+		if woken := clock.ReleaseAll(); woken != len(tasks) {
 			t.Fatalf("round %d woke %d of %d loops", round, woken, len(tasks))
 		}
 	}
 	// Wait for the last round to come back round before stopping, so the counts below are
 	// not racing the final pass.
-	clock.awaitWaiters(t, len(tasks))
+	clock.AwaitWaiters(t, len(tasks))
 	cancel()
-	clock.releaseAll()
+	clock.ReleaseAll()
 	finished.Wait()
 
 	for index := range counts {
@@ -186,7 +187,7 @@ func TestACollectorThatFailsDoesNotStopTheOthers(t *testing.T) {
 // service unit depends on.
 func TestTheRunLoopStopsOnCancellationWithinABoundedDeadline(t *testing.T) {
 	t.Parallel()
-	clock := newFixedClock(referenceInstant())
+	clock := collecttest.NewFixedClock(collecttest.ReferenceInstant())
 	tasks := []core.Task{
 		{Name: "a loop that waits", Interval: core.FixedInterval(time.Hour), RunAtStart: true,
 			Run: func(context.Context) error { return nil }},
@@ -216,7 +217,7 @@ func TestTheRunLoopStopsOnCancellationWithinABoundedDeadline(t *testing.T) {
 // runs as fast as the processor allows.
 func TestALoopWithNoCadenceIsNotRun(t *testing.T) {
 	t.Parallel()
-	clock := newFixedClock(referenceInstant())
+	clock := collecttest.NewFixedClock(collecttest.ReferenceInstant())
 	var ran atomic.Int64
 	tasks := []core.Task{
 		{Name: "a loop with no interval", Interval: core.FixedInterval(0), RunAtStart: true,
@@ -238,7 +239,7 @@ func TestALoopWithNoCadenceIsNotRun(t *testing.T) {
 // with failures that are only the stop itself.
 func TestAPassThatFailsBecauseTheRunIsStoppingIsNotReported(t *testing.T) {
 	t.Parallel()
-	clock := newFixedClock(referenceInstant())
+	clock := collecttest.NewFixedClock(collecttest.ReferenceInstant())
 	reported := make(chan string, 8)
 
 	ctx, cancel := context.WithCancel(context.Background())

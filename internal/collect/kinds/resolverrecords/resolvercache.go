@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/collect/resolvercache"
 	"github.com/NaejEL/opnview/internal/store/attribution"
 )
 
@@ -35,4 +37,15 @@ func (c *ResolverRecordCoordinator) CollectResolverCache(ctx context.Context) er
 			return source.Cache, true
 		})
 	return c.deriveRecordPass(ctx, request, passErr)
+}
+
+// ProbeResolverCache probes every implementation of the resolver_cache kind. The probe round (collect.ProbeAll)
+// runs it with every other kind's.
+func (c *ResolverRecordCoordinator) ProbeResolverCache(ctx context.Context) error {
+	return c.ResolveKind(ctx, core.KindResolverCache, core.ProbeablesOf(c.SourceSet.ResolverCache, cacheProbe))
+}
+
+// cacheProbe is the probe of one resolver_cache implementation, as core.ProbeablesOf takes it.
+func cacheProbe(source resolvercache.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
 }

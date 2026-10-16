@@ -9,7 +9,7 @@
 // database. The maintainer's decision 17: the cost is measured and recorded, with no
 // budget, so the test fails only when the reclassification itself fails.
 
-package collect
+package collect_test
 
 import (
 	"context"
@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/store"
 )
@@ -68,8 +69,8 @@ func TestReclassifyEverythingWallTimeAtTheMillionRowSeed(t *testing.T) {
 	}
 
 	fake := providertest.NewFirewall(t)
-	clock := newFixedClock(time.Unix(now, 0).UTC())
-	collector := newTestCollector(t, providertest.NewClient(t, fake), database, clock)
+	clock := collecttest.NewFixedClock(time.Unix(now, 0).UTC())
+	collector := collecttest.NewTestCollector(t, providertest.NewClient(t, fake), database, clock)
 
 	started := time.Now()
 	if err := collector.ReclassifyEverything(ctx); err != nil {

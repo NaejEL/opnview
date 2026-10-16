@@ -23,7 +23,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/store/plugindecl"
 	"github.com/NaejEL/opnview/internal/store/plugintables"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -37,17 +37,17 @@ import (
 // invoker is a plugin's way of answering a function of a kind: a script, or a declarative form.
 type invoker interface {
 	invoke(ctx context.Context, session provider.Session, function string, arguments ...any) (
-		answer any, hostErrors []error, failed *runtime.Failure)
+		answer any, hostErrors []error, failed *scripthost.Failure)
 }
 
 // scriptInvoker calls a script's exported functions under one kind's namespace.
 type scriptInvoker struct {
-	script    *runtime.Script
+	script    *scripthost.Script
 	namespace string
 }
 
 func (i scriptInvoker) invoke(ctx context.Context, session provider.Session, function string,
-	arguments ...any) (any, []error, *runtime.Failure) {
+	arguments ...any) (any, []error, *scripthost.Failure) {
 	return i.script.Call(ctx, session, i.namespace, function, arguments...)
 }
 
@@ -73,32 +73,32 @@ func (a adapter) run(ctx context.Context, session provider.Session, function, ta
 	}
 	object, isObject := answer.(map[string]any)
 	if !isObject {
-		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("%s returned no object", function)}
+		invalid := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: fmt.Sprintf("%s returned no object", function)}
 		return nil, a.failed(invalid), invalid
 	}
 	answerErr, _ := object["error"].(error)
 	delete(object, "error")
-	checked, err := runtime.CheckRecord(a.contract, table, object, function)
+	checked, err := scripthost.CheckRecord(a.contract, table, object, function)
 	if err != nil {
-		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
+		invalid := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: err.Error()}
 		return nil, a.failed(invalid), invalid
 	}
-	result, err := runtime.ResultOf(checked["result"].(map[string]any), a.endpoints)
+	result, err := scripthost.ResultOf(checked["result"].(map[string]any), a.endpoints)
 	if err != nil {
-		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
+		invalid := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: err.Error()}
 		return nil, a.failed(invalid), invalid
 	}
 	if answerErr != nil {
 		return checked, result, answerErr
 	}
-	if unsupported := runtime.Text(checked, "unsupported"); unsupported != "" {
+	if unsupported := scripthost.Text(checked, "unsupported"); unsupported != "" {
 		return checked, result, fmt.Errorf("%w: %s", provider.ErrUnsupportedRead, unsupported)
 	}
 	return checked, result, nil
 }
 
 // failed is the result a failed call is recorded with.
-func (a adapter) failed(failed *runtime.Failure) provider.Result {
+func (a adapter) failed(failed *scripthost.Failure) provider.Result {
 	return provider.Result{State: vocab.StateUnavailable, Outcome: failed.Code, Probe: a.scriptProbe,
 		Detail: fmt.Sprintf("the plugin %s: %s", a.plugin, failed.Detail)}
 }
@@ -123,7 +123,7 @@ func (a firewallLogAdapter) Records(ctx context.Context, session provider.Sessio
 		return nil, result, err
 	}
 	var converted []firewalllog.Record
-	for _, record := range runtime.Records(checked, "records") {
+	for _, record := range scripthost.Records(checked, "records") {
 		converted = append(converted, firewallLogRecord(record))
 	}
 	if invalid := firewallLogRecordsInvalid(converted); invalid != "" {
@@ -135,14 +135,14 @@ func (a firewallLogAdapter) Records(ctx context.Context, session provider.Sessio
 // firewallLogRecord converts one checked firewall_log record, pulled or pushed.
 func firewallLogRecord(record map[string]any) firewalllog.Record {
 	return firewalllog.Record{
-		Digest: runtime.Text(record, "digest"), ObservedAt: runtime.Integer(record, "observed_at"),
-		Device: runtime.Text(record, "device"), SrcAddress: runtime.Text(record, "src_address"),
-		DstAddress: runtime.Text(record, "dst_address"), SrcPort: runtime.IntegerPointer(record, "src_port"),
-		DstPort: runtime.IntegerPointer(record, "dst_port"), Protocol: runtime.Text(record, "protocol"),
-		IPVersion: runtime.Integer(record, "ip_version"), Action: runtime.Text(record, "action"),
-		Direction: runtime.Text(record, "direction"), LogReason: runtime.TextPointer(record, "log_reason"),
-		PacketBytes: runtime.Integer(record, "packet_bytes"), Rid: runtime.TextPointer(record, "rid"),
-		IPID: runtime.IntegerPointer(record, "ip_id"), TCPSeq: runtime.IntegerPointer(record, "tcp_seq"),
+		Digest: scripthost.Text(record, "digest"), ObservedAt: scripthost.Integer(record, "observed_at"),
+		Device: scripthost.Text(record, "device"), SrcAddress: scripthost.Text(record, "src_address"),
+		DstAddress: scripthost.Text(record, "dst_address"), SrcPort: scripthost.IntegerPointer(record, "src_port"),
+		DstPort: scripthost.IntegerPointer(record, "dst_port"), Protocol: scripthost.Text(record, "protocol"),
+		IPVersion: scripthost.Integer(record, "ip_version"), Action: scripthost.Text(record, "action"),
+		Direction: scripthost.Text(record, "direction"), LogReason: scripthost.TextPointer(record, "log_reason"),
+		PacketBytes: scripthost.Integer(record, "packet_bytes"), Rid: scripthost.TextPointer(record, "rid"),
+		IPID: scripthost.IntegerPointer(record, "ip_id"), TCPSeq: scripthost.IntegerPointer(record, "tcp_seq"),
 	}
 }
 
@@ -165,7 +165,7 @@ func portValid(port *int64) bool { return port == nil || (*port >= 0 && *port <=
 
 // invalid answers a read whose records the contract's ranges refuse.
 func (a firewallLogAdapter) invalid(detail string) ([]firewalllog.Record, provider.Result, error) {
-	failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: detail}
+	failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: detail}
 	return nil, a.failed(failed), failed
 }
 
@@ -183,11 +183,11 @@ func (a securityEventAdapter) Rotation(ctx context.Context, session provider.Ses
 	if err != nil {
 		return view, result, err
 	}
-	view.Known = runtime.Flag(checked, "known", false)
-	for _, file := range runtime.Texts(checked, "present") {
+	view.Known = scripthost.Flag(checked, "known", false)
+	for _, file := range scripthost.Texts(checked, "present") {
 		view.Present[file] = struct{}{}
 	}
-	view.HighestSequence = runtime.IntegerPointer(checked, "highest_sequence")
+	view.HighestSequence = scripthost.IntegerPointer(checked, "highest_sequence")
 	return view, result, nil
 }
 
@@ -198,18 +198,18 @@ func (a securityEventAdapter) Alerts(ctx context.Context, session provider.Sessi
 		return nil, result, err
 	}
 	var converted []securityevent.Alert
-	for index, record := range runtime.Records(checked, "alerts") {
+	for index, record := range scripthost.Records(checked, "alerts") {
 		alert := securityevent.Alert{
-			FileID: runtime.Text(record, "file_id"), ByteOffset: runtime.Integer(record, "byte_offset"),
-			OccurredAt: runtime.Integer(record, "occurred_at"), RuleIdentity: runtime.Text(record, "rule_identity"),
-			Signature: runtime.Text(record, "signature"), EventAction: runtime.Text(record, "event_action"),
-			NormalisedSeverity: runtime.TextPointer(record, "normalised_severity"),
-			SrcAddress:         runtime.Text(record, "src_address"), DstAddress: runtime.Text(record, "dst_address"),
-			SrcPort: runtime.IntegerPointer(record, "src_port"), DstPort: runtime.IntegerPointer(record, "dst_port"),
-			Protocol: runtime.TextPointer(record, "protocol"), InInterfaceDevice: runtime.TextPointer(record, "in_interface_device"),
+			FileID: scripthost.Text(record, "file_id"), ByteOffset: scripthost.Integer(record, "byte_offset"),
+			OccurredAt: scripthost.Integer(record, "occurred_at"), RuleIdentity: scripthost.Text(record, "rule_identity"),
+			Signature: scripthost.Text(record, "signature"), EventAction: scripthost.Text(record, "event_action"),
+			NormalisedSeverity: scripthost.TextPointer(record, "normalised_severity"),
+			SrcAddress:         scripthost.Text(record, "src_address"), DstAddress: scripthost.Text(record, "dst_address"),
+			SrcPort: scripthost.IntegerPointer(record, "src_port"), DstPort: scripthost.IntegerPointer(record, "dst_port"),
+			Protocol: scripthost.TextPointer(record, "protocol"), InInterfaceDevice: scripthost.TextPointer(record, "in_interface_device"),
 		}
 		if !portValid(alert.SrcPort) || !portValid(alert.DstPort) {
-			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("alerts[%d] carries a port outside 0 to "+
+			failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: fmt.Sprintf("alerts[%d] carries a port outside 0 to "+
 				"65535", index)}
 			return nil, a.failed(failed), failed
 		}
@@ -231,20 +231,20 @@ func (a dhcpLeaseAdapter) Leases(ctx context.Context, session provider.Session, 
 	if err != nil {
 		return nil, result, err
 	}
-	leases := runtime.Records(checked, "leases")
+	leases := scripthost.Records(checked, "leases")
 	if leases == nil {
 		return nil, result, nil
 	}
 	converted := make([]dhcplease.Observation, 0, len(leases))
 	for _, record := range leases {
 		converted = append(converted, dhcplease.Observation{
-			Address: runtime.Text(record, "address"), MAC: dhcplease.MACPointer(runtime.Text(record, "mac")),
-			Hostname: runtime.TextPointer(record, "hostname"), DHCPClientID: runtime.TextPointer(record, "dhcp_client_id"),
-			DUID: runtime.TextPointer(record, "duid"), IAID: runtime.TextPointer(record, "iaid"),
-			VendorHint: runtime.TextPointer(record, "vendor_hint"), LeaseState: runtime.Text(record, "lease_state"),
-			InterfaceIdentifier: runtime.Text(record, "interface_identifier"),
-			InterfaceDevice:     runtime.Text(record, "interface_device"),
-			StartsAt:            runtime.IntegerPointer(record, "starts_at"), ExpiresAt: runtime.IntegerPointer(record, "expires_at"),
+			Address: scripthost.Text(record, "address"), MAC: dhcplease.MACPointer(scripthost.Text(record, "mac")),
+			Hostname: scripthost.TextPointer(record, "hostname"), DHCPClientID: scripthost.TextPointer(record, "dhcp_client_id"),
+			DUID: scripthost.TextPointer(record, "duid"), IAID: scripthost.TextPointer(record, "iaid"),
+			VendorHint: scripthost.TextPointer(record, "vendor_hint"), LeaseState: scripthost.Text(record, "lease_state"),
+			InterfaceIdentifier: scripthost.Text(record, "interface_identifier"),
+			InterfaceDevice:     scripthost.Text(record, "interface_device"),
+			StartsAt:            scripthost.IntegerPointer(record, "starts_at"), ExpiresAt: scripthost.IntegerPointer(record, "expires_at"),
 		})
 	}
 	return converted, result, nil
@@ -271,21 +271,21 @@ func (a dnsLookupAdapter) Lookups(ctx context.Context, session provider.Session,
 	if err != nil {
 		return nil, result, err
 	}
-	lookups := runtime.Records(checked, "lookups")
+	lookups := scripthost.Records(checked, "lookups")
 	converted := make([]dnslookup.Record, 0, len(lookups))
 	for index, record := range lookups {
-		family := runtime.IntegerPointer(record, "client_family")
+		family := scripthost.IntegerPointer(record, "client_family")
 		if family != nil && *family != 4 && *family != 6 {
-			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("lookups[%d].client_family is %d, not 4 or "+
+			failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: fmt.Sprintf("lookups[%d].client_family is %d, not 4 or "+
 				"6", index, *family)}
 			return nil, a.failed(failed), failed
 		}
 		converted = append(converted, dnslookup.Record{
-			DeduplicationKey: runtime.Text(record, "deduplication_key"), ClientAddress: runtime.Text(record, "client_address"),
-			ClientFamily: family, Domain: runtime.Text(record, "domain"), Action: runtime.Text(record, "action"),
-			AnswerSource: runtime.TextPointer(record, "answer_source"), Rcode: runtime.TextPointer(record, "rcode"),
-			DNSSECStatus: runtime.TextPointer(record, "dnssec_status"), BlocklistName: runtime.Text(record, "blocklist_name"),
-			LookedUpAt: runtime.Integer(record, "looked_up_at"),
+			DeduplicationKey: scripthost.Text(record, "deduplication_key"), ClientAddress: scripthost.Text(record, "client_address"),
+			ClientFamily: family, Domain: scripthost.Text(record, "domain"), Action: scripthost.Text(record, "action"),
+			AnswerSource: scripthost.TextPointer(record, "answer_source"), Rcode: scripthost.TextPointer(record, "rcode"),
+			DNSSECStatus: scripthost.TextPointer(record, "dnssec_status"), BlocklistName: scripthost.Text(record, "blocklist_name"),
+			LookedUpAt: scripthost.Integer(record, "looked_up_at"),
 		})
 	}
 	return converted, result, nil
@@ -316,22 +316,22 @@ func (a dumpAdapter) dump(ctx context.Context, session provider.Session) (record
 	if err != nil {
 		return recorddump.Dump{}, result, err
 	}
-	rows := runtime.Records(checked, "records")
-	dump := recorddump.Dump{ResponseBytes: int(runtime.Integer(checked, "response_bytes")),
+	rows := scripthost.Records(checked, "records")
+	dump := recorddump.Dump{ResponseBytes: int(scripthost.Integer(checked, "response_bytes")),
 		Records: make([]recorddump.Record, 0, len(rows))}
 	for index, record := range rows {
-		shape, known := runtime.ShapeOf(runtime.Text(record, "ttl_shape"))
+		shape, known := scripthost.ShapeOf(scripthost.Text(record, "ttl_shape"))
 		if !known {
-			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("records[%d].ttl_shape is not a shape",
+			failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: fmt.Sprintf("records[%d].ttl_shape is not a shape",
 				index)}
 			return recorddump.Dump{}, a.failed(failed), failed
 		}
-		dump.Records = append(dump.Records, recorddump.Record{OwnerName: runtime.Text(record, "owner_name"),
-			TTL: runtime.Text(record, "ttl"), TTLShape: shape, RRType: runtime.Text(record, "rrtype"), Value: runtime.Text(record, "value")})
+		dump.Records = append(dump.Records, recorddump.Record{OwnerName: scripthost.Text(record, "owner_name"),
+			TTL: scripthost.Text(record, "ttl"), TTLShape: shape, RRType: scripthost.Text(record, "rrtype"), Value: scripthost.Text(record, "value")})
 	}
-	for _, count := range runtime.Records(checked, "not_records") {
-		dump.NotRecords = append(dump.NotRecords, recorddump.NotRecordCount{Count: int(runtime.Integer(count, "count")),
-			Wording: runtime.Text(count, "wording")})
+	for _, count := range scripthost.Records(checked, "not_records") {
+		dump.NotRecords = append(dump.NotRecords, recorddump.NotRecordCount{Count: int(scripthost.Integer(count, "count")),
+			Wording: scripthost.Text(count, "wording")})
 	}
 	return dump, result, nil
 }
@@ -356,25 +356,25 @@ func (a measurementAdapter) sampleWith(ctx context.Context, session provider.Ses
 		return nil, nil, result, err
 	}
 	var readings []vocab.MeasurementSample
-	for index, record := range runtime.Records(checked, "readings") {
+	for index, record := range scripthost.Records(checked, "readings") {
 		reading := vocab.MeasurementSample{
-			SubjectKind: vocab.SubjectKind(runtime.Text(record, "subject_kind")), SubjectKey: runtime.Text(record, "subject_key"),
-			Measure: vocab.Measure(runtime.Text(record, "measure")), Unit: vocab.Unit(runtime.Text(record, "unit")),
-			Value: runtime.Number(record, "value"), SampledAt: runtime.Integer(record, "sampled_at"),
+			SubjectKind: vocab.SubjectKind(scripthost.Text(record, "subject_kind")), SubjectKey: scripthost.Text(record, "subject_key"),
+			Measure: vocab.Measure(scripthost.Text(record, "measure")), Unit: vocab.Unit(scripthost.Text(record, "unit")),
+			Value: scripthost.Number(record, "value"), SampledAt: scripthost.Integer(record, "sampled_at"),
 		}
 		if !provider.TermShapeValid(string(reading.SubjectKind)) || !provider.TermShapeValid(string(reading.Measure)) ||
 			!provider.TermShapeValid(string(reading.Unit)) {
-			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("readings[%d] has a subject kind, measure "+
+			failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: fmt.Sprintf("readings[%d] has a subject kind, measure "+
 				"or unit that is not a lower-case word with no space", index)}
 			return nil, nil, a.failed(failed), failed
 		}
-		if runtime.Flag(record, "attributed", true) {
+		if scripthost.Flag(record, "attributed", true) {
 			id := providerID
 			reading.ProviderID = &id
 		}
 		readings = append(readings, reading)
 	}
-	return readings, runtime.Texts(checked, "missing"), result, nil
+	return readings, scripthost.Texts(checked, "missing"), result, nil
 }
 
 // DiscoveryView is the discovery snapshot as a sampling script reads it: the identifiers it may
@@ -386,7 +386,7 @@ func DiscoveryView(snapshot provider.Discovery) map[string]any {
 		identifiers = append(identifiers, string(identifier))
 	}
 	devices := make([]any, 0, len(snapshot.Devices))
-	for _, device := range runtime.SortedKeys(snapshot.Devices) {
+	for _, device := range scripthost.SortedKeys(snapshot.Devices) {
 		devices = append(devices, device)
 	}
 	return map[string]any{
@@ -431,16 +431,16 @@ func (a reconciledStateAdapter) Snapshot(ctx context.Context, session provider.S
 		return nil, result, err
 	}
 	var sets []reconciledstate.Set
-	for index, record := range runtime.Records(checked, "sets") {
-		set := reconciledstate.Set{SetKey: runtime.Text(record, "set_key")}
+	for index, record := range scripthost.Records(checked, "sets") {
+		set := reconciledstate.Set{SetKey: scripthost.Text(record, "set_key")}
 		if !provider.TermShapeValid(set.SetKey) {
-			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("sets[%d].set_key is not a lower-case "+
+			failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: fmt.Sprintf("sets[%d].set_key is not a lower-case "+
 				"word with no space", index)}
 			return nil, a.failed(failed), failed
 		}
-		for _, item := range runtime.Records(record, "items") {
-			set.Items = append(set.Items, vocab.StateItem{ItemKey: runtime.Text(item, "item_key"),
-				Attributes: runtime.TextPointer(item, "attributes"), ValidUntilAt: runtime.IntegerPointer(item, "valid_until_at")})
+		for _, item := range scripthost.Records(record, "items") {
+			set.Items = append(set.Items, vocab.StateItem{ItemKey: scripthost.Text(item, "item_key"),
+				Attributes: scripthost.TextPointer(item, "attributes"), ValidUntilAt: scripthost.IntegerPointer(item, "valid_until_at")})
 		}
 		sets = append(sets, set)
 	}
@@ -490,32 +490,32 @@ func (a declaredKindAdapter) Collect(ctx context.Context, session provider.Sessi
 	}
 	object, isObject := answer.(map[string]any)
 	if !isObject {
-		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: "collect returned no object"}
+		invalid := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: "collect returned no object"}
 		return pluginkind.Pass{}, a.failed(invalid), invalid
 	}
 	rows, state2, err := a.rowsAndState(object)
 	if err != nil {
-		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
+		invalid := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: err.Error()}
 		return pluginkind.Pass{}, a.failed(invalid), invalid
 	}
 	delete(object, "rows")
 	delete(object, "state")
 	answerErr, _ := object["error"].(error)
 	delete(object, "error")
-	checked, err := runtime.CheckRecord(a.contract, "collect_answer", object, "collect")
+	checked, err := scripthost.CheckRecord(a.contract, "collect_answer", object, "collect")
 	if err != nil {
-		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
+		invalid := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: err.Error()}
 		return pluginkind.Pass{}, a.failed(invalid), invalid
 	}
-	result, err := runtime.ResultOf(checked["result"].(map[string]any), a.endpoints)
+	result, err := scripthost.ResultOf(checked["result"].(map[string]any), a.endpoints)
 	if err != nil {
-		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
+		invalid := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: err.Error()}
 		return pluginkind.Pass{}, a.failed(invalid), invalid
 	}
 	if answerErr != nil {
 		return pluginkind.Pass{}, result, answerErr
 	}
-	if unsupported := runtime.Text(checked, "unsupported"); unsupported != "" {
+	if unsupported := scripthost.Text(checked, "unsupported"); unsupported != "" {
 		return pluginkind.Pass{}, result, fmt.Errorf("%w: %s", provider.ErrUnsupportedRead, unsupported)
 	}
 	return pluginkind.Pass{Rows: rows, State: state2}, result, nil
@@ -523,11 +523,11 @@ func (a declaredKindAdapter) Collect(ctx context.Context, session provider.Sessi
 
 // rowsAndState checks the rows and the state of a collect answer.
 func (a declaredKindAdapter) rowsAndState(object map[string]any) (plugintables.PluginRows, map[string]string, error) {
-	rows, err := runtime.CheckRows(a.tables, object["rows"])
+	rows, err := scripthost.CheckRows(a.tables, object["rows"])
 	if err != nil {
 		return nil, nil, err
 	}
-	state, err := runtime.CheckState(object["state"])
+	state, err := scripthost.CheckState(object["state"])
 	if err != nil {
 		return nil, nil, err
 	}
@@ -602,11 +602,11 @@ func (p *Plugin) lookupBounds(declaration contract.ProviderDeclaration) (int, in
 	if err != nil {
 		return 0, 0, err
 	}
-	pageBound, ok := runtime.IntegerOf(bound)
+	pageBound, ok := scripthost.IntegerOf(bound)
 	if !ok || pageBound < 1 {
 		return 0, 0, fmt.Errorf("dns_lookup.page_bound is %v, not a whole number of 1 or more", bound)
 	}
-	seconds, ok := runtime.IntegerOf(span)
+	seconds, ok := scripthost.IntegerOf(span)
 	if !ok || seconds < 0 {
 		return 0, 0, fmt.Errorf("dns_lookup.requested_span_seconds is %v, not a whole number of 0 or more", span)
 	}
@@ -638,28 +638,28 @@ func (a flowRecordAdapter) Capture(ctx context.Context, session provider.Session
 	}
 	captured, present := checked["capture"].(map[string]any)
 	if !present {
-		failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: "capture returned neither a capture nor an error"}
+		failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: "capture returned neither a capture nor an error"}
 		return flowrecord.Configuration{}, a.failed(failed), failed
 	}
-	configuration := flowrecord.Configuration{Enabled: runtime.Flag(captured, "enabled", false),
-		ExportVersion:          runtime.Text(captured, "export_version"),
-		ActiveTimeoutSeconds:   runtime.IntegerPointer(captured, "active_timeout_seconds"),
-		InactiveTimeoutSeconds: runtime.IntegerPointer(captured, "inactive_timeout_seconds")}
+	configuration := flowrecord.Configuration{Enabled: scripthost.Flag(captured, "enabled", false),
+		ExportVersion:          scripthost.Text(captured, "export_version"),
+		ActiveTimeoutSeconds:   scripthost.IntegerPointer(captured, "active_timeout_seconds"),
+		InactiveTimeoutSeconds: scripthost.IntegerPointer(captured, "inactive_timeout_seconds")}
 	seen := map[string]bool{}
-	for index, row := range runtime.Records(captured, "interfaces") {
-		identifier := runtime.Text(row, "identifier")
+	for index, row := range scripthost.Records(captured, "interfaces") {
+		identifier := scripthost.Text(row, "identifier")
 		if identifier == "" || seen[identifier] {
-			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("capture.interfaces[%d] names an empty or "+
+			failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: fmt.Sprintf("capture.interfaces[%d] names an empty or "+
 				"repeated identifier", index)}
 			return flowrecord.Configuration{}, a.failed(failed), failed
 		}
 		seen[identifier] = true
 		configuration.Interfaces = append(configuration.Interfaces, flowrecord.Interface{Identifier: identifier,
-			Ingress: runtime.Flag(row, "ingress", false), Egress: runtime.Flag(row, "egress", false)})
+			Ingress: scripthost.Flag(row, "ingress", false), Egress: scripthost.Flag(row, "egress", false)})
 	}
 	for _, timeout := range []*int64{configuration.ActiveTimeoutSeconds, configuration.InactiveTimeoutSeconds} {
 		if timeout != nil && *timeout <= 0 {
-			failed := &runtime.Failure{Code: runtime.FailureRecords, Detail: "capture states a timeout that is not positive"}
+			failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: "capture states a timeout that is not positive"}
 			return flowrecord.Configuration{}, a.failed(failed), failed
 		}
 	}

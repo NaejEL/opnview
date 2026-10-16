@@ -20,7 +20,7 @@ import "context"
 // kept in memory: after a restart the examination waits until both sources have been read once,
 // which costs at most one interval of the slower and loses nothing, because the mark is stored.
 
-// noteLeaseRead records a complete lease pass whose read began at readAt, and returns the
+// NoteLeaseRead records a complete lease pass whose read began at readAt, and returns the
 // instant before which the unresolved lookups may now be examined, and whether they may
 // be.
 func (c *Collector) NoteLeaseRead(ctx context.Context, readAt int64) (int64, bool, error) {
@@ -40,7 +40,7 @@ func (c *Collector) NoteLeaseRead(ctx context.Context, readAt int64) (int64, boo
 	return min(readAt, c.LocalDataReadAt), true, nil
 }
 
-// noteLocalDataRead records a successful local-data pass whose read began at readAt, and
+// NoteLocalDataRead records a successful local-data pass whose read began at readAt, and
 // returns the instant before which the unresolved lookups may now be examined, and
 // whether they may be.
 func (c *Collector) NoteLocalDataRead(ctx context.Context, readAt int64) (int64, bool, error) {
@@ -60,7 +60,7 @@ func (c *Collector) NoteLocalDataRead(ctx context.Context, readAt int64) (int64,
 	return min(readAt, c.LeaseReadAt), true, nil
 }
 
-// noteLocalDataFailed records a local-data pass that read no source.
+// NoteLocalDataFailed records a local-data pass that read no source.
 func (c *Collector) NoteLocalDataFailed() {
 	c.Mutex.Lock()
 	defer c.Mutex.Unlock()

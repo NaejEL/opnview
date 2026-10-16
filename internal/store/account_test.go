@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"bytes"
@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/accounts"
 )
@@ -23,7 +25,7 @@ func TestASecondApplySeedsNoAccountNoSessionAndNoCredential(t *testing.T) {
 	directory := testDatabase(t)
 	ctx := context.Background()
 
-	database, err := Open(ctx, directory)
+	database, err := store.Open(ctx, directory)
 	if err != nil {
 		t.Fatalf("first apply: %v", err)
 	}
@@ -59,7 +61,7 @@ func TestASecondApplySeedsNoAccountNoSessionAndNoCredential(t *testing.T) {
 	}
 
 	// The second apply, which is what every start does.
-	reopened, err := Open(ctx, directory)
+	reopened, err := store.Open(ctx, directory)
 	if err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -282,7 +284,7 @@ func TestDeletingASettingLeavesNoRow(t *testing.T) {
 }
 
 // countRows counts one table's rows.
-func countRows(t *testing.T, database *Store, table string) int {
+func countRows(t *testing.T, database *store.Store, table string) int {
 	t.Helper()
 	var count int
 	if err := database.DB().QueryRow(`SELECT count(*) FROM "` + table + `"`).Scan(&count); err != nil {
@@ -292,9 +294,9 @@ func countRows(t *testing.T, database *Store, table string) int {
 }
 
 // openTemporary opens a database of the test's own and closes it at the end.
-func openTemporary(t *testing.T) *Store {
+func openTemporary(t *testing.T) *store.Store {
 	t.Helper()
-	database, err := Open(context.Background(), testDatabase(t))
+	database, err := store.Open(context.Background(), testDatabase(t))
 	if err != nil {
 		t.Fatalf("opening the database: %v", err)
 	}

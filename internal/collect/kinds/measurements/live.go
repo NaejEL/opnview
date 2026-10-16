@@ -49,7 +49,7 @@ func (c *MeasurementCoordinator) LivePasses() int {
 	return c.Live.Passes
 }
 
-// liveTask is the live sampling loop.
+// LiveTask is the live sampling loop.
 func (c *MeasurementCoordinator) LiveTask(settings *config.Live) core.Task {
 	return core.Task{
 		Name: "live sampling",

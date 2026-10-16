@@ -45,7 +45,7 @@ func init() {
 			covered := call.OptionalIntervalOf(arguments.Argument(1), "the covered interval")
 			var gaps []envelope.Gap
 			if !script.Absent(arguments.Argument(2)) {
-				call.DecodeArgument(arguments.Argument(2), "the gaps", &gaps)
+				call.DecodeFlat(arguments.Argument(2), "the gaps", &gaps)
 			}
 			return call.VM.ToValue(traffic.IsGapBucket(bucket, covered, gaps))
 		})

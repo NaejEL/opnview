@@ -7,7 +7,8 @@
 -- `schema_version` table and a runner would be machinery for a problem that
 -- does not exist. This file is edited in place, and it is applied on every
 -- start: every statement below is idempotent, so applying it to a database
--- that already carries it changes nothing. Migrations begin the day the
+-- that already carries it changes nothing (and Open skips it when the
+-- database records this file's digest, applied_schema). Migrations begin the day the
 -- product runs somewhere with data worth keeping — this file becomes the
 -- baseline and the first real migration is the one after it.
 --
@@ -106,6 +107,20 @@ CREATE TABLE IF NOT EXISTS setting (
     key        TEXT PRIMARY KEY,
     value      TEXT NOT NULL,
     updated_at BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800)
+);
+
+-- ---------------------------------------------------------------------------
+-- applied_schema — the digest of the schema file last applied to this
+-- database. Bounded: one row. Open applies this file only when the digest
+-- recorded here is not the embedded file's (internal/store/schema.go), so a
+-- restart of the same build, and a test database cloned from the template,
+-- skip an apply that would change nothing; a database another build wrote is
+-- applied as before.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS applied_schema (
+    singleton  BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    digest     TEXT NOT NULL CHECK (digest ~ '^[0-9a-f]{64}$'),
+    applied_at BIGINT NOT NULL CHECK (applied_at >= 0 AND applied_at < 4102444800)
 );
 
 -- ---------------------------------------------------------------------------

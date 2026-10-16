@@ -100,7 +100,12 @@ so and amend this roadmap rather than quietly working around it.
   **Licence:** `opnview` uses TimescaleDB's Apache-2.0 edition only -- no
   continuous aggregate and no TimescaleDB background job
   (`docs/architecture.md`, *Storage*). `opnview` stays MIT and neither links
-  nor redistributes TimescaleDB.
+  nor redistributes TimescaleDB. Confirmed on 16 October 2026 (Phase E), which
+  supersedes the decision of 12 October 2026 to enable the Timescale License:
+  no continuous aggregate is exactly equivalent to the table it would replace
+  (`docs/data-model.md`, *Storage fit*), so enabling that licence would serve
+  nothing. Every database, the installation's included, runs with
+  `timescaledb.license=apache`.
 
   **TimescaleDB's telemetry is off,** and `opnview` refuses to start if it is
   not.
@@ -196,22 +201,66 @@ maintainer's test budget of 7 October 2026,
   nothing the suite asserts depends on; the pre-deployment command runs against a
   disk-backed instance with production settings.
 - **`docker compose run --rm pre-deployment` is the gate run before a
-  deployment**, not on every iteration. It runs `go vet` and
-  `go test -race -count=1` over the whole suite with the moved tests compiled in,
-  the test budget's own check (`ci/budget-self-test.sh`, which runs `checks` with
-  a test-only sleep one second past the budget and requires it to fail naming the
-  budget), and `sql/schema-checks.sh` — the schema, the seeds at 100 000 and
-  1 000 000 flow rows, the screen queries and every statement's query plan. Its
-  `/tmp` is the overlay filesystem, so the whole suite meets a real disk once
-  before a deployment.
-- **Moving a test out of the everyday suite** is done with the `predeployment`
-  build tag, which the pre-deployment command passes to `go vet` and `go test`,
-  never by deleting or skipping the test, and the test says why in a comment
-  beside the tag. **No test is moved today**: measured on 7 October 2026 the
-  everyday suite went from 341 s to about 12 s of `go test` wall time on 16 CPUs by
-  applying the schema in one transaction, preparing each statement once per
-  derivation, running the tests in parallel, rendering the web pages once per
-  package and putting `/tmp` on a tmpfs, so nothing had to leave it.
+  deployment**, not on every iteration. **Its wall time has a budget of 180 s**,
+  the one constant `PRE_DEPLOYMENT_BUDGET_SECONDS` in `ci/pre-deployment.sh`: it
+  prints every step's wall time, the total and the CPU count, and fails above the
+  budget naming it. Its steps, the independent ones side by side, each with its own
+  output block and exit code:
+  - **the race selection**, computed by `ci/raceselect` and never written by hand:
+    a package runs under `-race` when any of its `.go` files, test files included,
+    (i) holds a `go` statement, (ii) imports `sync` or `sync/atomic`, (iii) serves
+    HTTP -- imports `net/http/httptest`, declares a `ServeHTTP` method, or
+    references `http.Handler`, `http.HandlerFunc`, `http.ServeMux` or
+    `http.Server` -- or (iv) lies under `internal/plugin/`. Every package is
+    printed, selected or excluded, with the clause that decided it, and the two
+    sets together must be exactly `go list ./...`;
+  - **`go test -race -count=1`** over the selected packages and **`go test
+    -count=1`** over the others, both with the `predeployment` build tag, so every
+    package runs exactly once; `go vet` with the build tags of every test kept out
+    of the everyday suite;
+  - **the broker budgets** (the `brokerbudget` tag, without `-race`, which would
+    measure itself) and the push decoders' fuzz targets;
+  - **the test budget's own check**, `ci/budget-self-test.sh`: it runs `checks`
+    with `OPNVIEW_BUDGET_PROBE_ONLY`, which restricts its `go test` to the probe
+    package, and a test-only sleep one second past the budget, and requires it to
+    exit non-zero printing "over the test budget of 60 s"; it runs beside the other
+    steps, most of it being the probe's sleep;
+  - **`sql/schema-checks.sh`** -- the schema, the seeds at 100 000 and 1 000 000
+    flow rows, the screen queries and every statement's plan at both seeds, the
+    widget and data catalogue budgets at both seeds (100 000 rows at 250 ms for
+    24 h and 500 ms for 30 days, 1 000 000 at 1 s and 2 s), the live budget, the
+    wall time of `ReclassifyEverything` on a copy of the large seed, and the backup
+    round trip.
+
+  **The 1 000 000-row seed is built once and reused while its digest holds.** A
+  cold build takes minutes -- more than the whole budget -- so the analysed seed is
+  kept on `db-predeployment` under one exact name, `schema_checks_scale_seed`, with
+  the digest of what it was built from written on it: `schema.sql`, `sql/seed.sql`,
+  the seed's parameters, and the server's PostgreSQL and TimescaleDB versions. A
+  run whose digest matches clones it, and prints the digest it reused; a run whose
+  digest differs builds it cold, prints the build's breakdown -- the schema apply,
+  each table's generation, `VACUUM (ANALYZE)` -- and its time apart from the
+  budgeted run. Every consumer reads the clone: the plans, the widget budgets, the
+  live budget, and the reclassification, on a copy of it. The pre-deployment
+  command runs with `/tmp` on the overlay filesystem, against `db-predeployment`,
+  a disk-backed instance with production durability, so the whole suite meets a
+  real disk once before a deployment.
+- **Moving a test out of the everyday suite** is allowed only for a `-race` check
+  or a check on the 1 000 000-row seed, with the `predeployment` build tag, which
+  the pre-deployment command passes to `go vet` and `go test`, never by deleting or
+  skipping the test, and the test says why in a comment beside the tag. **The tests
+  outside the everyday suite, exactly:** none carries the `predeployment` tag
+  (`internal/store/calendar_test.go` returned to the everyday suite on 16 October
+  2026); `TestReclassifyEverythingWallTimeAtTheMillionRowSeed`
+  (`internal/collect/reclassifycost_test.go`, tag `reclassifycost`) reads the
+  1 000 000-row seed and is run by `sql/schema-checks.sh`; and the broker budgets
+  (`internal/broker/budget_test.go` and `internal/plugin/scripthost/budget_test.go`,
+  tag `brokerbudget`) are timings the race detector would distort. **The everyday
+  suite fits its budget by its shared helpers, never by a list of tests**: a clone
+  of the test template skips the schema apply when the database already records the
+  digest of `schema.sql` (`applied_schema`); a wait for the database is a reported
+  event, not a silent sleep; and `OPNVIEW_TEST_BREAKDOWN=1` prints, per package,
+  where the suite's time goes (`ci/testtiming`).
 
 **`OPNVIEW_DATA_DIR` and Git Bash.** The data directory of the scripts the
 pre-deployment command runs is `OPNVIEW_DATA_DIR`, **`/data` by default** — the

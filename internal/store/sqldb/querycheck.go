@@ -74,15 +74,15 @@ func (s *Handle) CheckQuery(ctx context.Context, text string, allowed []string) 
 	}
 	lexed := LexSQL(text)
 	switch {
-	case lexed.Statements == 0:
+	case lexed.statements == 0:
 		return QueryInfo{}, &QueryProblem{Kind: QueryEmpty, Detail: "the text holds no statement"}
-	case lexed.Statements > 1:
+	case lexed.statements > 1:
 		return QueryInfo{}, &QueryProblem{Kind: QueryMultipleStatements,
-			Detail: fmt.Sprintf("the text holds %d statements; a widget query is exactly one", lexed.Statements)}
+			Detail: fmt.Sprintf("the text holds %d statements; a widget query is exactly one", lexed.statements)}
 	}
-	if first := strings.ToUpper(lexed.FirstWord); first != "SELECT" && first != "WITH" {
+	if first := strings.ToUpper(lexed.firstWord); first != "SELECT" && first != "WITH" {
 		return QueryInfo{}, &QueryProblem{Kind: QueryNotReadOnly,
-			Detail: fmt.Sprintf("a widget query is a SELECT, and this one starts with %q", lexed.FirstWord)}
+			Detail: fmt.Sprintf("a widget query is a SELECT, and this one starts with %q", lexed.firstWord)}
 	}
 	for _, name := range lexed.positional {
 		return QueryInfo{}, &QueryProblem{Kind: QueryUnboundParameter,
@@ -145,7 +145,7 @@ func (s *Handle) queryColumns(ctx context.Context, body string, arguments []any)
 	return rows.Columns()
 }
 
-// nullArguments binds every named parameter of a text to NULL, which is all planning needs.
+// NullArguments binds every named parameter of a text to NULL, which is all planning needs.
 func NullArguments(names []string) []any {
 	arguments := make([]any, 0, len(names))
 	for _, name := range names {
@@ -154,7 +154,7 @@ func NullArguments(names []string) []any {
 	return arguments
 }
 
-// statementBody is the text of the single statement a text holds: everything before its
+// StatementBody is the text of the single statement a text holds: everything before its
 // terminating semicolon, which the lexer found outside any string or comment, so that what follows
 // it -- only whitespace and comments, once a text holds one statement -- is gone.
 func StatementBody(text string, lexed lexed) string {
@@ -209,15 +209,15 @@ type lexed struct {
 	// semicolonAt is the rune index of the first statement terminator outside any string or
 	// comment, or -1.
 	semicolonAt int
-	Statements  int
-	FirstWord   string
+	statements  int
+	firstWord   string
 	Parameters  []string
 	positional  []string
 	// words are every bare word of the text, outside strings, identifiers and comments.
 	words []string
 }
 
-// lexSQL walks a text once, skipping comments and quoted strings and identifiers, and counts
+// LexSQL walks a text once, skipping comments and quoted strings and identifiers, and counts
 // the statements, finds the first word and collects the named parameters.
 func LexSQL(text string) lexed {
 	result := lexed{semicolonAt: -1}
@@ -240,18 +240,18 @@ func LexSQL(text string) lexed {
 		case c == '\'' || c == '"' || c == '`':
 			if !inStatement {
 				inStatement = true
-				result.Statements++
-				if result.Statements == 1 {
-					result.FirstWord = string(c)
+				result.statements++
+				if result.statements == 1 {
+					result.firstWord = string(c)
 				}
 			}
 			i = skipQuoted(runes, i, c)
 		case c == '[':
 			if !inStatement {
 				inStatement = true
-				result.Statements++
-				if result.Statements == 1 {
-					result.FirstWord = "["
+				result.statements++
+				if result.statements == 1 {
+					result.firstWord = "["
 				}
 			}
 			for i < len(runes) && runes[i] != ']' {
@@ -271,18 +271,18 @@ func LexSQL(text string) lexed {
 			tag := []rune(dollarTagAt(runes, i))
 			if !inStatement {
 				inStatement = true
-				result.Statements++
-				if result.Statements == 1 {
-					result.FirstWord = string(tag)
+				result.statements++
+				if result.statements == 1 {
+					result.firstWord = string(tag)
 				}
 			}
 			i = skipDollarQuoted(runes, i, tag)
 		case c == ':' || c == '@' || c == '$':
 			if !inStatement {
 				inStatement = true
-				result.Statements++
-				if result.Statements == 1 {
-					result.FirstWord = string(c)
+				result.statements++
+				if result.statements == 1 {
+					result.firstWord = string(c)
 				}
 			}
 			start := i + 1
@@ -306,9 +306,9 @@ func LexSQL(text string) lexed {
 		case c == '?':
 			if !inStatement {
 				inStatement = true
-				result.Statements++
-				if result.Statements == 1 {
-					result.FirstWord = "?"
+				result.statements++
+				if result.statements == 1 {
+					result.firstWord = "?"
 				}
 			}
 			result.positional = append(result.positional, "?")
@@ -319,9 +319,9 @@ func LexSQL(text string) lexed {
 			}
 			if !inStatement {
 				inStatement = true
-				result.Statements++
-				if result.Statements == 1 {
-					result.FirstWord = string(runes[i:end])
+				result.statements++
+				if result.statements == 1 {
+					result.firstWord = string(runes[i:end])
 				}
 			}
 			result.words = append(result.words, string(runes[i:end]))
@@ -329,9 +329,9 @@ func LexSQL(text string) lexed {
 		default:
 			if !inStatement {
 				inStatement = true
-				result.Statements++
-				if result.Statements == 1 {
-					result.FirstWord = string(c)
+				result.statements++
+				if result.statements == 1 {
+					result.firstWord = string(c)
 				}
 			}
 		}

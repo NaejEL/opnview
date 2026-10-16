@@ -69,7 +69,7 @@ const (
 // minute (docs/plugins.md, "Push sources"), so a gap meeting the span is recorded within it.
 const finalityMarginSeconds = 120
 
-// setFilterLogReadThrough moves the filter log's read-through instant forward.
+// SetFilterLogReadThrough moves the filter log's read-through instant forward.
 func (c *Deriver) SetFilterLogReadThrough(at int64) {
 	c.Netflow.Mutex.Lock()
 	defer c.Netflow.Mutex.Unlock()
@@ -95,7 +95,7 @@ func (c *Deriver) joinTolerance() int64 {
 	return c.Netflow.ToleranceSeconds
 }
 
-// markDirty asks the next derivation to compute again the connections of a window.
+// MarkDirty asks the next derivation to compute again the connections of a window.
 func (c *Deriver) MarkDirty(from, to int64) {
 	c.Netflow.Mutex.Lock()
 	defer c.Netflow.Mutex.Unlock()
@@ -132,7 +132,7 @@ func (c *Deriver) takeDirty() (bool, int64, int64, []int64) {
 	return dirty, from, to, legs
 }
 
-// history returns a provider's capture history, read once and kept until it changes.
+// History returns a provider's capture history, read once and kept until it changes.
 func (c *Deriver) History(ctx context.Context, providerID int64) (*core.CaptureHistory, error) {
 	c.Netflow.Mutex.Lock()
 	cached := c.Netflow.Histories[providerID]
@@ -158,20 +158,20 @@ func (c *Deriver) History(ctx context.Context, providerID int64) (*core.CaptureH
 	return read, nil
 }
 
-// forgetHistory drops a provider's cached history.
+// ForgetHistory drops a provider's cached history.
 func (c *Deriver) ForgetHistory(providerID int64) {
 	c.Netflow.Mutex.Lock()
 	defer c.Netflow.Mutex.Unlock()
 	delete(c.Netflow.Histories, providerID)
 }
 
-// mappedInterface is one interface as the index map holds it.
+// MappedInterface is one interface as the index map holds it.
 type MappedInterface struct {
 	index  uint64
 	device string
 }
 
-// indexesByIdentifier is the index map keyed by interface identifier; an identifier two indexes
+// IndexesByIdentifier is the index map keyed by interface identifier; an identifier two indexes
 // claim maps to neither.
 func IndexesByIdentifier(indexes map[uint64]push.Interface) map[string]MappedInterface {
 	byIdentifier := map[string]MappedInterface{}
@@ -193,21 +193,21 @@ func IndexesByIdentifier(indexes map[uint64]push.Interface) map[string]MappedInt
 
 // pointState is the state of the configuration in force at an instant.
 type pointState struct {
-	// state is store.CaptureObservationPoint or one of PS18's named states.
+	// State is store.CaptureObservationPoint or one of PS18's named states.
 	State string
-	// captured is how many interfaces the configuration captured on; -1 when it is unknown.
+	// Captured is how many interfaces the configuration captured on; -1 when it is unknown.
 	Captured int64
-	// point is the one captured interface, its index and device, when there is one.
+	// Point is the one captured interface, its index and device, when there is one.
 	Point  netflow.CaptureInterface
 	Index  uint64
 	Device string
-	// lossDetectable says the exporter's sequence was one counter's.
+	// LossDetectable says the exporter's sequence was one counter's.
 	LossDetectable bool
 	// configuration is the configuration in force, nil when unknown.
 	configuration *netflow.CaptureConfiguration
 }
 
-// stateAt evaluates the configuration in force at an instant (PS18's table).
+// StateAt evaluates the configuration in force at an instant (PS18's table).
 // What is stored decides all of it but the index mapping (store.CaptureStateAt, which the widget
 // API's measure reads too); the mapping is the collector's.
 func StateAt(history *core.CaptureHistory, at int64, indexes map[string]MappedInterface) pointState {
@@ -227,7 +227,7 @@ func StateAt(history *core.CaptureHistory, at int64, indexes map[string]MappedIn
 	return result
 }
 
-// directionAt is a record's direction at its Observation Point (PS19 rule 1): from the configuration
+// DirectionAt is a record's direction at its Observation Point (PS19 rule 1): from the configuration
 // and the record's ingress interface, never from its egress interface, which is the route lookup's
 // interface rather than the one the packet left by (survey, Push sources, S6).
 //   - An interface captured on egress only exports egress records.
@@ -251,7 +251,7 @@ func portless(protocol int64, source, destination *int64) bool {
 		(*source == 0 && *destination == 0)
 }
 
-// tupleKey is a record's two ends, unordered, with its version and protocol: the join groups the
+// TupleKey is a record's two ends, unordered, with its version and protocol: the join groups the
 // records of one Observation Point by it.
 func TupleKey(addressFamily, protocol int64, source, destination netip.Addr, sourcePort, destinationPort *int64) string {
 	end := func(address netip.Addr, port *int64) string {
@@ -500,7 +500,7 @@ func samePort(a, b *int64) bool { return a != nil && b != nil && *a == *b }
 // joinFlowRecords decides the records of the active provider the filter log has been read past, a
 // group at a time, and marks the connections whose legs gained or lost a record. A second derivation
 // over the same rows writes nothing.
-func (c *Deriver) JoinFlowRecords(ctx context.Context) (int64, error) {
+func (c *Deriver) joinFlowRecords(ctx context.Context) (int64, error) {
 	_, providerID, active, err := c.ActiveSourceKey(ctx, KindFlowRecord)
 	if err != nil || !active {
 		return 0, err

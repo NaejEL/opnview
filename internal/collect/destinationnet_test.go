@@ -1,8 +1,9 @@
-package collect
+package collect_test
 
 import (
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/decode"
 )
 
@@ -12,22 +13,22 @@ import (
 // does not report the field stores NULL -- not reported -- rather than an empty value.
 func TestRuleDestinationNetIsStoredVerbatimFromSearchRule(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
+	harness := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 
 	reported := 0
 	for _, row := range fixtureRecords(t, "search_rule.json") {
 		label, _ := decode.String(row, "uuid")
 		raw, present := row["destination_net"]
 		if !present {
-			if stored := scalarCount(t, harness.store,
+			if stored := collecttest.ScalarCount(t, harness.Store,
 				"SELECT count(*) FROM rule WHERE pf_label = ? AND destination_net IS NULL", label); stored != 1 {
 				t.Errorf("the rule %s reports no destination_net and stored one", label)
 			}
 			continue
 		}
 		reported++
-		if stored := scalarCount(t, harness.store,
+		if stored := collecttest.ScalarCount(t, harness.Store,
 			"SELECT count(*) FROM rule WHERE pf_label = ? AND destination_net = ?", label, raw); stored != 1 {
 			t.Errorf("the rule %s did not store its destination_net %q verbatim", label, raw)
 		}

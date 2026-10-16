@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/config"
@@ -44,8 +46,8 @@ import (
 
 // MessageKey is a catalogue key. A handler chooses a key, never a string, and a template
 // resolves it; its own type keeps a plain string from being handed to a template where a key
-// belongs.
-type MessageKey string
+// belongs. The keys the core chooses are internal/web/messages'.
+type MessageKey = messages.Key
 
 // messageKey is the spelling the core's own files use.
 type messageKey = MessageKey
@@ -238,7 +240,7 @@ type Host interface {
 // rows and the settings its manifest declares, which the loader confines its keys to -- so a
 // test can assert that each exists and that no catalogue entry is unreachable.
 func AllHandlerKeys() []MessageKey {
-	keys := CoreKeys()
+	keys := messages.CoreKeys()
 	for _, surface := range RegisteredSurfaces() {
 		if surface.Keys != nil {
 			keys = append(keys, surface.Keys()...)

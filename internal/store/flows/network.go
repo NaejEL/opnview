@@ -103,7 +103,7 @@ func ParseNetwork(text string) (netip.Prefix, error) {
 		return netip.Prefix{}, fmt.Errorf("%w: %q has bits set beyond its prefix length; the network is %s",
 			ErrMalformedNetwork, text, prefix.Masked())
 	}
-	if OverlapsLinkLocal(prefix) {
+	if overlapsLinkLocal(prefix) {
 		return netip.Prefix{}, fmt.Errorf("%w: %q", ErrLinkLocalNetwork, text)
 	}
 	return prefix, nil
@@ -112,7 +112,7 @@ func ParseNetwork(text string) (netip.Prefix, error) {
 // overlapsLinkLocal reports whether a prefix shares an address with the IPv6
 // link-local prefix: it holds a link-local address, or a link-local address's
 // prefix of the same length is it.
-func OverlapsLinkLocal(prefix netip.Prefix) bool {
+func overlapsLinkLocal(prefix netip.Prefix) bool {
 	if !prefix.Addr().Is6() {
 		return false
 	}
@@ -136,7 +136,7 @@ func (s *FlowStore) DetectNetworks(ctx context.Context, interfaceID int64, prefi
 	seen := map[netip.Prefix]struct{}{}
 	for _, prefix := range prefixes {
 		masked := prefix.Masked()
-		if !masked.IsValid() || OverlapsLinkLocal(masked) || masked.Addr().Is4In6() {
+		if !masked.IsValid() || overlapsLinkLocal(masked) || masked.Addr().Is4In6() {
 			continue
 		}
 		if _, duplicate := seen[masked]; duplicate {
@@ -236,7 +236,7 @@ func (s *FlowStore) editStoredNetwork(ctx context.Context, interfaceID int64, te
 // link-local address seen on it is evidence that the address belongs to it.
 func (s *FlowStore) SetLinkLocalEvidence(ctx context.Context, interfaceID int64, evidence bool) error {
 	result, err := s.SQL.ExecContext(ctx,
-		"UPDATE interface SET link_local_evidence = ? WHERE id = ?", BoolToInt(evidence), interfaceID)
+		"UPDATE interface SET link_local_evidence = ? WHERE id = ?", boolToInt(evidence), interfaceID)
 	if err != nil {
 		return fmt.Errorf("store: setting the link-local rule of interface %d: %w", interfaceID, err)
 	}
@@ -389,7 +389,7 @@ func (s *FlowStore) OnLinkFingerprint(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("store: reading this firewall's addresses: %w", err)
 	}
-	margin, err := HeldMargin(ctx, s.SQL)
+	margin, err := heldMargin(ctx, s.SQL)
 	if err != nil {
 		return "", err
 	}

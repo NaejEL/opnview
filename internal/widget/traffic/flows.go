@@ -254,7 +254,8 @@ type destinationRow struct {
 
 // DestinationRows reads the window's connections by destination. Under aggregate_mode = no_domains
 // the core reads no site name at all, so every destination is in address form and the answer is
-// the one the database would give with no attribution stored.
+// the one the database would give with no attribution stored. The outside peers of its rows are
+// placed (request.Place), so their geolocations are read together at the first a script asks for.
 func DestinationRows(r *request.Request) ([]destinationRow, error) {
 	name := "widget_flow_destinations"
 	if r.NoDomains() {
@@ -282,6 +283,9 @@ func DestinationRows(r *request.Request) ([]destinationRow, error) {
 		item.SiteName, item.Port, item.Protocol = request.NullableText(site), request.NullableNumber(port), request.NullableText(protocol)
 		item.Bytes, item.BlockedBytes = bytes.Int64, blk.Int64
 		item.NetflowMembers = Summable(measured).NetflowMembers
+		if item.PeerAddress != nil {
+			r.Place(*item.PeerAddress)
+		}
 		rows = append(rows, item)
 		return nil
 	})

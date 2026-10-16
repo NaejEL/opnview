@@ -180,7 +180,7 @@ func (g RecentGap) MissedSeconds() int64 { return g.IntervalEndAt - g.IntervalSt
 // index's own column and the order is the index's order read backwards, so the plan
 // is a search of that index and never a scan of the table: collection_gap is a
 // growing table, and the screen reads one day of it.
-const RecentGapsStatement = `SELECT p.kind, p.provider_key, collection_gap.reason,
+const recentGapsStatement = `SELECT p.kind, p.provider_key, collection_gap.reason,
         collection_gap.interval_start_at, collection_gap.interval_end_at,
         collection_gap.detected_at, collection_gap.detail
  FROM collection_gap
@@ -190,7 +190,7 @@ const RecentGapsStatement = `SELECT p.kind, p.provider_key, collection_gap.reaso
 
 // RecentCollectionGaps returns every gap detected at or after since, newest first.
 func (s *ReadStore) RecentCollectionGaps(ctx context.Context, since int64) ([]RecentGap, error) {
-	rows, err := s.SQL.QueryContext(ctx, RecentGapsStatement, since)
+	rows, err := s.SQL.QueryContext(ctx, recentGapsStatement, since)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading the recent collection gaps: %w", err)
 	}

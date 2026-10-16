@@ -341,7 +341,7 @@ func blankOrComment(statement string) bool {
 	return true
 }
 
-// firstLine returns the first line of a statement that is not a comment, so an error names the
+// FirstLine returns the first line of a statement that is not a comment, so an error names the
 // statement without reprinting its documentation.
 func FirstLine(statement string) string {
 	for _, line := range strings.Split(statement, "\n") {

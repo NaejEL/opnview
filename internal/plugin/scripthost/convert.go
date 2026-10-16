@@ -1,4 +1,4 @@
-package runtime
+package scripthost
 
 import (
 	"encoding/json"
@@ -22,7 +22,7 @@ import (
 // records_invalid and stores nothing -- not the valid records beside the invalid one, because a
 // kind that stored half of a page would record a coverage it does not have.
 
-// checkRecord validates one value against a record table and returns its fields with their
+// CheckRecord validates one value against a record table and returns its fields with their
 // values normalised: text a string, integer an int64, number a float64, boolean a bool,
 // text_list a []string, object its JSON text, record a map and records a list of maps. An
 // optional field that is absent or null is left out.
@@ -132,7 +132,7 @@ func convertField(contract provider.Contract, field provider.Field, raw any, pat
 	return nil, fmt.Errorf("%s has the unknown type %s", path, field.Type)
 }
 
-// integerOf reads a whole number, whichever numeric type a script's value exported as.
+// IntegerOf reads a whole number, whichever numeric type a script's value exported as.
 func IntegerOf(raw any) (int64, bool) {
 	switch typed := raw.(type) {
 	case int64:
@@ -229,7 +229,7 @@ func Texts(record map[string]any, name string) []string {
 	return value
 }
 
-// resultOf converts a checked `result` record to a provider.Result. Its probe names one of the
+// ResultOf converts a checked `result` record to a provider.Result. Its probe names one of the
 // plugin's declared endpoints; its outcome is one of the closed outcome codes.
 func ResultOf(checked map[string]any, endpoints map[string]opnsense.Endpoint) (provider.Result, error) {
 	result := provider.Result{
@@ -251,7 +251,7 @@ func ResultOf(checked map[string]any, endpoints map[string]opnsense.Endpoint) (p
 	return result, nil
 }
 
-// checkRows validates the rows a plugin of a declared kind wrote, against its own tables: the
+// CheckRows validates the rows a plugin of a declared kind wrote, against its own tables: the
 // table must be the plugin's, every column declared, every NOT NULL column present, every value
 // of its column's type.
 func CheckRows(tables map[string]plugindecl.PluginTable, raw any) (plugintables.PluginRows, error) {
@@ -346,7 +346,7 @@ func checkRow(table plugindecl.PluginTable, row map[string]any, path string) (ma
 	return converted, nil
 }
 
-// checkState validates the durable state a plugin returns: an object of strings.
+// CheckState validates the durable state a plugin returns: an object of strings.
 func CheckState(raw any) (map[string]string, error) {
 	if raw == nil {
 		return nil, nil

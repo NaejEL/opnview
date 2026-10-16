@@ -118,6 +118,12 @@ type PluginTable struct {
 	RetentionSeconds int64
 }
 
+// Growing reports whether the table grows with time, as the schema checks classify every table:
+// one declaring a time column is purged by its retention -- its own, or the installation's -- and
+// accumulates a row per observation until then; one without holds what its plugin keeps, and is
+// bounded. The class is read from the declaration alone, never from a list.
+func (t PluginTable) Growing() bool { return t.TimeColumn != "" }
+
 // PluginSchema is the schema of a plugin's tables.
 func PluginSchema(plugin string) string { return PluginSchemaPrefix + plugin }
 
@@ -127,12 +133,12 @@ func (t PluginTable) SQLName() string { return PluginTableSQLName(t.Plugin, t.Ta
 // PluginTableSQLName composes the qualified name of a plugin's table.
 func PluginTableSQLName(plugin, table string) string { return PluginSchema(plugin) + "." + table }
 
-// quoted is the table's qualified name, each part quoted, as DDL and DML use it.
+// Quoted is the table's qualified name, each part quoted, as DDL and DML use it.
 func (t PluginTable) Quoted() string {
 	return QuoteIdentifier(PluginSchema(t.Plugin)) + "." + QuoteIdentifier(t.Table)
 }
 
-// quoteIdentifier quotes an identifier.
+// QuoteIdentifier quotes an identifier.
 func QuoteIdentifier(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
 
 // CarriesDomain reports whether any column of the table carries a domain name.
@@ -166,7 +172,7 @@ func (t PluginTable) column(name string) (PluginColumn, bool) {
 	return PluginColumn{}, false
 }
 
-// pluginTableSet is the plugin tables ensured on one store, by qualified name: the writes, the
+// PluginTableSet is the plugin tables ensured on one store, by qualified name: the writes, the
 // purge and the widget query check read them.
 type PluginTableSet struct {
 	sync.RWMutex
@@ -278,7 +284,7 @@ func quotedList(names []string) string {
 	return strings.Join(quoted, ", ")
 }
 
-// createStatements returns the DDL of a declaration: the schema, the table, its hypertable, then
+// CreateStatements returns the DDL of a declaration: the schema, the table, its hypertable, then
 // its indexes. Each is idempotent.
 func (t PluginTable) CreateStatements() []string {
 	var definition strings.Builder
@@ -322,7 +328,7 @@ func (t PluginTable) CreateStatements() []string {
 	return statements
 }
 
-// declaration is the full, canonical declaration of a table, as opnview records it: every change
+// Declaration is the full, canonical declaration of a table, as opnview records it: every change
 // to any part of it rebuilds the table.
 func (t PluginTable) Declaration() string {
 	shape := struct {
@@ -335,7 +341,7 @@ func (t PluginTable) Declaration() string {
 	return string(encoded)
 }
 
-// upsertStatement is the INSERT a row of the table is written with: an upsert on the primary key
+// UpsertStatement is the INSERT a row of the table is written with: an upsert on the primary key
 // when there is one, a plain insert otherwise.
 func (t PluginTable) UpsertStatement() string {
 	names := make([]string, 0, len(t.Columns))
@@ -375,7 +381,7 @@ func (c PluginColumn) placeholder() string {
 	return "?"
 }
 
-// pluginArgument turns a row's value into the argument its column's placeholder takes: an int64,
+// PluginArgument turns a row's value into the argument its column's placeholder takes: an int64,
 // a float64 or text; nil stays nil. A value of the wrong kind is an error naming the column.
 func PluginArgument(column PluginColumn, value any) (any, error) {
 	if value == nil {
@@ -447,7 +453,7 @@ func PluginArgument(column PluginColumn, value any) (any, error) {
 	return nil, invalid()
 }
 
-// multiRowInsert is one INSERT of several rows, with the upsert of upsertStatement.
+// MultiRowInsert is one INSERT of several rows, with the upsert of upsertStatement.
 func (t PluginTable) MultiRowInsert(rows []map[string]any) (string, []any, error) {
 	names := make([]string, 0, len(t.Columns))
 	for _, column := range t.Columns {
@@ -476,7 +482,7 @@ func (t PluginTable) MultiRowInsert(rows []map[string]any) (string, []any, error
 	return statement, arguments, nil
 }
 
-// lastPerKey keeps, of rows sharing a primary key, the last: one INSERT may not touch a row twice,
+// LastPerKey keeps, of rows sharing a primary key, the last: one INSERT may not touch a row twice,
 // and the last row written is the one a sequence of single writes would have kept.
 func LastPerKey(table PluginTable, rows []map[string]any) []map[string]any {
 	if len(table.PrimaryKey) == 0 {
@@ -500,7 +506,7 @@ func LastPerKey(table PluginTable, rows []map[string]any) []map[string]any {
 	return kept
 }
 
-// contains reports whether a list holds a value.
+// Contains reports whether a list holds a value.
 func Contains(list []string, value string) bool {
 	for _, held := range list {
 		if held == value {

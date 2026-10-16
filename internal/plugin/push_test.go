@@ -16,7 +16,7 @@ import (
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/push"
 )
 
@@ -275,7 +275,7 @@ func TestAParseFunctionIsTakenFromTheScriptOfTheFirewallsVersion(t *testing.T) {
 		prepared := sink.Prepare(context.Background(), records)
 		gate.Close()
 		if want == "" {
-			if prepared.Failed != 1 || prepared.Counts[string(runtime.FailureVersionUnsupported)] != 1 {
+			if prepared.Failed != 1 || prepared.Counts[string(scripthost.FailureVersionUnsupported)] != 1 {
 				t.Errorf("version %s: %+v", version, prepared)
 			}
 			continue

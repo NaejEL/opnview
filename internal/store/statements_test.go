@@ -1,7 +1,6 @@
-package store
+package store_test
 
 import (
-	"context"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -10,74 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store"
+
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The embedded statements, and the value sets they match on.
-
-// TestEveryStatementPreparesForEveryPeriod is the statement files' own check: every named
-// statement, and every period of every template, is valid SQL against the schema.
-func TestEveryStatementPreparesForEveryPeriod(t *testing.T) {
-	t.Parallel()
-	database, _ := openTestStore(t)
-	ctx := context.Background()
-	names := mustStatementNames(t)
-	if len(names) < 40 {
-		t.Fatalf("only %d statements were parsed, so the parser is not reaching them", len(names))
-	}
-	for _, name := range names {
-		texts := []string{}
-		if sqldb.IsComposeTemplate(name) {
-			composed := 0
-			for _, period := range vocab.Periods() {
-				if _, has := period.Child(); !has {
-					continue
-				}
-				text, err := sqldb.ComposeStatement(name, period)
-				if err != nil {
-					t.Fatalf("expanding %s: %v", name, err)
-				}
-				texts = append(texts, text)
-				composed++
-			}
-			if composed != 3 {
-				t.Errorf("the composition %s was expanded for %d periods, not the three with a finer one", name, composed)
-			}
-		} else if sqldb.IsPeriodTemplate(name) {
-			for _, period := range vocab.Periods() {
-				text, err := sqldb.PeriodStatement(name, period)
-				if err != nil {
-					t.Fatalf("expanding %s: %v", name, err)
-				}
-				texts = append(texts, text)
-			}
-		} else {
-			text, err := sqldb.Statement(name)
-			if err != nil {
-				t.Fatalf("reading %s: %v", name, err)
-			}
-			texts = append(texts, text)
-		}
-		for _, text := range texts {
-			if err := explainStatement(ctx, database, text); err != nil {
-				t.Errorf("the statement %s does not plan: %v", name, err)
-			}
-		}
-	}
-	if _, err := sqldb.Statement("no_such_statement"); err == nil {
-		t.Error("a statement that does not exist was returned")
-	}
-	if _, err := sqldb.PeriodStatement("dirty_hours", vocab.PeriodHour); err == nil {
-		t.Error("a statement that is not a template was expanded as one")
-	}
-	if _, err := sqldb.ComposeStatement("compose_volume", vocab.PeriodHour); err == nil {
-		t.Error("an hour, which has no finer period, was composed")
-	}
-	if _, err := sqldb.ComposeStatement("insert_volume", vocab.PeriodDay); err == nil {
-		t.Error("a statement that is not a composition was expanded as one")
-	}
-}
 
 // TestTheStatementParserRefusesWhatItCannotRun keeps two statements in one block, and an
 // empty block, from reaching the database.
@@ -149,7 +87,7 @@ func TestNoCodeMatchesALogReasonOutsideTheEstablishedSet(t *testing.T) {
 	}
 
 	// The view names every established value but `match` as a drop no rule expresses.
-	schema, _ := sqlFiles.ReadFile("schema.sql")
+	schema, _ := store.SQLFiles.ReadFile("schema.sql")
 	view := string(schema)[strings.Index(string(schema), "CREATE OR REPLACE VIEW blocked_decision"):]
 	for _, reason := range vocab.LogReasons {
 		if !strings.Contains(view, "'"+reason+"'") {

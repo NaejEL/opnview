@@ -67,7 +67,7 @@ type engine struct {
 	hasLimit bool
 }
 
-// serveDeclarative answers a request of a declarative preset.
+// ServeDeclarative answers a request of a declarative preset.
 func ServeDeclarative(r *request.Request) (any, bool, error) {
 	preset := r.Preset
 	e := &engine{r: r, preset: preset, columns: preset.Columns, measure: preset.Measure}
@@ -1033,7 +1033,7 @@ func (e *engine) drawGraph() (any, bool, error) {
 	return data, len(e.rows) > 0, nil
 }
 
-// shapeColumns are the columns each shape's contract requires of a query; the loader refuses
+// ShapeColumns are the columns each shape's contract requires of a query; the loader refuses
 // a query that lacks one (RefusalMissingColumn).
 var ShapeColumns = map[string][]string{
 	"figure":      {"value"},

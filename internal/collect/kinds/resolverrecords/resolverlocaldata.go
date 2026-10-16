@@ -4,6 +4,8 @@ import (
 	"context"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/collect/resolverlocaldata"
 	"github.com/NaejEL/opnview/internal/store/attribution"
 )
 
@@ -58,4 +60,15 @@ func nonNil(err error) []error {
 		return nil
 	}
 	return []error{err}
+}
+
+// ProbeResolverLocalData probes every implementation of the resolver_local_data kind. The probe round (collect.ProbeAll)
+// runs it with every other kind's.
+func (c *ResolverRecordCoordinator) ProbeResolverLocalData(ctx context.Context) error {
+	return c.ResolveKind(ctx, core.KindResolverLocalData, core.ProbeablesOf(c.SourceSet.ResolverLocalData, localDataProbe))
+}
+
+// localDataProbe is the probe of one resolver_local_data implementation, as core.ProbeablesOf takes it.
+func localDataProbe(source resolverlocaldata.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
 }

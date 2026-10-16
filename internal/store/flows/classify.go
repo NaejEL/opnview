@@ -107,7 +107,7 @@ func (r *Reclassification) add(other Reclassification) {
 	r.Placed += other.Placed
 }
 
-// prefixEvidence is one interface network that counts.
+// PrefixEvidence is one interface network that counts.
 type PrefixEvidence struct {
 	interfaceID int64
 	prefix      netip.Prefix
@@ -202,7 +202,7 @@ func (s *FlowStore) ReclassifyAll(ctx context.Context, now int64) (Reclassificat
 // neighbour pass recognised them (defect L2 of
 // specs/SPEC-test-budget-and-two-live-defects.md).
 func (s *FlowStore) PurgeUnreferencedClients(ctx context.Context) (int64, error) {
-	margin, err := HeldMargin(ctx, s.SQL)
+	margin, err := heldMargin(ctx, s.SQL)
 	if err != nil {
 		return 0, err
 	}
@@ -273,7 +273,7 @@ func (s *FlowStore) reclassifyChunk(ctx context.Context, addresses []string, now
 	if err != nil {
 		return result, err
 	}
-	margin, err := HeldMargin(ctx, prepared)
+	margin, err := heldMargin(ctx, prepared)
 	if err != nil {
 		return result, err
 	}
@@ -459,7 +459,7 @@ func idText(id *int64) string {
 	return strconv.FormatInt(*id, 10)
 }
 
-// membership applies the four kinds of evidence in order of strength.
+// Membership applies the four kinds of evidence in order of strength.
 func Membership(ctx context.Context, q sqldb.Querier, address string, prefixes []PrefixEvidence) (*int64, error) {
 	place, err := placeAddress(ctx, q, address, prefixes)
 	return place.interfaceID, err
@@ -557,7 +557,7 @@ func longestNetwork(address netip.Addr, prefixes []PrefixEvidence) (int64, bool)
 	return 0, false
 }
 
-// loadPrefixes reads the interface networks that count, decision D1.
+// LoadPrefixes reads the interface networks that count, decision D1.
 func LoadPrefixes(ctx context.Context, q sqldb.Querier) ([]PrefixEvidence, error) {
 	text, err := sqldb.Statement("membership_networks")
 	if err != nil {

@@ -1,8 +1,10 @@
-package store
+package store_test
 
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -216,7 +218,7 @@ func TestTwoProvidersReadingOneSubjectAtOneInstantAreTwoReadingsAndOneGaugeIsSti
 
 // schemaDefinitions renders every object in the database's schema, so a test can assert that a
 // statement changed no DDL at all.
-func schemaDefinitions(t *testing.T, database *Store) string {
+func schemaDefinitions(t *testing.T, database *store.Store) string {
 	t.Helper()
 	rows, err := database.DB().QueryContext(context.Background(),
 		`SELECT CAST(c.relkind AS TEXT) || ' ' || n.nspname || '.' || c.relname || ' ' ||

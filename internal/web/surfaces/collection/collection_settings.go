@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/web/settingfields"
 
 	"github.com/NaejEL/opnview/internal/config"
@@ -366,7 +367,7 @@ func entryIndex(entries []collectionEntry, id string) int {
 func (s *surface) polledKindCard(ctx context.Context, kind polledKind, settings config.Config,
 	page *collectionPage) (*settingsCard, error) {
 	card := &settingsCard{
-		ID: kind.Kind, LabelKey: web.KindLabelKey(kind.Kind),
+		ID: kind.Kind, LabelKey: messages.KindLabelKey(kind.Kind),
 		FieldCard: fieldCard, FieldConfirm: fieldConfirm, FieldCancel: fieldCancel,
 	}
 	rows, err := s.store.SourceAvailability(ctx)
@@ -385,9 +386,9 @@ func (s *surface) polledKindCard(ctx context.Context, kind polledKind, settings 
 		if row.Kind != kind.Kind {
 			continue
 		}
-		availability, _ := web.AvailabilityOf(row)
+		availability, _ := messages.AvailabilityOf(row)
 		card.Availability = append(card.Availability, figureRow{
-			LabelKey: web.ProviderLabelKey(row.Kind, row.ProviderKey), StateKey: availability})
+			LabelKey: messages.ProviderLabelKey(row.Kind, row.ProviderKey), StateKey: availability})
 
 		selection, err := config.LoadSourceSelection(ctx, s.store, row.Kind, row.ProviderKey)
 		if err != nil {
@@ -400,7 +401,7 @@ func (s *surface) polledKindCard(ctx context.Context, kind polledKind, settings 
 			card.Edited = card.Edited || value != string(selection)
 		}
 		card.Implementations = append(card.Implementations, implementationRow{
-			LabelKey: web.ProviderLabelKey(row.Kind, row.ProviderKey),
+			LabelKey: messages.ProviderLabelKey(row.Kind, row.ProviderKey),
 			Field:    field,
 			Options:  selectionOptions(shown),
 		})

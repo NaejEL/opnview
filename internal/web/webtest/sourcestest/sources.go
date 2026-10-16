@@ -11,7 +11,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 )
 
-// setAvailabilityDetail records a probe outcome with a probe name and a detail.
+// SetAvailabilityDetail records a probe outcome with a probe name and a detail.
 func SetAvailabilityDetail(h *webtest.Harness, kind, providerKey string, state vocab.AvailabilityState,
 	probe string, detail *string) {
 	h.T.Helper()
@@ -21,7 +21,7 @@ func SetAvailabilityDetail(h *webtest.Harness, kind, providerKey string, state v
 	}
 }
 
-// dropAvailability deletes one provider's availability row, which the schema
+// DropAvailability deletes one provider's availability row, which the schema
 // prevents and a screen still has to name.
 func DropAvailability(h *webtest.Harness, kind, providerKey string) {
 	h.T.Helper()
@@ -31,7 +31,7 @@ func DropAvailability(h *webtest.Harness, kind, providerKey string) {
 	}
 }
 
-// gapReasonsOfSchema reads the reasons collection_gap's CHECK admits from the table's
+// GapReasonsOfSchema reads the reasons collection_gap's CHECK admits from the table's
 // own definition, so a reason the schema gains is a reason this test asks a key of.
 func GapReasonsOfSchema(t *testing.T, h *webtest.Harness) []string {
 	t.Helper()
@@ -53,7 +53,7 @@ func GapReasonsOfSchema(t *testing.T, h *webtest.Harness) []string {
 	return reasons
 }
 
-// outcomeOfState is the outcome code a fixture records beside a state: the test sets
+// OutcomeOfState is the outcome code a fixture records beside a state: the test sets
 // the state and the probe, and the code follows from them as the collectors write it.
 func OutcomeOfState(state vocab.AvailabilityState, probe string) vocab.AvailabilityOutcome {
 	switch {

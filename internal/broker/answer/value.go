@@ -278,7 +278,7 @@ func NewArray(items ...*Value) *Value { return &Value{Kind: Array, Items: items}
 // NewBool is a boolean value.
 func NewBool(value bool) *Value { return &Value{Kind: Bool, Text: strconv.FormatBool(value)} }
 
-// canonicalNumber reports whether a number's text is what PostgreSQL's numeric type prints back
+// CanonicalNumber reports whether a number's text is what PostgreSQL's numeric type prints back
 // for it: plain decimal notation, no exponent, no negative zero.
 func CanonicalNumber(text string) bool {
 	if text == "" || strings.ContainsAny(text, "eE+") {

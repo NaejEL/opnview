@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/sizing"
 	"github.com/NaejEL/opnview/internal/store/attribution"
@@ -236,7 +238,7 @@ func (s *surface) collectionAnswer(ctx context.Context) (CollectionAnswer, error
 			if err != nil {
 				return answer, err
 			}
-			availability, _ := web.AvailabilityOf(row)
+			availability, _ := messages.AvailabilityOf(row)
 			code := web.ConditionOf(availability)
 			polled.Implementations = append(polled.Implementations, ImplementationState{
 				ProviderKey: row.ProviderKey, Selection: string(selection), Availability: &code})

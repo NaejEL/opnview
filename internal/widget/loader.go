@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/store"
-	readspkg "github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
-	paramspkg "github.com/NaejEL/opnview/internal/widget/params"
+	"github.com/NaejEL/opnview/internal/widget/params"
 	"github.com/NaejEL/opnview/internal/widget/request"
 	"github.com/NaejEL/opnview/internal/widget/shapes"
 )
@@ -42,34 +42,34 @@ var operatorSequence atomic.Int64
 const declarativeStatementPrefix = "widget_x_"
 
 // presetFromManifest builds the preset of a validated manifest.
-func presetFromManifest(manifest paramspkg.Manifest, origin string) request.Preset {
-	params := make([]paramspkg.Param, 0, len(manifest.Parameters))
+func presetFromManifest(manifest params.Manifest, origin string) request.Preset {
+	parameters := make([]params.Param, 0, len(manifest.Parameters))
 	for _, parameter := range manifest.Parameters {
-		params = append(params, parameter.Param())
+		parameters = append(parameters, parameter.Param())
 	}
 	if manifest.Volumes {
 		// The core's parameter, which the widget does not declare
 		// (internal/widget/request/measure.go).
-		params = append(params, request.VolumeMeasureParam())
+		parameters = append(parameters, request.VolumeMeasureParam())
 	}
 	return request.Preset{
 		Type: manifest.Type, Shape: manifest.Shape, Providers: append([]string{}, manifest.Providers...),
 		Primary: manifest.Primary, Windowed: manifest.Windowed,
-		WithheldWholeUnderNoDomains: manifest.NoDomains == paramspkg.NoDomainsWhole,
-		Params:                      params, LowerBound: manifest.LowerBound, Measure: manifest.Measure,
+		WithheldWholeUnderNoDomains: manifest.NoDomains == params.NoDomainsWhole,
+		Params:                      parameters, LowerBound: manifest.LowerBound, Measure: manifest.Measure,
 		Origin: origin, Manifest: manifest, Volumes: manifest.Volumes,
 	}
 }
 
 // queryParameters are the named parameters the engine binds for a manifest.
-func queryParameters(manifest paramspkg.Manifest) []string {
+func queryParameters(manifest params.Manifest) []string {
 	names := []string{"now"}
 	if manifest.Windowed {
 		names = append(names, "from", "to")
 	}
 	for _, parameter := range manifest.Parameters {
-		switch paramspkg.ParamKind(parameter.Kind) {
-		case paramspkg.KindSeries, paramspkg.KindObject:
+		switch params.ParamKind(parameter.Kind) {
+		case params.KindSeries, params.KindObject:
 			continue
 		}
 		names = append(names, parameter.Key)
@@ -78,24 +78,24 @@ func queryParameters(manifest paramspkg.Manifest) []string {
 }
 
 // checkDeclarative validates a declarative widget's query text and returns its columns.
-func checkDeclarative(ctx context.Context, database *store.Store, manifest paramspkg.Manifest, text string) (
-	[]string, *paramspkg.Refusal) {
+func checkDeclarative(ctx context.Context, database *store.Store, manifest params.Manifest, text string) (
+	[]string, *params.Refusal) {
 	info, err := database.CheckQuery(ctx, text, queryParameters(manifest))
 	if err != nil {
 		return nil, queryRefusal(manifest.Type, "the query", err)
 	}
 	// The data-leak guard every widget query passes (B3 of the backend-completion cycle).
-	reads, err := database.Reads(ctx, text, info.Parameters)
+	relations, err := database.Reads(ctx, text, info.Parameters)
 	if err != nil {
-		return nil, paramspkg.Refuse(manifest.Type, paramspkg.RefusalQueryDoesNotPlan, "the query: %v", err)
+		return nil, params.Refuse(manifest.Type, params.RefusalQueryDoesNotPlan, "the query: %v", err)
 	}
-	if credential := readspkg.CredentialTablesRead(reads); len(credential) > 0 {
-		return nil, paramspkg.Refuse(manifest.Type, paramspkg.RefusalQueryReadsCredential,
+	if credential := reads.CredentialTablesRead(relations); len(credential) > 0 {
+		return nil, params.Refuse(manifest.Type, params.RefusalQueryReadsCredential,
 			"the query reads %v, which hold a credential, a session or a setting row; no widget reads them", credential)
 	}
 	for _, required := range shapes.ShapeColumns[manifest.Shape] {
-		if !paramspkg.Contains(info.Columns, required) {
-			return nil, paramspkg.Refuse(manifest.Type, paramspkg.RefusalMissingColumn,
+		if !params.Contains(info.Columns, required) {
+			return nil, params.Refuse(manifest.Type, params.RefusalMissingColumn,
 				"the %s shape needs a column named %q and the query returns %v", manifest.Shape, required, info.Columns)
 		}
 	}
@@ -105,19 +105,19 @@ func checkDeclarative(ctx context.Context, database *store.Store, manifest param
 // loadOperatorWidgets reads <dir>/<type>/ for every directory. existing holds the types
 // already served, which an operator widget may not shadow.
 func loadOperatorWidgets(ctx context.Context, database *store.Store, dir string, existing map[string]request.Preset) (
-	[]request.Preset, []paramspkg.Refusal) {
+	[]request.Preset, []params.Refusal) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, []paramspkg.Refusal{*paramspkg.Refuse(dir, paramspkg.RefusalNotADirectory, "the widgets directory cannot be read: %v", err)}
+		return nil, []params.Refusal{*params.Refuse(dir, params.RefusalNotADirectory, "the widgets directory cannot be read: %v", err)}
 	}
 	ctx, cancel := context.WithTimeout(ctx, loadTimeout)
 	defer cancel()
 	var (
 		loaded   []request.Preset
-		refusals []paramspkg.Refusal
+		refusals []params.Refusal
 		claimed  = map[string]bool{}
 	)
 	for _, entry := range entries {
@@ -138,42 +138,42 @@ func loadOperatorWidgets(ctx context.Context, database *store.Store, dir string,
 
 // loadOperatorWidget validates one operator directory and registers its query.
 func loadOperatorWidget(ctx context.Context, database *store.Store, directory, name string,
-	existing map[string]request.Preset, claimed map[string]bool) (request.Preset, *paramspkg.Refusal) {
+	existing map[string]request.Preset, claimed map[string]bool) (request.Preset, *params.Refusal) {
 	raw, err := os.ReadFile(filepath.Join(directory, manifestFile))
 	if err != nil {
-		return request.Preset{}, paramspkg.Refuse(name, paramspkg.RefusalManifestUnreadable, "%s cannot be read: %v", manifestFile, err)
+		return request.Preset{}, params.Refuse(name, params.RefusalManifestUnreadable, "%s cannot be read: %v", manifestFile, err)
 	}
-	manifest, err := paramspkg.DecodeManifest(raw)
+	manifest, err := params.DecodeManifest(raw)
 	if err != nil {
-		return request.Preset{}, paramspkg.Refuse(name, paramspkg.RefusalManifestInvalid, "%s is not a valid manifest: %v", manifestFile, err)
+		return request.Preset{}, params.Refuse(name, params.RefusalManifestInvalid, "%s is not a valid manifest: %v", manifestFile, err)
 	}
-	if refusal := paramspkg.ValidateManifest(manifest); refusal != nil {
+	if refusal := params.ValidateManifest(manifest); refusal != nil {
 		refusal.Type = name
 		return request.Preset{}, refusal
 	}
 	if manifest.Type != name {
-		return request.Preset{}, paramspkg.Refuse(name, paramspkg.RefusalTypeMismatchWithDirectory,
+		return request.Preset{}, params.Refuse(name, params.RefusalTypeMismatchWithDirectory,
 			"the manifest declares type %q in the directory %q: they must be the same", manifest.Type, name)
 	}
 	if _, taken := existing[manifest.Type]; taken || claimed[manifest.Type] {
-		return request.Preset{}, paramspkg.Refuse(name, paramspkg.RefusalTypeCollision,
+		return request.Preset{}, params.Refuse(name, params.RefusalTypeCollision,
 			"the type %q is already served; an operator widget never shadows another widget", manifest.Type)
 	}
 	switch len(manifest.Queries) {
 	case 0:
-		return request.Preset{}, paramspkg.Refuse(name, paramspkg.RefusalQueryMissing, "a declarative widget declares its query file in `queries`")
+		return request.Preset{}, params.Refuse(name, params.RefusalQueryMissing, "a declarative widget declares its query file in `queries`")
 	case 1:
 	default:
-		return request.Preset{}, paramspkg.Refuse(name, paramspkg.RefusalTooManyQueries, "a widget runs exactly one query and this one declares %d",
+		return request.Preset{}, params.Refuse(name, params.RefusalTooManyQueries, "a widget runs exactly one query and this one declares %d",
 			len(manifest.Queries))
 	}
 	text, err := os.ReadFile(filepath.Join(directory, manifest.Queries[0]))
 	if err != nil {
-		code := paramspkg.RefusalQueryUnreadable
+		code := params.RefusalQueryUnreadable
 		if errors.Is(err, fs.ErrNotExist) {
-			code = paramspkg.RefusalQueryMissing
+			code = params.RefusalQueryMissing
 		}
-		return request.Preset{}, paramspkg.Refuse(name, code, "%s cannot be read: %v", manifest.Queries[0], err)
+		return request.Preset{}, params.Refuse(name, code, "%s cannot be read: %v", manifest.Queries[0], err)
 	}
 	columns, refusal := checkDeclarative(ctx, database, manifest, string(text))
 	if refusal != nil {
@@ -188,7 +188,7 @@ func loadOperatorWidget(ctx context.Context, database *store.Store, directory, n
 	preset.Columns = columns
 	preset.Serve = shapes.ServeDeclarative
 	if err := sqldb.RegisterQuery(fmt.Sprintf("operator:%s#%d", manifest.Type, sequence), preset.Statement, string(text)); err != nil {
-		return request.Preset{}, paramspkg.Refuse(name, paramspkg.RefusalStatementRegistrationFailed, "%v", err)
+		return request.Preset{}, params.Refuse(name, params.RefusalStatementRegistrationFailed, "%v", err)
 	}
 	return preset, nil
 }

@@ -1,8 +1,10 @@
-package store
+package store_test
 
 import (
 	"context"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -18,7 +20,7 @@ import (
 // The schema ships no such row, deliberately — a registry row is a claim that something
 // implements the kind, and no connector for a state-shaped source is written yet — so a test
 // that needs one registers it, which is the INSERT a real connector's cycle would add.
-func exampleStateProvider(t *testing.T, database *Store) int64 {
+func exampleStateProvider(t *testing.T, database *store.Store) int64 {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := database.DB().ExecContext(ctx,

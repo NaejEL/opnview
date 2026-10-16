@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -279,27 +280,27 @@ func assertSlotsArePurgedPartPlusFlows(t *testing.T, database *store.Store) {
 // slotBytesAt sums the volume family's bytes in the slot of period holding instant.
 func slotBytesAt(t *testing.T, database *store.Store, period vocab.Period, instant int64) int {
 	t.Helper()
-	return scalarCount(t, database, "SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_"+period.Name+
+	return collecttest.ScalarCount(t, database, "SELECT coalesce(sum(bytes), 0) FROM volume_aggregate_"+period.Name+
 		" WHERE period_start_at = ?", period.SlotStart(instant))
 }
 
 // arrangeProbeRecord stands up a harness whose filter log offers the verifier's probe: one
 // 77-byte record at now - 1000, from an address the interface networks place, under a
 // retention of 600 s.
-func arrangeProbeRecord(t *testing.T) (*probeHarness, int64) {
+func arrangeProbeRecord(t *testing.T) (*collecttest.ProbeHarness, int64) {
 	t.Helper()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	observed := referenceEpoch() - 1000
+	harness := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
+	observed := collecttest.ReferenceEpoch() - 1000
 	probe := pageRecord{digest: "exampledigest0000000000000000301", observedAt: observed, device: "exdev0",
 		src: "198.51.100.10", dst: "203.0.113.77", version: "4", action: "pass", bytes: 77}
 	// The page is the probe and nothing else, which a fixture would say nothing more about.
-	harness.fake.AnswerJSON(opnsense.FirewallLog, []any{probe.body()})
+	harness.Fake.AnswerJSON(opnsense.FirewallLog, []any{probe.body()})
 	ctx := context.Background()
-	if err := harness.collector.probeFirewallLog(ctx); err != nil {
+	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
-	if err := harness.store.SetSetting(ctx, "retention_seconds", "600", referenceEpoch()); err != nil {
+	if err := harness.Store.SetSetting(ctx, "retention_seconds", "600", collecttest.ReferenceEpoch()); err != nil {
 		t.Fatalf("setting the retention: %v", err)
 	}
 	return harness, observed
@@ -307,20 +308,20 @@ func arrangeProbeRecord(t *testing.T) (*probeHarness, int64) {
 
 // assertTheProbeIsInEverySlot checks the probe's 77 bytes are in the hour, day, week and
 // month holding it, in the purged part, and nowhere twice.
-func assertTheProbeIsInEverySlot(t *testing.T, harness *probeHarness, observed int64) {
+func assertTheProbeIsInEverySlot(t *testing.T, harness *collecttest.ProbeHarness, observed int64) {
 	t.Helper()
-	if left := countRows(t, harness.store, "flow"); left != 0 {
+	if left := collecttest.CountRows(t, harness.Store, "flow"); left != 0 {
 		t.Errorf("%d flows survived the purge, which should have moved the probe", left)
 	}
-	if purged := scalarCount(t, harness.store, "SELECT coalesce(sum(bytes), 0) FROM purged_flow_hour"); purged != 77 {
+	if purged := collecttest.ScalarCount(t, harness.Store, "SELECT coalesce(sum(bytes), 0) FROM purged_flow_hour"); purged != 77 {
 		t.Errorf("the purged part holds %d bytes, not the probe's 77", purged)
 	}
 	for _, period := range vocab.Periods() {
-		if got := slotBytesAt(t, harness.store, period, observed); got != 77 {
+		if got := slotBytesAt(t, harness.Store, period, observed); got != 77 {
 			t.Errorf("the %s slot holding the probe holds %d bytes, not 77", period.Name, got)
 		}
 	}
-	assertSlotsArePurgedPartPlusFlows(t, harness.store)
+	assertSlotsArePurgedPartPlusFlows(t, harness.Store)
 }
 
 // TestAPurgeRequestedBetweenAPassStoreAndItsRefreshWaitsForTheDerivation is AC1 at
@@ -336,9 +337,9 @@ func TestAPurgeRequestedBetweenAPassStoreAndItsRefreshWaitsForTheDerivation(t *t
 	waiting := make(chan struct{})
 	purged := make(chan error, 1)
 	ranInsideTheWindow := false
-	harness.collector.Hooks.PurgeWaits = func() { close(waiting) }
-	harness.collector.Hooks.AfterStore = func() {
-		go func() { purged <- harness.collector.Purge(ctx) }()
+	harness.Collector.Hooks.PurgeWaits = func() { close(waiting) }
+	harness.Collector.Hooks.AfterStore = func() {
+		go func() { purged <- harness.Collector.Purge(ctx) }()
 		select {
 		case <-waiting:
 		case err := <-purged:
@@ -347,7 +348,7 @@ func TestAPurgeRequestedBetweenAPassStoreAndItsRefreshWaitsForTheDerivation(t *t
 			purged <- err
 		}
 	}
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
 	if err := <-purged; err != nil {
@@ -358,8 +359,8 @@ func TestAPurgeRequestedBetweenAPassStoreAndItsRefreshWaitsForTheDerivation(t *t
 	}
 	assertTheProbeIsInEverySlot(t, harness, observed)
 
-	inside := interfaceIDOf(t, harness.store, "example_if_a")
-	if placed := scalarCount(t, harness.store, `SELECT count(*) FROM purged_flow_hour
+	inside := interfaceIDOf(t, harness.Store, "example_if_a")
+	if placed := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM purged_flow_hour
 		WHERE src_interface_id = ? AND local_client_id IS NOT NULL`, inside); placed != 1 {
 		t.Errorf("the purged part holds the probe placed %d times, not once: the purge froze it "+
 			"before the derivation placed it", placed)
@@ -374,16 +375,16 @@ func TestWithTheOrderingOffTheNextRefreshStillFillsEverySlot(t *testing.T) {
 	t.Parallel()
 	harness, observed := arrangeProbeRecord(t)
 	ctx := context.Background()
-	harness.collector.Hooks.Unordered = true
+	harness.Collector.Hooks.Unordered = true
 	var purgeErr error
-	harness.collector.Hooks.AfterStore = func() { purgeErr = harness.collector.Purge(ctx) }
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	harness.Collector.Hooks.AfterStore = func() { purgeErr = harness.Collector.Purge(ctx) }
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
 	if purgeErr != nil {
 		t.Fatalf("purging: %v", purgeErr)
 	}
-	if unplaced := scalarCount(t, harness.store, `SELECT count(*) FROM purged_flow_hour
+	if unplaced := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM purged_flow_hour
 		WHERE src_interface_id IS NULL AND dst_interface_id IS NULL`); unplaced != 1 {
 		t.Fatalf("the purged part holds %d unplaced rows: the purge did not run inside the window, so "+
 			"this test proves nothing about the refresh alone", unplaced)
@@ -398,10 +399,10 @@ func TestWithTheOrderingOffTheNextRefreshStillFillsEverySlot(t *testing.T) {
 // unplaced, which is what it is.
 func TestAPurgeBeforeTheFirstDerivationPlacesWhatItRemoves(t *testing.T) {
 	t.Parallel()
-	earlier := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, earlier.fake, earlier.collector)
+	earlier := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, earlier.Fake, earlier.Collector)
 	ctx := context.Background()
-	observed := referenceEpoch() - 1000
+	observed := collecttest.ReferenceEpoch() - 1000
 	for index, record := range []pageRecord{
 		{device: "exdev0", src: "198.51.100.10", dst: "203.0.113.77", version: "4", action: "pass", bytes: 70},
 		{device: "exdev3", src: "203.0.113.78", dst: "198.51.100.11", version: "4", action: "block", bytes: 80},
@@ -412,9 +413,9 @@ func TestAPurgeBeforeTheFirstDerivationPlacesWhatItRemoves(t *testing.T) {
 		if record.version == "6" {
 			version = 6
 		}
-		if err := earlier.store.InsertFlow(ctx, vocab.Flow{
+		if err := earlier.Store.InsertFlow(ctx, vocab.Flow{
 			LogDigest: fmt.Sprintf("example-unplaced-%d", index), ObservedAt: observed + int64(index),
-			IngestedAt: referenceEpoch() - 990, InterfaceDevice: record.device,
+			IngestedAt: collecttest.ReferenceEpoch() - 990, InterfaceDevice: record.device,
 			InterfaceLookupState: vocab.LookupResolved, SrcAddress: record.src, DstAddress: record.dst,
 			Protocol: "tcp", IPVersion: version, Action: record.action, Direction: "in",
 			PacketBytes: record.bytes, RuleLookupState: vocab.LookupNotFound,
@@ -422,21 +423,21 @@ func TestAPurgeBeforeTheFirstDerivationPlacesWhatItRemoves(t *testing.T) {
 			t.Fatalf("storing an unplaced flow: %v", err)
 		}
 	}
-	if err := earlier.store.SetSetting(ctx, "retention_seconds", "600", referenceEpoch()); err != nil {
+	if err := earlier.Store.SetSetting(ctx, "retention_seconds", "600", collecttest.ReferenceEpoch()); err != nil {
 		t.Fatalf("setting the retention: %v", err)
 	}
 
 	// This run: a collector over the same database, whose first act is the purge.
-	collector := newTestCollector(t, providertest.NewClient(t, earlier.fake), earlier.store, earlier.clock)
+	collector := collecttest.NewTestCollector(t, providertest.NewClient(t, earlier.Fake), earlier.Store, earlier.Clock)
 	if err := collector.Purge(ctx); err != nil {
 		t.Fatalf("purging: %v", err)
 	}
-	if left := countRows(t, earlier.store, "flow"); left != 0 {
+	if left := collecttest.CountRows(t, earlier.Store, "flow"); left != 0 {
 		t.Fatalf("%d flows survived the purge", left)
 	}
-	inside := interfaceIDOf(t, earlier.store, "example_if_a")
+	inside := interfaceIDOf(t, earlier.Store, "example_if_a")
 	var rows []string
-	result, err := earlier.store.DB().Query(`SELECT bytes, coalesce(src_interface_id, 0),
+	result, err := earlier.Store.DB().Query(`SELECT bytes, coalesce(src_interface_id, 0),
 		coalesce(dst_interface_id, 0), local_client_id IS NOT NULL, traffic_direction FROM purged_flow_hour
 		ORDER BY bytes`)
 	if err != nil {
@@ -473,15 +474,15 @@ func TestAPurgeBeforeTheFirstDerivationPlacesWhatItRemoves(t *testing.T) {
 	if err := collector.RefreshAggregates(ctx); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
-	assertSlotsArePurgedPartPlusFlows(t, earlier.store)
+	assertSlotsArePurgedPartPlusFlows(t, earlier.Store)
 }
 
 // arrangeEveryStoringSource stands up a harness whose filter log, lease backend and
 // resolver are all active.
-func arrangeEveryStoringSource(t *testing.T) *probeHarness {
+func arrangeEveryStoringSource(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
-	harness := newProbeHarness(t)
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
+	harness := collecttest.NewProbeHarness(t)
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	for endpoint, fixture := range map[opnsense.Endpoint]string{
 		opnsense.FirewallLog:      "firewall_log.json",
 		opnsense.KeaStatus:        "kea_status_disabled.json",
@@ -495,18 +496,18 @@ func arrangeEveryStoringSource(t *testing.T) *probeHarness {
 		opnsense.UnboundIsEnabled: "unbound_is_enabled_on.json",
 		opnsense.SearchQueries:    "search_queries_page1.json",
 	} {
-		harness.fake.AnswerFixture(endpoint, fixture)
+		harness.Fake.AnswerFixture(endpoint, fixture)
 	}
 	ctx := context.Background()
-	for _, probe := range []func(context.Context) error{harness.collector.probeFirewallLog,
-		harness.collector.probeDHCPLease, harness.collector.probeDNSLookup} {
+	for _, probe := range []func(context.Context) error{harness.Collector.ProbeFirewallLog,
+		harness.Collector.ProbeDHCPLease, harness.Collector.ProbeDNSLookup} {
 		if err := probe(ctx); err != nil {
 			t.Fatalf("probing: %v", err)
 		}
 	}
-	for kind, want := range map[string]string{core.KindFirewallLog: ProviderPf, core.KindDHCPLease: ProviderDnsmasq,
-		core.KindDNSLookup: ProviderUnbound} {
-		if key := harness.activeKeyOf(t, kind); key != want {
+	for kind, want := range map[string]string{core.KindFirewallLog: collecttest.ProviderPf, core.KindDHCPLease: collecttest.ProviderDnsmasq,
+		core.KindDNSLookup: collecttest.ProviderUnbound} {
+		if key := harness.ActiveKeyOf(t, kind); key != want {
 			t.Fatalf("the %s kind activated %q, not %q", kind, key, want)
 		}
 	}
@@ -562,17 +563,17 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 	harness := arrangeEveryStoringSource(t)
 	ctx := context.Background()
 	// Nine minutes before a Monday's midnight, so the run crosses an hour, a day and a week.
-	start := referenceInstant().Add(23*time.Hour + 51*time.Minute)
-	setClock(harness, start)
+	start := collecttest.ReferenceInstant().Add(23*time.Hour + 51*time.Minute)
+	collecttest.SetClock(harness, start)
 	if vocab.PeriodWeek.SlotStart(start.Unix()) == vocab.PeriodWeek.SlotStart(start.Add(18*time.Minute).Unix()) {
 		t.Fatal("the run does not cross an ISO week, so the composed week is not exercised")
 	}
-	if err := harness.store.SetSetting(ctx, "retention_seconds", "600", start.Unix()); err != nil {
+	if err := harness.Store.SetSetting(ctx, "retention_seconds", "600", start.Unix()); err != nil {
 		t.Fatalf("setting the retention: %v", err)
 	}
 	// The resolver's page starts empty; each resolver pass replaces it.
 	emptyLookups := map[string]any{"total": 0, "rowCount": 0, "current": 1, "rows": []any{}}
-	harness.fake.AnswerJSON(opnsense.SearchQueries, emptyLookups)
+	harness.Fake.AnswerJSON(opnsense.SearchQueries, emptyLookups)
 
 	const iterations = 36
 	var (
@@ -593,13 +594,13 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		purgeWaits sync.Mutex
 		waited     bool
 	)
-	harness.collector.Hooks.PurgeWaits = func() {
+	harness.Collector.Hooks.PurgeWaits = func() {
 		purgeWaits.Lock()
 		waited = true
 		purgeWaits.Unlock()
 		settled <- struct{}{}
 	}
-	harness.collector.Hooks.AfterStore = func() {
+	harness.Collector.Hooks.AfterStore = func() {
 		stored <- struct{}{}
 		<-settled
 	}
@@ -623,8 +624,8 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		if i > 0 {
 			<-purgeDone
 		}
-		harness.clock.advance(30 * time.Second)
-		now := harness.clock.Now().Unix()
+		harness.Clock.Advance(30 * time.Second)
+		now := harness.Clock.Now().Unix()
 		offeredMutex.Lock()
 		offered = append(offered, generatedRecord(i, 5000, now-615), generatedRecord(i, 4000, now-5))
 		var page []any
@@ -633,14 +634,14 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		}
 		offeredMutex.Unlock()
 		// The page is generated, newest first, as the endpoint returns it.
-		harness.fake.AnswerJSON(opnsense.FirewallLog, page)
-		err := harness.collector.CollectFirewallLog(ctx)
+		harness.Fake.AnswerJSON(opnsense.FirewallLog, page)
+		err := harness.Collector.CollectFirewallLog(ctx)
 		for _, tick := range ticks {
 			tick <- struct{}{}
 		}
 		return err
 	})
-	loop("DHCP leases", ticks[0], func(int) error { return harness.collector.CollectDHCPLease(ctx) })
+	loop("DHCP leases", ticks[0], func(int) error { return harness.Collector.CollectDHCPLease(ctx) })
 	loop("resolver lookups", ticks[1], func(int) error {
 		offeredMutex.Lock()
 		var rows []any
@@ -657,16 +658,16 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		}
 		offeredMutex.Unlock()
 		// The lookups are generated, one just before every outbound record, newest first.
-		harness.fake.AnswerJSON(opnsense.SearchQueries, map[string]any{
+		harness.Fake.AnswerJSON(opnsense.SearchQueries, map[string]any{
 			"total": len(rows), "rowCount": len(rows), "current": 1, "rows": rows})
-		return harness.collector.CollectDNSLookup(ctx)
+		return harness.Collector.CollectDNSLookup(ctx)
 	})
 	loop("retention purge", nil, func(int) error {
 		<-stored
 		purgeWaits.Lock()
 		waited = false
 		purgeWaits.Unlock()
-		err := harness.collector.Purge(ctx)
+		err := harness.Collector.Purge(ctx)
 		purgeWaits.Lock()
 		ranInsideTheWindow := !waited
 		purgeWaits.Unlock()
@@ -713,8 +714,8 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 			truthBySlot[period][period.SlotStart(record.observedAt)] = slot
 		}
 	}
-	purgedBytes := int64(scalarCount(t, harness.store, "SELECT coalesce(sum(bytes), 0) FROM purged_flow_hour"))
-	presentBytes := int64(scalarCount(t, harness.store, "SELECT coalesce(sum(packet_bytes), 0) FROM flow"))
+	purgedBytes := int64(collecttest.ScalarCount(t, harness.Store, "SELECT coalesce(sum(bytes), 0) FROM purged_flow_hour"))
+	presentBytes := int64(collecttest.ScalarCount(t, harness.Store, "SELECT coalesce(sum(packet_bytes), 0) FROM flow"))
 	if purgedBytes == 0 || presentBytes == 0 {
 		t.Errorf("the purged part holds %d bytes and flow %d: the run did not exercise both", purgedBytes,
 			presentBytes)
@@ -723,8 +724,8 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		t.Errorf("the purged part holds %d bytes and flow %d; the records offered hold %d", purgedBytes,
 			presentBytes, truth)
 	}
-	purgedRecords := int64(scalarCount(t, harness.store, "SELECT coalesce(sum(connections), 0) FROM purged_flow_hour"))
-	if stored := purgedRecords + int64(countRows(t, harness.store, "flow")); stored != connections {
+	purgedRecords := int64(collecttest.ScalarCount(t, harness.Store, "SELECT coalesce(sum(connections), 0) FROM purged_flow_hour"))
+	if stored := purgedRecords + int64(collecttest.CountRows(t, harness.Store, "flow")); stored != connections {
 		t.Errorf("%d records are stored or purged, not the %d offered once each", stored, connections)
 	}
 
@@ -732,7 +733,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 	for _, period := range vocab.Periods() {
 		for _, family := range []string{"volume", "rule"} {
 			bySlot := map[int64]slotFigures{}
-			for key, figures := range storedSlots(t, harness.store, period, family) {
+			for key, figures := range storedSlots(t, harness.Store, period, family) {
 				var start int64
 				if _, err := fmt.Sscanf(key, "%d|", &start); err != nil {
 					t.Fatalf("reading the slot %s: %v", key, err)
@@ -767,16 +768,16 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		}
 	}
 	// ...and every slot of every family is its purged part plus the flows present.
-	assertSlotsArePurgedPartPlusFlows(t, harness.store)
-	if unplaced := scalarCount(t, harness.store, `SELECT count(*) FROM purged_flow_hour
+	assertSlotsArePurgedPartPlusFlows(t, harness.Store)
+	if unplaced := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM purged_flow_hour
 		WHERE src_interface_id IS NULL AND dst_interface_id IS NULL`); unplaced != 0 {
 		t.Errorf("%d purged rows are frozen unplaced, while every record has an end the interface "+
 			"networks place", unplaced)
 	}
-	if named := scalarCount(t, harness.store, "SELECT count(*) FROM domain_volume_aggregate_1h"); named == 0 {
+	if named := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM domain_volume_aggregate_1h"); named == 0 {
 		t.Error("no flow was attributed a site name, so the domain family is not exercised")
 	}
-	if repointed := scalarCount(t, harness.store, `SELECT count(*) FROM purged_flow_hour p
+	if repointed := collecttest.ScalarCount(t, harness.Store, `SELECT count(*) FROM purged_flow_hour p
 		JOIN client c ON c.id = p.local_client_id WHERE c.identity_kind <> 'address_in_interface'`); repointed == 0 {
 		t.Error("no purged row names a leased client, so the lease pass's identities are not exercised")
 	}

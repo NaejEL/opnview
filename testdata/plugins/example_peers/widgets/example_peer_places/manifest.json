@@ -1,0 +1,10 @@
+{
+  "manifest_version": 1,
+  "type": "example_peer_places",
+  "shape": "figure",
+  "windowed": true,
+  "lower_bound": true,
+  "parameters": [{"key": "period", "kind": "enum", "values": ["24h", "30d"], "default": "24h"}],
+  "queries": ["places.statements.sql"],
+  "script": "places.js"
+}

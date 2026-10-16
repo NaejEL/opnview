@@ -249,7 +249,7 @@ type RetentionDeclaration struct {
 	Seconds int64  `json:"seconds,omitempty"`
 }
 
-// namePattern is what a plugin name, an endpoint name, a table name and a column name match: a
+// NamePattern is what a plugin name, an endpoint name, a table name and a column name match: a
 // lower-case snake_case word with no double underscore, so a table's database name
 // (plugin_<plugin>__<table>) is never ambiguous.
 var NamePattern = regexp.MustCompile(`^[a-z][a-z0-9]*(_[a-z0-9]+)*$`)
@@ -260,7 +260,7 @@ var scriptPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*\.js$`)
 // errTrailingData is a manifest followed by another JSON value.
 var errTrailingData = errors.New("data after the manifest object")
 
-// decodeManifest reads one plugin.json strictly.
+// DecodeManifest reads one plugin.json strictly.
 func DecodeManifest(raw []byte) (Manifest, error) {
 	var manifest Manifest
 	decoder := json.NewDecoder(bytes.NewReader(raw))
@@ -274,7 +274,7 @@ func DecodeManifest(raw []byte) (Manifest, error) {
 	return manifest, nil
 }
 
-// validateShape checks what a manifest says about itself, before anything about the world --
+// ValidateShape checks what a manifest says about itself, before anything about the world --
 // the directory, the kinds registered, the firewall's endpoints -- is consulted.
 func ValidateShape(manifest Manifest, directory string) *Refusal {
 	if manifest.APIVersion < MinAPIVersion || manifest.APIVersion > MaxAPIVersion {
@@ -397,7 +397,7 @@ func compareVersions(a, b []int) int {
 	return 0
 }
 
-// valid reports what is wrong with a range, empty when nothing is.
+// Valid reports what is wrong with a range, empty when nothing is.
 func (r VersionRange) Valid() string {
 	if r.From == "" && r.Before == "" {
 		return "a range needs from, before, or both"
@@ -423,7 +423,7 @@ func (r VersionRange) Valid() string {
 	return ""
 }
 
-// contains reports whether a version lies in the range.
+// Contains reports whether a version lies in the range.
 func (r VersionRange) Contains(version string) bool {
 	parts, ok := versionParts(version)
 	if !ok {
@@ -444,7 +444,7 @@ func (r VersionRange) Contains(version string) bool {
 	return true
 }
 
-// overlaps reports whether two valid ranges share a version.
+// Overlaps reports whether two valid ranges share a version.
 func (r VersionRange) Overlaps(other VersionRange) bool {
 	// [a, b) and [c, d) overlap when a < d and c < b, an absent bound being infinite.
 	below := func(from, before string) bool {

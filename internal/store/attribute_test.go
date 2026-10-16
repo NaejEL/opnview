@@ -1,10 +1,11 @@
-package store
+package store_test
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store/storetest"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -56,45 +57,45 @@ func TestAttributionFollowsTheRuleExactly(t *testing.T) {
 	for index, testCase := range cases {
 		for _, v6 := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s (IPv6 %t)", testCase.name, v6), func(t *testing.T) {
-				network := newTestNetwork(t, 2, 4)
+				network := storetest.NewNetwork(t, 2, 4)
 				ctx := context.Background()
-				var client, other testClient
-				for _, candidate := range network.clients {
-					if candidate.v6 != v6 {
+				var client, other storetest.Client
+				for _, candidate := range network.Clients {
+					if candidate.V6 != v6 {
 						continue
 					}
-					if client.address == "" {
+					if client.Address == "" {
 						client = candidate
-					} else if candidate.interfaceID != client.interfaceID || other.address == "" {
+					} else if candidate.InterfaceID != client.InterfaceID || other.Address == "" {
 						other = candidate
 					}
 				}
-				destination := outside(index, v6)
+				destination := storetest.Outside(index, v6)
 				if testCase.eastWest {
-					destination = other.address
+					destination = other.Address
 				}
-				observed := network.now - 100
+				observed := network.Now - 100
 				port := int64(443)
-				addresses := network.insert(t, []networkFlow{{observedAt: observed, device: client.device,
-					direction: "in", src: client.address, dst: destination, dstPort: &port,
-					protocol: "tcp", action: "pass", bytes: 100}})
+				addresses := network.Insert(t, []storetest.Flow{{ObservedAt: observed, Device: client.Device,
+					Direction: "in", Src: client.Address, Dst: destination, DstPort: &port,
+					Protocol: "tcp", Action: "pass", Bytes: 100}})
 				for number, lookup := range testCase.lookups {
-					if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
+					if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
 						LookupKey:     fmt.Sprintf("example-case-lookup-%d", number),
-						ClientAddress: client.address, Domain: lookup.domain, Resolver: "unbound",
-						Action: lookup.action, AnswerSource: ptr(lookup.source),
-						LookedUpAt: observed - lookup.secondsBefore, IngestedAt: network.now,
+						ClientAddress: client.Address, Domain: lookup.domain, Resolver: "unbound",
+						Action: lookup.action, AnswerSource: storetest.Ptr(lookup.source),
+						LookedUpAt: observed - lookup.secondsBefore, IngestedAt: network.Now,
 					}); err != nil {
 						t.Fatalf("writing a lookup: %v", err)
 					}
 				}
-				if _, err := network.db.Reclassify(ctx, append(addresses, client.address), network.now); err != nil {
+				if _, err := network.DB.Reclassify(ctx, append(addresses, client.Address), network.Now); err != nil {
 					t.Fatalf("classifying: %v", err)
 				}
-				if _, err := network.db.Attribute(ctx, observed-60, observed+60, testCase.maxDelay, network.now); err != nil {
+				if _, err := network.DB.Attribute(ctx, observed-60, observed+60, testCase.maxDelay, network.Now); err != nil {
 					t.Fatalf("attributing: %v", err)
 				}
-				rows, err := network.db.DB().Query(`SELECT site_name, correlation_delay_seconds
+				rows, err := network.DB.DB().Query(`SELECT site_name, correlation_delay_seconds
 					FROM domain_attribution`)
 				if err != nil {
 					t.Fatalf("reading the attribution: %v", err)
@@ -126,36 +127,36 @@ func TestAttributionFollowsTheRuleExactly(t *testing.T) {
 // API, and the store writes them in both modes.
 func TestAttributionIsStoredWhateverTheAggregateModeSays(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 2, 4)
+	network := storetest.NewNetwork(t, 2, 4)
 	ctx := context.Background()
-	if err := network.db.SetSetting(ctx, "aggregate_mode", "no_domains", network.now); err != nil {
+	if err := network.DB.SetSetting(ctx, "aggregate_mode", "no_domains", network.Now); err != nil {
 		t.Fatalf("setting the mode: %v", err)
 	}
-	client := network.clients[0]
+	client := network.Clients[0]
 	port := int64(443)
-	addresses := network.insert(t, []networkFlow{{observedAt: network.now - 50, device: client.device,
-		direction: "in", src: client.address, dst: outside(1, client.v6), dstPort: &port,
-		protocol: "tcp", action: "pass", bytes: 100}})
-	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
-		LookupKey: "example-mode-lookup", ClientAddress: client.address, Domain: "mode.example.invalid",
-		Resolver: "unbound", Action: "pass", AnswerSource: ptr("Recursion"),
-		LookedUpAt: network.now - 52, IngestedAt: network.now,
+	addresses := network.Insert(t, []storetest.Flow{{ObservedAt: network.Now - 50, Device: client.Device,
+		Direction: "in", Src: client.Address, Dst: storetest.Outside(1, client.V6), DstPort: &port,
+		Protocol: "tcp", Action: "pass", Bytes: 100}})
+	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+		LookupKey: "example-mode-lookup", ClientAddress: client.Address, Domain: "mode.example.invalid",
+		Resolver: "unbound", Action: "pass", AnswerSource: storetest.Ptr("Recursion"),
+		LookedUpAt: network.Now - 52, IngestedAt: network.Now,
 	}); err != nil {
 		t.Fatalf("writing a lookup: %v", err)
 	}
-	network.classifyAndRefresh(t, addresses)
-	result, err := network.db.Attribute(ctx, network.now-3600, network.now, 5, network.now)
+	network.ClassifyAndRefresh(t, addresses)
+	result, err := network.DB.Attribute(ctx, network.Now-3600, network.Now, 5, network.Now)
 	if err != nil {
 		t.Fatalf("attributing: %v", err)
 	}
-	if _, err := network.db.RefreshAggregates(ctx, network.now, network.now, result.FlowInstants); err != nil {
+	if _, err := network.DB.RefreshAggregates(ctx, network.Now, network.Now, result.FlowInstants); err != nil {
 		t.Fatalf("refreshing: %v", err)
 	}
-	if rows := queryInt(t, network.db, "SELECT count(*) FROM domain_attribution"); rows != 1 {
+	if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM domain_attribution"); rows != 1 {
 		t.Errorf("with no_domains set, %d attributions were written", rows)
 	}
 	for _, period := range vocab.Periods() {
-		if rows := queryInt(t, network.db, "SELECT count(*) FROM domain_volume_aggregate_"+period.Name+
+		if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM domain_volume_aggregate_"+period.Name+
 			" WHERE site_name = 'mode.example.invalid'"); rows != 1 {
 			t.Errorf("with no_domains set, the %s domain family holds %d rows for the name", period.Name, rows)
 		}
@@ -165,73 +166,73 @@ func TestAttributionIsStoredWhateverTheAggregateModeSays(t *testing.T) {
 // TestPurgingALookupOrAFlowRemovesItsAttribution is AC33.
 func TestPurgingALookupOrAFlowRemovesItsAttribution(t *testing.T) {
 	t.Parallel()
-	network := newTestNetwork(t, 2, 4)
+	network := storetest.NewNetwork(t, 2, 4)
 	ctx := context.Background()
-	client := network.clients[0]
+	client := network.Clients[0]
 	port := int64(443)
-	addresses := network.insert(t, []networkFlow{
-		{observedAt: network.now - 50, device: client.device, direction: "in", src: client.address,
-			dst: outside(1, client.v6), dstPort: &port, protocol: "tcp", action: "pass", bytes: 100},
-		{observedAt: network.now - 500, device: client.device, direction: "in", src: client.address,
-			dst: outside(2, client.v6), dstPort: &port, protocol: "tcp", action: "pass", bytes: 100},
+	addresses := network.Insert(t, []storetest.Flow{
+		{ObservedAt: network.Now - 50, Device: client.Device, Direction: "in", Src: client.Address,
+			Dst: storetest.Outside(1, client.V6), DstPort: &port, Protocol: "tcp", Action: "pass", Bytes: 100},
+		{ObservedAt: network.Now - 500, Device: client.Device, Direction: "in", Src: client.Address,
+			Dst: storetest.Outside(2, client.V6), DstPort: &port, Protocol: "tcp", Action: "pass", Bytes: 100},
 	})
-	for index, instant := range []int64{network.now - 51, network.now - 501} {
-		if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
-			LookupKey: fmt.Sprintf("example-purge-lookup-%d", index), ClientAddress: client.address,
+	for index, instant := range []int64{network.Now - 51, network.Now - 501} {
+		if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+			LookupKey: fmt.Sprintf("example-purge-lookup-%d", index), ClientAddress: client.Address,
 			Domain: fmt.Sprintf("purge-%d.example.invalid", index), Resolver: "unbound", Action: "pass",
-			AnswerSource: ptr("Recursion"), LookedUpAt: instant, IngestedAt: network.now,
+			AnswerSource: storetest.Ptr("Recursion"), LookedUpAt: instant, IngestedAt: network.Now,
 		}); err != nil {
 			t.Fatalf("writing a lookup: %v", err)
 		}
 	}
-	network.classifyAndRefresh(t, addresses)
-	if _, err := network.db.Attribute(ctx, network.now-3600, network.now, 5, network.now); err != nil {
+	network.ClassifyAndRefresh(t, addresses)
+	if _, err := network.DB.Attribute(ctx, network.Now-3600, network.Now, 5, network.Now); err != nil {
 		t.Fatalf("attributing: %v", err)
 	}
-	if rows := queryInt(t, network.db, "SELECT count(*) FROM domain_attribution"); rows != 2 {
+	if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM domain_attribution"); rows != 2 {
 		t.Fatalf("%d attributions before the purge, not 2", rows)
 	}
-	if _, err := network.db.DB().Exec("DELETE FROM dns_resolution WHERE lookup_key = 'example-purge-lookup-0'"); err != nil {
+	if _, err := network.DB.DB().Exec("DELETE FROM dns_resolution WHERE lookup_key = 'example-purge-lookup-0'"); err != nil {
 		t.Fatalf("purging a lookup: %v", err)
 	}
-	if _, err := network.db.DB().Exec("DELETE FROM flow WHERE observed_at = ?", network.now-500); err != nil {
+	if _, err := network.DB.DB().Exec("DELETE FROM flow WHERE observed_at = ?", network.Now-500); err != nil {
 		t.Fatalf("purging a flow: %v", err)
 	}
-	if rows := queryInt(t, network.db, "SELECT count(*) FROM domain_attribution"); rows != 0 {
+	if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM domain_attribution"); rows != 0 {
 		t.Errorf("%d attributions survived their lookup or their flow", rows)
 	}
-	if violations := foreignKeyViolations(t, network.db); violations != 0 {
+	if violations := storetest.ForeignKeyViolations(t, network.DB); violations != 0 {
 		t.Errorf("%d rows name a row that does not exist", violations)
 	}
 
 	// And through the retention purge itself, on an attribution that is still there when the
 	// purge runs: the surviving flow is named again from a fresh lookup first.
-	if err := network.db.InsertDNSResolution(ctx, vocab.DNSResolution{
-		LookupKey: "example-purge-lookup-again", ClientAddress: client.address,
+	if err := network.DB.InsertDNSResolution(ctx, vocab.DNSResolution{
+		LookupKey: "example-purge-lookup-again", ClientAddress: client.Address,
 		Domain: "purge-again.example.invalid", Resolver: "unbound", Action: "pass",
-		AnswerSource: ptr("Recursion"), LookedUpAt: network.now - 52, IngestedAt: network.now,
+		AnswerSource: storetest.Ptr("Recursion"), LookedUpAt: network.Now - 52, IngestedAt: network.Now,
 	}); err != nil {
 		t.Fatalf("writing a lookup: %v", err)
 	}
-	if _, err := network.db.Attribute(ctx, network.now-3600, network.now, 5, network.now); err != nil {
+	if _, err := network.DB.Attribute(ctx, network.Now-3600, network.Now, 5, network.Now); err != nil {
 		t.Fatalf("attributing again: %v", err)
 	}
-	if rows := queryInt(t, network.db, "SELECT count(*) FROM domain_attribution"); rows != 1 {
+	if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM domain_attribution"); rows != 1 {
 		t.Fatalf("%d attributions before the retention purge, not 1", rows)
 	}
-	if _, err := network.db.DB().Exec("UPDATE setting SET value = '60' WHERE key = 'retention_seconds'"); err != nil {
+	if _, err := network.DB.DB().Exec("UPDATE setting SET value = '60' WHERE key = 'retention_seconds'"); err != nil {
 		t.Fatalf("setting the horizon: %v", err)
 	}
-	if err := network.db.Purge(ctx, network.now+3600); err != nil {
+	if err := network.DB.Purge(ctx, network.Now+3600); err != nil {
 		t.Fatalf("purging: %v", err)
 	}
-	if rows := queryInt(t, network.db, "SELECT count(*) FROM flow"); rows != 0 {
+	if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM flow"); rows != 0 {
 		t.Fatalf("%d flows survived a horizon they are all older than", rows)
 	}
-	if rows := queryInt(t, network.db, "SELECT count(*) FROM domain_attribution"); rows != 0 {
+	if rows := storetest.QueryInt(t, network.DB, "SELECT count(*) FROM domain_attribution"); rows != 0 {
 		t.Errorf("%d attributions survived the retention purge of their flow and lookup", rows)
 	}
-	if violations := foreignKeyViolations(t, network.db); violations != 0 {
+	if violations := storetest.ForeignKeyViolations(t, network.DB); violations != 0 {
 		t.Errorf("after the retention purge, %d rows name a row that does not exist", violations)
 	}
 }

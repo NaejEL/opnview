@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// visibleText returns the text nodes of an HTML document, with the markup removed.
+// VisibleText returns the text nodes of an HTML document, with the markup removed.
 //
 // It is deliberately crude and deliberately strict: everything between < and > goes,
 // and what is left is what a reader sees. The templates contain no script and no
@@ -31,7 +31,7 @@ func VisibleText(document string) string {
 	return builder.String()
 }
 
-// reopenWithoutKeyFile removes the key file and builds a second server over the same
+// ReopenWithoutKeyFile removes the key file and builds a second server over the same
 // database, which is the lost-key-file state exactly as an operator would meet it:
 // the database intact, the key gone.
 func ReopenWithoutKeyFile(t *testing.T, from *Harness) *Harness {

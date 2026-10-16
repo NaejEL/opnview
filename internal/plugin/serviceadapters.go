@@ -9,7 +9,7 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
-	"github.com/NaejEL/opnview/internal/plugin/runtime"
+	"github.com/NaejEL/opnview/internal/plugin/scripthost"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -20,15 +20,15 @@ import (
 // serviceResult converts a service answer's result: its probe is a snake_case word.
 func serviceResult(checked map[string]any) (provider.Result, error) {
 	result := provider.Result{
-		State:     vocab.AvailabilityState(runtime.Text(checked, "state")),
-		Outcome:   vocab.AvailabilityOutcome(runtime.Text(checked, "outcome")),
-		Detail:    runtime.Text(checked, "detail"),
-		Separable: runtime.Flag(checked, "separable", false),
+		State:     vocab.AvailabilityState(scripthost.Text(checked, "state")),
+		Outcome:   vocab.AvailabilityOutcome(scripthost.Text(checked, "outcome")),
+		Detail:    scripthost.Text(checked, "detail"),
+		Separable: scripthost.Flag(checked, "separable", false),
 	}
 	if result.Outcome != "" && !result.Outcome.Valid() {
 		return provider.Result{}, fmt.Errorf("result.outcome %q is not one of the closed outcome codes", result.Outcome)
 	}
-	probe := runtime.Text(checked, "probe")
+	probe := scripthost.Text(checked, "probe")
 	if !contract.NamePattern.MatchString(probe) {
 		return provider.Result{}, fmt.Errorf("result.probe %q is not a snake_case word", probe)
 	}
@@ -38,20 +38,20 @@ func serviceResult(checked map[string]any) (provider.Result, error) {
 
 // runService calls one function of a service kind and checks its answer.
 func (a adapter) runService(ctx context.Context, session provider.Session, function, table string,
-	arguments ...any) (map[string]any, error, *runtime.Failure) {
+	arguments ...any) (map[string]any, error, *scripthost.Failure) {
 	answer, _, failed := a.invoker.invoke(ctx, session, function, arguments...)
 	if failed != nil {
 		return nil, nil, failed
 	}
 	object, isObject := answer.(map[string]any)
 	if !isObject {
-		return nil, nil, &runtime.Failure{Code: runtime.FailureRecords, Detail: fmt.Sprintf("%s returned no object", function)}
+		return nil, nil, &scripthost.Failure{Code: scripthost.FailureRecords, Detail: fmt.Sprintf("%s returned no object", function)}
 	}
 	answerErr, _ := object["error"].(error)
 	delete(object, "error")
-	checked, err := runtime.CheckRecord(a.contract, table, object, function)
+	checked, err := scripthost.CheckRecord(a.contract, table, object, function)
 	if err != nil {
-		return nil, nil, &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
+		return nil, nil, &scripthost.Failure{Code: scripthost.FailureRecords, Detail: err.Error()}
 	}
 	return checked, answerErr, nil
 }
@@ -67,10 +67,10 @@ func (a ipGeolocationAdapter) dataset(ctx context.Context, session provider.Sess
 	}
 	result, err := serviceResult(checked["result"].(map[string]any))
 	if err != nil {
-		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
+		invalid := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: err.Error()}
 		return ipgeolocation.Dataset{}, a.failed(invalid), invalid
 	}
-	dataset := ipgeolocation.Dataset{Ready: runtime.Flag(checked, "ready", false), Build: runtime.Integer(checked, "build")}
+	dataset := ipgeolocation.Dataset{Ready: scripthost.Flag(checked, "ready", false), Build: scripthost.Integer(checked, "build")}
 	return dataset, result, answerErr
 }
 
@@ -98,10 +98,10 @@ func (a ipGeolocationAdapter) Lookup(ctx context.Context, session provider.Sessi
 		return 0, nil, answerErr
 	}
 	var answers []ipgeolocation.Answer
-	for _, record := range runtime.Records(checked, "answers") {
-		answer := ipgeolocation.Answer{Address: runtime.Text(record, "address"), CountryCode: runtime.TextPointer(record, "country_code"),
-			CountryName: runtime.TextPointer(record, "country_name"), ASN: runtime.IntegerPointer(record, "asn"),
-			Operator: runtime.TextPointer(record, "operator")}
+	for _, record := range scripthost.Records(checked, "answers") {
+		answer := ipgeolocation.Answer{Address: scripthost.Text(record, "address"), CountryCode: scripthost.TextPointer(record, "country_code"),
+			CountryName: scripthost.TextPointer(record, "country_name"), ASN: scripthost.IntegerPointer(record, "asn"),
+			Operator: scripthost.TextPointer(record, "operator")}
 		if value, present := record["latitude"].(float64); present {
 			answer.Latitude = &value
 		}
@@ -110,7 +110,7 @@ func (a ipGeolocationAdapter) Lookup(ctx context.Context, session provider.Sessi
 		}
 		answers = append(answers, answer)
 	}
-	return runtime.Integer(checked, "build"), answers, nil
+	return scripthost.Integer(checked, "build"), answers, nil
 }
 
 // registrableDomainAdapter is a plugin as a registrable_domain source.
@@ -124,12 +124,12 @@ func (a registrableDomainAdapter) list(ctx context.Context, session provider.Ses
 	}
 	result, err := serviceResult(checked["result"].(map[string]any))
 	if err != nil {
-		invalid := &runtime.Failure{Code: runtime.FailureRecords, Detail: err.Error()}
+		invalid := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: err.Error()}
 		return registrabledomain.List{}, a.failed(invalid), invalid
 	}
-	list := registrabledomain.List{Ready: runtime.Flag(checked, "ready", false), Version: runtime.Text(checked, "version"),
-		Rules: int(runtime.Integer(checked, "rules")), ConfirmedAt: runtime.Integer(checked, "confirmed_at"),
-		Failed: runtime.Flag(checked, "failed", false)}
+	list := registrabledomain.List{Ready: scripthost.Flag(checked, "ready", false), Version: scripthost.Text(checked, "version"),
+		Rules: int(scripthost.Integer(checked, "rules")), ConfirmedAt: scripthost.Integer(checked, "confirmed_at"),
+		Failed: scripthost.Flag(checked, "failed", false)}
 	return list, result, answerErr
 }
 
@@ -157,9 +157,9 @@ func (a registrableDomainAdapter) Group(ctx context.Context, session provider.Se
 		return nil, answerErr
 	}
 	groups := map[string]string{}
-	for _, record := range runtime.Records(checked, "groups") {
-		if domain := runtime.Text(record, "registrable_domain"); domain != "" {
-			groups[runtime.Text(record, "name")] = domain
+	for _, record := range scripthost.Records(checked, "groups") {
+		if domain := scripthost.Text(record, "registrable_domain"); domain != "" {
+			groups[scripthost.Text(record, "name")] = domain
 		}
 	}
 	return groups, nil

@@ -1,11 +1,14 @@
-package store
+package flows_test
 
 import (
 	"context"
 	"fmt"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/store"
+
 	"github.com/NaejEL/opnview/internal/store/flows"
+	"github.com/NaejEL/opnview/internal/store/storetest"
 )
 
 // TestChunkedAndUnchunkedPairingAreIdentical is AC29 of
@@ -20,67 +23,67 @@ func TestChunkedAndUnchunkedPairingAreIdentical(t *testing.T) {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
 			t.Parallel()
 			const chunk = int64(50)
-			network := newTestNetwork(t, counts[0], counts[1])
+			network := storetest.NewNetwork(t, counts[0], counts[1])
 			ctx := context.Background()
-			start := network.now - 1000
-			var specs []networkFlow
+			start := network.Now - 1000
+			var specs []storetest.Flow
 			for index := 0; index < 60; index++ {
-				client := network.clients[index%len(network.clients)]
+				client := network.Clients[index%len(network.Clients)]
 				at := start + int64(index)*13
 				// Every fifth connection is moved to the last second of a chunk, so its
 				// second leg falls in the next one.
 				if index%5 == 0 {
 					at = start - flows.DefaultPairingWindowSeconds + ((at-start)/chunk+1)*chunk - 1
 				}
-				first, second := network.legs(connection{client: client, peer: outside(index, client.v6),
-					at: at, ipID: int64(5000 + index), seq: int64(90000 + index), lag: 1}, "")
+				first, second := network.Legs(storetest.Connection{Client: client, Peer: storetest.Outside(index, client.V6),
+					At: at, IPID: int64(5000 + index), Seq: int64(90000 + index), Lag: 1}, "")
 				specs = append(specs, first, second)
 			}
 			// Two connections that look alike at a chunk boundary: neither out record has
 			// one candidate, so neither pairs, whichever chunk reads it.
-			v4 := clientsOfFamily(network, false)
+			v4 := storetest.ClientsOfFamily(network, false)
 			boundary := start - flows.DefaultPairingWindowSeconds + 6*chunk - 1
-			a, b := network.legs(connection{client: v4[0], peer: outside(200, false), at: boundary,
-				ipID: 7777, seq: 31000, lag: 1}, "")
-			c, d := network.legs(connection{client: v4[len(v4)-1], peer: outside(200, false), at: boundary,
-				ipID: 7777, seq: 31000, lag: 1}, "")
+			a, b := network.Legs(storetest.Connection{Client: v4[0], Peer: storetest.Outside(200, false), At: boundary,
+				IPID: 7777, Seq: 31000, Lag: 1}, "")
+			c, d := network.Legs(storetest.Connection{Client: v4[len(v4)-1], Peer: storetest.Outside(200, false), At: boundary,
+				IPID: 7777, Seq: 31000, Lag: 1}, "")
 			specs = append(specs, a, b, c, d)
-			addresses := network.insert(t, specs)
-			if _, err := network.db.Reclassify(ctx, addresses, network.now); err != nil {
+			addresses := network.Insert(t, specs)
+			if _, err := network.DB.Reclassify(ctx, addresses, network.Now); err != nil {
 				t.Fatalf("classifying: %v", err)
 			}
 
-			from, to := start, network.now
+			from, to := start, network.Now
 			whole := int64(1 << 40)
-			if _, err := network.db.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, whole); err != nil {
+			if _, err := network.DB.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, whole); err != nil {
 				t.Fatalf("pairing in one transaction: %v", err)
 			}
-			correct := pairState(t, network.db)
-			if pairs := scalarInt(t, network.db, "SELECT count(*) FROM flow WHERE pair_outcome = 'second_leg'"); pairs < 50 {
+			correct := storetest.PairState(t, network.DB)
+			if pairs := scalarInt(t, network.DB, "SELECT count(*) FROM flow WHERE pair_outcome = 'second_leg'"); pairs < 50 {
 				t.Fatalf("only %d pairs were made, so the comparison is vacuous", pairs)
 			}
 
 			// Stale partners: every pair's out record is handed the next pair's in record,
 			// so the pass has to clear and re-pair across chunks.
-			perturb(t, network.db)
-			backup(t, network.db)
-			if pairState(t, network.db) == correct {
+			perturb(t, network.DB)
+			backup(t, network.DB)
+			if storetest.PairState(t, network.DB) == correct {
 				t.Fatal("the perturbation changed nothing, so the comparison is vacuous")
 			}
 
-			if _, err := network.db.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, whole); err != nil {
+			if _, err := network.DB.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, whole); err != nil {
 				t.Fatalf("pairing in one transaction: %v", err)
 			}
-			unchunked := pairState(t, network.db)
-			restore(t, network.db)
+			unchunked := storetest.PairState(t, network.DB)
+			restore(t, network.DB)
 			chunks := len(flows.PairChunks(from-flows.DefaultPairingWindowSeconds, to+flows.DefaultPairingWindowSeconds, chunk))
 			if chunks < 10 {
 				t.Fatalf("the span is cut into %d chunks, too few to test the cut", chunks)
 			}
-			if _, err := network.db.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, chunk); err != nil {
+			if _, err := network.DB.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, chunk); err != nil {
 				t.Fatalf("pairing in chunks: %v", err)
 			}
-			chunked := pairState(t, network.db)
+			chunked := storetest.PairState(t, network.DB)
 			if chunked != unchunked {
 				t.Errorf("the chunked pairing differs from the pairing in one transaction:\n%s\nwant\n%s",
 					chunked, unchunked)
@@ -88,21 +91,21 @@ func TestChunkedAndUnchunkedPairingAreIdentical(t *testing.T) {
 			if unchunked != correct {
 				t.Error("the pairing of the perturbed records is not the pairing of the clean ones")
 			}
-			again, err := network.db.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, chunk)
+			again, err := network.DB.PairInChunks(ctx, from, to, flows.DefaultPairingWindowSeconds, chunk)
 			if err != nil {
 				t.Fatalf("pairing in chunks again: %v", err)
 			}
 			if len(again.FlowInstants) != 0 {
 				t.Errorf("a second chunked run changed %d records", len(again.FlowInstants))
 			}
-			if outcome, _ := outcomeOf(t, network.db, b.device, b.src, b.dst); outcome == flows.PairSecondLeg {
+			if outcome, _ := storetest.OutcomeOf(t, network.DB, b.Device, b.Src, b.Dst); outcome == flows.PairSecondLeg {
 				t.Error("an out record with two candidates at a chunk boundary was paired")
 			}
 		})
 	}
 }
 
-func scalarInt(t *testing.T, database *Store, query string) int64 {
+func scalarInt(t *testing.T, database *store.Store, query string) int64 {
 	t.Helper()
 	var value int64
 	if err := database.DB().QueryRow(query).Scan(&value); err != nil {
@@ -113,7 +116,7 @@ func scalarInt(t *testing.T, database *Store, query string) int64 {
 
 // perturb hands every second leg's partner to the next pair, in id order, and every
 // first leg to the previous out record, keeping each row's own CHECK.
-func perturb(t *testing.T, database *Store) {
+func perturb(t *testing.T, database *store.Store) {
 	t.Helper()
 	rows, err := database.DB().Query(
 		"SELECT id, paired_flow_id FROM flow WHERE pair_outcome = 'second_leg' ORDER BY id")
@@ -140,7 +143,7 @@ func perturb(t *testing.T, database *Store) {
 	}
 }
 
-func backup(t *testing.T, database *Store) {
+func backup(t *testing.T, database *store.Store) {
 	t.Helper()
 	if _, err := database.DB().Exec(
 		"CREATE TABLE pairing_backup AS SELECT id, pair_outcome, paired_flow_id FROM flow"); err != nil {
@@ -148,7 +151,7 @@ func backup(t *testing.T, database *Store) {
 	}
 }
 
-func restore(t *testing.T, database *Store) {
+func restore(t *testing.T, database *store.Store) {
 	t.Helper()
 	if _, err := database.DB().Exec(`UPDATE flow SET
 		pair_outcome = (SELECT b.pair_outcome FROM pairing_backup AS b WHERE b.id = flow.id),

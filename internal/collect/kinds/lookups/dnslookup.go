@@ -106,7 +106,7 @@ func (c *LookupCoordinator) CollectDNSLookup(ctx context.Context) error {
 			// stored -- or of any older one, since the buffer is not ordered by anything
 			// opnview controls. 5A skipped every row at or before the newest stored instant
 			// without inserting it, and lost such a lookup (step-5A live corrections, F6).
-			lookup, err := c.BuildDNSResolution(ctx, record, providerKey, now)
+			lookup, err := c.buildDNSResolution(ctx, record, providerKey, now)
 			if err != nil {
 				return derive.On(c.Collector).DeriveAfter(ctx, stored, c.lookupStoreFailure(ctx, providerID, result, err))
 			}
@@ -195,7 +195,7 @@ func (c *LookupCoordinator) lookupStoreFailure(ctx context.Context, providerID i
 }
 
 // buildDNSResolution turns one record into a row, resolving the querying machine.
-func (c *LookupCoordinator) BuildDNSResolution(ctx context.Context, record dnslookup.Record,
+func (c *LookupCoordinator) buildDNSResolution(ctx context.Context, record dnslookup.Record,
 	resolver string, now int64) (vocab.DNSResolution, error) {
 	// The resolver's query report gives, in place of the querying address, the name a
 	// reverse lookup of it returned whenever there was one (opnsense/core 26.7.3,
@@ -254,4 +254,15 @@ func (c *LookupCoordinator) BuildDNSResolution(ctx context.Context, record dnslo
 		LookedUpAt:       record.LookedUpAt,
 		IngestedAt:       now,
 	}, nil
+}
+
+// ProbeDNSLookup probes every implementation of the dns_lookup kind. The probe round (collect.ProbeAll)
+// runs it with every other kind's.
+func (c *LookupCoordinator) ProbeDNSLookup(ctx context.Context) error {
+	return c.ResolveKind(ctx, core.KindDNSLookup, core.ProbeablesOf(c.SourceSet.DNSLookup, lookupProbe))
+}
+
+// lookupProbe is the probe of one dns_lookup implementation, as core.ProbeablesOf takes it.
+func lookupProbe(source dnslookup.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
 }

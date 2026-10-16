@@ -1,15 +1,16 @@
-package collect
+package collect_test
 
 import (
 	"context"
 	"errors"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
-	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The provider-seam tests.
@@ -25,7 +26,7 @@ import (
 // cannot have its availability recorded against anything.
 func TestEveryRegisteredImplementationHasARegistryRow(t *testing.T) {
 	t.Parallel()
-	database := newTestStore(t)
+	database := collecttest.NewTestStore(t)
 	ctx := context.Background()
 
 	for kind, keys := range registeredKeysByKind() {
@@ -59,7 +60,7 @@ func TestEveryRegisteredImplementationHasARegistryRow(t *testing.T) {
 //     to be told to ignore one. It is listed here only to say that the absence is deliberate.
 func TestEveryRegistryRowOfACollectedKindHasAnImplementation(t *testing.T) {
 	t.Parallel()
-	database := newTestStore(t)
+	database := collecttest.NewTestStore(t)
 	registered := registeredKeysByKind()
 
 	for _, provider := range everyProvider(t, database) {
@@ -112,25 +113,25 @@ func TestTheKindsWithSeveralImplementationsReallyHaveSeveral(t *testing.T) {
 // is what says so in a way that can fail.
 func TestAnImplementationTheFirewallDoesNotSeparateIsNeverActivatedWhateverItsPosition(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
+	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
 
 	// Kea is the first key in sort order and is disabled; Dnsmasq is second and is serving.
-	harness.fake.AnswerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
-	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
+	harness.Fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
 
-	if err := harness.collector.probeDHCPLease(ctx); err != nil {
+	if err := harness.Collector.ProbeDHCPLease(ctx); err != nil {
 		t.Logf("the lease probe reported: %v", err)
 	}
-	if key := harness.activeKeyOf(t, core.KindDHCPLease); key != ProviderDnsmasq {
+	if key := harness.ActiveKeyOf(t, core.KindDHCPLease); key != collecttest.ProviderDnsmasq {
 		t.Fatalf("the active backend is %q; activation followed something other than the "+
 			"firewall's own configuration", key)
 	}
 
 	// The probe order is the sorted one, which is what makes a request sequence comparable.
-	keys := make([]string, 0, len(core.ProbeablesOf(plugin.Builtins().DHCPLease, leaseProbe)))
-	for _, candidate := range core.ProbeablesOf(plugin.Builtins().DHCPLease, leaseProbe) {
+	keys := make([]string, 0, len(core.ProbeablesOf(plugin.Builtins().DHCPLease, sourceProbe)))
+	for _, candidate := range core.ProbeablesOf(plugin.Builtins().DHCPLease, sourceProbe) {
 		keys = append(keys, candidate.ProviderKey)
 	}
 	for index := 1; index < len(keys); index++ {
@@ -141,96 +142,20 @@ func TestAnImplementationTheFirewallDoesNotSeparateIsNeverActivatedWhateverItsPo
 	}
 }
 
-// TestAnImplementationThatCannotBeReadReportsWhyRatherThanFailingThePass is the shape the two
-// unreadable implementations take: a state with a reason, not a missing code path.
-//
-// The end-of-life ISC plugin and the Dnsmasq resolver are both registered and both probed, and
-// neither can be read — the first because its endpoint answered 404 on the surveyed firmware
-// and its contract is unverified, the second because its lookups exist only as free text under
-// a grammar nobody has recorded. A pass that meets one records it and returns no error, because
-// nothing failed: nothing was attempted.
-func TestAnImplementationThatCannotBeReadReportsWhyRatherThanFailingThePass(t *testing.T) {
-	t.Parallel()
-	harness := newProbeHarness(t)
-	ctx := context.Background()
-
-	for _, unreadable := range []struct {
-		kind string
-		key  string
-		call func(context.Context) error
-	}{
-		{core.KindDHCPLease, ProviderISC, func(ctx context.Context) error {
-			if err := harness.store.SetActiveProviders(ctx, core.KindDHCPLease, ProviderISC); err != nil {
-				return err
-			}
-			var seen []string
-			_, err := harness.collector.CollectLeases(ctx, &seen)
-			return err
-		}},
-		{core.KindDNSLookup, ProviderDnsmasq, func(ctx context.Context) error {
-			if err := harness.store.SetActiveProviders(ctx, core.KindDNSLookup, ProviderDnsmasq); err != nil {
-				return err
-			}
-			return harness.collector.CollectDNSLookup(ctx)
-		}},
-	} {
-		if err := unreadable.call(ctx); err != nil {
-			t.Errorf("reading %s/%s returned %v; an unreadable implementation is a state and not "+
-				"a failed pass", unreadable.kind, unreadable.key, err)
-		}
-		detail := harness.detailOf(t, unreadable.kind, unreadable.key)
-		if detail == "" {
-			t.Errorf("%s/%s was not read and recorded no reason", unreadable.kind, unreadable.key)
-		}
-	}
-}
-
 // TestTheUnreadableImplementationsReturnTheUnsupportedSentinel pins the sentinel itself, so a
 // caller can tell "cannot be read" from "the call failed" without matching on a message.
 func TestTheUnreadableImplementationsReturnTheUnsupportedSentinel(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
+	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
 
-	if _, _, err := mustLeaseSource(t, ProviderISC).Leases(ctx, harness.collector, 1); !errors.Is(
+	if _, _, err := mustLeaseSource(t, collecttest.ProviderISC).Leases(ctx, harness.Collector, 1); !errors.Is(
 		err, provider.ErrUnsupportedRead) {
 		t.Errorf("the ISC lease read returned %v, not the unsupported sentinel", err)
 	}
-	if _, _, err := mustLookupSource(t, ProviderDnsmasq).Lookups(ctx, harness.collector, 1); !errors.Is(
+	if _, _, err := mustLookupSource(t, collecttest.ProviderDnsmasq).Lookups(ctx, harness.Collector, 1); !errors.Is(
 		err, provider.ErrUnsupportedRead) {
 		t.Errorf("the Dnsmasq lookup read returned %v, not the unsupported sentinel", err)
-	}
-}
-
-// TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence keeps a registry row that
-// somebody activated by hand, and that no code answers for, from looking like a quiet source.
-func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testing.T) {
-	t.Parallel()
-	harness := newProbeHarness(t)
-	ctx := context.Background()
-
-	// A registry row of a collected kind with no implementation registered for it. Inserting one
-	// is how a future provider arrives, and until its file exists the collector has to say so.
-	if _, err := harness.store.DB().ExecContext(ctx,
-		`INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-		 VALUES (?, ?, ?, 0, ?)`,
-		core.KindDHCPLease, "an-unimplemented-backend", "An unimplemented backend",
-		referenceEpoch()); err != nil {
-		t.Fatalf("registering a provider with no implementation: %v", err)
-	}
-	if _, err := harness.store.DB().ExecContext(ctx,
-		`INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
-		 SELECT id, ?, 'not_yet_probed', NULL, 0 FROM provider WHERE provider_key = ?`,
-		string(vocab.StateUnavailable), "an-unimplemented-backend"); err != nil {
-		t.Fatalf("giving it an availability row: %v", err)
-	}
-	if err := harness.store.SetActiveProviders(ctx, core.KindDHCPLease, "an-unimplemented-backend"); err != nil {
-		t.Fatalf("activating it: %v", err)
-	}
-
-	var seen []string
-	if _, err := harness.collector.CollectLeases(ctx, &seen); err == nil {
-		t.Fatal("collecting from an active provider with no implementation returned no error")
 	}
 }
 
@@ -259,4 +184,9 @@ func registeredKeysByKind() map[string][]string {
 		registered[core.KindResolverLocalData] = append(registered[core.KindResolverLocalData], key)
 	}
 	return registered
+}
+
+// sourceProbe is the probe of one dhcp_lease implementation, as core.ProbeablesOf takes it.
+func sourceProbe(source dhcplease.Source) func(context.Context, provider.Session) (provider.Result, error) {
+	return source.Probe
 }

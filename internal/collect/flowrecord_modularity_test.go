@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -72,31 +73,33 @@ func TestASecondExporterIsAddedByItsDirectoryAlone(t *testing.T) {
 		t.Fatalf("the loader did not find the exporter in the data directory")
 	}
 
-	insideForward, insideReverse, _, _ := natRecords()
-	run := func(h *netflowHarness, readCapture func()) string {
+	insideForward, insideReverse, _, _ := collecttest.NatRecords()
+	run := func(h *collecttest.NetflowHarness, readCapture func()) string {
 		readCapture()
-		h.at(netflowReadSecond)
-		h.deliver(t, legInstant+30, insideForward, insideReverse)
-		h.logged(t, natLegs("nat", legInstant, "pass")...)
-		return joinFingerprint(t, h, "nat1", "nat2")
+		h.At(collecttest.NetflowReadSecond)
+		h.Deliver(t, collecttest.LegInstant+30, insideForward, insideReverse)
+		h.Logged(t, collecttest.NatLegs("nat", collecttest.LegInstant, "pass")...)
+		return collecttest.JoinFingerprint(t, h, "nat1", "nat2")
 	}
-	builtin := newNetflowHarness(t)
-	want := run(builtin, func() { builtin.capture(t, captureStartAt, captured{identifier: insideIdentifier}) })
+	builtin := collecttest.NewNetflowHarness(t)
+	want := run(builtin, func() {
+		builtin.Capture(t, collecttest.CaptureStartAt, collecttest.Captured{Identifier: collecttest.InsideIdentifier})
+	})
 
 	state := map[string]any{"running": true, "active_timeout": 1800,
-		"points": []any{map[string]any{"name": insideIdentifier, "receive": true, "send": true}}}
-	second := newNetflowHarnessWith(t, loaded, "example_exporter", func(fake *providertest.Firewall) {
+		"points": []any{map[string]any{"name": collecttest.InsideIdentifier, "receive": true, "send": true}}}
+	second := collecttest.NewNetflowHarnessWith(t, loaded, "example_exporter", func(fake *providertest.Firewall) {
 		fake.AnswerJSON(exampleExporterEndpoint, state)
 	})
 	got := run(second, func() {
-		second.at(captureStartAt)
-		if err := second.collector.CollectFlowRecordCapture(context.Background()); err != nil {
+		second.At(collecttest.CaptureStartAt)
+		if err := second.Collector.CollectFlowRecordCapture(context.Background()); err != nil {
 			t.Fatal(err)
 		}
 	})
-	if len(second.records(t)) != 2 {
+	if len(second.Records(t)) != 2 {
 		t.Fatalf("the second exporter fed %d records, want 2 (the built-in's, not active, stores none)",
-			len(second.records(t)))
+			len(second.Records(t)))
 	}
 	if got != want {
 		t.Errorf("the second exporter gives\n%s\nthe built-in gives\n%s", got, want)
@@ -138,22 +141,22 @@ func TestASecondExporterIsAddedByItsDirectoryAlone(t *testing.T) {
 func TestTheDirectionAtTheObservationPointComesFromTheConfigurationAndTheIngressIndex(t *testing.T) {
 	t.Parallel()
 	index := func(value int64) *int64 { return &value }
-	both := netflow.CaptureInterface{Identifier: insideIdentifier, Ingress: true, Egress: true}
-	egressOnly := netflow.CaptureInterface{Identifier: insideIdentifier, Egress: true}
+	both := netflow.CaptureInterface{Identifier: collecttest.InsideIdentifier, Ingress: true, Egress: true}
+	egressOnly := netflow.CaptureInterface{Identifier: collecttest.InsideIdentifier, Egress: true}
 	for _, scenario := range []struct {
 		name    string
 		point   netflow.CaptureInterface
 		ingress *int64
 		want    string
 	}{
-		{"received on the point", both, index(insideIndex), netflow.DirectionIngress},
-		{"received elsewhere", both, index(upstreamIndex), netflow.DirectionEgress},
+		{"received on the point", both, index(collecttest.InsideIndex), netflow.DirectionIngress},
+		{"received elsewhere", both, index(collecttest.UpstreamIndex), netflow.DirectionEgress},
 		{"originated by the firewall (index 0, S6a)", both, index(0), netflow.DirectionEgress},
 		{"no ingress index", both, nil, netflow.DirectionEgress},
-		{"egress-only point, received on it", egressOnly, index(insideIndex), netflow.DirectionEgress},
-		{"egress-only point, received elsewhere", egressOnly, index(upstreamIndex), netflow.DirectionEgress},
+		{"egress-only point, received on it", egressOnly, index(collecttest.InsideIndex), netflow.DirectionEgress},
+		{"egress-only point, received elsewhere", egressOnly, index(collecttest.UpstreamIndex), netflow.DirectionEgress},
 	} {
-		if got := derive.DirectionAt(scenario.point, insideIndex, scenario.ingress); got != scenario.want {
+		if got := derive.DirectionAt(scenario.point, collecttest.InsideIndex, scenario.ingress); got != scenario.want {
 			t.Errorf("%s: %s, want %s", scenario.name, got, scenario.want)
 		}
 	}
@@ -165,26 +168,26 @@ func TestTheDirectionAtTheObservationPointComesFromTheConfigurationAndTheIngress
 // contradicts the only candidate's pf direction and orientation joins nothing.
 func TestAPolicyRoutedRecordJoinsByItsIngressIndexAndAContradictionJoinsNothing(t *testing.T) {
 	t.Parallel()
-	at := legInstant
-	h := newNetflowHarness(t)
-	h.capture(t, captureStartAt, captured{identifier: insideIdentifier})
-	h.at(netflowReadSecond)
-	routed := forward(17, 46000, 53, 0, 7, at, at+1)
-	routed.out = 4 // the route lookup's interface, not the upstream one the leg left by
-	contradicting := forward(17, 46001, 53, 0, 8, at, at+1)
-	contradicting.in = upstreamIndex // received elsewhere: egress at the point, forward: needs an `out` leg
-	h.deliver(t, at+30, routed, contradicting)
-	h.logged(t, singleLeg("routed", at, "udp", 17, 46000, 53, "pass"),
+	at := collecttest.LegInstant
+	h := collecttest.NewNetflowHarness(t)
+	h.Capture(t, collecttest.CaptureStartAt, collecttest.Captured{Identifier: collecttest.InsideIdentifier})
+	h.At(collecttest.NetflowReadSecond)
+	routed := collecttest.Forward(17, 46000, 53, 0, 7, at, at+1)
+	routed.Out = 4 // the route lookup's interface, not the upstream one the leg left by
+	contradicting := collecttest.Forward(17, 46001, 53, 0, 8, at, at+1)
+	contradicting.In = collecttest.UpstreamIndex // received elsewhere: egress at the point, forward: needs an `out` leg
+	h.Deliver(t, at+30, routed, contradicting)
+	h.Logged(t, singleLeg("routed", at, "udp", 17, 46000, 53, "pass"),
 		singleLeg("contradicted", at, "udp", 17, 46001, 53, "pass"))
 	records := byOctets(t, h)
-	if record := records[7]; record.joinedFlowID == nil || *record.joinedFlowID != h.flowID(t, "routed") ||
-		orNull(record.direction) != netflow.DirectionIngress {
-		t.Errorf("the policy-routed record is %s %s, want ingress and joined", orNull(record.direction),
-			record.joinState)
+	if record := records[7]; record.JoinedFlowID == nil || *record.JoinedFlowID != h.FlowID(t, "routed") ||
+		collecttest.OrNull(record.Direction) != netflow.DirectionIngress {
+		t.Errorf("the policy-routed record is %s %s, want ingress and joined", collecttest.OrNull(record.Direction),
+			record.JoinState)
 	}
-	if record := records[8]; record.joinState != netflow.JoinUnmatched ||
-		orNull(record.reason) != netflow.UnmatchedNoLoggedLeg {
-		t.Errorf("the contradicting record is %s (%s), want unmatched", record.joinState, orNull(record.reason))
+	if record := records[8]; record.JoinState != netflow.JoinUnmatched ||
+		collecttest.OrNull(record.Reason) != netflow.UnmatchedNoLoggedLeg {
+		t.Errorf("the contradicting record is %s (%s), want unmatched", record.JoinState, collecttest.OrNull(record.Reason))
 	}
 }
 

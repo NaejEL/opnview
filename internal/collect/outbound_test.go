@@ -1,9 +1,10 @@
-package collect
+package collect_test
 
 import (
 	"context"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 )
 
@@ -21,12 +22,12 @@ import (
 // anywhere in the collection path.
 func TestDiscoveryAndEveryCollectorReachTheFirewallAndNothingElse(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
+	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
 
 	// A firewall with every source answering, so each collector actually does its work
 	// rather than returning early on an unavailable provider.
-	fake := harness.fake
+	fake := harness.Fake
 	fake.AnswerFixture(opnsense.InterfacesInfo, "interfaces_info.json")
 	fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
 	fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")
@@ -53,19 +54,19 @@ func TestDiscoveryAndEveryCollectorReachTheFirewallAndNothingElse(t *testing.T) 
 	fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
 	fake.AnswerFixture(opnsense.SearchQueries, "search_queries_page1.json")
 
-	if err := harness.collector.RefreshDiscovery(ctx); err != nil {
+	if err := harness.Collector.RefreshDiscovery(ctx); err != nil {
 		t.Fatalf("runtime discovery: %v", err)
 	}
-	if err := harness.collector.ProbeAll(ctx); err != nil {
+	if err := harness.Collector.ProbeAll(ctx); err != nil {
 		t.Fatalf("the probe round: %v", err)
 	}
 
 	for name, collect := range map[string]func(context.Context) error{
-		"the filter log":          harness.collector.CollectFirewallLog,
-		"the security events":     harness.collector.CollectSecurityEvent,
-		"the sampled measurement": harness.collector.CollectMeasurement,
-		"the DHCP leases":         harness.collector.CollectDHCPLease,
-		"the resolver lookups":    harness.collector.CollectDNSLookup,
+		"the filter log":          harness.Collector.CollectFirewallLog,
+		"the security events":     harness.Collector.CollectSecurityEvent,
+		"the sampled measurement": harness.Collector.CollectMeasurement,
+		"the DHCP leases":         harness.Collector.CollectDHCPLease,
+		"the resolver lookups":    harness.Collector.CollectDNSLookup,
 	} {
 		if err := collect(ctx); err != nil {
 			t.Errorf("collecting %s: %v", name, err)
@@ -80,7 +81,7 @@ func TestDiscoveryAndEveryCollectorReachTheFirewallAndNothingElse(t *testing.T) 
 	// returns that happen to make no request at all.
 	for _, table := range []string{"flow", "security_event", "dns_resolution", "dhcp_lease",
 		"measurement_sample", "interface", "interface_map", "rule", "client"} {
-		if stored := countRows(t, harness.store, table); stored == 0 {
+		if stored := collecttest.CountRows(t, harness.Store, table); stored == 0 {
 			t.Errorf("%s is empty, so this run proved nothing about that collector", table)
 		}
 	}
@@ -92,29 +93,29 @@ func TestDiscoveryAndEveryCollectorReachTheFirewallAndNothingElse(t *testing.T) 
 // half: every method the fake saw is a read, and no path names a command that could write.
 func TestNoCollectorWritesToTheFirewall(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
+	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
-	harness.fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
-	harness.fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
-	harness.fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
+	harness.Fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
+	harness.Fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
+	harness.Fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
 
-	if err := harness.collector.ProbeAll(ctx); err != nil {
+	if err := harness.Collector.ProbeAll(ctx); err != nil {
 		t.Logf("the probe round reported: %v", err)
 	}
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("collecting the filter log: %v", err)
 	}
-	if err := harness.collector.CollectDHCPLease(ctx); err != nil {
+	if err := harness.Collector.CollectDHCPLease(ctx); err != nil {
 		t.Logf("collecting the leases reported: %v", err)
 	}
 
-	if harness.fake.RequestCount() == 0 {
+	if harness.Fake.RequestCount() == 0 {
 		t.Fatal("no request was made, so this assertion is vacuous")
 	}
-	for _, request := range harness.fake.Requests() {
+	for _, request := range harness.Fake.Requests() {
 		switch request.Method {
 		case "GET", "POST":
 			// Both are read-only here: OPNsense has no framework-level method routing and

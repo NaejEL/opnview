@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	contractpkg "github.com/NaejEL/opnview/internal/plugin/contract"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/store/plugindecl"
 
@@ -25,7 +25,7 @@ import (
 // pushBinding is one push entry, checked and compiled.
 type pushBinding struct {
 	plugin      string
-	declaration contractpkg.PushDeclaration
+	declaration contract.PushDeclaration
 	protocol    push.Protocol
 	selector    push.Selector
 	pattern     *regexp.Regexp
@@ -44,7 +44,7 @@ const pushParseNamespace = "push"
 
 // checkPush checks every push entry of a manifest against its protocol, its tables, its providers
 // and its script's exports.
-func checkPush(plugin *Plugin, exports map[string]map[string]string) ([]*pushBinding, *contractpkg.Refusal) {
+func checkPush(plugin *Plugin, exports map[string]map[string]string) ([]*pushBinding, *contract.Refusal) {
 	manifest := plugin.Manifest
 	if len(manifest.Push) == 0 {
 		return nil, nil
@@ -53,8 +53,8 @@ func checkPush(plugin *Plugin, exports map[string]map[string]string) ([]*pushBin
 	for _, table := range plugin.OwnTables {
 		tables[table.Table] = table
 	}
-	var pushProviders []contractpkg.ProviderDeclaration
-	providedKinds := map[string]contractpkg.ProviderDeclaration{}
+	var pushProviders []contract.ProviderDeclaration
+	providedKinds := map[string]contract.ProviderDeclaration{}
 	for _, declaration := range manifest.Providers {
 		if declaration.Source == providerSourcePush {
 			pushProviders = append(pushProviders, declaration)
@@ -69,7 +69,7 @@ func checkPush(plugin *Plugin, exports map[string]map[string]string) ([]*pushBin
 			return nil, refusal
 		}
 		if seen[declaration.Name] {
-			return nil, contractpkg.Refuse(plugin.Name, contractpkg.RefusalPushDeclarationInvalid, "the push entry %q is declared twice",
+			return nil, contract.Refuse(plugin.Name, contract.RefusalPushDeclarationInvalid, "the push entry %q is declared twice",
 				declaration.Name)
 		}
 		seen[declaration.Name] = true
@@ -78,31 +78,31 @@ func checkPush(plugin *Plugin, exports map[string]map[string]string) ([]*pushBin
 	return bindings, nil
 }
 
-func checkPushEntry(plugin *Plugin, declaration contractpkg.PushDeclaration, tables map[string]plugindecl.PluginTable,
-	pushProviders []contractpkg.ProviderDeclaration, providedKinds map[string]contractpkg.ProviderDeclaration,
-	exports map[string]map[string]string) (*pushBinding, *contractpkg.Refusal) {
+func checkPushEntry(plugin *Plugin, declaration contract.PushDeclaration, tables map[string]plugindecl.PluginTable,
+	pushProviders []contract.ProviderDeclaration, providedKinds map[string]contract.ProviderDeclaration,
+	exports map[string]map[string]string) (*pushBinding, *contract.Refusal) {
 	name := plugin.Name
-	if !contractpkg.NamePattern.MatchString(declaration.Name) {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "the push entry name %q is not a snake_case word",
+	if !contract.NamePattern.MatchString(declaration.Name) {
+		return nil, contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "the push entry name %q is not a snake_case word",
 			declaration.Name)
 	}
 	entry := fmt.Sprintf("the push entry %q", declaration.Name)
 	protocol, known := push.Lookup(declaration.Protocol)
 	if !known {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalPushProtocolUnknown, "%s names the protocol %q; this build decodes %v",
+		return nil, contract.Refuse(name, contract.RefusalPushProtocolUnknown, "%s names the protocol %q; this build decodes %v",
 			entry, declaration.Protocol, push.Protocols())
 	}
 	binding := &pushBinding{plugin: name, declaration: declaration, protocol: protocol}
 	if len(bytes.TrimSpace(declaration.Filter)) == 0 {
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalPushFilterInvalid, "%s declares no filter", entry)
+		return nil, contract.Refuse(name, contract.RefusalPushFilterInvalid, "%s declares no filter", entry)
 	}
 	selector, err := protocol.Compile(declaration.Filter)
 	if err != nil {
-		code := contractpkg.RefusalPushFilterInvalid
+		code := contract.RefusalPushFilterInvalid
 		if isUnknownElement(err) {
-			code = contractpkg.RefusalPushElementUnknown
+			code = contract.RefusalPushElementUnknown
 		}
-		return nil, contractpkg.Refuse(name, code, "%s: %v", entry, err)
+		return nil, contract.Refuse(name, code, "%s: %v", entry, err)
 	}
 	binding.selector = selector
 
@@ -112,7 +112,7 @@ func checkPushEntry(plugin *Plugin, declaration contractpkg.PushDeclaration, tab
 	}
 	for _, transport := range declaration.Transports {
 		if !offered[transport] {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s accepts %s, which %s is not received over",
+			return nil, contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s accepts %s, which %s is not received over",
 				entry, transport, declaration.Protocol)
 		}
 	}
@@ -125,7 +125,7 @@ func checkPushEntry(plugin *Plugin, declaration contractpkg.PushDeclaration, tab
 	if declaration.LivenessSeconds != 0 {
 		binding.liveness = time.Duration(declaration.LivenessSeconds) * time.Second
 		if binding.liveness < push.LivenessFloor {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalPushLivenessBelowFloor, "%s declares liveness_seconds %d, below the "+
+			return nil, contract.Refuse(name, contract.RefusalPushLivenessBelowFloor, "%s declares liveness_seconds %d, below the "+
 				"floor of %d", entry, declaration.LivenessSeconds, int(push.LivenessFloor/time.Second))
 		}
 	}
@@ -134,37 +134,37 @@ func checkPushEntry(plugin *Plugin, declaration contractpkg.PushDeclaration, tab
 	fieldsOf := protocol.Fields()
 	for column, sources := range declaration.Fields {
 		if len(sources) == 0 {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s maps the column %q to no field", entry, column)
+			return nil, contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s maps the column %q to no field", entry, column)
 		}
 		for _, source := range sources {
 			if _, known := protocol.FieldType(source); !known {
-				return nil, contractpkg.Refuse(name, contractpkg.RefusalPushElementUnknown, "%s maps the column %q to %q, which %s does "+
+				return nil, contract.Refuse(name, contract.RefusalPushElementUnknown, "%s maps the column %q to %q, which %s does "+
 					"not carry", entry, column, source, declaration.Protocol)
 			}
 		}
 	}
 	if declaration.Parse != "" {
 		if fieldsOf == nil {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s declares a parse function: a %s record "+
+			return nil, contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s declares a parse function: a %s record "+
 				"is mapped to columns by its fields, with no script", entry, declaration.Protocol)
 		}
 		if exports[pushParseNamespace][declaration.Parse] != "function" {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalPushParseMissing, "%s names the parse function %s.%s, which the "+
+			return nil, contract.Refuse(name, contract.RefusalPushParseMissing, "%s names the parse function %s.%s, which the "+
 				"script does not export", entry, pushParseNamespace, declaration.Parse)
 		}
 	}
 	if declaration.Pattern != "" {
 		if fieldsOf == nil {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s declares a pattern: a %s record carries "+
+			return nil, contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s declares a pattern: a %s record carries "+
 				"no message text", entry, declaration.Protocol)
 		}
 		if declaration.Parse != "" {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s declares both a pattern and a parse "+
+			return nil, contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s declares both a pattern and a parse "+
 				"function", entry)
 		}
 		pattern, err := regexp.Compile(declaration.Pattern)
 		if err != nil {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalPushPatternInvalid, "%s: the pattern does not compile under RE2: %v",
+			return nil, contract.Refuse(name, contract.RefusalPushPatternInvalid, "%s: the pattern does not compile under RE2: %v",
 				entry, err)
 		}
 		binding.pattern = pattern
@@ -174,7 +174,7 @@ func checkPushEntry(plugin *Plugin, declaration contractpkg.PushDeclaration, tab
 	switch {
 	case declaration.OutputTable != "" && declaration.Kind != "",
 		declaration.OutputTable == "" && declaration.Kind == "":
-		return nil, contractpkg.Refuse(name, contractpkg.RefusalPushDestinationInvalid, "%s names %s: one of output_table and kind, "+
+		return nil, contract.Refuse(name, contract.RefusalPushDestinationInvalid, "%s names %s: one of output_table and kind, "+
 			"never both", entry, describeDestination(declaration))
 	case declaration.OutputTable != "":
 		if refusal := checkPushTable(plugin, binding, tables, pushProviders, entry); refusal != nil {
@@ -187,14 +187,14 @@ func checkPushEntry(plugin *Plugin, declaration contractpkg.PushDeclaration, tab
 	}
 	if declaration.Replaces != "" {
 		if _, declared := plugin.Endpoints[declaration.Replaces]; !declared {
-			return nil, contractpkg.Refuse(name, contractpkg.RefusalPushReplacesUnknown, "%s replaces %q, which the manifest does not "+
+			return nil, contract.Refuse(name, contract.RefusalPushReplacesUnknown, "%s replaces %q, which the manifest does not "+
 				"declare as an endpoint", entry, declaration.Replaces)
 		}
 	}
 	return binding, nil
 }
 
-func describeDestination(declaration contractpkg.PushDeclaration) string {
+func describeDestination(declaration contract.PushDeclaration) string {
 	if declaration.OutputTable == "" && declaration.Kind == "" {
 		return "neither"
 	}
@@ -211,21 +211,21 @@ const providerSourcePush = "push"
 
 // checkPushTable checks an entry writing into one of the plugin's own tables.
 func checkPushTable(plugin *Plugin, binding *pushBinding, tables map[string]plugindecl.PluginTable,
-	pushProviders []contractpkg.ProviderDeclaration, entry string) *contractpkg.Refusal {
+	pushProviders []contract.ProviderDeclaration, entry string) *contract.Refusal {
 	name := plugin.Name
 	declaration := binding.declaration
 	table, declared := tables[declaration.OutputTable]
 	if !declared {
-		return contractpkg.Refuse(name, contractpkg.RefusalPushDestinationInvalid, "%s writes into %q, which the plugin does not declare",
+		return contract.Refuse(name, contract.RefusalPushDestinationInvalid, "%s writes into %q, which the plugin does not declare",
 			entry, declaration.OutputTable)
 	}
 	timeColumn, _ := tableColumn(table, table.TimeColumn)
 	if table.TimeColumn == "" || timeColumn.Type != push.TypeInstant {
-		return contractpkg.Refuse(name, contractpkg.RefusalPushTableWithoutInstant, "%s writes into %s, whose time column is not an "+
+		return contract.Refuse(name, contract.RefusalPushTableWithoutInstant, "%s writes into %s, whose time column is not an "+
 			"instant: a push output table is a hypertable chunked on an instant", entry, table.Table)
 	}
 	if len(pushProviders) != 1 {
-		return contractpkg.Refuse(name, contractpkg.RefusalPushProviderMissing, "%s writes into a table of the plugin's own, which needs "+
+		return contract.Refuse(name, contract.RefusalPushProviderMissing, "%s writes into a table of the plugin's own, which needs "+
 			"exactly one provider of a kind of the plugin's own with source push; the plugin declares %d",
 			entry, len(pushProviders))
 	}
@@ -241,14 +241,14 @@ func checkPushTable(plugin *Plugin, binding *pushBinding, tables map[string]plug
 				continue
 			}
 			if _, isColumn := tableColumn(table, group); !isColumn {
-				return contractpkg.Refuse(name, contractpkg.RefusalPushPatternInvalid, "%s: the named group %q is not a column of %s",
+				return contract.Refuse(name, contract.RefusalPushPatternInvalid, "%s: the named group %q is not a column of %s",
 					entry, group, table.Table)
 			}
 		}
 	}
 	for column := range declaration.Fields {
 		if _, isColumn := tableColumn(table, column); !isColumn {
-			return contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s maps %q, which is not a column of %s", entry,
+			return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s maps %q, which is not a column of %s", entry,
 				column, table.Table)
 		}
 	}
@@ -267,7 +267,7 @@ func checkPushTable(plugin *Plugin, binding *pushBinding, tables map[string]plug
 	}
 	for _, column := range table.Columns {
 		if !column.Nullable && !filled[column.Name] {
-			return contractpkg.Refuse(name, contractpkg.RefusalPushColumnUnfilled, "%s leaves the NOT NULL column %s of %s unfilled", entry,
+			return contract.Refuse(name, contract.RefusalPushColumnUnfilled, "%s leaves the NOT NULL column %s of %s unfilled", entry,
 				column.Name, table.Table)
 		}
 	}
@@ -275,49 +275,49 @@ func checkPushTable(plugin *Plugin, binding *pushBinding, tables map[string]plug
 }
 
 // checkPushKind checks an entry delivering records of a core kind, which the same plugin provides.
-func checkPushKind(plugin *Plugin, binding *pushBinding, providedKinds map[string]contractpkg.ProviderDeclaration,
-	entry string) *contractpkg.Refusal {
+func checkPushKind(plugin *Plugin, binding *pushBinding, providedKinds map[string]contract.ProviderDeclaration,
+	entry string) *contract.Refusal {
 	name := plugin.Name
 	declaration := binding.declaration
 	provided, declared := providedKinds[declaration.Kind]
 	if !declared || !provider.IsCoreKind(declaration.Kind) {
-		return contractpkg.Refuse(name, contractpkg.RefusalPushDestinationInvalid, "%s delivers records of %q, which is not a core kind the "+
+		return contract.Refuse(name, contract.RefusalPushDestinationInvalid, "%s delivers records of %q, which is not a core kind the "+
 			"plugin provides", entry, declaration.Kind)
 	}
 	table := declaration.Kind + "_record"
-	contract, _ := provider.ContractOf(declaration.Kind)
-	record, hasTable := provider.LookupRecord(contract, table)
+	kindContract, _ := provider.ContractOf(declaration.Kind)
+	record, hasTable := provider.LookupRecord(kindContract, table)
 	switch {
 	case !hasTable:
-		return contractpkg.Refuse(name, contractpkg.RefusalPushDestinationInvalid, "%s delivers records of %s, whose contract has no %s "+
+		return contract.Refuse(name, contract.RefusalPushDestinationInvalid, "%s delivers records of %s, whose contract has no %s "+
 			"table a push entry could fill", entry, declaration.Kind, table)
 	case declaration.Parse == "" && len(declaration.Fields) == 0:
-		return contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s delivers records of %s, which a parse function "+
+		return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s delivers records of %s, which a parse function "+
 			"builds or a field mapping fills: the records are the kind's contract", entry, declaration.Kind)
 	case declaration.Parse != "" && len(declaration.Fields) > 0:
-		return contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s delivers records of %s with both a parse function "+
+		return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s delivers records of %s with both a parse function "+
 			"and a field mapping: one of the two builds them", entry, declaration.Kind)
 	case declaration.Pattern != "":
-		return contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s delivers records of %s with a pattern: a record of a "+
+		return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s delivers records of %s with a pattern: a record of a "+
 			"kind is built by a parse function or a field mapping", entry, declaration.Kind)
 	}
 	if len(declaration.Fields) > 0 {
 		// A mapping fills contract fields, and every required one.
 		for column := range declaration.Fields {
 			if _, known := record.Field(column); !known {
-				return contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s maps %q, which is not a field of %s", entry,
+				return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s maps %q, which is not a field of %s", entry,
 					column, table)
 			}
 		}
 		for _, field := range record.Fields {
 			if _, mapped := declaration.Fields[field.Name]; field.Required && !mapped {
-				return contractpkg.Refuse(name, contractpkg.RefusalPushColumnUnfilled, "%s leaves the required field %s of %s unmapped",
+				return contract.Refuse(name, contract.RefusalPushColumnUnfilled, "%s leaves the required field %s of %s unmapped",
 					entry, field.Name, table)
 			}
 		}
 	}
 	if _, adapted := pushKinds[declaration.Kind]; !adapted {
-		return contractpkg.Refuse(name, contractpkg.RefusalPushDestinationInvalid, "%s delivers records of %s, which no push path of the "+
+		return contract.Refuse(name, contract.RefusalPushDestinationInvalid, "%s delivers records of %s, which no push path of the "+
 			"core receives yet", entry, declaration.Kind)
 	}
 	// PS9, as the NetFlow join amendment's PS17 amends it. The load check tells the two cases apart by
@@ -327,14 +327,14 @@ func checkPushKind(plugin *Plugin, binding *pushBinding, providedKinds map[strin
 	// endpoint it replaces, or the two paths would count them twice (push_kind_without_replacement).
 	// When it does not -- flow_record's polled function returns the capture configuration, a different
 	// record -- the entry is push-only, and a `replaces` would replace nothing.
-	polled := provider.PolledRecordTables(contract)[table]
+	polled := provider.PolledRecordTables(kindContract)[table]
 	switch {
 	case polled && declaration.Replaces == "":
-		return contractpkg.Refuse(name, contractpkg.RefusalPushKindWithoutReplacement, "%s delivers %s records beside a provider that polls "+
+		return contract.Refuse(name, contract.RefusalPushKindWithoutReplacement, "%s delivers %s records beside a provider that polls "+
 			"them, and declares no replaces: without an exclusive source per instant the two paths would count "+
 			"records twice", entry, declaration.Kind)
 	case !polled && declaration.Replaces != "":
-		return contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s replaces %q, but no polled function of %s delivers %s "+
+		return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s replaces %q, but no polled function of %s delivers %s "+
 			"records: there is nothing to replace", entry, declaration.Replaces, declaration.Kind, table)
 	}
 	key := provided.Key
@@ -351,7 +351,7 @@ func checkPushKind(plugin *Plugin, binding *pushBinding, providedKinds map[strin
 		}
 	}
 	if len(detectable) == 0 {
-		return contractpkg.Refuse(name, contractpkg.RefusalPushDeclarationInvalid, "%s delivers records of %s over no transport whose loss "+
+		return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s delivers records of %s over no transport whose loss "+
 			"is detectable", entry, declaration.Kind)
 	}
 	binding.transports = detectable
@@ -406,8 +406,8 @@ func (b *pushBinding) columns() []string {
 		}
 		return columns
 	}
-	if contract, core := provider.ContractOf(b.declaration.Kind); core {
-		if record, found := provider.LookupRecord(contract, b.declaration.Kind+"_record"); found {
+	if kindContract, core := provider.ContractOf(b.declaration.Kind); core {
+		if record, found := provider.LookupRecord(kindContract, b.declaration.Kind+"_record"); found {
 			for _, field := range record.Fields {
 				columns = append(columns, field.Name)
 			}
@@ -431,7 +431,7 @@ func (b *pushBinding) lossDetectable() bool {
 	return true
 }
 
-// listedPush is the plugin's push entries with the receiver's view of each.
+// ListedPush is the plugin's push entries with the receiver's view of each.
 func (p *Plugin) ListedPush() []PushEntry {
 	entries := p.PushEntries()
 	var hub *push.Hub

@@ -49,7 +49,7 @@ const AddressIdleWindow = flows.AddressIdleWindow
 // row. The classification (internal/store/flows/classify.go) mints one only for an address
 // with on-link evidence on a non-upstream interface, after the whole pass is stored.
 
-// addressIdentityKey composes the level-3 key: the interface, the address, and the
+// AddressIdentityKey composes the level-3 key: the interface, the address, and the
 // substitute validity start. The composition is store.AddressIdentityKey's, so a
 // lease falling to this level and the classification compose the same key.
 func AddressIdentityKey(interfaceID *int64, address string, now int64) string {
@@ -60,7 +60,7 @@ func AddressIdentityKey(interfaceID *int64, address string, now int64) string {
 // seventeen-character form the schema constrains. The rule is the dhcplease kind's
 // (dhcplease.NormaliseMAC), because the lease decoders apply it; the neighbour tables apply it
 // here.
-func NormaliseMAC(raw string) (string, bool) { return dhcplease.NormaliseMAC(raw) }
+func normaliseMAC(raw string) (string, bool) { return dhcplease.NormaliseMAC(raw) }
 
 // macPointer returns a normalised MAC as a nullable column value.
 func macPointer(raw string) *string { return dhcplease.MACPointer(raw) }

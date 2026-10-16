@@ -1,0 +1,21 @@
+{
+  "api_version": 1,
+  "name": "example_peers",
+  "version": "0.1.0",
+  "display_name": "Example peers",
+  "description": "A third party's plugin, as the tests add one: a widget that places the window's destinations by their geolocation, and a table with a time column. It is copied into a temporary plugin tree, never shipped.",
+  "widgets": ["example_peer_places"],
+  "tables": [
+    {
+      "name": "sighting",
+      "nature": "event",
+      "columns": [
+        {"name": "seen_at", "type": "integer", "role": "time"},
+        {"name": "peer", "type": "ip"},
+        {"name": "sightings", "type": "integer", "role": "measure", "unit": "event"}
+      ],
+      "indexes": [{"columns": ["peer", "seen_at"]}],
+      "retention": {"column": "seen_at"}
+    }
+  ]
+}

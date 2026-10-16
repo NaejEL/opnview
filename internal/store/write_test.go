@@ -1,4 +1,4 @@
-package store
+package store_test
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/store"
 
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -664,7 +666,7 @@ func exampleFlow(index int) vocab.Flow {
 }
 
 // exampleTwoInterfaces discovers two interfaces and returns their ids.
-func exampleTwoInterfaces(t *testing.T, database *Store) (int64, int64) {
+func exampleTwoInterfaces(t *testing.T, database *store.Store) (int64, int64) {
 	t.Helper()
 	ctx := context.Background()
 	first, err := database.UpsertInterface(ctx, vocab.Interface{
@@ -685,7 +687,7 @@ func exampleTwoInterfaces(t *testing.T, database *Store) (int64, int64) {
 }
 
 // count counts a table, failing the test on an error.
-func count(t *testing.T, database *Store, table string) int {
+func count(t *testing.T, database *store.Store, table string) int {
 	t.Helper()
 	value, err := database.CountRows(context.Background(), table)
 	if err != nil {

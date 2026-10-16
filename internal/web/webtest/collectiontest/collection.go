@@ -17,7 +17,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web/webtest"
 )
 
-// signedInHarness is a harness with an account, signed in.
+// SignedInHarness is a harness with an account, signed in.
 func SignedInHarness(t *testing.T) *webtest.Harness {
 	t.Helper()
 	h := webtest.New(t)
@@ -25,7 +25,7 @@ func SignedInHarness(t *testing.T) *webtest.Harness {
 	return h
 }
 
-// storeFlows stores one synthesised filter-log record per source instant, each
+// StoreFlows stores one synthesised filter-log record per source instant, each
 // ingested five seconds after it. Nothing here is an address or an identifier read
 // off a network.
 func StoreFlows(h *webtest.Harness, observedAt ...int64) {
@@ -53,7 +53,7 @@ func StoreFlows(h *webtest.Harness, observedAt ...int64) {
 	}
 }
 
-// storeBurst stores count filter-log records spread over the minute starting at
+// StoreBurst stores count filter-log records spread over the minute starting at
 // from: one through the product's own insert, and the rest copied from it by one
 // statement, because sixteen hundred separate inserts cost seconds and prove
 // nothing more.
@@ -90,7 +90,7 @@ func StoreBurst(h *webtest.Harness, from int64, count int) {
 	}
 }
 
-// providerID looks up one implementation's registry row.
+// ProviderID looks up one implementation's registry row.
 func ProviderID(h *webtest.Harness, kind, providerKey string) int64 {
 	h.T.Helper()
 	id, err := h.Store.ProviderID(context.Background(), kind, providerKey)
@@ -100,7 +100,7 @@ func ProviderID(h *webtest.Harness, kind, providerKey string) int64 {
 	return id
 }
 
-// setAvailability records what a probe of one implementation found.
+// SetAvailability records what a probe of one implementation found.
 func SetAvailability(h *webtest.Harness, kind, providerKey string, state vocab.AvailabilityState) {
 	h.T.Helper()
 	if err := h.Store.SetAvailability(context.Background(), ProviderID(h, kind, providerKey),
@@ -109,7 +109,7 @@ func SetAvailability(h *webtest.Harness, kind, providerKey string, state vocab.A
 	}
 }
 
-// setSelection stores the operator's selection for one implementation.
+// SetSelection stores the operator's selection for one implementation.
 func SetSelection(h *webtest.Harness, kind, providerKey string, selection config.Selection) {
 	h.T.Helper()
 	if err := h.Store.SetSetting(context.Background(), config.KeySourceSelection(kind, providerKey),
@@ -118,7 +118,7 @@ func SetSelection(h *webtest.Harness, kind, providerKey string, selection config
 	}
 }
 
-// recordGap stores one collection gap of an implementation, detected at an instant.
+// RecordGap stores one collection gap of an implementation, detected at an instant.
 func RecordGap(h *webtest.Harness, kind, providerKey string, reason vocab.GapReason, start, end int64) {
 	h.T.Helper()
 	if err := h.Store.RecordCollectionGap(context.Background(), vocab.CollectionGap{
@@ -129,7 +129,7 @@ func RecordGap(h *webtest.Harness, kind, providerKey string, reason vocab.GapRea
 	}
 }
 
-// setting reads one setting row, failing when it is absent.
+// Setting reads one setting row, failing when it is absent.
 func Setting(h *webtest.Harness, key string) string {
 	h.T.Helper()
 	value, present, err := h.Store.Setting(context.Background(), key)
@@ -142,7 +142,7 @@ func Setting(h *webtest.Harness, key string) string {
 	return value
 }
 
-// pairForm is what one card's save submits.
+// PairForm is what one card's save submits.
 func PairForm(kind, pageSize, intervalSeconds string) url.Values {
 	return url.Values{
 		webtest.FieldKind: {kind}, webtest.CardFieldName(kind, webtest.FieldPageSize): {pageSize},
@@ -150,12 +150,12 @@ func PairForm(kind, pageSize, intervalSeconds string) url.Values {
 	}
 }
 
-// fillForm is what one card's fill control submits.
+// FillForm is what one card's fill control submits.
 func FillForm(kind string) url.Values {
 	return url.Values{webtest.FieldFill: {kind}}
 }
 
-// cardOf returns one kind's card out of a rendered page, failing when there is
+// CardOf returns one kind's card out of a rendered page, failing when there is
 // none.
 func CardOf(t *testing.T, page, kind string) string {
 	t.Helper()
@@ -170,7 +170,7 @@ func CardOf(t *testing.T, page, kind string) string {
 	return page[start : start+end]
 }
 
-// catalogueText is the source-language string of one key.
+// CatalogueText is the source-language string of one key.
 func CatalogueText(t *testing.T, key webtest.MessageKey) string {
 	t.Helper()
 	catalogue, err := web.ProductCatalogue(web.SourceLanguage)
@@ -184,7 +184,7 @@ func CatalogueText(t *testing.T, key webtest.MessageKey) string {
 	return template.HTMLEscapeString(value)
 }
 
-// figureShown says whether a card shows a row labelled by one key carrying one
+// FigureShown says whether a card shows a row labelled by one key carrying one
 // figure.
 func FigureShown(t *testing.T, card string, label webtest.MessageKey, figure string) bool {
 	t.Helper()
@@ -192,19 +192,19 @@ func FigureShown(t *testing.T, card string, label webtest.MessageKey, figure str
 		figure+"</span></dd>")
 }
 
-// stateShown says whether a card shows a row labelled by one key carrying one state.
+// StateShown says whether a card shows a row labelled by one key carrying one state.
 func StateShown(t *testing.T, card string, label, state webtest.MessageKey) bool {
 	t.Helper()
 	return strings.Contains(card, "<dt>"+CatalogueText(t, label)+"</dt>\n<dd>"+
 		CatalogueText(t, state)+"</dd>")
 }
 
-// fieldValue is what one input of a card holds.
+// FieldValue is what one input of a card holds.
 func FieldValue(card, id string) string {
 	return html.UnescapeString(webtest.AttributeAfter(card[max(strings.Index(card, `id="`+id+`"`), 0):], `value="`))
 }
 
-// collectionPages renders the collection surface in every state these tests can
+// CollectionPages renders the collection surface in every state these tests can
 // reach, so the catalogue's assertions run against each.
 //
 // THE ORDER IS THE STATE. One harness is moved from too little measured, to a
@@ -274,7 +274,7 @@ func CollectionPages(t *testing.T) []webtest.RenderedPage {
 	return pages
 }
 
-// selectedIn returns the value of the option selected in one select of a card, or
+// SelectedIn returns the value of the option selected in one select of a card, or
 // the empty string when none is.
 func SelectedIn(t *testing.T, card, id string) string {
 	t.Helper()

@@ -71,7 +71,7 @@ func IsLocalhostName(name string) bool {
 
 // heldMargin is how far either side of a sighting an address counts as held: the
 // discovery interval in force, from its setting row.
-func HeldMargin(ctx context.Context, q sqldb.Querier) (int64, error) {
+func heldMargin(ctx context.Context, q sqldb.Querier) (int64, error) {
 	var value string
 	err := q.QueryRowContext(ctx, "SELECT value FROM setting WHERE key = ?", DiscoveryIntervalKey).
 		Scan(&value)
@@ -132,7 +132,7 @@ func (s *FlowStore) IsThisFirewallAt(ctx context.Context, address string, at int
 	if IsLoopback(address) {
 		return true, nil
 	}
-	margin, err := HeldMargin(ctx, s.SQL)
+	margin, err := heldMargin(ctx, s.SQL)
 	if err != nil {
 		return false, err
 	}

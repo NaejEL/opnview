@@ -118,6 +118,15 @@ services:
       - "timescaledb.license=apache"
       - "-c"
       - "max_connections=500"
+      # A small buffer pool, on this service alone. Every test database is cloned with
+      # STRATEGY FILE_COPY, which forces a checkpoint before and after the copy, and a
+      # checkpoint writes every dirty buffer of every database the suite has open: measured on
+      # 16 October 2026 on 16 CPUs, the image's own setting (about 4 GB) had the checkpointer
+      # write 4.7 GB in 1 369 checkpoints during one run, and 512 MB took the database's CPU
+      # for the whole suite from about 570 s to about 500 s and its wall time by about a tenth.
+      # The tmpfs under it serves an evicted page from memory anyway.
+      - "-c"
+      - "shared_buffers=512MB"
       # Durability off: the tmpfs loses everything at a stop anyway.
       - "-c"
       - "fsync=off"
@@ -188,6 +197,11 @@ services:
     <<: *dev-base
     environment:
       OPNVIEW_TEST_DATABASE: "host=db-predeployment port=5432 user=postgres dbname=postgres sslmode=disable"
+      # The tests clone their databases with WAL_LOG here, and with FILE_COPY, the default, on the
+      # everyday tmpfs instance: FILE_COPY forces a checkpoint before and after each clone, which on
+      # this disk with production durability made 64 create-then-drop cycles, 16 at a time, take
+      # 38.3 s against 2.6 s with WAL_LOG (16 October 2026; internal/store/testdatabase.go).
+      OPNVIEW_TEST_CLONE_STRATEGY: "WAL_LOG"
     depends_on:
       db-predeployment:
         condition: service_healthy

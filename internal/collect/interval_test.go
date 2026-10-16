@@ -1,4 +1,4 @@
-package collect
+package collect_test
 
 import (
 	"context"
@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -25,7 +26,7 @@ type recordingClock struct {
 }
 
 // Now is a fixed instant; nothing here reads it.
-func (c *recordingClock) Now() time.Time { return referenceInstant() }
+func (c *recordingClock) Now() time.Time { return collecttest.ReferenceInstant() }
 
 // After records the duration and registers a waiter.
 func (c *recordingClock) After(d time.Duration) <-chan time.Time {
@@ -61,7 +62,7 @@ func (c *recordingClock) releaseOne() {
 	channel := c.waiters[0]
 	c.waiters = c.waiters[1:]
 	c.mutex.Unlock()
-	channel <- referenceInstant()
+	channel <- collecttest.ReferenceInstant()
 }
 
 // TestASavedIntervalChangesTheNextScheduledPassWithoutARestart: the interval is read before
@@ -116,15 +117,15 @@ func TestASavedIntervalChangesTheNextScheduledPassWithoutARestart(t *testing.T) 
 // collector, and the next pass of each paged read asks the firewall for that page.
 func TestASavedPageSizeReachesARunningCollector(t *testing.T) {
 	t.Parallel()
-	harness := newProbeHarness(t)
+	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
-	arrangeDiscoverableFirewall(t, harness.fake, harness.collector)
-	harness.fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
-	if err := harness.collector.probeFirewallLog(ctx); err != nil {
+	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
+	harness.Fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
+	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
 
-	if got := harness.collector.PageSizes(); got != config.DefaultPageSizes() {
+	if got := harness.Collector.PageSizes(); got != config.DefaultPageSizes() {
 		t.Fatalf("a new collector uses the pages %+v, want the defaults", got)
 	}
 
@@ -132,17 +133,17 @@ func TestASavedPageSizeReachesARunningCollector(t *testing.T) {
 	settings.FirewallLogPageSize = 250
 	settings.SecurityEventPageSize = 125
 	settings.DHCPLeasePageSize = 2000
-	harness.collector.Configure(settings)
+	harness.Collector.Configure(settings)
 
 	want := config.PageSizes{FirewallLog: 250, SecurityEvent: 125, DHCPLease: 2000}
-	if got := harness.collector.PageSizes(); got != want {
+	if got := harness.Collector.PageSizes(); got != want {
 		t.Fatalf("after Configure the collector uses %+v, want %+v", got, want)
 	}
 
-	if err := harness.collector.CollectFirewallLog(ctx); err != nil {
+	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
 		t.Fatalf("a filter-log pass: %v", err)
 	}
-	requests := harness.fake.RequestsTo(opnsense.FirewallLog)
+	requests := harness.Fake.RequestsTo(opnsense.FirewallLog)
 	if limit := requests[len(requests)-1].Query.Get("limit"); limit != "250" {
 		t.Errorf("the pass after a saved page asked for %q records, want 250", limit)
 	}

@@ -2581,6 +2581,321 @@ WHERE m.n <= 1 + (
       AND newer.captured_at > s.captured_at
 );
 
+-- ---------------------------------------------------------------------------
+-- NetFlow, and the push bookkeeping: the exporter's records, the capture
+-- configurations they were read under, the join's decisions, the measured
+-- volumes, the unmatched records, the conditions the decoder met, the push
+-- source periods and listeners, and the `netflow` figures of the families and
+-- of the purged part (PS9, PS17 to PS22, Phase E of the spec).
+--
+-- IN PROPORTION TO :flow_rows, at every size: one exporter record for every
+-- eighth flow, one measured connection for each of them, a condition for every
+-- 20 000 flows. So the scale seed's NetFlow tables are ten times the
+-- baseline's, as flow is, and the plans read at both sizes read tables that
+-- grew together.
+--
+-- NO ADDRESS LITERAL: every address below is a flow's own, or a slot of the
+-- address pool. The Observation Point is the upstream interface, identified by
+-- its position after the others, never by a name, and the configuration that
+-- captured on two interfaces adds the first one.
+-- ---------------------------------------------------------------------------
+
+-- The exporter, a provider of the flow_record kind this pretend-installation
+-- runs: an example value, as the reconciled_state source above is.
+INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
+VALUES ('flow_record', 'example-exporter', 'Example exporter', 1, :now)
+ON CONFLICT (kind, provider_key) DO NOTHING;
+
+INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
+SELECT p.id, 'reachable', 'example-exporter-probe', NULL, :now
+FROM provider AS p
+WHERE p.kind = 'flow_record' AND p.provider_key = 'example-exporter'
+  AND NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);
+
+-- Three configurations, in force one after the other over the whole history:
+-- one Observation Point, the upstream interface, from before the oldest flow to
+-- 45 days ago; then five days capturing on two interfaces, which joins nothing;
+-- then the one Observation Point again, up to :now. A minute between two runs
+-- is a capture configuration unknown, as between any two reads that differ, and
+-- both lie before the 30-day window, which the last configuration covers whole.
+INSERT INTO capture_configuration (id, provider_id, first_read_at, last_read_at, fingerprint, outcome,
+                                   detail, enabled, export_version, active_timeout_seconds,
+                                   inactive_timeout_seconds)
+SELECT c.id, p.id, c.first_read_at, c.last_read_at, c.fingerprint, NULL, NULL, 1, '9', 1800, 15
+FROM provider AS p,
+     (VALUES (1, least(:now - :flow_rows * 97, :now - 3888000 - 86400) - 3600, :now - 3888000, 'example-one-observation-point'),
+             (2, :now - 3888000 + 60, :now - 3456000, 'example-two-captured-interfaces'),
+             (3, :now - 3456000 + 60, :now, 'example-one-observation-point'))
+         AS c (id, first_read_at, last_read_at, fingerprint)
+WHERE p.kind = 'flow_record' AND p.provider_key = 'example-exporter';
+
+INSERT INTO capture_interface (capture_configuration_id, identifier, ingress, egress)
+SELECT c.id, i.identifier, 1, 1
+FROM capture_configuration AS c
+JOIN interface AS i ON i.id = :interfaces + 1 OR (c.id = 2 AND i.id = 1);
+
+-- The records. Record n is the exporter's view of flow 8n: its start is the
+-- flow's instant, its ends and family the flow's own, and the configuration in
+-- force at its start decides its capture state. Under one Observation Point most
+-- records are joined to their flow -- forward and reverse in turn -- one in five
+-- waits for the join, one in five was decided unmatched, every reason in turn;
+-- a few carry each state that joins nothing. Under two captured interfaces none
+-- is joinable.
+WITH counter (n) AS (
+    SELECT generate_series(CAST(1 AS BIGINT), :flow_rows / 8)
+),
+recorded AS (
+    SELECT c.n, f.id AS flow_id, f.observed_at, f.ip_version, f.src_address, f.dst_address,
+           f.src_port, f.dst_port, f.packet_bytes,
+           CASE f.protocol WHEN 'tcp' THEN 6 ELSE 17 END AS protocol,
+           f.src_interface_id IS NULL AS arriving,
+           (SELECT k.id FROM capture_configuration AS k
+            WHERE k.first_read_at <= f.observed_at ORDER BY k.first_read_at DESC LIMIT 1) AS configuration_id
+    FROM counter AS c
+    JOIN flow AS f ON f.id = 8 * c.n
+),
+stated AS (
+    SELECT r.*,
+           CASE WHEN r.configuration_id = 2 THEN 'observation_point_not_exported'
+                WHEN r.n % 41 = 0 THEN 'interface_index_unmapped'
+                WHEN r.n % 43 = 0 THEN 'capture_configuration_unknown'
+                WHEN r.n % 47 = 0 THEN 'netflow_not_configured'
+                ELSE 'observation_point' END AS capture_state
+    FROM recorded AS r
+),
+decided AS (
+    SELECT s.*,
+           CASE WHEN s.capture_state <> 'observation_point' THEN 'not_joinable'
+                WHEN s.n % 5 = 0 THEN 'pending'
+                WHEN s.n % 5 = 1 THEN 'unmatched'
+                ELSE 'joined' END AS join_state
+    FROM stated AS s
+)
+INSERT INTO flow_record (provider_id, identity, start_at, start_millisecond, end_at, end_millisecond,
+                         received_at, exporter_address, observation_domain, ingress_interface,
+                         egress_interface, ip_version, protocol, src_address, dst_address, src_port,
+                         dst_port, tcp_flags, octets, packets, capture_state, captured_interfaces,
+                         observation_point_identifier, observation_point_device, direction,
+                         loss_detectable, tuple_key, join_state, joined_flow_id, orientation,
+                         unmatched_reason, decided_at)
+SELECT
+    (SELECT id FROM provider WHERE kind = 'flow_record' AND provider_key = 'example-exporter'),
+    encode(sha256(convert_to(format('example-record-%s', d.n), 'UTF8')), 'hex'),
+    d.observed_at, 0, d.observed_at + 30, 500, d.observed_at + 60,
+    CASE WHEN d.ip_version = 6 THEN exporter.address_v6 ELSE exporter.address_v4 END,
+    0, 1, 2, d.ip_version, d.protocol, d.src_address, d.dst_address, d.src_port, d.dst_port,
+    CASE WHEN d.protocol = 6 THEN 27 END,
+    d.packet_bytes * 3, 3,
+    d.capture_state,
+    CASE d.capture_state WHEN 'observation_point_not_exported' THEN 2
+                         WHEN 'netflow_not_configured' THEN 0 ELSE 1 END,
+    CASE WHEN d.capture_state IN ('observation_point', 'interface_index_unmapped') THEN upstream.identifier END,
+    CASE WHEN d.capture_state = 'observation_point' THEN upstream.device END,
+    CASE WHEN d.capture_state = 'observation_point'
+         THEN CASE WHEN d.arriving THEN 'ingress' ELSE 'egress' END END,
+    CASE WHEN d.capture_state = 'observation_point' THEN 1 ELSE 0 END,
+    format('%s|%s|%s|%s', least(d.src_address, d.dst_address), greatest(d.src_address, d.dst_address),
+           d.ip_version, d.protocol),
+    d.join_state,
+    CASE WHEN d.join_state = 'joined' THEN d.flow_id END,
+    CASE WHEN d.join_state = 'joined' THEN CASE WHEN d.n % 2 = 0 THEN 'forward' ELSE 'reverse' END END,
+    CASE WHEN d.join_state = 'unmatched'
+         THEN (ARRAY['no_logged_leg', 'ambiguous', 'beyond_flow_horizon'])[1 + (d.n / 5) % 3] END,
+    CASE WHEN d.join_state IN ('joined', 'unmatched') THEN d.observed_at + 90 END
+FROM decided AS d
+JOIN interface AS upstream ON upstream.id = :interfaces + 1
+JOIN synth_address AS exporter ON exporter.slot = 900000 + :interfaces + 1;
+
+-- The conditions the decoder met: one for every 20 000 flows, at least two,
+-- spread evenly over the flows' history so the oldest is as old as the oldest
+-- flow, each resolved an hour later but the newest.
+INSERT INTO flow_record_condition (id, provider_id, reason, scope, observed_at, resolved_at)
+SELECT c.n, (SELECT id FROM provider WHERE kind = 'flow_record' AND provider_key = 'example-exporter'),
+       'netflow_sequence_interleaved', 'observation_domain 0', c.observed_at,
+       CASE WHEN c.n > 1 THEN c.observed_at + 3600 END
+FROM (SELECT n, :now - (n * :flow_rows * 97) / greatest(2, :flow_rows / 20000) AS observed_at
+      FROM generate_series(CAST(1 AS BIGINT), greatest(2, :flow_rows / 20000)) AS n) AS c;
+
+-- The measured volume of every connection a record was decided for, both
+-- directions, its state cycling through every state the CHECK allows, each with
+-- the figures that state carries: records and bytes for a measured or an
+-- in-progress direction, none for the others; a final row has no due instant,
+-- an open one does.
+WITH connection (flow_id, start_at, n) AS (
+    SELECT joined_flow_id, start_at, row_number() OVER (ORDER BY joined_flow_id)
+    FROM flow_record
+    WHERE join_state = 'joined'
+),
+directed AS (
+    SELECT c.*, d.direction,
+           (ARRAY['measured', 'in_progress', 'awaiting_export', 'missing', 'not_captured', 'export_gap',
+                  'not_exported_when_refused'])[1 + (c.n + d.shift) % 7] AS state
+    FROM connection AS c
+    CROSS JOIN (VALUES ('forward', 0), ('reverse', 3)) AS d (direction, shift)
+)
+INSERT INTO connection_measured_volume (connection_flow_id, direction, connection_start_at, state, bytes,
+                                        packets, records, observation_point_identifier,
+                                        observation_point_device, measured_at_leg, measured_flow_id, final,
+                                        due_at, computed_at)
+SELECT d.flow_id, d.direction, d.start_at, d.state,
+       CASE WHEN d.state IN ('measured', 'in_progress') THEN 1500 + d.n % 900 ELSE 0 END,
+       CASE WHEN d.state IN ('measured', 'in_progress') THEN 3 ELSE 0 END,
+       CASE WHEN d.state IN ('measured', 'in_progress') THEN 1 ELSE 0 END,
+       upstream.identifier, upstream.device,
+       CASE WHEN d.state IN ('measured', 'in_progress') THEN 'first_leg' END,
+       CASE WHEN d.state IN ('measured', 'in_progress') THEN d.flow_id END,
+       CASE WHEN d.state IN ('in_progress', 'awaiting_export') THEN 0 ELSE 1 END,
+       CASE WHEN d.state IN ('in_progress', 'awaiting_export') THEN d.start_at + 3600 END,
+       d.start_at + 120
+FROM directed AS d
+JOIN interface AS upstream ON upstream.id = :interfaces + 1;
+
+-- The unmatched records, per slot of their start in each period, per Observation
+-- Point, direction, protocol, version and reason: what the join adds as it
+-- decides each record unmatched.
+INSERT INTO unmatched_record_aggregate_1h
+SELECT (start_at / 3600) * 3600, (start_at / 3600) * 3600 + 3600, observation_point_identifier, direction,
+       protocol, ip_version, unmatched_reason, sum(octets), sum(packets), count(*), :now
+FROM flow_record WHERE join_state = 'unmatched'
+GROUP BY 1, 2, 3, 4, 5, 6, 7;
+INSERT INTO unmatched_record_aggregate_24h
+SELECT (start_at / 86400) * 86400, (start_at / 86400) * 86400 + 86400, observation_point_identifier,
+       direction, protocol, ip_version, unmatched_reason, sum(octets), sum(packets), count(*), :now
+FROM flow_record WHERE join_state = 'unmatched'
+GROUP BY 1, 2, 3, 4, 5, 6, 7;
+INSERT INTO unmatched_record_aggregate_7d
+SELECT (start_at / 86400) * 86400 - (((start_at / 86400) + 3) % 7) * 86400,
+       (start_at / 86400) * 86400 - (((start_at / 86400) + 3) % 7) * 86400 + 604800,
+       observation_point_identifier, direction, protocol, ip_version, unmatched_reason, sum(octets),
+       sum(packets), count(*), :now
+FROM flow_record WHERE join_state = 'unmatched'
+GROUP BY 1, 2, 3, 4, 5, 6, 7;
+INSERT INTO unmatched_record_aggregate_30d
+SELECT month_start_at(start_at), next_month_start_at(start_at), observation_point_identifier, direction,
+       protocol, ip_version, unmatched_reason, sum(octets), sum(packets), count(*), :now
+FROM flow_record WHERE join_state = 'unmatched'
+GROUP BY 1, 2, 3, 4, 5, 6, 7;
+
+-- The filter log moved from polling to a push source a day before the
+-- retention's horizon: one closed pull period from the start of its history,
+-- which the purge removes, and the open push period since, which it keeps.
+INSERT INTO provider_source_period (provider_id, path, from_at, to_at)
+SELECT p.id, s.path, s.from_at, s.to_at
+FROM provider AS p,
+     (SELECT :now - CAST(value AS BIGINT) - 86400 AS handover FROM setting WHERE key = 'retention_seconds')
+         AS h,
+     LATERAL (VALUES ('pull', 0, h.handover), ('push', h.handover + 1, CAST(NULL AS BIGINT)))
+         AS s (path, from_at, to_at)
+WHERE p.kind = 'firewall_log' AND p.is_active = 1;
+
+-- The two push listeners, last heard alive half a minute ago.
+INSERT INTO push_listener (protocol, transport, alive_at)
+VALUES ('syslog', 'udp', :now - 30), ('netflow', 'udp', :now - 30);
+
+-- The `netflow` figures of every family, every period, and of the purged part:
+-- each slot's measured bytes per action -- the exporter counting three times what
+-- the filter log's first packet showed -- and its netflow_parts, one measured
+-- connection for each logged one, its packets three a connection. Fixture values
+-- standing where the refresh would have written connection_netflow's sums, so
+-- every `_netflow` twin and every netflow answer reads rows; the two measures are
+-- still never summed. One slot in eight of each family carries them, in
+-- proportion as the exporter's records do: an UPDATE writes a new version of
+-- every row it touches, and rewriting every slot would double the families'
+-- size at the 1 000 000-row seed for no row a check reads that one in eight
+-- does not give.
+DO $seed_netflow_families$
+DECLARE
+    family TEXT;
+    period TEXT;
+    target TEXT;
+    parts TEXT := 'CAST(ROW(allowed_connections * 3, allowed_connections, 0, 0, 0, 2 * allowed_connections, '
+                  '0, 0, 0, 0, 0, 0, blocked_connections * 3, blocked_connections, 0, 0, 0, '
+                  '2 * blocked_connections, 0, 0, 0, 0, 0, 0, unknown_connections * 3, unknown_connections, '
+                  '0, 0, 0, 2 * unknown_connections, 0, 0, 0, 0, 0, 0) AS netflow_parts)';
+BEGIN
+    FOREACH family IN ARRAY ARRAY['volume', 'rule', 'domain', 'peer', 'client', 'owner'] LOOP
+        FOREACH period IN ARRAY ARRAY['1h', '24h', '7d', '30d'] LOOP
+            target := family || '_volume_aggregate_' || period;
+            IF family = 'volume' THEN
+                target := 'volume_aggregate_' || period;
+            END IF;
+            EXECUTE format('UPDATE %I SET netflow_allowed_bytes = 3 * allowed_bytes, '
+                           'netflow_blocked_bytes = 3 * blocked_bytes, netflow_unknown_bytes = 3 * unknown_bytes, '
+                           'netflow_bytes = 3 * (allowed_bytes + blocked_bytes + unknown_bytes), '
+                           'netflow_parts = %s WHERE id %% 8 = 0', target, parts);
+        END LOOP;
+    END LOOP;
+    UPDATE purged_flow_hour
+    SET netflow_bytes = 3 * bytes,
+        netflow_parts = CAST(ROW(3 * connections, connections, 0, 0, 0, 2 * connections, 0, 0, 0, 0, 0, 0,
+                                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                             AS netflow_parts);
+END
+$seed_netflow_families$;
+
+-- ---------------------------------------------------------------------------
+-- The mirror's bookkeeping (A9 and A10 of the broker amendment): what the broker
+-- learned of two endpoints a reader called -- a snapshot and an event stream --
+-- their parameters, one datum each, the table the snapshot's rows went to and
+-- its columns, the schema's history, the reads, a correction, and the gaps the
+-- broker recorded: one every week of the flows' history, alternately a datum's
+-- and the stream's, so the oldest lie before the retention's horizon. The paths
+-- are example values, as the providers' keys above are; nothing is an address.
+-- ---------------------------------------------------------------------------
+INSERT INTO opnsense.mirror_endpoint (id, path, method, encoding, first_seen_at, observed_stream,
+                                      declared_stream, calls, mirror_hits, write_refused, latencies_ms,
+                                      sizes_bytes, event_interval_ms, stream_cutoff_seconds)
+VALUES (1, '/api/example/snapshot/search', 'POST', 'form', :now - :flow_rows * 97, false, false, 1440, 2880, 0,
+        '[120, 135, 128]', '[20480, 20992, 20736]', NULL, NULL),
+       (2, '/api/example/stream/events', 'GET', 'none', :now - :flow_rows * 97, true, true, 12, 0, 0,
+        '[15]', '[512]', 1000, 300);
+
+INSERT INTO opnsense.mirror_parameter (endpoint_id, name, role, corrected_by, honoured)
+VALUES (1, 'current', 'page', 'example-reader', NULL),
+       (1, 'rowCount', 'page_size', 'example-reader', NULL),
+       (1, 'searchPhrase', 'ignored', NULL, NULL),
+       (2, 'since', 'window_start', NULL, true);
+
+INSERT INTO opnsense.mirror_datum (id, endpoint_id, identity, identity_key, firewall, nature, row_set, key,
+                                   cursor, cursor_type, generation, fetched_at, attempted_at, outcome,
+                                   status_code, root_shape, page_size, read_whole, changes)
+VALUES (1, 1, '{}', '{}', 'example-firewall-identity', 'snapshot', 'rows', '["id"]', NULL, NULL, 1440,
+        :now - 60, :now - 60, 'ok', 200, '{"rows": "array"}', 500, false, 96),
+       (2, 2, '{}', '{}', 'example-firewall-identity', 'record_stream', 'events', NULL, to_jsonb(:now - 1),
+        'timestamp', 12, :now - 1, :now - 1, 'ok', 200, '{"events": "array"}', NULL, false, 12);
+
+INSERT INTO opnsense.mirror_table (name, endpoint_id, row_set, parent_row_set, hypertable, created_at)
+VALUES ('example_snapshot_search_rows', 1, 'rows', NULL, false, :now - :flow_rows * 97),
+       ('example_stream_events_events', 2, 'events', NULL, true, :now - :flow_rows * 97);
+
+INSERT INTO opnsense.mirror_column (table_name, path, column_name, type, carries_domain, added_at)
+VALUES ('example_snapshot_search_rows', 'id', 'id', 'text', false, :now - :flow_rows * 97),
+       ('example_snapshot_search_rows', 'bytes', 'bytes', 'number', false, :now - :flow_rows * 97),
+       ('example_stream_events_events', 'timestamp', 'timestamp', 'timestamp', false, :now - :flow_rows * 97),
+       ('example_stream_events_events', 'name', 'name', 'text', true, :now - 86400);
+
+INSERT INTO opnsense.mirror_schema_version (endpoint_id, version, changed_at, cause, firewall_version)
+VALUES (1, 1, :now - :flow_rows * 97, 'first_answer', 'example-version-1'),
+       (2, 1, :now - :flow_rows * 97, 'first_answer', 'example-version-1'),
+       (2, 2, :now - 86400, 'field_added', 'example-version-2');
+
+INSERT INTO opnsense.mirror_read (datum_id, reader, reader_version, path, whole, max_age_seconds, first_read_at,
+                                  last_read_at)
+VALUES (1, 'example-reader', '1.0.0', 'rows', true, 60, :now - :flow_rows * 97, :now - 60),
+       (2, 'example-reader', '1.0.0', 'events.name', false, NULL, :now - 86400, :now - 1);
+
+INSERT INTO opnsense.mirror_correction (endpoint_id, reader, corrections, applied, recorded_at)
+VALUES (1, 'example-reader', '{"nature": "snapshot", "key": ["id"]}', true, :now - :flow_rows * 97);
+
+INSERT INTO opnsense.mirror_gap (id, datum_id, stream, from_at, to_at, reason, recorded_at)
+SELECT n,
+       CASE WHEN n % 2 = 0 THEN 1 END,
+       CASE WHEN n % 2 = 1 THEN 'example_stream_events' END,
+       :now - n * 604800, :now - n * 604800 + 300,
+       CASE WHEN n % 2 = 0 THEN 'call_failed' ELSE 'stream_cut' END,
+       :now - n * 604800 + 300
+FROM generate_series(CAST(1 AS BIGINT), greatest(2, (:flow_rows * 97) / 604800)) AS n;
+
 DROP TABLE synth_address;
 
 COMMIT;

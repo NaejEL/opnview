@@ -909,6 +909,13 @@ What the two service kinds answered, as stored. A widget never downloads or look
 | `registrable(names)` | `{available, groups}`: each name's registrable domain, by the list in use; `available` is `false` while none is held. |
 | `geolocation(address)` | The stored IP geolocation of an address: `{lookup_state, country_code, country_name, latitude, longitude, asn, operator, dataset_build_at}`; `lookup_state` is `resolved`, `miss`, `pending`, or `no_row` for an address never looked up. |
 
+A widget that places many peers costs no statement a peer. Every outside peer the request has
+read -- the rows of `host.volume.window()` and `host.flows.destinations()`, and the `peer_address`
+column of any row your own statement returns through `host.query` -- is *placed*, and the first
+`geolocation` call reads the geolocations of every peer placed so far in one statement; the calls
+after it are answered from what that read. Name the column that holds a peer's address
+`peer_address` in your statement and your widget is served the same way.
+
 #### `host.settings`
 
 | Member | What it is |

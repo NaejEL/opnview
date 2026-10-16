@@ -1,9 +1,12 @@
-package collect
+package collect_test
 
 import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/NaejEL/opnview/internal/collect"
+	"github.com/NaejEL/opnview/internal/collect/collecttest"
 
 	"github.com/NaejEL/opnview/internal/config"
 )
@@ -19,12 +22,12 @@ func TestTheHeartbeatLoopAndTheStartRecordBoundTheIntervalOpnviewWasNotRunning(t
 	live := config.NewLive(settings)
 
 	for _, clean := range []bool{true, false} {
-		harness := newProbeHarness(t)
-		start := referenceInstant()
-		if absence, err := RecordStart(ctx, harness.store, settings, harness.clock); err != nil || absence != nil {
+		harness := collecttest.NewProbeHarness(t)
+		start := collecttest.ReferenceInstant()
+		if absence, err := collect.RecordStart(ctx, harness.Store, settings, harness.Clock); err != nil || absence != nil {
 			t.Fatalf("a first start recorded %+v (%v)", absence, err)
 		}
-		task := HeartbeatTask(live, harness.store, harness.clock)
+		task := collect.HeartbeatTask(live, harness.Store, harness.Clock)
 		if task.RunAtStart {
 			t.Error("the heartbeat runs at start, although RecordStart has just beaten")
 		}
@@ -33,22 +36,22 @@ func TestTheHeartbeatLoopAndTheStartRecordBoundTheIntervalOpnviewWasNotRunning(t
 		}
 		lastAlive := start.Add(5 * time.Minute)
 		for at := start.Add(time.Minute); !at.After(lastAlive); at = at.Add(time.Minute) {
-			setClock(harness, at)
+			collecttest.SetClock(harness, at)
 			if err := task.Run(ctx); err != nil {
 				t.Fatalf("a beat: %v", err)
 			}
 		}
 		if clean {
 			lastAlive = lastAlive.Add(10 * time.Second)
-			setClock(harness, lastAlive)
-			if err := RecordCleanStop(ctx, harness.store, harness.clock); err != nil {
+			collecttest.SetClock(harness, lastAlive)
+			if err := collect.RecordCleanStop(ctx, harness.Store, harness.Clock); err != nil {
 				t.Fatalf("the clean stop: %v", err)
 			}
 		}
 
 		restart := lastAlive.Add(time.Hour)
-		setClock(harness, restart)
-		absence, err := RecordStart(ctx, harness.store, settings, harness.clock)
+		collecttest.SetClock(harness, restart)
+		absence, err := collect.RecordStart(ctx, harness.Store, settings, harness.Clock)
 		if err != nil {
 			t.Fatalf("the restart: %v", err)
 		}
@@ -57,7 +60,7 @@ func TestTheHeartbeatLoopAndTheStartRecordBoundTheIntervalOpnviewWasNotRunning(t
 			t.Errorf("clean %t: the restart recorded %+v, not [%d, %d)", clean, absence,
 				lastAlive.Unix(), restart.Unix())
 		}
-		if count := countRows(t, harness.store, "opnview_downtime"); count != 1 {
+		if count := collecttest.CountRows(t, harness.Store, "opnview_downtime"); count != 1 {
 			t.Errorf("clean %t: %d intervals recorded, not one", clean, count)
 		}
 	}

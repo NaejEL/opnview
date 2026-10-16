@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/NaejEL/opnview/internal/plugin"
+	"github.com/NaejEL/opnview/internal/plugin/harness"
 )
 
 // The plugin subcommand: `opnview plugin test <directory>` runs a plugin's own tests -- the
@@ -27,7 +27,7 @@ func runPluginCommand(ctx context.Context, arguments []string, out io.Writer) er
 	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
 		return fmt.Errorf("%s is not a directory", directory)
 	}
-	results, err := plugin.RunTests(ctx, directory)
+	results, err := harness.RunTests(ctx, directory)
 	if err != nil {
 		return err
 	}

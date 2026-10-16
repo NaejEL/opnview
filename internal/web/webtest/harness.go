@@ -64,7 +64,7 @@ type TestClock struct {
 	now   time.Time
 }
 
-// newTestClock returns a clock stopped at a fixed, arbitrary instant. The instant is
+// NewTestClock returns a clock stopped at a fixed, arbitrary instant. The instant is
 // a date and carries no meaning; what matters is that it is the same on every
 // machine.
 func NewTestClock() *TestClock {
@@ -78,7 +78,7 @@ func (c *TestClock) Now() time.Time {
 	return c.now
 }
 
-// advance moves the clock forward.
+// Advance moves the clock forward.
 func (c *TestClock) Advance(by time.Duration) {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -98,13 +98,13 @@ type Harness struct {
 	Server     *web.Server
 	HTTP       *httptest.Server
 	Client     *http.Client
-	// live is the configuration holder the scheduler would read, and collector
+	// Live is the configuration holder the scheduler would read, and collector
 	// stands in for the running Collector: together they are what a save on the
 	// collection surface has to reach without a restart.
 	Live      *config.Live
 	Collector *RecordingCollector
 	GeoIP     *RecordingGeoIP
-	// suffix stands in for the Public Suffix List's refresher: the copy a test says
+	// Suffix stands in for the Public Suffix List's refresher: the copy a test says
 	// is held, answered from memory, and a count of how often it was asked.
 	Suffix *RecordingPublicSuffix
 }
@@ -127,7 +127,7 @@ func (p *RecordingPublicSuffix) Held() (string, int, int64, bool) {
 	return p.version, p.rules, p.confirmedAt, p.held
 }
 
-// hold makes a copy held, at a version, with a rule count, confirmed at an instant.
+// Hold makes a copy held, at a version, with a rule count, confirmed at an instant.
 func (p *RecordingPublicSuffix) Hold(version string, rules int, confirmedAt int64) {
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
@@ -172,14 +172,14 @@ func (g *RecordingGeoIP) Ready() (int64, bool) {
 	return g.build, g.ready
 }
 
-// woken returns how many wakes arrived.
+// Woken returns how many wakes arrived.
 func (g *RecordingGeoIP) Woken() int {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 	return g.wakes
 }
 
-// setBuild makes the databases ready at a build.
+// SetBuild makes the databases ready at a build.
 func (g *RecordingGeoIP) SetBuild(build int64) {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
@@ -194,14 +194,14 @@ func (c *RecordingCollector) Reselect(_ context.Context, kind string) error {
 	return nil
 }
 
-// reselectedKinds returns the kinds whose selection was applied, in order.
+// ReselectedKinds returns the kinds whose selection was applied, in order.
 func (c *RecordingCollector) ReselectedKinds() []string {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
 	return append([]string(nil), c.reselected...)
 }
 
-// received returns the configurations handed over so far.
+// Received returns the configurations handed over so far.
 func (c *RecordingCollector) Received() []config.Config {
 	c.mutex.Lock()
 	defer c.mutex.Unlock()
@@ -360,7 +360,7 @@ func NewAdjusted(t *testing.T, dataDir string, withKeyFile, firewallOverTLS bool
 	}
 }
 
-// reopen closes this Harness's database and builds a second server over the SAME
+// Reopen closes this Harness's database and builds a second server over the SAME
 // data directory, which is what a restart is.
 //
 // IT IS HOW AC7 IS ASSERTED ACROSS A RESTART. A setup surface closed by a flag in
@@ -374,7 +374,7 @@ func (h *Harness) Reopen() *Harness {
 	return NewIn(h.T, h.DataDir, true)
 }
 
-// get issues a GET.
+// Get issues a GET.
 func (h *Harness) Get(path string) *http.Response {
 	h.T.Helper()
 	request, err := http.NewRequest(http.MethodGet, h.HTTP.URL+path, nil)
@@ -388,7 +388,7 @@ func (h *Harness) Get(path string) *http.Response {
 	return answer
 }
 
-// post issues a POST carrying the form token the page it names was rendered with.
+// Post issues a POST carrying the form token the page it names was rendered with.
 func (h *Harness) Post(path string, form url.Values) *http.Response {
 	h.T.Helper()
 	if _, present := form["csrf_token"]; !present {
@@ -397,7 +397,7 @@ func (h *Harness) Post(path string, form url.Values) *http.Response {
 	return h.PostRaw(path, form)
 }
 
-// postRaw issues a POST exactly as given, token included or omitted.
+// PostRaw issues a POST exactly as given, token included or omitted.
 func (h *Harness) PostRaw(path string, form url.Values) *http.Response {
 	h.T.Helper()
 	request, err := http.NewRequest(http.MethodPost, h.HTTP.URL+path,
@@ -413,7 +413,7 @@ func (h *Harness) PostRaw(path string, form url.Values) *http.Response {
 	return answer
 }
 
-// formToken fetches a page and reads the form token out of it, which is what a
+// FormToken fetches a page and reads the form token out of it, which is what a
 // browser does.
 func (h *Harness) FormToken(path string) string {
 	h.T.Helper()
@@ -436,7 +436,7 @@ func (h *Harness) FormToken(path string) string {
 	return token
 }
 
-// completeSetup runs the setup surface end to end and returns the login and
+// CompleteSetup runs the setup surface end to end and returns the login and
 // password it used, both generated here.
 func (h *Harness) CompleteSetup() (login, password string) {
 	h.T.Helper()
@@ -456,7 +456,7 @@ func (h *Harness) CompleteSetup() (login, password string) {
 	return login, password
 }
 
-// signIn signs in and leaves the session in the Harness's cookie jar.
+// SignIn signs in and leaves the session in the Harness's cookie jar.
 func (h *Harness) SignIn(login, password string) {
 	h.T.Helper()
 	answer := h.Post(web.PathSignIn, url.Values{"login": {login}, "password": {password}})
@@ -466,7 +466,7 @@ func (h *Harness) SignIn(login, password string) {
 	}
 }
 
-// sessionCookie returns the session cookie the jar currently holds, or the empty
+// SessionCookie returns the session cookie the jar currently holds, or the empty
 // string.
 func (h *Harness) SessionCookie() string {
 	h.T.Helper()
@@ -482,7 +482,7 @@ func (h *Harness) SessionCookie() string {
 	return ""
 }
 
-// readBody reads a response body to the end.
+// ReadBody reads a response body to the end.
 func ReadBody(t *testing.T, answer *http.Response) string {
 	t.Helper()
 	raw, err := io.ReadAll(answer.Body)
@@ -492,7 +492,7 @@ func ReadBody(t *testing.T, answer *http.Response) string {
 	return string(raw)
 }
 
-// attributeAfter returns what follows marker up to the next double quote.
+// AttributeAfter returns what follows marker up to the next double quote.
 func AttributeAfter(body, marker string) string {
 	start := strings.Index(body, marker)
 	if start < 0 {
@@ -506,7 +506,7 @@ func AttributeAfter(body, marker string) string {
 	return rest[:end]
 }
 
-// randomHex generates a value for one test run, so no credential exists in the
+// RandomHex generates a value for one test run, so no credential exists in the
 // repository.
 func RandomHex(t *testing.T, bytes int) string {
 	t.Helper()
@@ -526,7 +526,7 @@ type FakeFirewall struct {
 	mutex  sync.Mutex
 	status int
 	body   []byte
-	// perPath answers one path with a shape of its own. Runtime discovery reads three
+	// PerPath answers one path with a shape of its own. Runtime discovery reads three
 	// endpoints whose envelopes differ, and a collection pass that fell over on a body
 	// it could not decode would prove nothing about the credentials it carried.
 	PerPath  map[string][]byte
@@ -538,18 +538,18 @@ type FakeFirewall struct {
 
 // FakeRequest is one request the fake received.
 type FakeRequest struct {
-	// path is what was asked for.
+	// Path is what was asked for.
 	Path string
-	// method is how.
+	// Method is how.
 	Method string
-	// apiKey and apiSecret are the Basic-auth halves the request carried. They are
+	// APIKey and apiSecret are the Basic-auth halves the request carried. They are
 	// what AC16 asserts on: the pass after a credential change must carry the new
 	// value.
 	APIKey    string
 	APISecret string
 }
 
-// newFakeFirewall starts a fake answering the verification endpoint. overTLS serves
+// NewFakeFirewall starts a fake answering the verification endpoint. overTLS serves
 // it under a certificate httptest generates, which no system root vouches for —
 // which is the shape of a firewall as OPNsense ships it.
 func NewFakeFirewall(t *testing.T, overTLS bool) *FakeFirewall {
@@ -569,7 +569,7 @@ func NewFakeFirewall(t *testing.T, overTLS bool) *FakeFirewall {
 	return fake
 }
 
-// serve records one request and answers it.
+// Serve records one request and answers it.
 func (f *FakeFirewall) Serve(writer http.ResponseWriter, request *http.Request) {
 	apiKey, apiSecret, _ := request.BasicAuth()
 
@@ -602,7 +602,7 @@ func (f *FakeFirewall) Serve(writer http.ResponseWriter, request *http.Request) 
 	_, _ = writer.Write(body)
 }
 
-// host is the fake's host:port, chosen by the operating system at run time.
+// Host is the fake's host:port, chosen by the operating system at run time.
 func (f *FakeFirewall) Host() string {
 	f.T.Helper()
 	target, err := url.Parse(f.Server.URL)
@@ -612,10 +612,10 @@ func (f *FakeFirewall) Host() string {
 	return target.Host
 }
 
-// baseURL is what a test types into the firewall URL field.
+// BaseURL is what a test types into the firewall URL field.
 func (f *FakeFirewall) BaseURL() string { return f.Server.URL }
 
-// fingerprint is the SHA-256 fingerprint of the certificate this fake presents, or
+// Fingerprint is the SHA-256 fingerprint of the certificate this fake presents, or
 // the empty string when it speaks plain HTTP. It is what an operator would read off
 // OPNsense's own interface and type into the settings surface.
 func (f *FakeFirewall) Fingerprint() string {
@@ -626,21 +626,21 @@ func (f *FakeFirewall) Fingerprint() string {
 	return opnsense.CertificateFingerprint(f.Server.Certificate())
 }
 
-// answer sets what the fake replies with.
+// Answer sets what the fake replies with.
 func (f *FakeFirewall) Answer(status int, body []byte) {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 	f.status, f.body, f.down = status, body, false
 }
 
-// goDown makes the fake stop answering.
+// GoDown makes the fake stop answering.
 func (f *FakeFirewall) GoDown() {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
 	f.down = true
 }
 
-// received returns the requests the fake got.
+// Received returns the requests the fake got.
 func (f *FakeFirewall) Received() []FakeRequest {
 	f.mutex.Lock()
 	defer f.mutex.Unlock()
@@ -649,7 +649,7 @@ func (f *FakeFirewall) Received() []FakeRequest {
 	return copied
 }
 
-// last returns the most recent request, failing if there is none.
+// Last returns the most recent request, failing if there is none.
 func (f *FakeFirewall) Last() FakeRequest {
 	f.T.Helper()
 	received := f.Received()
@@ -659,7 +659,7 @@ func (f *FakeFirewall) Last() FakeRequest {
 	return received[len(received)-1]
 }
 
-// mustJSON encodes a body the fake serves.
+// MustJSON encodes a body the fake serves.
 func MustJSON(t *testing.T, value any) []byte {
 	t.Helper()
 	encoded, err := json.Marshal(value)

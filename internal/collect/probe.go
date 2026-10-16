@@ -5,14 +5,6 @@ import (
 	"fmt"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
-	"github.com/NaejEL/opnview/internal/collect/dnslookup"
-	"github.com/NaejEL/opnview/internal/collect/firewalllog"
-	"github.com/NaejEL/opnview/internal/collect/measurement"
-	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/resolvercache"
-	"github.com/NaejEL/opnview/internal/collect/resolverlocaldata"
-	"github.com/NaejEL/opnview/internal/collect/securityevent"
 )
 
 // Availability probes and provider activation, written once for every kind.
@@ -51,13 +43,13 @@ func (c *Collector) ProbeAll(ctx context.Context) error {
 		failures = append(failures, err)
 	}
 	for _, probe := range []func(context.Context) error{
-		c.probeFirewallLog,
-		c.probeSecurityEvent,
-		c.probeMeasurement,
-		c.probeDHCPLease,
-		c.probeDNSLookup,
-		c.probeResolverCache,
-		c.probeResolverLocalData,
+		c.ProbeFirewallLog,
+		c.ProbeSecurityEvent,
+		c.ProbeMeasurement,
+		c.ProbeDHCPLease,
+		c.ProbeDNSLookup,
+		c.ProbeResolverCache,
+		c.ProbeResolverLocalData,
 		c.ProbeFlowRecord,
 		c.ProbeReconciledState,
 		c.ProbeDeclaredKinds,
@@ -70,41 +62,6 @@ func (c *Collector) ProbeAll(ctx context.Context) error {
 		return fmt.Errorf("collect: the probe round was incomplete: %w", core.JoinErrors(failures))
 	}
 	return nil
-}
-
-// probeFirewallLog probes every implementation of the firewall_log kind.
-func (c *Collector) probeFirewallLog(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindFirewallLog, core.ProbeablesOf(c.SourceSet.FirewallLog, firewallLogProbe))
-}
-
-// probeSecurityEvent probes every implementation of the security_event kind.
-func (c *Collector) probeSecurityEvent(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindSecurityEvent, core.ProbeablesOf(c.SourceSet.SecurityEvent, securityEventProbe))
-}
-
-// probeMeasurement probes every implementation of the measurement_sample kind.
-func (c *Collector) probeMeasurement(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindMeasurementSample, core.ProbeablesOf(c.SourceSet.Measurement, measurementProbe))
-}
-
-// probeDHCPLease probes every implementation of the dhcp_lease kind.
-func (c *Collector) probeDHCPLease(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindDHCPLease, core.ProbeablesOf(c.SourceSet.DHCPLease, leaseProbe))
-}
-
-// probeDNSLookup probes every implementation of the dns_lookup kind.
-func (c *Collector) probeDNSLookup(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindDNSLookup, core.ProbeablesOf(c.SourceSet.DNSLookup, lookupProbe))
-}
-
-// probeResolverCache probes every implementation of the resolver_cache kind.
-func (c *Collector) probeResolverCache(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindResolverCache, core.ProbeablesOf(c.SourceSet.ResolverCache, cacheProbe))
-}
-
-// probeResolverLocalData probes every implementation of the resolver_local_data kind.
-func (c *Collector) probeResolverLocalData(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindResolverLocalData, core.ProbeablesOf(c.SourceSet.ResolverLocalData, localDataProbe))
 }
 
 // Reselect applies the operator's selection of one kind at once, from what the last probe
@@ -130,35 +87,4 @@ func (c *Collector) Reselect(ctx context.Context, kind string) error {
 	}
 	active, _ := core.DecideActive(kind, outcomes, selections)
 	return c.Store.SetActiveProviders(ctx, kind, active...)
-}
-
-// The probe of each core kind's implementations, as probeablesOf takes it.
-func firewallLogProbe(source firewalllog.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
-}
-
-func securityEventProbe(source securityevent.Source) func(context.Context, provider.Session) (
-	provider.Result, error) {
-	return source.Probe
-}
-
-func measurementProbe(source measurement.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
-}
-
-func leaseProbe(source dhcplease.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
-}
-
-func lookupProbe(source dnslookup.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
-}
-
-func cacheProbe(source resolvercache.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
-}
-
-func localDataProbe(source resolverlocaldata.Source) func(context.Context, provider.Session) (
-	provider.Result, error) {
-	return source.Probe
 }

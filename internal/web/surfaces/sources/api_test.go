@@ -7,9 +7,10 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/web/messages"
+
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/vocab"
-	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/settingfields"
 	"github.com/NaejEL/opnview/internal/web/surfaces/sources"
 	"github.com/NaejEL/opnview/internal/web/webtest"
@@ -64,7 +65,7 @@ func TestTheSourcesJSONCarriesEveryFigureOfThePage(t *testing.T) {
 			detailText = text
 		}
 		line := fmt.Sprintf("source %s %s state.availability.%s active %s selection state.sizing.selection_%s "+
-			"outage %s checked %s probe %s detail %s", web.KindLabelKey(kind), web.ProviderLabelKey(kind, provider),
+			"outage %s checked %s probe %s detail %s", messages.KindLabelKey(kind), messages.ProviderLabelKey(kind, provider),
 			settingstest.Path(raw, "availability"), yesNo(settingstest.Path(raw, "active")), settingstest.Path(raw, "selection"),
 			yesNo(settingstest.Path(raw, "in_outage")), checked, settingstest.Path(raw, "probe"), detailText)
 		for _, page := range settingstest.Path(raw, "opnsense_pages").([]any) {
@@ -76,9 +77,9 @@ func TestTheSourcesJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		kind := settingstest.Path(raw, "kind").(string)
 		providerLabel, state := "", "state.outage.kind"
 		if provider, ok := settingstest.Path(raw, "provider_key").(string); ok {
-			providerLabel, state = string(web.ProviderLabelKey(kind, provider)), "state.outage.provider"
+			providerLabel, state = string(messages.ProviderLabelKey(kind, provider)), "state.outage.provider"
 		}
-		expected = append(expected, fmt.Sprintf("outage %s %s %s", web.KindLabelKey(kind), providerLabel, state))
+		expected = append(expected, fmt.Sprintf("outage %s %s %s", messages.KindLabelKey(kind), providerLabel, state))
 	}
 	for _, raw := range settingstest.Path(answer, "recent_gaps").([]any) {
 		kind, provider := settingstest.Path(raw, "kind").(string), settingstest.Path(raw, "provider_key").(string)
@@ -86,8 +87,8 @@ func TestTheSourcesJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		if text, ok := settingstest.Path(raw, "detail").(string); ok {
 			detailText = text
 		}
-		expected = append(expected, fmt.Sprintf("gap %s %s gap_reason.%s %s %s %v detail %s", web.KindLabelKey(kind),
-			web.ProviderLabelKey(kind, provider), settingstest.Path(raw, "reason"),
+		expected = append(expected, fmt.Sprintf("gap %s %s gap_reason.%s %s %s %v detail %s", messages.KindLabelKey(kind),
+			messages.ProviderLabelKey(kind, provider), settingstest.Path(raw, "reason"),
 			settingfields.Instant(int64(settingstest.Path(raw, "start_at").(float64))),
 			settingfields.Instant(int64(settingstest.Path(raw, "end_at").(float64))),
 			settingfields.SpelledDuration(int64(settingstest.Path(raw, "missed_seconds").(float64))), detailText))

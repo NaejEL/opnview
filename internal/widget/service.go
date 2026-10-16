@@ -13,7 +13,7 @@ import (
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/params"
-	requestpkg "github.com/NaejEL/opnview/internal/widget/request"
+	"github.com/NaejEL/opnview/internal/widget/request"
 	"github.com/NaejEL/opnview/internal/widget/script"
 )
 
@@ -28,8 +28,8 @@ const ParametersQueryKey = "parameters"
 type Service struct {
 	store    *store.Store
 	Now      func() time.Time
-	lists    requestpkg.SuffixLists
-	presets  map[string]requestpkg.Preset
+	lists    request.SuffixLists
+	presets  map[string]request.Preset
 	types    []string
 	refusals []params.Refusal
 	operator []string
@@ -46,7 +46,7 @@ type Options struct {
 	Now func() time.Time
 	// SuffixLists is the Public Suffix List in use, for the registrable-domain grouping;
 	// nil reports the grouping unavailable.
-	SuffixLists requestpkg.SuffixLists
+	SuffixLists request.SuffixLists
 	// OperatorDir is the directory operator widgets are read from, <data-dir>/widgets; empty
 	// loads none. A missing directory is not an error. Every widget the loader refuses is
 	// reported by Service.Refusals and never stops the service.
@@ -71,7 +71,7 @@ func New(database *store.Store, options Options) (*Service, error) {
 	if now == nil {
 		now = time.Now
 	}
-	service := &Service{store: database, Now: now, lists: options.SuffixLists, presets: map[string]requestpkg.Preset{},
+	service := &Service{store: database, Now: now, lists: options.SuffixLists, presets: map[string]request.Preset{},
 		liveInterest: options.LiveInterest}
 	service.datasets = options.Datasets
 	if service.datasets == nil {
@@ -95,7 +95,7 @@ func New(database *store.Store, options Options) (*Service, error) {
 	service.refusals = append(service.refusals, refused...)
 	for _, preset := range fromPlugins {
 		service.presets[preset.Type] = preset
-		if preset.Origin == requestpkg.OriginOperator {
+		if preset.Origin == request.OriginOperator {
 			service.operator = append(service.operator, preset.Type)
 		}
 	}
@@ -133,7 +133,7 @@ func (s *Service) Types() []string {
 }
 
 // Preset returns a served type's declaration.
-func (s *Service) Preset(widgetType string) (requestpkg.Preset, bool) {
+func (s *Service) Preset(widgetType string) (request.Preset, bool) {
 	preset, found := s.presets[widgetType]
 	return preset, found
 }
@@ -148,21 +148,21 @@ type Failure struct {
 
 // ServeType answers one request for a served type: 200 with the envelope, or 400 with a
 // JSON condition when the parameters cannot be parsed at all.
-func (s *Service) ServeType(writer http.ResponseWriter, request *http.Request, widgetType string) {
-	response, err := s.Respond(request.Context(), widgetType, request.URL.Query().Get(ParametersQueryKey))
+func (s *Service) ServeType(writer http.ResponseWriter, httpRequest *http.Request, widgetType string) {
+	response, err := s.Respond(httpRequest.Context(), widgetType, httpRequest.URL.Query().Get(ParametersQueryKey))
 	var (
 		malformed params.ErrMalformed
-		failed    *requestpkg.ScriptError
+		failed    *request.ScriptError
 	)
 	switch {
 	case errors.As(err, &failed):
 		// A widget script that threw, ran past its time bound or answered something that is not
 		// an answer: its own closed condition, and the detail in the log, never in the answer.
-		if request.Context().Err() != nil {
+		if httpRequest.Context().Err() != nil {
 			return
 		}
 		script.ScriptLogger(failed.Plugin, failed.Error())
-		WriteJSON(writer, http.StatusInternalServerError, Failure{Condition: requestpkg.ConditionScriptFailed, Type: widgetType})
+		WriteJSON(writer, http.StatusInternalServerError, Failure{Condition: request.ConditionScriptFailed, Type: widgetType})
 	case errors.As(err, &malformed):
 		WriteJSON(writer, http.StatusBadRequest, Failure{Condition: envelope.ConditionMalformedParameters,
 			Type: widgetType, Reason: malformed.Reason})
@@ -171,7 +171,7 @@ func (s *Service) ServeType(writer http.ResponseWriter, request *http.Request, w
 	case err != nil:
 		// The error is the store's: a cancelled request or a failed read. Its text names
 		// statements and is not shown; the condition says what happened.
-		if request.Context().Err() != nil {
+		if httpRequest.Context().Err() != nil {
 			return
 		}
 		WriteJSON(writer, http.StatusInternalServerError, Failure{Condition: "read_failed", Type: widgetType})
@@ -214,7 +214,7 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 	if err != nil {
 		return envelope.Response{}, err
 	}
-	request := &requestpkg.Request{
+	widgetRequest := &request.Request{
 		Ctx:            ctx,
 		Db:             s.store,
 		Lists:          s.lists,
@@ -235,20 +235,20 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 			States: []string{},
 		},
 	}
-	if request.Response.InvalidParameters == nil {
-		request.Response.InvalidParameters = []params.InvalidValue{}
+	if widgetRequest.Response.InvalidParameters == nil {
+		widgetRequest.Response.InvalidParameters = []params.InvalidValue{}
 	}
-	if request.Response.MissingParameters == nil {
-		request.Response.MissingParameters = []string{}
+	if widgetRequest.Response.MissingParameters == nil {
+		widgetRequest.Response.MissingParameters = []string{}
 	}
-	if err := request.Prepare(); err != nil {
+	if err := widgetRequest.Prepare(); err != nil {
 		return envelope.Response{}, err
 	}
-	response := request.Response
+	response := widgetRequest.Response
 
 	topUnresolved, topWithheld := false, false
 	for _, unresolvedReference := range response.UnresolvedReferences {
-		if requestpkg.IsSeriesPath(unresolvedReference.Path) {
+		if request.IsSeriesPath(unresolvedReference.Path) {
 			continue
 		}
 		if unresolvedReference.Reason == params.UnresolvedWithheld {
@@ -265,7 +265,7 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 		condition = envelope.ConditionWithheldByAggregateMode
 	case len(response.MissingParameters) > 0:
 		condition = envelope.ConditionMissingRequiredParameter
-	case preset.WithheldWholeUnderNoDomains && request.NoDomains():
+	case preset.WithheldWholeUnderNoDomains && widgetRequest.NoDomains():
 		condition = envelope.ConditionWithheldByAggregateMode
 		response.Withheld = append(response.Withheld, "data")
 	}
@@ -276,9 +276,9 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 
 	serve := preset.Serve
 	if preset.Volumes {
-		serve = func(r *requestpkg.Request) (any, bool, error) { return r.ServeMeasured(preset.Serve) }
+		serve = func(r *request.Request) (any, bool, error) { return r.ServeMeasured(preset.Serve) }
 	}
-	data, hasRows, err := serve(request)
+	data, hasRows, err := serve(widgetRequest)
 	if errors.Is(err, script.ErrWithheldUnderNoDomains) {
 		response.Condition = envelope.ConditionWithheldByAggregateMode
 		response.Data = nil
@@ -290,7 +290,7 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 	if err != nil {
 		return envelope.Response{}, err
 	}
-	response.Condition = request.Condition(hasRows)
+	response.Condition = widgetRequest.Condition(hasRows)
 	if response.Condition != envelope.ConditionReachable && response.Condition != envelope.ConditionReachableNoRows &&
 		!hasRows {
 		// A degraded source with nothing stored: no data at all, never a zero.
@@ -298,9 +298,9 @@ func (s *Service) Respond(ctx context.Context, widgetType, rawParameters string)
 	} else {
 		response.Data = data
 	}
-	if request.Override != "" {
-		response.Condition = request.Override
-		if request.Override == envelope.ConditionNoOwnerExists {
+	if widgetRequest.Override != "" {
+		response.Condition = widgetRequest.Override
+		if widgetRequest.Override == envelope.ConditionNoOwnerExists {
 			response.Data = nil
 		}
 	}
