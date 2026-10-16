@@ -4535,7 +4535,7 @@ Each fact is read from source and recorded in the survey with its 26.7.3 or `sta
   - Parent copies are never counted.
 - **The state of a direction.**
   - **Exactly one counted exporter, or the sole-copy rule applies:** the approved states `measured`, `in_progress`, `awaiting_export`, `missing` and `export_gap`.
-  - **Two counted exporters:** untranslated forwarding between two exported interfaces, or an unknown entry or exit while another interface exports that side. The state is `forwarding_export_unsettled`, with no bytes, not covered (decided, question 1). The controlled test of LV-NJ2 item 7 drives a short follow-up amendment.
+  - **Two counted exporters:** untranslated forwarding between two exported interfaces, or an unknown entry or exit while another interface exports that side. The state is `forwarding_export_unsettled`, with no bytes, not covered (decided, question 1). No controlled test follows; LV-NJ2 item 7 only counts the state.
   - **None, and no sole copy:** the first cause that applies, looking at the entry side, then the exit side:
 
     | State | Cause |
@@ -4765,12 +4765,7 @@ LV-NJ2 runs after deployment, on the maintainer's firewall, with every interface
    - Counted bytes per interface, against the `traffic/interface` deltas.
    - A query proving that no direction draws records of two copy kinds or from two exporters.
    - One NAT connection and one VLAN connection traced by hand, from legs to records to figures.
-7. **Controlled test of untranslated forwarding.**
-   - A sustained TCP transfer of a known size N, at least 100 MB, between hosts on two exported internal interfaces.
-   - 100 ICMP echoes across the same pair.
-   - The same again with one end on a VLAN.
-
-   The report gives the records per packet (0, 1 or 2) and the counted bytes against N. The result is recorded in survey S11 and drives the follow-up amendment for `forwarding_export_unsettled`.
+7. **Untranslated forwarding: observed only, no controlled test (maintainer, 16 October 2026).** On the maintainer's network, transfers between internal hosts are rare and cross an unmanaged switch, so they never reach the firewall. No test is staged. The report gives the count of `forwarding_export_unsettled` directions seen during the window, which is expected to be zero or near zero.
 8. **Samples explained.** Every sample of `ambiguous`, `no_logged_leg`, `reverse_unconfirmed` and `missing` is explained, including REPORT's unexplained absences.
 
 **LV-NJ2 passes** when every item is reported, every difference is named, and the maintainer has accepted the figures.
@@ -4789,7 +4784,7 @@ LV-NJ2 runs after deployment, on the maintainer's firewall, with every interface
 
 1. **Missing ingress records count as covered.** REPORT could not explain some missing ingress records; they end `missing`, which counts as covered. If they are systematic, `best_available` overstates coverage. LV-NJ2 item 8 measures this.
 2. **Policy routing.** `egressInterface` is the interface the route lookup chose. Under policy routing or gateway groups, the reverse check may reject legitimate replies (`reverse_unconfirmed`). LV-NJ2 reports the share.
-3. **Inter-VLAN traffic.** Untranslated inter-VLAN traffic carries no `netflow` figure until the controlled test settles it.
+3. **Inter-VLAN traffic.** Untranslated inter-VLAN traffic carries no `netflow` figure. No controlled test settles it: on the maintainer's network such traffic stays behind an unmanaged switch. An installation where it does cross the firewall sees it as `forwarding_export_unsettled`, stated rather than guessed.
 4. **Unreliable parent copies.** They are never counted, so a VLAN without its own export stays unmeasured.
 5. **F17 is synthesised.** A captured upstream ingress was never observed. If the maintainer later captures it, LV-NJ2 must run again.
 6. **Renumbering without a restart.** Index renumbering is caught only by the `sysUptime` rule (NJ3).
@@ -4869,7 +4864,7 @@ LV-NJ2 runs after deployment, on the maintainer's firewall, with every interface
 
 ## I. Decided (maintainer, 16 October 2026): the planner's open questions
 
-1. **Untranslated forwarding between two exported interfaces:** built now as `forwarding_export_unsettled`, with no bytes and not covered. LV-NJ2's controlled test, run after deployment, drives a short follow-up amendment.
+1. **Untranslated forwarding between two exported interfaces:** built now as `forwarding_export_unsettled`, with no bytes and not covered. There is no controlled test and no follow-up amendment: on the maintainer's network this traffic crosses an unmanaged switch and never reaches the firewall (maintainer, 16 October 2026).
 2. **Loss detection:** several sequence counters are followed under one `source_id`. A gap is asserted when the counters exceed the number of exporting interfaces (NJ7).
 3. **The exit row:** it carries the connection's `netflow` figure in both directions when the second leg passed, and `not_exported_when_refused` forward when it was refused.
 4. **Copy counting:** when no exporter sees the first leg's form of a direction, its translated copy is counted, chosen from the configuration and marked `counted_copy`. Parent copies are never counted.
