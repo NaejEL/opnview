@@ -4363,3 +4363,514 @@ The suite runs once, before commit. The hand-back carries:
 6. The move tooling is its own module, `ci/mover/`.
 7. `calendar_test.go` returns to the everyday suite.
 8. `provider_source_period` is classified from its writing code path: growing and purged if a row is written per restart, bounded and documented otherwise.
+
+---
+
+**This amendment is part of the spec and overrides any earlier text it replaces; section H lists the earlier sentences it makes obsolete.**
+
+# Amendment: the NetFlow join with every interface captured (replaces decision 15b and the single-Observation-Point rule)
+
+Status: PROPOSED
+
+Cycle kind: standard
+
+**Placement.** This amendment follows the Phase E amendment and is built **after Phase E is complete**. It replaces the parts of the NetFlow join amendment (lines 3601–4011) that §H names; anything it does not name stays as approved.
+
+**Cycle kind.** `standard`: Go, SQL, plugin JavaScript, fixtures and documents. Nothing on screen changes; the widget API changes only as a data contract (states and coverage fields).
+
+**Modularity.** CLAUDE.md, *The user interface*: "Modular at every layer". Adding an exporter implementation is adding a plugin directory and touching nothing else. NJ9 and NJ-AC17 test this.
+
+## Context
+
+**What the real data shows.** The maintainer's firewall was captured on 16 October 2026: OPNsense 26.7.3_11, all seven interfaces captured, NetFlow v9, 11,193 records and 13,352 `filterlog` lines. The analysis is in `scratchpad/capture-analysis/REPORT.md` (session scratchpad). It contradicts what decision 15b assumed:
+
+- **The records name their interfaces.** `INPUT_SNMP` and `OUTPUT_SNMP` (IANA `ingressInterface` IE 10 and `egressInterface` IE 14) are filled. `INPUT_SNMP = 0` appears only on firewall-originated records (S6a). Local delivery carries the loopback's index as `OUTPUT_SNMP` (REPORT Q1, Q2).
+- **No cross-node identical twin was observed** (S11's "two records identical in every field"). The 26 records that are identical in every field lie within one node and one datagram: they are distinct real one-packet records (Q3).
+- **VLAN parent copies exist.** A parent interface's node re-exports VLAN ingress with `INPUT_SNMP` = the parent (584 records). Of 131 VLAN-ingress tuples, 7 have no parent copy and 5 have a copy with different totals (Q3).
+- **Translated traffic is exported twice:** a pre-NAT copy from the ingress node and a post-NAT copy from the upstream egress node, equal in bytes in 2,521 of 2,540 cases.
+- **pflog logs the post-NAT form on the upstream `out` leg** (3,376 of 3,376). This settles S11's `UNVERIFIED:` sub-fact (Q4).
+- **Upstream ingress is not captured**, which fits an egress-only configuration; `getconfig` has not confirmed it (Q4).
+- **`wg0` has no node, and one VLAN exported nothing of its own** (Q2, Q7).
+- **REPORT's Rule B joins exactly one leg** for 82.2 % of records and 92.3 % of bytes, excluding the expected copies. It prevents about 48.5 MB of double counting and rejects nothing legitimate (Q5).
+
+**What the repository holds today.**
+- **The single-Observation-Point join is built:**
+  - `internal/collect/derive/flowrecord.go`: `StateAt`, `DirectionAt`, `consistent`, groups keyed by `observation_point_device`;
+  - `internal/collect/derive/measuredvolume.go`: a figure only under `CaptureObservationPoint`, otherwise `not_captured`;
+  - `internal/store/netflow/flowrecord.go`: the five capture states; `CaptureStateAt` returns `observation_point_not_exported` for two or more interfaces;
+  - `internal/store/schema.sql`: `flow_record`'s `capture_state`, `captured_interfaces`, `observation_point_*`, `direction` and `not_joinable` (lines 3939–3964); `idx_flow_record_group` (3978); `flow_record_condition` (3852–3872); `connection_measured_volume.observation_point_*` (4020–4021); the unmatched family keyed on `observation_point_identifier` (3215, 3226);
+  - `internal/widget/request/measure.go`: the window state, `observation_point_not_exported` and `state_details.captured_interfaces`.
+- **The decoder** (`internal/push/protocols/netflow/decoder.go:51-54, 577-625`) flags `netflow_sequence_interleaved` and then asserts no loss.
+- **The `netflow` plugin** (`plugins/netflow/plugin.json`, `netflow.js`):
+  - it already maps `ingressInterface` and `egressInterface`;
+  - it reads `getconfig` and `is_enabled`;
+  - its description (`plugin.json:6`) and its header (`netflow.js:28-31`) state the one-interface rule.
+- **The index map** (`internal/collect/derive/pushindexes.go`) reads `interfaces_info/1` `statistics.index` per device. Nothing establishes the loopback's index or a VLAN's parent. `interfaces_info` carries `vlan_tag`, but the survey has recorded no parent field.
+- **Firewall addresses** are held by discovery (`interface_address`, source `interfaces_info`).
+- **Phase E's E.6** (lines 4179–4194) seeds "one Observation Point, plus one interval with two captured interfaces" and `flow_record_condition`, and E22 purges `flow_record_condition`.
+
+**Why the rule changes.** The maintainer wants every interface captured, so that Insight keeps everything, **and** NetFlow volumes joined to the logged connections. Decision 15b forbade having both; the capture shows they are compatible.
+
+**What does not change.** The **observation-point limit** of `docs/widget-api.md` and `docs/widget-catalogue.md` (traffic within one interface stays invisible, and the limit is documented rather than printed) is unrelated to RFC 7011's *Observation Point* and does not change.
+
+## A. Decision recorded (appended to decision 15, after 15c)
+
+> - **15d. The NetFlow join works with every interface captured** (maintainer, 16 October 2026; supersedes 15b).
+>   - Each record is joined from its own `ingressInterface` and `egressInterface`, mapped at reception, under NJ4 (REPORT's Rule B).
+>   - No Observation Point is assigned to a record: OPNsense exports none (S11).
+>   - Translated copies and VLAN parent copies are stored and never counted, except a translated copy under NJ5's sole-copy rule.
+>   - Records are never deduplicated by content.
+>   - Each direction of a connection is counted once.
+>   - What the rule cannot measure carries a named state per direction, served per figure.
+>   - Coverage is read from the capture configuration, never inferred from records.
+
+## B. Scope
+
+### NJ1. Firewall facts first (survey, *Push sources*)
+
+Each fact is read from source and recorded in the survey with its 26.7.3 or `stable/26.7` URL, or else marked `UNVERIFIED:`. Nothing in NJ2–NJ8 is built on an `UNVERIFIED:` fact, except through the fallback named for it.
+
+| # | What must be established | Fallback while `UNVERIFIED:` |
+|---|---|---|
+| S5c | Which interfaces get an `ng_netflow` node when they are listed in `capture.interfaces`; REPORT's hypothesis is that only Ethernet attachments get one, so `wg` gets none. Also which field of a read-only endpoint tells the two kinds apart. | The plugin reports such an interface's export as `unknown`; its directions get `capture_configuration_unknown` (NJ5). |
+| S6b | How the loopback's kernel index is read: a row of `interfaces_info/1` with its `statistics.index`, identified by a reported attribute such as an interface flag, never by device name. | Rule 2(c), and rule 4's "0 equals L", are not built. A record whose egress index is unmapped is unmatched with `interface_index_unmapped`, and the hand-back reports it. |
+| S6c | Where a VLAN's parent is read (an `interfaces_info` field, or `/api/interfaces/vlan_settings/search_item`, with VLAN model fields such as `if` / `vlanif`), and what OPNsense calls that field, which settles the term "parent". | Parent copies cannot be classified; they end `no_logged_leg`, and LV-NJ2 reports their share. |
+
+**Corrections recorded from the 16 October capture.**
+- S11's pflog sub-fact is settled as "the post-NAT form on the `out` leg" (3,376 of 3,376). The `UNVERIFIED:` marker and PS-AC28's named exemption are removed.
+- The other S5, S6 and S11 corrections are listed in NJ11.
+
+### NJ2. Contract and stored columns
+
+- **The flow-record contract (PS17).** Its provider-filled fields do not change: `ingress_interface` and `egress_interface` were already raw indexes.
+- **Core-written columns of `flow_record`.** They are replaced. The core no longer writes `capture_state`, `captured_interfaces`, `observation_point_identifier`, `observation_point_device` or `direction`. It writes instead:
+  - the **mapped ingress and egress interface**, each as identifier and device, from the index map in force at reception (NJ3);
+  - for each of the two, a **role** from a closed list (the names are proposals): `interface`, `no_receiving_interface` (index 0, S6a), `local_delivery` (the loopback index, S6b) or `unmapped`;
+  - **`join_state`**: `pending`, `joined`, `copy` or `unmatched`. `not_joinable` is removed, because every record can be joined;
+  - **`copy_kind`**: `translated_copy` or `parent_copy`, present exactly when `join_state = copy`;
+  - a **`counted_copy` marker** on a translated copy counted under NJ5's sole-copy rule;
+  - **`unmatched_reason`**, from NJ4 rule 9's closed list;
+  - **`loss_detectable`** (NJ7);
+  - **`tuple_key`**, unchanged.
+- **The group key** no longer holds a device. `idx_flow_record_group` becomes `(tuple_key, start_at)`, unless the Builder shows a better index with plans at both seeds.
+- **The capture-configuration record (contract).** It keeps, per interface, the identifier, `ingress` and `egress`, and gains:
+  - **`exported`**, for each captured direction: whether the exporter actually exports what is configured. The value is `yes`, `no` with a named reason (proposal: `no_export_point`), or `unknown` (the S5c fallback);
+  - **`parent_of`**: the identifiers of the interfaces whose received packets this interface's exporter also exports with this interface as `ingressInterface` (S6c).
+
+  The plugin fills both. The core never names the mechanism behind them.
+- **`capture_interface`** gains the matching columns.
+- **`flow_record_condition`** is dropped (NJ6).
+- **`connection_measured_volume`**:
+  - loses `observation_point_identifier` and `observation_point_device`;
+  - loses `measured_at_leg` and `measured_flow_id`, unless they still carry information under decided questions 3 and 4;
+  - gains the `counted_copy` marker per direction;
+  - its `state` CHECK takes NJ5's list.
+- **No migration.** The project is pre-POC and the database is rebuilt. No migration, backfill or compatibility code is written (decided 11 October 2026).
+
+### NJ3. The index map in force at reception
+
+- **When a record is mapped.** Its two indexes are mapped when it is received, against the latest `interfaces_info/1` read at or before reception: PS11, through the broker, at discovery's max age.
+- **Mapped values are fixed.** They are stored and never re-mapped.
+- **Exporter restart.** When the exporter's `sysUptime` goes backwards, the index map is read again before the next record is mapped, because a reboot can renumber cloned interfaces.
+- **Roles.** Index 0 has the role `no_receiving_interface`. The loopback index (S6b) has the role `local_delivery`. Any other index absent from the map is `unmapped`.
+
+### NJ4. The join (REPORT's Rule B)
+
+**Definitions.**
+- *dev(i)* is the interface that a record's mapped index *i* names.
+- *L* is the loopback index.
+- A **leg** is a `flow` row.
+- A **second leg** is a leg whose pairing outcome is `second_leg`.
+
+**Unchanged.** Forward and reverse (RFC 5103), address comparison by value, the portless key, the time rule (latest `observed_at` ≤ start + `netflow_join_tolerance_seconds`), the SYN rule, continuity (S12 defaults), ambiguity and "every action joins" are PS19 rules 2–6 as approved. Only the device and the pf `dir` of the candidate legs change.
+
+1. **`ingressInterface` = 0** (firewall-originated). The record joins forward to the `out` leg on dev(egress), or in reverse to the `in` leg on dev(egress).
+2. **`ingressInterface` ≠ 0.** The record joins:
+   - (a) forward to the `in` leg on dev(ingress);
+   - (b) in reverse to the `in` leg on dev(egress);
+   - (c) if `egressInterface` = L, in reverse to the `out` leg on dev(ingress).
+3. **Choosing among candidates.** The candidates of every applicable case are pooled, and PS19's time, ambiguity, SYN and continuity rules choose among them. **A second leg is never a candidate.**
+4. **The reverse-join check.**
+   - A reverse join under rule 1 or rule 2(b) is accepted only if a forward record joined to the same leg has an `egressInterface` equal to this record's `ingressInterface`, with 0 and L counted as equal.
+   - Until such a forward record exists, the reverse record stays `pending`, while the filter-log read-through ≤ the leg's `observed_at` + the active timeout in force + the tolerance. Without a known timeout, pf's `tcp.established` is used.
+   - After that bound, the record is decided by rule 6, or else unmatched with `reverse_unconfirmed`.
+   - A forward record joined later reopens the pending reverse records of that leg (PS19 rule 8).
+5. **Translated copy.** A record with `ingressInterface` ≠ 0 and `egressInterface` ≠ L that joins no candidate is a `translated_copy` when either holds:
+   - its tuple equals, in either orientation, the logged tuple of a second leg on dev(egress) or dev(ingress);
+   - its source or destination is an address that discovery holds for the firewall.
+
+   It is stored with `join_state = copy`, counted only under NJ5's sole-copy rule, and never reported `no_logged_leg`.
+6. **Parent copy.** A record whose dev(ingress) declares a non-empty `parent_of` is a `parent_copy` when either holds:
+   - (i) it joins no candidate on dev(ingress), but would join under rule 2 if dev(ingress) were replaced by an interface of its `parent_of`;
+   - (ii) rule 4 rejected its reverse join, and the egress interface of the accepted forward record is in its `parent_of`.
+
+   It is stored, never counted, and never reported `no_logged_leg`.
+7. **No deduplication.** Records are never deduplicated by content. Identical records are distinct rows (PS17 identity), and each is counted when joined.
+8. **Everything is core.** Every rule reads contract fields, legs, the index map, the capture configuration and discovery's addresses. None names a device, an interface, a VLAN or an address.
+9. **Unmatched reasons**, a closed list (the names are proposals):
+   - `no_logged_leg`;
+   - `ambiguous`;
+   - `beyond_flow_horizon`;
+   - `interface_index_unmapped` (reinstated: a record whose needed index is `unmapped`);
+   - `reverse_unconfirmed`.
+
+### NJ5. Counting each direction once, and the per-direction states
+
+- **A direction's figure.** A connection's direction figure is the sum of the `joined` records joined, in that orientation, to its first (or single) leg, plus the sole-copy records below. No record contributes to two connections, nor twice to one.
+- **Exporters of a direction.** Each direction has an **entry** (the interface its packets arrive by, or local) and an **exit** (the interface they leave by, or local). They come from the configuration in force at the connection's start and from the connection's legs:
+
+  | Connection | Forward | Reverse |
+  |---|---|---|
+  | first leg `in` on A, paired second leg `out` on B | A → B | B → A |
+  | single `in` leg on A, destination an address of the firewall | A → local | local → A |
+  | single `in` leg on A, any other destination | A → unknown | unknown → A |
+  | single `out` leg on A (firewall-originated) | local → A | A → local |
+
+  - **Candidates.** The exporters that can see a direction are the entry interface's ingress and the exit interface's egress, wherever that direction is `exported = yes`.
+  - **Translated connections.** On a translated connection (the second leg's logged tuple differs from the first leg's), an exporter on the second leg's interface sees the translated form, so its records are copies and it is excluded.
+  - The exporters that remain are the **counted exporters**.
+- **Sole-copy rule (decided, question 4).**
+  - When a direction has **no** counted exporter, and an exporter on the second leg's interface exports the **translated** form of that direction, its translated copies are counted for that direction and marked `counted_copy`. This happens for example from `wg0` to outside.
+  - The choice is made from the configuration alone, so the copy cannot double.
+  - Parent copies are never counted.
+- **The state of a direction.**
+  - **Exactly one counted exporter, or the sole-copy rule applies:** the approved states `measured`, `in_progress`, `awaiting_export`, `missing` and `export_gap`.
+  - **Two counted exporters:** untranslated forwarding between two exported interfaces, or an unknown entry or exit while another interface exports that side. The state is `forwarding_export_unsettled`, with no bytes, not covered (decided, question 1). The controlled test of LV-NJ2 item 7 drives a short follow-up amendment.
+  - **None, and no sole copy:** the first cause that applies, looking at the entry side, then the exit side:
+
+    | State | Cause |
+    |---|---|
+    | `not_exported_when_refused` | a refused `out` leg: pf dropped the direction before the egress capture (approved meaning) |
+    | `ingress_not_captured` | the entry interface is captured egress-only, for example an egress-only upstream's inbound blocks, or the replies of firewall-originated traffic |
+    | `parent_copies_only` | the entry interface exports no ingress of its own, but an exported interface lists it in `parent_of` |
+    | `interface_not_exported` | configured as captured but reported `exported = no` |
+    | `interface_not_captured` | not in the capture configuration |
+    | `capture_configuration_unknown` | the configuration, or an interface's `exported`, is unknown |
+
+    The state names are proposals.
+- **Coverage.** `not_captured` is removed. **Covered** stays `measured`, `in_progress`, `awaiting_export` or `missing`. Every other state is not covered.
+- **No readable configuration.** A connection that started under `netflow_not_configured` or `capture_configuration_unknown` has no row. Its class, today's `not_joinable`, is renamed (proposal: `capture_not_known`), because records now join regardless.
+- **The exit row (decided, question 3).** A second leg's `exit_leg_device` row carries, under `netflow`, the connection's figure in both directions when the second leg passed, and `not_exported_when_refused` forward when it was refused. These are the same packets, mirroring how a second leg's logged bytes count there.
+
+### NJ6. What becomes of the Observation Point
+
+**Removed** (no speculative placeholders):
+- the record's Observation Point and direction;
+- the `observation_point`, `observation_point_not_exported` and `interface_index_unmapped` capture states, as interval states;
+- `captured_interfaces`;
+- `DirectionAt`, the direction-consistency table, and `StateAt`'s one-interface branch;
+- the configuration-contradiction rule;
+- `flow_record_condition`;
+- the decoder's `ResetSequences` call on a configuration change, unless NJ7 still uses it;
+- `state_details.captured_interfaces`;
+- `widget_flow_record_unmapped`;
+- the "single Observation Point throughout the window" condition;
+- PS-AC28's pflog exemption;
+- the README's "restricting capture to one interface narrows Insight" trade-off;
+- the `flow_record` dataset label about "identical records whose interface is not known".
+
+**Kept:**
+- `capture_configuration` and `capture_interface` as runs of reads, `CaptureHistory`, and the rule "in force over its run, unknown between differing runs";
+- `netflow_not_configured`, `capture_configuration_unknown` and `netflow_not_covering_window` with its `interval_states` detail;
+- the per-direction-state coverage counts and the four coverage classes (one renamed);
+- `connection_netflow` as the single reader;
+- `netflow_parts`, extended (NJ8);
+- RFC 7011's *Observation Point* in *Vocabulary*, restated as "not exported by OPNsense and not assigned by `opnview`".
+
+### NJ7. Loss detection under several exporting nodes (decided, question 2)
+
+- The decoder follows several sequence counters under one `source_id`. A datagram continues the counter whose expected next sequence equals its own; otherwise it opens a new counter.
+- A `netflow_sequence_gap` is asserted only when the open counters exceed the number of interfaces that the configuration in force reports as exporting. The core passes in this bound from the contract; the decoder names no OPNsense concept.
+- `loss_detectable` is 1 over the intervals where the bound is known.
+
+### NJ8. Aggregates and widget API
+
+- **PS21.**
+  - The unmatched family's key becomes: slot, the ingress interface identifier or role, the egress interface identifier or role, protocol, IP version and reason.
+  - Copies are in no family, except counted copies, which count in their connection's figures.
+  - `netflow_parts` gains, per part, a `<part>_direction_<state>_connections` field for each NJ5 state, and loses `not_captured`. The Builder states the new field count.
+- **PS22.**
+  - **The `netflow` measure's definition** becomes: "bytes and packets the firewall's NetFlow export reported for the logged connections, each direction counted once, from the records in the first leg's form, or from the translated form where no exporter sees the first leg's form; copies are otherwise never counted".
+  - **`best_available` stays strict (decided, question 5).** It answers `netflow` only when the window has a readable, enabled configuration throughout and every counted connection is covered. Otherwise it answers `logged`, with `netflow_not_configured`, `capture_configuration_unknown` or `netflow_not_covering_window`. LV-NJ2 item 5 measures the fallback rate, and the maintainer revisits the rule with that figure.
+  - **Coverage object.** The coverage object on every `netflow` figure serves the counts per NJ5 state, so that no unmeasurable direction is silently zero.
+  - **The `flow_record` dataset** serves `join_state`, `copy_kind`, `counted_copy` and the mapped interfaces. Its label says that a sum over records which are not `joined` counts copies.
+
+### NJ9. Modularity
+
+- **Core.** The join, the states, coverage and counting are core (`internal/collect/derive`, `internal/store/netflow`).
+- **The plugin supplies contract data only.**
+  - `plugin.json` keeps its IE mapping unchanged.
+  - `netflow.js` reports per-interface `exported` and `parent_of`, from the S5c and S6c reads. It declares these in its manifest's `endpoints`, with `survey_section` and `upstream_url`.
+- **A second exporter** is a directory with its own mapping and its own configuration read. Nothing under `internal/` or in any shipped plugin is edited.
+- **Description and header.** The plugin's `description` and its header state the all-interface rule.
+
+### NJ10. Interaction with Phase E (built after it)
+
+- **E.6.1's seed list is replaced for:**
+  - `capture_configuration` and `capture_interface`: several captured interfaces, including one egress-only interface, one `exported = no`, one with `parent_of`, and one unreadable run;
+  - `flow_record`: every `join_state`, both `copy_kind`s, a `counted_copy`, every unmatched reason and every role;
+  - `connection_measured_volume`: every NJ5 state;
+  - `unmatched_record_aggregate_*`, under the new key.
+
+  `flow_record_condition` is removed from the list.
+- **Phase E checks rerun.** E17, E18 (including the teeth check, with the extended `netflow_parts`), E19 and E22 (without `flow_record_condition`) are rerun and pass at both seeds.
+- **Join statements.** The join's statements are planned by the sweep at both seeds, and none scans a growing table.
+- **Budgets.** No budget is raised.
+
+### NJ11. Survey and document corrections
+
+- **Survey (`docs/opnsense-api-survey.md`).**
+  - **S5:** "one `ng_netflow` node per captured interface" is qualified by S5c. Add that a VLAN parent's node re-exports VLAN ingress with its own index (observed 16 October 2026).
+  - **S6:** add S6b and S6c. S6a is confirmed by data.
+  - **S10:** confirmed (templates 256/259, `OUT_*` = 0, 1 s resolution, no options template).
+  - **S11:**
+    - replace "two records identical in every field … Only an installation capturing one interface knows its observation point" with the observed facts;
+    - mark the pflog sub-fact settled;
+    - record the unexplained absences (blocked ICMP to the firewall, 0 of 40; some inter-VLAN TCP, 0 of 49) as open, without the maintainer's device names.
+  - **The summary-table rows** for S5, S6 and S11 are updated.
+  - ***The user's procedure*:** delete "capture exactly one interface … narrows what Insight collects". State instead:
+    - capture the interfaces to measure;
+    - an egress-only interface's inbound traffic is `ingress_not_captured`;
+    - an interface the exporter cannot capture is `interface_not_exported`.
+
+    These consequences are described, not advised.
+- **`docs/data-model.md`.**
+  - *NetFlow volumes* is rewritten.
+  - *Vocabulary*: rows 184, 187 and 188 change. New rows, each with its reason: *translated copy*, *parent copy* (term per S6c), *counted copy*, and the index roles.
+  - *Storage fit*: row 503 changes.
+- **Other documents.**
+  - `docs/widget-api.md` and `docs/plugins.md` (*A NetFlow subscriber*, the `flow_record` contract, `netflowState()`) are amended where named.
+  - `README.md`: the NetFlow paragraph.
+
+### NJ12. Fixtures
+
+- **Source.** Every fixture derives from REPORT's shapes. It is fed through the real v9 decoder and the real filter-log parser, uses templates 256/259 with REPORT Q1's field list, and has `source_id` 0.
+- **Rewriting under X1.**
+  - Addresses: documentation addresses only (RFC 5737, RFC 3849).
+  - Interface identifiers, devices and kernel indexes differ from the capture's.
+  - Nothing from the maintainer's network appears: no address, MAC, identifier, device or index.
+- **Provenance.** Each fixture carries `__provenance__`, naming the REPORT section it follows and what was rewritten or synthesised.
+
+| # | Shape | Expected |
+|---|---|---|
+| F1 | Outbound NAT from a VLAN: a pre-NAT ingress record; a parent copy; a post-NAT egress copy (`ingressInterface` = the VLAN); the reply as the VLAN's egress copy (`ingressInterface` = upstream, destination de-NATed); no parent copy of the reply | forward and reverse `measured`; one `parent_copy`; one `translated_copy` |
+| F2 | The same from an untagged interface | as F1, without the parent copy |
+| F3 | Client → firewall on a VLAN: forward `egressInterface` = L; a parent copy (parent → L); reply with `ingressInterface` = 0 | 2(a) and rule-1 reverse joined; rule 4 with 0 = L; one `parent_copy` |
+| F4 | Firewall → internal host on a VLAN: forward `ingressInterface` = 0; reply `egressInterface` = L; a parent copy of the reply | rule-1 forward and 2(c) joined; one `parent_copy` |
+| F5 | Firewall → outside, with an egress-only upstream | forward `measured`; reverse `ingress_not_captured` |
+| F6 | `exported = no` interface → VLAN host: forward as the VLAN's egress copy; reply, plus its parent copy | rule 4 accepts the reply and rejects the parent copy (`parent_copy` by 6(ii)) |
+| F7 | `exported = no` interface → outside via NAT: only a post-NAT copy | sole-copy rule: the forward is counted from the translated copy and marked `counted_copy` |
+| F8 | Inbound blocked on an egress-only upstream | forward `ingress_not_captured`; reverse `missing` (approved builder choice) |
+| F9 | Two identical one-packet records (FIN/RST) in one datagram, and a pair identical across two datagrams | four rows; each joined record is counted |
+| F10 | A VLAN not captured whose parent is captured | `parent_copies_only` |
+| F11 | Untranslated forwarding between two exported interfaces, with 0, 1 and 2 records per packet | `forwarding_export_unsettled`, no bytes |
+| F12 | A firewall-originated refused `out` leg | `not_exported_when_refused` |
+| F13 | An index absent from the map | `interface_index_unmapped` |
+| F14 | A reply with no forward record past the bound | `reverse_unconfirmed` |
+| F15 | IPv6 firewall-originated traffic | rule 1 joins |
+| F16 | Datagrams from five interleaved counters, one datagram dropped | one `netflow_sequence_gap` |
+| F17 | A pre-de-NAT ingress record on an upstream captured on ingress (**synthesised; not observed**) | `translated_copy`, never joined to the second leg |
+
+## C. Acceptance criteria
+
+Every test runs on the PostgreSQL test instance, with a fake clock and NJ12's fixtures, through the real decoder and router.
+
+- [ ] **NJ-AC1. Facts first.**
+  - S5c, S6b and S6c exist in the survey, each with a 26.7.3 or `stable/26.7` URL. Where one is still `UNVERIFIED:`, its NJ1 fallback is built and named in the hand-back.
+  - S11's pflog sub-fact carries no `UNVERIFIED:`.
+  - PS-AC28's test exempts nothing by name.
+- [ ] **NJ-AC2. OPNsense sources verified, and an unavailable source reported.**
+  - Every endpoint that the `netflow` plugin adds for S5c and S6c is in its manifest with `survey_section` and `upstream_url`, and is cited in its header with the response fields it reads.
+  - A 404, 403 or unparseable answer gives `exported = unknown` or `capture_configuration_unknown`, with the broker outcome in the availability. Nothing is guessed from records.
+  - No mutating `netflow` action is called (BR-AC15).
+- [ ] **NJ-AC3. Contract.**
+  - The contract in code equals `docs/plugins.md` (A13), including `exported` and `parent_of`.
+  - A grep finds no `observation_point` in `contract.go`, `schema.sql`, `internal/`, `plugins/` or `docs/`, outside *Vocabulary*'s RFC row.
+- [ ] **NJ-AC4. Index map.**
+  - Records are mapped with the map in force at reception, and a later map change does not re-map stored rows.
+  - A `sysUptime` that goes backwards forces a read before the next mapping (request counter).
+  - Index 0 and L get their roles; any other unknown index gets `unmapped`.
+- [ ] **NJ-AC5. Rule B, table-driven.**
+  - Each of rule 1 (both orientations), 2(a), 2(b) and 2(c) has a fixture that joins the expected leg.
+  - A record that meets only a second leg never joins it.
+  - Candidates pooled at the same instant give `ambiguous`.
+- [ ] **NJ-AC6. Reverse check.**
+  - F6's parent copy is rejected and classed `parent_copy`.
+  - F3 accepts with 0 = L.
+  - F14 stays `pending` until the bound, then becomes `reverse_unconfirmed`.
+  - F1–F6 give identical rows whether ingested forward-first, reverse-first or interleaved (PS-AC34's method), and a second derivation writes nothing.
+- [ ] **NJ-AC7. Copies.**
+  - F1, F2 and F17 classify translated copies by each of the two signals separately.
+  - F1, F3, F4 and F10 classify parent copies.
+  - Uncounted copies appear in no family, no total, no `connection_measured_volume` figure and no unmatched slot.
+  - F7's counted copy is counted exactly once and carries `counted_copy` in the row, in the dataset and in the figure's coverage object.
+- [ ] **NJ-AC8. No deduplication.** F9 stores four rows, and the connection's figure sums every joined record.
+- [ ] **NJ-AC9. Each direction counted once.**
+  - For every fixture, each direction's bytes and packets equal an independent computation over the records that the fixture's provenance marks as counted.
+  - A test fails if any record contributes to two directions, to two connections, or twice to one direction.
+- [ ] **NJ-AC10. Named states, never silently zero.**
+  - Each NJ5 state is produced by its fixture (F5, F8, F10, F11, F12, and `exported = no`).
+  - None of these directions reports `measured` or `missing`.
+  - Each state appears in the figure's coverage object of a `client_traffic_detail` answer and of an aggregate answer.
+- [ ] **NJ-AC11. Unsettled forwarding.** F11's three variants each give `forwarding_export_unsettled`, with zero bytes and not covered.
+- [ ] **NJ-AC12. Aggregates.**
+  - At `1h`, `24h`, `7d` and `30d`, the logged columns equal the baseline (P-AC9), and the `netflow` columns equal an independent computation.
+  - The unmatched family uses the new key.
+  - The purge keeps the purged part's `netflow` figures.
+  - The exit row follows NJ5's decided rule.
+- [ ] **NJ-AC13. One reader, inlined.**
+  - `connection_netflow` remains the only reader of `connection_measured_volume` (`TestNoStatementCopiesThePerLegCounting`).
+  - E18's inlining check passes with the extended `netflow_parts`.
+- [ ] **NJ-AC14. Widget measure.**
+  - Under a seven-interface configuration where every counted connection is covered, `best_available` answers `netflow`.
+  - With F5 in scope, it answers `logged` with `netflow_not_covering_window`, byte-identical to `logged` apart from the admitted differences.
+  - An explicit `netflow` request serves the coverage object with the NJ5 counts.
+  - A grep finds no `observation_point_not_exported` and no `captured_interfaces` in code, schema or docs.
+- [ ] **NJ-AC15. Loss detection.**
+  - F16 records one `netflow_sequence_gap` for the dropped datagram, and none for the five interleaved counters alone.
+  - `loss_detectable` is 1 over those intervals.
+- [ ] **NJ-AC16. Dead code removed.**
+  - `flow_record_condition`, `DirectionAt`, the one-interface branch, `widget_flow_record_unmapped` and the `not_joinable` join state no longer exist (grep and catalogue inspection).
+  - Each removal is listed in the hand-back.
+- [ ] **NJ-AC17. Modularity.**
+  - PS-AC48 passes with a test-only second provider, in its own directory, that reports `exported` and `parent_of`, with no shipped file edited.
+  - PS-AC47's grep extends to the NJ4 and NJ5 code: no OPNsense endpoint, model field, netgraph term, IE name, device name or address literal.
+- [ ] **NJ-AC18. Fixtures.**
+  - Every NJ12 fixture passes X1 and carries `__provenance__`.
+  - A test asserts that no fixture holds an address, identifier, device or kernel index from REPORT.md's configuration table or its Q2 table.
+- [ ] **NJ-AC19. REPORT reproduced.**
+  - The Builder runs the built join locally over the 16 October capture: `scratchpad/capture/netflow.bin` and `syslog.log`, with REPORT Q2's mapping supplied as a test-only index map.
+  - The capture files are **never committed**.
+  - The hand-back prints the outcome table (records and bytes for one leg, ambiguous, each copy kind and each unmatched reason) beside REPORT Q5's, and explains every difference.
+- [ ] **NJ-AC20. Phase E holds.** E17, E18, E19 and E22, as NJ10 amends them, pass at both seeds, and the join statements are planned.
+- [ ] **NJ-AC21. Budget.** `docker compose run --rm checks` stays within its 60 s `go test` budget. The hand-back prints the wall time that the new tests add.
+- [ ] **NJ-AC22. Documents.**
+  - NJ11's corrections are present.
+  - The new *Vocabulary* rows exist, each with its reason.
+  - F-AC5 holds for every new state, reason, role and copy kind.
+
+## D. Live validation: LV-NJ2 (replaces LV-NJ)
+
+LV-NJ2 runs after deployment, on the maintainer's firewall, with every interface captured as on 16 October 2026. **Nothing goes to `main` before it passes.**
+
+1. **The configuration read.** The plugin's `getconfig` read through the broker is reported:
+   - which interfaces are captured, and which are egress-only, notably the upstream;
+   - the status of `wg0` and of the VLAN that exported nothing of its own;
+   - `exported` and `parent_of` as the plugin derived them.
+2. **The index map.** The `interfaces_info` map, including the loopback index, is compared with an empirical 5-tuple mapping recomputed by REPORT's method. Every high-confidence row agrees, or the difference is explained.
+3. **Window length.** The window lasts at least 40 minutes, longer than the 1800 s active timeout.
+4. **Outcome table.** Records and bytes, per outcome, per copy kind, per unmatched reason and per interface, are reported beside REPORT Q5. Excluding copies, the joined share is at least the baseline minus 5 points in both records and bytes (baseline 82.2 % / 92.3 %), or each shortfall is explained.
+5. **Fallback rate.** The share of connection directions in each NJ5 state is reported, and so is the share of `best_available` answers that fall back to `logged` over the default canvas. The maintainer revisits question 5 with this figure.
+6. **Double-count audit.**
+   - Counted bytes per interface, against the `traffic/interface` deltas.
+   - A query proving that no direction draws records of two copy kinds or from two exporters.
+   - One NAT connection and one VLAN connection traced by hand, from legs to records to figures.
+7. **Controlled test of untranslated forwarding.**
+   - A sustained TCP transfer of a known size N, at least 100 MB, between hosts on two exported internal interfaces.
+   - 100 ICMP echoes across the same pair.
+   - The same again with one end on a VLAN.
+
+   The report gives the records per packet (0, 1 or 2) and the counted bytes against N. The result is recorded in survey S11 and drives the follow-up amendment for `forwarding_export_unsettled`.
+8. **Samples explained.** Every sample of `ambiguous`, `no_logged_leg`, `reverse_unconfirmed` and `missing` is explained, including REPORT's unexplained absences.
+
+**LV-NJ2 passes** when every item is reported, every difference is named, and the maintainer has accepted the figures.
+
+## E. Out of scope
+
+- QinQ and nested VLANs, LAGG members, and a parent of a parent.
+- Inferring an interface or a node from a record's content, timing or sequence counter.
+- Deduplicating records by content.
+- The rdr (port-forward) form on the upstream `in` leg. LV-NJ2 measures it.
+- A join for exporters other than OPNsense's: only the seam is built.
+- Re-joining stored records when the index map or the configuration changes.
+- Writing anything to the firewall.
+
+## F. Risks
+
+1. **Missing ingress records count as covered.** REPORT could not explain some missing ingress records; they end `missing`, which counts as covered. If they are systematic, `best_available` overstates coverage. LV-NJ2 item 8 measures this.
+2. **Policy routing.** `egressInterface` is the interface the route lookup chose. Under policy routing or gateway groups, the reverse check may reject legitimate replies (`reverse_unconfirmed`). LV-NJ2 reports the share.
+3. **Inter-VLAN traffic.** Untranslated inter-VLAN traffic carries no `netflow` figure until the controlled test settles it.
+4. **Unreliable parent copies.** They are never counted, so a VLAN without its own export stays unmeasured.
+5. **F17 is synthesised.** A captured upstream ingress was never observed. If the maintainer later captures it, LV-NJ2 must run again.
+6. **Renumbering without a restart.** Index renumbering is caught only by the `sysUptime` rule (NJ3).
+7. **Join cost.** Candidate legs are read across several devices per group. Plans are checked at both seeds, but throughput at 1M is not measured (declined 11 October 2026).
+8. **Missing NJ1 sources.** If the NJ1 sources do not exist, the fallbacks lower coverage, never correctness.
+
+## G. ROADMAP.md, README.md and CLAUDE.md
+
+- **`ROADMAP.md`, *Push sources*:** unchanged in substance.
+- **README:** Phase F rewrites the NetFlow paragraph. Every interface may be captured; it names the states and the egress-only consequence; the Insight trade-off is removed.
+- **`CLAUDE.md`:** its NetFlow sentence stays true, so no diff.
+
+## H. Sentences that become obsolete
+
+**In `specs/SPEC-backend-completion-plugins.md`:**
+1. Decision 15b, lines 3635–3638.
+2. Line 3621, "cannot be evaluated once two interfaces are captured".
+3. PS17:
+   - the "Core-written columns", lines 3669–3673;
+   - the last sentence of line 3680.
+4. PS18:
+   - lines 3702–3709;
+   - lines 3711–3713;
+   - lines 3714–3717 (replaced by NJ7);
+   - lines 3718–3721 (replaced by NJ5).
+5. PS19:
+   - rule 1, lines 3725–3729;
+   - rule 2's "Same point" and its consistency table, lines 3731–3742;
+   - rule 7's list and note, lines 3755–3763;
+   - rule 9, lines 3767–3770.
+6. PS20, lines 3772–3799 (replaced by NJ5).
+7. PS21, lines 3807 and 3808.
+8. PS22:
+   - line 3814;
+   - lines 3815–3822;
+   - lines 3828–3830.
+9. PS23, line 3839.
+10. §C, lines 3846 and 3849.
+11. §D:
+    - PS-AC30(b), line 3866;
+    - PS-AC32's last bullet, line 3872;
+    - PS-AC36, lines 3876 and 3880;
+    - PS-AC37, lines 3882–3883;
+    - PS-AC19, line 3885;
+    - PS-AC49, lines 3894–3899;
+    - PS-AC50, lines 3900–3903;
+    - PS-AC51's last bullet, line 3909;
+    - PS-AC28's exemption, lines 3858 and 3967.
+12. §E, line 3921, and LV-NJ, lines 3923–3927 (replaced by LV-NJ2).
+13. §F, line 3933.
+14. §G, risks 44, 49, 57 and 58 (lines 3940–3943).
+15. The decided blocks:
+    - line 3976's `captured_interfaces: N`;
+    - line 3982's "no single Observation Point".
+16. Phase E:
+    - line 4182, the seed's "one Observation Point, plus one interval with two captured interfaces";
+    - line 4183's `flow_record_condition`;
+    - E22's `flow_record_condition`, line 4283.
+
+**In `docs/opnsense-api-survey.md`:** lines 1367, 1368, 1373, 1478–1480, 1614–1629 and 1676–1678.
+
+**In `docs/data-model.md`:** lines 184, 187, 188, 503, 2970–2975, 2985–2990, 2996–3016, 3026–3037, 3051–3052 and 3067–3068.
+
+**In `docs/widget-api.md`:** lines 65, 116, 154, 166–167, 184, 188–193, 202–205, 216, 221, 337, 343 and 999–1000.
+
+**In `docs/plugins.md`:** lines 1105, 1160–1161, 1171, 1436, 1487, 2061 and 2139–2150.
+
+**In code:**
+- `plugins/netflow/plugin.json:6`;
+- `plugins/netflow/netflow.js:28-31`;
+- `internal/store/netflow/flowrecord.go:23-31, 174-195`;
+- `internal/collect/derive/flowrecord.go:28-33, 194-245, 285-296`;
+- `internal/collect/derive/measuredvolume.go:11-20, 105-125`;
+- `internal/widget/request/measure.go:37-57, 245-249, 286-289, 346-375`;
+- `internal/store/schema.sql:3215, 3226, 3852-3872, 3894-3912, 3939-3964, 3978-3979, 3984-4005, 4020-4021, 4066-4068`;
+- `internal/push/protocols/netflow/decoder.go:51-54`.
+
+## I. Decided (maintainer, 16 October 2026): the planner's open questions
+
+1. **Untranslated forwarding between two exported interfaces:** built now as `forwarding_export_unsettled`, with no bytes and not covered. LV-NJ2's controlled test, run after deployment, drives a short follow-up amendment.
+2. **Loss detection:** several sequence counters are followed under one `source_id`. A gap is asserted when the counters exceed the number of exporting interfaces (NJ7).
+3. **The exit row:** it carries the connection's `netflow` figure in both directions when the second leg passed, and `not_exported_when_refused` forward when it was refused.
+4. **Copy counting:** when no exporter sees the first leg's form of a direction, its translated copy is counted, chosen from the configuration and marked `counted_copy`. Parent copies are never counted.
+5. **`best_available`:** unchanged and strict this cycle. LV-NJ2 item 5 measures the fallback rate, and the maintainer revisits the rule with that figure.
