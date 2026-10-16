@@ -108,6 +108,7 @@ func TestAnOutsideAddressSeenOnBothKindsOfInterfaceGetsNoClientAndNoInterface(t 
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 4}, {5, 11}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			for _, v6 := range []bool{false, true} {
 				remote := storetest.Outside(77, v6)

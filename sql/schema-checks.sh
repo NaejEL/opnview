@@ -4155,6 +4155,119 @@ check 'S5A-AC35 the scan check catches a scan of flow hidden behind the view and
     "$(scanned_growing "$MAIN_DB" "$WORK/stmt_plan.txt" | tr -d '\n')"
 
 # ===========================================================================
+section 'E16 — purge_due_addresses is bounded by an index condition on observed_at'
+# ===========================================================================
+# The statement the collector runs before every purge (internal/store/flows/
+# classify.statements.sql, whose comment states why no index is added), as the store runs it:
+# prepared, its :now a parameter, under the custom and under the generic plan -- statements run
+# under the driver's statement cache (internal/store/sqldb/driver.go), so the generic plan is the
+# one a long-lived connection ends on. Three horizons on each seed, each computed from the seed's
+# own rows and its own retention: none due (the horizon at the oldest flow), about 1 % due (the
+# horizon at the flow one hundredth of the way through the rows), and every flow due (the
+# horizon past the newest). At each, the set returned through the indexes equals the set a plan
+# with every index switched off returns. At the 1 000 000-row seed with nothing due, each plan
+# reads at most 100 shared buffers; on both seeds, every node reading flow is an index node whose
+# index condition bounds observed_at, and none is a sequential scan.
+E16_STATEMENT="$WORK/statements/purge_due_addresses.sql"
+check 'E16 the sweep split purge_due_addresses out of its statements file' 'yes' \
+    "$([ -s "$E16_STATEMENT" ] && echo yes || echo no)"
+# e16_run <db> <now> <mode> <what> — the statement prepared with :now as $1, executed under
+# plan_cache_mode <mode>; <what> is "rows" for its result, sorted, or "explain" for EXPLAIN
+# (ANALYZE, BUFFERS) of the execution. "seqscan" switches every index access off for the
+# reference set. The session is rolled back.
+e16_run() {
+    local db="$1" now="$2" mode="$3" what="$4"
+    {
+        printf -- 'BEGIN;\n'
+        if [ "$mode" = 'seqscan' ]; then
+            printf -- 'SET LOCAL enable_indexscan = off;\nSET LOCAL enable_indexonlyscan = off;\n'
+            printf -- 'SET LOCAL enable_bitmapscan = off;\n'
+        else
+            printf -- 'SET LOCAL plan_cache_mode = %s;\n' "$mode"
+        fi
+        printf -- 'PREPARE e16_due(bigint) AS\n'
+        sed "s/:now/\$1/g" "$E16_STATEMENT"
+        if [ "$what" = 'explain' ]; then
+            printf -- 'EXPLAIN (ANALYZE, BUFFERS, COSTS OFF, TIMING OFF) EXECUTE e16_due(%s);\n' "$now"
+        else
+            printf -- 'EXECUTE e16_due(%s);\n' "$now"
+        fi
+        printf -- 'ROLLBACK;\n'
+    } > "$WORK/e16.sql"
+    if [ "$what" = 'explain' ]; then
+        "${PSQL[@]}" -d "$(dsn "$db")" -f "$WORK/e16.sql"
+    else
+        "${PSQL[@]}" -d "$(dsn "$db")" -f "$WORK/e16.sql" | LC_ALL=C sort
+    fi
+}
+# e16_root_buffers — the shared buffers (hit and read) of the plan's root node, read from an
+# EXPLAIN (ANALYZE, BUFFERS) on standard input: the first Buffers line above the first child,
+# or none when the root read nothing.
+e16_root_buffers() {
+    awk '/->/ { exit } /Buffers: shared/ { n = 0
+            if (match($0, /hit=[0-9]+/)) n += substr($0, RSTART + 4, RLENGTH - 4)
+            if (match($0, /read=[0-9]+/)) n += substr($0, RSTART + 5, RLENGTH - 5)
+            found = n; exit }
+         END { print found + 0 }'
+}
+for db in "$MAIN_DB" "$SCALE_DB"; do
+    tag="$(tag_of "$db")"
+    retention="$(q "$db" "SELECT CAST(value AS BIGINT) FROM setting
+        WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0;")"
+    if [ -z "$retention" ]; then
+        fail "E16 $tag: the seed sets no retention, so no flow is ever due"
+        continue
+    fi
+    oldest="$(q "$db" 'SELECT min(observed_at) FROM flow;')"
+    newest="$(q "$db" 'SELECT max(observed_at) FROM flow;')"
+    hundredth="$(q "$db" 'SELECT observed_at FROM flow ORDER BY observed_at
+        OFFSET (SELECT count(*) / 100 FROM flow) LIMIT 1;')"
+    for horizon in "none:$oldest" "one_percent:$hundredth" "all:$((newest + 1))"; do
+        label="${horizon%%:*}"
+        now=$(( ${horizon#*:} + retention ))
+        e16_run "$db" "$now" auto rows > "$WORK/e16_${tag}_${label}_index.txt"
+        e16_run "$db" "$now" seqscan rows > "$WORK/e16_${tag}_${label}_reference.txt"
+        rows="$(wc -l < "$WORK/e16_${tag}_${label}_index.txt" | tr -d ' ')"
+        if cmp -s "$WORK/e16_${tag}_${label}_index.txt" "$WORK/e16_${tag}_${label}_reference.txt"; then
+            pass "E16 $tag, $label due: the set through the indexes equals the set with every index off ($rows addresses)"
+        else
+            fail "E16 $tag, $label due: the set through the indexes differs from the set with every index off"
+        fi
+        case "$label" in
+            none) check "E16 $tag: with nothing due the statement returns nothing" '0' "$rows" ;;
+            *) check_ge "E16 $tag, $label due: the statement returns the unplaced ends due" 1 "$rows" ;;
+        esac
+    done
+    now=$(( oldest + retention ))
+    for mode in force_custom_plan force_generic_plan; do
+        e16_run "$db" "$now" "$mode" explain > "$WORK/e16_${tag}_$mode.txt"
+        check "E16 $tag, $mode, nothing due: no sequential scan reads flow" '0' \
+            "$(grep -c 'Seq Scan on flow\b' "$WORK/e16_${tag}_$mode.txt")"
+        flow_nodes="$(grep -cE '(Index Scan|Index Only Scan|Bitmap Heap Scan).* on flow( |$)' "$WORK/e16_${tag}_$mode.txt")"
+        check "E16 $tag, $mode, nothing due: each of the two branches reads flow through an index" '2' "$flow_nodes"
+        check "E16 $tag, $mode, nothing due: each branch's index condition bounds observed_at" '2' \
+            "$(grep -cE 'Index Cond: .*observed_at < ' "$WORK/e16_${tag}_$mode.txt")"
+        if [ "$db" = "$SCALE_DB" ]; then
+            buffers="$(e16_root_buffers < "$WORK/e16_${tag}_$mode.txt")"
+            if [ "$buffers" -le 100 ]; then
+                pass "E16 $tag, $mode, nothing due: the plan reads $buffers shared buffers (at most 100)"
+            else
+                fail "E16 $tag, $mode, nothing due: the plan reads $buffers shared buffers, over 100"
+            fi
+        fi
+    done
+done
+# And the checks have teeth: with every index access switched off, the same statement is caught
+# reading flow sequentially, with no index condition on observed_at.
+tag="$(tag_of "$MAIN_DB")"
+e16_run "$MAIN_DB" "$(( $(q "$MAIN_DB" 'SELECT min(observed_at) FROM flow;') + 1 ))" seqscan explain \
+    > "$WORK/e16_teeth.txt"
+check_ge "E16 $tag: the scan check catches the statement planned with every index off" 1 \
+    "$(grep -c 'Seq Scan on flow\b' "$WORK/e16_teeth.txt")"
+check "E16 $tag: the index-condition check finds none in that plan" '0' \
+    "$(grep -cE 'Index Cond: .*observed_at < ' "$WORK/e16_teeth.txt")"
+
+# ===========================================================================
 section 'S5B-AC18 — every served widget type answers within its response budget'
 # ===========================================================================
 # A14 and decision 9 of specs/SPEC-step-5b-widget-api.md: every served type, at its

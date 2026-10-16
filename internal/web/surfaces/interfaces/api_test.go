@@ -75,6 +75,7 @@ func TestTheInterfacesJSONEditsMakeThePagesChangeAndRefuseItsInputs(t *testing.T
 			network: interfacestest.ExampleOperatorV4(1).String(), unknown: true, refused: true},
 	} {
 		t.Run(input.what, func(t *testing.T) {
+			t.Parallel()
 			pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
 			pageNetwork, jsonNetwork := interfacestest.SeedBundleNetwork(pageSide, 1), interfacestest.SeedBundleNetwork(jsonSide, 1)
 			target := func(seeded interfacestest.BundleNetwork) int64 {

@@ -4,9 +4,15 @@
 //
 //	(i)   holds a go statement;
 //	(ii)  imports sync or sync/atomic;
-//	(iii) serves HTTP: imports net/http/httptest, declares a ServeHTTP method, or names
-//	      http.Handler, http.HandlerFunc, http.ServeMux or http.Server;
 //	(iv)  or lies under internal/plugin/.
+//
+// Clause (iii), serving HTTP -- importing net/http/httptest, declaring a ServeHTTP method, or naming
+// http.Handler, http.HandlerFunc, http.ServeMux or http.Server -- selected a package on its own until
+// the maintainer's decision of 16 October 2026 (decision 2 of "Phase E: decisions after the partial
+// build", specs/SPEC-backend-completion-plugins.md): the race detector covers the packages that start
+// goroutines or share mutable state across them, and a package that only serves HTTP does neither in
+// its own code. Its number is kept retired rather than reused, so a clause keeps one meaning in every
+// record that names it.
 //
 // It reads the packages of the module rooted at the directory it runs in (go list ./...), parses
 // every file go list names for each, and prints one line per package:
@@ -14,7 +20,7 @@
 //	selected <clause> <import path>
 //	excluded - <import path>
 //
-// where <clause> is the first clause that decided it, (i) to (iv), with the file that triggered it.
+// where <clause> is the first clause that decided it, (i), (ii) or (iv), with the file that triggered it.
 // ci/pre-deployment.sh runs the selected packages with -race and the others without it.
 package main
 
@@ -106,7 +112,7 @@ func list(root string) ([]listedPackage, error) {
 	return packages, nil
 }
 
-// decide applies the four clauses to one package, in order, and returns the first that holds.
+// decide applies the three clauses to one package, in order, and returns the first that holds.
 func decide(root string, listed listedPackage) (decision, error) {
 	relative, err := filepath.Rel(root, listed.Dir)
 	if err != nil {
@@ -133,7 +139,7 @@ func decide(root string, listed listedPackage) (decision, error) {
 	return decided, nil
 }
 
-// decideFiles applies the four clauses to the files of a package in a directory relative to the
+// decideFiles applies the three clauses to the files of a package in a directory relative to the
 // module root, by file name, and returns the first clause that holds with the file that triggered it.
 func decideFiles(directory string, sources map[string][]byte) (decision, error) {
 	names := make([]string, 0, len(sources))
@@ -156,7 +162,6 @@ func decideFiles(directory string, sources map[string][]byte) (decision, error) 
 	}{
 		{"(i)", holdsGoStatement},
 		{"(ii)", importsSync},
-		{"(iii)", servesHTTP},
 	}
 	for _, clause := range clauses {
 		for _, name := range names {
@@ -192,39 +197,4 @@ func importsSync(file *ast.File) bool {
 		}
 	}
 	return false
-}
-
-// servesHTTP is clause (iii).
-func servesHTTP(file *ast.File) bool {
-	httpName := ""
-	for _, spec := range file.Imports {
-		path, _ := strconv.Unquote(spec.Path.Value)
-		switch path {
-		case "net/http/httptest":
-			return true
-		case "net/http":
-			httpName = "http"
-			if spec.Name != nil {
-				httpName = spec.Name.Name
-			}
-		}
-	}
-	found := false
-	ast.Inspect(file, func(node ast.Node) bool {
-		switch typed := node.(type) {
-		case *ast.FuncDecl:
-			if typed.Recv != nil && typed.Name.Name == "ServeHTTP" {
-				found = true
-			}
-		case *ast.SelectorExpr:
-			if identifier, isIdent := typed.X.(*ast.Ident); isIdent && httpName != "" && identifier.Name == httpName {
-				switch typed.Sel.Name {
-				case "Handler", "HandlerFunc", "ServeMux", "Server":
-					found = true
-				}
-			}
-		}
-		return !found
-	})
-	return found
 }

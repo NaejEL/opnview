@@ -313,6 +313,7 @@ func TestEverySlotOfEveryFamilyEqualsTheSameSumsOverFlow(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][3]int{{2, 5, 300}, {4, 13, 900}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			// Forty days back, so slots of every period, months included, are closed and open.
 			network := storetest.Populated(t, counts[0], counts[1], counts[2], 40*86400)
 			if _, err := network.DB.DB().Exec(`INSERT INTO owner (id, display_name, created_at, updated_at)

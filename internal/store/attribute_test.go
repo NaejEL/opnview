@@ -57,6 +57,7 @@ func TestAttributionFollowsTheRuleExactly(t *testing.T) {
 	for index, testCase := range cases {
 		for _, v6 := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s (IPv6 %t)", testCase.name, v6), func(t *testing.T) {
+				t.Parallel()
 				network := storetest.NewNetwork(t, 2, 4)
 				ctx := context.Background()
 				var client, other storetest.Client

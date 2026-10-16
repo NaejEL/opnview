@@ -40,6 +40,7 @@ func TestALoggedHostNameMatchesALeaseByFirstLabelOnBothSides(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 4}, {3, 7}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			ctx := context.Background()
 			expires := network.Now + 3600

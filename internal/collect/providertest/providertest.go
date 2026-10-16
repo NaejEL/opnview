@@ -60,12 +60,21 @@ type Firewall struct {
 
 // streamReply is a canned server-sent event stream: the events' data, each written as
 // "event: message", "data: <data>" and a blank line, and then either the end of the stream or,
-// when forever is set, silence until the reader closes the connection -- which is what the
-// firewall's stream does.
+// when forever is set, the connection held open until the reader closes it -- which is what the
+// firewall's stream does. Held open, it is silent, unless repeatLast is set: then the last event
+// is written again every streamRepeatInterval, as the firewall's script goes on printing a reading
+// every interval for as long as the connection lasts.
 type streamReply struct {
-	events  [][]byte
-	forever bool
+	events     [][]byte
+	forever    bool
+	repeatLast bool
 }
+
+// streamRepeatInterval is how often a held stream with repeatLast writes its last event again.
+// The firewall's script prints one reading a second; a test reads at a frozen instant and waits
+// on the wall clock, so the fake prints faster, and a read taking the next events after the
+// connection's first ones finds them at once rather than at the end of its bound.
+const streamRepeatInterval = 50 * time.Millisecond
 
 // NewFirewall starts a fake. Every registry path answers 404 until a reply is configured for it,
 // which is the honest default: an endpoint the test did not arrange is a component that is not
@@ -133,10 +142,29 @@ func (f *Firewall) serve(writer http.ResponseWriter, request *http.Request) {
 		if flusher != nil {
 			flusher.Flush()
 		}
-		if stream.forever {
-			<-request.Context().Done()
+		if !stream.forever {
+			return
 		}
-		return
+		if !stream.repeatLast || len(stream.events) == 0 {
+			<-request.Context().Done()
+			return
+		}
+		last := stream.events[len(stream.events)-1]
+		ticker := time.NewTicker(streamRepeatInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-request.Context().Done():
+				return
+			case <-ticker.C:
+				if _, err := writer.Write([]byte("event: message\ndata: " + string(last) + "\n\n")); err != nil {
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+		}
 	}
 	if matched == "" || !configured {
 		writer.WriteHeader(http.StatusNotFound)
@@ -166,7 +194,11 @@ func (f *Firewall) AnswerStream(endpoint opnsense.Endpoint, events [][]byte, for
 
 // AnswerStreamFixture configures a stream from a labelled fixture whose body is
 // {"events": [...]}: one event per element, the element as its data, and the stream then held
-// open, as the firewall's is.
+// open, as the firewall's is, its last event written again every streamRepeatInterval as the
+// firewall's script goes on printing readings. The first events of a connection are the
+// fixture's, in order, so a read taking the first events of a connection reads exactly them; a
+// later read on the same connection reads the repeated last event, which is what a reading after
+// the first one looks like.
 func (f *Firewall) AnswerStreamFixture(endpoint opnsense.Endpoint, name string) {
 	f.t.Helper()
 	var body struct {
@@ -184,7 +216,12 @@ func (f *Firewall) AnswerStreamFixture(endpoint opnsense.Endpoint, name string) 
 		}
 		events = append(events, compact.Bytes())
 	}
-	f.AnswerStream(endpoint, events, true)
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+	if f.streams == nil {
+		f.streams = map[string]streamReply{}
+	}
+	f.streams[endpoint.Path] = streamReply{events: events, forever: true, repeatLast: true}
 }
 
 // AnswerFixture configures the reply for one endpoint from a labelled fixture.

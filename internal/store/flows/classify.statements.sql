@@ -511,6 +511,20 @@ SELECT min(src_address) FROM security_event WHERE src_address > :address;
 -- part never freezes a flow as it was stored -- with neither end placed, and therefore
 -- north-south -- when the evidence held can place it. An outside end is unplaced for
 -- ever and is returned too; placing it again changes nothing.
+--
+-- ITS PLAN IS BOUNDED, AND NONE OF THE FOUR SUSPECTED CAUSES HOLDS (E16, measured on
+-- 16 October 2026 with EXPLAIN (ANALYZE, BUFFERS) on the 1 000 000-row seed, under the
+-- custom and the generic plan). The scalar-subquery horizon is an InitPlan parameter,
+-- which PostgreSQL accepts as an index condition, so it hides nothing that matters here;
+-- the first branch reads idx_flow_src_interface_observed_at with the index condition
+-- (src_interface_id IS NULL AND observed_at < horizon), and the second reads
+-- idx_flow_observed_at with (observed_at < horizon AND dst_interface_id IS NULL), the
+-- index carrying dst_interface_id among its keys -- so no index leading on
+-- dst_interface_id is needed. With nothing due, both plans read 8 shared buffers; with
+-- about 1 % due, 1 024; with everything due, 101 956 -- the work follows the due rows,
+-- and the heap fetch each due row costs for its address is the address the purge needs.
+-- No index is added. sql/schema-checks.sh, section E16, asserts all of this at both
+-- seeds and three horizons.
 -- statement: purge_due_addresses
 SELECT src_address
 FROM flow

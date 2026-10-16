@@ -55,16 +55,11 @@ func TestEachClauseSelectsAPackageByItself(t *testing.T) {
 	for name, testCase := range map[string]struct {
 		directory, source, clause string
 	}{
-		"sync":             {"internal/a", "package a\n\nimport \"sync\"\n\nvar m sync.Mutex\n", "(ii)"},
-		"sync/atomic":      {"internal/a", "package a\n\nimport \"sync/atomic\"\n\nvar n atomic.Int64\n", "(ii)"},
-		"httptest":         {"internal/a", "package a\n\nimport _ \"net/http/httptest\"\n", "(iii)"},
-		"a ServeHTTP":      {"internal/a", "package a\n\ntype h struct{}\n\nfunc (h) ServeHTTP() {}\n", "(iii)"},
-		"an http.Handler":  {"internal/a", "package a\n\nimport \"net/http\"\n\nvar h http.Handler\n", "(iii)"},
-		"a renamed import": {"internal/a", "package a\n\nimport web \"net/http\"\n\nvar s web.Server\n", "(iii)"},
-		"an http client":   {"internal/a", "package a\n\nimport \"net/http\"\n\nvar c http.Client\n", ""},
-		"the plugin host":  {"internal/plugin", plainPackage, "(iv)"},
-		"under it":         {"internal/plugin/harness", plainPackage, "(iv)"},
-		"a mere prefix":    {"internal/pluginfixture", plainPackage, ""},
+		"sync":            {"internal/a", "package a\n\nimport \"sync\"\n\nvar m sync.Mutex\n", "(ii)"},
+		"sync/atomic":     {"internal/a", "package a\n\nimport \"sync/atomic\"\n\nvar n atomic.Int64\n", "(ii)"},
+		"the plugin host": {"internal/plugin", plainPackage, "(iv)"},
+		"under it":        {"internal/plugin/harness", plainPackage, "(iv)"},
+		"a mere prefix":   {"internal/pluginfixture", plainPackage, ""},
 	} {
 		decided, err := decideFiles(testCase.directory, map[string][]byte{"a.go": []byte(testCase.source)})
 		if err != nil {
@@ -72,6 +67,39 @@ func TestEachClauseSelectsAPackageByItself(t *testing.T) {
 		}
 		if decided.clause != testCase.clause {
 			t.Errorf("%s was decided %q, not %q", name, decided.clause, testCase.clause)
+		}
+	}
+}
+
+// TestServingHTTPAloneNoLongerSelectsAPackage is the narrowing of 16 October 2026 (decision 2 of
+// "Phase E: decisions after the partial build"): what retired clause (iii) selected -- an httptest
+// import, a ServeHTTP method, an http.Handler, an http.Server under a renamed import -- now leaves a
+// package excluded, unless a go statement or a sync import beside it selects the package by clause
+// (i) or (ii).
+func TestServingHTTPAloneNoLongerSelectsAPackage(t *testing.T) {
+	t.Parallel()
+	for name, source := range map[string]string{
+		"httptest":         "package a\n\nimport _ \"net/http/httptest\"\n",
+		"a ServeHTTP":      "package a\n\ntype h struct{}\n\nfunc (h) ServeHTTP() {}\n",
+		"an http.Handler":  "package a\n\nimport \"net/http\"\n\nvar h http.Handler\n",
+		"a renamed import": "package a\n\nimport web \"net/http\"\n\nvar s web.Server\n",
+		"an http client":   "package a\n\nimport \"net/http\"\n\nvar c http.Client\n",
+	} {
+		decided, err := decideFiles("internal/a", map[string][]byte{"a.go": []byte(source)})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if decided.clause != "" {
+			t.Errorf("%s alone selected the package by %s (%s)", name, decided.clause, decided.file)
+		}
+		decided, err = decideFiles("internal/a", map[string][]byte{"a.go": []byte(source),
+			"b.go": []byte("package a\n\nfunc start(f func()) { go f() }\n")})
+		if err != nil {
+			t.Fatalf("%s with a go statement: %v", name, err)
+		}
+		if decided.clause != "(i)" || decided.file != "b.go" {
+			t.Errorf("%s beside a go statement was decided %q in %q, not (i) in b.go", name, decided.clause,
+				decided.file)
 		}
 	}
 }

@@ -250,6 +250,7 @@ func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			harness := collecttest.NewProbeHarness(t)
 			collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 			// The provider is activated from a healthy probe first, so the collector is

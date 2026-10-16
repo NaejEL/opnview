@@ -88,6 +88,7 @@ func TestThisFirewallIsRecognisedAtEveryEndInBothFamilies(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 6}, {4, 13}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			ctx := context.Background()
 			upstream6 := upstreamV6(t, network)
@@ -246,6 +247,7 @@ func TestThisFirewallIsDecidedAsOfTheRowsInstant(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 4}, {3, 7}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			ctx := context.Background()
 			margin := int64(flows.DefaultDiscoveryIntervalSeconds)
@@ -303,6 +305,7 @@ func TestThisFirewallIsItsOwnKeyAndHasATreeNodeOnEachSide(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 6}, {4, 11}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			ctx := context.Background()
 			upstream6 := upstreamV6(t, network)
@@ -435,6 +438,7 @@ func TestAFlowToThisFirewallIsNeverAttributedAndAFlowFromItIsOutsideTheRate(t *t
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 4}, {3, 8}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			ctx := context.Background()
 			dns := int64(53)
@@ -561,6 +565,7 @@ func TestReclassifyEverythingPurgesThePhantomClientsAtFirewallAddresses(t *testi
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 5}, {4, 12}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			ctx := context.Background()
 			specs := network.FlowsFor(150, 2*3600)
@@ -724,6 +729,7 @@ func TestAnAddressReleasedAndReacquiredIsNotHeldInBetween(t *testing.T) {
 		for _, counts := range [][2]int{{2, 4}, {3, 7}} {
 			t.Run(fmt.Sprintf("upstream first %t, %d interfaces, %d clients", upstreamFirst, counts[0], counts[1]),
 				func(t *testing.T) {
+					t.Parallel()
 					network := storetest.NewNetwork(t, counts[0], counts[1])
 					held4, held6 := storetest.Outside(120, false), storetest.Outside(120, true)
 					bits4, bits6 := int64(24), int64(64)

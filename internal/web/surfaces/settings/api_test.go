@@ -73,6 +73,7 @@ func assertSameChange(t *testing.T, cases []pageAndJSON) {
 	t.Helper()
 	for _, input := range cases {
 		t.Run(input.what, func(t *testing.T) {
+			t.Parallel()
 			pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
 			pageBefore, jsonBefore := storedRows(t, pageSide), storedRows(t, jsonSide)
 			answer := pageSide.Post(web.PathSettings, input.form(pageSide))
@@ -186,6 +187,7 @@ func TestTheMaxMindCardsJSONEquivalentIsTheMaxMindPluginsSettings(t *testing.T) 
 	})
 
 	t.Run("an emptied account ID is removed by both", func(t *testing.T) {
+		t.Parallel()
 		pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
 		for _, h := range []*webtest.Harness{pageSide, jsonSide} {
 			if status, answer := settingstest.SendJSON(h, path, map[string]any{"account_id": 100001}); status != http.StatusOK {
@@ -301,9 +303,11 @@ func TestTheSettingsJSONCarriesEveryFigureOfThePage(t *testing.T) {
 	}
 
 	t.Run("an installation with nothing configured", func(t *testing.T) {
+		t.Parallel()
 		check(t, collectiontest.SignedInHarness(t))
 	})
 	t.Run("an installation with everything configured", func(t *testing.T) {
+		t.Parallel()
 		h := collectiontest.SignedInHarness(t)
 		webtest.Discard(t, settingstest.StoreCredentials(h, webtest.RandomHex(t, 8), webtest.RandomHex(t, 16)))
 		if status, answer := settingstest.SendJSON(h, "/api/plugins/"+settings.GeolocationPlugin+"/settings",
@@ -320,6 +324,7 @@ func TestTheSettingsJSONCarriesEveryFigureOfThePage(t *testing.T) {
 		check(t, h)
 	})
 	t.Run("a copy in use that states no version", func(t *testing.T) {
+		t.Parallel()
 		h := collectiontest.SignedInHarness(t)
 		h.Suffix.Hold("", 12, 0)
 		check(t, h)

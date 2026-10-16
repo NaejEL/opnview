@@ -58,6 +58,7 @@ func assertSameCollectionChange(t *testing.T, inputs []collectionInput) {
 	t.Helper()
 	for _, input := range inputs {
 		t.Run(input.what, func(t *testing.T) {
+			t.Parallel()
 			pageSide, jsonSide := collectiontest.SignedInHarness(t), collectiontest.SignedInHarness(t)
 			pageBefore, jsonBefore := settingRows(t, pageSide), settingRows(t, jsonSide)
 			answer := pageSide.Post(input.pagePath, input.form)
@@ -165,6 +166,7 @@ func TestTheCollectionJSONSavesMakeThePagesChangeAndRefuseItsInputs(t *testing.T
 	})
 
 	t.Run("an unknown kind or card is refused by both", func(t *testing.T) {
+		t.Parallel()
 		h := collectiontest.SignedInHarness(t)
 		before := settingRows(t, h)
 		status, answer := settingstest.SendJSON(h, strings.Replace(collection.PathAPICollectionKind, "{kind}", "no_such_kind", 1),

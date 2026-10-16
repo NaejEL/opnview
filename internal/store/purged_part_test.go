@@ -114,6 +114,7 @@ func TestAPurgeUnderAShortRetentionKeepsEveryFamilyWhole(t *testing.T) {
 	t.Parallel()
 	for _, retention := range []int64{1800, 600, 1} {
 		t.Run(fmt.Sprintf("retention %d", retention), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, 2, 6)
 			ctx := context.Background()
 			addresses := network.Insert(t, network.FlowsFor(200, 6*3600))

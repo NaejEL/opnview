@@ -136,6 +136,7 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
 			harness := collecttest.NewProbeHarness(t)
 			testCase.arrange(harness.Fake)
 

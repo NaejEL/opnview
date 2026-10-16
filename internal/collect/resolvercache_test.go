@@ -64,6 +64,7 @@ func TestADumpOfEveryRRTypeStoresOnlyAAAAAAndCNAME(t *testing.T) {
 	t.Parallel()
 	for _, copies := range []int{1, 3} {
 		t.Run(fmt.Sprintf("%d copies", copies), func(t *testing.T) {
+			t.Parallel()
 			harness := collecttest.ArrangeRecordCollection(t)
 			template := fixtureRows(t, "unbound_dumpcache.json")
 			var rows []map[string]any
@@ -138,6 +139,7 @@ func TestMessageCacheReferencesAreNamedForWhatTheyAreAndNotCountedAsABadTTL(t *t
 	t.Parallel()
 	for _, references := range []int{1, 4} {
 		t.Run(fmt.Sprintf("%d references per rrtype", references), func(t *testing.T) {
+			t.Parallel()
 			harness := collecttest.ArrangeRecordCollection(t)
 			var rows []map[string]any
 			for _, v6 := range []bool{false, true} {
@@ -193,8 +195,25 @@ func TestMessageCacheReferencesAreNamedForWhatTheyAreAndNotCountedAsABadTTL(t *t
 // authentication failed (401), which names no privilege, denied (403) naming the
 // privilege, not found, undecodable, and a status that is not ok -- each its own wording,
 // none storing an observation or moving the last poll.
+//
+// Every absence gets a harness of its own, so the absences run as parallel subtests, each with its
+// own database; the wordings are compared once every absence of an endpoint has run.
 func TestEachRecordReadAbsenceHasItsOwnWordingAndStoresNothing(t *testing.T) {
 	t.Parallel()
+	absences := []struct {
+		name   string
+		status int
+		body   string
+		want   string
+	}{
+		{"unauthorised", http.StatusUnauthorized, `{"status":401,"message":"Authentication Failed"}`,
+			"authentication failed (HTTP 401)"},
+		{"forbidden", http.StatusForbidden, `{"errorMessage":"Forbidden"}`, `"Services: Unbound"`},
+		{"not found", http.StatusNotFound, `{"errorMessage":"Endpoint not found"}`, "not found (HTTP 404)"},
+		{"undecodable", http.StatusOK, `["not", "the", "envelope"]`, "undecodable"},
+		{"no data list", http.StatusOK, `{"status":"ok"}`, "no data list"},
+		{"failed status", http.StatusOK, `{"status":"failed"}`, `status "failed"`},
+	}
 	for _, endpoint := range []struct {
 		endpoint opnsense.Endpoint
 		kind     string
@@ -203,56 +222,52 @@ func TestEachRecordReadAbsenceHasItsOwnWordingAndStoresNothing(t *testing.T) {
 		{opnsense.UnboundDumpCache, core.KindResolverCache, (*collect.Collector).CollectResolverCache},
 		{opnsense.UnboundListLocalData, core.KindResolverLocalData, (*collect.Collector).CollectResolverLocalData},
 	} {
-		details := map[string]string{}
-		for _, absence := range []struct {
-			name   string
-			status int
-			body   string
-			want   string
-		}{
-			{"unauthorised", http.StatusUnauthorized, `{"status":401,"message":"Authentication Failed"}`,
-				"authentication failed (HTTP 401)"},
-			{"forbidden", http.StatusForbidden, `{"errorMessage":"Forbidden"}`, `"Services: Unbound"`},
-			{"not found", http.StatusNotFound, `{"errorMessage":"Endpoint not found"}`, "not found (HTTP 404)"},
-			{"undecodable", http.StatusOK, `["not", "the", "envelope"]`, "undecodable"},
-			{"no data list", http.StatusOK, `{"status":"ok"}`, "no data list"},
-			{"failed status", http.StatusOK, `{"status":"failed"}`, `status "failed"`},
-		} {
-			harness := collecttest.ArrangeRecordCollection(t)
-			harness.Fake.Answer(endpoint.endpoint, absence.status, []byte(absence.body))
-			if err := endpoint.collect(harness.Collector, context.Background()); err == nil {
-				t.Errorf("%s %s: the pass reported no failure", endpoint.endpoint.Path, absence.name)
+		t.Run(endpoint.kind, func(t *testing.T) {
+			t.Parallel()
+			wordings := make([]string, len(absences))
+			t.Run("absences", func(t *testing.T) {
+				for index, absence := range absences {
+					t.Run(absence.name, func(t *testing.T) {
+						t.Parallel()
+						harness := collecttest.ArrangeRecordCollection(t)
+						harness.Fake.Answer(endpoint.endpoint, absence.status, []byte(absence.body))
+						if err := endpoint.collect(harness.Collector, context.Background()); err == nil {
+							t.Errorf("%s %s: the pass reported no failure", endpoint.endpoint.Path, absence.name)
+						}
+						detail := harness.DetailOf(t, endpoint.kind, collecttest.ProviderUnbound)
+						if !strings.Contains(detail, absence.want) || !strings.Contains(detail, "nothing was stored") {
+							t.Errorf("%s %s: the detail %q does not say %q and that nothing was stored",
+								endpoint.endpoint.Path, absence.name, detail, absence.want)
+						}
+						// A 401 is a key or secret the firewall did not accept, which no privilege cures
+						// (ApiControllerBase::beforeExecuteRoute answers 403 for a missing page).
+						if absence.status == http.StatusUnauthorized && strings.Contains(detail, "privilege") {
+							t.Errorf("%s %s: the detail %q blames a privilege for a failed authentication",
+								endpoint.endpoint.Path, absence.name, detail)
+						}
+						if state, _, _ := harness.AvailabilityOf(t, endpoint.kind, collecttest.ProviderUnbound); state != vocab.StateUnavailable {
+							t.Errorf("%s %s: the state is %q", endpoint.endpoint.Path, absence.name, state)
+						}
+						if stored := observationCount(t, harness.Store); stored != 0 {
+							t.Errorf("%s %s stored %d observations", endpoint.endpoint.Path, absence.name, stored)
+						}
+						if polls := collecttest.CountRows(t, harness.Store, "resource_record_read"); polls != 0 {
+							t.Errorf("%s %s recorded a successful poll", endpoint.endpoint.Path, absence.name)
+						}
+						wordings[index] = detail
+					})
+				}
+			})
+			// Own wording: no two absences read alike.
+			seen := map[string]string{}
+			for index, absence := range absences {
+				detail := wordings[index]
+				if other, duplicate := seen[detail]; duplicate {
+					t.Errorf("%s: %s and %s read alike: %q", endpoint.endpoint.Path, absence.name, other, detail)
+				}
+				seen[detail] = absence.name
 			}
-			detail := harness.DetailOf(t, endpoint.kind, collecttest.ProviderUnbound)
-			if !strings.Contains(detail, absence.want) || !strings.Contains(detail, "nothing was stored") {
-				t.Errorf("%s %s: the detail %q does not say %q and that nothing was stored",
-					endpoint.endpoint.Path, absence.name, detail, absence.want)
-			}
-			// A 401 is a key or secret the firewall did not accept, which no privilege cures
-			// (ApiControllerBase::beforeExecuteRoute answers 403 for a missing page).
-			if absence.status == http.StatusUnauthorized && strings.Contains(detail, "privilege") {
-				t.Errorf("%s %s: the detail %q blames a privilege for a failed authentication",
-					endpoint.endpoint.Path, absence.name, detail)
-			}
-			if state, _, _ := harness.AvailabilityOf(t, endpoint.kind, collecttest.ProviderUnbound); state != vocab.StateUnavailable {
-				t.Errorf("%s %s: the state is %q", endpoint.endpoint.Path, absence.name, state)
-			}
-			if stored := observationCount(t, harness.Store); stored != 0 {
-				t.Errorf("%s %s stored %d observations", endpoint.endpoint.Path, absence.name, stored)
-			}
-			if polls := collecttest.CountRows(t, harness.Store, "resource_record_read"); polls != 0 {
-				t.Errorf("%s %s recorded a successful poll", endpoint.endpoint.Path, absence.name)
-			}
-			details[absence.name] = detail
-		}
-		// Own wording: no two absences read alike.
-		seen := map[string]string{}
-		for name, detail := range details {
-			if other, duplicate := seen[detail]; duplicate {
-				t.Errorf("%s: %s and %s read alike: %q", endpoint.endpoint.Path, name, other, detail)
-			}
-			seen[detail] = name
-		}
+		})
 	}
 }
 

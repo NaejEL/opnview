@@ -57,28 +57,36 @@ func TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 			fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status_unmonitored.json")
 		}, "gateway latency and loss (2 of 2 gateways listed with no figure: dpinger.inc reports \"~\""},
 	}
-	seen := map[string]string{}
-	for _, one := range cases {
-		t.Run(one.name, func(t *testing.T) {
-			harness := arrangeMeasurementCollection(t)
-			one.arrange(harness.Fake)
-			if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
-				t.Fatalf("sampling: %v", err)
-			}
-			detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
-			if !strings.Contains(detail, one.wording) {
-				t.Errorf("the detail is %q, which does not name the absence as %q", detail, one.wording)
-			}
-			for other, wording := range seen {
-				if strings.Contains(detail, wording) {
-					t.Errorf("the %s absence reads like the %s one", one.name, other)
+	// Every absence gets a harness of its own, so the absences run as parallel subtests, each with
+	// its own database; each detail is compared with the wordings of the absences before it once
+	// every absence has run.
+	details := make([]string, len(cases))
+	t.Run("absences", func(t *testing.T) {
+		for index, one := range cases {
+			t.Run(one.name, func(t *testing.T) {
+				t.Parallel()
+				harness := arrangeMeasurementCollection(t)
+				one.arrange(harness.Fake)
+				if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
+					t.Fatalf("sampling: %v", err)
 				}
+				detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
+				if !strings.Contains(detail, one.wording) {
+					t.Errorf("the detail is %q, which does not name the absence as %q", detail, one.wording)
+				}
+				details[index] = detail
+				if rows, zeroes := gatewayReadings(t, harness.Store); rows != 0 || zeroes != 0 {
+					t.Errorf("%d gateway readings, %d of them 0, were written for an absence", rows, zeroes)
+				}
+			})
+		}
+	})
+	for index, one := range cases {
+		for _, other := range cases[:index] {
+			if strings.Contains(details[index], other.wording) {
+				t.Errorf("the %s absence reads like the %s one", one.name, other.name)
 			}
-			seen[one.name] = one.wording
-			if rows, zeroes := gatewayReadings(t, harness.Store); rows != 0 || zeroes != 0 {
-				t.Errorf("%d gateway readings, %d of them 0, were written for an absence", rows, zeroes)
-			}
-		})
+		}
 	}
 }
 
@@ -346,6 +354,7 @@ func TestAReacquiredAddressIsANewHoldingWhateverTheOrderInterfacesAreListed(t *t
 	t.Parallel()
 	for _, heldFirst := range []bool{true, false} {
 		t.Run(map[bool]string{true: "listed first", false: "listed last"}[heldFirst], func(t *testing.T) {
+			t.Parallel()
 			harness := collecttest.NewProbeHarness(t)
 			ctx := context.Background()
 			harness.Fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")

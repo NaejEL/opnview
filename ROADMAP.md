@@ -197,8 +197,10 @@ maintainer's test budget of 7 October 2026,
   prints it beside the container's CPU count so a slower or busier machine is
   identifiable, and fails above the budget with a message that names it. `-count=1`
   makes the time the suite's rather than a cache hit's. The everyday suite's
-  PostgreSQL test instance keeps its data on a tmpfs with durability off, which
-  nothing the suite asserts depends on; the pre-deployment command runs against a
+  PostgreSQL test instance keeps its data on a tmpfs with durability off, and runs
+  with autovacuum off and `wal_level = minimal` (each measured in
+  `docker-compose.yml`), which nothing the suite asserts depends on; the
+  pre-deployment command runs against a
   disk-backed instance with production settings. **A hard limit stops the run**:
   the whole of `checks` runs under coreutils `timeout` at
   `CHECKS_HARD_LIMIT_SECONDS`, 90 s, and fails naming it, and `go test` runs with
@@ -217,11 +219,12 @@ maintainer's test budget of 7 October 2026,
   independent ones side by side, each with its own output block and exit code:
   - **the race selection**, computed by `ci/raceselect` and never written by hand:
     a package runs under `-race` when any of its `.go` files, test files included,
-    (i) holds a `go` statement, (ii) imports `sync` or `sync/atomic`, (iii) serves
-    HTTP -- imports `net/http/httptest`, declares a `ServeHTTP` method, or
-    references `http.Handler`, `http.HandlerFunc`, `http.ServeMux` or
-    `http.Server` -- or (iv) lies under `internal/plugin/`. Every package is
-    printed, selected or excluded, with the clause that decided it, and the two
+    (i) holds a `go` statement, (ii) imports `sync` or `sync/atomic`, or (iv) lies
+    under `internal/plugin/`: the packages that start goroutines or share mutable
+    state across them. Clause (iii), serving HTTP, was retired on 16 October 2026
+    (decision 2 of the spec's "Phase E: decisions after the partial build"), and its
+    number is not reused: a package that only serves HTTP is excluded. Every package
+    is printed, selected or excluded, with the clause that decided it, and the two
     sets together must be exactly `go list ./...`;
   - **`go test -race -count=1`** over the selected packages and **`go test
     -count=1`** over the others, both with the `predeployment` build tag, so every

@@ -117,6 +117,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 		{"a machine that sends none, so the cascade falls to its MAC", nil},
 	} {
 		t.Run(shape.name, func(t *testing.T) {
+			t.Parallel()
 			harness := collecttest.NewProbeHarness(t)
 			collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 

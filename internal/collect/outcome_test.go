@@ -27,8 +27,30 @@ import (
 // which name the most absences of any reader: each answer the firewall can give yields its
 // own code, 401 and 403 included, and a read that answered yields healthy, or healthy_empty
 // when it returned nothing.
+//
+// Every answer gets a harness of its own, so the answers run as parallel subtests, each with its
+// own database; the codes are compared once every answer of a read has run.
 func TestEveryRecordReadOutcomeWritesItsOwnCode(t *testing.T) {
 	t.Parallel()
+	answers := []struct {
+		name   string
+		status int
+		body   string
+		want   vocab.AvailabilityOutcome
+	}{
+		{"unauthorised", http.StatusUnauthorized, `{"status":401}`, vocab.OutcomeAuthenticationFailed},
+		{"forbidden", http.StatusForbidden, `{"errorMessage":"Forbidden"}`, vocab.OutcomeDenied},
+		{"not found", http.StatusNotFound, `{}`, vocab.OutcomeNotFound},
+		{"server error", http.StatusInternalServerError, `{}`, vocab.OutcomeServerError},
+		{"empty body", http.StatusOK, ``, vocab.OutcomeEmptyBody},
+		{"failed result", http.StatusOK, `{"result":"failed"}`, vocab.OutcomeResultFailed},
+		{"undecodable", http.StatusOK, `["not", "the", "envelope"]`, vocab.OutcomeUndecodable},
+		{"failed status", http.StatusOK, `{"status":"failed"}`, vocab.OutcomeStatusNotOK},
+		{"no record", http.StatusOK, `{"status":"ok","data":[]}`, vocab.OutcomeHealthyEmpty},
+		{"records", http.StatusOK, `{"status":"ok","data":[{"host":"edge.example.net.","name":` +
+			`"edge.example.net.","ttl":"60","type":"IN","rrtype":"A","value":"192.0.2.10"}]}`,
+			vocab.OutcomeHealthy},
+	}
 	for _, read := range []struct {
 		endpoint opnsense.Endpoint
 		kind     string
@@ -37,39 +59,34 @@ func TestEveryRecordReadOutcomeWritesItsOwnCode(t *testing.T) {
 		{opnsense.UnboundDumpCache, core.KindResolverCache, (*collect.Collector).CollectResolverCache},
 		{opnsense.UnboundListLocalData, core.KindResolverLocalData, (*collect.Collector).CollectResolverLocalData},
 	} {
-		codes := map[vocab.AvailabilityOutcome]string{}
-		for _, answer := range []struct {
-			name   string
-			status int
-			body   string
-			want   vocab.AvailabilityOutcome
-		}{
-			{"unauthorised", http.StatusUnauthorized, `{"status":401}`, vocab.OutcomeAuthenticationFailed},
-			{"forbidden", http.StatusForbidden, `{"errorMessage":"Forbidden"}`, vocab.OutcomeDenied},
-			{"not found", http.StatusNotFound, `{}`, vocab.OutcomeNotFound},
-			{"server error", http.StatusInternalServerError, `{}`, vocab.OutcomeServerError},
-			{"empty body", http.StatusOK, ``, vocab.OutcomeEmptyBody},
-			{"failed result", http.StatusOK, `{"result":"failed"}`, vocab.OutcomeResultFailed},
-			{"undecodable", http.StatusOK, `["not", "the", "envelope"]`, vocab.OutcomeUndecodable},
-			{"failed status", http.StatusOK, `{"status":"failed"}`, vocab.OutcomeStatusNotOK},
-			{"no record", http.StatusOK, `{"status":"ok","data":[]}`, vocab.OutcomeHealthyEmpty},
-			{"records", http.StatusOK, `{"status":"ok","data":[{"host":"edge.example.net.","name":` +
-				`"edge.example.net.","ttl":"60","type":"IN","rrtype":"A","value":"192.0.2.10"}]}`,
-				vocab.OutcomeHealthy},
-		} {
-			harness := collecttest.ArrangeRecordCollection(t)
-			harness.Fake.Answer(read.endpoint, answer.status, []byte(answer.body))
-			_ = read.collect(harness.Collector, context.Background())
-			got := harness.OutcomeOf(t, read.kind, collecttest.ProviderUnbound)
-			if got != answer.want {
-				t.Errorf("%s answering %s: the outcome is %q, not %q", read.endpoint.Path, answer.name,
-					got, answer.want)
+		t.Run(read.kind, func(t *testing.T) {
+			t.Parallel()
+			outcomes := make([]vocab.AvailabilityOutcome, len(answers))
+			t.Run("answers", func(t *testing.T) {
+				for index, answer := range answers {
+					t.Run(answer.name, func(t *testing.T) {
+						t.Parallel()
+						harness := collecttest.ArrangeRecordCollection(t)
+						harness.Fake.Answer(read.endpoint, answer.status, []byte(answer.body))
+						_ = read.collect(harness.Collector, context.Background())
+						got := harness.OutcomeOf(t, read.kind, collecttest.ProviderUnbound)
+						if got != answer.want {
+							t.Errorf("%s answering %s: the outcome is %q, not %q", read.endpoint.Path, answer.name,
+								got, answer.want)
+						}
+						outcomes[index] = got
+					})
+				}
+			})
+			codes := map[vocab.AvailabilityOutcome]string{}
+			for index, answer := range answers {
+				got := outcomes[index]
+				if other, seen := codes[got]; seen {
+					t.Errorf("%s: %s and %s gave the same code %q", read.endpoint.Path, answer.name, other, got)
+				}
+				codes[got] = answer.name
 			}
-			if other, seen := codes[got]; seen {
-				t.Errorf("%s: %s and %s gave the same code %q", read.endpoint.Path, answer.name, other, got)
-			}
-			codes[got] = answer.name
-		}
+		})
 	}
 }
 

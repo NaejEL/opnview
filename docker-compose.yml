@@ -134,6 +134,19 @@ services:
       - "synchronous_commit=off"
       - "-c"
       - "full_page_writes=off"
+      # No autovacuum and the least WAL, on this service alone. A test database lives for one
+      # test, so a vacuum or an analyze of it is work no assertion reads: no everyday test depends
+      # on a table's statistics, and the plan checks run on db-predeployment, where autovacuum
+      # stays on. WAL is never replayed here (the tmpfs loses it at a stop) and never shipped, so
+      # minimal is all that is written. Measured on 16 October 2026 on 16 CPUs, internal/store and
+      # internal/collect side by side on a throwaway instance otherwise configured as this one:
+      # 420 s of database CPU with both at their defaults, 380 s with both changed.
+      - "-c"
+      - "autovacuum=off"
+      - "-c"
+      - "wal_level=minimal"
+      - "-c"
+      - "max_wal_senders=0"
 
   # The pre-deployment test database: on a disk (a named volume) with
   # PostgreSQL's production durability, so the whole suite meets a real disk

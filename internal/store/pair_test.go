@@ -24,6 +24,7 @@ func TestANatedPairIsPairedOneToOne(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 4}, {3, 9}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			client := storetest.ClientsOfFamily(network, false)[0]
 			first, second := network.Legs(storetest.Connection{Client: client, Peer: storetest.Outside(60, false),
@@ -47,6 +48,7 @@ func TestAnUntranslatedIPv6PairIsPaired(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 4}, {3, 9}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			client := storetest.ClientsOfFamily(network, true)[0]
 			first, second := network.Legs(storetest.Connection{Client: client, Peer: storetest.Outside(61, true),
@@ -73,6 +75,7 @@ func TestTwoClientsToOneDestinationEachPairWithTheirOwnLeg(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 6}, {4, 12}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			clients := storetest.ClientsOfFamily(network, false)
 			peer := storetest.Outside(62, false)
@@ -109,6 +112,7 @@ func TestIndistinguishableCandidatesLeaveBothLegsUnpaired(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 6}, {3, 10}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			clients := storetest.ClientsOfFamily(network, false)
 			peer := storetest.Outside(63, false)
@@ -137,6 +141,7 @@ func TestAnOutLegIngestedBeforeItsInLegIsPairedAtTheSecondPass(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 4}, {4, 11}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			ctx := context.Background()
 			build := func(order []int) (*storetest.Network, []storetest.Flow) {
 				network := storetest.NewNetwork(t, counts[0], counts[1])
@@ -425,6 +430,7 @@ func TestNoRecordIsEverLabelledThisFirewallsOwnTraffic(t *testing.T) {
 	t.Parallel()
 	for _, counts := range [][2]int{{2, 6}, {3, 10}} {
 		t.Run(fmt.Sprintf("%d interfaces, %d clients", counts[0], counts[1]), func(t *testing.T) {
+			t.Parallel()
 			network := storetest.NewNetwork(t, counts[0], counts[1])
 			clients := storetest.ClientsOfFamily(network, false)
 			var specs []storetest.Flow
