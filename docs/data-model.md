@@ -2634,7 +2634,8 @@ handed across them. A span within one chunk, the collectors' everyday case, is d
 and written in one transaction as before.
 
 **The cost of a reclassification of everything — measured, with no budget** (B8h,
-decision 17). `sql/schema-checks.sh`, which the pre-deployment command runs, times
+decision 17). `sql/schema-checks.sh`, when `OPNVIEW_RECLASSIFY_COST=1` is set (out of the pre-deployment
+command since 16 October 2026: the figures below do not fit its 180 s budget), times
 `ReclassifyEverything` twice on the copy of its million-row seed it has just timed the widget
 response budgets on, rather than building a second million rows in Go (which took 4 min
 39 s): the second run moves nothing and measures the floor. Re-measured on 10 October 2026

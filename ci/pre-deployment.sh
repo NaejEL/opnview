@@ -26,8 +26,9 @@
 #                    checks.sh with its go test restricted to the probe package;
 #   schema checks    sql/schema-checks.sh: the schema, the seeds at 100 000 and
 #                    1 000 000 flow rows, the screen queries and every statement's
-#                    plan, the widget and data catalogue budgets, the wall time of
-#                    ReclassifyEverything, the backup round trip.
+#                    plan, the widget and data catalogue budgets, the backup round
+#                    trip (ReclassifyEverything's wall time only on request:
+#                    OPNVIEW_RECLASSIFY_COST=1, see sql/schema-checks.sh).
 #
 # THE STEPS THAT DO NOT DEPEND ON ONE ANOTHER RUN SIDE BY SIDE: go vet, the fuzz
 # targets, the budget self-test (most of which is its probe's sleep) and the schema
@@ -64,8 +65,50 @@ fi
 
 # THE PRE-DEPLOYMENT BUDGET, in seconds: the one place it is written. The whole command's
 # wall time is measured, printed beside the CPU count, and a run over it fails, as
-# ci/checks.sh does for the everyday suite's TEST_BUDGET_SECONDS.
+# ci/checks.sh does for the everyday suite's TEST_BUDGET_SECONDS. Every go test below runs
+# with this budget as its -timeout.
 PRE_DEPLOYMENT_BUDGET_SECONDS=180
+
+# THE HARD LIMIT, in seconds: the budget above is measured once every step has ended, so on its
+# own it cannot stop a run that hangs or crawls; this limit does. The script runs itself again
+# under coreutils timeout, which stops the run and every process it started when the limit is
+# reached, and the run then fails with a message naming the limit.
+PRE_DEPLOYMENT_HARD_LIMIT_SECONDS=240
+if [ -z "${OPNVIEW_PRE_DEPLOYMENT_UNDER_LIMIT:-}" ]; then
+  OPNVIEW_PRE_DEPLOYMENT_UNDER_LIMIT=1 timeout --kill-after=5 "$PRE_DEPLOYMENT_HARD_LIMIT_SECONDS" \
+    bash "${BASH_SOURCE[0]}" "$@"
+  limited_status=$?
+  if [ "$limited_status" -eq 124 ] || [ "$limited_status" -eq 137 ]; then
+    printf -- 'pre-deployment: STOPPED at the hard limit of %d s for the whole run (pre-deployment budget: %d s).\n' \
+      "$PRE_DEPLOYMENT_HARD_LIMIT_SECONDS" "$PRE_DEPLOYMENT_BUDGET_SECONDS" >&2
+    printf -- 'pre-deployment: FAILED\n' >&2
+    exit 1
+  fi
+  exit "$limited_status"
+fi
+
+# THE COMMAND RUNS ON A COPY OF THE WORKING TREE, at the path ci/checks.sh copies it to. Go keys
+# a compiled package by its directory as well as its content: compiled from /workspace, no
+# package found the everyday suite's results in the shared build cache (go-build-cache, the
+# same named volume), and go vet alone took 413 s on 16 October 2026. Compiled from the same
+# path, every package the everyday suite compiled is a cache hit here. The copy is made only
+# after the data-directory guard above, which the everyday suite runs from inside its own copy
+# at this path, and it is removed by its exact path at the end.
+TREE_COPY=/tmp/opnview-checks-tree
+copy_started="$(date +%s%N)"
+rm -rf -- "$TREE_COPY"
+mkdir -p "$TREE_COPY"
+tar -C "$REPO_ROOT" --exclude=./.git --exclude=./.claude -cf - . | tar -C "$TREE_COPY" -xf -
+copy_status=$?
+copy_elapsed_ms=$(( ( $(date +%s%N) - copy_started ) / 1000000 ))
+printf -- '-- copying the working tree to %s: exit %s, %d.%03d s\n' "$TREE_COPY" "$copy_status" \
+  $(( copy_elapsed_ms / 1000 )) $(( copy_elapsed_ms % 1000 ))
+if [ "$copy_status" -ne 0 ]; then
+  printf -- 'pre-deployment: FAILED, the working tree could not be copied\n' >&2
+  exit 1
+fi
+REPO_ROOT="$TREE_COPY"
+cd "$REPO_ROOT" || exit 1
 
 # The push decoders' fuzz targets run this long each, side by side.
 PUSH_FUZZ_SECONDS=10
@@ -73,7 +116,7 @@ PUSH_FUZZ_SECONDS=10
 failed=0
 started="$(date +%s%N)"
 STEPS_DIR="$(mktemp -d)"
-trap 'rm -rf -- "$STEPS_DIR"' EXIT
+trap 'cd / && rm -rf -- "$STEPS_DIR" "$TREE_COPY"' EXIT
 
 # Every step's name, exit code and wall time, in the order they ended, for the table at the end.
 step_names=()
@@ -154,21 +197,21 @@ for target in "FuzzHeader ./internal/push/protocols/syslog" "FuzzFraming ./inter
   fuzz_name="${target%% *}"
   fuzz_package="${target#* }"
   start_step "fuzz_$fuzz_name" "go test -fuzz $fuzz_name -fuzztime ${PUSH_FUZZ_SECONDS}s $fuzz_package" \
-    go test -run '^$' -fuzz "^${fuzz_name}\$" -fuzztime "${PUSH_FUZZ_SECONDS}s" "$fuzz_package"
+    go test -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -run '^$' -fuzz "^${fuzz_name}\$" -fuzztime "${PUSH_FUZZ_SECONDS}s" "$fuzz_package"
   fuzz_ids+=("fuzz_$fuzz_name")
 done
 
 # The two go test runs and the broker budgets, in the foreground.
 if [ "${#race_packages[@]}" -gt 0 ]; then
   run_step "go test -race -count=1 -tags predeployment (${#race_packages[@]} selected packages)" \
-    go test -race -count=1 -timeout 60m -tags predeployment "${race_packages[@]}"
+    go test -race -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags predeployment "${race_packages[@]}"
 fi
 if [ "${#plain_packages[@]}" -gt 0 ]; then
   run_step "go test -count=1 -tags predeployment (${#plain_packages[@]} excluded packages)" \
-    go test -count=1 -timeout 60m -tags predeployment "${plain_packages[@]}"
+    go test -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags predeployment "${plain_packages[@]}"
 fi
 broker_budgets() {
-  go test -count=1 -tags brokerbudget -run Budget -v ./internal/broker/ ./internal/plugin/scripthost/ |
+  go test -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags brokerbudget -run Budget -v ./internal/broker/ ./internal/plugin/scripthost/ |
     grep -E '^(budget:|--- FAIL|FAIL|ok)'
   return "${PIPESTATUS[0]}"
 }

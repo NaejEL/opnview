@@ -10,8 +10,11 @@
 # to that probe package (Q3 of the Phase E amendment to
 # specs/SPEC-backend-completion-plugins.md): the check is of the budget's
 # enforcement, which the probe alone exercises, and the whole suite already ran
-# once in the same command. checks.sh still formats, vets and builds the whole
-# tree. Run inside the development container, as part of
+# once in the same command. In that mode checks.sh makes no copy of the tree and
+# skips gofmt, go vet and go build -- the pre-deployment command vets and compiles
+# the whole tree itself, and gofmt is the everyday suite's -- so
+# the run fits checks.sh's hard limit beside the probe's sleep. Run inside the
+# development container, as part of
 #
 #     docker compose run --rm pre-deployment
 #

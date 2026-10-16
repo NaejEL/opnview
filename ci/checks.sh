@@ -50,22 +50,58 @@ TEST_BUDGET_SECONDS=60
 # the tree the same way. The copy holds everything but .git and .claude, takes a few seconds, is
 # timed and printed apart, and is removed by its exact path at the end. Nothing is written back:
 # the four commands read the tree, and gofmt -l lists, it does not rewrite.
+#
+# THE SAME PATH IS THE PRE-DEPLOYMENT COMMAND'S. Go keys a compiled package by its directory as
+# well as its content, so a command that compiles the tree from another path finds none of this
+# command's results in the shared build cache; ci/pre-deployment.sh copies the tree here too.
+#
+# The budget self-test's run (OPNVIEW_BUDGET_PROBE_ONLY) makes no copy and runs in place: the
+# pre-deployment command starting it already runs on a copy at this path, and the probe package
+# is all it compiles.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TREE_COPY=/tmp/opnview-checks-tree
-copy_started="$(date +%s%N)"
-rm -rf -- "$TREE_COPY"
-mkdir -p "$TREE_COPY"
-tar -C "$REPO_ROOT" --exclude=./.git --exclude=./.claude -cf - . | tar -C "$TREE_COPY" -xf -
-copy_status=$?
-copy_elapsed_ms=$(( ( $(date +%s%N) - copy_started ) / 1000000 ))
-printf -- '-- copying the working tree to %s: exit %s, %d.%03d s\n' "$TREE_COPY" "$copy_status" \
-  $(( copy_elapsed_ms / 1000 )) $(( copy_elapsed_ms % 1000 ))
-if [ "$copy_status" -ne 0 ]; then
-  printf -- 'checks: FAILED, the working tree could not be copied\n' >&2
-  exit 1
+
+# THE HARD LIMIT, in seconds: the whole run's wall time -- the copy, gofmt, go vet, go build and
+# go test together. The test budget above is measured once go test has ended, so on its own it
+# cannot stop a run that hangs or crawls; this limit does. The script runs itself again under
+# coreutils timeout, which stops the run and every process it started when the limit is reached,
+# and the run then fails with a message naming the limit. go test's own -timeout is the test
+# budget, so a test binary that hangs is stopped sooner still.
+CHECKS_HARD_LIMIT_SECONDS=90
+if [ -z "${OPNVIEW_CHECKS_UNDER_LIMIT:-}" ]; then
+  OPNVIEW_CHECKS_UNDER_LIMIT=1 timeout --kill-after=5 "$CHECKS_HARD_LIMIT_SECONDS" bash "${BASH_SOURCE[0]}" "$@"
+  limited_status=$?
+  if [ "$limited_status" -eq 124 ] || [ "$limited_status" -eq 137 ]; then
+    # The stopped run's own clean-up may not have run, so the copy is removed by its exact path.
+    if [ -z "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
+      rm -rf -- "$TREE_COPY"
+    fi
+    printf -- 'checks: STOPPED at the hard limit of %d s for the whole run (test budget: %d s).\n' \
+      "$CHECKS_HARD_LIMIT_SECONDS" "$TEST_BUDGET_SECONDS" >&2
+    printf -- 'checks: FAILED\n' >&2
+    exit 1
+  fi
+  exit "$limited_status"
 fi
-cd "$TREE_COPY" || exit 1
-trap 'cd / && rm -rf -- "$TREE_COPY"' EXIT
+
+if [ -n "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
+  cd "$REPO_ROOT" || exit 1
+else
+  copy_started="$(date +%s%N)"
+  rm -rf -- "$TREE_COPY"
+  mkdir -p "$TREE_COPY"
+  tar -C "$REPO_ROOT" --exclude=./.git --exclude=./.claude -cf - . | tar -C "$TREE_COPY" -xf -
+  copy_status=$?
+  copy_elapsed_ms=$(( ( $(date +%s%N) - copy_started ) / 1000000 ))
+  printf -- '-- copying the working tree to %s: exit %s, %d.%03d s\n' "$TREE_COPY" "$copy_status" \
+    $(( copy_elapsed_ms / 1000 )) $(( copy_elapsed_ms % 1000 ))
+  if [ "$copy_status" -ne 0 ]; then
+    printf -- 'checks: FAILED, the working tree could not be copied\n' >&2
+    exit 1
+  fi
+  cd "$TREE_COPY" || exit 1
+  trap 'cd / && rm -rf -- "$TREE_COPY"' EXIT
+fi
 
 failed=0
 
@@ -76,27 +112,32 @@ report() {
   fi
 }
 
-# gofmt -l exits 0 even when it lists unformatted files, so the output is what
-# decides here, not the exit code.
-printf -- '== gofmt -l .\n'
-gofmt_output="$(gofmt -l . 2>&1)"
-gofmt_status=$?
-if [ -n "$gofmt_output" ]; then
-  printf -- '%s\n' "$gofmt_output"
-  printf -- 'The files listed above are not gofmt-formatted.\n'
-  if [ "$gofmt_status" -eq 0 ]; then
-    gofmt_status=1
+# The budget self-test's run (OPNVIEW_BUDGET_PROBE_ONLY) checks the budget's enforcement and
+# nothing else: the pre-deployment command starting it vets the whole tree in a step of its own,
+# and go test compiles what it runs.
+if [ -z "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
+  # gofmt -l exits 0 even when it lists unformatted files, so the output is what
+  # decides here, not the exit code.
+  printf -- '== gofmt -l .\n'
+  gofmt_output="$(gofmt -l . 2>&1)"
+  gofmt_status=$?
+  if [ -n "$gofmt_output" ]; then
+    printf -- '%s\n' "$gofmt_output"
+    printf -- 'The files listed above are not gofmt-formatted.\n'
+    if [ "$gofmt_status" -eq 0 ]; then
+      gofmt_status=1
+    fi
   fi
+  report 'gofmt -l .' "$gofmt_status"
+
+  printf -- '== go vet ./...\n'
+  go vet ./...
+  report 'go vet ./...' "$?"
+
+  printf -- '== go build ./...\n'
+  go build ./...
+  report 'go build ./...' "$?"
 fi
-report 'gofmt -l .' "$gofmt_status"
-
-printf -- '== go vet ./...\n'
-go vet ./...
-report 'go vet ./...' "$?"
-
-printf -- '== go build ./...\n'
-go build ./...
-report 'go build ./...' "$?"
 
 test_packages=(./...)
 if [ -n "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
@@ -114,12 +155,12 @@ test_started="$(date +%s%N)"
 mover_log="$(mktemp)"
 mover_pid=''
 if [ -z "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
-  (cd ci/mover && go build ./... && go vet ./... && go test -count=1 ./...) > "$mover_log" 2>&1 &
+  (cd ci/mover && go build ./... && go vet ./... && go test -count=1 -timeout "${TEST_BUDGET_SECONDS}s" ./...) > "$mover_log" 2>&1 &
   mover_pid=$!
 fi
-printf -- '== go test -count=1 %s\n' "${test_packages[*]}"
-go test -count=1 "${test_packages[@]}"
-report "go test -count=1 ${test_packages[*]}" "$?"
+printf -- '== go test -count=1 -timeout %ds %s\n' "$TEST_BUDGET_SECONDS" "${test_packages[*]}"
+go test -count=1 -timeout "${TEST_BUDGET_SECONDS}s" "${test_packages[@]}"
+report "go test -count=1 -timeout ${TEST_BUDGET_SECONDS}s ${test_packages[*]}" "$?"
 if [ -n "$mover_pid" ]; then
   wait "$mover_pid"
   mover_status=$?

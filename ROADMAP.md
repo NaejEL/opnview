@@ -199,13 +199,22 @@ maintainer's test budget of 7 October 2026,
   makes the time the suite's rather than a cache hit's. The everyday suite's
   PostgreSQL test instance keeps its data on a tmpfs with durability off, which
   nothing the suite asserts depends on; the pre-deployment command runs against a
-  disk-backed instance with production settings.
+  disk-backed instance with production settings. **A hard limit stops the run**:
+  the whole of `checks` runs under coreutils `timeout` at
+  `CHECKS_HARD_LIMIT_SECONDS`, 90 s, and fails naming it, and `go test` runs with
+  the test budget as its `-timeout`; a measured budget alone cannot stop a run
+  that hangs.
 - **`docker compose run --rm pre-deployment` is the gate run before a
   deployment**, not on every iteration. **Its wall time has a budget of 180 s**,
   the one constant `PRE_DEPLOYMENT_BUDGET_SECONDS` in `ci/pre-deployment.sh`: it
   prints every step's wall time, the total and the CPU count, and fails above the
-  budget naming it. Its steps, the independent ones side by side, each with its own
-  output block and exit code:
+  budget naming it. The whole command runs under coreutils `timeout` at
+  `PRE_DEPLOYMENT_HARD_LIMIT_SECONDS`, 240 s, and fails naming it; every `go test`
+  in it runs with the budget as its `-timeout`. It runs on a copy of the working
+  tree at the path `checks` copies it to, `/tmp/opnview-checks-tree`, because Go
+  keys a compiled package by its directory: from that path, everything the
+  everyday suite compiled is a hit in the shared build cache. Its steps, the
+  independent ones side by side, each with its own output block and exit code:
   - **the race selection**, computed by `ci/raceselect` and never written by hand:
     a package runs under `-race` when any of its `.go` files, test files included,
     (i) holds a `go` statement, (ii) imports `sync` or `sync/atomic`, (iii) serves
@@ -228,9 +237,11 @@ maintainer's test budget of 7 October 2026,
   - **`sql/schema-checks.sh`** -- the schema, the seeds at 100 000 and 1 000 000
     flow rows, the screen queries and every statement's plan at both seeds, the
     widget and data catalogue budgets at both seeds (100 000 rows at 250 ms for
-    24 h and 500 ms for 30 days, 1 000 000 at 1 s and 2 s), the live budget, the
-    wall time of `ReclassifyEverything` on a copy of the large seed, and the backup
-    round trip.
+    24 h and 500 ms for 30 days, 1 000 000 at 1 s and 2 s), the live budget and the
+    backup round trip. The wall time of `ReclassifyEverything` on a copy of the
+    large seed is out of this command since 16 October 2026: it places one address
+    at a time and took 1.5 to 2 minutes alone, which the budget cannot hold; it runs
+    on request, `docker compose run --rm -e OPNVIEW_RECLASSIFY_COST=1 schema-checks`.
 
   **The 1 000 000-row seed is built once and reused while its digest holds.** A
   cold build takes minutes -- more than the whole budget -- so the analysed seed is
@@ -241,7 +252,7 @@ maintainer's test budget of 7 October 2026,
   digest differs builds it cold, prints the build's breakdown -- the schema apply,
   each table's generation, `VACUUM (ANALYZE)` -- and its time apart from the
   budgeted run. Every consumer reads the clone: the plans, the widget budgets, the
-  live budget, and the reclassification, on a copy of it. The pre-deployment
+  live budget, and, on request, the reclassification, on a copy of it. The pre-deployment
   command runs with `/tmp` on the overlay filesystem, against `db-predeployment`,
   a disk-backed instance with production durability, so the whole suite meets a
   real disk once before a deployment.
@@ -253,7 +264,8 @@ maintainer's test budget of 7 October 2026,
   (`internal/store/calendar_test.go` returned to the everyday suite on 16 October
   2026); `TestReclassifyEverythingWallTimeAtTheMillionRowSeed`
   (`internal/collect/reclassifycost_test.go`, tag `reclassifycost`) reads the
-  1 000 000-row seed and is run by `sql/schema-checks.sh`; and the broker budgets
+  1 000 000-row seed and is run by `sql/schema-checks.sh` only when
+  `OPNVIEW_RECLASSIFY_COST=1` is set; and the broker budgets
   (`internal/broker/budget_test.go` and `internal/plugin/scripthost/budget_test.go`,
   tag `brokerbudget`) are timings the race detector would distort. **The everyday
   suite fits its budget by its shared helpers, never by a list of tests**: a clone
