@@ -4015,7 +4015,7 @@ Every test runs on the PostgreSQL test instance with a fake clock and small reco
 
 # Amendment: Phase E, performance and the two budgets (maintainer decisions of 12 and 16 October 2026)
 
-Status: PROPOSED
+Status: APPROVED
 
 Cycle kind: standard
 
