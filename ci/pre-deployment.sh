@@ -15,7 +15,8 @@
 #                    and the two sets together must be exactly go list ./...;
 #   go vet           with the `predeployment`, `reclassifycost` and `brokerbudget`
 #                    build tags, so the tests out of the everyday suite are vetted too;
-#   go test -race    the selected packages, with the `predeployment` tag;
+#   go test -race    the selected packages, with the `predeployment` tag, against the
+#                    everyday test instance (OPNVIEW_RACE_TEST_DATABASE, see below);
 #   go test          the excluded packages, with the `predeployment` tag and no race
 #                    detector: every package of ./... runs exactly once;
 #   broker budgets   BR-AC17's budgets (the `brokerbudget` tag, without the race
@@ -32,9 +33,9 @@
 #
 # THE STEPS THAT DO NOT DEPEND ON ONE ANOTHER RUN SIDE BY SIDE: go vet, the fuzz
 # targets, the budget self-test (most of which is its probe's sleep) and the schema
-# checks start in the background while the two go test runs and the broker budgets
-# run in the foreground; each background step's output is held and printed, in one
-# block, when it ends.
+# checks start in the background, and so does the non-race go test run, while the
+# -race run and then the broker budgets run in the foreground; each background step's
+# output is held and printed, in one block, when it ends.
 #
 # The command's own wall time has a budget, PRE_DEPLOYMENT_BUDGET_SECONDS below, and
 # exceeding it fails the run. The wall time of every step is printed at the end,
@@ -44,9 +45,14 @@
 # here are listed in ROADMAP.md, "Development and test environment".
 #
 # Unlike checks, this command runs with /tmp on the container's overlay
-# filesystem, against db-predeployment, a disk-backed PostgreSQL instance with
-# production durability, so the whole suite meets a real disk once before a
-# deployment.
+# filesystem. The non-race go test and the schema checks run against
+# db-predeployment, a disk-backed PostgreSQL instance with production durability,
+# so the suite meets a real disk once before a deployment. The -race step runs
+# against db-test, the everyday instance on its tmpfs, which docker-compose.yml
+# hands this command as OPNVIEW_RACE_TEST_DATABASE (Phase E decision 6, 16 October
+# 2026): on the disk-backed instance four of the selected packages reached the
+# budget under the race detector alone, and nothing the race detector proves
+# depends on a write reaching a disk.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -201,15 +207,29 @@ for target in "FuzzHeader ./internal/push/protocols/syslog" "FuzzFraming ./inter
   fuzz_ids+=("fuzz_$fuzz_name")
 done
 
-# The two go test runs and the broker budgets, in the foreground.
-if [ "${#race_packages[@]}" -gt 0 ]; then
-  run_step "go test -race -count=1 -tags predeployment (${#race_packages[@]} selected packages)" \
+# THE TWO GO TEST RUNS SIDE BY SIDE, then the broker budgets. The -race step's test databases are
+# created on the everyday test instance, with that instance's clone strategy (the default,
+# FILE_COPY; internal/store/testdatabase.go); every other step keeps db-predeployment. The two runs
+# share no database instance, so the non-race run starts in the background as the -race run starts
+# in the foreground: measured on 16 October 2026 on 16 CPUs, one after the other they took 95.2 s
+# and 103.1 s, and the run reached the hard limit before the schema checks ended.
+if [ "${#plain_packages[@]}" -gt 0 ]; then
+  start_step plain "go test -count=1 -tags predeployment (${#plain_packages[@]} excluded packages)" \
+    go test -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags predeployment "${plain_packages[@]}"
+fi
+race_test_database="${OPNVIEW_RACE_TEST_DATABASE:-}"
+if [ -z "$race_test_database" ]; then
+  printf -- 'OPNVIEW_RACE_TEST_DATABASE is not set: docker-compose.yml names the -race step its test instance.\n' >&2
+  record 'OPNVIEW_RACE_TEST_DATABASE' 1 0
+elif [ "${#race_packages[@]}" -gt 0 ]; then
+  run_step "go test -race -count=1 -tags predeployment (${#race_packages[@]} selected packages, on the everyday test instance)" \
+    env -u OPNVIEW_TEST_CLONE_STRATEGY OPNVIEW_TEST_DATABASE="$race_test_database" \
     go test -race -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags predeployment "${race_packages[@]}"
 fi
 if [ "${#plain_packages[@]}" -gt 0 ]; then
-  run_step "go test -count=1 -tags predeployment (${#plain_packages[@]} excluded packages)" \
-    go test -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags predeployment "${plain_packages[@]}"
+  wait_step plain
 fi
+# The broker budgets measure medians, so they start once neither go test run competes for the CPU.
 broker_budgets() {
   go test -count=1 -timeout "${PRE_DEPLOYMENT_BUDGET_SECONDS}s" -tags brokerbudget -run Budget -v ./internal/broker/ ./internal/plugin/scripthost/ |
     grep -E '^(budget:|--- FAIL|FAIL|ok)'

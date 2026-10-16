@@ -71,8 +71,9 @@ x-dev-base: &dev-base
   working_dir: /workspace
   init: true
   environment:
-    # Where the tests create their databases: the everyday test instance.
-    OPNVIEW_TEST_DATABASE: "host=/run/opnview-test-database port=5432 user=postgres dbname=postgres sslmode=disable"
+    # Where the tests create their databases: the everyday test instance, db-test, reached on its
+    # socket.
+    OPNVIEW_TEST_DATABASE: &everyday-test-database "host=/run/opnview-test-database port=5432 user=postgres dbname=postgres sslmode=disable"
   depends_on:
     db-test:
       condition: service_healthy
@@ -150,8 +151,10 @@ services:
 
   # The pre-deployment test database: on a disk (a named volume) with
   # PostgreSQL's production durability, so the whole suite meets a real disk
-  # once before a deployment. Background workers are off for the same reason
-  # as above.
+  # once before a deployment -- every package outside the race detector's
+  # selection, and the schema checks with their seeds and query plans. The
+  # pre-deployment command's -race step runs on db-test instead (see that
+  # command below). Background workers are off for the same reason as above.
   db-predeployment:
     <<: *database-base
     environment: *test-database-environment
@@ -204,18 +207,33 @@ services:
   # It runs go vet and go test -race -count=1 over the whole suite with the
   # tests moved out of the everyday suite compiled in (the `predeployment` build
   # tag), the test budget's own check, and the schema checks below with their
-  # 100 000- and 1 000 000-row seeds and their query plans -- all against
-  # db-predeployment, a disk-backed instance with production durability.
+  # 100 000- and 1 000 000-row seeds and their query plans.
+  #
+  # TWO INSTANCES. The packages outside the race detector's selection and the
+  # schema checks run against db-predeployment, a disk-backed instance with
+  # production durability. The -race step runs against db-test, the everyday
+  # instance on its tmpfs (the maintainer's decision of 16 October 2026, Phase E
+  # decision 6): under the race detector every package selected runs several
+  # times slower, and on the disk-backed instance internal/collect,
+  # internal/store, internal/plugin/harness and internal/web/surfaces each
+  # reached the 180 s budget on 16 October 2026. What the race detector proves
+  # does not depend on a write reaching a disk; what a disk changes, the
+  # non-race step and the schema checks still meet. ci/pre-deployment.sh hands
+  # the -race step OPNVIEW_RACE_TEST_DATABASE as its OPNVIEW_TEST_DATABASE, with
+  # the clone strategy of db-test.
   pre-deployment:
     <<: *dev-base
     environment:
       OPNVIEW_TEST_DATABASE: "host=db-predeployment port=5432 user=postgres dbname=postgres sslmode=disable"
+      OPNVIEW_RACE_TEST_DATABASE: *everyday-test-database
       # The tests clone their databases with WAL_LOG here, and with FILE_COPY, the default, on the
       # everyday tmpfs instance: FILE_COPY forces a checkpoint before and after each clone, which on
       # this disk with production durability made 64 create-then-drop cycles, 16 at a time, take
       # 38.3 s against 2.6 s with WAL_LOG (16 October 2026; internal/store/testdatabase.go).
       OPNVIEW_TEST_CLONE_STRATEGY: "WAL_LOG"
     depends_on:
+      db-test:
+        condition: service_healthy
       db-predeployment:
         condition: service_healthy
     command: ["bash", "/workspace/ci/pre-deployment.sh"]
