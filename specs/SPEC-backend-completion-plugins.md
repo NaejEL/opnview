@@ -4008,3 +4008,358 @@ Every test runs on the PostgreSQL test instance with a fake clock and small reco
 - **`plugin/runtime` is renamed** so that it no longer collides with the standard library's `runtime` (for example `scripthost`).
 - **Forced exports narrowed.** Each part's tests move into the part's own directory, so that the names exported only for tests left in the composing package become unexported again; the shared test fixtures (notably the store's `testNetwork`) are split as needed.
 - **The move tooling is kept in the repository under `ci/`.**
+
+---
+
+**This amendment is part of the spec and overrides any earlier text it replaces; section 7 lists the earlier sentences it makes obsolete.**
+
+# Amendment: Phase E, performance and the two budgets (maintainer decisions of 12 and 16 October 2026)
+
+Status: PROPOSED
+
+Cycle kind: standard
+
+**Placement.** This amendment **replaces the whole of "### Phase E: the pre-deployment budget"** (lines 620–631) and **criterion E1** (line 843). X1–X4 stay as approved. The cycle kind stays `standard`: Go, SQL, shell, compose and documents only, no screen changes.
+
+**Modularity.** Adding a plugin is adding a directory and touching nothing else (CLAUDE.md, *The user interface*; ROADMAP.md, *Rules that apply to every step*). Every mechanism of this phase works from what it discovers, and none keeps a list a new plugin would have to edit: the `-race` selection, the geolocation batching, the plan sweep, the widget budgets and the plugin-table classification. E29 tests this.
+
+## 1. Context: what the repository holds today (planner's read-only findings)
+
+**The everyday suite.**
+- `TEST_BUDGET_SECONDS=60` is set at `ci/checks.sh:30`, and the timed command is `go test -count=1 ./...` (line 65). The suite measured 95 s on 16 CPUs.
+- Each database test clones a template:
+  - `internal/store/testdatabase.go:180-206` runs `CREATE DATABASE … TEMPLATE … STRATEGY FILE_COPY` (line 188);
+  - when the template is busy (55006) it retries 20 times with no backoff (193–205);
+  - the database is dropped `WITH (FORCE)`, together with its role (106–121).
+- Every `Open` re-applies the whole schema, even on a clone that already holds it:
+  - `store.go:156` calls `applySchema` (`schema.go:21-53`), which runs the 4,528 lines of `schema.sql`, including the `DO` blocks that alter 24 aggregate tables (`schema.sql:3138-3181`);
+  - every test helper goes through `Open`: `storetest.Open`, `collect/fake_test.go:105-117`, `webtest/harness.go:251` and `store/store_test.go:15-28`.
+- Every `Open` also creates or alters a cluster-wide login role and re-grants it (`sqldb/readers.go:56-130`).
+- `waitForDatabase` (`store.go:171-195`) retries a failed ping every second for up to 60 s, and logs nothing in tests:
+  - `db-test` sets `max_connections=500` (`docker-compose.yml:119-120`);
+  - the main pool is unbounded (`sqldb/driver.go:54-61`) and the read pool allows 8 (`readers.go:38`).
+- The slow packages already call `t.Parallel()`, and `collect` has no `time.Sleep`. The per-package figures include contention.
+- `internal/opnsense`'s source-policy tests walk every Go file of `cmd/` and `internal/` serially (`source_policy_test.go:360-406`).
+- `internal/store/calendar_test.go:1` is tagged `predeployment`, which contradicts `ROADMAP.md:210` ("No test is moved today").
+
+**Pre-deployment.**
+- `PRE_DEPLOYMENT_BUDGET_SECONDS=180` exists already (`ci/pre-deployment.sh:57, 103-111`).
+- `-race` still runs over `./...` (line 74).
+- The three fuzz targets run one after another, 10 s each (85–93).
+- `ci/budget-self-test.sh:27` re-runs the whole of `ci/checks.sh` with a probe that sleeps 61 s.
+- The 1M-row seed is built once per run (`sql/schema-checks.sh:625`). It was not ready about 310 s into the scale section in the 11 October logs.
+
+**Widget budgets at 100k/30d** (11 October run). Five types exceed 500 ms:
+
+| Widget | 100k/30d | 1M/30d |
+|---|---|---|
+| `destination_countries` | 1450.9 ms | 980.8 ms |
+| `destination_operators` | 1101.6 ms | 993.0 ms |
+| `passed_traffic_world_map` | 1022.7 ms | 1257.5 ms |
+| `traffic_sankey` | 991.4 ms | 1165.4 ms |
+| `blocked_traffic_world_map` | 668.1 ms | 666.2 ms |
+
+All five stay within 2 s at 1M/30d. The cost tracks the number of distinct peers, not the number of flows.
+
+Hypothesis, not yet profiled: `host.services.geolocation` (`request/installation.go:192-228`) runs one statement per peer address, an N+1 read.
+
+**NetFlow.**
+- `sql/seed.sql` fills none of these tables: `flow_record`, `flow_record_condition`, `connection_measured_volume`, `capture_configuration`, `capture_interface`, `unmatched_record_aggregate_*`, `provider_source_period`, `push_listener`.
+- Nothing checks that `connection_netflow` (`schema.sql:4059-4133`) is inlined.
+- `netflow_parts_add` is PL/pgSQL with 36 fields (`schema.sql:3057-3109`).
+- The core datasets' `relation.sql` and `earliest.sql` carry no `-- statement:` marker, so the plan sweep never plans them.
+
+**Schema-check coverage.**
+- `CORE_TABLES` and `CORE_ENTITIES` read only `schemaname = 'opnview'` (`schema-checks.sh:753-756`). So none of these is ever covered:
+  - the `opnsense.mirror_*` tables;
+  - the broker's stream tables;
+  - the plugin tables (`pf_states.rate`, `unbound.query_log`).
+- `provider_source_period` is classified bounded (`docs/data-model.md:422, 459`).
+
+**`purge_due_addresses`** (`internal/store/flows/classify.statements.sql:514-527`). Candidate causes, read from the statement:
+1. A scalar-subquery horizon, which hides its selectivity from the planner.
+2. No index leads with `dst_interface_id`.
+3. `idx_flow_src_interface_observed_at` lacks `src_address`, so every row costs a heap fetch.
+4. Its generic plan matters, because statements run under pgx's statement cache (`sqldb/driver.go:55`).
+
+**TimescaleDB.**
+- The 12 October decision enables the Timescale License and uses continuous aggregates wherever they are exactly equivalent (line 2295).
+- The tree still says Apache only: `docker-compose.yml:117-118, 147-148`, `ROADMAP.md:100-101`, `docs/data-model.md:474-476, 529`, `broker/recording.go:20-23`.
+- `flow` cannot become a hypertable (`docs/data-model.md:487`).
+
+**Phase D leftovers.**
+- `internal/plugin`, `internal/web` and `internal/widget/hostareas/readers` each hold exactly 15 files.
+- The nine import aliases appear in 14 files.
+- `internal/plugin/runtime` is imported by 17 files.
+- The move tooling is a separate module (`module mover`, go 1.24, `golang.org/x/tools v0.30.0`) holding compiled binaries. Its replay script hard-codes `/scratch` paths and calls Perl fix-ups.
+
+## 2. Scope: "### Phase E: performance and the two budgets" (replaces Phase E whole)
+
+### E.1 The everyday suite under 60 s
+
+1. **Measure first.** A CI-only switch, off by default, makes the shared test helpers record, per package:
+   - clone time;
+   - `Open`: schema apply and read-role grant, separately;
+   - every `waitForDatabase` retry;
+   - drop time;
+   - time in test bodies.
+
+   The breakdown covers the nine slow packages. It is taken twice, with the whole suite running and with each package alone. The hand-back reports both breakdowns before and after the change.
+2. **Fix by mechanism, in the shared helpers.** Never fix by a list of tests. Each point below is measured, and its decision is reported:
+   - **A clone must not pay the full schema apply again.** The product records a digest of `schema.sql` in the database and skips the apply when it matches (decided, Q2). Tests therefore run the shipped code path.
+   - **The cluster-wide role created per test.**
+   - **`FILE_COPY` against `WAL_LOG` cloning.** Cite the PostgreSQL 17 documentation on `FILE_COPY`'s checkpoints.
+   - **A bounded backoff on the 55006 retry.**
+   - **Databases and connections in flight against `max_connections`.** Any `-p` or `-parallel` value written into `ci/checks.sh` is justified there by the measured figures.
+   - **Every `waitForDatabase` retry during tests** becomes a reported event, not a silent sleep.
+3. **Forbidden, whatever it saves:**
+   - weakening, deleting or skipping an assertion;
+   - adding `t.Skip`, `testing.Short()` or a build tag to a test;
+   - moving a test to pre-deployment, unless it is a `-race` check or a 1M-row check;
+   - suppressing a warning.
+
+   A per-test edit is allowed only where a test bypasses the shared helpers. Each such edit is listed in the hand-back with its reason.
+4. **Real applies are still exercised.** `TestApplyingTheSchemaTwiceChangesNothing`, and every test of `Open` on an empty or outdated database, still runs a real full apply.
+5. **`internal/store/calendar_test.go` returns to the everyday suite** once E.1 leaves room for it (decided, Q7). If it does not fit, the figures are reported.
+
+### E.2 Pre-deployment under 180 s
+
+1. `PRE_DEPLOYMENT_BUDGET_SECONDS` stays the one constant. The command prints each step's wall time and the total, beside the CPU count.
+2. **`-race` by a stated rule, computed by a `ci/` program, never a hand list.** A package is selected when any of its `.go` files, test files included:
+   - (i) holds a `go` statement;
+   - (ii) imports `sync` or `sync/atomic`;
+   - (iii) serves HTTP: it imports `net/http/httptest`, declares a `ServeHTTP` method, or references `http.Handler`, `http.HandlerFunc`, `http.ServeMux` or `http.Server`;
+   - (iv) or lies under `internal/plugin/`.
+
+   Every package is printed as selected or excluded, with the clause that decided it.
+3. Every package runs exactly once with the `predeployment` tag: the selected ones under `-race`, the others without it.
+4. **The budget self-test** still asserts that `checks.sh` exits non-zero and names the budget. A CI-only variable restricts `checks.sh`'s `go test` to the probe package during the self-test, and the self-test runs concurrently with other steps (decided, Q3).
+5. Independent steps may run concurrently: vet, fuzzing, the self-test's sleep and the seed builds. Each keeps its own output block and its own exit code.
+6. **The 1M-row seed is built once per run.** That one build serves the plans, the widget budgets, the live budget and the reclassification cost (on a copy). The build prints its breakdown: schema apply, generation of each table, index maintenance, and `VACUUM (ANALYZE)`.
+   - The seed is first built cold on every run, which must fit in 180 s.
+   - If the breakdown shows it cannot fit, the seed is reused across runs while a digest of `schema.sql`, `seed.sql`, the seed parameters and the image digest matches. A run whose digest changed builds the seed cold and prints that build time apart; the 180 s budget then applies to runs whose seed already exists. This is preferred to dropping any check (decided, Q4).
+7. If 180 s still cannot be met without dropping a check, the Builder reports the per-step figures and drops nothing.
+
+### E.3 The five widgets over budget
+
+1. Profile the five types at 100k/30d: statements per response, SQL time and script time.
+2. If the N+1 geolocation read is confirmed, the core reads the geolocations of every peer a request places in one bounded statement.
+   - The statement lives in a `.statements.sql` file, so the sweep plans it.
+   - It fills the request cache, so `host.services.geolocation` keeps its contract.
+   - Third-party widgets that place peers benefit without being edited.
+3. Anything else the profile names is fixed in the core host areas, never by special-casing one widget type.
+4. Every golden output stays byte-identical.
+5. Widget budgets run on **both seeds**: 100k at 250/500 ms and 1M at 1 s/2 s (decided, Q1).
+
+### E.4 Continuous aggregates, only where exactly equivalent
+
+1. `docs/data-model.md`, *Storage fit*, records a verdict and a reason for every candidate:
+   - the 24 family tables;
+   - `unmatched_record_aggregate_*`;
+   - the broker's `#minute` and `#hour` stream aggregates.
+
+   Every TimescaleDB 2.30.2 restriction a reason relies on is cited from that version's documentation.
+2. The expected reasons, which the Builder must verify and not take as given:
+   - **Families:** `flow` cannot become a hypertable.
+   - **`unmatched_record_aggregate_*`:** it is accumulated from the join's decisions and outlives the purge of its records.
+   - **Stream aggregates:**
+     - `last` is insertion-ordered, with ties at one-second resolution;
+     - columns are added at run time;
+     - the aggregates are retained longer than the detail rows;
+     - each event is visible immediately;
+     - refreshes may not run inside a transaction, which is to be verified.
+3. A continuous aggregate is used only where an equivalence test passes: every slot equals the hand-built table across late ingestion, reclassification, purge and the existing fixtures.
+4. **If none qualifies, the installation stays on Apache-2.0.** The 12 October licence decision is then recorded as superseded, with the reason: enabling an unused licence would be a placeholder (decided, Q5).
+
+### E.5 `purge_due_addresses`
+
+1. Record `EXPLAIN (ANALYZE, BUFFERS)` at the 1M seed, under the custom and the generic plan, at three horizons: none due, about 1 % due, and all due. State which cause holds.
+2. Fix the statement, or add or extend an index, so that both branches are bounded by an index condition and the work scales with the number of due rows. The result set stays identical. A new index is justified in `schema.sql` like the existing `flow` indexes, with its write cost stated.
+
+### E.6 NetFlow plans at the 1M seed
+
+1. **`sql/seed.sql` fills these tables**, at every size, in proportion to `flow_rows`, with no address literal:
+   - `capture_configuration` and `capture_interface`: one Observation Point, plus one interval with two captured interfaces;
+   - `flow_record` and `flow_record_condition`;
+   - `connection_measured_volume`: every state allowed by its CHECK;
+   - `unmatched_record_aggregate_*`;
+   - `provider_source_period`: one pull period and one push period;
+   - `push_listener`;
+   - the `netflow_*` columns of the families and of `purged_flow_hour`.
+2. **Plan checks**, for every `_netflow` twin, `connection_netflow` and `netflow_sum`, at both seeds:
+   - no `Function Scan` of `connection_netflow`;
+   - `connection_measured_volume` is read through its primary key;
+   - no growing table is scanned;
+   - the same set of indexes is used at 100k and at 1M.
+3. **Widget budgets.** `widgetbudget` also times the `netflow` answer of every type whose preset offers a volume measure, with the same budgets and the same empty-answer rule. The cost of `netflow_sum` is reported.
+
+### E.7 Schema checks over the tables added since Phase C
+
+1. `sql/schema-checks.sh` covers, in its entity, classification, foreign-key, seed-fill, plan and purge sections:
+   - every core table added since Phase C;
+   - the `opnsense` schema's bookkeeping tables;
+   - the built-in plugins' tables.
+
+   The plugin tables are created by a `ci/` program that runs the plugin loader.
+2. A plugin table's class (growing or bounded) is derived from its manifest: a time column and a retention make it growing. It is never taken from a list in `docs/data-model.md`.
+3. The plan sweep also plans every core dataset's `relation.sql` and `earliest.sql`, at both seeds, with `:from` and `:to` bound.
+4. After a purge, no row older than its horizon remains in any core growing table added since Phase C.
+5. **`provider_source_period`.** The Builder first states which code path writes a row (decided, Q8):
+   - if a row is written on each listener restart, the table is reclassified as growing and purged at the flows' horizon, keeping the open period;
+   - otherwise it stays bounded, and the bound is documented.
+
+### E.8 The five Phase D proposals (decision of 16 October 2026)
+
+1. **Room under the 15-file rule.**
+   - The plugin test harness moves to `internal/plugin/harness`.
+   - The message-key files of `internal/web` move to their own package.
+   - `internal/widget/hostareas/readers` is split in two, by responsibility.
+2. **The nine import aliases are removed** by renaming the shadowing locals. No new alias replaces them.
+3. **`internal/plugin/runtime` is renamed** to a name that collides with no standard-library package (`scripthost` unless that collides). The map of the tree follows.
+4. **Each part's tests move into the part's own directory.** Every identifier that Phase D exported only for tests becomes unexported, or is kept with a named non-test caller. Shared fixtures such as `testNetwork` (`store/network_test.go:61`) are split as needed.
+5. **The move tooling becomes its own module at `ci/mover/`**, with its own `go.mod` (decided, Q6).
+   - `golang.org/x/tools` is pinned after the complete transitive dependency audit. The product's `go.mod` does not change.
+   - Kept: the commands' sources, a `doc.go` per command, and one example plan.
+   - A fixture test runs the splitter on a small module under `testdata/` and asserts that the result builds and matches the expected tree.
+   - Not kept: compiled binaries, absolute paths, and the Perl fix-ups and replay scripts.
+   - `ci/checks.sh` builds, vets and tests the module inside the timed span.
+6. **As in Phase D:** the moves preserve history; B5's comparison, the widget goldens and X3's snapshot stay byte-identical.
+
+### E.9 Order and reporting
+
+The work runs in this order:
+1. E.8;
+2. E.1;
+3. E.7 and E.6, seed first;
+4. E.5;
+5. E.3;
+6. E.4;
+7. E.2.
+
+The suite runs once, before commit. The hand-back carries:
+- the before-and-after tables of E.1.1, E.2.1, E.2.6 and E.3.1;
+- every figure that §8 lists as unmeasured.
+
+## 3. Acceptance criteria: replaces E1 under "### Phase E and the whole cycle" (X1–X4 unchanged)
+
+- [ ] **E1.** `docker compose run --rm pre-deployment`:
+  - prints each step's wall time and the total, beside the CPU count;
+  - fails above `PRE_DEPLOYMENT_BUDGET_SECONDS`, which is written once;
+  - passes within 180 s on 16 CPUs, or the hand-back carries the per-step figures as E.2.7 requires.
+- [ ] **E2.** `docker compose run --rm checks` reports a `go test` wall time of at most 60 s on 16 CPUs and exits 0.
+- [ ] **E3.** The E.1.1 switch prints, per package, the clone, schema-apply, role, wait-retry, drop and body totals. The hand-back gives them before and after, for the nine packages, with the whole suite running and with each package alone.
+- [ ] **E4.** A green everyday run records zero `waitForDatabase` retries. A test that forces a refused connection shows the retry is reported, not silently slept.
+- [ ] **E5.** A test inventory (`go test -json -count=1 ./...`) is taken before Phase E, and every name in it passes afterwards. The hand-back maps each test moved under E.8.4 to its new path.
+- [ ] **E6.** The Phase E diff adds no `t.Skip`, no `testing.Short()` and no `//go:build` line to any test.
+  - The only `predeployment`-tagged tests are those `ROADMAP.md` lists. `calendar_test.go` is back in the everyday suite, or the hand-back reports why it does not fit.
+  - Every removed `_test.go` line that holds `t.Error`, `t.Errorf`, `t.Fatal`, `t.Fatalf` or a comparison is listed beside the line that replaces it.
+- [ ] **E7.** The `-race` selection is computed by a `ci/` program from E.2.2's four clauses. Pre-deployment prints every package with its deciding clause. A test shows that a fixture package becomes selected when a `go` statement is added to it, and that a fixture package with no trigger is excluded.
+- [ ] **E8.** Pre-deployment runs every package of `./...` exactly once with the `predeployment` tag, the selected ones with `-race`. The two printed sets together equal `go list ./...`.
+- [ ] **E9.** `ci/budget-self-test.sh` still fails unless `checks.sh` exits non-zero **and** prints "over the test budget of 60 s". During the self-test, `go test` is restricted to the probe package.
+- [ ] **E10.** One run's output shows:
+  - exactly one 1M-row build, or a reuse whose digest is printed;
+  - the build's breakdown;
+  - every consumer that read it: plans, widget budgets, live budget, and reclassification on a copy.
+- [ ] **E11.** `widgetbudget` prints no `OVER BUDGET` line on either seed. Each of the five types in §1 has a 30d median of at most 500 ms at 100k.
+- [ ] **E12.** For each of the five types, a test answers the same request over two fixtures that differ only in the number of distinct outside peers, and the statements per response are equal. The batched read is a named statement that the S5A-AC35 sweep plans, and it scans no growing table.
+- [ ] **E13.** Every widget golden, B5's comparison and X3's snapshot pass with their recorded files byte-unchanged.
+- [ ] **E14.** *Storage fit* gives a verdict and a reason for every E.4 candidate, citing the TimescaleDB 2.30.2 documentation. No continuous aggregate exists without a passing equivalence test.
+- [ ] **E15.** The licence setting is the same everywhere it appears: `docker-compose.yml`, the serve compose file, `ROADMAP.md`, `README.md` and `docs/architecture.md`. It is Apache-2.0 unless a continuous aggregate qualified. `sql/schema-checks.sh` asserts the value the database is running with.
+- [ ] **E16.** `purge_due_addresses` returns the same set at both seeds and at the three horizons.
+  - At 1M with nothing due, `EXPLAIN (ANALYZE, BUFFERS)` reads at most 100 shared buffers, under both the custom and the generic plan.
+  - Each branch's access to `flow` carries an index condition on `observed_at`.
+  - The cause is stated in the statement's comment.
+- [ ] **E17.** At both seed sizes, every table E.6.1 names holds rows, in both address families where the table carries an address. The seed holds no address literal (V6-AC2).
+- [ ] **E18.** For every `_netflow` twin, at both seeds:
+  - no `Function Scan` on `connection_netflow`;
+  - `connection_measured_volume` is read through its primary key;
+  - no growing table is scanned;
+  - the same set of indexes is used at 100k and at 1M.
+
+  A teeth check catches a twin that calls a non-inlinable copy of the function.
+- [ ] **E19.** `widgetbudget` prints a `netflow` line for every type offering a volume measure. Every such line is within budget and non-empty.
+- [ ] **E20.** Every core dataset's `relation.sql` and `earliest.sql` is planned at both seeds, and none scans a growing table.
+- [ ] **E21.** The AC10 classification covers every table of the `opnview` and `opnsense` schemas and every built-in plugin table, and plugin classes come from their manifests. A test plugin directory holding a table with a time column is classified and planned without editing any shipped file. `provider_source_period`'s class follows E.7.5, with the writing code path stated.
+- [ ] **E22.** After the schema checks' purge, no row older than its horizon remains in `flow_record`, `flow_record_condition`, `connection_measured_volume` or `unmatched_record_aggregate_*`.
+- [ ] **E23.** `internal/plugin`, `internal/web` and each part of the former `hostareas/readers` hold fewer than 15 files. D1 and D2 pass, and the map lists the new packages.
+- [ ] **E24.** No file imports a package under any of the nine aliases. The set of import aliases after Phase E is a subset of the set before.
+- [ ] **E25.** No directory named `runtime` exists under `internal/`, and nothing imports `…/internal/plugin/runtime`.
+- [ ] **E26.** Every identifier in Phase D's list of test-forced exports is unexported, or is kept with a named non-test caller listed in the hand-back.
+- [ ] **E27.** `ci/mover/` is its own module, with:
+  - `x/tools` pinned after the audit, and no change to the product's `go.mod`;
+  - a `doc.go` per command;
+  - a fixture test that passes;
+  - no binary and no absolute path;
+  - a build, vet and test run by `ci/checks.sh` inside the timed span.
+- [ ] **E28.** `ROADMAP.md`, *Development and test environment*, states:
+  - both budgets;
+  - the `-race` rule;
+  - what the self-test runs;
+  - the seed rule, reuse included;
+  - the exact list of tests moved to pre-deployment.
+- [ ] **E29.** A test copies a fixture plugin into a temporary plugin tree. The fixture holds a widget that places peers and a table with a time column. The test shows the plugin is covered by:
+  - the geolocation batching;
+  - the manifest-derived classification;
+  - the plan sweep;
+  - the `-race` rule where it applies.
+
+  No shipped file is edited.
+- [ ] **E30.** No new OPNsense data source is read: the diff adds no endpoint to the registry or to any manifest.
+
+## 4. Out of scope
+
+- Any change to what a widget, dataset or screen answers, beyond the admitted differences already recorded.
+- Raising any budget.
+- Indexes, except under E.5.
+- The join-throughput row at the 1M seed (declined 11 October 2026).
+- Migration, backfill or old-schema compatibility (decided 11 October 2026).
+- The live service (port 8080) and the `data` volume.
+- Phase F, except the sentences listed in §6.
+
+## 5. Risks
+
+1. The per-package cost reading is a hypothesis. If contention dominates, the concurrency bound becomes the lever.
+2. Skipping the schema apply would make the apply-twice test vacuous unless that test forces a real apply (E.1.4).
+3. A cold 1M build may not fit in 180 s alongside `-race`. Q4's fallback covers this.
+4. The `-race` rule may select almost every package. The figure is reported, not tuned away.
+5. Seeding the NetFlow tables may expose existing failures. These are defects to fix, not checks to relax.
+6. `golang.org/x/tools` needs the full transitive dependency audit, and has not been tested here with Go 1.27.
+7. `provider_source_period` may grow without bound (E.7.5).
+8. The TimescaleDB restrictions in E.4 come from memory and must be verified against the 2.30.2 documentation.
+
+## 6. Documents
+
+- `ROADMAP.md:198-214` is rewritten per E28.
+- `ROADMAP.md:100-101` keeps the Apache-only sentence, adding the date and the reason, unless a continuous aggregate qualified.
+- `docs/data-model.md`, *Storage fit*, gains the E.4 verdicts and the `opnsense` tables.
+- `docs/architecture.md`, *Map of the tree*, follows E.8.
+
+## 7. Obsolete sentences
+
+1. Spec lines 620–631, the old Phase E.
+2. Spec line 843, the old E1.
+3. "Widget timings run on the large seed only": both seeds are timed now (Q1).
+4. `ROADMAP.md:210`, "No test is moved today".
+5. Line 2295's licence sentence, if no continuous aggregate qualifies (Q5).
+
+## 8. Figures not yet measured (hand-back items)
+
+- Today's everyday breakdown.
+- Pre-deployment's per-step figures.
+- The 1M seed's build time.
+- Widget timings after the plugin port.
+- `purge_due_addresses`'s plan.
+- Whether `widgetbudget` fails today on the NetFlow datasets.
+- The cost of `netflow_sum`.
+- Whether `connection_netflow` is inlined.
+
+## 9. Decided (maintainer, 16 October 2026): the planner's open questions
+
+1. Widget budgets on both seeds: 100k at 250/500 ms, 1M at 1 s/2 s.
+2. A digest of `schema.sql` is recorded in the product, and the apply is skipped when it matches. A real apply is still tested.
+3. During the budget self-test, `go test` is restricted to the probe package, and the self-test runs concurrently with other steps.
+4. The 1M seed is built cold, and is reused by digest only if a cold build cannot fit.
+5. If no continuous aggregate qualifies, stay on Apache-2.0 and supersede the 12 October licence decision.
+6. The move tooling is its own module, `ci/mover/`.
+7. `calendar_test.go` returns to the everyday suite.
+8. `provider_source_period` is classified from its writing code path: growing and purged if a row is written per restart, bounded and documented otherwise.
