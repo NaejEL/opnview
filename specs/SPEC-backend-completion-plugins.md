@@ -4869,3 +4869,10 @@ LV-NJ2 runs after deployment, on the maintainer's firewall, with every interface
 3. **The exit row:** it carries the connection's `netflow` figure in both directions when the second leg passed, and `not_exported_when_refused` forward when it was refused.
 4. **Copy counting:** when no exporter sees the first leg's form of a direction, its translated copy is counted, chosen from the configuration and marked `counted_copy`. Parent copies are never counted.
 5. **`best_available`:** unchanged and strict this cycle. LV-NJ2 item 5 measures the fallback rate, and the maintainer revisits the rule with that figure.
+
+## Phase E: decisions after the partial build (maintainer, 16 October 2026)
+
+1. **Parallel subtests are allowed.** This amends E.1.3's ban on per-test edits, for this purpose only. A slow test that sets up several database harnesses one after another may run them as `t.Run` subtests with `t.Parallel()`, each keeping its own database. No assertion is removed or weakened. There is no shared database between tests.
+2. **Fewer packages under `-race`.** Clause (iii) of the race-selection rule (E7) is narrowed: serving HTTP no longer selects a package on its own. `-race` covers only the packages that start goroutines or share mutable state across them. `pre-deployment` must hold its 180 s budget.
+3. **The reclassification cost stays opt-in.** It runs only when `OPNVIEW_RECLASSIFY_COST=1` is set, and it is outside `pre-deployment`. A set-based `ReclassifyAll` is a separate spec, later. S5B-AC35 and E10 are amended accordingly.
+4. **Hard limits are part of the commands:** `checks` stops at 90 s and `pre-deployment` at 240 s. No `go test -timeout` exceeds its command's budget.
