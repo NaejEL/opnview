@@ -49,8 +49,10 @@ func (c *Discoverer) RefreshDiscovery(ctx context.Context) error {
 	c.discoverVersion(ctx)
 
 	// The snapshot is published even when something failed, because the part that
-	// answered is better than the part that is stale.
+	// answered is better than the part that is stale. The passes held until the run's first
+	// discovery read it from here on (N5).
 	c.SetDiscovery(snapshot)
+	c.DiscoveryEnded()
 
 	// A change of which interfaces are upstream, or of the networks that count, changes what is
 	// outside, so every stored address is placed again. The first discovery of a run is such a

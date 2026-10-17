@@ -1,6 +1,7 @@
 package decode
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -55,6 +56,25 @@ type Normaliser struct {
 	// OffsetSeconds is the firewall's assumed offset from UTC, for the one shape
 	// that carries no zone. It is the recorded assumption of survey gap 7.
 	OffsetSeconds int
+	// OffsetUnknown says the firewall's offset has not been read yet, so OffsetSeconds
+	// is no measurement: every zone-less shape is refused with ErrOffsetUnknown rather
+	// than read as UTC. A live OPNsense on CEST had a mirror gap dated 7 200 s in the
+	// future because its first read after a start was normalised before the offset was
+	// read (N4, live validation of 17 October 2026). The zero value is a known offset.
+	OffsetUnknown bool
+}
+
+// ErrOffsetUnknown is a zone-less timestamp read before the firewall's offset from
+// UTC has been read: no instant is derived from the firewall's local time until it is.
+var ErrOffsetUnknown = errors.New("decode: the firewall's offset from UTC has not been read, so a timestamp " +
+	"with no zone cannot be read")
+
+// Relative is the normaliser for what does not depend on the offset: whether a text
+// is a timestamp, and how timestamps of one source order among themselves, both of
+// which a uniform shift leaves unchanged. An instant it yields is never stored.
+func (n Normaliser) Relative() Normaliser {
+	n.OffsetUnknown = false
+	return n
 }
 
 // NormaliseEpoch reads a value the source already expresses as epoch seconds.
@@ -95,6 +115,9 @@ func (n Normaliser) NormaliseISO(value string) (int64, error) {
 			continue
 		}
 		if zoneless(layout) {
+			if n.OffsetUnknown {
+				return 0, fmt.Errorf("decode: %q: %w", value, ErrOffsetUnknown)
+			}
 			return parsed.UTC().Unix() - int64(n.OffsetSeconds), nil
 		}
 		return parsed.UTC().Unix(), nil
@@ -126,6 +149,9 @@ func (n Normaliser) NormaliseSyslog(value string) (int64, error) {
 	if n.Reference.IsZero() {
 		return 0, fmt.Errorf("decode: %q carries no year and no reference time was given", value)
 	}
+	if n.OffsetUnknown {
+		return 0, fmt.Errorf("decode: %q: %w", value, ErrOffsetUnknown)
+	}
 
 	reference := n.Reference.UTC()
 	referenceYear := reference.Year()
@@ -152,10 +178,14 @@ func (n Normaliser) NormaliseSyslog(value string) (int64, error) {
 // possible per the survey, and only the ISO one was exercised on a live
 // firewall, so both are handled and neither is assumed.
 func (n Normaliser) NormaliseFilterLogTimestamp(value string) (int64, error) {
-	if epoch, err := n.NormaliseISO(value); err == nil {
-		return epoch, nil
+	epoch, err := n.NormaliseISO(value)
+	if err == nil || errors.Is(err, ErrOffsetUnknown) {
+		return epoch, err
 	}
-	epoch, err := n.NormaliseSyslog(value)
+	epoch, err = n.NormaliseSyslog(value)
+	if errors.Is(err, ErrOffsetUnknown) {
+		return 0, err
+	}
 	if err != nil {
 		return 0, fmt.Errorf("decode: %q is neither the ISO nor the year-less filter-log shape", value)
 	}

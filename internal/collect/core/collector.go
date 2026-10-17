@@ -127,4 +127,9 @@ type Collector struct {
 	// Netflow is the flow_record kind's state: the filter log's read-through instant, the join
 	// tolerance, the capture histories and what is to be derived again (flowrecord.go).
 	Netflow NetflowState
+	// firstDiscovery is closed when the run's first discovery pass has ended, and the two
+	// Onces make it once and close it once (firstdiscovery.go).
+	firstDiscovery       chan struct{}
+	firstDiscoveryMade   sync.Once
+	firstDiscoveryClosed sync.Once
 }

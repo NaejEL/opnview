@@ -86,3 +86,31 @@ func TestNoFilterLogLineIsStoredBeforeTheOffsetIsKnown(t *testing.T) {
 		t.Errorf("%d records were stored at a guessed time", stored)
 	}
 }
+
+// TestTheBrokersNormaliserSaysTheOffsetIsUnknownUntilItIsRead is N4 of the live validation of
+// 17 October 2026: the normaliser the broker's mirror reads does not pass a zero offset off as a
+// measurement before discovery has read the firewall's clock.
+func TestTheBrokersNormaliserSaysTheOffsetIsUnknownUntilItIsRead(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	harness := collecttest.ArrangeFilterLogCollection(t)
+	fresh := collecttest.NewTestCollector(t, providertest.NewClient(t, harness.Fake), harness.Store, harness.Clock)
+	before, err := fresh.KnownNormaliser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.OffsetUnknown {
+		t.Errorf("before discovery the broker's normaliser claimed a known offset of %ds", before.OffsetSeconds)
+	}
+	harness.Fake.AnswerJSON(opnsense.SystemTime, systemTimeAt(2*time.Hour, "CEST"))
+	if err := fresh.RefreshDiscovery(ctx); err != nil {
+		t.Fatalf("discovering: %v", err)
+	}
+	after, err := fresh.KnownNormaliser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.OffsetUnknown || after.OffsetSeconds != 7200 {
+		t.Errorf("after discovery the broker's normaliser is %+v, want a known 7200 s", after)
+	}
+}

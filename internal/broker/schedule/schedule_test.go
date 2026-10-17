@@ -70,7 +70,7 @@ func newSimulation(t *testing.T, settings Settings) *simulation {
 
 // refresh is a datum's call: it records its instant and waits for the next tick.
 func (sim *simulation) refresh(key string) Refresh {
-	return func(context.Context) Outcome {
+	return func(context.Context) (Outcome, any) {
 		sim.mutex.Lock()
 		sim.calls[key] = append(sim.calls[key], sim.clock.Now())
 		outcome := sim.outcomes[key]
@@ -80,7 +80,7 @@ func (sim *simulation) refresh(key string) Refresh {
 		if gate != nil {
 			<-gate
 		}
-		return outcome
+		return outcome, key
 	}
 }
 
@@ -335,5 +335,109 @@ func TestFailuresBackOffExponentiallyAndAnAnswerEndsIt(t *testing.T) {
 	calls = sim.callsOf("absent")
 	if len(calls) < 8 || sim.scheduler.BackingOff("absent") {
 		t.Errorf("not_found was backed off: %d calls in 20 s", len(calls))
+	}
+}
+
+// joined is what a caller of Do received.
+type joined struct {
+	value any
+	err   error
+}
+
+// do calls Do for a datum on its own goroutine, with a call of its own that must never run.
+func (sim *simulation) do(key string) (chan joined, *bool) {
+	ran := new(bool)
+	done := make(chan joined, 1)
+	go func() {
+		_, value, err := sim.scheduler.Do(context.Background(), key, "/api/example/"+key, time.Minute,
+			func(context.Context) (Outcome, any) {
+				sim.mutex.Lock()
+				*ran = true
+				sim.mutex.Unlock()
+				return Succeeded, "the caller's own call"
+			})
+		done <- joined{value: value, err: err}
+	}()
+	return done, ran
+}
+
+// attached waits until one caller waits on the datum's queued job, or on its job in flight.
+func (sim *simulation) attached(key string, inFlight bool) {
+	sim.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		sim.scheduler.mutex.Lock()
+		waiting := 0
+		if entry := sim.scheduler.data[key]; entry != nil {
+			held := entry.queued
+			if inFlight {
+				held = entry.running
+			}
+			if held != nil {
+				waiting = len(held.waiters)
+			}
+		}
+		sim.scheduler.mutex.Unlock()
+		if waiting == 1 {
+			return
+		}
+		if time.Now().After(deadline) {
+			sim.t.Fatalf("the caller never joined %s's call", key)
+		}
+		runtime.Gosched()
+	}
+}
+
+// ownCallRan reads whether a caller's own call ran.
+func (sim *simulation) ownCallRan(ran *bool) bool {
+	sim.mutex.Lock()
+	defer sim.mutex.Unlock()
+	return *ran
+}
+
+// TestACallerJoiningAQueuedAdvanceRefreshIsHandedItsResult is N1's scheduler half: a caller that
+// finds the datum's advance refresh queued joins it, and is handed what that one call returned.
+func TestACallerJoiningAQueuedAdvanceRefreshIsHandedItsResult(t *testing.T) {
+	t.Parallel()
+	sim := newSimulation(t, Settings{MaxInFlight: 1, MaxPerSecond: 50})
+	// A datum of its own holds the only slot.
+	sim.demand("blocker", "/api/example/blocker", time.Minute)
+	sim.scheduler.kick()
+	sim.settle()
+	// The advance refresh is queued behind it.
+	sim.demand("datum", "/api/example/datum", time.Minute)
+	sim.scheduler.kick()
+	sim.settle()
+	done, ran := sim.do("datum")
+	sim.attached("datum", false)
+	sim.step()
+	sim.step()
+	got := <-done
+	if got.err != nil || got.value != "datum" {
+		t.Fatalf("the caller was handed %v (%v), not the refresh's result", got.value, got.err)
+	}
+	if calls := len(sim.callsOf("datum")); calls != 1 || sim.ownCallRan(ran) {
+		t.Errorf("the datum was called %d times, the caller's own call ran: %v", calls, sim.ownCallRan(ran))
+	}
+}
+
+// TestACallerArrivingDuringACallJoinsIt is N1's other order: a call already in flight for the
+// datum is joined, never followed by a second.
+func TestACallerArrivingDuringACallJoinsIt(t *testing.T) {
+	t.Parallel()
+	sim := newSimulation(t, Settings{MaxInFlight: 2, MaxPerSecond: 50})
+	sim.demand("datum", "/api/example/datum", time.Minute)
+	sim.scheduler.kick()
+	sim.settle()
+	done, ran := sim.do("datum")
+	sim.attached("datum", true)
+	sim.step()
+	got := <-done
+	if got.err != nil || got.value != "datum" {
+		t.Fatalf("the caller was handed %v (%v), not the call's result", got.value, got.err)
+	}
+	if calls := len(sim.callsOf("datum")); calls != 1 || sim.ownCallRan(ran) || sim.scheduler.Stats().Calls != 1 {
+		t.Errorf("the datum was called %d times (%d dispatched), the caller's own call ran: %v", calls,
+			sim.scheduler.Stats().Calls, sim.ownCallRan(ran))
 	}
 }
