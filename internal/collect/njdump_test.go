@@ -35,9 +35,9 @@ func joinDumpQueries() []struct{ name, query string } {
 		                 FROM flow_record r
 		                 LEFT JOIN flow j ON j.id = r.joined_flow_id
 		                 LEFT JOIN flow c ON c.id = r.copy_flow_id`},
-		{"connection_measured_volume", `SELECT (to_jsonb(v) - 'connection_flow_id' ||
+		{"connection_measure", `SELECT (to_jsonb(v) - 'connection_flow_id' - 'measure' ||
 		                                        jsonb_build_object('connection_leg', f.log_digest))::text
-		                                FROM connection_measured_volume v
+		                                FROM connection_measure v
 		                                LEFT JOIN flow f ON f.id = v.connection_flow_id`},
 	}
 	for _, period := range joinDumpPeriods {

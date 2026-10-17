@@ -134,7 +134,8 @@ ORDER BY r.copy_flow_id, r.start_at, r.identity;
 -- log's read-through instant :due.
 -- statement: measured_volume_open
 SELECT DISTINCT v.connection_flow_id
-FROM connection_measured_volume AS v
-WHERE NOT v.final
+FROM connection_measure AS v
+WHERE v.measure = 'netflow'
+  AND NOT v.final
   AND v.due_at <= :due
 ORDER BY v.connection_flow_id;

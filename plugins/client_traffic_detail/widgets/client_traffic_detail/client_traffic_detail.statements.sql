@@ -75,19 +75,18 @@ ORDER BY max(l.observed_at) DESC, l.address;
 
 
 -- ---------------------------------------------------------------------------
--- The two reads above in the `netflow` measure, run in their place when the answer is given in it
--- (host.query; docs/widget-api.md, "Volumes and the observation-point limit"). A record's bytes are
--- its connection's measured volume, both directions, read through connection_netflow
--- (internal/store/schema.sql) as every netflow twin reads it; each record also carries its action
--- as an action column (allowed_connections, blocked_connections, unknown_connections, 1 for its own
--- action), the columns of netflow_parts -- its connection's packets, coverage class and direction
--- states, in the part of its action -- and, per direction -- forward and reverse, as its first leg logged them -- the
--- bytes, the packets, the state and whether it was counted from translated copies (counted_copy). A
--- connection that started under no readable, enabled capture configuration has no direction row: its
--- directions are null.
+-- The two reads above in a declared measure, CAST(:measure AS TEXT), run in their place when the answer is given in
+-- it (host.query; docs/widget-api.md, "Volumes and the observation-point limit"). A record's bytes are
+-- its connection's in the measure, both directions, read through flow_measures (internal/store/schema.sql)
+-- as every measured twin reads them; each record also carries its action as an action column
+-- (allowed_connections, blocked_connections, unknown_connections, 1 for its own action), its parts as
+-- measure_parts -- its connection's packets, coverage class, direction states and markers, in the part of
+-- its action -- and, per direction -- forward and reverse, as its first leg logged them -- the bytes, the
+-- packets, the state and the markers. A connection the measure knew nothing of at its start has no
+-- direction row: its directions are null.
 -- ---------------------------------------------------------------------------
 
--- statement: widget_client_traffic_detail_records_netflow
+-- statement: widget_client_traffic_detail_records_measured
 SELECT f.id AS flow_id,
        f.observed_at AS observed_at,
        f.dst_address AS destination,
@@ -95,7 +94,7 @@ SELECT f.id AS flow_id,
        f.protocol AS protocol,
        f.action AS action,
        f.traffic_scope AS traffic_scope,
-       n.bytes AS bytes,
+       measure_total_bytes(n.parts, CAST(:measure AS TEXT)) AS bytes,
        f.interface_device AS interface_device,
        m.description AS interface_description,
        g.lookup_state AS lookup_state,
@@ -106,26 +105,28 @@ SELECT f.id AS flow_id,
        a.site_name AS site_name,
        a.method AS method,
        a.correlation_delay_seconds AS correlation_delay_seconds,
-       'netflow' AS measure,
+       CAST(:measure AS TEXT) AS measure,
        CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END AS allowed_connections,
        CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END AS blocked_connections,
        CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END AS unknown_connections,
-       (n.parts).*,
+       n.parts -> CAST(:measure AS TEXT) AS measure_parts,
        fw.bytes AS forward_bytes,
        fw.packets AS forward_packets,
        fw.state AS forward_state,
-       CAST(fw.counted_copy AS INTEGER) AS forward_counted_copy,
+       measure_markers(CAST(:measure AS TEXT), fw.markers) AS forward_markers,
        rv.bytes AS reverse_bytes,
        rv.packets AS reverse_packets,
        rv.state AS reverse_state,
-       CAST(rv.counted_copy AS INTEGER) AS reverse_counted_copy
+       measure_markers(CAST(:measure AS TEXT), rv.markers) AS reverse_markers
 FROM flow AS f
 LEFT JOIN interface_map AS m ON m.device = f.interface_device
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
-LEFT JOIN connection_measured_volume AS fw ON fw.connection_flow_id = f.id AND fw.direction = 'forward'
-LEFT JOIN connection_measured_volume AS rv ON rv.connection_flow_id = f.id AND rv.direction = 'reverse'
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN connection_measure AS fw ON fw.measure = CAST(:measure AS TEXT) AND fw.connection_flow_id = f.id
+                                AND fw.direction = 'forward'
+LEFT JOIN connection_measure AS rv ON rv.measure = CAST(:measure AS TEXT) AND rv.connection_flow_id = f.id
+                                AND rv.direction = 'reverse'
 WHERE f.src_client_id = :client_id
   AND f.observed_at >= :from
   AND f.observed_at < :to
@@ -138,16 +139,16 @@ ORDER BY f.observed_at DESC, f.id DESC
 LIMIT :limit;
 
 
--- statement: widget_client_traffic_detail_record_totals_netflow
+-- statement: widget_client_traffic_detail_record_totals_measured
 SELECT count(*) AS records,
-       coalesce(sum(n.bytes), 0) AS bytes,
-       'netflow' AS measure,
+       coalesce(sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))), 0) AS bytes,
+       CAST(:measure AS TEXT) AS measure,
        coalesce(sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END), 0) AS allowed_connections,
        coalesce(sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END), 0) AS blocked_connections,
        coalesce(sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END), 0) AS unknown_connections,
-       (netflow_sum(n.parts)).*
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM flow AS f
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.src_client_id = :client_id
   AND f.observed_at >= :from
   AND f.observed_at < :to

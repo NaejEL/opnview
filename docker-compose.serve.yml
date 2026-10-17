@@ -47,6 +47,18 @@
 # an unprivileged user, so a port below 1024 -- syslog's registered 514 -- fails
 # to bind: choose 1024 or above, which OPNsense's remote target accepts.
 #
+# THE REVIEW MODE, a development build only. An environment file holding
+#
+#     OPNVIEW_BUILD_FLAGS=-tags=review
+#     OPNVIEW_REVIEW_ANSWERS=internal/widget/widgets/testdata/golden_responses.json.gz
+#
+# builds the binary with the review tag and starts it with --review-answers:
+# GET /api/widget/{type} then answers the widget API's recorded answers instead of
+# the database, so a review instance on a scratch Compose project (-p) draws every
+# widget without a firewall. The session still applies. A build without the tag
+# has no such flag and no such code (cmd/opnview/review.go); the flag is refused
+# by a build without it, so OPNVIEW_REVIEW_ANSWERS alone does not start.
+#
 # Step 8 adds deployment. This file runs the service from source in the
 # development toolchain; it is not an install story and it is not a production
 # configuration.
@@ -76,6 +88,15 @@ services:
       OPNVIEW_PUSH_SYSLOG_TCP: ""
       OPNVIEW_PUSH_SYSLOG_UDP: ""
       OPNVIEW_PUSH_NETFLOW_UDP: ""
+      # Extra accepted push senders, empty by default (README, "Push sources"): a network that
+      # rewrites the source of a published port -- Docker Desktop gives every datagram and
+      # connection the bridge network's gateway -- needs that gateway here, and then the host
+      # must filter the published ports to the firewall's address.
+      OPNVIEW_PUSH_EXTRA_SENDERS: "${OPNVIEW_PUSH_EXTRA_SENDERS:-}"
+      # The review mode (header), empty unless the environment file sets them: the
+      # build flags (-tags=review selects it) and the recorded answers' path.
+      OPNVIEW_BUILD_FLAGS: "${OPNVIEW_BUILD_FLAGS:-}"
+      OPNVIEW_REVIEW_ANSWERS: "${OPNVIEW_REVIEW_ANSWERS:-}"
     volumes:
       - serve-database-secret:/run/opnview-database:ro
     depends_on:
@@ -95,6 +116,8 @@ services:
         [ -n "$$OPNVIEW_PUSH_SYSLOG_TCP" ] && set -- "$$@" --push-listen "syslog/tcp=0.0.0.0:$$OPNVIEW_PUSH_SYSLOG_TCP"
         [ -n "$$OPNVIEW_PUSH_SYSLOG_UDP" ] && set -- "$$@" --push-listen "syslog/udp=0.0.0.0:$$OPNVIEW_PUSH_SYSLOG_UDP"
         [ -n "$$OPNVIEW_PUSH_NETFLOW_UDP" ] && set -- "$$@" --push-listen "netflow/udp=0.0.0.0:$$OPNVIEW_PUSH_NETFLOW_UDP"
+        [ -n "$$OPNVIEW_PUSH_EXTRA_SENDERS" ] && set -- "$$@" --push-extra-senders "$$OPNVIEW_PUSH_EXTRA_SENDERS"
+        [ -n "$$OPNVIEW_REVIEW_ANSWERS" ] && set -- "$$@" --review-answers "$$OPNVIEW_REVIEW_ANSWERS"
         go build $${OPNVIEW_BUILD_FLAGS:-} -o /tmp/opnview ./cmd/opnview
         exec /tmp/opnview --data-dir /data --database "$$OPNVIEW_DATABASE" --listen 0.0.0.0:${OPNVIEW_LISTEN} "$$@"
 

@@ -145,6 +145,8 @@ type Plugin struct {
 	pushHost *pushHost
 	// declaredDatasets are the datasets its scripts may read (datasetaccess.go).
 	declaredDatasets DeclaredDatasets
+	// derivations are its derivations (derivation.go).
+	derivations []*derivation
 }
 
 // ProviderInfo is one provider a plugin declares.
@@ -284,6 +286,9 @@ func Load(ctx context.Context, options Options) (*Loaded, error) {
 	if err := options.Store.RegisterProviderDeclarations(ctx, kinds, providers, time.Now().Unix()); err != nil {
 		return nil, fmt.Errorf("plugin: registering the declarations: %w", err)
 	}
+	if err := options.Store.RegisterMeasures(ctx, loaded.Measures(), time.Now().Unix()); err != nil {
+		return nil, fmt.Errorf("plugin: registering the measures: %w", err)
+	}
 	values, implementations := provider.SetValues(loaded.Set)
 	if err := options.Store.RecordProviderValues(ctx, values, implementations, time.Now().Unix()); err != nil {
 		return nil, fmt.Errorf("plugin: recording the providers' values: %w", err)
@@ -406,6 +411,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 	if refusal := checkEnablePages(manifest); refusal != nil {
 		return nil, refusal
 	}
+	if refusal := checkMeasures(manifest); refusal != nil {
+		return nil, refusal
+	}
 	if plugin.declaredDatasets, refusal = checkDatasets(manifest, directory); refusal != nil {
 		return nil, refusal
 	}
@@ -433,6 +441,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 	if plugin.pushes, refusal = checkPush(plugin, exports); refusal != nil {
 		return nil, refusal
 	}
+	if plugin.derivations, refusal = checkDerivations(plugin, exports, providers, options); refusal != nil {
+		return nil, refusal
+	}
 	if refusal := loadWidgets(plugin, directory, location, onDisk, origin); refusal != nil {
 		return nil, refusal
 	}
@@ -454,6 +465,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 
 	// Everything is valid: the side effects, in an order that leaves nothing behind on a
 	// failure but the one the store reports.
+	if refusal := registerMeasures(manifest); refusal != nil {
+		return nil, refusal
+	}
 	if options.Store != nil {
 		for _, table := range tables {
 			event, err := options.Store.EnsurePluginTable(ctx, table)
@@ -488,6 +502,9 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 	}
 	for _, setting := range manifest.Settings {
 		taken[settingClaim(StorageKey(manifest.Name, setting.Key))] = manifest.Name
+	}
+	for _, derived := range plugin.derivations {
+		set.AddDerivation(derived)
 	}
 	plugin.Destinations = append([]string(nil), manifest.Destinations...)
 	// What the plugin declares of its endpoints reaches whichever broker reads this set.
@@ -566,7 +583,7 @@ func declaredTables(manifest contract.Manifest) ([]plugindecl.PluginTable, *cont
 		}
 		seen[declaration.Name] = true
 		table := plugindecl.PluginTable{Plugin: manifest.Name, Table: declaration.Name,
-			PrimaryKey: declaration.PrimaryKey}
+			PrimaryKey: declaration.PrimaryKey, Counters: declaration.Counters}
 		for _, column := range declaration.Columns {
 			table.Columns = append(table.Columns, plugindecl.PluginColumn{Name: column.Name, Type: column.Type,
 				Nullable: column.Nullable, CarriesDomain: column.CarriesDomain, Role: column.Role, Unit: column.Unit})

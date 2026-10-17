@@ -114,14 +114,14 @@ func TestTheJoinWithEveryInterfaceCaptured(t *testing.T) {
 				// A second derivation writes nothing (PS-AC34's method): no decision, no figure, not even its
 				// computation instant.
 				computed := collecttest.ScalarCount(t, h.Store,
-					"SELECT coalesce(sum(computed_at), 0) + coalesce(sum(1), 0) FROM connection_measured_volume")
+					"SELECT coalesce(sum(computed_at), 0) + coalesce(sum(1), 0) FROM connection_measure")
 				decided := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(decided_at), 0) FROM flow_record")
 				h.At(collecttest.NetflowReadSecond + 1)
 				if err := h.Collector.RefreshAggregates(context.Background()); err != nil {
 					t.Fatal(err)
 				}
 				if collecttest.ScalarCount(t, h.Store,
-					"SELECT coalesce(sum(computed_at), 0) + coalesce(sum(1), 0) FROM connection_measured_volume") != computed ||
+					"SELECT coalesce(sum(computed_at), 0) + coalesce(sum(1), 0) FROM connection_measure") != computed ||
 					collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(decided_at), 0) FROM flow_record") != decided {
 					t.Errorf("a second derivation rewrote a decision or a figure")
 				}
@@ -317,7 +317,7 @@ func checkEveryShape(t *testing.T, h *collecttest.NetflowHarness, fixtures []col
 			t.Errorf("%d records are both joined and counted as copies", twice)
 		}
 		if counted := collecttest.ScalarCount(t, h.Store, `SELECT coalesce(sum(octets), 0) FROM flow_record
-			WHERE join_state = 'joined' AND joined_flow_id IN (SELECT connection_flow_id FROM connection_measured_volume
+			WHERE join_state = 'joined' AND joined_flow_id IN (SELECT connection_flow_id FROM connection_measure
 			                                                   WHERE state IN ('measured', 'in_progress', 'export_gap'))
 			   OR counted_copy`); counted != int(sumOf(independent)) {
 			t.Errorf("the records counted in figures hold %d bytes, the independent computation %d", counted,
@@ -406,24 +406,24 @@ func checkAggregates(t *testing.T, h *collecttest.NetflowHarness, fixtures []col
 	}
 	t.Run("NJ-AC12 NJ-AC7 the netflow columns equal an independent computation", func(t *testing.T) {
 		for _, period := range []string{"1h", "24h", "7d", "30d"} {
-			if got := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(netflow_bytes), 0) FROM volume_aggregate_"+period+
+			if got := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(measure_total_bytes(measure_parts, 'netflow')), 0) FROM volume_aggregate_"+period+
 				" WHERE exit_leg_device IS NULL"); int64(got) != counted {
 				t.Errorf("at %s the first legs count %d measured bytes, want %d", period, got, counted)
 			}
-			if got := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(netflow_bytes), 0) FROM volume_aggregate_"+period+
+			if got := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(measure_total_bytes(measure_parts, 'netflow')), 0) FROM volume_aggregate_"+period+
 				" WHERE exit_leg_device IS NOT NULL"); int64(got) != exit {
 				t.Errorf("at %s the exit rows count %d measured bytes, want %d: both directions of every connection "+
 					"whose second leg passed", period, got, exit)
 			}
 			for _, family := range []string{"client_volume", "peer_volume", "rule_volume"} {
-				if got := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(netflow_bytes), 0) FROM "+family+
+				if got := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(measure_total_bytes(measure_parts, 'netflow')), 0) FROM "+family+
 					"_aggregate_"+period); int64(got) > counted+exit {
 					t.Errorf("at %s the %s family counts %d measured bytes, more than every counted record", period,
 						family, got)
 				}
 			}
 		}
-		if copies := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum((netflow_parts).allowed_counted_copy_connections), 0) "+
+		if copies := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(CAST(measure_parts -> 'netflow' ->> 18 AS BIGINT)), 0) "+
 			"FROM volume_aggregate_1h WHERE exit_leg_device IS NULL"); copies != 1 {
 			t.Errorf("the volume family counts %d connections with a counted copy, want F7's one", copies)
 		}
@@ -470,7 +470,7 @@ func checkThePurgeKeepsTheNetflowFigures(t *testing.T, h *collecttest.NetflowHar
 	t.Helper()
 	t.Run("NJ-AC12 the purge keeps the purged part's netflow figures", func(t *testing.T) {
 		before := collecttest.ScalarCount(t, h.Store,
-			"SELECT coalesce(sum(netflow_bytes), 0) FROM volume_aggregate_1h WHERE exit_leg_device IS NULL")
+			"SELECT coalesce(sum(measure_total_bytes(measure_parts, 'netflow')), 0) FROM volume_aggregate_1h WHERE exit_leg_device IS NULL")
 		ctx := context.Background()
 		if err := h.Store.SetSetting(ctx, "retention_seconds", "600", collecttest.ReferenceEpoch()); err != nil {
 			t.Fatal(err)
@@ -482,9 +482,9 @@ func checkThePurgeKeepsTheNetflowFigures(t *testing.T, h *collecttest.NetflowHar
 		if left := collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM flow"); left != 0 {
 			t.Fatalf("%d legs survived the purge", left)
 		}
-		purged := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(netflow_bytes), 0) FROM purged_flow_hour")
+		purged := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(measure_total_bytes(measure_parts, 'netflow')), 0) FROM purged_flow_hour")
 		after := collecttest.ScalarCount(t, h.Store,
-			"SELECT coalesce(sum(netflow_bytes), 0) FROM volume_aggregate_1h WHERE exit_leg_device IS NULL")
+			"SELECT coalesce(sum(measure_total_bytes(measure_parts, 'netflow')), 0) FROM volume_aggregate_1h WHERE exit_leg_device IS NULL")
 		if purged < before || after != before {
 			t.Errorf("before the purge %d measured bytes; after it the purged part holds %d and the aggregates %d",
 				before, purged, after)
@@ -515,7 +515,7 @@ func periodFingerprint(t *testing.T, h *collecttest.NetflowHarness, period strin
 			}
 			var line string
 			for index, column := range columns {
-				if column != "computed_at" && column != "id" && !strings.HasPrefix(column, "netflow_") {
+				if column != "computed_at" && column != "id" && column != "measure_parts" {
 					line += fmt.Sprintf("%s.%s=%v;", family, column, values[index])
 				}
 			}

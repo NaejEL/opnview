@@ -8,9 +8,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/widget"
-	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/params"
-	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
 // The maintainer's decisions of 11 October 2026, after the PS22 build: the aggregates count
@@ -42,7 +40,7 @@ func TestBestAvailableTreatsEveryCoveredDirectionStateAsCovered(t *testing.T) {
 		total, _ := data(t, answer)["total"].(map[string]any)
 		coverage, _ := total["coverage"].(map[string]any)
 		states, _ := coverage["direction_states"].(map[string]any)
-		if total["measure"] != envelope.MeasureNetflow || len(answer.States) != 0 || answer.StateDetails != nil {
+		if total["measure"] != measureNetflow || len(answer.States) != 0 || answer.StateDetails != nil {
 			t.Errorf("%s: best_available answered %s", test.state, encoded(t, answer))
 			continue
 		}
@@ -74,9 +72,9 @@ func TestBestAvailableFallsBackOnEveryUncoveredDirectionState(t *testing.T) {
 		}
 		best := f.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"})
 		logged := f.respond(t, "interface_volume_ranking", map[string]any{"period": "1h", "volume_measure": "logged"})
-		if !params.Contains(best.States, request.StateNetflowNotCoveringWindow) ||
-			string(withoutMeasureDifferences(t, best, request.StateNetflowNotCoveringWindow)) !=
-				string(withoutMeasureDifferences(t, logged, request.StateNetflowNotCoveringWindow)) {
+		if !params.Contains(best.States, stateNetflowNotCoveringWindow) ||
+			string(withoutMeasureDifferences(t, best, stateNetflowNotCoveringWindow)) !=
+				string(withoutMeasureDifferences(t, logged, stateNetflowNotCoveringWindow)) {
 			t.Errorf("%s: best_available is not logged's answer with the state\nlogged: %s\ngot:    %s", state,
 				encoded(t, logged), encoded(t, best))
 		}
@@ -95,7 +93,7 @@ func TestBestAvailableFallsBackOnEveryUncoveredDirectionState(t *testing.T) {
 		}
 		// The single record's coverage object names the state too.
 		detail := f.respond(t, "client_traffic_detail", measureParameters(f.service, "client_traffic_detail",
-			envelope.MeasureNetflow))
+			measureNetflow))
 		if !strings.Contains(string(encoded(t, detail)), `"`+member+`":1`) {
 			t.Errorf("%s: client_traffic_detail's coverage does not name it: %s", state, encoded(t, detail))
 		}
@@ -114,10 +112,10 @@ func (f *fixture) measureBlockedFlow(t *testing.T) {
 		ip_version, action, direction, packet_bytes, rule_lookup_state, traffic_scope) VALUES
 		($1, 'measure-blocked', $2, $3, 'exdev_a', 'resolved', 1, 10, '192.0.2.10', '203.0.113.9', 'tcp', 4, 'block',
 		 'in', 100, 'pending', 'north_south')`, measureFlowBlocked, f.now-400, f.now-400)
-	f.exec(t, `INSERT INTO connection_measured_volume (connection_flow_id, direction, connection_start_at, state,
-		bytes, packets, records, counted_copy, final, due_at, computed_at) VALUES
-		($1, 'forward', $2, 'measured', 600, 2, 1, false, true, NULL, $3),
-		($4, 'reverse', $5, 'missing', 0, 0, 0, false, true, NULL, $6)`,
+	f.exec(t, `INSERT INTO connection_measure (measure, connection_flow_id, direction, connection_start_at, state,
+		bytes, packets, records, markers, final, due_at, computed_at) VALUES
+		('netflow', $1, 'forward', $2, 'measured', 600, 2, 1, 0, true, NULL, $3),
+		('netflow', $4, 'reverse', $5, 'missing', 0, 0, 0, 0, true, NULL, $6)`,
 		measureFlowBlocked, f.now-400, f.now, measureFlowBlocked, f.now-400, f.now)
 }
 
@@ -135,7 +133,7 @@ func TestEachActionPartCarriesItsOwnPacketsAndCoverage(t *testing.T) {
 		return coverage
 	}
 	total, _ := data(t, f.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"}))["total"].(map[string]any)
-	if total["measure"] != envelope.MeasureNetflow || total["packets"] != float64(31) || total["allowed_packets"] != float64(29) ||
+	if total["measure"] != measureNetflow || total["packets"] != float64(31) || total["allowed_packets"] != float64(29) ||
 		total["blocked_packets"] != float64(2) || total["unknown_packets"] != float64(0) ||
 		coverageOf(total, "coverage")["measured"] != float64(2) || coverageOf(total, "coverage")["partial"] != float64(1) ||
 		coverageOf(total, "allowed_coverage")["measured"] != float64(2) ||
@@ -155,7 +153,7 @@ func TestEachActionPartCarriesItsOwnPacketsAndCoverage(t *testing.T) {
 		answer := f.respond(t, test.widgetType, map[string]any{"period": "1h"})
 		mapTotal, _ := data(t, answer)["total"].(map[string]any)
 		coverage := coverageOf(mapTotal, "coverage")
-		if mapTotal["measure"] != envelope.MeasureNetflow || mapTotal["bytes"] != test.bytes ||
+		if mapTotal["measure"] != measureNetflow || mapTotal["bytes"] != test.bytes ||
 			mapTotal["packets"] != test.packets || mapTotal["connections"] != test.connection || coverage == nil ||
 			coverage["measured"] != test.measured || coverage["partial"] != test.partial {
 			t.Errorf("%s: the map's total is %v (states %v)", test.widgetType, mapTotal, answer.States)
@@ -182,8 +180,8 @@ func exampleTwinPlugin(twinParameters string, twinTemplate bool) map[string]stri
 -- statement: widget_example_twin_rows
 SELECT count(*) AS allowed_connections FROM flow WHERE observed_at >= :from AND observed_at < :to;
 
--- statement: widget_example_twin_rows_netflow
-SELECT count(*) AS allowed_connections, 'netflow' AS measure FROM ` + from + ` WHERE ` + twinParameters + `;
+-- statement: widget_example_twin_rows_measured
+SELECT count(*) AS allowed_connections, CAST(:measure AS TEXT) AS measure FROM ` + from + ` WHERE ` + twinParameters + `;
 `,
 		"widgets/example_twin_total/twin.js": `
 exports.widget = {
@@ -197,11 +195,11 @@ exports.widget = {
 	}
 }
 
-// TestAWidgetWhoseNetflowTwinBindsOtherParametersIsRefused is twin validation at load: a statement's
-// netflow twin that binds other parameters than the statement, or runs at a period where the
-// statement does not, is refused with netflow_twin_mismatch, and nothing else is; a twin binding the
-// same parameters loads.
-func TestAWidgetWhoseNetflowTwinBindsOtherParametersIsRefused(t *testing.T) {
+// TestAWidgetWhoseMeasuredTwinBindsOtherParametersIsRefused is twin validation at load: a statement's
+// measured twin that binds other parameters than the statement and :measure, or runs at a period where
+// the statement does not, is refused with measured_twin_mismatch, and nothing else is; a twin binding
+// the same parameters and :measure loads.
+func TestAWidgetWhoseMeasuredTwinBindsOtherParametersIsRefused(t *testing.T) {
 	t.Parallel()
 	f := newMeasureWorld(t)
 	for name, test := range map[string]struct {
@@ -226,8 +224,8 @@ func TestAWidgetWhoseNetflowTwinBindsOtherParametersIsRefused(t *testing.T) {
 		refusals := service.Refusals()
 		_, served := service.Preset("example_twin_total")
 		switch {
-		case test.refused && (len(refusals) != 1 || refusals[0].Code != params.RefusalNetflowTwinMismatch ||
-			!strings.Contains(refusals[0].Detail, "widget_example_twin_rows_netflow") || served):
+		case test.refused && (len(refusals) != 1 || refusals[0].Code != params.RefusalMeasuredTwinMismatch ||
+			!strings.Contains(refusals[0].Detail, "widget_example_twin_rows_measured") || served):
 			t.Errorf("%s: the refusals are %+v (served %v)", name, refusals, served)
 		case !test.refused && (len(refusals) != 0 || !served):
 			t.Errorf("%s: a valid twin was refused: %+v", name, refusals)
@@ -242,8 +240,8 @@ func TestTheRefusalCodeOfATwinIsDocumented(t *testing.T) {
 	for _, document := range []string{"widget-authoring.md", "plugins.md"} {
 		raw, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", document))
 		check(t, err)
-		if !strings.Contains(string(raw), "`"+params.RefusalNetflowTwinMismatch+"`") {
-			t.Errorf("docs/%s does not name the refusal code %s", document, params.RefusalNetflowTwinMismatch)
+		if !strings.Contains(string(raw), "`"+params.RefusalMeasuredTwinMismatch+"`") {
+			t.Errorf("docs/%s does not name the refusal code %s", document, params.RefusalMeasuredTwinMismatch)
 		}
 	}
 }
@@ -255,7 +253,7 @@ func TestAStateDetailIsServedOnlyWithItsState(t *testing.T) {
 	t.Parallel()
 	unconfigured := newMeasureWorld(t)
 	answer := unconfigured.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"})
-	if !params.Contains(answer.States, request.StateNetflowNotConfigured) || answer.StateDetails != nil ||
+	if !params.Contains(answer.States, stateNetflowNotConfigured) || answer.StateDetails != nil ||
 		strings.Contains(string(encoded(t, answer)), "state_details") {
 		t.Errorf("NetFlow not configured answered %s", encoded(t, answer))
 	}

@@ -1,0 +1,4 @@
+{
+  "name": "datagram",
+  "description": "One UDP datagram per message, its octets decoded by the subscribing plugin's own decode function: no structure is read by the core."
+}

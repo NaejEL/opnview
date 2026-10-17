@@ -104,6 +104,7 @@ type Set struct {
 	builtin       map[[2]string]bool
 	failures      []error
 	declarers     []Declarer
+	derivations   []Derivation
 }
 
 // NewSet returns an empty set.

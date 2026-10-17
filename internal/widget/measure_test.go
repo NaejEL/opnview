@@ -6,17 +6,18 @@ import (
 
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
-// The measure's own tests that need no database: the twins of the core's statements, and the netflow
-// figures as a script and a Volume carry them.
+// The measure's own tests that need no database: the twins of the core's statements, and the coverage
+// judgment of a declared measure.
 
-// TestEveryCoreNetflowTwinBindsItsStatementsParameters is twin validation for the core's own
-// statements -- the store's and the core widgets' -- which no loader reads: every <name>_netflow binds
-// exactly the parameters of <name> and is a period template exactly when it is. The built-in widget
-// plugins' twins are checked by the loader, which would refuse them.
-func TestEveryCoreNetflowTwinBindsItsStatementsParameters(t *testing.T) {
+// TestEveryCoreMeasuredTwinBindsItsStatementsParameters is twin validation for the core's own
+// statements -- the store's and the core widgets' -- which no loader reads: every <name>_measured binds
+// exactly the parameters of <name> and :measure, and is a period template exactly when it is. The
+// built-in widget plugins' twins are checked by the loader, which would refuse them.
+func TestEveryCoreMeasuredTwinBindsItsStatementsParameters(t *testing.T) {
 	t.Parallel()
 	names, err := sqldb.StatementNames()
 	if err != nil {
@@ -32,67 +33,80 @@ func TestEveryCoreNetflowTwinBindsItsStatementsParameters(t *testing.T) {
 	}
 	twins := 0
 	for _, name := range names {
-		if _, isTwin := strings.CutSuffix(name, request.NetflowStatementSuffix); isTwin {
+		if _, isTwin := strings.CutSuffix(name, request.MeasuredStatementSuffix); isTwin {
 			twins++
 		}
-		if mismatch := request.NetflowTwinMismatch(texts, name); mismatch != "" {
+		if mismatch := request.MeasuredTwinMismatch(texts, name); mismatch != "" {
 			t.Error(mismatch)
 		}
 	}
 	if twins == 0 {
-		t.Fatal("no netflow twin is registered: the test reads nothing")
+		t.Fatal("no measured twin is registered: the test reads nothing")
 	}
 }
 
-// TestNetflowTwinMismatchNamesWhatDiffers is the rule itself: other parameters, or a template beside a
-// statement that is not one, is a mismatch; the same parameters in another order, or bound twice, is
-// not; and a _netflow statement with no statement beside it is no twin.
-func TestNetflowTwinMismatchNamesWhatDiffers(t *testing.T) {
+// TestMeasuredTwinMismatchNamesWhatDiffers is the rule itself: other parameters, a missing :measure, or a
+// template beside a statement that is not one, is a mismatch; the same parameters in another order, or
+// bound twice, is not; and a _measured statement with no statement beside it is no twin.
+func TestMeasuredTwinMismatchNamesWhatDiffers(t *testing.T) {
 	t.Parallel()
 	texts := map[string]string{
 		"widget_a":                "SELECT 1 FROM flow WHERE observed_at >= :from AND observed_at < :to",
-		"widget_a_netflow":        "SELECT 1 FROM flow WHERE observed_at < :to AND observed_at >= :from AND :to > 0",
+		"widget_a_measured":       "SELECT :measure FROM flow WHERE observed_at < :to AND observed_at >= :from AND :to > 0",
 		"widget_b":                "SELECT 1 FROM flow WHERE observed_at >= :from",
-		"widget_b_netflow":        "SELECT 1 FROM flow WHERE observed_at >= :from AND id = :id",
+		"widget_b_measured":       "SELECT :measure FROM flow WHERE observed_at >= :from AND id = :id",
 		"widget_c":                "SELECT 1 FROM flow WHERE observed_at >= :from",
-		"widget_c_netflow":        "SELECT 1 FROM volume_aggregate_@period@ WHERE period_start_at >= :from",
-		"widget_orphan_netflow":   "SELECT 1 FROM flow WHERE id = :id",
+		"widget_c_measured":       "SELECT :measure FROM volume_aggregate_@period@ WHERE period_start_at >= :from",
+		"widget_d":                "SELECT 1 FROM flow WHERE observed_at >= :from",
+		"widget_d_measured":       "SELECT 1 FROM flow WHERE observed_at >= :from",
+		"widget_orphan_measured":  "SELECT 1 FROM flow WHERE id = :id",
 		"widget_not_a_twin_other": "SELECT 1",
 	}
-	for name, want := range map[string]string{"widget_a_netflow": "", "widget_b_netflow": ":id",
-		"widget_c_netflow": "period template", "widget_orphan_netflow": "", "widget_not_a_twin_other": ""} {
-		got := request.NetflowTwinMismatch(texts, name)
+	for name, want := range map[string]string{"widget_a_measured": "", "widget_b_measured": ":id",
+		"widget_c_measured": "period template", "widget_d_measured": ":measure", "widget_orphan_measured": "",
+		"widget_not_a_twin_other": ""} {
+		got := request.MeasuredTwinMismatch(texts, name)
 		if (want == "") != (got == "") || !strings.Contains(got, want) {
 			t.Errorf("%s: the mismatch is %q, want one naming %q", name, got, want)
 		}
 	}
 }
 
-// TestCoveredIsPS22sCoverage is the judgment best_available makes, as NJ5 restates it: a connection is
-// covered when its capture was known and every direction is measured, in_progress, awaiting_export or
-// missing; any other of NJ5's states, on one direction, uncovers it.
-func TestCoveredIsPS22sCoverage(t *testing.T) {
+// TestCoveredIsTheDeclaredMeasuresCoverage is the judgment best_available makes (PS22, as PA5 generalises
+// it): a connection is covered when the measure knew of it and every direction is in a state the measure
+// declares covered -- for netflow measured, in_progress, awaiting_export or missing -- and any other state,
+// on one direction, uncovers it.
+func TestCoveredIsTheDeclaredMeasuresCoverage(t *testing.T) {
 	t.Parallel()
-	covered := reads.NetflowCoverage{Measured: 1, Partial: 3, Unmeasured: 1, Directions: reads.DirectionStates{
-		Measured: 2, InProgress: 1, AwaitingExport: 1, Missing: 2}}
-	if !covered.Covered() {
+	measure, declared := vocab.MeasureNamed("netflow")
+	if !declared {
+		t.Fatal("the built-in netflow measure is not registered")
+	}
+	index := func(state string) int {
+		position := measure.StateIndex(state)
+		if position < 0 {
+			t.Fatalf("netflow declares no state %s", state)
+		}
+		return position
+	}
+	covered := reads.MeasureCoverage{Complete: 1, Partial: 3, Unmeasured: 1}
+	covered.States[index("measured")], covered.States[index("in_progress")] = 2, 1
+	covered.States[index("awaiting_export")], covered.States[index("missing")] = 1, 2
+	if !covered.Covered(measure) {
 		t.Errorf("%+v is not covered", covered)
 	}
-	for name, uncover := range map[string]func(*reads.NetflowCoverage){
-		"capture_not_known":             func(c *reads.NetflowCoverage) { c.CaptureNotKnown = 1 },
-		"export_gap":                    func(c *reads.NetflowCoverage) { c.Directions.ExportGap = 1 },
-		"not_exported_when_refused":     func(c *reads.NetflowCoverage) { c.Directions.NotExportedWhenRefused = 1 },
-		"forwarding_export_unsettled":   func(c *reads.NetflowCoverage) { c.Directions.ForwardingExportUnsettled = 1 },
-		"ingress_not_captured":          func(c *reads.NetflowCoverage) { c.Directions.IngressNotCaptured = 1 },
-		"parent_copies_only":            func(c *reads.NetflowCoverage) { c.Directions.ParentCopiesOnly = 1 },
-		"interface_not_exported":        func(c *reads.NetflowCoverage) { c.Directions.InterfaceNotExported = 1 },
-		"interface_not_captured":        func(c *reads.NetflowCoverage) { c.Directions.InterfaceNotCaptured = 1 },
-		"capture_configuration_unknown": func(c *reads.NetflowCoverage) { c.Directions.CaptureConfigurationUnknown = 1 },
-	} {
+	notKnown := covered
+	notKnown.NotKnown = 1
+	if notKnown.Covered(measure) {
+		t.Errorf("a connection the measure knew nothing of is covered: %+v", notKnown)
+	}
+	for _, state := range []string{"export_gap", "not_exported_when_refused", "forwarding_export_unsettled",
+		"ingress_not_captured", "parent_copies_only", "interface_not_exported", "interface_not_captured",
+		"capture_configuration_unknown"} {
 		coverage := covered
-		uncover(&coverage)
-		if coverage.Covered() {
-			t.Errorf("%s: %+v is covered", name, coverage)
+		coverage.States[index(state)] = 1
+		if coverage.Covered(measure) {
+			t.Errorf("%s: %+v is covered", state, coverage)
 		}
 	}
 }

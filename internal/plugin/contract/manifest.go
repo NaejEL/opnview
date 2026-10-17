@@ -11,6 +11,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/broker/infer"
 	"github.com/NaejEL/opnview/internal/collect/provider"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // ManifestFile is the manifest's file name in every plugin directory.
@@ -63,6 +64,9 @@ type Manifest struct {
 	Settings []SettingDeclaration `json:"settings,omitempty"`
 	// Pages are the sections of its settings, each with its settings in display order (PageDeclaration).
 	Pages []PageDeclaration `json:"pages,omitempty"`
+	// Measures are the measures its derivations fill (PA5 of the plugin-API amendment): each a value of the
+	// widget API's volume_measure, its direction states, markers and window states (vocab.DeclaredMeasure).
+	Measures []vocab.DeclaredMeasure `json:"measures,omitempty"`
 	// Destinations are the hosts beyond the firewall the plugin contacts, each a scheme and a host
 	// (such as https://publicsuffix.org). The fetch facility refuses any other.
 	Destinations []string `json:"destinations,omitempty"`
@@ -73,6 +77,9 @@ type Manifest struct {
 	// plugins' (PA3 of the plugin-API amendment). Its own tables' datasets need no entry. A read of a
 	// dataset not named here is refused: at load when a script names it by a literal, at the call otherwise.
 	Datasets []string `json:"datasets,omitempty"`
+	// Derivations are the functions of the script that compute from what the core and the plugin stored, each
+	// run on its triggers (PA4 of the plugin-API amendment, docs/plugins.md "Derivations").
+	Derivations []DerivationDeclaration `json:"derivations,omitempty"`
 }
 
 // EndpointDeclaration is one firewall endpoint a plugin reads, in the fields an
@@ -245,6 +252,10 @@ type TableDeclaration struct {
 	Indexes []IndexDeclaration `json:"indexes,omitempty"`
 	// Retention says how long a row is kept.
 	Retention *RetentionDeclaration `json:"retention,omitempty"`
+	// Counters makes the table a table of counters: every column outside its primary key is a number, and
+	// a row written again with a key already held ADDS its figures to the held row's, in one batched write,
+	// rather than replacing it (PA4 of the plugin-API amendment). Only a derivation writes one.
+	Counters bool `json:"counters,omitempty"`
 	// Nature says what a bucket of the data catalogue with no row of the table means: event (a
 	// covered bucket with no row is a true zero) or sample (a gap); empty is sample, which never
 	// draws a zero it did not read.
@@ -530,9 +541,25 @@ type PushDeclaration struct {
 	Replaces string `json:"replaces,omitempty"`
 	// LivenessSeconds is how long the entry stays alive with no message; zero is push.DefaultLiveness.
 	LivenessSeconds int `json:"liveness_seconds,omitempty"`
+	// Decode names a function the script exports under `push`, called with ONE message -- a datagram of the
+	// datagram protocol, a line of the line protocol -- and returning a list of what it held: records of the
+	// entry's kind, or rows of its output table (PA7 of the plugin-API amendment). A protocol whose messages
+	// carry no structure of their own requires it; any other refuses it.
+	Decode string `json:"decode,omitempty"`
+	// SequenceBound says where the sequence-loss bound of the entry's sender comes from (NJ7, as PA7 of the
+	// plugin-API amendment restates it): a loss the sender's sequence numbers show is asserted only while
+	// the bound is known, and the decoders follow as many counters as it says. Absent asserts every loss.
+	SequenceBound *SequenceBoundDeclaration `json:"sequence_bound,omitempty"`
 	// SurveySection names the section of docs/opnsense-api-survey.md establishing what the firewall
 	// sends; a built-in carries it.
 	SurveySection string `json:"survey_section,omitempty"`
+}
+
+// SequenceBoundDeclaration names the value a push entry's sequence-loss bound is read from: a value its
+// provider records over time (Store.RecordSequenceBound), by its name -- how many sequence counters the
+// sender runs, known from the sender's configuration by whatever reads it.
+type SequenceBoundDeclaration struct {
+	Value string `json:"value"`
 }
 
 // PushField is where one column's value comes from: field names, the first present one wins.
@@ -616,3 +643,32 @@ type ValueSource struct {
 // DatasetNamePattern is what a name of the manifest's `datasets` matches: a core dataset's name, or a
 // plugin's <plugin>.<table>, as the data catalogue names them.
 var DatasetNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?$`)
+
+// DerivationDeclaration is one derivation a plugin declares (PA4 of the plugin-API amendment): a function of
+// its script the core runs on its triggers, reading what the core and the plugin stored and writing its own
+// outputs, each run in one transaction.
+type DerivationDeclaration struct {
+	// Name is the derivation's own name, a snake_case word: the function's name under the script's
+	// `derivations` namespace unless Function names another.
+	Name string `json:"name"`
+	// Function is the function of the script's `derivations` namespace it runs; empty is Name.
+	Function string `json:"function,omitempty"`
+	// AfterPasses are the collection passes that run it: a core kind ("firewall_log"), or a kind and one of
+	// its providers ("firewall_log/pf").
+	AfterPasses []string `json:"after_passes,omitempty"`
+	// AfterPush are the plugin's own push entries, by name, whose stored batches run it.
+	AfterPush []string `json:"after_push,omitempty"`
+	// CadenceSeconds runs it on a cadence as well; zero runs it on its other triggers alone.
+	CadenceSeconds int `json:"cadence_seconds,omitempty"`
+	// Datasets are the data-catalogue datasets it reads, each also named by the manifest's `datasets`.
+	Datasets []string `json:"datasets,omitempty"`
+	// Outputs are what it writes; anything else it returns refuses the run.
+	Outputs DerivationOutputs `json:"outputs"`
+}
+
+// DerivationOutputs are the outputs a derivation may write: tables of the plugin's own (counter tables
+// among them) and the per-connection output and window intervals of measures the plugin declares.
+type DerivationOutputs struct {
+	Tables   []string `json:"tables,omitempty"`
+	Measures []string `json:"measures,omitempty"`
+}

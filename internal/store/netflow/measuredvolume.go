@@ -31,7 +31,7 @@ const (
 	VolumeCaptureUnknown            = "capture_configuration_unknown"
 )
 
-// VolumeStates are the per-direction states, in the order netflow_parts holds them.
+// VolumeStates are the per-direction states, in the order the netflow measure declares them (plugins/netflow/plugin.json).
 func VolumeStates() []string {
 	return []string{VolumeMeasured, VolumeInProgress, VolumeAwaitingExport, VolumeMissing, VolumeExportGap,
 		VolumeNotExportedWhenRefused, VolumeForwardingExportUnsettled, VolumeIngressNotCaptured,
@@ -227,11 +227,17 @@ func (s *NetflowStore) MeasuredVolumesOf(ctx context.Context, connectionIDs []in
 	if len(connectionIDs) == 0 {
 		return stored, nil
 	}
+	copied, err := countedCopyBit()
+	if err != nil {
+		return nil, err
+	}
 	rows, err := s.SQL.QueryContext(ctx,
-		`SELECT connection_flow_id, direction, connection_start_at, state, bytes, packets, records, counted_copy,
-		        final, due_at, computed_at
-		 FROM connection_measured_volume
-		 WHERE connection_flow_id = ANY (CAST(string_to_array($1, ',') AS BIGINT[]))`, idList(connectionIDs))
+		`SELECT connection_flow_id, direction, connection_start_at, state, bytes, packets, records,
+		        markers & $2 <> 0, final, due_at, computed_at
+		 FROM connection_measure
+		 WHERE measure = $3
+		   AND connection_flow_id = ANY (CAST(string_to_array($1, ',') AS BIGINT[]))`, idList(connectionIDs), copied,
+		MeasureName)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading measured volumes: %w", err)
 	}
@@ -269,48 +275,87 @@ func (s *NetflowStore) WriteMeasuredVolumes(ctx context.Context, connectionIDs [
 	if len(connectionIDs) == 0 {
 		return nil, nil
 	}
+	copied, err := countedCopyBit()
+	if err != nil {
+		return nil, err
+	}
 	stored, err := s.MeasuredVolumesOf(ctx, connectionIDs)
 	if err != nil {
 		return nil, err
 	}
-	transaction, err := s.SQL.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("store: writing measured volumes: %w", err)
-	}
-	defer func() { _ = transaction.Rollback() }()
 	var changed []int64
 	kept := map[[2]any]bool{}
+	// The rows written and the rows deleted, each as one array per column: one statement for each,
+	// whatever their number (PA17).
+	var (
+		ids, starts, bytes, packets, records, markers, dues, computedAt []int64
+		dueKnown                                                        []bool
+		directions, states                                              []string
+		finals                                                          []bool
+		goneIDs                                                         []int64
+		goneDirections                                                  []string
+	)
 	for _, volume := range computed {
 		key := [2]any{volume.ConnectionFlowID, volume.Direction}
 		kept[key] = true
 		if previous, found := stored[key]; found && previous.sameFigures(volume) {
 			continue
 		}
-		if _, err := transaction.ExecContext(ctx,
-			`INSERT INTO connection_measured_volume (connection_flow_id, direction, connection_start_at, state, bytes,
-			     packets, records, counted_copy, final, due_at, computed_at)
-			 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-			 ON CONFLICT (connection_flow_id, direction) DO UPDATE SET
-			     connection_start_at = excluded.connection_start_at, state = excluded.state, bytes = excluded.bytes,
-			     packets = excluded.packets, records = excluded.records, counted_copy = excluded.counted_copy,
-			     final = excluded.final, due_at = excluded.due_at, computed_at = excluded.computed_at`,
-			volume.ConnectionFlowID, volume.Direction, volume.ConnectionStartAt, volume.State, volume.Bytes,
-			volume.Packets, volume.Records, volume.CountedCopy, volume.Final, sqldb.Optional(volume.DueAt),
-			volume.ComputedAt); err != nil {
-			return nil, fmt.Errorf("store: writing a measured volume: %w", err)
+		var bits, due int64
+		if volume.CountedCopy {
+			bits = copied
 		}
+		if volume.DueAt != nil {
+			due = *volume.DueAt
+		}
+		ids, directions, starts = append(ids, volume.ConnectionFlowID), append(directions, volume.Direction),
+			append(starts, volume.ConnectionStartAt)
+		states, bytes, packets = append(states, volume.State), append(bytes, volume.Bytes), append(packets, volume.Packets)
+		records, markers, finals = append(records, volume.Records), append(markers, bits), append(finals, volume.Final)
+		dues, dueKnown, computedAt = append(dues, due), append(dueKnown, volume.DueAt != nil),
+			append(computedAt, volume.ComputedAt)
 		changed = append(changed, volume.ConnectionStartAt)
 	}
-	for key := range stored {
+	for key, volume := range stored {
 		if kept[key] {
 			continue
 		}
+		goneIDs, goneDirections = append(goneIDs, volume.ConnectionFlowID), append(goneDirections, volume.Direction)
+		changed = append(changed, volume.ConnectionStartAt)
+	}
+	transaction, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("store: writing measured volumes: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if len(ids) > 0 {
 		if _, err := transaction.ExecContext(ctx,
-			"DELETE FROM connection_measured_volume WHERE connection_flow_id = $1 AND direction = $2",
-			key[0], key[1]); err != nil {
-			return nil, fmt.Errorf("store: deleting a measured volume: %w", err)
+			`INSERT INTO connection_measure (measure, connection_flow_id, direction, connection_start_at, state, bytes,
+			     packets, records, markers, final, due_at, computed_at)
+			 SELECT $1, w.id, w.direction, w.start_at, w.state, w.bytes, w.packets, w.records, w.markers, w.final,
+			        CASE WHEN w.due_known THEN w.due_at END, w.computed_at
+			 FROM unnest(CAST($2 AS BIGINT[]), CAST($3 AS TEXT[]), CAST($4 AS BIGINT[]), CAST($5 AS TEXT[]),
+			             CAST($6 AS BIGINT[]), CAST($7 AS BIGINT[]), CAST($8 AS BIGINT[]), CAST($9 AS BIGINT[]),
+			             CAST($10 AS BOOLEAN[]), CAST($11 AS BIGINT[]), CAST($12 AS BOOLEAN[]), CAST($13 AS BIGINT[]))
+			      AS w (id, direction, start_at, state, bytes, packets, records, markers, final, due_at, due_known,
+			            computed_at)
+			 ON CONFLICT (measure, connection_flow_id, direction) DO UPDATE SET
+			     connection_start_at = excluded.connection_start_at, state = excluded.state, bytes = excluded.bytes,
+			     packets = excluded.packets, records = excluded.records, markers = excluded.markers,
+			     final = excluded.final, due_at = excluded.due_at, computed_at = excluded.computed_at`,
+			MeasureName, ids, directions, starts, states, bytes, packets, records, markers, finals, dues, dueKnown,
+			computedAt); err != nil {
+			return nil, fmt.Errorf("store: writing measured volumes: %w", err)
 		}
-		changed = append(changed, stored[key].ConnectionStartAt)
+	}
+	if len(goneIDs) > 0 {
+		if _, err := transaction.ExecContext(ctx,
+			`DELETE FROM connection_measure AS v
+			 USING unnest(CAST($2 AS BIGINT[]), CAST($3 AS TEXT[])) AS g (id, direction)
+			 WHERE v.measure = $1 AND v.connection_flow_id = g.id AND v.direction = g.direction`,
+			MeasureName, goneIDs, goneDirections); err != nil {
+			return nil, fmt.Errorf("store: deleting measured volumes: %w", err)
+		}
 	}
 	for _, mark := range marks {
 		if _, err := transaction.ExecContext(ctx,
@@ -326,6 +371,24 @@ func (s *NetflowStore) WriteMeasuredVolumes(ctx context.Context, connectionIDs [
 		return nil, fmt.Errorf("store: committing measured volumes: %w", err)
 	}
 	return changed, nil
+}
+
+// MeasureName is the measure this Go join writes its output under, the name the netflow plugin's
+// manifest declares (plugins/netflow/plugin.json): until the join moves into that plugin (Lot 3 of the
+// plugin-API amendment), the Go join is the derivation filling it.
+const MeasureName = "netflow"
+
+// countedCopyBit is the bit of the marker counted_copy in the netflow measure's declared markers.
+func countedCopyBit() (int64, error) {
+	measure, found := vocab.MeasureNamed(MeasureName)
+	if !found {
+		return 0, fmt.Errorf("store: the measure %s is not declared", MeasureName)
+	}
+	bits := measure.MarkerBits(map[string]bool{"counted_copy": true})
+	if bits == 0 {
+		return 0, fmt.Errorf("store: the measure %s declares no marker counted_copy", MeasureName)
+	}
+	return bits, nil
 }
 
 // ProviderGap is one interval a provider knows it did not cover.
@@ -382,14 +445,19 @@ func PurgeNetflow(ctx context.Context, transaction *sql.Tx, now int64) error {
 			                          WHERE n.provider_id = c.provider_id)`, horizon); err != nil {
 			return fmt.Errorf("store: purging capture configurations: %w", err)
 		}
+		// The intervals of the configurations purged go with them: before the oldest configuration kept,
+		// nothing is recorded, as before the first read.
+		if _, err := transaction.ExecContext(ctx,
+			`DELETE FROM measure_interval AS m
+			 WHERE m.measure = $1
+			   AND m.starts_at < (SELECT min(c.first_read_at) FROM capture_configuration AS c
+			                      WHERE c.provider_id = m.provider_id)`, MeasureName); err != nil {
+			return fmt.Errorf("store: purging the measure's intervals: %w", err)
+		}
 	}
 	if horizon, bounded, err := plugintables.RetentionHorizon(ctx, transaction, now, 0); err != nil {
 		return err
 	} else if bounded {
-		if _, err := transaction.ExecContext(ctx,
-			"DELETE FROM connection_measured_volume WHERE connection_start_at < $1", horizon); err != nil {
-			return fmt.Errorf("store: purging measured volumes: %w", err)
-		}
 		// The unmatched family's slots go at the flows' horizon, as an aggregate slot that is not
 		// composed from finer ones: once the slot has ended before it.
 		for _, period := range vocab.Periods() {

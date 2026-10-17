@@ -46,7 +46,7 @@ import (
 // The retention purge is this collector's own Purge, so it is ordered against the
 // passes whoever builds the loops (purge.go).
 func (c *Collector) Tasks(settings *config.Live) []core.Task {
-	tasks := append(c.coreTasks(settings), c.DeclaredTasks()...)
+	tasks := append(append(c.coreTasks(settings), c.DeclaredTasks()...), c.DerivationTasks()...)
 	tasks = append(tasks, c.LiveTask(settings))
 	return append(tasks, c.listenTask()...)
 }

@@ -143,6 +143,7 @@ func (s *ReadStore) Reads(ctx context.Context, text string, parameters []string)
 		case map[string]any:
 			if relation, ok := typed["Relation Name"].(string); ok {
 				schema, _ := typed["Schema"].(string)
+				schema, relation = s.hypertableOf(ctx, tx, schema, relation)
 				name := qualifiedTable(schema, relation)
 				tables[name] = true
 				alias, _ := typed["Alias"].(string)
@@ -295,4 +296,20 @@ func (s *ReadStore) ReadRows(ctx context.Context, text string, parameters map[st
 		result = append(result, row)
 	}
 	return result, rows.Err()
+}
+
+// hypertableOf names the hypertable a TimescaleDB chunk belongs to: a plan scanning a hypertable that holds
+// rows scans its chunks, which live in TimescaleDB's own schema, and a query reads the hypertable it named,
+// never a chunk. Any other relation is answered as it is.
+func (s *ReadStore) hypertableOf(ctx context.Context, q sqldb.Querier, schema, relation string) (string, string) {
+	if schema != "_timescaledb_internal" {
+		return schema, relation
+	}
+	var hyperSchema, hyperName string
+	if err := q.QueryRowContext(ctx,
+		`SELECT hypertable_schema, hypertable_name FROM timescaledb_information.chunks
+		 WHERE chunk_schema = $1 AND chunk_name = $2`, schema, relation).Scan(&hyperSchema, &hyperName); err != nil {
+		return schema, relation
+	}
+	return hyperSchema, hyperName
 }

@@ -28,6 +28,9 @@ import (
 
 // Derivation is what one pass asks to be derived.
 type Derivation struct {
+	// Instants are slots the refresh rewrites whatever else changed: the start instants of the connections a
+	// plugin's derivation wrote measure rows for (PA4 of the plugin-API amendment).
+	Instants []int64
 	// Addresses are placed, and every row naming them rewritten.
 	Addresses []string
 	// attributeFrom and attributeTo bound the flows whose attribution is decided
@@ -194,6 +197,7 @@ func (c *Deriver) DeriveLocked(ctx context.Context, request Derivation) error {
 		return fmt.Errorf("collect: deriving the measured volume: %w", err)
 	}
 	forced = append(forced, measured...)
+	forced = append(forced, request.Instants...)
 
 	// The slots are stamped with the watermark rather than now: a row of a pass still in
 	// flight, stamped with its start, may commit after this refresh reads its slot, and

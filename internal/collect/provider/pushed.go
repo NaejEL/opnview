@@ -48,9 +48,6 @@ type PushCondition struct {
 type PushReceiver interface {
 	// ReceivePushed takes the records a provider's push entry delivered, checked and converted.
 	ReceivePushed(ctx context.Context, kind, key string, records []Answer) error
-	// PushSequenceAsserted says whether a loss the sender's sequence numbers show over [from, to] is
-	// asserted for a provider of a kind; a kind with no rule of its own asserts every one.
-	PushSequenceAsserted(ctx context.Context, kind, key string, from, to int64) bool
 	// ObservePushCondition is told a condition the decoder detected on a stream a provider's push entry
 	// is fed by.
 	ObservePushCondition(ctx context.Context, kind, key string, condition PushCondition) error

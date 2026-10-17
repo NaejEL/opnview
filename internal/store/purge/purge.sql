@@ -66,15 +66,14 @@ BEGIN;
 -- contributes to no peer, client or owner figure. A second leg keeps the device it
 -- was logged on, exit_leg_device, which is the only volume figure it counts in.
 --
--- The netflow measure of the flows purged goes with them (PS21 of the NetFlow join
--- amendment): each flow's share of its connection's measured volume -- the whole
--- figure on its first leg, on its second leg only when it was measured there -- and
--- its connection's netflow_parts, read through connection_netflow (schema.sql) before the
--- flows and their measured volume are deleted.
+-- Every declared measure of the flows purged goes with them (PS21 of the NetFlow join
+-- amendment, generalised by PA5 of the plugin-API amendment): each flow's parts in every
+-- measure, read through flow_measures (schema.sql) before the flows and their measure
+-- output are deleted, so the purged part keeps a purged figure in every measure.
 INSERT INTO purged_flow_hour (hour_start_at, src_interface_id, dst_interface_id, src_client_id,
                               local_client_id, traffic_direction, peer_address, exit_leg_device,
-                              rule_id, site_name, action, bytes, connections, netflow_bytes,
-                              netflow_parts, purged_at)
+                              rule_id, site_name, action, bytes, connections, measure_parts,
+                              purged_at)
 SELECT (f.observed_at / 3600) * 3600,
        f.src_interface_id,
        f.dst_interface_id,
@@ -91,12 +90,11 @@ SELECT (f.observed_at / 3600) * 3600,
        f.action,
        sum(f.packet_bytes),
        count(*),
-       sum(n.bytes),
-       netflow_sum(n.parts),
+       measure_parts_sum(n.parts),
        :now
 FROM classified_flow AS f
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
-LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
 WHERE f.observed_at < (
     SELECT :now - CAST(value AS BIGINT)
     FROM setting
@@ -121,6 +119,15 @@ WHERE attributed_at < (
 
 DELETE FROM flow
 WHERE observed_at < (
+    SELECT :now - CAST(value AS BIGINT)
+    FROM setting
+    WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0
+);
+
+-- Every measure's output goes with the connections it belongs to: a connection is
+-- purged with its first leg, at the same horizon (schema.sql, connection_measure).
+DELETE FROM connection_measure
+WHERE connection_start_at < (
     SELECT :now - CAST(value AS BIGINT)
     FROM setting
     WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0

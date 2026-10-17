@@ -1,0 +1,35 @@
+{
+  "api_version": 2,
+  "name": "example_derived",
+  "version": "0.1.0",
+  "display_name": "Example derived",
+  "description": "A test plugin: pings received as datagrams, decoded by its script, and two derivations computing from them -- a summary written as rows, and a tally of the triggers kept as counters.",
+  "script": "example_derived.js",
+  "kinds": [{"kind": "example_ping", "push": true}],
+  "providers": [{"kind": "example_ping", "display_name": "Example pings", "source": "push"}],
+  "tables": [
+    {"name": "pings", "columns": [
+      {"name": "received_at", "type": "instant"},
+      {"name": "sender", "type": "text"},
+      {"name": "value", "type": "integer"}
+    ], "retention": {"column": "received_at"}},
+    {"name": "summary", "columns": [
+      {"name": "sender", "type": "text"},
+      {"name": "pings", "type": "integer"},
+      {"name": "total", "type": "integer"}
+    ], "primary_key": ["sender"]},
+    {"name": "tallies", "columns": [
+      {"name": "trigger", "type": "text"},
+      {"name": "runs", "type": "integer"}
+    ], "primary_key": ["trigger"], "counters": true}
+  ],
+  "push": [
+    {"name": "pings", "protocol": "datagram", "filter": {"prefix": "PING "}, "decode": "ping", "output_table": "pings"}
+  ],
+  "derivations": [
+    {"name": "summarise", "after_passes": ["firewall_log"], "after_push": ["pings"], "cadence_seconds": 600,
+     "outputs": {"tables": ["summary"]}},
+    {"name": "tally", "after_passes": ["firewall_log/pf"], "after_push": ["pings"],
+     "outputs": {"tables": ["tallies"]}}
+  ]
+}

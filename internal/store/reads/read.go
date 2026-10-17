@@ -3,11 +3,11 @@ package reads
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
 
-	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -57,12 +57,12 @@ type VolumeKey struct {
 // not name: it is counted as neither, because a decision nobody read is not an
 // allowance. Bytes is the three together.
 //
-// THE MEASURE. Figures are logged unless Netflow is set. Netflow figures are the same connections
-// -- the connection counts are the logged connections counted -- with the bytes the NetFlow export
-// reported for them in place of the logged bytes, split by the counting leg's action, and, per
-// action, the parts: the packets, the coverage classes and the direction states met
-// (connection_netflow and netflow_parts in schema.sql; docs/data-model.md, "NetFlow volumes"). The
-// two measures are never summed: a read answers one or the other, never both.
+// THE MEASURE. Figures are logged unless Measure names a declared measure (PA5 of the plugin-API
+// amendment; vocab.DeclaredMeasure). A measure's figures are the same connections -- the connection
+// counts are the logged connections counted -- with the measure's bytes in place of the logged bytes,
+// split by the counting leg's action, and, per action, the parts: the packets, the coverage classes,
+// the direction states met and the markers (flow_measures and measure_parts in schema.sql;
+// docs/data-model.md, "Declared measures"). Two measures are never summed: a read answers one, never two.
 type VolumeFigures struct {
 	Bytes              int64
 	AllowedBytes       int64
@@ -71,185 +71,207 @@ type VolumeFigures struct {
 	AllowedConnections int64
 	BlockedConnections int64
 	UnknownConnections int64
-	// Netflow says the figures are of the netflow measure.
-	Netflow bool
-	// Parts are the netflow figures counted per action; zero for logged figures.
-	Parts NetflowParts
+	// Measure is the declared measure the figures are of; empty for logged figures.
+	Measure string
+	// Parts are the measure's figures counted per action; zero for logged figures.
+	Parts MeasureParts
 }
 
-// NetflowParts are the netflow figures of the allowed, the blocked and the unknown connections: the
-// composite type netflow_parts of schema.sql, whose fifty-four fields are, in order, the eighteen
-// figures of NetflowPartMembers for each of NetflowPartNames.
-type NetflowParts struct {
-	Allowed NetflowPart
-	Blocked NetflowPart
-	Unknown NetflowPart
+// Measured reports whether the figures are of a declared measure rather than logged.
+func (f VolumeFigures) Measured() bool { return f.Measure != "" }
+
+// MeasureParts are a measure's figures of the allowed, the blocked and the unknown connections, in the
+// order the measure's parts hold them (schema.sql, "THE LAYOUT OF A MEASURE'S PARTS").
+type MeasureParts struct {
+	Allowed MeasurePart
+	Blocked MeasurePart
+	Unknown MeasurePart
 }
 
-// NetflowPart is the netflow figures of one action's connections: their packets and their coverage.
-type NetflowPart struct {
+// MeasurePart is a measure's figures of one action's connections: their packets and their coverage.
+type MeasurePart struct {
 	Packets  int64
-	Coverage NetflowCoverage
+	Coverage MeasureCoverage
 }
 
-// NetflowCoverage counts connections by how NetFlow covered them (NJ5 of the amendment "the NetFlow join
-// with every interface captured"). The four coverage classes sum to the connections counted:
-// Measured, both directions measured; Partial, some measured bytes but not both directions measured;
-// Unmeasured, a readable configuration and no measured byte; CaptureNotKnown, no readable, enabled
-// capture configuration at the connection's start. Directions counts, per direction state of NJ5, the
-// connections with at least one direction in it: a connection whose two directions are in two states
-// counts under both. CountedCopy counts the connections with a direction counted from translated
-// copies.
-type NetflowCoverage struct {
-	Measured        int64
-	Partial         int64
-	Unmeasured      int64
-	CaptureNotKnown int64
-	Directions      DirectionStates
-	CountedCopy     int64
+// MeasureCoverage counts connections by how the measure covered them. The four coverage classes sum to
+// the connections counted: Complete, every direction in the measure's complete state; Partial, some
+// measured bytes but not every direction complete; Unmeasured, rows but no measured byte; NotKnown, no
+// row -- the measure knew nothing at the connection's start. States counts, per declared direction
+// state in its declared order, the connections with at least one direction in it: a connection whose
+// two directions are in two states counts under both. Markers counts, per declared marker, the
+// connections with a direction carrying it. The arrays are fixed-size so that coverage compares as a
+// plain value; past the measure's declared states and markers they hold zero.
+type MeasureCoverage struct {
+	Complete   int64
+	Partial    int64
+	Unmeasured int64
+	NotKnown   int64
+	States     [vocab.MaxMeasureStates]int64
+	Markers    [vocab.MaxMeasureMarkers]int64
 }
 
-// DirectionStates counts connections per direction state met (connection_measured_volume.state).
-type DirectionStates struct {
-	Measured                    int64
-	InProgress                  int64
-	AwaitingExport              int64
-	Missing                     int64
-	ExportGap                   int64
-	NotExportedWhenRefused      int64
-	ForwardingExportUnsettled   int64
-	IngressNotCaptured          int64
-	ParentCopiesOnly            int64
-	InterfaceNotExported        int64
-	InterfaceNotCaptured        int64
-	CaptureConfigurationUnknown int64
+// List is the three parts, in the order the measure's parts hold them.
+func (p *MeasureParts) List() []*MeasurePart {
+	return []*MeasurePart{&p.Allowed, &p.Blocked, &p.Unknown}
 }
 
-// Fields are the twelve counts, in the order of NJ5's states (netflow.VolumeStates).
-func (d *DirectionStates) Fields() []*int64 {
-	return []*int64{&d.Measured, &d.InProgress, &d.AwaitingExport, &d.Missing, &d.ExportGap,
-		&d.NotExportedWhenRefused, &d.ForwardingExportUnsettled, &d.IngressNotCaptured, &d.ParentCopiesOnly,
-		&d.InterfaceNotExported, &d.InterfaceNotCaptured, &d.CaptureConfigurationUnknown}
-}
-
-// NetflowPartNames are the parts of netflow figures, in the order netflow_parts holds them.
-var NetflowPartNames = []string{"allowed", "blocked", "unknown"}
-
-// NetflowPartMembers are the eighteen figures of a part, in the order netflow_parts holds them: a
-// column of the type is a part's name, an underscore and one of these.
-var NetflowPartMembers = func() []string {
-	members := []string{"packets", "measured_connections", "partial_connections", "unmeasured_connections",
-		"capture_not_known_connections"}
-	for _, state := range netflow.VolumeStates() {
-		members = append(members, "direction_"+state+"_connections")
+// Add sums other into p, figure by figure.
+func (p *MeasureParts) Add(other MeasureParts) {
+	others := other.List()
+	for index, part := range p.List() {
+		part.add(*others[index])
 	}
-	return append(members, "counted_copy_connections")
-}()
+}
 
-// NetflowPartsColumns are the fifty-four column names of netflow_parts, in order: what
-// (netflow_sum(...)).* reads back, and the members a script's netflow figures carry.
-func NetflowPartsColumns() []string {
-	columns := make([]string, 0, len(NetflowPartNames)*len(NetflowPartMembers))
-	for _, part := range NetflowPartNames {
-		for _, member := range NetflowPartMembers {
-			columns = append(columns, part+"_"+member)
-		}
+func (p *MeasurePart) add(other MeasurePart) {
+	p.Packets += other.Packets
+	c, o := &p.Coverage, other.Coverage
+	c.Complete += o.Complete
+	c.Partial += o.Partial
+	c.Unmeasured += o.Unmeasured
+	c.NotKnown += o.NotKnown
+	for index := range c.States {
+		c.States[index] += o.States[index]
 	}
-	return columns
-}
-
-// Fields are the eighteen figures of the part, in the order of NetflowPartMembers.
-func (p *NetflowPart) Fields() []*int64 {
-	c := &p.Coverage
-	fields := []*int64{&p.Packets, &c.Measured, &c.Partial, &c.Unmeasured, &c.CaptureNotKnown}
-	fields = append(fields, c.Directions.Fields()...)
-	return append(fields, &c.CountedCopy)
-}
-
-// List is the three parts, in the order of NetflowPartNames.
-func (p *NetflowParts) List() []*NetflowPart {
-	return []*NetflowPart{&p.Allowed, &p.Blocked, &p.Unknown}
-}
-
-// Fields are the fifty-four figures, in the order of NetflowPartsColumns.
-func (p *NetflowParts) Fields() []*int64 {
-	fields := make([]*int64, 0, len(NetflowPartNames)*len(NetflowPartMembers))
-	for _, part := range p.List() {
-		fields = append(fields, part.Fields()...)
-	}
-	return fields
-}
-
-// Add sums other into p, field by field.
-func (p *NetflowParts) Add(other NetflowParts) {
-	into, from := p.Fields(), other.Fields()
-	for index := range into {
-		*into[index] += *from[index]
+	for index := range c.Markers {
+		c.Markers[index] += o.Markers[index]
 	}
 }
 
 // Whole is the three parts summed: the packets and the coverage of every connection.
-func (p NetflowParts) Whole() NetflowPart {
-	var whole NetflowPart
-	into := whole.Fields()
+func (p MeasureParts) Whole() MeasurePart {
+	var whole MeasurePart
 	for _, part := range p.List() {
-		for index, value := range part.Fields() {
-			*into[index] += *value
-		}
+		whole.add(*part)
 	}
 	return whole
 }
 
-// Covered reports whether every connection counted is covered, as NJ5 states it: its capture was
-// known, and every direction is measured, in_progress, awaiting_export or missing -- the export is
-// reporting it, or should have and has reported nothing of it. Every other state is not covered.
-func (c NetflowCoverage) Covered() bool {
-	if c.CaptureNotKnown != 0 {
+// Covered reports whether every connection counted is covered in a measure: none not known, and no
+// direction in a state the measure declares not covered.
+func (c MeasureCoverage) Covered(measure vocab.DeclaredMeasure) bool {
+	if c.NotKnown != 0 {
 		return false
 	}
-	d := c.Directions
-	for index, count := range d.Fields() {
-		if *count != 0 && !netflow.CoveredState(netflow.VolumeStates()[index]) {
+	for index, state := range measure.States {
+		if c.States[index] != 0 && !state.Covered {
 			return false
 		}
 	}
 	return true
 }
 
-// Packets are the netflow packets of every connection counted; 0 for logged figures.
+// Packets are the measure's packets of every connection counted; 0 for logged figures.
 func (f VolumeFigures) Packets() int64 { return f.Parts.Whole().Packets }
 
 // Coverage is the coverage of every connection counted; zero for logged figures.
-func (f VolumeFigures) Coverage() NetflowCoverage { return f.Parts.Whole().Coverage }
+func (f VolumeFigures) Coverage() MeasureCoverage { return f.Parts.Whole().Coverage }
+
+// Covered reports whether every connection the figures count is covered by their measure; logged
+// figures, and figures of a measure the process does not know, are not.
+func (f VolumeFigures) Covered() bool {
+	measure, found := vocab.MeasureNamed(f.Measure)
+	return found && f.Coverage().Covered(measure)
+}
 
 // AllowedPart keeps the allowed connections of figures, in their measure, with their own packets and
 // coverage.
 func (f VolumeFigures) AllowedPart() VolumeFigures {
 	return VolumeFigures{Bytes: f.AllowedBytes, AllowedBytes: f.AllowedBytes,
-		AllowedConnections: f.AllowedConnections, Netflow: f.Netflow, Parts: NetflowParts{Allowed: f.Parts.Allowed}}
+		AllowedConnections: f.AllowedConnections, Measure: f.Measure, Parts: MeasureParts{Allowed: f.Parts.Allowed}}
 }
 
 // BlockedPart keeps the blocked connections of figures, in their measure, with their own packets and
 // coverage.
 func (f VolumeFigures) BlockedPart() VolumeFigures {
 	return VolumeFigures{Bytes: f.BlockedBytes, BlockedBytes: f.BlockedBytes,
-		BlockedConnections: f.BlockedConnections, Netflow: f.Netflow, Parts: NetflowParts{Blocked: f.Parts.Blocked}}
+		BlockedConnections: f.BlockedConnections, Measure: f.Measure, Parts: MeasureParts{Blocked: f.Parts.Blocked}}
 }
 
-// NetflowTargets are the scan destinations of the fifty-four columns a netflow read appends to the
-// seven summable ones: netflow_parts read back as (netflow_sum(...)).*.
-func (f *VolumeFigures) NetflowTargets() []any {
-	f.Netflow = true
-	fields := f.Parts.Fields()
-	targets := make([]any, len(fields))
-	for index, field := range fields {
-		targets[index] = field
+// PartsArray is the figures' parts in the layout of their measure: per part, its bytes, its packets,
+// its four classes, one count per declared state and one per declared marker. It is what a script's
+// figures carry as measure_parts. Nil for logged figures, and for a measure the process does not know.
+func (f VolumeFigures) PartsArray() []int64 {
+	measure, found := vocab.MeasureNamed(f.Measure)
+	if !found {
+		return nil
 	}
-	return targets
+	array := make([]int64, 0, 3*measure.PartWidth())
+	bytes := []int64{f.AllowedBytes, f.BlockedBytes, f.UnknownBytes}
+	for index, part := range f.Parts.List() {
+		c := part.Coverage
+		array = append(array, bytes[index], part.Packets, c.Complete, c.Partial, c.Unmeasured, c.NotKnown)
+		array = append(array, c.States[:len(measure.States)]...)
+		array = append(array, c.Markers[:len(measure.Markers)]...)
+	}
+	return array
 }
 
-// Add sums other into f. Netflow figures stay netflow: the reads of one answer are all of one
-// measure, so a logged figure added to a netflow one is the zero a sum starts from.
+// SetPartsArray reads parts in the layout of a measure (PartsArray) into the figures, which become of
+// that measure; the bytes the array holds are not read, the figures carry their own. An array of
+// another width is an error naming the measure.
+func (f *VolumeFigures) SetPartsArray(measureName string, array []int64) error {
+	measure, found := vocab.MeasureNamed(measureName)
+	if !found {
+		return fmt.Errorf("store: the measure %q is not declared", measureName)
+	}
+	f.Measure = measureName
+	f.Parts = MeasureParts{}
+	if len(array) == 0 {
+		return nil
+	}
+	width := measure.PartWidth()
+	if len(array) != 3*width {
+		return fmt.Errorf("store: the parts of the measure %s hold %d figures, not %d", measureName, len(array), 3*width)
+	}
+	for index, part := range f.Parts.List() {
+		figures := array[index*width : (index+1)*width]
+		part.Packets = figures[1]
+		c := &part.Coverage
+		c.Complete, c.Partial, c.Unmeasured, c.NotKnown = figures[2], figures[3], figures[4], figures[5]
+		copy(c.States[:], figures[6:6+len(measure.States)])
+		copy(c.Markers[:], figures[6+len(measure.States):])
+	}
+	return nil
+}
+
+// MeasureTarget is the scan destination of the parts column a read in a measure appends to the seven
+// summable ones: the measure's JSON array of figures, or NULL where no row counted anything of it. The
+// figures become of the measure.
+func (f *VolumeFigures) MeasureTarget(measure string) sql.Scanner {
+	f.Measure = measure
+	return measurePartsScanner{figures: f, measure: measure}
+}
+
+// measurePartsScanner reads a measure's parts column.
+type measurePartsScanner struct {
+	figures *VolumeFigures
+	measure string
+}
+
+// Scan implements sql.Scanner.
+func (s measurePartsScanner) Scan(source any) error {
+	var text []byte
+	switch value := source.(type) {
+	case nil:
+		return s.figures.SetPartsArray(s.measure, nil)
+	case []byte:
+		text = value
+	case string:
+		text = []byte(value)
+	default:
+		return fmt.Errorf("store: a measure's parts are %T, not JSON", source)
+	}
+	var array []int64
+	if err := json.Unmarshal(text, &array); err != nil {
+		return fmt.Errorf("store: reading the parts of the measure %s: %w", s.measure, err)
+	}
+	return s.figures.SetPartsArray(s.measure, array)
+}
+
+// Add sums other into f. Figures of a measure stay of it: the reads of one answer are all of one
+// measure, so a logged figure added to a measured one is the zero a sum starts from.
 func (f *VolumeFigures) Add(other VolumeFigures) { f.add(other) }
 
 func (f *VolumeFigures) add(other VolumeFigures) {
@@ -260,7 +282,9 @@ func (f *VolumeFigures) add(other VolumeFigures) {
 	f.AllowedConnections += other.AllowedConnections
 	f.BlockedConnections += other.BlockedConnections
 	f.UnknownConnections += other.UnknownConnections
-	f.Netflow = f.Netflow || other.Netflow
+	if f.Measure == "" {
+		f.Measure = other.Measure
+	}
 	f.Parts.Add(other.Parts)
 }
 
@@ -335,18 +359,18 @@ func (w VolumeWindow) ExitLegs() map[string]VolumeFigures {
 // `flow`. Inside the flow horizon this equals a computation over `flow` alone;
 // beyond it the slots answer, and Covered says which interval they cover.
 func (s *ReadStore) ReadVolumeWindow(ctx context.Context, from, to, now int64) (VolumeWindow, error) {
-	return s.ReadVolumeWindowOf(ctx, from, to, now, false)
+	return s.ReadVolumeWindowOf(ctx, from, to, now, "")
 }
 
-// ReadVolumeWindowOf is ReadVolumeWindow of one measure: the logged figures, or with netflow the
-// netflow figures of the same rows -- the same keys, the same connections, the bytes the NetFlow
-// export reported for them -- read from the netflow_* columns of the 1 h slots and, at either edge,
-// from connection_measured_volume. The window's coverage is the same for both.
-func (s *ReadStore) ReadVolumeWindowOf(ctx context.Context, from, to, now int64, netflow bool) (VolumeWindow, error) {
+// ReadVolumeWindowOf is ReadVolumeWindow of one measure: the logged figures, or, naming a declared
+// measure, its figures of the same rows -- the same keys, the same connections, the measure's bytes --
+// read from the measure_parts of the 1 h slots and, at either edge, through flow_measures. The
+// window's coverage is the same for both.
+func (s *ReadStore) ReadVolumeWindowOf(ctx context.Context, from, to, now int64, measure string) (VolumeWindow, error) {
 	result := VolumeWindow{Requested: Interval{From: from, To: to}}
 	flows, slots := "read_volume_flows", "read_volume_slots"
-	if netflow {
-		flows, slots = "read_volume_flows_netflow", "read_volume_slots_netflow"
+	if measure != "" {
+		flows, slots = "read_volume_flows_measured", "read_volume_slots_measured"
 	}
 	if to <= from {
 		return result, nil
@@ -359,16 +383,16 @@ func (s *ReadStore) ReadVolumeWindowOf(ctx context.Context, from, to, now int64,
 
 	sums := map[string]*VolumeRow{}
 	if firstHour < lastHour {
-		if err := s.readVolume(ctx, flows, from, firstHour, sums, netflow); err != nil {
+		if err := s.readVolume(ctx, flows, from, firstHour, sums, measure); err != nil {
 			return result, err
 		}
-		if err := s.readVolume(ctx, slots, firstHour, lastHour, sums, netflow); err != nil {
+		if err := s.readVolume(ctx, slots, firstHour, lastHour, sums, measure); err != nil {
 			return result, err
 		}
-		if err := s.readVolume(ctx, flows, lastHour, to, sums, netflow); err != nil {
+		if err := s.readVolume(ctx, flows, lastHour, to, sums, measure); err != nil {
 			return result, err
 		}
-	} else if err := s.readVolume(ctx, flows, from, to, sums, netflow); err != nil {
+	} else if err := s.readVolume(ctx, flows, from, to, sums, measure); err != nil {
 		return result, err
 	}
 	result.Rows = sortedVolumeRows(sums)
@@ -403,7 +427,7 @@ func (s *ReadStore) ReadVolumeWindowOf(ctx context.Context, from, to, now int64,
 
 // readVolume adds one statement's rows over [from, to) into sums.
 func (s *ReadStore) readVolume(ctx context.Context, name string, from, to int64,
-	sums map[string]*VolumeRow, netflow bool) error {
+	sums map[string]*VolumeRow, measure string) error {
 	if to <= from {
 		return nil
 	}
@@ -411,7 +435,11 @@ func (s *ReadStore) readVolume(ctx context.Context, name string, from, to int64,
 	if err != nil {
 		return err
 	}
-	rows, err := sqldb.Query(ctx, s.Reader, text, map[string]any{"from": from, "to": to})
+	parameters := map[string]any{"from": from, "to": to}
+	if measure != "" {
+		parameters["measure"] = measure
+	}
+	rows, err := sqldb.Query(ctx, s.Reader, text, parameters)
 	if err != nil {
 		return fmt.Errorf("store: %s: %w", name, err)
 	}
@@ -425,8 +453,8 @@ func (s *ReadStore) readVolume(ctx context.Context, name string, from, to int64,
 		targets := []any{&src, &dst, &peer, &row.TrafficScope, &row.TrafficDirection, &exit,
 			&row.Bytes, &row.AllowedBytes, &row.BlockedBytes, &row.UnknownBytes,
 			&row.AllowedConnections, &row.BlockedConnections, &row.UnknownConnections}
-		if netflow {
-			targets = append(targets, row.NetflowTargets()...)
+		if measure != "" {
+			targets = append(targets, row.MeasureTarget(measure))
 		}
 		if err := rows.Scan(targets...); err != nil {
 			return fmt.Errorf("store: %s: %w", name, err)

@@ -1,9 +1,12 @@
 package envelope
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 
 	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/params"
 )
 
@@ -162,8 +165,9 @@ const (
 	ConditionMalformedParameters = "malformed_parameters"
 )
 
-// The measures a volume figure can be (A11, decision 7). Two measures are never summed
-// together.
+// The measures a volume figure can be (A11, decision 7), beside every measure a plugin declares (PA5
+// of the plugin-API amendment; vocab.DeclaredMeasure): the set is open, and a declared measure's name
+// is its own value. Two measures are never summed together.
 const (
 	// MeasureLogged is the filter log: bytes are the sum of the logged packet lengths --
 	// the packet that establishes a state, not the rest of the connection -- and
@@ -174,23 +178,17 @@ const (
 	// MeasureInterfaceCounter is the interface's own counters, which include traffic no
 	// logging rule matched.
 	MeasureInterfaceCounter = "interface_counter"
-	// MeasureNetflow is the bytes and packets the firewall's NetFlow export reported for the
-	// logged connections, each direction counted once, from the records in the first leg's form, or
-	// from the translated form where no exporter sees the first leg's form (PS22, as the amendment "the
-	// NetFlow join with every interface captured" restates it; internal/widget/request/measure.go
-	// chooses it).
-	MeasureNetflow = "netflow"
 )
 
-// Volume is one set of volume figures of one measure: logged or netflow, never both, and never a
-// sum of the two (internal/widget/request/measure.go). lower_bound is true on every Volume: opnview
+// Volume is one set of volume figures of one measure: logged or a declared measure, never both, and
+// never a sum of two (internal/widget/request/measure.go). lower_bound is true on every Volume: opnview
 // sees only what crosses the firewall, and traffic between two clients behind one interface is in
-// no figure; a netflow Volume is an aggregate, and the only exact netflow figure is one
-// connection's byte Count (Request.ByteCountOf). A logged Volume gains no field. A netflow Volume
-// also carries its packets and its coverage, whole and for each of its allowed, blocked and unknown
-// parts, as its bytes and connections are split: each part carries its own packets and coverage, so
-// the part a map keeps is served with its own (PS21, and the maintainer's decision of 11 October
-// 2026, "coverage per action").
+// no figure; a declared measure's Volume is an aggregate, and the only exact figure of it is one
+// connection's byte Count (Request.ByteCountOf). A logged Volume gains no field. A declared measure's
+// Volume also carries its packets and its coverage, whole and for each of its allowed, blocked and
+// unknown parts, as its bytes and connections are split: each part carries its own packets and
+// coverage, so the part a map keeps is served with its own (PS21, and the maintainer's decision of 11
+// October 2026, "coverage per action").
 type Volume struct {
 	Measure            string          `json:"measure"`
 	LowerBound         bool            `json:"lower_bound"`
@@ -212,68 +210,100 @@ type Volume struct {
 	UnknownCoverage    *VolumeCoverage `json:"unknown_coverage,omitempty"`
 }
 
-// VolumeCoverage is how NetFlow covered a netflow Volume's connections (NJ5 and NJ8 of the amendment
-// "the NetFlow join with every interface captured"). The four coverage classes sum to the connections:
-// both directions measured, partial (some measured bytes, not both directions measured), unmeasured (a
-// readable configuration, no measured byte) and capture_not_known (no readable, enabled capture
-// configuration at the connection's start). DirectionStates counts, per direction state, the
-// connections with at least one direction in it, so that no direction NetFlow cannot measure is
-// silently zero: they say which states were met, and do not sum to the connections. CountedCopy counts
-// the connections with a direction counted from translated copies.
+// VolumeCoverage is how a declared measure covered a Volume's connections, written in the measure's own
+// names (vocab.DeclaredMeasure): its four coverage classes, which sum to the connections; under
+// direction_states, per declared direction state in its declared order, the connections with at least
+// one direction in it, so that no direction the measure cannot count is silently zero -- they say which
+// states were met, and do not sum to the connections; then, per declared marker, the connections with a
+// direction carrying it. For the netflow measure that is NJ5's and NJ8's object of the amendment "the
+// NetFlow join with every interface captured", byte for byte.
 type VolumeCoverage struct {
-	Measured        int64                 `json:"measured"`
-	Partial         int64                 `json:"partial"`
-	Unmeasured      int64                 `json:"unmeasured"`
-	CaptureNotKnown int64                 `json:"capture_not_known"`
-	DirectionStates VolumeDirectionStates `json:"direction_states"`
-	CountedCopy     int64                 `json:"counted_copy"`
+	// measure names the measure whose names the coverage is written in.
+	measure string
+	// counts are the counts, in the store's layout.
+	counts reads.MeasureCoverage
+	// decoded is a coverage object a script handed back, read in its measure's names by StoreCoverage.
+	decoded json.RawMessage
 }
 
-// VolumeDirectionStates counts connections per direction state met (NJ5).
-type VolumeDirectionStates struct {
-	Measured                    int64 `json:"measured"`
-	InProgress                  int64 `json:"in_progress"`
-	AwaitingExport              int64 `json:"awaiting_export"`
-	Missing                     int64 `json:"missing"`
-	ExportGap                   int64 `json:"export_gap"`
-	NotExportedWhenRefused      int64 `json:"not_exported_when_refused"`
-	ForwardingExportUnsettled   int64 `json:"forwarding_export_unsettled"`
-	IngressNotCaptured          int64 `json:"ingress_not_captured"`
-	ParentCopiesOnly            int64 `json:"parent_copies_only"`
-	InterfaceNotExported        int64 `json:"interface_not_exported"`
-	InterfaceNotCaptured        int64 `json:"interface_not_captured"`
-	CaptureConfigurationUnknown int64 `json:"capture_configuration_unknown"`
+// CoverageOf is a store coverage of a measure as a Volume carries it.
+func CoverageOf(measure string, coverage reads.MeasureCoverage) *VolumeCoverage {
+	return &VolumeCoverage{measure: measure, counts: coverage}
 }
 
-// fields are the twelve counts, in the order of the store's DirectionStates.Fields.
-func (d *VolumeDirectionStates) fields() []*int64 {
-	return []*int64{&d.Measured, &d.InProgress, &d.AwaitingExport, &d.Missing, &d.ExportGap,
-		&d.NotExportedWhenRefused, &d.ForwardingExportUnsettled, &d.IngressNotCaptured, &d.ParentCopiesOnly,
-		&d.InterfaceNotExported, &d.InterfaceNotCaptured, &d.CaptureConfigurationUnknown}
-}
-
-// CoverageOf is a store coverage as a Volume carries it.
-func CoverageOf(coverage reads.NetflowCoverage) *VolumeCoverage {
-	result := &VolumeCoverage{Measured: coverage.Measured, Partial: coverage.Partial, Unmeasured: coverage.Unmeasured,
-		CaptureNotKnown: coverage.CaptureNotKnown, CountedCopy: coverage.CountedCopy}
-	from := coverage.Directions
-	into := result.DirectionStates.fields()
-	for index, value := range from.Fields() {
-		*into[index] = *value
+// MarshalJSON writes the coverage in its measure's names and declared order.
+func (c VolumeCoverage) MarshalJSON() ([]byte, error) {
+	measure, found := vocab.MeasureNamed(c.measure)
+	if !found {
+		if c.decoded != nil {
+			return c.decoded, nil
+		}
+		return nil, fmt.Errorf("envelope: the measure %q is not declared", c.measure)
 	}
-	return result
+	var out bytes.Buffer
+	field := func(name string, value int64) {
+		if out.Len() > 1 {
+			out.WriteByte(',')
+		}
+		fmt.Fprintf(&out, "%q:%d", name, value)
+	}
+	out.WriteByte('{')
+	field(measure.Classes.Complete, c.counts.Complete)
+	field(measure.Classes.Partial, c.counts.Partial)
+	field(measure.Classes.Unmeasured, c.counts.Unmeasured)
+	field(measure.Classes.NotKnown, c.counts.NotKnown)
+	out.WriteString(`,"direction_states":{`)
+	for index, state := range measure.States {
+		if index > 0 {
+			out.WriteByte(',')
+		}
+		fmt.Fprintf(&out, "%q:%d", state.Name, c.counts.States[index])
+	}
+	out.WriteByte('}')
+	for index, marker := range measure.Markers {
+		field(marker, c.counts.Markers[index])
+	}
+	out.WriteByte('}')
+	return out.Bytes(), nil
 }
 
-// StoreCoverage is a Volume's coverage as the store holds it.
-func (c VolumeCoverage) StoreCoverage() reads.NetflowCoverage {
-	result := reads.NetflowCoverage{Measured: c.Measured, Partial: c.Partial, Unmeasured: c.Unmeasured,
-		CaptureNotKnown: c.CaptureNotKnown, CountedCopy: c.CountedCopy}
-	from := c.DirectionStates
-	into := result.Directions.Fields()
-	for index, value := range from.fields() {
-		*into[index] = *value
+// UnmarshalJSON keeps a coverage object a script handed back, for StoreCoverage to read in its measure.
+func (c *VolumeCoverage) UnmarshalJSON(raw []byte) error {
+	c.decoded = append(json.RawMessage(nil), raw...)
+	return nil
+}
+
+// StoreCoverage is a Volume's coverage as the store holds it, read in a measure's names: the counts it
+// was built from, or the object a script handed back. A name the measure does not declare is ignored.
+func (c VolumeCoverage) StoreCoverage(measureName string) reads.MeasureCoverage {
+	if c.decoded == nil {
+		return c.counts
 	}
-	return result
+	measure, found := vocab.MeasureNamed(measureName)
+	var counts reads.MeasureCoverage
+	if !found {
+		return counts
+	}
+	var object map[string]json.RawMessage
+	if json.Unmarshal(c.decoded, &object) != nil {
+		return counts
+	}
+	number := func(name string) int64 {
+		var value int64
+		_ = json.Unmarshal(object[name], &value)
+		return value
+	}
+	counts.Complete, counts.Partial = number(measure.Classes.Complete), number(measure.Classes.Partial)
+	counts.Unmeasured, counts.NotKnown = number(measure.Classes.Unmeasured), number(measure.Classes.NotKnown)
+	var states map[string]int64
+	_ = json.Unmarshal(object["direction_states"], &states)
+	for index, state := range measure.States {
+		counts.States[index] = states[state.Name]
+	}
+	for index, marker := range measure.Markers {
+		counts.Markers[index] = number(marker)
+	}
+	return counts
 }
 
 // Logged turns store figures into logged volume figures.

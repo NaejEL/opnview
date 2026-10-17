@@ -37,26 +37,26 @@ WHERE f.observed_at >= :from
 GROUP BY 1, 2, 3;
 
 
--- The same timeline in the `netflow` measure, run in its place when the answer is given in it
--- (host.query; docs/widget-api.md, "Volumes and the observation-point limit"): the bytes the NetFlow
--- export reported for the connections, then the columns of netflow_parts, under the names
+-- The same timeline in a declared measure, CAST(:measure AS TEXT),, run in its place when the answer is given in it
+-- (host.query; docs/widget-api.md, "Volumes and the observation-point limit"): the measure's bytes for
+-- the connections, then the measure's parts, measure_parts, under the names
 -- summable figures carry them (host.figures).
--- statement: widget_owner_activity_buckets_netflow
+-- statement: widget_owner_activity_buckets_measured
 SELECT f.observed_at - f.observed_at % :width AS bucket_start,
        c.owner_id AS owner_id,
        f.traffic_direction AS traffic_direction,
-       sum(n.bytes) AS bytes,
-       sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END) AS allowed_bytes,
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
-       sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END) AS unknown_bytes,
+       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))) AS bytes,
+       sum(CASE WHEN f.action = 'pass' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS allowed_bytes,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS blocked_bytes,
+       sum(CASE WHEN f.action = 'unknown' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS unknown_bytes,
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
-       'netflow' AS measure,
-       (netflow_sum(n.parts)).*
+       CAST(:measure AS TEXT) AS measure,
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM classified_flow AS f
 JOIN client AS c ON c.id = f.local_client_id
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.traffic_scope <> 'this_firewall'

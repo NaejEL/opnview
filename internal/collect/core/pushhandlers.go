@@ -16,9 +16,6 @@ import (
 type PushHandler struct {
 	// Receive stores a provider's pushed records.
 	Receive func(ctx context.Context, c *Collector, key string, records []provider.Answer) error
-	// SequenceAsserted judges a loss the sender's sequence numbers show over [from, to]; nil asserts
-	// every one.
-	SequenceAsserted func(ctx context.Context, c *Collector, key string, from, to int64) bool
 	// Observe is told a condition of the stream; nil ignores it.
 	Observe func(ctx context.Context, c *Collector, key string, condition provider.PushCondition) error
 	// Liveness is told when a push entry replacing one of the provider's polled endpoints becomes alive or
@@ -54,15 +51,6 @@ func (c *Collector) ReceivePushed(ctx context.Context, kind, key string, records
 	return handler.Receive(ctx, c, key, records)
 }
 
-// PushSequenceAsserted asks the kind's coordinator whether a loss is asserted.
-func (c *Collector) PushSequenceAsserted(ctx context.Context, kind, key string, from, to int64) bool {
-	handler, found := pushHandlerOf(kind)
-	if !found || handler.SequenceAsserted == nil {
-		return true
-	}
-	return handler.SequenceAsserted(ctx, c, key, from, to)
-}
-
 // ObservePushCondition tells the kind's coordinator a condition of a stream.
 func (c *Collector) ObservePushCondition(ctx context.Context, kind, key string, condition provider.PushCondition) error {
 	handler, found := pushHandlerOf(kind)
@@ -86,4 +74,38 @@ type unhandledPush struct{ kind string }
 
 func (e *unhandledPush) Error() string {
 	return "collect: no coordinator receives pushed records of the " + e.kind + " kind"
+}
+
+// SequenceBoundObserver is told every recorded read of a sequence bound (Collector.RecordSequenceBound):
+// the provider, the value's name, whether the sender's configuration changed, and how many counters it now
+// runs. The push service bounds the decoders of every entry that takes its bound from that value, and has
+// them follow the sender's sequence numbers afresh when the configuration changed.
+type SequenceBoundObserver func(kind, key, name string, changed bool, counters int)
+
+// SetSequenceBoundObserver gives the collector what it tells after every read of a sequence bound.
+func (c *Collector) SetSequenceBoundObserver(observe SequenceBoundObserver) {
+	c.Mutex.Lock()
+	defer c.Mutex.Unlock()
+	c.SequenceBoundObserver = observe
+}
+
+// RecordSequenceBound records one read of a provider's sequence bound under its value name (schema.sql,
+// sequence_bound), then tells the observer. A push entry declaring the value judges every loss its sender's
+// sequence numbers show by it.
+func (c *Collector) RecordSequenceBound(ctx context.Context, kind, key, name string, at int64, counters int,
+	changed bool) error {
+	providerID, err := c.Store.ProviderID(ctx, kind, key)
+	if err != nil {
+		return err
+	}
+	if err := c.Store.RecordSequenceBound(ctx, providerID, name, at, int64(counters), changed); err != nil {
+		return err
+	}
+	c.Mutex.RLock()
+	observe := c.SequenceBoundObserver
+	c.Mutex.RUnlock()
+	if observe != nil {
+		observe(kind, key, name, changed, counters)
+	}
+	return nil
 }

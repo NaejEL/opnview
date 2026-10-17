@@ -37,7 +37,7 @@ security_event
 | Kind | What it supplies | Normalised into |
 |---|---|---|
 | `firewall_log` | one record per logged packet decision | `flow`, and `blocked_event` over it |
-| `flow_record` | one record of a flow as an exporter reported it, pushed over NetFlow -- the *Flow Record* of RFC 3954 and RFC 7011, a different thing from `flow`, one filter-log record | `flow_record`, joined to the logged connections, and `connection_measured_volume` from the joined records, which the `netflow` measure reads |
+| `flow_record` | one record of a flow as an exporter reported it, pushed over NetFlow -- the *Flow Record* of RFC 3954 and RFC 7011, a different thing from `flow`, one filter-log record | `flow_record`, joined to the logged connections, and the netflow measure's rows of `connection_measure` from the joined records, which the `netflow` measure reads |
 | `security_event` | one record per detection | `security_event`, with `provider_rule_info` for severity |
 | `flow_volume` | per-pair byte and packet counters | `pair_volume_observation`, **derived from `flow` and collected from nowhere** |
 | `dhcp_lease` | one record per lease generation | `dhcp_lease`, naming the server that issued each one, feeding `client` identity |

@@ -10,7 +10,7 @@ function zero() {
 }
 
 // add adds summable figures into others, in place. host.figures.add sums every member a figure
-// carries -- its measure and, in the netflow measure, its packets and coverage per part included -- so
+// carries -- its measure and, in a declared measure, its packets and coverage per part included -- so
 // the sum is kept whole whatever the measure.
 function add(host, into, other) {
   var sum = host.figures.add(into, other);

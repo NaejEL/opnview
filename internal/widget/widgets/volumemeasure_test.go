@@ -95,10 +95,14 @@ func (f *fixture) measuredCopy(t *testing.T, flowID int64, direction, state stri
 	if bytes > 0 {
 		records = 1
 	}
-	f.exec(t, `INSERT INTO connection_measured_volume (connection_flow_id, direction, connection_start_at, state,
-		bytes, packets, records, counted_copy, final, due_at, computed_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true, NULL, $9)`,
-		flowID, direction, f.now-700+flowID*100, state, bytes, packets, records, counted, f.now)
+	markers := 0
+	if counted {
+		markers = 1
+	}
+	f.exec(t, `INSERT INTO connection_measure (measure, connection_flow_id, direction, connection_start_at, state,
+		bytes, packets, records, markers, final, due_at, computed_at)
+		VALUES ('netflow', $1, $2, $3, $4, $5, $6, $7, $8, true, NULL, $9)`,
+		flowID, direction, f.now-700+flowID*100, state, bytes, packets, records, markers, f.now)
 }
 
 // measureEverything measures both directions of both connections: 17000 bytes in all.
@@ -195,9 +199,9 @@ func measuresIn(t *testing.T, response envelope.Response) (map[string]bool, []st
 		switch typed := node.(type) {
 		case map[string]any:
 			if measure, isText := typed["measure"].(string); isText &&
-				(measure == envelope.MeasureLogged || measure == envelope.MeasureNetflow) {
+				(measure == envelope.MeasureLogged || measure == measureNetflow) {
 				measures[measure] = true
-				if bound, isBool := typed["lower_bound"].(bool); isBool && !bound && measure == envelope.MeasureNetflow {
+				if bound, isBool := typed["lower_bound"].(bool); isBool && !bound && measure == measureNetflow {
 					exact = append(exact, path)
 				}
 			}
@@ -229,7 +233,7 @@ func TestEveryVolumeTypeAcceptsTheThreeMeasures(t *testing.T) {
 	}
 	for _, widgetType := range types {
 		answers := map[string]envelope.Response{}
-		for _, measure := range append([]string{""}, request.VolumeMeasures...) {
+		for _, measure := range append([]string{""}, request.VolumeMeasures()...) {
 			parameters := measureParameters(f.service, widgetType, measure)
 			for key, value := range defaultParameters(f, widgetType) {
 				parameters[key] = value
@@ -247,17 +251,17 @@ func TestEveryVolumeTypeAcceptsTheThreeMeasures(t *testing.T) {
 		logged := encoded(t, answers[envelope.MeasureLogged])
 		for _, measure := range []string{"", params.VolumeMeasureBestAvailable} {
 			got := answers[measure]
-			if !params.Contains(got.States, request.StateNetflowNotConfigured) {
+			if !params.Contains(got.States, stateNetflowNotConfigured) {
 				t.Errorf("%s %q: the states are %v, without netflow_not_configured", widgetType, measure, got.States)
 			}
-			if string(withoutMeasureDifferences(t, got, request.StateNetflowNotConfigured)) !=
-				string(withoutMeasureDifferences(t, answers[envelope.MeasureLogged], request.StateNetflowNotConfigured)) {
+			if string(withoutMeasureDifferences(t, got, stateNetflowNotConfigured)) !=
+				string(withoutMeasureDifferences(t, answers[envelope.MeasureLogged], stateNetflowNotConfigured)) {
 				t.Errorf("%s %q: best_available is not logged's answer\nlogged: %s\ngot:    %s", widgetType, measure,
 					logged, encoded(t, got))
 			}
 		}
-		explicit := answers[envelope.MeasureNetflow]
-		if explicit.Data != nil || !params.Contains(explicit.States, request.StateNetflowNotConfigured) {
+		explicit := answers[measureNetflow]
+		if explicit.Data != nil || !params.Contains(explicit.States, stateNetflowNotConfigured) {
 			t.Errorf("%s: an explicit netflow that cannot be answered carries %s", widgetType, encoded(t, explicit))
 		}
 	}
@@ -277,7 +281,7 @@ func TestBestAvailableAnswersNetflowWhenEveryConnectionIsMeasured(t *testing.T) 
 	response := f.respond(t, "interface_volume_ranking", map[string]any{"period": "1h"})
 	total, _ := data(t, response)["total"].(map[string]any)
 	coverage, _ := total["coverage"].(map[string]any)
-	if total["measure"] != envelope.MeasureNetflow || total["bytes"] != float64(17000) || total["connections"] != float64(2) ||
+	if total["measure"] != measureNetflow || total["bytes"] != float64(17000) || total["connections"] != float64(2) ||
 		total["packets"] != float64(29) || total["lower_bound"] != true || coverage["measured"] != float64(2) ||
 		coverage["partial"] != float64(0) || coverage["capture_not_known"] != float64(0) {
 		t.Errorf("the total is %v", total)
@@ -318,13 +322,13 @@ func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T
 	best := f.respond(t, "interface_volume_ranking", parameters)
 	parameters["volume_measure"] = "logged"
 	logged := f.respond(t, "interface_volume_ranking", parameters)
-	if !params.Contains(best.States, request.StateNetflowNotCoveringWindow) ||
-		string(withoutMeasureDifferences(t, best, request.StateNetflowNotCoveringWindow)) !=
-			string(withoutMeasureDifferences(t, logged, request.StateNetflowNotCoveringWindow)) {
+	if !params.Contains(best.States, stateNetflowNotCoveringWindow) ||
+		string(withoutMeasureDifferences(t, best, stateNetflowNotCoveringWindow)) !=
+			string(withoutMeasureDifferences(t, logged, stateNetflowNotCoveringWindow)) {
 		t.Errorf("best_available under partial coverage is not logged's answer with the state\nlogged: %s\ngot:    %s",
 			encoded(t, logged), encoded(t, best))
 	}
-	if detail := best.StateDetails[request.StateNetflowNotCoveringWindow]; len(detail.IntervalStates) != 1 ||
+	if detail := best.StateDetails[stateNetflowNotCoveringWindow]; len(detail.IntervalStates) != 1 ||
 		detail.IntervalStates[0] != netflow.CaptureConfigured {
 		t.Errorf("the detail of netflow_not_covering_window is %+v, not the one interval state capture_configured",
 			best.StateDetails)
@@ -334,9 +338,9 @@ func TestBestAvailableFallsBackToLoggedWhenAConnectionIsNotMeasured(t *testing.T
 	total, _ := data(t, explicit)["total"].(map[string]any)
 	coverage, _ := total["coverage"].(map[string]any)
 	states, _ := coverage["direction_states"].(map[string]any)
-	if total["measure"] != envelope.MeasureNetflow || total["bytes"] != float64(14500) || coverage["measured"] != float64(1) ||
+	if total["measure"] != measureNetflow || total["bytes"] != float64(14500) || coverage["measured"] != float64(1) ||
 		coverage["partial"] != float64(1) || states["ingress_not_captured"] != float64(1) ||
-		!params.Contains(explicit.States, request.StateNetflowNotCoveringWindow) {
+		!params.Contains(explicit.States, stateNetflowNotCoveringWindow) {
 		t.Errorf("the explicit netflow total is %v, states %v", total, explicit.States)
 	}
 }
@@ -356,14 +360,14 @@ func TestUnderAnUnknownConfigurationBestAvailableIsLoggedAndNetflowCarriesNoFigu
 	for _, widgetType := range volumeTypes(t, f.service) {
 		best := f.respond(t, widgetType, measureParameters(f.service, widgetType, ""))
 		logged := f.respond(t, widgetType, measureParameters(f.service, widgetType, envelope.MeasureLogged))
-		if !params.Contains(best.States, request.StateCaptureConfigurationUnknown) ||
-			string(withoutMeasureDifferences(t, best, request.StateCaptureConfigurationUnknown)) !=
-				string(withoutMeasureDifferences(t, logged, request.StateCaptureConfigurationUnknown)) {
+		if !params.Contains(best.States, stateCaptureConfigurationUnknown) ||
+			string(withoutMeasureDifferences(t, best, stateCaptureConfigurationUnknown)) !=
+				string(withoutMeasureDifferences(t, logged, stateCaptureConfigurationUnknown)) {
 			t.Errorf("%s: best_available under an unknown configuration\nlogged: %s\ngot:    %s", widgetType,
 				encoded(t, logged), encoded(t, best))
 		}
-		explicit := f.respond(t, widgetType, measureParameters(f.service, widgetType, envelope.MeasureNetflow))
-		if explicit.Data != nil || !params.Contains(explicit.States, request.StateCaptureConfigurationUnknown) {
+		explicit := f.respond(t, widgetType, measureParameters(f.service, widgetType, measureNetflow))
+		if explicit.Data != nil || !params.Contains(explicit.States, stateCaptureConfigurationUnknown) {
 			t.Errorf("%s: an explicit netflow under an unknown configuration carries %s", widgetType, encoded(t, explicit))
 		}
 		for name, answer := range map[string]envelope.Response{"best_available": best, "netflow": explicit,
@@ -391,14 +395,14 @@ func TestEveryFigureOfAnAnswerCarriesOneMeasure(t *testing.T) {
 		f := newMeasureWorld(t)
 		prepare(t, f)
 		for _, widgetType := range volumeTypes(t, f.service) {
-			for _, measure := range request.VolumeMeasures {
+			for _, measure := range request.VolumeMeasures() {
 				answer := f.respond(t, widgetType, measureParameters(f.service, widgetType, measure))
 				measures, _ := measuresIn(t, answer)
 				if len(measures) > 1 {
 					t.Errorf("%s: %s %s mixes the measures %v: %s", name, widgetType, measure, measures,
 						encoded(t, answer))
 				}
-				if measure == envelope.MeasureLogged && measures[envelope.MeasureNetflow] && widgetType != "custom_chart" {
+				if measure == envelope.MeasureLogged && measures[measureNetflow] && widgetType != "custom_chart" {
 					t.Errorf("%s: %s answers a netflow figure under logged", name, widgetType)
 				}
 			}
@@ -419,7 +423,7 @@ func TestLowerBoundIsFalseOnlyOnAFullyMeasuredRecord(t *testing.T) {
 	f.measured(t, measureFlowB, "forward", "measured", 1500, 3)
 	f.measured(t, measureFlowB, "reverse", "in_progress", 700, 2)
 	detail := f.respond(t, "client_traffic_detail", measureParameters(f.service, "client_traffic_detail",
-		envelope.MeasureNetflow))
+		measureNetflow))
 	records, _ := data(t, detail)["records"].([]any)
 	if len(records) != 2 {
 		t.Fatalf("the records are %v", data(t, detail))
@@ -432,7 +436,7 @@ func TestLowerBoundIsFalseOnlyOnAFullyMeasuredRecord(t *testing.T) {
 	full, partial := byFlow[float64(measureFlowA)], byFlow[float64(measureFlowB)]
 	fullBytes, _ := full["bytes"].(map[string]any)
 	partialBytes, _ := partial["bytes"].(map[string]any)
-	if fullBytes["measure"] != envelope.MeasureNetflow || fullBytes["value"] != float64(13000) || fullBytes["lower_bound"] != false {
+	if fullBytes["measure"] != measureNetflow || fullBytes["value"] != float64(13000) || fullBytes["lower_bound"] != false {
 		t.Errorf("the fully measured record's bytes are %v", fullBytes)
 	}
 	if partialBytes["value"] != float64(2200) || partialBytes["lower_bound"] != true {
@@ -445,7 +449,7 @@ func TestLowerBoundIsFalseOnlyOnAFullyMeasuredRecord(t *testing.T) {
 		t.Errorf("the record's reverse direction is %v", reverse)
 	}
 	for _, widgetType := range volumeTypes(t, f.service) {
-		answer := f.respond(t, widgetType, measureParameters(f.service, widgetType, envelope.MeasureNetflow))
+		answer := f.respond(t, widgetType, measureParameters(f.service, widgetType, measureNetflow))
 		_, exact := measuresIn(t, answer)
 		for _, path := range exact {
 			if widgetType != "client_traffic_detail" || path != "data.records[].bytes" {
@@ -529,7 +533,7 @@ func TestAThirdPartyWidgetGetsTheMeasureFromItsManifestAlone(t *testing.T) {
 	best := f.respond(t, "example_volume_total", map[string]any{"period": "1h"})
 	total, _ := data(t, best)["total"].(map[string]any)
 	if best.Parameters[params.VolumeMeasureKey] != params.VolumeMeasureBestAvailable ||
-		total["measure"] != envelope.MeasureNetflow || total["bytes"] != float64(17000) {
+		total["measure"] != measureNetflow || total["bytes"] != float64(17000) {
 		t.Errorf("best_available answered %s", encoded(t, best))
 	}
 	logged := f.respond(t, "example_volume_total", map[string]any{"period": "1h", "volume_measure": "logged"})
@@ -552,7 +556,7 @@ func TestAThirdPartyWidgetGetsTheMeasureFromItsManifestAlone(t *testing.T) {
 	hidden.measureEverything(t)
 	hidden.service = pluginService(t, hidden, dataDir)
 	answer := hidden.respond(t, "example_volume_total", map[string]any{"period": "1h"})
-	if !params.Contains(answer.States, request.StateCaptureConfigurationUnknown) || answer.StateDetails != nil {
+	if !params.Contains(answer.States, stateCaptureConfigurationUnknown) || answer.StateDetails != nil {
 		t.Errorf("under an unknown configuration the third party's widget answered %s", encoded(t, answer))
 	}
 	uncovered := newMeasureWorld(t)
@@ -561,8 +565,8 @@ func TestAThirdPartyWidgetGetsTheMeasureFromItsManifestAlone(t *testing.T) {
 	uncovered.measured(t, measureFlowA, "reverse", "ingress_not_captured", 0, 0)
 	uncovered.service = pluginService(t, uncovered, dataDir)
 	answer = uncovered.respond(t, "example_volume_total", map[string]any{"period": "1h"})
-	detail := answer.StateDetails[request.StateNetflowNotCoveringWindow]
-	if !params.Contains(answer.States, request.StateNetflowNotCoveringWindow) ||
+	detail := answer.StateDetails[stateNetflowNotCoveringWindow]
+	if !params.Contains(answer.States, stateNetflowNotCoveringWindow) ||
 		strings.Join(detail.IntervalStates, ",") != netflow.CaptureConfigured {
 		t.Errorf("under partial coverage the third party's widget answered %s", encoded(t, answer))
 	}
@@ -610,11 +614,11 @@ func TestNoVolumeIsServedBuiltFromTwoMeasures(t *testing.T) {
 	best := f.respond(t, "example_mixing_total", map[string]any{"period": "1h"})
 	total, _ := data(t, best)["total"].(map[string]any)
 	if total["measure"] != envelope.MeasureLogged || total["bytes"] != float64(2*measureLoggedBytes) ||
-		!params.Contains(best.States, request.StateNetflowNotServedByType) {
+		!params.Contains(best.States, stateNetflowNotServedByType) {
 		t.Errorf("best_available answered %s", encoded(t, best))
 	}
 	explicit := f.respond(t, "example_mixing_total", map[string]any{"period": "1h", "volume_measure": "netflow"})
-	if explicit.Data != nil || !params.Contains(explicit.States, request.StateNetflowNotServedByType) {
+	if explicit.Data != nil || !params.Contains(explicit.States, stateNetflowNotServedByType) {
 		t.Errorf("an explicit netflow answered %s", encoded(t, explicit))
 	}
 }
@@ -631,15 +635,15 @@ func TestTheWindowStateNamesWhyNetflowCannotAnswer(t *testing.T) {
 		"unreadable": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
 			f.exec(t, `UPDATE capture_configuration SET fingerprint = NULL, outcome = 'unavailable', enabled = NULL`)
-		}, request.StateCaptureConfigurationUnknown},
+		}, stateCaptureConfigurationUnknown},
 		"disabled": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
 			f.exec(t, `UPDATE capture_configuration SET enabled = false`)
-		}, request.StateNetflowNotConfigured},
+		}, stateNetflowNotConfigured},
 		"read_inside_the_window": {func(t *testing.T, f *fixture) {
 			f.configureNetflow(t, "example_if_a")
 			f.exec(t, `UPDATE capture_configuration SET first_read_at = $1`, f.now-1800)
-		}, request.StateNetflowNotCoveringWindow},
+		}, stateNetflowNotCoveringWindow},
 	} {
 		f := newMeasureWorld(t)
 		test.prepare(t, f)
@@ -649,7 +653,7 @@ func TestTheWindowStateNamesWhyNetflowCannotAnswer(t *testing.T) {
 		}
 		// Only netflow_not_covering_window, of these, carries a detail: the interval states the window
 		// meets -- here no configuration read before first_read_at, then a readable, enabled one.
-		if test.state == request.StateNetflowNotCoveringWindow {
+		if test.state == stateNetflowNotCoveringWindow {
 			detail := answer.StateDetails[test.state]
 			if len(answer.StateDetails) != 1 || strings.Join(detail.IntervalStates, ",") !=
 				netflow.CaptureUnknown+","+netflow.CaptureConfigured {
@@ -726,7 +730,7 @@ func TestACustomChartSeriesOfTheNetflowMeasures(t *testing.T) {
 	for index, want := range []struct {
 		measure string
 		total   float64
-	}{{envelope.MeasureNetflow, 17000}, {envelope.MeasureNetflow, 29}, {envelope.MeasureLogged, float64(measureLoggedBytes)}} {
+	}{{measureNetflow, 17000}, {measureNetflow, 29}, {envelope.MeasureLogged, float64(measureLoggedBytes)}} {
 		line := lines[index].(map[string]any)
 		if line["measure"] != want.measure || line["total"] != want.total {
 			t.Errorf("series %d is %s with total %v, not %s with %v", index, line["measure"], line["total"],
@@ -740,7 +744,7 @@ func TestACustomChartSeriesOfTheNetflowMeasures(t *testing.T) {
 	hidden.measureEverything(t)
 	answer := hidden.respond(t, "custom_chart", parameters)
 	lines, _ = data(t, answer)["series"].([]any)
-	if len(lines) != 3 || !params.Contains(answer.States, request.StateCaptureConfigurationUnknown) ||
+	if len(lines) != 3 || !params.Contains(answer.States, stateCaptureConfigurationUnknown) ||
 		answer.StateDetails != nil {
 		t.Fatalf("under an unknown configuration the chart answered %s", encoded(t, answer))
 	}
@@ -757,3 +761,13 @@ func TestACustomChartSeriesOfTheNetflowMeasures(t *testing.T) {
 		}
 	}
 }
+
+// The netflow measure's names, as the netflow plugin's manifest declares them (plugins/netflow/plugin.json):
+// the core names none of them, and these tests read them where the answer carries them.
+const (
+	measureNetflow                   = "netflow"
+	stateNetflowNotConfigured        = "netflow_not_configured"
+	stateNetflowNotCoveringWindow    = "netflow_not_covering_window"
+	stateNetflowNotServedByType      = "netflow_not_served_by_type"
+	stateCaptureConfigurationUnknown = "capture_configuration_unknown"
+)

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect"
-	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/push"
@@ -116,24 +115,25 @@ func startPush(ctx context.Context, listens pushListens, database *store.Store, 
 	if err != nil {
 		return nil, err
 	}
-	protocolsOf := map[[2]string][]string{}
 	for _, subscription := range subscriptions {
 		if err := service.hub.Subscribe(subscription); err != nil {
 			return nil, err
 		}
-		owner := service.providers[subscription.ID]
-		protocolsOf[owner] = append(protocolsOf[owner], subscription.Protocol)
 	}
-	// After every read of a provider's capture configuration, the decoders of its push entries are given
-	// how many sequence counters the exporter runs; when the configuration changed, they also follow the
-	// exporter's sequence numbers afresh, its counters having been recreated (NJ7 of the amendment "the
-	// NetFlow join with every interface captured").
-	collector.SetCaptureReadObserver(func(key string, changed bool, counters int) {
-		for _, protocol := range protocolsOf[[2]string{derive.KindFlowRecord, key}] {
-			if changed {
-				service.hub.ResetSequences(protocol)
+	// After every read of a sequence bound a push entry declares (its `sequence_bound`), the decoders of the
+	// entry's protocol are given how many sequence counters the sender runs; when its configuration changed,
+	// they also follow its sequence numbers afresh, its counters having been recreated (NJ7, as PA7 of the
+	// plugin-API amendment restates it).
+	bounds := plugins.SequenceBounds()
+	collector.SetSequenceBoundObserver(func(kind, key, name string, changed bool, counters int) {
+		for _, bound := range bounds {
+			if bound.Kind != kind || bound.Key != key || bound.Value != name {
+				continue
 			}
-			service.hub.SetSequenceCounters(protocol, counters)
+			if changed {
+				service.hub.ResetSequences(bound.Protocol)
+			}
+			service.hub.SetSequenceCounters(bound.Protocol, counters)
 		}
 	})
 	plugins.AttachPushHub(service.hub)

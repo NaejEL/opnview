@@ -45,7 +45,7 @@ func AttributionByClient(r *request.Request) (map[int64]ClientAttribution, reads
 		return nil, whole, err
 	}
 	result := map[int64]ClientAttribution{}
-	err = r.Db.WidgetRows(r.Ctx, r.Measured("widget_attribution_rate_by_client"), vocab.Period{}, r.WindowParameters(),
+	err = r.Db.WidgetRows(r.Ctx, r.InMeasure("widget_attribution_rate_by_client"), vocab.Period{}, r.WithMeasure(r.WindowParameters()),
 		func(row reads.RowScanner) error {
 			var (
 				id      int64
@@ -55,8 +55,8 @@ func AttributionByClient(r *request.Request) (map[int64]ClientAttribution, reads
 			)
 			targets := []any{&id, &counts.Eligible, &counts.Named, &mean, &maximum, &counts.Cache,
 				&counts.Timing, &counts.Bytes}
-			if r.Netflow() {
-				targets = append(targets, counts.Measured.NetflowTargets()...)
+			if measure := r.MeasureRead(); measure != "" {
+				targets = append(targets, counts.Measured.MeasureTarget(measure))
 			}
 			if err := row.Scan(targets...); err != nil {
 				return err

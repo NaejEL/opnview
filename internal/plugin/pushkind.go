@@ -34,6 +34,7 @@ type kindSink struct {
 // kindBatch is what Prepare made: the checked records, under their contract's field names.
 type kindBatch struct {
 	records []provider.Answer
+	span    batchSpan
 }
 
 func (s *kindSink) Prepare(ctx context.Context, records []push.Record) push.Prepared {
@@ -46,7 +47,27 @@ func (s *kindSink) Prepare(ctx context.Context, records []push.Record) push.Prep
 		chunk := records[start:min(len(records), start+ParseBatch)]
 		var objects []map[string]any
 		var sources []push.Record
-		if s.binding.declaration.Parse == "" {
+		if s.binding.declaration.Decode != "" {
+			// One call per message: each answers a list of the records the message held.
+			for _, record := range chunk {
+				answers, failed := callDecode(ctx, s.plugin, s.environment.Session, s.binding.declaration.Decode, record,
+					prepared.Counts)
+				if failed != "" {
+					prepared.Failed++
+					prepared.FailedReason = push.GapScriptFailed
+					continue
+				}
+				for _, answer := range answers {
+					object, isObject := answer.(map[string]any)
+					if !isObject {
+						prepared.Counts[pushCounterRecordsInvalid]++
+						continue
+					}
+					objects = append(objects, object)
+					sources = append(sources, record)
+				}
+			}
+		} else if s.binding.declaration.Parse == "" {
 			// The field mapping: no script runs, per record or per batch.
 			objects = mappedAnswers(kindContract, kindContract.PushRecord, s.binding.declaration.Fields, chunk)
 			sources = chunk
@@ -96,7 +117,7 @@ func (s *kindSink) Prepare(ctx context.Context, records []push.Record) push.Prep
 	}
 	prepared.Rows = len(converted)
 	if len(converted) > 0 {
-		prepared.Payload = kindBatch{records: converted}
+		prepared.Payload = kindBatch{records: converted, span: spanOf(records)}
 	}
 	return prepared
 }
@@ -106,16 +127,16 @@ func (s *kindSink) Store(ctx context.Context, prepared push.Prepared) error {
 	if !ok || s.environment.Kinds == nil {
 		return nil
 	}
-	return s.environment.Kinds.ReceivePushed(ctx, s.binding.declaration.Kind, s.binding.providerKey, batch.records)
+	if err := s.environment.Kinds.ReceivePushed(ctx, s.binding.declaration.Kind, s.binding.providerKey, batch.records); err != nil {
+		return err
+	}
+	s.plugin.notePush(s.binding.declaration.Name, len(batch.records), batch.span.from, batch.span.to, batch.span.to)
+	return nil
 }
 
-// SequenceAsserted asks the core whether a loss the sender's sequence numbers show is asserted.
+// SequenceAsserted judges a loss the sender's sequence numbers show by the entry's declared bound.
 func (s *kindSink) SequenceAsserted(ctx context.Context, problem push.Problem) bool {
-	if s.environment.Kinds == nil {
-		return true
-	}
-	return s.environment.Kinds.PushSequenceAsserted(ctx, s.binding.declaration.Kind, s.binding.providerKey,
-		problem.From.Unix(), problem.To.Unix())
+	return s.binding.sequenceAsserted(ctx, s.environment, problem)
 }
 
 // ObserveCondition tells the core a condition of the stream.

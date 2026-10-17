@@ -9,6 +9,7 @@ import (
 	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/store/plugindecl"
 	"github.com/NaejEL/opnview/internal/store/plugintables"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The plugin listing (A5 of the backend-completion cycle): every plugin discovered, built-ins
@@ -45,8 +46,11 @@ type ListedPlugin struct {
 	Settings     []plugin.SettingValue     `json:"settings"`
 	// Pages are the sections its manifest groups its settings in, each with its settings in display order:
 	// what the step-7 application draws a plugin's settings from. Absent for a plugin that declares none.
-	Pages  []contract.PageDeclaration      `json:"pages,omitempty"`
-	Events []plugintables.PluginTableEvent `json:"events"`
+	Pages []contract.PageDeclaration `json:"pages,omitempty"`
+	// Measures are the measures its manifest declares (PA5 of the plugin-API amendment), each with its label
+	// key: what the step-7 application names a volume_measure value by. Absent for a plugin that declares none.
+	Measures []vocab.DeclaredMeasure         `json:"measures,omitempty"`
+	Events   []plugintables.PluginTableEvent `json:"events"`
 	// Endpoints are the endpoints it reads, with what its manifest tells the broker of each and the
 	// OPNsense versions each route serves; CorrectionConflicts are those whose mirror corrections lost
 	// to another plugin's (mirror_correction_conflict), the plugin loading all the same.
@@ -131,6 +135,7 @@ func Listing(l *plugin.Loaded, ctx context.Context, database ListingStore) ([]Li
 		}
 		entry.Settings = settings
 		entry.Pages = member.Manifest.Pages
+		entry.Measures = member.Manifest.Measures
 		listed = append(listed, entry)
 	}
 	refusals := append([]contract.Refusal(nil), l.Refused...)

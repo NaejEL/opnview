@@ -6,6 +6,7 @@ import (
 	"github.com/dop251/goja"
 
 	"github.com/NaejEL/opnview/internal/store/reads"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/figures"
 	"github.com/NaejEL/opnview/internal/widget/script"
@@ -19,13 +20,13 @@ import (
 // THE MEASURE IS THE CORE'S (internal/widget/request/measure.go). Summable figures carry the
 // measure they were read in: the core's reads hand a widget whose manifest declares volumes the
 // figures of the measure its request is answered under, and these functions build every Volume and
-// Count in the figures' own measure, judging, under netflow, whether every connection counted was
-// measured. A widget never chooses a measure, and two measures are never summed.
+// Count in the figures' own measure, judging, under a declared measure, whether every connection counted
+// was covered. A widget never chooses a measure, and two measures are never summed.
 //
 //	host.figures.volume(figures)             the Volume of summable figures, in their measure: {measure,
 //	                                         lower_bound, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
 //	                                         connections, allowed_connections, blocked_connections,
-//	                                         unknown_connections}, and for a netflow Volume its packets and
+//	                                         unknown_connections}, and for a declared measure's Volume its packets and
 //	                                         its coverage, whole and per part (packets, allowed_packets ...
 //	                                         coverage, allowed_coverage ...; docs/widget-api.md)
 //	host.figures.logged(figures)             the same: the name it had while every figure was logged
@@ -33,15 +34,15 @@ import (
 //	                                         count: {measure, lower_bound: true, value}, in the measure the
 //	                                         request is answered under
 //	host.figures.byteCount(figures)          the Count of the figures' bytes, in their measure
-//	host.figures.connectionBytes(figures)    the same for one connection's figures: a netflow figure of
-//	                                         one connection measured in both directions is exact, and the
+//	host.figures.connectionBytes(figures)    the same for one connection's figures: a measured figure
+//	                                         of one connection complete in both directions is exact, and the
 //	                                         only figure whose lower_bound is false
 //	host.figures.cover(figures)              says the answer counts figures whose numbers the widget uses
 //	                                         directly, so the core judges them as it judges a Volume
 //	host.figures.loggedCount(value)          {measure: "logged", lower_bound: true, value}: a count of logged
-//	                                         records, which an answer under netflow cannot carry
+//	                                         records, which an answer in a declared measure cannot carry
 //	host.figures.withMeasure(figures, from)  figures carrying the measure of `from` (a row or figures read
-//	                                         in it): its measure and its netflow parts
+//	                                         in it): its measure and its measure_parts
 //	host.figures.zero()                      summable figures holding nothing, in the measure the request
 //	                                         is answered under
 //	host.figures.add(into, other)            the sum of two summable figures, as a new object
@@ -57,16 +58,18 @@ import (
 //	                                         withheld, by a hash of the name that says nothing about it
 //	host.figures.interfaceKey(id)            "interface:<id>", an interface's member key
 //	host.figures.clientKey(id)               "client:<id>", a client's member key
-//	host.figures.measures                    the measures, by name: logged, netflow, sampled,
-//	                                         interface_counter
-//	host.figures.measure                     the measure the request is answered under: logged or netflow
+//	host.figures.measures                    the measures, by name: logged, sampled, interface_counter
+//	                                         and every declared measure
+//	host.figures.declared                    the declared measures' names, in name order
+//	host.figures.measure                     the measure the request is answered under: logged or a
+//	                                         declared measure
 //
 // Summable figures are {bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
-// blocked_connections, unknown_connections}; a member left out is 0. Netflow figures also carry
-// measure: "netflow" and the fifty-four columns of netflow_parts (store.NetflowPartsColumns): for each
-// of the allowed, blocked and unknown parts, its packets, its four coverage classes and the direction
-// states it met. A row of a statement read under netflow carries them as columns of those names --
-// (netflow_sum(n.parts)).* writes them all -- and a Volume handed back is read as its figures.
+// blocked_connections, unknown_connections}; a member left out is 0. A declared measure's figures
+// also carry measure, its name, and measure_parts, its parts as one array (reads.VolumeFigures.PartsArray):
+// for each of the allowed, blocked and unknown parts, its bytes, its packets, its four coverage classes,
+// the direction states it met and its markers. A row of a statement's measured twin carries them as the
+// columns measure and measure_parts, and a Volume handed back is read as its figures.
 
 func init() {
 	script.RegisterHostArea("figures", func(call *script.ScriptCall, area *goja.Object) {
@@ -95,11 +98,11 @@ func init() {
 		call.Function(area, "withMeasure", func(arguments goja.FunctionCall) goja.Value {
 			figures := FiguresOf(call, arguments.Argument(0), "the figures")
 			from := FiguresOf(call, arguments.Argument(1), "the figures whose measure is taken")
-			figures.Netflow, figures.Parts = from.Netflow, from.Parts
+			figures.Measure, figures.Parts = from.Measure, from.Parts
 			return call.Value(traffic.Summable(figures))
 		})
 		call.Function(area, "zero", func(goja.FunctionCall) goja.Value {
-			return call.Value(traffic.Summable(reads.VolumeFigures{Netflow: r.Netflow()}))
+			return call.Value(traffic.Summable(reads.VolumeFigures{Measure: r.MeasureRead()}))
 		})
 		call.Function(area, "add", func(arguments goja.FunctionCall) goja.Value {
 			sum := FiguresOf(call, arguments.Argument(0), "the figures added to")
@@ -149,10 +152,15 @@ func init() {
 		call.Function(area, "clientKey", func(arguments goja.FunctionCall) goja.Value {
 			return call.VM.ToValue(traffic.ClientKey(call.IntegerOf(arguments.Argument(0), "the client id")))
 		})
-		_ = area.Set("measures", call.Value(map[string]string{
-			"logged": envelope.MeasureLogged, "netflow": envelope.MeasureNetflow, "sampled": envelope.MeasureSampled,
-			"interface_counter": envelope.MeasureInterfaceCounter,
-		}))
+		measures := map[string]string{"logged": envelope.MeasureLogged, "sampled": envelope.MeasureSampled,
+			"interface_counter": envelope.MeasureInterfaceCounter}
+		declared := []string{}
+		for _, measure := range vocab.Measures() {
+			measures[measure.Name] = measure.Name
+			declared = append(declared, measure.Name)
+		}
+		_ = area.Set("measures", call.Value(measures))
+		_ = area.Set("declared", call.Value(declared))
 		_ = area.Set("measure", r.MeasureInForce())
 	})
 }
@@ -167,21 +175,21 @@ func FiguresOf(c *script.ScriptCall, value goja.Value, what string) reads.Volume
 	return FromScript(c, figures)
 }
 
-// FromScript is figures a script hands back, as the core reads them. Under a netflow run, figures
-// holding anything that are not netflow were not read by the core in that measure: the run cannot be
-// served as netflow (internal/widget/request/measure.go).
+// FromScript is figures a script hands back, as the core reads them. Under a measured run, figures
+// holding anything that are not of a measure were not read by the core in it: the run cannot be
+// served in the measure (internal/widget/request/measure.go).
 func FromScript(c *script.ScriptCall, figures traffic.SummableFigures) reads.VolumeFigures {
 	read := figures.ToStore()
-	if c.Request.Measure.Netflow && !read.Netflow && read != (reads.VolumeFigures{}) {
+	if c.Request.MeasureRead() != "" && !read.Measured() && read != (reads.VolumeFigures{}) {
 		c.Request.Measure.LoggedFigure = true
 	}
 	return read
 }
 
-// MeasuredOf is the netflow members of a row a script hands back, as a row's measured figures
+// MeasuredOf is the measure members of a row a script hands back, as a row's measured figures
 // (internal/widget/figures/sites.go): judged as figuresOf judges figures holding bytes.
-func MeasuredOf(c *script.ScriptCall, members traffic.NetflowMembers, bytes int64) reads.VolumeFigures {
-	read := FromScript(c, traffic.SummableFigures{Bytes: bytes, NetflowMembers: members})
+func MeasuredOf(c *script.ScriptCall, members traffic.MeasureMembers, bytes int64) reads.VolumeFigures {
+	read := FromScript(c, traffic.SummableFigures{Bytes: bytes, MeasureMembers: members})
 	read.Bytes = 0
 	return read
 }

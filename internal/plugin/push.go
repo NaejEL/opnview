@@ -153,6 +153,27 @@ func checkPushEntry(plugin *Plugin, declaration contract.PushDeclaration, tables
 				"script does not export", entry, pushParseNamespace, declaration.Parse)
 		}
 	}
+	if push.IsScriptDecoded(protocol) {
+		// A message the core reads no structure in is decoded by the plugin's own function, and by nothing else.
+		switch {
+		case declaration.Decode == "":
+			return nil, contract.Refuse(name, contract.RefusalPushDecodeMissing, "%s is of the %s protocol, whose messages carry "+
+				"no structure the core reads: it names a decode function", entry, declaration.Protocol)
+		case declaration.Parse != "" || declaration.Pattern != "" || len(declaration.Fields) > 0:
+			return nil, contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s is decoded by its decode function, and "+
+				"declares a parse function, a pattern or a field mapping beside it", entry)
+		case exports[pushParseNamespace][declaration.Decode] != "function":
+			return nil, contract.Refuse(name, contract.RefusalPushDecodeMissing, "%s names the decode function %s.%s, which the "+
+				"script does not export", entry, pushParseNamespace, declaration.Decode)
+		}
+	} else if declaration.Decode != "" {
+		return nil, contract.Refuse(name, contract.RefusalPushDecodeMissing, "%s names a decode function: a %s message is decoded "+
+			"by the core, and mapped by a pattern, a parse function or a field mapping", entry, declaration.Protocol)
+	}
+	if bound := declaration.SequenceBound; bound != nil && !contract.NamePattern.MatchString(bound.Value) {
+		return nil, contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s takes its sequence bound from %q, which is not "+
+			"a snake_case value name", entry, bound.Value)
+	}
 	if declaration.Pattern != "" {
 		if fieldsOf == nil {
 			return nil, contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s declares a pattern: a %s record carries "+
@@ -252,8 +273,8 @@ func checkPushTable(plugin *Plugin, binding *pushBinding, tables map[string]plug
 				column, table.Table)
 		}
 	}
-	if declaration.Parse != "" {
-		// What the parse function returns is checked per row, against the table.
+	if declaration.Parse != "" || declaration.Decode != "" {
+		// What the parse or decode function returns is checked per row, against the table.
 		return nil
 	}
 	filled := map[string]bool{table.TimeColumn: true}
@@ -291,9 +312,9 @@ func checkPushKind(plugin *Plugin, binding *pushBinding, providedKinds map[strin
 	case !kindContract.Push || !hasTable:
 		return contract.Refuse(name, contract.RefusalPushDestinationInvalid, "%s delivers records of %s, which no push entry may "+
 			"deliver: its kind file does not mark it push", entry, declaration.Kind)
-	case declaration.Parse == "" && len(declaration.Fields) == 0:
-		return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s delivers records of %s, which a parse function "+
-			"builds or a field mapping fills: the records are the kind's contract", entry, declaration.Kind)
+	case declaration.Parse == "" && declaration.Decode == "" && len(declaration.Fields) == 0:
+		return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s delivers records of %s, which a parse or decode "+
+			"function builds or a field mapping fills: the records are the kind's contract", entry, declaration.Kind)
 	case declaration.Parse != "" && len(declaration.Fields) > 0:
 		return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s delivers records of %s with both a parse function "+
 			"and a field mapping: one of the two builds them", entry, declaration.Kind)

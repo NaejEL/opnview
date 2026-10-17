@@ -1,6 +1,6 @@
 {
   "__provenance__": {
-    "statement": "SYNTHESISED, NOT A CAPTURE. Maps each column the Go join's recording holds (fixtures.json, f16_interleaved_counters.json, f17_upstream_ingress_captured.json in this directory) to where the same value lives once the join is the netflow plugin's (PA5 and PA9 of specs/SPEC-backend-completion-plugins.md, amendment of 17 October 2026). The generic measure output's and parts' column names are PA5's; the change that creates those tables owns their final spelling and updates this file with it.",
+    "statement": "SYNTHESISED, NOT A CAPTURE. Maps each column the Go join's recording holds (fixtures.json, f16_interleaved_counters.json, f17_upstream_ingress_captured.json in this directory) to where the same value lives once the join is the netflow plugin's (PA5 and PA9 of specs/SPEC-backend-completion-plugins.md, amendment of 17 October 2026). The generic measure output's and parts' names are PA5's, as Lot 2 built them: connection_measure, keyed by measure, and the aggregates' measure_parts, a JSON object keyed by measure name whose value is the measure's parts array (internal/store/schema.sql, \"THE LAYOUT OF A MEASURE'S PARTS\"). The netflow measure's part is 19 figures wide: bytes, packets, the four classes, its twelve direction states in their declared order, its one marker.",
     "recorded_by": "TestRecordTheGoJoinOverTheFixtures, build tag njrecord, internal/collect/njrecord_test.go"
   },
   "conventions": {
@@ -28,19 +28,19 @@
       }
     },
     "connection_measured_volume": {
-      "becomes": "the generic per-connection measure output (PA5), rows whose measure is netflow",
+      "becomes": "connection_measure, the generic per-connection measure output (PA5), rows whose measure is netflow",
       "columns": {
-        "connection_leg": "connection, as the digest of the flow it names",
+        "connection_leg": "connection_flow_id, as the digest of the flow it names",
         "direction": "direction",
         "bytes": "bytes",
         "packets": "packets",
         "state": "state",
-        "counted_copy": "the marker counted_copy",
-        "connection_start_at": "the netflow plugin's own bookkeeping, beside the output",
-        "records": "the netflow plugin's own bookkeeping, beside the output",
-        "final": "the netflow plugin's own bookkeeping, beside the output",
-        "due_at": "the netflow plugin's own bookkeeping, beside the output",
-        "computed_at": "the netflow plugin's own bookkeeping, beside the output"
+        "counted_copy": "markers & 1: the marker counted_copy, bit 0 of markers (declared_measure_marker.position 0)",
+        "connection_start_at": "connection_start_at",
+        "records": "records",
+        "final": "final",
+        "due_at": "due_at",
+        "computed_at": "computed_at"
       }
     },
     "unmatched_record_aggregate_<period>": {
@@ -53,13 +53,19 @@
       }
     },
     "<family>_aggregate_<period>": {
-      "becomes": "the same family and period; the netflow columns become the parts of the measure named netflow (PA5)",
+      "becomes": "the same family and period; the netflow columns become measure_parts -> 'netflow', the measure's parts array (PA5)",
       "columns": {
-        "netflow_bytes": "the netflow measure's bytes",
-        "netflow_allowed_bytes": "the netflow measure's allowed_bytes",
-        "netflow_blocked_bytes": "the netflow measure's blocked_bytes",
-        "netflow_unknown_bytes": "the netflow measure's unknown_bytes",
-        "netflow_parts.<field>": "the netflow measure's <field>, each field of the netflow_parts type under its own name",
+        "netflow_bytes": "measure_total_bytes(measure_parts, 'netflow'): elements 0 + 19 + 38",
+        "netflow_allowed_bytes": "measure_bytes(measure_parts, 'netflow', 0): element 0",
+        "netflow_blocked_bytes": "measure_bytes(measure_parts, 'netflow', 1): element 19",
+        "netflow_unknown_bytes": "measure_bytes(measure_parts, 'netflow', 2): element 38",
+        "netflow_parts.<part>_packets": "element 19p + 1, p = 0 allowed, 1 blocked, 2 unknown",
+        "netflow_parts.<part>_measured_connections": "element 19p + 2 (the class complete)",
+        "netflow_parts.<part>_partial_connections": "element 19p + 3",
+        "netflow_parts.<part>_unmeasured_connections": "element 19p + 4",
+        "netflow_parts.<part>_capture_not_known_connections": "element 19p + 5 (the class not_known)",
+        "netflow_parts.<part>_direction_<state>_connections": "element 19p + 6 + the state's declared position (measured 0 ... capture_configuration_unknown 11)",
+        "netflow_parts.<part>_counted_copy_connections": "element 19p + 18 (the marker counted_copy)",
         "every other column": "unchanged: the family's key and its logged figures"
       }
     },

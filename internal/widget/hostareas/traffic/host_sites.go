@@ -52,8 +52,8 @@ type scriptSiteRow struct {
 	Bytes       int64   `json:"bytes"`
 	DelaySum    *int64  `json:"delay_sum"`
 	DelayMax    *int64  `json:"delay_max"`
-	// The members a row read under netflow carries beyond its bytes (host.figures).
-	traffic.NetflowMembers
+	// The members a row read in a declared measure carries beyond its bytes (host.figures).
+	traffic.MeasureMembers
 }
 
 // scriptAddressRow is one row of address figures as a script reads it, and hands it back.
@@ -67,7 +67,7 @@ type scriptAddressRow struct {
 	Operator    *string `json:"operator"`
 	Flows       int64   `json:"flows"`
 	Bytes       int64   `json:"bytes"`
-	traffic.NetflowMembers
+	traffic.MeasureMembers
 }
 
 func init() {
@@ -83,7 +83,7 @@ func init() {
 				answer = append(answer, scriptSiteRow{Site: row.Site, ClientID: row.ClientID,
 					InterfaceID: row.InterfaceID, Method: row.Method, CountryCode: row.Country, ASN: row.ASN,
 					Operator: row.Operator, Flows: row.Flows, Bytes: row.Bytes, DelaySum: row.DelaySum,
-					DelayMax: row.DelayMax, NetflowMembers: traffic.Summable(row.Measured).NetflowMembers})
+					DelayMax: row.DelayMax, MeasureMembers: traffic.Summable(row.Measured).MeasureMembers})
 			}
 			return call.Value(answer)
 		})
@@ -102,7 +102,7 @@ func init() {
 				accumulator.Add(figures.SiteRow{Site: row.Site, ClientID: row.ClientID, InterfaceID: row.InterfaceID,
 					Method: row.Method, Country: row.CountryCode, ASN: row.ASN, Operator: row.Operator,
 					Flows: row.Flows, Bytes: row.Bytes, DelaySum: row.DelaySum, DelayMax: row.DelayMax,
-					Measured: values.MeasuredOf(call, row.NetflowMembers, row.Bytes)})
+					Measured: values.MeasuredOf(call, row.MeasureMembers, row.Bytes)})
 			}
 			return call.Value(accumulator.Finish(r))
 		})
@@ -116,7 +116,7 @@ func init() {
 				answer = append(answer, scriptAddressRow{Address: row.Address, ClientID: row.ClientID,
 					InterfaceID: row.InterfaceID, LookupState: row.LookupState, CountryCode: row.Country,
 					ASN: row.ASN, Operator: row.Operator, Flows: row.Flows, Bytes: row.Bytes,
-					NetflowMembers: traffic.Summable(row.Measured).NetflowMembers})
+					MeasureMembers: traffic.Summable(row.Measured).MeasureMembers})
 			}
 			return call.Value(answer)
 		})
@@ -135,7 +135,7 @@ func init() {
 				rows = append(rows, figures.AddressRow{Address: row.Address, ClientID: row.ClientID,
 					InterfaceID: row.InterfaceID, LookupState: row.LookupState, Country: row.CountryCode,
 					ASN: row.ASN, Operator: row.Operator, Flows: row.Flows, Bytes: row.Bytes,
-					Measured: values.MeasuredOf(call, row.NetflowMembers, row.Bytes)})
+					Measured: values.MeasuredOf(call, row.MeasureMembers, row.Bytes)})
 			}
 			return call.Value(figures.AccumulateAddress(r, address, rows))
 		})

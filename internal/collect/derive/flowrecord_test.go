@@ -52,10 +52,10 @@ func TestTheJoinDoesNotDependOnArrivalOrder(t *testing.T) {
 		if err != nil || changed != 0 {
 			t.Errorf("%s: a second join changed %d rows (%v)", name, changed, err)
 		}
-		before := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(computed_at), 0) FROM connection_measured_volume")
+		before := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(computed_at), 0) FROM connection_measure")
 		h.Derive(t)
 		if after := collecttest.ScalarCount(t, h.Store,
-			"SELECT coalesce(sum(computed_at), 0) FROM connection_measured_volume"); after != before {
+			"SELECT coalesce(sum(computed_at), 0) FROM connection_measure"); after != before {
 			t.Errorf("%s: a second derivation rewrote a measured volume", name)
 		}
 	}

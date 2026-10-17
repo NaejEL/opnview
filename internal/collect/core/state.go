@@ -42,11 +42,6 @@ type NetflowState struct {
 	// IndexMapStale says the exporter restarted since the index map was last read: the next mapping
 	// reads it afresh, whatever the broker's mirror holds (NJ3, a reboot can renumber interfaces).
 	IndexMapStale bool
-	// OnCaptureRead is told after every read of a provider's capture configuration: whether it opened a
-	// new configuration, and how many sequence counters the configuration in force lets the exporter run
-	// (NJ7; 0 when that is not known). The receiver bounds its decoders' counters with it, and follows
-	// the exporter's sequence numbers afresh when the configuration changed.
-	OnCaptureRead func(key string, changed bool, counters int)
 }
 
 // CaptureHistory is one provider's capture configurations.
@@ -161,6 +156,21 @@ type Services struct {
 type triggers struct {
 	mutex  sync.Mutex
 	routes map[string][]chan struct{}
+	// observers are told the notifications they named, payload and all: a derivation learns what changed
+	// (PA4 of the plugin-API amendment).
+	observers map[string][]func(sqldb.Notification)
+}
+
+// Observe calls observe with every notification heard under one of the names, before any loop is woken.
+func (t *triggers) Observe(names []string, observe func(sqldb.Notification)) {
+	t.mutex.Lock()
+	defer t.mutex.Unlock()
+	if t.observers == nil {
+		t.observers = map[string][]func(sqldb.Notification){}
+	}
+	for _, name := range names {
+		t.observers[name] = append(t.observers[name], observe)
+	}
 }
 
 // WakeOn returns the wake channel of a loop that the notifications named run, or nil when it names
@@ -194,6 +204,9 @@ func (t *triggers) Heard(notification sqldb.Notification) {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 	for _, name := range []string{notification.Channel, notification.Channel + ":" + subject} {
+		for _, observe := range t.observers[name] {
+			observe(notification)
+		}
 		for _, wake := range t.routes[name] {
 			select {
 			case wake <- struct{}{}:
@@ -208,7 +221,14 @@ func (t *triggers) Channels() []string {
 	t.mutex.Lock()
 	defer t.mutex.Unlock()
 	var channels []string
+	names := make([]string, 0, len(t.routes)+len(t.observers))
 	for name := range t.routes {
+		names = append(names, name)
+	}
+	for name := range t.observers {
+		names = append(names, name)
+	}
+	for _, name := range names {
 		channel, _, _ := strings.Cut(name, ":")
 		found := false
 		for _, held := range channels {

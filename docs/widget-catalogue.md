@@ -1641,8 +1641,8 @@ may also be drawn from any dataset of the data catalogue that has a time column 
 table included -- through the catalogue's compiled query on the same UTC-aligned buckets
 (`docs/widget-api.md`, *Data catalogue*); the sources above keep their own reads. A traffic
 series also offers the measures `netflow_bytes` and `netflow_packets`: the bytes and packets the
-firewall's NetFlow export reported for the logged connections (`connection_measured_volume`, the
-`netflow_*` columns of the aggregate families), a series of the `netflow` measure whatever
+firewall's NetFlow export reported for the logged connections (`connection_measure`, the
+`measure_parts` of the aggregate families), a series of the `netflow` measure whatever
 `volume_measure` says, and with no figure when NetFlow cannot answer the window; the two measures
 are never summed.
 

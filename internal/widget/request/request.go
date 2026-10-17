@@ -120,8 +120,8 @@ type Request struct {
 
 	// Measure is the measure the request is being answered under, and what the run built (measure.go).
 	Measure measureRun
-	// netflowWindow is what the window says of NetFlow, once read (measure.go).
-	netflowWindow *netflowWindow
+	// measureWindows are what the window says of each declared measure, once read (measure.go).
+	measureWindows map[string]measureWindow
 }
 
 // Prepare reads what every response carries: the aggregate mode, the window, the

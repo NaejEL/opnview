@@ -175,15 +175,19 @@ both, so `direction_states` says which states were met and does not sum to the c
 not `logged`, `netflow`, `sampled` and `interface_counter` with one another.
 
 **`volume_measure`.** Every type serving a `Volume` or a byte `Count` takes `volume_measure`:
-`logged`, `netflow` or `best_available`, default `best_available`. The core gives the parameter to
+`logged`, every measure a plugin declares (`netflow` for the netflow plugin; `docs/plugins.md`,
+*Measures*), or `best_available`, default `best_available`; the observation-point limit holds for every
+declared measure as for `logged`. The core gives the parameter to
 every type whose manifest declares `volumes` (`docs/widget-authoring.md`), and decides which measure
 the answer is given in; the types are those whose row in *Parameters* carries the key. One answer
 is of one measure, and every figure in it says which.
 
 - **`logged`** answers the filter log's figures, as every volume type always has.
 - **`best_available`** answers `netflow` only when the window has a readable capture configuration
-  with the export enabled throughout, and every connection the answer counts is covered.
-$1  one named state saying why (*Named states*): `netflow_not_configured`,
+  with the export enabled throughout, and every connection the answer counts is covered; with several
+  declared measures, the first in name order that answers. Otherwise it answers `logged`, byte for
+  byte what `logged` answers, with
+  one named state saying why (*Named states*): `netflow_not_configured`,
   `capture_configuration_unknown`, `netflow_not_covering_window` or `netflow_not_served_by_type`.
   Every interface may be captured; an answer counting a connection NetFlow cannot measure -- an
   egress-only interface's inbound traffic, forwarding between two exported interfaces -- falls back
@@ -215,10 +219,11 @@ packets, the state and `counted_copy` (whether it was counted from translated co
 `coverage` object, or `null` directions when its connection started under no readable, enabled capture
 configuration -- the coverage then counts it `capture_not_known`.
 
-`custom_chart`'s `traffic` source offers two measures of its own, `netflow_bytes` and
-`netflow_packets`: a series of either is the `netflow` measure whatever `volume_measure` says, drawn
-beside the chart's other series and never summed with them, and carries no figure, with the named
-state, when the window has no readable, enabled capture configuration.
+`custom_chart`'s `traffic` source offers two measures for every declared measure, `<measure>_bytes`
+and `<measure>_packets` -- `netflow_bytes` and `netflow_packets` for the netflow plugin's: a series of
+either is that measure whatever `volume_measure` says, drawn beside the chart's other series and never
+summed with them, and carries no figure, with the measure's named state, when the measure cannot
+answer the window.
 
 ## References
 
@@ -276,7 +281,7 @@ of its kind: `interface`, `client`, `rule`, `provider`, `country`, `operator`, `
 
 | `source` | `metric` / `measure` | Default aggregation | Provider |
 |---|---|---|---|
-| `traffic` | `measure`: `bytes`, `connections`, `allowed`, `blocked`, `netflow_bytes`, `netflow_packets` | `sum` | `firewall_log` (plus `ip_geolocation` with a country or operator, `dns_lookup` with a site) |
+| `traffic` | `measure`: `bytes`, `connections`, `allowed`, `blocked`, and `<measure>_bytes`, `<measure>_packets` for every declared measure (`netflow_bytes`, `netflow_packets`) | `sum` | `firewall_log` (plus `ip_geolocation` with a country or operator, `dns_lookup` with a site) |
 | `firewall_metric` | `metric`: `uptime`, `cpu`, `memory`, `swap`, `disk`, `temperature`, `gateway_latency`, `gateway_loss` | `mean` | `measurement_sample` |
 | `interface_throughput` | `measure`: `bits_per_second`, `bytes`, `packets`, `errors` | `mean` | `measurement_sample` |
 | `dns` | `measure`: `lookups`, `blocked` | `sum` | `dns_lookup` |

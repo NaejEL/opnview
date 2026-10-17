@@ -39,10 +39,7 @@ func ClientVolumes(r *request.Request) (map[int64]*clientVolume, error) {
 		if to <= from {
 			return nil
 		}
-		if r.Netflow() {
-			name += request.NetflowStatementSuffix
-		}
-		return r.Db.WidgetRows(r.Ctx, name, vocab.Period{}, map[string]any{"from": from, "to": to},
+		return r.Db.WidgetRows(r.Ctx, r.InMeasure(name), vocab.Period{}, r.WithMeasure(map[string]any{"from": from, "to": to}),
 			func(row reads.RowScanner) error {
 				var (
 					id        int64
@@ -52,8 +49,8 @@ func ClientVolumes(r *request.Request) (map[int64]*clientVolume, error) {
 				targets := []any{&id, &direction, &figures.Bytes, &figures.AllowedBytes, &figures.BlockedBytes,
 					&figures.UnknownBytes, &figures.AllowedConnections, &figures.BlockedConnections,
 					&figures.UnknownConnections}
-				if r.Netflow() {
-					targets = append(targets, figures.NetflowTargets()...)
+				if measure := r.MeasureRead(); measure != "" {
+					targets = append(targets, figures.MeasureTarget(measure))
 				}
 				if err := row.Scan(targets...); err != nil {
 					return err

@@ -282,6 +282,9 @@ func (s *NetflowStore) RecordCaptureRead(ctx context.Context, providerID, readAt
 			return false, err
 		}
 	}
+	if err := recordMeasureIntervals(ctx, transaction, providerID); err != nil {
+		return false, err
+	}
 	if err := transaction.Commit(); err != nil {
 		return false, fmt.Errorf("store: committing a capture read: %w", err)
 	}
@@ -400,4 +403,69 @@ func (s *NetflowStore) readCaptureInterfaces(ctx context.Context, providerID int
 		configurations[index].Interfaces = append(configurations[index].Interfaces, captured)
 	}
 	return interfaces.Err()
+}
+
+// recordMeasureIntervals rewrites a provider's window intervals of the netflow measure from its capture
+// configurations (measure_interval, PA5 of the plugin-API amendment): each configuration is in force from
+// its first read until the next one's first read, or, when the next one began after its last read, until
+// the instant after its last read -- after which nothing is recorded, the measure's unrecorded state -- and
+// the newest for as long as no later read says otherwise. A configuration whose read failed is
+// capture_configuration_unknown; a readable one is capture_configured when its export is enabled and it
+// captures an interface in some direction, and netflow_not_configured otherwise: CaptureStateAt's states,
+// recorded so that the widget measure reads them without reading this package's tables.
+func recordMeasureIntervals(ctx context.Context, transaction *sql.Tx, providerID int64) error {
+	if _, err := transaction.ExecContext(ctx,
+		"DELETE FROM measure_interval WHERE measure = $1 AND provider_id = $2", MeasureName, providerID); err != nil {
+		return fmt.Errorf("store: rewriting the measure's intervals: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx,
+		`INSERT INTO measure_interval (measure, provider_id, starts_at, ends_at, state)
+		 SELECT $1, c.provider_id, c.first_read_at,
+		        CASE WHEN lead(c.first_read_at) OVER w IS NULL THEN NULL ELSE c.last_read_at + 1 END,
+		        CASE WHEN c.fingerprint IS NULL THEN $3
+		             WHEN coalesce(c.enabled, false)
+		                  AND EXISTS (SELECT 1 FROM capture_interface AS i
+		                              WHERE i.capture_configuration_id = c.id AND (i.ingress OR i.egress)) THEN $4
+		             ELSE $5 END
+		 FROM capture_configuration AS c
+		 WHERE c.provider_id = $2
+		 WINDOW w AS (ORDER BY c.first_read_at)`,
+		MeasureName, providerID, CaptureUnknown, CaptureConfigured, CaptureNotConfigured); err != nil {
+		return fmt.Errorf("store: recording the measure's intervals: %w", err)
+	}
+	return nil
+}
+
+// RecordMeasureIntervals rewrites every provider's window intervals of the netflow measure from its
+// capture configurations, as each capture read rewrites its own provider's (recordMeasureIntervals): what
+// a fixture writing configurations straight into the tables runs after it.
+func (s *NetflowStore) RecordMeasureIntervals(ctx context.Context) error {
+	transaction, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: rewriting the measure's intervals: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	rows, err := transaction.QueryContext(ctx, "SELECT DISTINCT provider_id FROM capture_configuration ORDER BY 1")
+	if err != nil {
+		return fmt.Errorf("store: reading the capture providers: %w", err)
+	}
+	var providers []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			_ = rows.Close()
+			return fmt.Errorf("store: reading the capture providers: %w", err)
+		}
+		providers = append(providers, id)
+	}
+	_ = rows.Close()
+	if _, err := transaction.ExecContext(ctx, "DELETE FROM measure_interval WHERE measure = $1", MeasureName); err != nil {
+		return fmt.Errorf("store: rewriting the measure's intervals: %w", err)
+	}
+	for _, provider := range providers {
+		if err := recordMeasureIntervals(ctx, transaction, provider); err != nil {
+			return err
+		}
+	}
+	return transaction.Commit()
 }

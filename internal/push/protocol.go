@@ -190,6 +190,23 @@ type SequenceBounder interface {
 	SetSequenceCounters(counters int)
 }
 
+// ScriptDecoded is a protocol whose messages carry no structure of their own -- a datagram, a line -- so the
+// core decodes nothing in them: a push entry of it names a decode function of its script, called with ONE
+// message, which returns what the message held (PA7 of the plugin-API amendment to
+// specs/SPEC-backend-completion-plugins.md). Its records carry the message's octets under PayloadField.
+type ScriptDecoded interface {
+	ScriptDecoded() bool
+}
+
+// PayloadField is the field a record of a ScriptDecoded protocol carries its message's octets under.
+const PayloadField = "payload"
+
+// IsScriptDecoded reports whether a protocol's messages are decoded by a script.
+func IsScriptDecoded(protocol Protocol) bool {
+	decoded, is := protocol.(ScriptDecoded)
+	return is && decoded.ScriptDecoded()
+}
+
 // Framer splits a stream into messages.
 type Framer interface {
 	// Next returns the next message, io.EOF at the end of the stream, or ErrFrameTooLarge.

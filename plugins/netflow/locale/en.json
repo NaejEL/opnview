@@ -5,6 +5,7 @@
     "plugin.netflow.setting.join_tolerance_seconds": "Join tolerance, in seconds",
     "plugin.netflow.setting.retention_flow_record_seconds": "Flow record retention, in seconds (0 follows the retention)",
     "plugin.netflow.page.join": "Joining flow records to logged connections",
-    "plugin.netflow.page.join_help": "How far after a logged connection a flow record may start and still be counted for it, and how long the flow records are kept. A volume measured by NetFlow is a second measure beside the logged one, never summed with it, and traffic between two clients behind one interface is in neither."
+    "plugin.netflow.page.join_help": "How far after a logged connection a flow record may start and still be counted for it, and how long the flow records are kept. A volume measured by NetFlow is a second measure beside the logged one, never summed with it, and traffic between two clients behind one interface is in neither.",
+    "plugin.netflow.measure.netflow": "NetFlow"
   }
 }

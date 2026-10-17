@@ -162,10 +162,6 @@ func (discardKinds) ReceivePushed(context.Context, string, string, []provider.An
 	return nil
 }
 
-func (discardKinds) PushSequenceAsserted(context.Context, string, string, int64, int64) bool {
-	return true
-}
-
 func (discardKinds) ObservePushCondition(context.Context, string, string, provider.PushCondition) error {
 	return nil
 }

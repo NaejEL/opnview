@@ -151,7 +151,7 @@ func TestAnUnmatchedRecordIsCountedInNoFigure(t *testing.T) {
 			}
 		}
 	}
-	if counted := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(netflow_bytes), 0) FROM volume_aggregate_1h"); counted != 0 {
+	if counted := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(measure_total_bytes(measure_parts, 'netflow')), 0) FROM volume_aggregate_1h"); counted != 0 {
 		t.Errorf("the volume family counts %d measured bytes of unmatched records", counted)
 	}
 

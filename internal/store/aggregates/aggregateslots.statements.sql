@@ -95,12 +95,11 @@ WHERE period_start_at IN (SELECT CAST(j.value ->> 0 AS BIGINT) FROM jsonb_array_
 INSERT INTO volume_aggregate_@period@ (period_start_at, period_end_at, src_interface_id,
     dst_interface_id, peer_address, traffic_scope, traffic_direction, exit_leg_device, bytes,
     allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections, blocked_connections,
-    unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_parts, computed_at)
+    unknown_connections, measure_parts, computed_at)
 SELECT s.slot_start, s.slot_end, v.src_interface_id, v.dst_interface_id, v.peer_address,
        v.traffic_scope, v.traffic_direction, v.exit_leg_device, sum(v.bytes), sum(v.allowed_bytes),
        sum(v.blocked_bytes), sum(v.unknown_bytes), sum(v.allowed_connections),
-       sum(v.blocked_connections), sum(v.unknown_connections), sum(v.netflow_bytes), sum(v.netflow_allowed_bytes), sum(v.netflow_blocked_bytes), sum(v.netflow_unknown_bytes), netflow_sum(v.netflow_parts), :now
+       sum(v.blocked_connections), sum(v.unknown_connections), measure_parts_sum(v.measure_parts), :now
 FROM (SELECT CAST(j.value ->> 0 AS BIGINT) AS slot_start, CAST(j.value ->> 1 AS BIGINT) AS slot_end
       FROM jsonb_array_elements(CAST(:slots AS jsonb)) AS j(value)) AS s
 JOIN volume_aggregate_@child@ AS v ON v.period_start_at >= s.slot_start AND v.period_start_at < s.slot_end
@@ -112,11 +111,10 @@ GROUP BY s.slot_start, s.slot_end, v.src_interface_id, v.dst_interface_id, v.pee
 -- statement: compose_rule_slots
 INSERT INTO rule_volume_aggregate_@period@ (period_start_at, period_end_at, rule_id,
     src_interface_id, dst_interface_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
-    allowed_connections, blocked_connections, unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_parts, computed_at)
+    allowed_connections, blocked_connections, unknown_connections, measure_parts, computed_at)
 SELECT s.slot_start, s.slot_end, r.rule_id, r.src_interface_id, r.dst_interface_id,
        sum(r.bytes), sum(r.allowed_bytes), sum(r.blocked_bytes), sum(r.unknown_bytes),
-       sum(r.allowed_connections), sum(r.blocked_connections), sum(r.unknown_connections), sum(r.netflow_bytes), sum(r.netflow_allowed_bytes), sum(r.netflow_blocked_bytes), sum(r.netflow_unknown_bytes), netflow_sum(r.netflow_parts),
+       sum(r.allowed_connections), sum(r.blocked_connections), sum(r.unknown_connections), measure_parts_sum(r.measure_parts),
        :now
 FROM (SELECT CAST(j.value ->> 0 AS BIGINT) AS slot_start, CAST(j.value ->> 1 AS BIGINT) AS slot_end
       FROM jsonb_array_elements(CAST(:slots AS jsonb)) AS j(value)) AS s
@@ -128,11 +126,10 @@ GROUP BY s.slot_start, s.slot_end, r.rule_id, r.src_interface_id, r.dst_interfac
 -- statement: compose_domain_slots
 INSERT INTO domain_volume_aggregate_@period@ (period_start_at, period_end_at, site_name,
     client_id, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
-    blocked_connections, unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_parts, computed_at)
+    blocked_connections, unknown_connections, measure_parts, computed_at)
 SELECT s.slot_start, s.slot_end, d.site_name, d.client_id, sum(d.bytes),
        sum(d.allowed_bytes), sum(d.blocked_bytes), sum(d.unknown_bytes),
-       sum(d.allowed_connections), sum(d.blocked_connections), sum(d.unknown_connections), sum(d.netflow_bytes), sum(d.netflow_allowed_bytes), sum(d.netflow_blocked_bytes), sum(d.netflow_unknown_bytes), netflow_sum(d.netflow_parts),
+       sum(d.allowed_connections), sum(d.blocked_connections), sum(d.unknown_connections), measure_parts_sum(d.measure_parts),
        :now
 FROM (SELECT CAST(j.value ->> 0 AS BIGINT) AS slot_start, CAST(j.value ->> 1 AS BIGINT) AS slot_end
       FROM jsonb_array_elements(CAST(:slots AS jsonb)) AS j(value)) AS s
@@ -144,11 +141,10 @@ GROUP BY s.slot_start, s.slot_end, d.site_name, d.client_id;
 -- statement: compose_peer_slots
 INSERT INTO peer_volume_aggregate_@period@ (period_start_at, period_end_at, client_id,
     traffic_direction, peer_address, bytes, allowed_bytes, blocked_bytes, unknown_bytes,
-    allowed_connections, blocked_connections, unknown_connections, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_parts, computed_at)
+    allowed_connections, blocked_connections, unknown_connections, measure_parts, computed_at)
 SELECT s.slot_start, s.slot_end, p.client_id, p.traffic_direction, p.peer_address,
        sum(p.bytes), sum(p.allowed_bytes), sum(p.blocked_bytes), sum(p.unknown_bytes),
-       sum(p.allowed_connections), sum(p.blocked_connections), sum(p.unknown_connections), sum(p.netflow_bytes), sum(p.netflow_allowed_bytes), sum(p.netflow_blocked_bytes), sum(p.netflow_unknown_bytes), netflow_sum(p.netflow_parts),
+       sum(p.allowed_connections), sum(p.blocked_connections), sum(p.unknown_connections), measure_parts_sum(p.measure_parts),
        :now
 FROM (SELECT CAST(j.value ->> 0 AS BIGINT) AS slot_start, CAST(j.value ->> 1 AS BIGINT) AS slot_end
       FROM jsonb_array_elements(CAST(:slots AS jsonb)) AS j(value)) AS s
@@ -160,12 +156,11 @@ GROUP BY s.slot_start, s.slot_end, p.client_id, p.traffic_direction, p.peer_addr
 -- statement: regroup_client_slots
 INSERT INTO client_volume_aggregate_@period@ (period_start_at, period_end_at, client_id,
     traffic_direction, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
-    blocked_connections, unknown_connections, distinct_peers, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_parts, computed_at)
+    blocked_connections, unknown_connections, distinct_peers, measure_parts, computed_at)
 SELECT s.slot_start, s.slot_end, p.client_id, p.traffic_direction, sum(p.bytes),
        sum(p.allowed_bytes), sum(p.blocked_bytes), sum(p.unknown_bytes),
        sum(p.allowed_connections), sum(p.blocked_connections), sum(p.unknown_connections),
-       count(DISTINCT p.peer_address), sum(p.netflow_bytes), sum(p.netflow_allowed_bytes), sum(p.netflow_blocked_bytes), sum(p.netflow_unknown_bytes), netflow_sum(p.netflow_parts), :now
+       count(DISTINCT p.peer_address), measure_parts_sum(p.measure_parts), :now
 FROM (SELECT CAST(j.value ->> 0 AS BIGINT) AS slot_start, CAST(j.value ->> 1 AS BIGINT) AS slot_end
       FROM jsonb_array_elements(CAST(:slots AS jsonb)) AS j(value)) AS s
 JOIN peer_volume_aggregate_@period@ AS p ON p.period_start_at = s.slot_start
@@ -175,14 +170,13 @@ GROUP BY s.slot_start, s.slot_end, p.client_id, p.traffic_direction;
 -- statement: regroup_owner_slots
 INSERT INTO owner_volume_aggregate_@period@ (period_start_at, period_end_at, owner_id,
     traffic_scope, bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
-    blocked_connections, unknown_connections, client_count, netflow_bytes, netflow_allowed_bytes, netflow_blocked_bytes,
-    netflow_unknown_bytes, netflow_parts, computed_at)
+    blocked_connections, unknown_connections, client_count, measure_parts, computed_at)
 SELECT s.slot_start, s.slot_end, k.owner_id,
        CASE WHEN c.traffic_direction = 'inter_interface' THEN 'east_west'
             ELSE 'north_south' END,
        sum(c.bytes), sum(c.allowed_bytes), sum(c.blocked_bytes), sum(c.unknown_bytes),
        sum(c.allowed_connections), sum(c.blocked_connections), sum(c.unknown_connections),
-       count(DISTINCT c.client_id), sum(c.netflow_bytes), sum(c.netflow_allowed_bytes), sum(c.netflow_blocked_bytes), sum(c.netflow_unknown_bytes), netflow_sum(c.netflow_parts), :now
+       count(DISTINCT c.client_id), measure_parts_sum(c.measure_parts), :now
 FROM (SELECT CAST(j.value ->> 0 AS BIGINT) AS slot_start, CAST(j.value ->> 1 AS BIGINT) AS slot_end
       FROM jsonb_array_elements(CAST(:slots AS jsonb)) AS j(value)) AS s
 JOIN client_volume_aggregate_@period@ AS c ON c.period_start_at = s.slot_start

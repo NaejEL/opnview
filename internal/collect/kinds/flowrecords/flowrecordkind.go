@@ -12,16 +12,6 @@ import (
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
-// SetCaptureReadObserver gives the collector what it tells after every read of a flow_record
-// provider's capture configuration: whether the read opened a new configuration, and how many sequence
-// counters the configuration in force lets the exporter run (NJ7 of the amendment "the NetFlow join with
-// every interface captured").
-func (c *FlowRecordCoordinator) SetCaptureReadObserver(observe func(key string, changed bool, counters int)) {
-	c.Netflow.Mutex.Lock()
-	defer c.Netflow.Mutex.Unlock()
-	c.Netflow.OnCaptureRead = observe
-}
-
 // receivePushed stores the flow records the push entry of a flow_record provider delivered,
 // each with what its two indexes name under the index map in force at reception (NJ3) and whether a loss
 // would have been detected over its start (NJ7). Records of a provider that is not the active one are
@@ -119,22 +109,6 @@ func (c *FlowRecordCoordinator) observeCondition() error {
 	return nil
 }
 
-// sequenceAsserted says whether a loss the exporter's sequence numbers show over [from, to]
-// is asserted: only when one readable configuration with the export enabled is in force over both ends,
-// and it bounds the exporter's sequence counters (NJ7).
-func (c *FlowRecordCoordinator) sequenceAsserted(ctx context.Context, key string, from, to int64) bool {
-	providerID, err := c.Store.ProviderID(ctx, derive.KindFlowRecord, key)
-	if err != nil {
-		return false
-	}
-	history, err := derive.On(c.Collector).History(ctx, providerID)
-	if err != nil {
-		return false
-	}
-	configuration := history.ConfigurationAt(from)
-	return configuration.LossDetectable() && history.ConfigurationAt(to) == configuration
-}
-
 // CollectFlowRecordCapture reads the active flow_record provider's capture configuration and records
 // it (PS18). A read that fails is recorded as an unreadable configuration with what the broker
 // answered: the interval is capture_configuration_unknown, never an empty configuration.
@@ -180,11 +154,10 @@ func (c *FlowRecordCoordinator) CollectFlowRecordCapture(ctx context.Context) er
 			counters = configuration.SequenceCounters()
 		}
 	}
-	c.Netflow.Mutex.Lock()
-	observe := c.Netflow.OnCaptureRead
-	c.Netflow.Mutex.Unlock()
-	if observe != nil {
-		observe(key, opened, counters)
+	// The configuration's bound on the exporter's sequence counters, recorded under the value the netflow
+	// plugin's push entry takes its sequence bound from (NJ7, PA7 of the plugin-API amendment).
+	if err := c.RecordSequenceBound(ctx, Kind, key, SequenceBoundValue, readAt, counters, opened); err != nil {
+		return err
 	}
 	if !opened {
 		// The same configuration again: the interval it is in force over grew, which only the cached
@@ -210,13 +183,16 @@ func availabilityOutcome(outcome vocab.AvailabilityOutcome) vocab.AvailabilityOu
 // Kind is the kind this coordinator collects.
 const Kind = "flow_record"
 
+// SequenceBoundValue is the value this coordinator records the capture configuration's bound on the
+// exporter's sequence counters under: the value the netflow plugin's push entry names as its
+// sequence_bound (plugins/netflow/plugin.json). Until the capture configuration moves into that plugin (Lot 3
+// of the plugin-API amendment), this Go reader records it.
+const SequenceBoundValue = "sequence_counters"
+
 func init() {
 	core.RegisterPushHandler(Kind, core.PushHandler{
 		Receive: func(ctx context.Context, c *core.Collector, key string, records []provider.Answer) error {
 			return On(c).receivePushed(ctx, key, records)
-		},
-		SequenceAsserted: func(ctx context.Context, c *core.Collector, key string, from, to int64) bool {
-			return On(c).sequenceAsserted(ctx, key, from, to)
 		},
 		Observe: func(_ context.Context, c *core.Collector, _ string, _ provider.PushCondition) error {
 			return On(c).observeCondition()

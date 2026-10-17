@@ -7,11 +7,14 @@
 // or whether, it was inferred.
 var WITHHELD = ["records[].site_name", "records[].method", "records[].correlation_delay_seconds"];
 
-// direction is one direction of a connection as NetFlow measured it: its bytes, packets and state
-// (connection_measured_volume, NJ5 of the amendment "the NetFlow join with every interface captured"),
-// and whether the figure was counted from translated copies.
-function direction(bytes, packets, state, countedCopy) {
-  return { bytes: bytes, packets: packets, state: state, counted_copy: countedCopy === 1 || countedCopy === true };
+// direction is one direction of a connection as a declared measure counted it: its bytes, packets and
+// state (the core's per-connection measure output), then each marker the measure declares, true or false.
+function direction(bytes, packets, state, markers) {
+  var counted = { bytes: bytes, packets: packets, state: state };
+  Object.keys(markers || {}).forEach(function (marker) {
+    counted[marker] = markers[marker] === true;
+  });
+  return counted;
 }
 
 // peerRates lists a map of rates by peer address as [{peer, rate}], by address in byte order.
@@ -103,15 +106,15 @@ exports.widget = {
         record.method = null;
         record.correlation_delay_seconds = null;
       }
-      if (row.measure === host.figures.measures.netflow) {
-        // Under the netflow measure, each direction of the record's connection as NetFlow measured it, each
-        // counted once; null when it started under no readable, enabled capture configuration.
+      if (host.figures.declared.indexOf(row.measure) >= 0) {
+        // Under a declared measure, each direction of the record's connection as the measure counted it, each
+        // counted once; null when the measure knew nothing of the connection at its start.
         record.directions = row.forward_state === null && row.reverse_state === null ? null : {
-          forward: direction(row.forward_bytes, row.forward_packets, row.forward_state, row.forward_counted_copy),
-          reverse: direction(row.reverse_bytes, row.reverse_packets, row.reverse_state, row.reverse_counted_copy)
+          forward: direction(row.forward_bytes, row.forward_packets, row.forward_state, row.forward_markers),
+          reverse: direction(row.reverse_bytes, row.reverse_packets, row.reverse_state, row.reverse_markers)
         };
-        // And its coverage object: the counts per state of NJ5, so a direction NetFlow could not measure, or a
-        // connection whose capture was not known, is named and never silently zero.
+        // And its coverage object: the counts per declared state, so a direction the measure could not count,
+        // or a connection it knew nothing of, is named and never silently zero.
         record.coverage = host.figures.volume(row).coverage;
       }
       data.records.push(record);

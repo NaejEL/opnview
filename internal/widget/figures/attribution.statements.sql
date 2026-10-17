@@ -30,10 +30,10 @@ GROUP BY f.src_client_id;
 
 
 
--- The same read of the `netflow` measure (measure.go): the client's eligible bytes are the bytes the
--- NetFlow export reported for its eligible connections, then the columns of netflow_parts
+-- The same read in a declared measure, CAST(:measure AS TEXT), (measure.go): the client's eligible bytes are the measure's bytes for
+-- its eligible connections, then the measure's parts, measure_parts
 -- (internal/store/schema.sql). First legs only, so a connection counts once.
--- statement: widget_attribution_rate_by_client_netflow
+-- statement: widget_attribution_rate_by_client_measured
 SELECT f.src_client_id,
        count(*),
        count(a.flow_id),
@@ -41,11 +41,11 @@ SELECT f.src_client_id,
        max(a.correlation_delay_seconds),
        coalesce(sum(CASE WHEN a.method = 'resolver_cache_answer' THEN 1 ELSE 0 END), 0),
        coalesce(sum(CASE WHEN a.method = 'lookup_timing' THEN 1 ELSE 0 END), 0),
-       sum(n.bytes),
-       (netflow_sum(n.parts)).*
+       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))),
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM flow AS f
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.dst_interface_id IS NULL

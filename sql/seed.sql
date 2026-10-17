@@ -2768,6 +2768,44 @@ JOIN interface AS ingress ON ingress.id = r.interface_id
 JOIN interface AS upstream ON upstream.id = :interfaces + 1
 JOIN synth_address AS exporter ON exporter.slot = 900000 + :interfaces + 1;
 
+-- The `netflow` measure, as the netflow plugin's manifest declares it and the
+-- loader registers it (PA5 of the plugin-API amendment; plugins/netflow/plugin.json):
+-- its twelve direction states in their declared order, the four covered, and its
+-- one marker. A part is 6 + 12 + 1 = 19 figures wide.
+INSERT INTO declared_measure (name, provider_kind, complete_state, refused_state, zero_part, not_known_part,
+                              registered_at)
+VALUES ('netflow', 'flow_record', 'measured', 'not_exported_when_refused',
+        array_fill(CAST(0 AS BIGINT), ARRAY[19]),
+        array_fill(CAST(0 AS BIGINT), ARRAY[5]) || ARRAY[CAST(1 AS BIGINT)] || array_fill(CAST(0 AS BIGINT), ARRAY[13]),
+        :now)
+ON CONFLICT (name) DO NOTHING;
+INSERT INTO declared_measure_state (measure, state, position, covered)
+SELECT 'netflow', s.state, s.position - 1, s.position <= 4
+FROM unnest(ARRAY['measured', 'in_progress', 'awaiting_export', 'missing', 'export_gap',
+                  'not_exported_when_refused', 'forwarding_export_unsettled', 'ingress_not_captured',
+                  'parent_copies_only', 'interface_not_exported', 'interface_not_captured',
+                  'capture_configuration_unknown']) WITH ORDINALITY AS s (state, position)
+ON CONFLICT (measure, state) DO NOTHING;
+INSERT INTO declared_measure_marker (measure, marker, position)
+VALUES ('netflow', 'counted_copy', 0)
+ON CONFLICT (measure, marker) DO NOTHING;
+
+-- The window intervals the Go join records from the capture configurations above
+-- (internal/store/netflow, capture.go): each configuration in force from its
+-- first read until the next one's, or the instant after its last read, the newest
+-- for as long as no later read says otherwise.
+INSERT INTO measure_interval (measure, provider_id, starts_at, ends_at, state)
+SELECT 'netflow', c.provider_id, c.first_read_at,
+       CASE WHEN lead(c.first_read_at) OVER w IS NULL THEN NULL ELSE c.last_read_at + 1 END,
+       CASE WHEN c.fingerprint IS NULL THEN 'capture_configuration_unknown'
+            WHEN coalesce(c.enabled, false)
+                 AND EXISTS (SELECT 1 FROM capture_interface AS i
+                             WHERE i.capture_configuration_id = c.id AND (i.ingress OR i.egress))
+            THEN 'capture_configured'
+            ELSE 'netflow_not_configured' END
+FROM capture_configuration AS c
+WINDOW w AS (PARTITION BY c.provider_id ORDER BY c.first_read_at);
+
 -- The measured volume of every connection a record was joined to, both
 -- directions, its state cycling through every state of NJ5, each with the
 -- figures that state carries: records and bytes for a measured or an in-progress
@@ -2787,13 +2825,13 @@ directed AS (
     FROM connection AS c
     CROSS JOIN (VALUES ('forward', 0), ('reverse', 5)) AS d (direction, shift)
 )
-INSERT INTO connection_measured_volume (connection_flow_id, direction, connection_start_at, state, bytes,
-                                        packets, records, counted_copy, final, due_at, computed_at)
-SELECT d.flow_id, d.direction, d.start_at, d.state,
+INSERT INTO connection_measure (measure, connection_flow_id, direction, connection_start_at, state, bytes,
+                                packets, records, markers, final, due_at, computed_at)
+SELECT 'netflow', d.flow_id, d.direction, d.start_at, d.state,
        CASE WHEN d.state IN ('measured', 'in_progress') THEN 1500 + d.n % 900 ELSE 0 END,
        CASE WHEN d.state IN ('measured', 'in_progress') THEN 3 ELSE 0 END,
        CASE WHEN d.state IN ('measured', 'in_progress') THEN 1 ELSE 0 END,
-       d.state IN ('measured', 'in_progress') AND d.n % 5 = 0,
+       CASE WHEN d.state IN ('measured', 'in_progress') AND d.n % 5 = 0 THEN 1 ELSE 0 END,
        d.state NOT IN ('in_progress', 'awaiting_export'),
        CASE WHEN d.state IN ('in_progress', 'awaiting_export') THEN d.start_at + 3600 END,
        d.start_at + 120
@@ -2850,23 +2888,30 @@ WHERE p.kind = 'firewall_log' AND p.is_active;
 INSERT INTO push_listener (protocol, transport, alive_at)
 VALUES ('syslog', 'udp', :now - 30), ('netflow', 'udp', :now - 30);
 
--- The `netflow` figures of every family, every period, and of the purged part:
--- each slot's measured bytes per action -- the exporter counting three times what
--- the filter log's first packet showed -- and its netflow_parts, one measured
--- connection for each logged one, its packets three a connection. Fixture values
--- standing where the refresh would have written connection_netflow's sums, so
--- every `_netflow` twin and every netflow answer reads rows; the two measures are
--- still never summed. One slot in eight of each family carries them, in
--- proportion as the exporter's records do: an UPDATE writes a new version of
--- every row it touches, and rewriting every slot would double the families'
--- size at the 1 000 000-row seed for no row a check reads that one in eight
--- does not give.
-DO $seed_netflow_families$
+-- The `netflow` measure's parts in every family, every period, and in the purged
+-- part: each slot's measured bytes per action -- the exporter counting three
+-- times what the filter log's first packet showed -- and, per action, one
+-- complete connection for each logged one, its packets three a connection and
+-- both its directions measured. Fixture values standing where the refresh would
+-- have written flow_measures' sums, so every measured twin and every netflow
+-- answer reads rows; the two measures are still never summed. One slot in eight
+-- of each family carries them, in proportion as the exporter's records do: an
+-- UPDATE writes a new version of every row it touches, and rewriting every slot
+-- would double the families' size at the 1 000 000-row seed for no row a check
+-- reads that one in eight does not give. A part is 19 figures wide (above):
+-- bytes, packets, the four classes, the twelve states, the one marker.
+DO $seed_measure_families$
 DECLARE
     family TEXT;
     period TEXT;
     target TEXT;
-    parts TEXT := 'CAST(ROW(allowed_connections * 3, allowed_connections, 0, 0, 0, 2 * allowed_connections, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, blocked_connections * 3, blocked_connections, 0, 0, 0, 2 * blocked_connections, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, unknown_connections * 3, unknown_connections, 0, 0, 0, 2 * unknown_connections, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) AS netflow_parts)';
+    parts TEXT := 'jsonb_build_object(''netflow'', to_jsonb('
+        'ARRAY[3 * allowed_bytes, 3 * allowed_connections, allowed_connections, 0, 0, 0, 2 * allowed_connections] '
+        '|| array_fill(CAST(0 AS BIGINT), ARRAY[12]) '
+        '|| ARRAY[3 * blocked_bytes, 3 * blocked_connections, blocked_connections, 0, 0, 0, 2 * blocked_connections] '
+        '|| array_fill(CAST(0 AS BIGINT), ARRAY[12]) '
+        '|| ARRAY[3 * unknown_bytes, 3 * unknown_connections, unknown_connections, 0, 0, 0, 2 * unknown_connections] '
+        '|| array_fill(CAST(0 AS BIGINT), ARRAY[12])))';
 BEGIN
     FOREACH family IN ARRAY ARRAY['volume', 'rule', 'domain', 'peer', 'client', 'owner'] LOOP
         FOREACH period IN ARRAY ARRAY['1h', '24h', '7d', '30d'] LOOP
@@ -2874,17 +2919,15 @@ BEGIN
             IF family = 'volume' THEN
                 target := 'volume_aggregate_' || period;
             END IF;
-            EXECUTE format('UPDATE %I SET netflow_allowed_bytes = 3 * allowed_bytes, '
-                           'netflow_blocked_bytes = 3 * blocked_bytes, netflow_unknown_bytes = 3 * unknown_bytes, '
-                           'netflow_bytes = 3 * (allowed_bytes + blocked_bytes + unknown_bytes), '
-                           'netflow_parts = %s WHERE id %% 8 = 0', target, parts);
+            EXECUTE format('UPDATE %I SET measure_parts = %s WHERE id %% 8 = 0', target, parts);
         END LOOP;
     END LOOP;
     UPDATE purged_flow_hour
-    SET netflow_bytes = 3 * bytes,
-        netflow_parts = CAST(ROW(connections * 3, connections, 0, 0, 0, 2 * connections, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0) AS netflow_parts);
+    SET measure_parts = jsonb_build_object('netflow', to_jsonb(
+        ARRAY[3 * bytes, 3 * connections, connections, 0, 0, 0, 2 * connections]
+        || array_fill(CAST(0 AS BIGINT), ARRAY[12 + 19 + 19])));
 END
-$seed_netflow_families$;
+$seed_measure_families$;
 
 -- ---------------------------------------------------------------------------
 -- The mirror's bookkeeping (A9 and A10 of the broker amendment): what the broker

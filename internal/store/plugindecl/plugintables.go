@@ -116,6 +116,10 @@ type PluginTable struct {
 	// RetentionSeconds is how long a row is kept after its instant. Zero follows the
 	// installation's retention_seconds setting, under which zero means unlimited.
 	RetentionSeconds int64
+	// Counters makes it a table of counters (PA4 of the plugin-API amendment): every column outside its
+	// primary key is a number, and a row written with a key already held adds its figures to the held
+	// row's. Only a derivation writes one.
+	Counters bool
 }
 
 // Growing reports whether the table grows with time, as the schema checks classify every table:
@@ -271,6 +275,18 @@ func ValidatePluginTable(table PluginTable) error {
 	}
 	if table.RetentionSeconds < 0 {
 		return fmt.Errorf("store: the retention of %s is negative", table.SQLName())
+	}
+	if table.Counters {
+		if len(table.PrimaryKey) == 0 {
+			return fmt.Errorf("store: the counter table %s declares no primary key: a counter is added to the row of its key",
+				table.SQLName())
+		}
+		for _, column := range table.Columns {
+			if !Contains(table.PrimaryKey, column.Name) && ((column.Type != "integer" && column.Type != "real") || column.Nullable) {
+				return fmt.Errorf("store: the column %q of the counter table %s is outside its primary key and is not a "+
+					"NOT NULL number: every such column is a counter", column.Name, table.SQLName())
+			}
+		}
 	}
 	return nil
 }
@@ -515,4 +531,59 @@ func Contains(list []string, value string) bool {
 		}
 	}
 	return false
+}
+
+// DerivationInsert is the INSERT a derivation's rows are written with (PA4 of the plugin-API amendment): one
+// multi-row statement, on the primary key every derivation output declares. A row of an ordinary table
+// replaces the held row only when one of its values differs, and a row of a counter table adds its
+// figures to the held row's, so a statement writing what is already held changes no row and the rows it
+// reports affected are exactly the rows it changed.
+func (t PluginTable) DerivationInsert(rows []map[string]any) (string, []any, error) {
+	if len(t.PrimaryKey) == 0 {
+		return "", nil, fmt.Errorf("store: %s declares no primary key, which a derivation's output needs", t.SQLName())
+	}
+	names := make([]string, 0, len(t.Columns))
+	for _, column := range t.Columns {
+		names = append(names, QuoteIdentifier(column.Name))
+	}
+	tuples := make([]string, 0, len(rows))
+	arguments := make([]any, 0, len(rows)*len(t.Columns))
+	for _, row := range rows {
+		marks := make([]string, 0, len(t.Columns))
+		for _, column := range t.Columns {
+			argument, err := PluginArgument(column, row[column.Name])
+			if err != nil {
+				return "", nil, fmt.Errorf("store: a row of %s: %w", t.SQLName(), err)
+			}
+			arguments = append(arguments, argument)
+			marks = append(marks, column.placeholder(len(arguments)))
+		}
+		tuples = append(tuples, "("+strings.Join(marks, ", ")+")")
+	}
+	var updates, held, offered []string
+	for _, column := range t.Columns {
+		if Contains(t.PrimaryKey, column.Name) {
+			continue
+		}
+		name := QuoteIdentifier(column.Name)
+		if t.Counters {
+			updates = append(updates, name+" = t."+name+" + excluded."+name)
+			offered = append(offered, "excluded."+name+" <> 0")
+			continue
+		}
+		updates = append(updates, name+" = excluded."+name)
+		held, offered = append(held, "t."+name), append(offered, "excluded."+name)
+	}
+	statement := "INSERT INTO " + t.Quoted() + " AS t (" + strings.Join(names, ", ") + ") VALUES " +
+		strings.Join(tuples, ", ") + " ON CONFLICT (" + quotedList(t.PrimaryKey) + ")"
+	switch {
+	case len(updates) == 0:
+		statement += " DO NOTHING"
+	case t.Counters:
+		statement += " DO UPDATE SET " + strings.Join(updates, ", ") + " WHERE " + strings.Join(offered, " OR ")
+	default:
+		statement += " DO UPDATE SET " + strings.Join(updates, ", ") + " WHERE (" + strings.Join(held, ", ") +
+			") IS DISTINCT FROM (" + strings.Join(offered, ", ") + ")"
+	}
+	return statement, arguments, nil
 }

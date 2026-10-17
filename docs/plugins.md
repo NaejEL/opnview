@@ -72,8 +72,9 @@ double underscore. A plugin directory holds no Go file; a test of the repository
 | `destinations` | no | The hosts beyond the firewall the plugin contacts, each a scheme and a host. |
 | `tables` | no | Tables the plugin owns. |
 | `widgets` | no | The widgets the plugin carries, each a directory `widgets/<type>/` (see *Widgets*). |
-| `push` | no | The push sources the plugin receives: syslog lines and NetFlow records the firewall sends (see *Push sources*). |
+| `push` | no | The push sources the plugin receives: syslog lines and NetFlow records the firewall sends, and datagrams and lines its script decodes (see *Push sources*). |
 | `datasets` | no | The data-catalogue names its scripts read through `host.datasets` -- core datasets and other plugins' `<plugin>.<table>` (*Datasets a plugin reads*). Its own tables need no entry. |
+| `derivations` | no | Functions of the script the core runs after collection passes, push batches and on a cadence, writing tables, counters and measures (*Derivations*). |
 
 ### Endpoints
 
@@ -228,6 +229,7 @@ table of the same name; a query names it `plugin_<plugin>.<table>`.
 | `primary_key`, `indexes` | The keys. A row written again with the same primary key replaces the first. |
 | `retention` | The column holding each row's instant -- an `instant`, or an `integer` of UTC epoch seconds -- and how long a row is kept after it; `seconds` 0 follows the installation's retention. A push output table's is an `instant`. |
 | `nature` | `event` or `sample`: what a bucket of the data catalogue with no row means -- a true zero, or a gap. `sample` by default, which never draws a zero it did not read. |
+| `counters` | `true` makes it a table of counters, which only a derivation writes (*Derivations*): it has a primary key, every other column is a NOT NULL number, and a row written with a key already held adds its figures to the held row's, in one batched write, instead of replacing it. A counter outlives the purge of whatever it counts. |
 
 A table with a retention column is a TimescaleDB hypertable chunked by day on it, purged by whole
 chunks and then to the exact second. A hypertable cannot hold a unique key that leaves out its time
@@ -462,6 +464,66 @@ var values = host.datasets.rows("provider_value", {
 var established = values.rows.length > 0 ? values.rows[0].integer_value : null; // null: no timeout stated
 ```
 
+## Derivations
+
+A derivation computes from what the core and the plugin stored, and writes outputs of its own: a
+measure's per-connection figures, a summary table, counters. It is a function the script exports under
+`derivations`, declared in the manifest:
+
+```json
+"derivations": [{
+  "name": "summarise",
+  "after_passes": ["firewall_log", "dhcp_lease/kea"],
+  "after_push": ["pings"],
+  "cadence_seconds": 600,
+  "datasets": ["leg"],
+  "outputs": {"tables": ["summary", "tallies"], "measures": ["example_rate"]}
+}]
+```
+
+| Key | What it is |
+|---|---|
+| `name` | Its name, a snake_case word; the function's under `derivations`, unless `function` names another. |
+| `after_passes` | Collection passes that run it: a core kind, or a kind and one of its providers (`kind/provider`). |
+| `after_push` | The plugin's own push entries whose stored batches run it. |
+| `cadence_seconds` | Runs it on a cadence too; 0 runs it on its other triggers alone. At least one trigger is named. |
+| `datasets` | The datasets it reads, each also under the manifest's `datasets` (*Datasets a plugin reads*). |
+| `outputs` | What it may write: tables of the plugin's own, each with a primary key (counter tables among them, *Tables*), and measures the plugin declares (*Measures*). |
+
+```js
+exports.derivations = {
+  summarise: function (host, run) {
+    // run: {derivation, now, since, changes: [{trigger, at, kind, provider, entry, rows, from, to}]}
+    return {
+      rows: { summary: [/* rows */], tallies: [/* counters to add */] },
+      measures: { example_rate: [{ connection: 1, connection_start_at: 0, direction: "forward",
+        state: "measured", bytes: 0, packets: 0, records: 0, markers: [], due_at: null }] },
+      intervals: { example_rate: [{ starts_at: 0, ends_at: null, state: "covered" }] }
+    };
+  }
+};
+```
+
+**A run is handed what changed, never "everything".** `changes` are the passes (`kind`, `provider`), the
+stored batches (`entry`, `rows`, the reception span `from`..`to`) and, with nothing else noted, the cadence
+tick, since its last successful run (`since`, null before the first); `now` is the host's clock. They are
+handed in an order of what they are, never of when they arrived, so the same changes make the same run.
+**Runs of one derivation never overlap**: each has one loop, and changes arriving together make one run.
+
+**A run is one transaction.** What it returns is checked against its declaration -- a table or measure it
+did not declare, a column or field that is not one, a state or marker its measure does not declare, refuse
+the whole run -- and written together, or not at all. A row replaces the held row of its key only when a
+value differs, a measure row only when a figure, its state or its markers differ, and a measure's
+`intervals` (its window states for the plugin's provider of the measure's kind) are rewritten only when
+they differ: **a run over the same inputs writes nothing.** A counter adds, which is why a run is handed
+only new changes. A measure row's `connection` is the logged connection's first leg (*Measures*); the
+aggregate slots of every connection whose row changed are refreshed after the run.
+
+**A run that fails writes nothing**, keeps its changes for the next run, and is recorded in the
+availability of the plugin's provider -- its first of a kind of its own, else its first -- with the closed
+outcome `script_failed`, `script_timeout` or `records_invalid`. A plugin declaring derivations declares a
+provider. `internal/collect/testdata/example_derived` is a complete example.
+
 ## Settings
 
 A plugin may declare settings the operator sets:
@@ -583,6 +645,7 @@ a recorded answer in `testdata/`, `{"__provenance__": {...}, "body": ...}`; `fil
 | `manifest_unreadable` | `plugin.json` cannot be read, or the entry is a file. |
 | `manifest_invalid` | The manifest is not valid: malformed JSON, an unknown key, a missing or ill-formed value, a locale file that is not a catalogue. |
 | `unsupported_api_version` | It targets a plugin API version this build does not read. |
+| `measure_invalid` | A measure declaration is ill-formed, needs a kind none of its providers implements, labels itself outside its catalogue, or takes another plugin's measure's name. |
 | `name_mismatch` | Its name is not its directory's. |
 | `name_collision` | A built-in, or another plugin, has its name. |
 | `unknown_kind` | A provider names a kind that is neither a core kind nor one of its own. |
@@ -621,6 +684,8 @@ a recorded answer in `testdata/`, `{"__provenance__": {...}, "body": ...}`; `fil
 | `push_column_unfilled` | A NOT NULL column of a push entry's table, or a required field of the kind record its field mapping fills, is filled by nothing. |
 | `push_parse_missing` | A push entry names a parse function the script does not export under `push`. |
 | `dataset_not_declared` | A script reads, through `host.datasets`, a dataset the manifest does not name under `datasets`. Refused at load when the script names it by a literal; a name computed at run time is refused at the call, a `TypeError` carrying the code. |
+| `derivation_invalid` | A derivation names a function the script does not export, no trigger, a pass of no core kind, a push entry the plugin lacks, a dataset its manifest does not declare, an output that is not one of its tables (with a primary key) or measures, a name twice; or the plugin declares derivations and no provider. |
+| `push_decode_missing` | A `datagram` or `line` entry names no decode function, or one the script does not export under `push`; or an entry of another protocol names one. |
 
 ## OPNsense versions
 
@@ -791,9 +856,9 @@ ORDER BY target, latency_ms;
   the script names when it runs it: `1h`, `24h`, `7d` or `30d`.
 - **Every column has a name of its own.** The script reads a row as an object of its columns, so a
   result naming one column twice is refused at run time; give each one with `AS`.
-- **`<name>_netflow` is `<name>`'s twin in the netflow measure** (*Volume figures and their
-  measure*): it binds exactly `<name>`'s parameters and is a period template exactly when `<name>` is,
-  or the widget is refused when it loads (`netflow_twin_mismatch`).
+- **`<name>_measured` is `<name>`'s twin in every declared measure** (*Volume figures and their
+  measure*): it binds exactly `<name>`'s parameters and `:measure`, and is a period template exactly
+  when `<name>` is, or the widget is refused when it loads (`measured_twin_mismatch`).
 
 Every statement is checked when the widget loads, at every period of a template: it is one `SELECT`
 that PostgreSQL plans, and it reads none of `account`, `session`, `encrypted_credential`, `setting`
@@ -887,7 +952,7 @@ The references the core resolved. One that matched nothing has already made the 
 
 | Function | What it answers |
 |---|---|
-| `rows(name, parameters, period)` | Every row of a statement the widget declares, each an object of its columns. `period` names the period of a template and is left out otherwise. Under the netflow measure, a statement whose twin `<name>_netflow` the widget declares is run as its twin (*Volume figures and their measure*). |
+| `rows(name, parameters, period)` | Every row of a statement the widget declares, each an object of its columns. `period` names the period of a template and is left out otherwise. Under a declared measure, a statement whose twin `<name>_measured` the widget declares is run as its twin, with the measure's name bound to `:measure` (*Volume figures and their measure*). |
 | `row(name, parameters, period)` | Its first row, or `null`. |
 | `carriesDomain(name)` | Whether the statement reads a column carrying a domain name. |
 
@@ -933,22 +998,22 @@ says so beside its measure.
 | `loggedCount(value)` | `{measure: "logged", lower_bound: true, value}`: a count of logged records, which an answer in the netflow measure cannot carry. |
 | `withMeasure(figures, from)` | Figures carrying the measure of `from` -- a row or figures read in it: its measure and its netflow parts. |
 | `zero()`, `add(a, b)` | Summable figures holding nothing, in the measure the request is answered under, and the sum of two. |
-| `value(measure, figures)` | The figure a `measure` names: `bytes`, `connections`, `allowed`, `blocked`, or `packets` of netflow figures. |
+| `value(measure, figures)` | The figure a `measure` names: `bytes`, `connections`, `allowed`, `blocked`, or `packets` of a declared measure's figures. |
 | `remainder(members, volume, count)` | What a truncating parameter dropped: `{members, volume, count}`, a `null` volume or count left out. `count` is a Count built by this area, or a number, read as `loggedCount` reads one. |
 | `compare(a, b)` | `-1`, `0` or `1`: two strings in byte order, the order every key of the core is ranked in. JavaScript's `<` compares UTF-16 code units and differs outside ASCII. |
 | `nameFreeCompare(a, b)` | The tie-break between rows whose name is withheld: by a hash of the name, which says nothing about it. |
 | `interfaceKey(id)`, `clientKey(id)` | A member key, `interface:<id>` or `client:<id>`. |
-| `measures` | The measures, by name: `logged`, `netflow`, `sampled`, `interface_counter`. |
-| `measure` | The measure the request is answered under: `logged` or `netflow`. |
+| `measures` | The measures, by name: `logged`, `sampled`, `interface_counter` and every declared measure. |
+| `declared` | The declared measures' names, in name order (*Measures*). |
+| `measure` | The measure the request is answered under: `logged` or a declared measure. |
 
 Summable figures are `{bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
-blocked_connections, unknown_connections}`; a member left out is `0`. Figures of the netflow measure
-also carry `measure: "netflow"` and the fifty-four columns of `netflow_parts` (`docs/data-model.md`,
-*NetFlow volumes*): for each part `allowed`, `blocked` and `unknown`, `<part>_packets`,
-`<part>_measured_connections`, `<part>_partial_connections`, `<part>_unmeasured_connections`,
-`<part>_capture_not_known_connections`, `<part>_direction_<state>_connections` for each of the twelve
-direction states, and `<part>_counted_copy_connections`. A script never needs to name them: `host.figures.add` and `host.figures.zero` keep them, and a
-Volume handed back is read as its figures, its parts included.
+blocked_connections, unknown_connections}`; a member left out is `0`. Figures of a declared measure
+also carry `measure`, its name, and `measure_parts`, its parts as one array (*Measures*): for each part
+`allowed`, `blocked` and `unknown`, its bytes, its packets, its four coverage classes, one count per
+declared direction state and one per declared marker. A script never needs to read them:
+`host.figures.add` and `host.figures.zero` keep them, and a Volume handed back is read as its figures,
+its parts included.
 
 #### `host.volume`
 
@@ -1198,8 +1263,8 @@ chart whose series each degrade on their own.
 
 | Function | What it answers |
 |---|---|
-| `traffic(filter, width)` | The traffic of the window per bucket start and traffic direction, in the measure the request is answered under: `{buckets, covered}`, `buckets` mapping a bucket start to `{direction: summable figures}` and `covered` the interval read, `null` for none. `filter` is `{interfaces, client_id, rule_id, asn, country, site, netflow}`, each `null` or left out for no restriction; `netflow: true` reads the netflow measure whatever the request is answered under, for a series whose measure is `netflow_bytes` or `netflow_packets`. Whole-hour buckets the flows no longer hold are read from the 1 h slots when only interfaces restrict the series, and the answer then carries the state `series_read_from_hour_slots_beyond_flow_horizon`. |
-| `netflowState()` | `null` when NetFlow can answer the window -- a readable capture configuration with the export enabled throughout it -- and otherwise the named state, which the answer then carries: a series of the netflow measure then carries no figure. |
+| `traffic(filter, width)` | The traffic of the window per bucket start and traffic direction, in the measure the request is answered under: `{buckets, covered}`, `buckets` mapping a bucket start to `{direction: summable figures}` and `covered` the interval read, `null` for none. `filter` is `{interfaces, client_id, rule_id, asn, country, site, measure}`, each `null` or left out for no restriction; `measure`, a declared measure's name, reads that measure whatever the request is answered under, for a series whose measure is `<measure>_bytes` or `<measure>_packets`. Whole-hour buckets the flows no longer hold are read from the 1 h slots when only interfaces restrict the series, and the answer then carries the state `series_read_from_hour_slots_beyond_flow_horizon`. |
+| `measureState(measure)` | `null` when a declared measure can answer the window -- its window states recorded as covered throughout it -- and otherwise the measure's named state, which the answer then carries: a series of the measure then carries no figure. A name no plugin declares is a `TypeError`. |
 | `providers()` | Every registered provider with its availability and condition, as `host.envelope.availability()` writes one. |
 | `kindCondition(availability, kind)` | The condition of a provider kind among an availability list: its active providers' best. |
 | `bind(kinds)` | Adds every registered provider of those kinds to the response's availability: for a widget whose kinds depend on its parameters, and which declares none. |
@@ -1252,72 +1317,90 @@ withheld whole -- condition `withheld_by_aggregate_mode`, `data` null, `"data"` 
 
 ### Volume figures and their measure
 
-A volume figure is of one **measure**: `logged`, what the filter log recorded, or `netflow`, the bytes
-and packets the firewall's NetFlow export reported for the same logged connections, each direction
-counted once (`docs/widget-api.md`, *Volumes and the observation-point limit*). The two are never summed, and an answer carries one of them.
+A volume figure is of one **measure**: `logged`, what the filter log recorded, or a measure a plugin
+declares (*Measures*), such as the netflow plugin's `netflow`, the bytes and packets the firewall's
+NetFlow export reported for the same logged connections, each direction counted once
+(`docs/widget-api.md`, *Volumes and the observation-point limit*). Two measures are never summed, and
+an answer carries one of them.
 
 **The choice is the core's, and a widget names no measure.** A widget serving Volume or byte Count
 figures declares `"volumes": true` in its manifest, and that is all:
 
-- the core gives it the parameter `volume_measure` -- `logged`, `netflow` or `best_available`,
-  `best_available` by default -- which its manifest does not declare (`reserved_parameter_key` if it
-  tries);
-- the core decides, from what is stored, whether NetFlow can answer the window, runs the script in the
-  measure chosen, and judges what it built: `best_available` answers `netflow` only when every
-  connection the answer counts is covered, under a readable configuration throughout, and falls back
-  to `logged` -- byte for byte what `volume_measure = logged` answers -- with the named state that says
-  why, and that state's detail in `state_details` when it carries one;
+- the core gives it the parameter `volume_measure` -- `logged`, every declared measure, or
+  `best_available`, `best_available` by default -- which its manifest does not declare
+  (`reserved_parameter_key` if it tries);
+- the core decides, from what is stored, whether a measure can answer the window, runs the script in
+  the measure chosen, and judges what it built: `best_available` answers a declared measure only when
+  its window states are covered throughout and every connection the answer counts is covered -- the
+  first such measure in name order -- and falls back to `logged` -- byte for byte what
+  `volume_measure = logged` answers -- with the measure's named state that says why, and that state's
+  detail in `state_details` when it carries one;
 - every figure the core hands the script is already of that measure: `host.volume`, `host.clients`,
   `host.peers`, `host.sites`, `host.flows`, `host.series` and `host.attribution` read it, and
   `host.figures` builds every Volume and Count in the figures' own measure.
 
-**What a script does to be answered in the netflow measure.** It builds its figures through
+**What a script does to be answered in a declared measure.** It builds its figures through
 `host.figures` and keeps what the core read whole:
 
-- sum with `host.figures.add`, which keeps every member a figure carries, `measure` and the netflow
-  parts included, as the built-in `interface_volume_ranking` does;
+- sum with `host.figures.add`, which keeps every member a figure carries, `measure` and
+  `measure_parts` included, as the built-in `interface_volume_ranking` does;
 - a count of connections is `host.figures.count(n)`, a byte count `host.figures.byteCount(figures)`;
   `host.figures.loggedCount(n)` stays a count of logged records;
 - a number taken out of figures and drawn on its own -- a node of a tree -- is written with
   `host.figures.measure` as its measure, and the figures it came from are handed to
   `host.figures.cover`;
-- a statement of the widget's own that reads volume columns declares its twin, `<name>_netflow`, with
-  the same parameters and the same columns read in the netflow measure, plus `measure`
-  (`'netflow' AS measure`) and the columns of `netflow_parts`, which one expression writes. A twin
-  reading the flows joins each flow to its netflow figures through `connection_netflow`, the one
-  place they are read from, and sums them with `netflow_sum`:
+- a statement of the widget's own that reads volume columns declares ONE twin, `<name>_measured`,
+  which serves every declared measure: the same parameters and the same columns, with the measure's
+  bytes in place of the logged ones, plus `measure` (`CAST(:measure AS TEXT) AS measure`) and the
+  measure's parts as `measure_parts`. A twin reading the flows joins each flow to every measure's
+  figures through `flow_measures`, the one place they are read from, and sums them with
+  `measure_parts_sum`; `measure_total_bytes(parts, measure)` and `measure_bytes(parts, measure, part)`
+  read a measure's bytes. The built-in `owner_activity`, `traffic_composition` and `traffic_sankey`
+  statement files show a twin over the flows; `internal/widget/traffic/buckets.statements.sql` one over
+  an aggregate family's `measure_parts`.
+- **a twin binds exactly its statement's parameters and `:measure`**, and is a period template exactly
+  when its statement is: the core runs it in the statement's place with the statement's parameters and
+  the measure's name. A widget whose twin does not is refused when it loads, with
+  `measured_twin_mismatch` (`docs/widget-authoring.md`, *Refusals*).
 
-  ```sql
-  -- statement: widget_example_by_client_netflow
-  SELECT f.local_client_id AS client_id,
-         sum(n.bytes) AS bytes,
-         sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END) AS allowed_bytes,
-         sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
-         sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END) AS unknown_bytes,
-         sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
-         sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
-         sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
-         'netflow' AS measure,
-         (netflow_sum(n.parts)).*
-  FROM classified_flow AS f
-  LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
-  WHERE f.observed_at >= :from AND f.observed_at < :to AND f.exit_leg_device IS NULL
-  GROUP BY f.local_client_id;
-  ```
+**What happens to a widget that does not.** Nothing wrong is ever served. A run in a declared measure
+that builds a figure the core did not read in it -- a non-zero logged figure, a logged count, a figure
+the script wrote with `measure: "logged"` -- or that fails, is not served in that measure:
+`best_available` answers the widget's logged answer with the measure's not-served state (for netflow,
+`netflow_not_served_by_type`), and an explicit `volume_measure` naming the measure answers no figure and
+the same state.
 
-  A twin reading an aggregate family writes `(netflow_sum(netflow_parts)).*` over its
-  `netflow_parts` column. The built-in widgets' statement files show each case (`docs/data-model.md`,
-  *NetFlow volumes*).
-- **a twin binds exactly its statement's parameters**, and is a period template exactly when its
-  statement is: the core runs it in the statement's place with the statement's parameters. A widget
-  whose twin does not is refused when it loads, with `netflow_twin_mismatch`
-  (`docs/widget-authoring.md`, *Refusals*).
+### Measures
 
-**What happens to a widget that does not.** Nothing wrong is ever served. A run in the netflow
-measure that builds a figure the core did not read in it -- a non-zero logged figure, a logged count,
-a figure the script wrote with `measure: "logged"` -- or that fails, is not served in that measure:
-`best_available` answers the widget's logged answer with the state `netflow_not_served_by_type`, and an
-explicit `volume_measure = netflow` answers no figure and the same state.
+A plugin whose derivation counts the logged connections a second way declares the **measure** in its
+manifest's `measures` key; the core then serves it in every widget that declares `"volumes": true`,
+adds it to `volume_measure`, and draws its `<measure>_bytes` and `<measure>_packets` in
+`custom_chart`, with no line of Go. "Measure" and "marker" are `opnview`'s own terms
+(`docs/data-model.md`, *Vocabulary*). The netflow plugin's manifest is the worked example.
+
+| Key | What it is |
+|---|---|
+| `name` | The measure's name, a snake_case word: a value of `volume_measure` and of a figure's `measure`. Not one of the core's own (`logged`, `best_available`, `sampled`, `interface_counter`, `dns_lookups`). |
+| `label`, `description` | Its catalogue key, `plugin.<plugin>.*`, and what it counts. |
+| `provider_kind` | The kind of one of the plugin's providers whose active provider the measure needs. |
+| `states` | The direction states, in the order a coverage object lists them, each `{name, covered}`: a direction in a state not covered uncovers its connection. At most 32. |
+| `complete_state`, `refused_state` | The state a direction counts complete in, and the state the forward direction of a refused second leg is counted in. |
+| `markers` | Named booleans a direction carries, counted in the coverage object. At most 16. |
+| `classes` | The names of the four coverage classes: `complete`, `partial`, `unmeasured`, `not_known`. |
+| `window_states` | The names of the window's states: `covered`, `unrecorded`, and the three the core decides -- `no_provider`, `not_covering`, `not_served` -- plus `own`, those its derivation records. |
+| `best_available` | Whether `best_available` may answer in it. |
+
+**What the derivation writes.** Per logged connection and direction, a row of the core's
+per-connection output (`connection_measure`: the measure, the connection's first leg, the direction,
+bytes, packets, records, the state and the markers), and the measure's window intervals
+(`measure_interval`). The aggregate families, the purge and every twin read them through
+`flow_measures`; adding a measure adds no column.
+
+**The observation-point limit applies to every declared measure**: whatever a measure counts, it
+counts at the firewall, and traffic between two clients behind one interface is in none of its
+figures. This is documented, never printed on a screen.
+
+A refused declaration is `measure_invalid`.
 
 ### Testing a widget
 
@@ -1990,7 +2073,9 @@ One event, decoded and normalised.
 
 Most of what a plugin reads it **asks** the firewall for, through the broker. A push source is data
 the firewall **sends** to `opnview` once the user has configured it to: syslog lines (RFC 5424 and
-RFC 3164, over UDP and TCP) and NetFlow records (version 9, RFC 3954; IPFIX, RFC 7011, over UDP).
+RFC 3164, over UDP and TCP), NetFlow records (version 9, RFC 3954; IPFIX, RFC 7011, over UDP), and
+messages the core reads nothing in -- a UDP datagram (`datagram`), or a line of text over TCP or UDP
+(`line`) -- which the subscribing plugin's own decode function reads.
 `opnview` never configures the export: what the user does on OPNsense, and what OPNsense sends, is in
 `docs/opnsense-api-survey.md`, *Push sources: remote syslog and NetFlow export, read from source for
 push sources*, and in the README. Receiving is inbound: a listener makes no outbound call, and the
@@ -2009,7 +2094,7 @@ A listener is opened by a start parameter and by nothing else. **It has no defau
 `--listen` has none: a port is one installation's configuration.
 
 ```text
-opnview ... --push-listen syslog/tcp=<host:port> --push-listen syslog/udp=<host:port> --push-listen netflow/udp=<host:port>
+opnview ... --push-listen syslog/tcp=<host:port> --push-listen syslog/udp=<host:port> --push-listen netflow/udp=<host:port> --push-listen datagram/udp=<host:port> --push-listen line/tcp=<host:port>
 ```
 
 Each is optional and repeatable. With none, no push socket is opened, and every push declaration's
@@ -2031,12 +2116,14 @@ data.
 | Key | What it is |
 |---|---|
 | `name` | The entry's name, a snake_case word: the parse function's name, and the catalogue's. |
-| `protocol` | `syslog` or `netflow`. |
-| `filter` | The header filter, in the protocol's form. Syslog: `{"program": [...], "facility": [...], "severity": [...]}`, the program -- RFC 3164's TAG, RFC 5424's APP-NAME -- by exact name and required, facility and severity by RFC 5424's names. NetFlow: `{"require": [...], "where": [...]}`, the Information Elements a row is built from, by registry name, and conditions `{element, operator, value or values}` with the data catalogue's operators (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `in`, `not_in`, `is_null`, `is_not_null`); a record lacking a required element is skipped for that entry and counted (`netflow_required_element_missing`). |
+| `protocol` | `syslog`, `netflow`, `datagram` or `line`. |
+| `filter` | The header filter, in the protocol's form. Syslog: `{"program": [...], "facility": [...], "severity": [...]}`, the program -- RFC 3164's TAG, RFC 5424's APP-NAME -- by exact name and required, facility and severity by RFC 5424's names. NetFlow: `{"require": [...], "where": [...]}`, the Information Elements a row is built from, by registry name, and conditions `{element, operator, value or values}` with the data catalogue's operators (`eq`, `ne`, `lt`, `le`, `gt`, `ge`, `in`, `not_in`, `is_null`, `is_not_null`); a record lacking a required element is skipped for that entry and counted (`netflow_required_element_missing`). `datagram` and `line`: `{}`, or `{"prefix": "..."}` to take only the messages whose octets begin with it. |
 | `transports` | The transports the entry accepts: `udp`, `tcp`; every one its protocol is received over by default. |
 | `pattern` | Syslog: a regular expression over the message, in RE2 syntax (Go's `regexp`: `(?P<name>...)` names a group; no backreference and no lookaround, because the input is network data and RE2 matches in linear time). Each named group fills the column of its name. A message it does not match is counted (`pattern_unmatched`). |
 | `parse` | Syslog: the name of a function the script exports under `push`, for a message a regular expression cannot express. Never with `pattern`. |
 | `fields` | Columns -- or, for a `kind` entry, the fields of the kind's record -- filled from fields every record carries: a syslog header field (`facility`, `severity`, `timestamp`, `hostname`, `program`, `process_id`, `message_id`, `structured_data`, `message`), or a NetFlow Information Element by registry name -- one name, or a list whose first present one wins. A `kind` entry's mapping names every required field of the record, and runs no script. |
+| `decode` | `datagram` and `line` only, and required there: a function the script exports under `push`, called with ONE message (*The decode function*). Never with `pattern`, `parse` or `fields`. |
+| `sequence_bound` | `{"value": "<name>"}`: the value, recorded over time by whatever reads the sender's configuration, that bounds the sequence counters the sender runs (*Liveness and gaps*). Absent asserts every loss its sender's sequence numbers show. |
 | `output_table` | One of the plugin's tables, which receives the rows. |
 | `kind` | Instead, a core kind the plugin provides, whose records the parse function builds or the `fields` mapping fills (see *Replacing polling*). Never with `output_table`. |
 | `replaces` | One of the plugin's endpoints, whose polling this entry replaces while it is alive. |
@@ -2130,6 +2217,28 @@ and the next batch is processed. The regular expression stays the fast path: it 
 plugin that maps OPNsense versions to scripts (*OPNsense versions*) has its parse function taken from
 the script of the firewall's version.
 
+### The decode function
+
+```js
+exports.push = {
+  readings: function (message) {
+    return [/* the rows, or the kind's records, the message held */];
+  }
+};
+```
+
+A `datagram` or `line` entry's function is called once per message -- one datagram, one line -- in a
+fresh interpreter. The message is `{bytes, text, sender, transport, received_at}`: its octets, each 0 to
+255; the same read as UTF-8; the sender's address; `udp` or `tcp`; the reception instant as UTC epoch
+seconds with its fraction, which also fills the table's time column when the row does not. It answers a
+list -- empty for a message holding nothing -- of rows of the output table, or records of the entry's
+`kind`, each checked as a parse function's are. A call that throws, runs past its bound or answers
+anything but a list loses that message alone: counted, and recorded as a `push_script_failed` gap. A
+`line` over TCP is one frame per line (the newline, and a carriage return before it, are not part of the
+line); a `line` datagram may hold several lines, each one message. Neither protocol carries a sequence
+number the core reads, so their loss is detectable over TCP alone, and a `kind` entry is received over TCP
+alone. `internal/plugin/testdata/example_decoded` is a complete example.
+
 ### Instants
 
 An RFC 5424 timestamp, or an ISO one carrying its offset, is read as it stands. An RFC 3164 timestamp
@@ -2180,8 +2289,10 @@ NetFlow -- and false when it accepts UDP syslog.
 counters -- OPNsense runs one per exporting interface behind one forwarder (survey, *Push sources*,
 S11). The decoder follows several: a datagram continues the counter expecting its number, or opens
 one. A `netflow_sequence_gap` is asserted only once more counters are open than the exporter runs,
-which the `flow_record` provider's capture configuration says -- the interfaces it reports exporting
--- and the core passes to the decoder after every read; a decoder told nothing assumes one counter.
+which the entry's `sequence_bound` names -- the netflow plugin's is the value `sequence_counters`, which
+its provider records from the capture configuration's exporting interfaces after every read -- and the
+core passes to the decoder; a decoder told nothing assumes one counter. A loss is asserted only while one
+recorded bound holds both its ends.
 With that number unknown no gap is asserted: it is counted as `sequence_gap_not_asserted`, and the
 records of that interval say `loss_detectable` 0. The counters are followed afresh when the
 configuration changes, and when the exporter's uptime goes backwards -- a restart, which the decoder

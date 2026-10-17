@@ -1,0 +1,29 @@
+{
+  "api_version": 2,
+  "name": "example_decoded",
+  "version": "0.1.0",
+  "display_name": "Example decoded",
+  "description": "A test plugin: readings received as datagrams and as lines, and filter-log records received as lines, each decoded by its script.",
+  "script": "example_decoded.js",
+  "endpoints": [
+    {"name": "log", "path": "/api/diagnostics/firewall/log", "method": "GET"}
+  ],
+  "kinds": [{"kind": "example_reading", "push": true}],
+  "providers": [
+    {"kind": "firewall_log", "display_name": "Example decoded log"},
+    {"kind": "example_reading", "display_name": "Example readings", "source": "push"}
+  ],
+  "tables": [
+    {"name": "readings", "columns": [
+      {"name": "received_at", "type": "instant"},
+      {"name": "sender", "type": "text"},
+      {"name": "value", "type": "integer"}
+    ], "retention": {"column": "received_at"}}
+  ],
+  "push": [
+    {"name": "datagrams", "protocol": "datagram", "filter": {}, "decode": "binary_reading", "output_table": "readings"},
+    {"name": "lines", "protocol": "line", "filter": {"prefix": "READING "}, "decode": "text_reading", "output_table": "readings"},
+    {"name": "log_lines", "protocol": "line", "filter": {"prefix": "LOG "}, "decode": "log_line", "kind": "firewall_log",
+     "replaces": "log"}
+  ]
+}

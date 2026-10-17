@@ -26,24 +26,24 @@ GROUP BY f.local_client_id, f.traffic_direction, f.src_interface_id, f.dst_inter
          f.peer_address;
 
 
--- The same in the `netflow` measure, run in its place when the answer is given in it (host.query;
--- docs/widget-api.md, "Volumes and the observation-point limit"): the bytes the NetFlow export
--- reported for the connections, then the columns of netflow_parts, under the names summable
+-- The same in a declared measure, CAST(:measure AS TEXT),, run in its place when the answer is given in it (host.query;
+-- docs/widget-api.md, "Volumes and the observation-point limit"): the measure's bytes
+-- for the connections, then the measure's parts, measure_parts, under the names summable
 -- figures carry them (host.figures).
--- statement: widget_sankey_client_flows_netflow
+-- statement: widget_sankey_client_flows_measured
 SELECT f.local_client_id AS client_id,
        f.traffic_direction AS traffic_direction,
        f.src_interface_id AS src_interface_id,
        f.dst_interface_id AS dst_interface_id,
        f.peer_address AS peer_address,
-       sum(n.bytes) AS bytes,
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
+       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))) AS bytes,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS blocked_bytes,
        count(*) AS connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
-       'netflow' AS measure,
-       (netflow_sum(n.parts)).*
+       CAST(:measure AS TEXT) AS measure,
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM classified_flow AS f
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL

@@ -149,7 +149,7 @@ func timeWidgets(ctx context.Context, database *store.Store, service *widget.Ser
 		// E19 of the Phase E amendment: a type whose preset offers a volume measure is timed a
 		// second time answering in the netflow measure, under the same budgets and the same rule on
 		// an empty answer; beside the logged line, the difference is what reading the measured
-		// volumes -- connection_netflow and netflow_sum -- costs.
+		// volumes -- flow_measures and measure_parts_sum -- costs.
 		if preset, found := service.Preset(widgetType); found && offersVolumeMeasure(preset) {
 			netflow := map[string]any{"volume_measure": "netflow"}
 			for key, value := range parameters {

@@ -82,15 +82,15 @@ func SiteRows(r *request.Request) ([]SiteRow, error) {
 		boundary = min(boundary, vocab.PeriodHour.SlotStart(r.Window.To))
 		if firstHour < boundary {
 			read := false
-			err := r.Db.WidgetRows(r.Ctx, r.Measured("widget_site_slots"), vocab.Period{},
-				map[string]any{"from": firstHour, "to": boundary}, func(row reads.RowScanner) error {
+			err := r.Db.WidgetRows(r.Ctx, r.InMeasure("widget_site_slots"), vocab.Period{},
+				r.WithMeasure(map[string]any{"from": firstHour, "to": boundary}), func(row reads.RowScanner) error {
 					var (
 						item   SiteRow
 						client reads.NullInt64
 					)
 					targets := []any{&item.Site, &client, &item.Bytes, &item.Flows}
-					if r.Netflow() {
-						targets = append(targets, item.Measured.NetflowTargets()...)
+					if measure := r.MeasureRead(); measure != "" {
+						targets = append(targets, item.Measured.MeasureTarget(measure))
 					}
 					if err := row.Scan(targets...); err != nil {
 						return err
@@ -122,8 +122,8 @@ func SiteRows(r *request.Request) ([]SiteRow, error) {
 			}
 		}
 	}
-	err = r.Db.WidgetRows(r.Ctx, r.Measured("widget_site_flows"), vocab.Period{},
-		map[string]any{"from": flowsFrom, "to": r.Window.To}, func(row reads.RowScanner) error {
+	err = r.Db.WidgetRows(r.Ctx, r.InMeasure("widget_site_flows"), vocab.Period{},
+		r.WithMeasure(map[string]any{"from": flowsFrom, "to": r.Window.To}), func(row reads.RowScanner) error {
 			var (
 				item                                   SiteRow
 				client, iface, asn, delaySum, delayMax reads.NullInt64
@@ -131,8 +131,8 @@ func SiteRows(r *request.Request) ([]SiteRow, error) {
 			)
 			targets := []any{&item.Site, &client, &iface, &item.Method, &country, &asn, &operator,
 				&item.Flows, &item.Bytes, &delaySum, &delayMax}
-			if r.Netflow() {
-				targets = append(targets, item.Measured.NetflowTargets()...)
+			if measure := r.MeasureRead(); measure != "" {
+				targets = append(targets, item.Measured.MeasureTarget(measure))
 			}
 			if err := row.Scan(targets...); err != nil {
 				return err
@@ -242,7 +242,7 @@ type AddressRow struct {
 func AddressRows(r *request.Request) ([]AddressRow, error) {
 	interfaces, clients := r.IdSet("interfaces"), r.IdSet("clients")
 	var rows []AddressRow
-	err := r.Db.WidgetRows(r.Ctx, r.Measured("widget_address_flows"), vocab.Period{}, r.WindowParameters(),
+	err := r.Db.WidgetRows(r.Ctx, r.InMeasure("widget_address_flows"), vocab.Period{}, r.WithMeasure(r.WindowParameters()),
 		func(row reads.RowScanner) error {
 			var (
 				item              AddressRow
@@ -252,8 +252,8 @@ func AddressRows(r *request.Request) ([]AddressRow, error) {
 			)
 			targets := []any{&item.Address, &client, &iface, &item.LookupState, &country, &asn, &operator,
 				&item.Flows, &item.Bytes}
-			if r.Netflow() {
-				targets = append(targets, item.Measured.NetflowTargets()...)
+			if measure := r.MeasureRead(); measure != "" {
+				targets = append(targets, item.Measured.MeasureTarget(measure))
 			}
 			if err := row.Scan(targets...); err != nil {
 				return err

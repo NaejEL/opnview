@@ -38,33 +38,35 @@ WHERE f.observed_at >= :from
 GROUP BY f.local_client_id, f.traffic_direction;
 
 
--- The same two reads of the `netflow` measure (measure.go): the same rows and connections, with
--- the bytes the NetFlow export reported for them, then the columns of netflow_parts (internal/store,
--- schema.sql). A flow's figure is its connection's, read through connection_netflow and counted
+-- The same two reads in a declared measure, CAST(:measure AS TEXT), (measure.go): the same rows and connections, with
+-- the measure's bytes for them, then the measure's parts, measure_parts (internal/store,
+-- schema.sql). A flow's figure is its connection's, read through flow_measures and counted
 -- on its first leg's row as the aggregate refresh counts it (internal/store, insert_volume).
--- statement: widget_client_volume_slots_netflow
+-- statement: widget_client_volume_slots_measured
 SELECT client_id, traffic_direction,
-       sum(netflow_bytes), sum(netflow_allowed_bytes), sum(netflow_blocked_bytes), sum(netflow_unknown_bytes),
+       measure_total_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT)),
+       measure_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT), 0), measure_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT), 1),
+       measure_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT), 2),
        sum(allowed_connections), sum(blocked_connections), sum(unknown_connections),
-       (netflow_sum(netflow_parts)).*
+       measure_parts_sum(measure_parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM client_volume_aggregate_1h
 WHERE period_start_at >= :from
   AND period_start_at < :to
 GROUP BY client_id, traffic_direction;
 
 
--- statement: widget_client_volume_flows_netflow
+-- statement: widget_client_volume_flows_measured
 SELECT f.local_client_id, f.traffic_direction,
-       sum(n.bytes),
-       sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END),
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END),
-       sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END),
+       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))),
+       sum(CASE WHEN f.action = 'pass' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END),
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END),
+       sum(CASE WHEN f.action = 'unknown' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END),
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
-       (netflow_sum(n.parts)).*
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM classified_flow AS f
-LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.local_client_id IS NOT NULL

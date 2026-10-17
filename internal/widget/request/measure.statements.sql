@@ -1,36 +1,23 @@
 -- opnview — the read statements the widget code in measure runs: what decides whether a volume answer
--- can be of the `netflow` measure (PS22 of the NetFlow join amendment to
+-- can be given in a declared measure (PA5 of the plugin-API amendment to
 -- specs/SPEC-backend-completion-plugins.md; docs/widget-api.md, "Volumes and the observation-point
 -- limit").
 --
 -- Same conventions as every *.statements.sql file of the tree (see service.statements.sql in
 -- internal/widget for the parameter conventions). sql/schema-checks.sh plans each statement at both
--- seed sizes. They read what the collector stored -- the active flow_record provider, the capture
--- configurations it read -- and name no exporter, endpoint or
--- model field: which provider feeds the kind is its plugin's.
+-- seed sizes. They read the registry and the window intervals a measure's derivation recorded, and name
+-- no measure, no state, no exporter and no endpoint: which measure is asked is the request's.
 
 
--- The active providers of the flow_record kind: none means NetFlow is not configured.
--- statement: widget_flow_record_providers
-SELECT id FROM provider WHERE kind = 'flow_record' AND is_active ORDER BY id;
+-- The active providers of the kind a measure needs: none means the measure cannot answer.
+-- statement: widget_measure_providers
+SELECT id FROM provider WHERE kind = CAST(:kind AS TEXT) AND is_active ORDER BY id;
 
 
--- A provider's capture configurations, oldest first, with how many interfaces each captures on in
--- either direction: the intervals bounded by read instants of PS18, kept by NJ6 of the amendment "the
--- NetFlow join with every interface captured".
--- statement: widget_capture_configurations
-SELECT c.id, c.first_read_at, c.last_read_at, c.fingerprint IS NOT NULL AS readable,
-       coalesce(c.enabled, false) AS enabled
-FROM capture_configuration AS c
-WHERE c.provider_id = :provider_id
-ORDER BY c.first_read_at;
-
-
--- The captured interfaces of a provider's capture configurations.
--- statement: widget_capture_interfaces
-SELECT i.capture_configuration_id, i.identifier, i.ingress, i.egress
-FROM capture_interface AS i
-JOIN capture_configuration AS c ON c.id = i.capture_configuration_id
-WHERE c.provider_id = :provider_id
-ORDER BY i.capture_configuration_id, i.identifier;
-
+-- A provider's recorded window intervals of a measure, oldest first (schema.sql, measure_interval).
+-- statement: widget_measure_intervals
+SELECT i.starts_at, i.ends_at, i.state
+FROM measure_interval AS i
+WHERE i.measure = CAST(:measure AS TEXT)
+  AND i.provider_id = :provider_id
+ORDER BY i.starts_at;

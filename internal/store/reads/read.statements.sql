@@ -36,22 +36,25 @@ GROUP BY f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope
 
 
 -- ---------------------------------------------------------------------------
--- The same two reads of the `netflow` measure (PS22 of the NetFlow join amendment): the same rows
--- and the same connections, with the bytes the NetFlow export reported for them in place of the
--- logged bytes, then the thirty-six columns of netflow_parts (schema.sql): per action, the packets,
--- the coverage classes and the direction states met. The slots carry them in their netflow_*
--- columns; at the edges a flow's figure is its connection's, read through connection_netflow and
--- counted as the aggregate refresh counts it
+-- The same two reads in a declared measure, CAST(:measure AS TEXT) (PA5 of the plugin-API amendment; PS22 of the
+-- NetFlow join amendment): the same rows and the same connections, with the measure's bytes in place
+-- of the logged bytes, then the measure's parts (schema.sql, "THE LAYOUT OF A MEASURE'S PARTS"): per
+-- action, the packets, the coverage classes, the direction states met and the markers. The slots
+-- carry them in their measure_parts; at the edges a flow's figure is its connection's, read through
+-- flow_measures and counted as the aggregate refresh counts it
 -- (aggregate.statements.sql, insert_volume): on the first leg's row, and on the second leg's row
 -- too where the figure was measured at that leg. The two measures are never summed.
 -- ---------------------------------------------------------------------------
 
--- statement: read_volume_slots_netflow
+-- statement: read_volume_slots_measured
 SELECT src_interface_id, dst_interface_id, peer_address, traffic_scope, traffic_direction,
        exit_leg_device,
-       sum(netflow_bytes), sum(netflow_allowed_bytes), sum(netflow_blocked_bytes), sum(netflow_unknown_bytes),
+       measure_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT), 0) + measure_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT), 1)
+           + measure_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT), 2),
+       measure_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT), 0), measure_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT), 1),
+       measure_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT), 2),
        sum(allowed_connections), sum(blocked_connections), sum(unknown_connections),
-       (netflow_sum(netflow_parts)).*
+       measure_parts_sum(measure_parts) -> CAST(:measure AS TEXT)
 FROM volume_aggregate_1h
 WHERE period_start_at >= :from
   AND period_start_at < :to
@@ -59,19 +62,19 @@ GROUP BY src_interface_id, dst_interface_id, peer_address, traffic_scope, traffi
          exit_leg_device;
 
 
--- statement: read_volume_flows_netflow
+-- statement: read_volume_flows_measured
 SELECT f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope,
        f.traffic_direction, f.exit_leg_device,
-       sum(n.bytes),
-       sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END),
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END),
-       sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END),
+       measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 0) + measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 1)
+           + measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 2),
+       measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 0), measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 1),
+       measure_bytes(measure_parts_sum(n.parts), CAST(:measure AS TEXT), 2),
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END),
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END),
-       (netflow_sum(n.parts)).*
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT)
 FROM classified_flow AS f
-LEFT JOIN LATERAL connection_netflow(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, f.pair_outcome, f.paired_flow_id, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
 GROUP BY f.src_interface_id, f.dst_interface_id, f.peer_address, f.traffic_scope,

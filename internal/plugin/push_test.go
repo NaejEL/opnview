@@ -132,6 +132,28 @@ func TestEveryPushRefusalHasItsCode(t *testing.T) {
 			entry(m)["parse"] = "lines"
 			m["script"] = "example.js"
 		}, `exports.push = {};`},
+		// PA7: a script-decoded protocol needs a decode function the script exports, and nothing beside it; a
+		// protocol the core decodes refuses one.
+		{contract.RefusalPushDecodeMissing, func(m map[string]any) {
+			entry(m)["protocol"], entry(m)["filter"] = "line", map[string]any{}
+			delete(entry(m), "pattern")
+		}, ""},
+		{contract.RefusalPushDecodeMissing, func(m map[string]any) {
+			entry(m)["protocol"], entry(m)["filter"], entry(m)["decode"] = "datagram", map[string]any{}, "reading"
+			delete(entry(m), "pattern")
+			m["script"] = "example.js"
+		}, `exports.push = {};`},
+		{contract.RefusalPushDeclarationInvalid, func(m map[string]any) {
+			entry(m)["protocol"], entry(m)["filter"], entry(m)["decode"] = "line", map[string]any{}, "reading"
+			m["script"] = "example.js"
+		}, `exports.push = { reading: function (m) { return []; } };`},
+		{contract.RefusalPushDecodeMissing, func(m map[string]any) {
+			entry(m)["decode"] = "reading"
+			m["script"] = "example.js"
+		}, `exports.push = { reading: function (m) { return []; } };`},
+		{contract.RefusalPushDeclarationInvalid, func(m map[string]any) {
+			entry(m)["sequence_bound"] = map[string]any{"value": "Not A Name"}
+		}, ""},
 		{contract.RefusalPushDeclarationInvalid, func(m map[string]any) { entry(m)["transports"] = []any{"sctp"} }, ""},
 		{contract.RefusalPushDeclarationInvalid, func(m map[string]any) {
 			entry(m)["parse"] = "lines"
@@ -355,9 +377,11 @@ func netflowManifest(t *testing.T) (map[string]any, string) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		t.Fatal(err)
 	}
-	// Its settings and their page are the netflow plugin's own, named in its catalogue: not this test's subject.
+	// Its settings, their page and its measure are the netflow plugin's own, named in its catalogue: not this
+	// test's subject.
 	delete(manifest, "settings")
 	delete(manifest, "pages")
+	delete(manifest, "measures")
 	manifest["name"] = "example_push"
 	manifest["script"] = "example.js"
 	script, err := os.ReadFile(filepath.Join("..", "..", "plugins", "netflow", "netflow.js"))

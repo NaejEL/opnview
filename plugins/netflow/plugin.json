@@ -57,6 +57,7 @@
         "received_at": "collectionTimeMilliseconds"
       },
       "kind": "flow_record",
+      "sequence_bound": {"value": "sequence_counters"},
       "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources"
     }
   ],
@@ -92,6 +93,41 @@
       "label": "plugin.netflow.page.join",
       "help": "plugin.netflow.page.join_help",
       "settings": ["join_tolerance_seconds", "retention_flow_record_seconds"]
+    }
+  ],
+  "measures": [
+    {
+      "name": "netflow",
+      "label": "plugin.netflow.measure.netflow",
+      "description": "The bytes and packets the firewall's NetFlow export reported for the logged connections, each direction counted once: from the records joined to the first leg, or from the translated copies where no exporter sees the first leg's form (NJ5 of the amendment \"the NetFlow join with every interface captured\"). A second measure beside the logged one, never summed with it; like every figure opnview draws, it is a lower bound, and traffic between two clients behind one interface is in no figure.",
+      "provider_kind": "flow_record",
+      "states": [
+        {"name": "measured", "covered": true},
+        {"name": "in_progress", "covered": true},
+        {"name": "awaiting_export", "covered": true},
+        {"name": "missing", "covered": true},
+        {"name": "export_gap", "covered": false},
+        {"name": "not_exported_when_refused", "covered": false},
+        {"name": "forwarding_export_unsettled", "covered": false},
+        {"name": "ingress_not_captured", "covered": false},
+        {"name": "parent_copies_only", "covered": false},
+        {"name": "interface_not_exported", "covered": false},
+        {"name": "interface_not_captured", "covered": false},
+        {"name": "capture_configuration_unknown", "covered": false}
+      ],
+      "complete_state": "measured",
+      "refused_state": "not_exported_when_refused",
+      "markers": ["counted_copy"],
+      "classes": {"complete": "measured", "partial": "partial", "unmeasured": "unmeasured", "not_known": "capture_not_known"},
+      "window_states": {
+        "covered": "capture_configured",
+        "unrecorded": "capture_configuration_unknown",
+        "no_provider": "netflow_not_configured",
+        "not_covering": "netflow_not_covering_window",
+        "not_served": "netflow_not_served_by_type",
+        "own": ["capture_configuration_unknown", "netflow_not_configured"]
+      },
+      "best_available": true
     }
   ]
 }

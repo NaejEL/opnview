@@ -436,13 +436,20 @@ func newNetflowHarness(t *testing.T, loaded *plugin.Loaded, key string, arrange 
 		t.Fatal(err)
 	}
 	h.Hub.Senders().Set([]netip.Addr{ExporterAddress})
-	// As the service does (cmd/opnview, push.go): after each capture read the decoders are given the
-	// sequence counters the exporter runs, and follow them afresh when the configuration changed.
-	collector.SetCaptureReadObserver(func(_ string, changed bool, counters int) {
-		if changed {
-			h.Hub.ResetSequences("netflow")
+	// As the service does (cmd/opnview, push.go): after each read of a sequence bound a push entry declares, the
+	// decoders of its protocol are given the counters the exporter runs, and follow them afresh when the
+	// configuration changed.
+	bounds := loaded.SequenceBounds()
+	collector.SetSequenceBoundObserver(func(kind, key, name string, changed bool, counters int) {
+		for _, bound := range bounds {
+			if bound.Kind != kind || bound.Key != key || bound.Value != name {
+				continue
+			}
+			if changed {
+				h.Hub.ResetSequences(bound.Protocol)
+			}
+			h.Hub.SetSequenceCounters(bound.Protocol, counters)
 		}
-		h.Hub.SetSequenceCounters("netflow", counters)
 	})
 	return h
 }
@@ -736,8 +743,8 @@ type VolumeRow struct {
 func (h *NetflowHarness) Volumes(t *testing.T) []VolumeRow {
 	t.Helper()
 	rows, err := h.Store.DB().QueryContext(context.Background(),
-		`SELECT connection_flow_id, direction, state, bytes, packets, records, CAST(counted_copy AS INTEGER)
-		 FROM connection_measured_volume ORDER BY connection_flow_id, direction`)
+		`SELECT connection_flow_id, direction, state, bytes, packets, records, markers & 1
+		 FROM connection_measure WHERE measure = 'netflow' ORDER BY connection_flow_id, direction`)
 	if err != nil {
 		t.Fatal(err)
 	}

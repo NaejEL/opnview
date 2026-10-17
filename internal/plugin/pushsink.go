@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -126,12 +127,35 @@ type tableSink struct {
 // tableBatch is what Prepare made: the rows to insert.
 type tableBatch struct {
 	rows []map[string]any
+	// span is the reception instants of the batch's messages, for the derivations it runs.
+	span batchSpan
 }
 
 func (s *tableSink) Prepare(ctx context.Context, records []push.Record) push.Prepared {
 	prepared := push.Prepared{Counts: map[string]int64{}}
 	var rows []map[string]any
-	if s.binding.declaration.Parse != "" {
+	if s.binding.declaration.Decode != "" {
+		// One call per message: each answers a list of the rows the message held.
+		for _, record := range records {
+			answers, failed := callDecode(ctx, s.plugin, s.environment.Session, s.binding.declaration.Decode, record,
+				prepared.Counts)
+			if failed != "" {
+				prepared.Failed++
+				prepared.FailedReason = push.GapScriptFailed
+				continue
+			}
+			for _, answer := range answers {
+				object, isObject := answer.(map[string]any)
+				if !isObject {
+					prepared.Counts[pushCounterRecordsInvalid]++
+					continue
+				}
+				if row, ok := s.convert(object, record, prepared.Counts); ok {
+					rows = append(rows, row)
+				}
+			}
+		}
+	} else if s.binding.declaration.Parse != "" {
 		for start := 0; start < len(records); start += ParseBatch {
 			chunk := records[start:min(len(records), start+ParseBatch)]
 			answers, failed := callParse(ctx, s.plugin, s.environment.Session, s.binding.declaration.Parse, chunk,
@@ -170,7 +194,7 @@ func (s *tableSink) Prepare(ctx context.Context, records []push.Record) push.Pre
 	}
 	prepared.Rows = len(rows)
 	if len(rows) > 0 {
-		prepared.Payload = tableBatch{rows: rows}
+		prepared.Payload = tableBatch{rows: rows, span: spanOf(records)}
 	}
 	return prepared
 }
@@ -243,8 +267,28 @@ func (s *tableSink) Store(ctx context.Context, prepared push.Prepared) error {
 	if s.environment.Store == nil {
 		return errors.New("plugin: no store is wired for the push entries")
 	}
-	_, err := s.environment.Store.InsertPluginRows(ctx, s.binding.table, batch.rows)
-	return err
+	if _, err := s.environment.Store.InsertPluginRows(ctx, s.binding.table, batch.rows); err != nil {
+		return err
+	}
+	s.plugin.notePush(s.binding.declaration.Name, len(batch.rows), batch.span.from, batch.span.to, batch.span.to)
+	return nil
+}
+
+// batchSpan is the reception instants a batch spans.
+type batchSpan struct{ from, to time.Time }
+
+// spanOf is the reception instants of a batch's records.
+func spanOf(records []push.Record) batchSpan {
+	var span batchSpan
+	for index, record := range records {
+		if index == 0 || record.ReceivedAt.Before(span.from) {
+			span.from = record.ReceivedAt
+		}
+		if index == 0 || record.ReceivedAt.After(span.to) {
+			span.to = record.ReceivedAt
+		}
+	}
+	return span
 }
 
 // callParse calls a parse function on a batch, returning one answer per message. A call that throws,
@@ -280,6 +324,58 @@ func callParse(ctx context.Context, plugin *Plugin, session provider.Session, fu
 		return nil, pushCounterRecordsInvalid
 	}
 	return list, ""
+}
+
+// callDecode calls a decode function on one message of a script-decoded protocol (PA7), returning what it
+// held: a list, possibly empty. A call that throws, times out or answers with anything but a list loses the
+// message: its reason, counted.
+func callDecode(ctx context.Context, plugin *Plugin, session provider.Session, function string, record push.Record,
+	counts map[string]int64) ([]any, string) {
+	counts[pushCounterScriptCalls]++
+	if plugin.script == nil {
+		counts[pushCounterScriptFailed]++
+		return nil, pushCounterScriptFailed
+	}
+	answer, _, failed := plugin.script.RunWith(ctx, session, pushParseNamespace, function, scripthost.RunOptions{Plain: true},
+		decodedMessage(record))
+	if failed != nil {
+		reason := pushCounterScriptFailed
+		switch failed.Code {
+		case scripthost.FailureTimeout:
+			reason = pushCounterScriptTimeout
+		case scripthost.FailureVersionUnsupported:
+			reason = string(scripthost.FailureVersionUnsupported)
+		}
+		counts[reason]++
+		return nil, reason
+	}
+	if answer == nil {
+		return nil, ""
+	}
+	list, isList := answer.([]any)
+	if !isList {
+		counts[pushCounterRecordsInvalid]++
+		return nil, pushCounterRecordsInvalid
+	}
+	return list, ""
+}
+
+// decodedMessage is one message of a script-decoded protocol as a decode function receives it: its octets,
+// each a number from 0 to 255, its text (the octets read as UTF-8, an invalid sequence replaced), the
+// sender's address, the transport and the reception instant as UTC epoch seconds with its fraction.
+func decodedMessage(record push.Record) map[string]any {
+	payload, _ := record.Fields[push.PayloadField].([]byte)
+	octets := make([]any, len(payload))
+	for index, octet := range payload {
+		octets[index] = int64(octet)
+	}
+	return map[string]any{
+		"bytes":       octets,
+		"text":        strings.ToValidUTF8(string(payload), "�"),
+		"sender":      record.Sender.String(),
+		"transport":   record.Transport,
+		"received_at": epochSeconds(record.ReceivedAt),
+	}
 }
 
 // messageObject is one decoded message as a parse function receives it: the header's fields, every
@@ -368,4 +464,54 @@ func (a pushProviderImplementation) result() provider.Result {
 			"the firewall's export is off, filtered, or sent elsewhere"
 	}
 	return result
+}
+
+// SequenceAsserted judges a loss the sender's sequence numbers show by the entry's declared bound.
+func (s *tableSink) SequenceAsserted(ctx context.Context, problem push.Problem) bool {
+	return s.binding.sequenceAsserted(ctx, s.environment, problem)
+}
+
+// sequenceAsserted judges a loss its sender's sequence numbers show over the problem's span (NJ7, as PA7 of
+// the plugin-API amendment restates it): an entry declaring no sequence bound asserts every loss; one
+// declaring a bound asserts it only when the value it names, recorded for its provider, held one non-zero
+// bound over both ends (Store.SequenceBoundAsserted). A bound that cannot be read asserts nothing: the loss
+// is counted, never recorded as a gap the configuration could not vouch for.
+func (b *pushBinding) sequenceAsserted(ctx context.Context, environment PushEnvironment, problem push.Problem) bool {
+	bound := b.declaration.SequenceBound
+	if bound == nil {
+		return true
+	}
+	if environment.Store == nil {
+		return false
+	}
+	providerID, err := environment.Store.ProviderID(ctx, b.providerKind, b.providerKey)
+	if err != nil {
+		return false
+	}
+	asserted, err := environment.Store.SequenceBoundAsserted(ctx, providerID, bound.Value, problem.From.Unix(),
+		problem.To.Unix())
+	return err == nil && asserted
+}
+
+// SequenceBound is one push entry taking its sequence bound from a value its provider records: the hub
+// bounds the decoders of the entry's protocol by it.
+type SequenceBound struct {
+	Subscription string
+	Protocol     string
+	Kind, Key    string
+	Value        string
+}
+
+// SequenceBounds lists every loaded push entry that declares a sequence bound.
+func (l *Loaded) SequenceBounds() []SequenceBound {
+	var bounds []SequenceBound
+	for _, plugin := range l.Members {
+		for _, binding := range plugin.pushes {
+			if bound := binding.declaration.SequenceBound; bound != nil {
+				bounds = append(bounds, SequenceBound{Subscription: binding.ID(), Protocol: binding.declaration.Protocol,
+					Kind: binding.providerKind, Key: binding.providerKey, Value: bound.Value})
+			}
+		}
+	}
+	return bounds
 }

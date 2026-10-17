@@ -17,8 +17,8 @@ import (
 // no text the script writes.
 //
 //	host.query.rows(name, parameters, period)  every row, each an object of its columns in order
-//	                                           -- under the netflow measure, the rows of the
-//	                                           statement's twin name_netflow when the widget declares
+//	                                           -- under a declared measure, the rows of the
+//	                                           statement's twin name_measured when the widget declares
 //	                                           one (internal/widget/request/measure.go)
 //	host.query.row(name, parameters, period)   the first row, or null when there is none
 //	host.query.carriesDomain(name)             whether the statement reads a column carrying a
@@ -84,14 +84,18 @@ func statementOf(c *script.ScriptCall, value goja.Value) script.WidgetStatement 
 func runStatement(c *script.ScriptCall, arguments goja.FunctionCall) ([]string, [][]any, bool) {
 	name := c.TextOf(arguments.Argument(0), "the statement name")
 	statement := statementOf(c, arguments.Argument(0))
-	if c.Request.Netflow() {
-		// Under the netflow measure a statement that declares its twin is run as its twin
-		// (internal/widget/request/measure.go).
-		if twin, declared := c.Widget.Statements[name+request.NetflowStatementSuffix]; declared {
-			name, statement = name+request.NetflowStatementSuffix, twin
+	measure, measured := c.Request.MeasureRead(), false
+	if measure != "" {
+		// Under a declared measure a statement that declares its twin is run as its twin, bound with the
+		// measure's name (internal/widget/request/measure.go).
+		if twin, declared := c.Widget.Statements[name+request.MeasuredStatementSuffix]; declared {
+			name, statement, measured = name+request.MeasuredStatementSuffix, twin, true
 		}
 	}
 	bound := bindParameters(c, name, statement, arguments.Argument(1))
+	if measured {
+		bound[request.MeasureParameter] = measure
+	}
 	period := vocab.Period{}
 	switch {
 	case statement.Template && script.Absent(arguments.Argument(2)):

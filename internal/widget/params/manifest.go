@@ -64,7 +64,8 @@ type Manifest struct {
 	// emits). Optional; "query" when absent.
 	Measure string `json:"measure,omitempty"`
 	// Volumes says the widget serves Volume or byte Count figures. The core then gives it the
-	// parameter volume_measure -- logged, netflow or best_available, best_available by default --
+	// parameter volume_measure -- logged, best_available or a declared measure, best_available by
+	// default --
 	// which it does not declare, and answers it under the measure that parameter chooses
 	// (internal/widget/request/measure.go): the widget reads its figures through the core and
 	// builds them through host.figures, and never names a measure. Only a widget with a script,

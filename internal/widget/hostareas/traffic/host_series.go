@@ -3,6 +3,7 @@ package traffic
 import (
 	"github.com/dop251/goja"
 
+	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/widget/datasets"
 	"github.com/NaejEL/opnview/internal/widget/envelope"
 	"github.com/NaejEL/opnview/internal/widget/params"
@@ -23,16 +24,17 @@ import (
 //	                                         {direction: summable figures}; covered is the interval read,
 //	                                         null for none. filter is {interfaces, client_id, rule_id, asn,
 //	                                         country, site}, each null or left out for no restriction, and
-//	                                         netflow: true to read the netflow measure whatever the request
-//	                                         is answered under (a series whose measure is netflow_bytes or
-//	                                         netflow_packets).
+//	                                         measure: the name of a declared measure to read whatever the
+//	                                         request is answered under (a series whose measure is
+//	                                         <measure>_bytes or <measure>_packets).
 //	                                         Whole-hour buckets the flows no longer hold are read from the
 //	                                         1 h slots where only interfaces restrict the series, and say so
 //	                                         by a named state
-//	host.series.netflowState()               null when NetFlow can answer the window (a readable,
-//	                                         enabled capture configuration throughout it, internal/widget/request/measure.go); otherwise the
-//	                                         named state, which the answer then carries: a series of the
-//	                                         netflow measure carries no figure
+//	host.series.measureState(measure)        null when a declared measure can answer the window (its
+//	                                         window states recorded as covered throughout it,
+//	                                         internal/widget/request/measure.go); otherwise the named state,
+//	                                         which the answer then carries: a series of the measure carries
+//	                                         no figure. A name no plugin declares is the script's mistake
 //	host.series.providers()                  every registered provider with its availability and condition
 //	host.series.kindCondition(availability, kind)
 //	                                         the condition of a provider kind among an availability list:
@@ -66,7 +68,7 @@ type trafficFilter struct {
 	Asn        *int64  `json:"asn"`
 	Country    *string `json:"country"`
 	Site       *string `json:"site"`
-	Netflow    bool    `json:"netflow"`
+	Measure    string  `json:"measure"`
 }
 
 // seriesDatasetRef names the dataset a series reads.
@@ -100,9 +102,12 @@ func init() {
 			if !r.Preset.Windowed {
 				call.Throw("series.traffic reads a rolling window, and the widget %s is not windowed", r.Preset.Type)
 			}
+			if _, declared := vocab.MeasureNamed(filter.Measure); filter.Measure != "" && !declared {
+				call.Throw("no plugin declares the measure %q", filter.Measure)
+			}
 			buckets, covered, err := traffic.TrafficBuckets(r, traffic.TrafficFilter{Interfaces: filter.Interfaces,
 				ClientID: filter.ClientID, RuleID: filter.RuleID, Asn: filter.Asn, Country: filter.Country,
-				Site: filter.Site, Netflow: filter.Netflow}, width)
+				Site: filter.Site, Measure: filter.Measure}, width)
 			if err != nil {
 				return call.Fail(err)
 			}
@@ -115,15 +120,20 @@ func init() {
 			}
 			return call.Value(read)
 		})
-		call.Function(area, "netflowState", func(goja.FunctionCall) goja.Value {
-			state, err := r.NetflowWindowState()
+		call.Function(area, "measureState", func(arguments goja.FunctionCall) goja.Value {
+			name := call.TextOf(arguments.Argument(0), "the measure")
+			measure, declared := vocab.MeasureNamed(name)
+			if !declared {
+				call.Throw("no plugin declares the measure %q", name)
+			}
+			state, err := r.MeasureWindowState(measure)
 			if err != nil {
 				return call.Fail(err)
 			}
 			if state == "" {
 				return goja.Null()
 			}
-			r.NetflowState(state, false)
+			r.MeasureState(measure, state, false)
 			return call.VM.ToValue(state)
 		})
 		call.Function(area, "providers", func(goja.FunctionCall) goja.Value {

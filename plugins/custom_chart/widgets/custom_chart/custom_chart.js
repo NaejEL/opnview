@@ -51,17 +51,29 @@ function bucketStart(host, interval, width) {
   return interval.from - host.buckets.floorMod(interval.from, width);
 }
 
-// NETFLOW_FIGURES are the traffic measures that are the netflow measure whatever the answer is given
-// in, and the figure each draws.
-var NETFLOW_FIGURES = { netflow_bytes: "bytes", netflow_packets: "packets" };
+// measuredFigure reads a traffic measure naming a declared measure's figure -- <measure>_bytes or
+// <measure>_packets, which the core offers for every measure a plugin declares -- as that measure and
+// the figure it draws; null for the logged figures.
+function measuredFigure(host, name) {
+  var cut = name.lastIndexOf("_");
+  if (cut <= 0) {
+    return null;
+  }
+  var measure = name.slice(0, cut);
+  var figure = name.slice(cut + 1);
+  if ((figure !== "bytes" && figure !== "packets") || host.figures.declared.indexOf(measure) < 0) {
+    return null;
+  }
+  return { measure: measure, figure: figure };
+}
 
 // fillTraffic reads a traffic series: the figures of the window per bucket, every traffic direction
-// summed, in the measure the answer is given in -- or the netflow measure for netflow_bytes and
-// netflow_packets, which carry no figure when NetFlow cannot answer the window.
+// summed, in the measure the answer is given in -- or a declared measure for its <measure>_bytes and
+// <measure>_packets, which carry no figure when that measure cannot answer the window.
 function fillTraffic(host, line, entry, index, width) {
-  var netflow = NETFLOW_FIGURES.hasOwnProperty(entry.measure);
-  if (netflow && host.series.netflowState() !== null) {
-    line.measure = host.figures.measures.netflow;
+  var measured = measuredFigure(host, entry.measure);
+  if (measured !== null && host.series.measureState(measured.measure) !== null) {
+    line.measure = measured.measure;
     line.unit = entry.measure;
     line.lower_bound = true;
     host.buckets.intervals(host.request.window, width).forEach(function (interval) {
@@ -88,13 +100,13 @@ function fillTraffic(host, line, entry, index, width) {
     asn: idOf("operator"),
     country: textOf("country"),
     site: textOf("site"),
-    netflow: netflow
+    measure: measured === null ? null : measured.measure
   }, width);
   setCovered(host, line.window, traffic.covered);
-  line.measure = netflow ? host.figures.measures.netflow : host.figures.measure;
+  line.measure = measured !== null ? measured.measure : host.figures.measure;
   line.unit = entry.measure;
   line.lower_bound = true;
-  var figure = netflow ? NETFLOW_FIGURES[entry.measure] :
+  var figure = measured !== null ? measured.figure :
     { bytes: "bytes", connections: "connections", allowed: "allowed", blocked: "blocked" }[entry.measure];
   if (figure === undefined) {
     figure = "";

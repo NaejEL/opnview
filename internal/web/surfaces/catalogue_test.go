@@ -128,6 +128,15 @@ func TestNoUserVisibleStringIsALiteral(t *testing.T) {
 				}
 			}
 		}
+		// So is a declared measure's label (PA5): served in JSON by the plugin listing, which names a
+		// volume_measure value by it.
+		for _, loaded := range plugin.BuiltinsLoaded().Plugins() {
+			for _, measure := range loaded.Manifest.Measures {
+				if value, present := catalogue.Strings[measure.Label]; present && !shown[strings.TrimSpace(value)] {
+					unrenderable[measure.Label] = "a declared measure's label, served by GET /api/plugins"
+				}
+			}
+		}
 		// A dataset's label is served in JSON by the data catalogue and drawn by the step-7
 		// application; no Go-rendered page draws it.
 		for key, value := range catalogue.Strings {

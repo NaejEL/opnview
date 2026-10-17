@@ -1,0 +1,4 @@
+{
+  "name": "line",
+  "description": "Newline-framed text, over TCP or UDP, one line per message, decoded by the subscribing plugin's own decode function: no structure is read by the core."
+}

@@ -65,21 +65,21 @@ GROUP BY f.dst_address, f.src_client_id, f.src_interface_id, g.lookup_state, g.c
 
 
 -- ---------------------------------------------------------------------------
--- The same three reads of the `netflow` measure (measure.go): the same rows and flows, with the bytes
--- the NetFlow export reported for their connections in place of the logged bytes, then the columns
--- of netflow_parts (internal/store, schema.sql). A flow's figure is its connection's, read through
--- connection_netflow; these read first legs only, so a connection is counted once.
+-- The same three reads in a declared measure, CAST(:measure AS TEXT), (measure.go): the same rows and flows, with the measure's
+-- bytes for their connections in place of the logged bytes, then the measure's
+-- parts, measure_parts (internal/store, schema.sql). A flow's figure is its connection's, read through
+-- flow_measures; these read first legs only, so a connection is counted once.
 -- ---------------------------------------------------------------------------
 
--- statement: widget_site_flows_netflow
+-- statement: widget_site_flows_measured
 SELECT a.site_name, f.src_client_id, f.src_interface_id, a.method, g.country_code, g.asn,
-       g.operator, count(*), sum(n.bytes), sum(a.correlation_delay_seconds),
+       g.operator, count(*), sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))), sum(a.correlation_delay_seconds),
        max(a.correlation_delay_seconds),
-       (netflow_sum(n.parts)).*
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM flow AS f
 JOIN domain_attribution AS a ON a.flow_id = f.id
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.dst_interface_id IS NULL
@@ -91,24 +91,24 @@ GROUP BY a.site_name, f.src_client_id, f.src_interface_id, a.method, g.country_c
          g.operator;
 
 
--- statement: widget_site_slots_netflow
-SELECT site_name, client_id, sum(netflow_bytes),
+-- statement: widget_site_slots_measured
+SELECT site_name, client_id, measure_total_bytes(measure_parts_sum(measure_parts), CAST(:measure AS TEXT)),
        sum(allowed_connections + blocked_connections + unknown_connections),
-       (netflow_sum(netflow_parts)).*
+       measure_parts_sum(measure_parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM domain_volume_aggregate_1h
 WHERE period_start_at >= :from
   AND period_start_at < :to
 GROUP BY site_name, client_id;
 
 
--- statement: widget_address_flows_netflow
+-- statement: widget_address_flows_measured
 SELECT f.dst_address, f.src_client_id, f.src_interface_id, coalesce(g.lookup_state, 'no_row'),
-       g.country_code, g.asn, g.operator, count(*), sum(n.bytes),
-       (netflow_sum(n.parts)).*
+       g.country_code, g.asn, g.operator, count(*), sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))),
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM flow AS f
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND a.flow_id IS NULL

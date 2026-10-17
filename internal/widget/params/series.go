@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/NaejEL/opnview/internal/dataset"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The fourth value shape of docs/dashboard-format.md, "Parameters": `series`, an ordered
@@ -31,7 +32,7 @@ var (
 	SeriesSources = []string{SourceTraffic, SourceFirewallMetric, SourceInterfaceThroughput,
 		SourceDNS, SourceSecurityEvent}
 	SeriesMeasures = map[string][]string{
-		SourceTraffic:             {"bytes", "connections", "allowed", "blocked", "netflow_bytes", "netflow_packets"},
+		SourceTraffic:             {"bytes", "connections", "allowed", "blocked"},
 		SourceInterfaceThroughput: {"bits_per_second", "bytes", "packets", "errors"},
 		SourceDNS:                 {"lookups", "blocked"},
 		SourceSecurityEvent:       {"events", "blocked"},
@@ -143,7 +144,8 @@ func parseSeries(key string, raw json.RawMessage, datasets *dataset.Catalogue) (
 					Reason: ReasonNotInVocabulary})
 			}
 		} else {
-			textField("measure", SeriesMeasures[source], SeriesMeasures[source][0])
+			measures := SeriesMeasuresOf(source)
+			textField("measure", measures, measures[0])
 			if value, present := fields["metric"]; present && !isJSONNull(value) {
 				invalid = append(invalid, InvalidValue{Path: path + ".metric", Value: value,
 					Reason: ReasonNotInVocabulary})
@@ -303,4 +305,30 @@ func defaultDatasetAggregation(declaration dataset.Declaration, admitted []strin
 		return preferred
 	}
 	return admitted[0]
+}
+
+// SeriesMeasuresOf are the measures a series of a source may draw: the source's own, and for the traffic
+// source, every declared measure's bytes and packets, <measure>_bytes and <measure>_packets in measure-name
+// order (PA5 of the plugin-API amendment: a measure a plugin declares is drawn without a line of Go).
+func SeriesMeasuresOf(source string) []string {
+	measures := append([]string(nil), SeriesMeasures[source]...)
+	if source == SourceTraffic {
+		for _, declared := range vocab.Measures() {
+			measures = append(measures, declared.Name+"_bytes", declared.Name+"_packets")
+		}
+	}
+	return measures
+}
+
+// MeasuredSeriesFigure reads a traffic series measure naming a declared measure's figure: the measure and
+// the figure, bytes or packets; ok is false for any other measure.
+func MeasuredSeriesFigure(name string) (measure, figure string, ok bool) {
+	for _, declared := range vocab.Measures() {
+		for _, candidate := range []string{"bytes", "packets"} {
+			if name == declared.Name+"_"+candidate {
+				return declared.Name, candidate, true
+			}
+		}
+	}
+	return "", "", false
 }

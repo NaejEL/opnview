@@ -8,6 +8,8 @@
 package protocols
 
 import (
+	_ "github.com/NaejEL/opnview/internal/push/protocols/datagram"
+	_ "github.com/NaejEL/opnview/internal/push/protocols/line"
 	_ "github.com/NaejEL/opnview/internal/push/protocols/netflow"
 	_ "github.com/NaejEL/opnview/internal/push/protocols/syslog"
 )

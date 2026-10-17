@@ -2871,7 +2871,7 @@ check 'AC32 the purge leaves no attribution without its lookup or its flow' '0' 
 "$WORK/bin/plugintables" -database "$(dsn "$PURGE_DB")" -now "$NOW" -data-dir "$PLUGIN_DATA" -older \
     > "$WORK/plugin_older_before.txt"
 E22_HORIZONS="flow_record:start_at:flow_record
-connection_measured_volume:connection_start_at:installation unmatched_record_aggregate_1h:period_end_at:installation
+connection_measure:connection_start_at:installation unmatched_record_aggregate_1h:period_end_at:installation
 unmatched_record_aggregate_24h:period_end_at:installation unmatched_record_aggregate_7d:period_end_at:installation
 unmatched_record_aggregate_30d:period_end_at:installation provider_source_period:to_at:installation"
 # e22_horizon <installation|flow_record> — the horizon the product purges a table at: the flow
@@ -4376,13 +4376,13 @@ plan_statement() {
     } > "$WORK/plan_statement${PLAN_SLOT:-}.sql"
     "${PSQL[@]}" -d "$(dsn "$db")" -f "$WORK/plan_statement${PLAN_SLOT:-}.sql" | to_nodes "$db"
 }
-# netflow_statement <statement file> — a statement of the netflow measure: a _netflow twin, or one
-# that reads connection_netflow.
+# netflow_statement <statement file> — a statement of a declared measure: a _measured twin, or one
+# that reads flow_measures (PA5 of the plugin-API amendment).
 netflow_statement() {
     case "$(basename "$1" .sql)" in
-        *_netflow) return 0 ;;
+        *_measured) return 0 ;;
     esac
-    grep -q 'connection_netflow(' "$1"
+    grep -q 'flow_measures(' "$1"
 }
 # THE PLANS ARE READ SIDE BY SIDE (Phase E decision 8, 17 October 2026). Every statement, at every
 # period of a template, on each of the two databases, is one task, independent of every other --
@@ -4476,11 +4476,11 @@ check 'S5A-AC35 every statement plans against the schema' '' "$UNPLANNABLE"
 check 'S5A-AC35 no derivation or read statement scans a growing table, at either seed size' \
     '' "$SCANNING"
 
-# E18: every statement of the netflow measure, at both seeds. connection_netflow is a SQL function
-# PostgreSQL inlines where it is called (a single SELECT, LANGUAGE sql, STABLE, no SET clause --
+# E18: every statement of a declared measure, at both seeds. flow_measures, and the reader of one
+# connection it calls, connection_measure_parts, are SQL functions PostgreSQL inlines where called (a single SELECT, LANGUAGE sql, STABLE, no SET clause --
 # https://wiki.postgresql.org/wiki/Inlining_of_SQL_functions), so its body is planned in the
-# statement and the measured volume is read through its primary key, connection by connection; a
-# Function Scan of it is the function called once per row as a black box. netflow_sum is an
+# statement and the measure output is read through its primary key, connection by connection; a
+# Function Scan of either is a function called once per row as a black box. measure_parts_sum is an
 # aggregate, planned as an Aggregate node: its cost is per row, in its transition function, and is
 # timed under the widget budgets below.
 NETFLOW_FUNCTION_SCANS=''
@@ -4493,10 +4493,10 @@ while IFS= read -r label; do
     for tag in "$(tag_of "$MAIN_DB")" "$(tag_of "$SCALE_DB")"; do
         plan="$WORK/netflow-plans/${tag}_${label}.txt"
         [ -f "$plan" ] || continue
-        if awk -F'\t' '$1 == "Function Scan" && $2 == "connection_netflow" { found = 1 } END { exit !found }' "$plan"; then
+        if awk -F'\t' '$1 == "Function Scan" && ($2 == "flow_measures" || $2 == "connection_measure_parts") { found = 1 } END { exit !found }' "$plan"; then
             NETFLOW_FUNCTION_SCANS="$NETFLOW_FUNCTION_SCANS $label@$tag"
         fi
-        if awk -F'\t' '$2 == "connection_measured_volume" && $4 != "connection_measured_volume_pkey" { found = 1 }
+        if awk -F'\t' '$2 == "connection_measure" && $4 != "connection_measure_pkey" { found = 1 }
                 END { exit !found }' "$plan"; then
             NETFLOW_NOT_BY_KEY="$NETFLOW_NOT_BY_KEY $label@$tag"
         fi
@@ -4509,31 +4509,31 @@ while IFS= read -r label; do
         NETFLOW_SHAPE_CHANGED="$NETFLOW_SHAPE_CHANGED $label"
     fi
 done < <(sort -u "$WORK/netflow-plans/labels_$(tag_of "$MAIN_DB").txt" 2> /dev/null)
-check_ge 'E18 the sweep planned the statements of the netflow measure' 19 "$NETFLOW_PLANNED"
-check 'E18 no statement of the netflow measure calls connection_netflow as a Function Scan, at either seed' \
+check_ge 'E18 the sweep planned the statements of the declared measures' 19 "$NETFLOW_PLANNED"
+check 'E18 no statement of a declared measure calls its reader as a Function Scan, at either seed' \
     '' "$NETFLOW_FUNCTION_SCANS"
-check 'E18 every statement of the netflow measure reads connection_measured_volume through its primary key' \
+check 'E18 every statement of a declared measure reads connection_measure through its primary key' \
     '' "$NETFLOW_NOT_BY_KEY"
-check 'E18 every statement of the netflow measure uses the same indexes at 100 000 and at 1 000 000 rows' \
+check 'E18 every statement of a declared measure uses the same indexes at 100 000 and at 1 000 000 rows' \
     '' "$NETFLOW_SHAPE_CHANGED"
-# And the check has teeth: a copy of connection_netflow that cannot be inlined -- the same body,
+# And the check has teeth: a copy of flow_measures that cannot be inlined -- the same body,
 # with a SET clause, which PostgreSQL never inlines -- called by the first statement that calls the
 # function, is a Function Scan the check above catches. The copy lives in a transaction rolled back.
-TEETH_SOURCE="$(grep -l 'connection_netflow(' "$WORK"/statements/*.sql | grep -v '/expanded_' | head -n 1)"
+TEETH_SOURCE="$(grep -l 'flow_measures(' "$WORK"/statements/*.sql | grep -v '/expanded_' | head -n 1)"
 {
     printf -- 'BEGIN;\n'
-    printf -- "DO \$teeth\$ BEGIN EXECUTE replace(replace(pg_get_functiondef(CAST('connection_netflow' AS regproc)),\n"
-    printf -- "    'FUNCTION opnview.connection_netflow(', 'FUNCTION opnview.connection_netflow_not_inlined('),\n"
+    printf -- "DO \$teeth\$ BEGIN EXECUTE replace(replace(pg_get_functiondef(CAST('flow_measures' AS regproc)),\n"
+    printf -- "    'FUNCTION opnview.flow_measures(', 'FUNCTION opnview.flow_measures_not_inlined('),\n"
     printf -- "    ' LANGUAGE sql', ' LANGUAGE sql SET search_path TO opnview, public'); END \$teeth\$;\n"
-    sed -e 's/@period@/24h/g' -e 's/@child@/1h/g' -e 's/connection_netflow(/connection_netflow_not_inlined(/g' \
+    sed -e 's/@period@/24h/g' -e 's/@child@/1h/g' -e 's/flow_measures(/flow_measures_not_inlined(/g' \
         "$TEETH_SOURCE" > "$WORK/statements/teeth_netflow.sql.txt"
     "$WORK/bin/planjson" explain "$WORK/statements/teeth_netflow.sql.txt" "$NOW"
     printf -- 'ROLLBACK;\n'
 } > "$WORK/teeth_netflow.sql"
 "${PSQL[@]}" -d "$(dsn "$MAIN_DB")" -f "$WORK/teeth_netflow.sql" 2> "$WORK/teeth_netflow.err" |
     to_nodes "$MAIN_DB" > "$WORK/teeth_netflow_plan.txt"
-check "E18 the check catches a call of a non-inlinable copy of connection_netflow ($(basename "$TEETH_SOURCE" .sql))" \
-    'connection_netflow_not_inlined' \
+check "E18 the check catches a call of a non-inlinable copy of flow_measures ($(basename "$TEETH_SOURCE" .sql))" \
+    'flow_measures_not_inlined' \
     "$(awk -F'\t' '$1 == "Function Scan" { print $2 }' "$WORK/teeth_netflow_plan.txt" | sort -u | tr -d '\n')"
 
 # E12: the geolocations a widget places are read by one named statement, which the sweep planned
@@ -4903,7 +4903,7 @@ done
 # proportion to the flows, in both address families where a table carries an address.
 for db in "$MAIN_DB" "$SCALE_DB"; do
     tag="$(tag_of "$db")"
-    for t in capture_configuration capture_interface capture_interface_parent_of flow_record connection_measured_volume \
+    for t in capture_configuration capture_interface capture_interface_parent_of flow_record connection_measure measure_interval \
              unmatched_record_aggregate_1h unmatched_record_aggregate_24h unmatched_record_aggregate_7d \
              unmatched_record_aggregate_30d provider_source_period push_listener \
              opnsense.mirror_endpoint opnsense.mirror_parameter opnsense.mirror_datum opnsense.mirror_table \
@@ -4926,11 +4926,11 @@ for db in "$MAIN_DB" "$SCALE_DB"; do
             UNION ALL SELECT 'parent_of' WHERE EXISTS (SELECT 1 FROM capture_interface_parent_of)
             UNION ALL SELECT 'unreadable' WHERE EXISTS (SELECT 1 FROM capture_configuration WHERE fingerprint IS NULL)
             ) AS s;")"
-    check "E17 $tag: connection_measured_volume carries every state its CHECK allows, and a counted copy" \
+    check "E17 $tag: connection_measure carries every state the netflow measure declares, and a counted copy" \
         'awaiting_export,capture_configuration_unknown,export_gap,forwarding_export_unsettled,in_progress,ingress_not_captured,interface_not_captured,interface_not_exported,measured,missing,not_exported_when_refused,parent_copies_only:1' \
         "$(q "$db" "SELECT string_agg(state, ',' ORDER BY state) || ':' ||
-            (SELECT CAST(max(counted_copy) AS text) FROM connection_measured_volume) FROM
-            (SELECT DISTINCT state FROM connection_measured_volume) AS s;")"
+            (SELECT CAST(max(markers) AS text) FROM connection_measure WHERE measure = 'netflow') FROM
+            (SELECT DISTINCT state FROM connection_measure WHERE measure = 'netflow') AS s;")"
     check "E17 $tag: flow_record carries every join state, copy kind, unmatched reason and role, and a counted copy" \
         'copy,joined,pending,unmatched|parent_copy,translated_copy|ambiguous,beyond_flow_horizon,interface_index_unmapped,no_logged_leg,reverse_unconfirmed|interface,no_receiving_interface,unmapped|interface,local_delivery|1' \
         "$(q "$db" "SELECT (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT join_state AS v FROM flow_record) AS a)
@@ -4947,13 +4947,12 @@ for db in "$MAIN_DB" "$SCALE_DB"; do
     for p in 1h 24h 7d 30d; do
         for t in "volume_aggregate_$p" "owner_volume_aggregate_$p" "client_volume_aggregate_$p" \
                  "domain_volume_aggregate_$p" "rule_volume_aggregate_$p" "peer_volume_aggregate_$p"; do
-            check_ge "E17 $tag: $t fills the netflow columns" 1 \
-                "$(q "$db" "SELECT count(*) FROM $t WHERE netflow_bytes > 0
-                    AND (netflow_parts).allowed_packets + (netflow_parts).blocked_packets > 0;")"
+            check_ge "E17 $tag: $t fills the netflow measure's parts" 1 \
+                "$(q "$db" "SELECT count(*) FROM $t WHERE measure_total_bytes(measure_parts, 'netflow') > 0;")"
         done
     done
-    check_ge "E17 $tag: purged_flow_hour fills the netflow columns" 1 \
-        "$(q "$db" "SELECT count(*) FROM purged_flow_hour WHERE netflow_bytes > 0;")"
+    check_ge "E17 $tag: purged_flow_hour fills the netflow measure's parts" 1 \
+        "$(q "$db" "SELECT count(*) FROM purged_flow_hour WHERE measure_total_bytes(measure_parts, 'netflow') > 0;")"
 done
 check_ge 'E17 the NetFlow tables grow with the flows: the scale seed holds more records than the baseline' \
     "$(( $(q "$MAIN_DB" 'SELECT count(*) FROM flow_record;') + 1 ))" \

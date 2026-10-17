@@ -38,6 +38,10 @@ const (
 	// RefusalTriggerInvalid is a triggered_by naming a channel the core does not publish, or declared
 	// by a provider whose kind runs at a surveyed interval.
 	RefusalTriggerInvalid = "trigger_invalid"
+	// RefusalMeasureInvalid is a measure declaration that is ill-formed, names a kind none of the plugin's
+	// providers implements, labels itself outside the plugin's catalogue, or takes a name another plugin's
+	// measure has.
+	RefusalMeasureInvalid = "measure_invalid"
 	// RefusalEndpointInvalid is an endpoint declaration with an ill-formed name, body or
 	// argument, or a name declared twice.
 	RefusalEndpointInvalid = "endpoint_invalid"
@@ -117,6 +121,14 @@ const (
 	// not name under `datasets` (PA3 of the plugin-API amendment): refused at load when the script names it by a
 	// literal, and at the call -- a TypeError carrying this code -- when the name is computed.
 	RefusalDatasetNotDeclared = "dataset_not_declared"
+	// RefusalDerivationInvalid is a derivation the loader cannot run (PA4 of the plugin-API amendment): a function
+	// the script does not export, a trigger naming no core kind or no push entry of the plugin, a dataset the
+	// manifest does not declare, an output that is not one of the plugin's tables or measures, or a plugin with
+	// no provider whose availability a failed run is recorded in.
+	RefusalDerivationInvalid = "derivation_invalid"
+	// RefusalPushDecodeMissing is a decode function the script does not export under push, an entry of a
+	// protocol whose messages carry no structure that names none, or one of any other protocol that names one.
+	RefusalPushDecodeMissing = "push_decode_missing"
 )
 
 // Refusal is one plugin the loader would not load, with its closed code.

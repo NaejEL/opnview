@@ -150,14 +150,14 @@ GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
 
 
 -- ---------------------------------------------------------------------------
--- The same four reads of the `netflow` measure (measure.go): the same rows and connections, with the
--- bytes the NetFlow export reported for them in place of the logged bytes, then the columns of
--- netflow_parts (internal/store, schema.sql). A flow's figure is its connection's, read through
--- connection_netflow and counted on its first leg's row (no second leg is read here), as the aggregate
+-- The same four reads in a declared measure, CAST(:measure AS TEXT), (measure.go): the same rows and connections, with the
+-- measure's bytes for them in place of the logged bytes, then the measure's
+-- parts, measure_parts (internal/store, schema.sql). A flow's figure is its connection's, read through
+-- flow_measures and counted on its first leg's row (no second leg is read here), as the aggregate
 -- refresh counts it (internal/store, insert_volume).
 -- ---------------------------------------------------------------------------
 
--- statement: widget_flow_parts_netflow
+-- statement: widget_flow_parts_measured
 SELECT f.traffic_direction AS traffic_direction,
        f.protocol AS protocol,
        f.dst_port AS port,
@@ -170,16 +170,16 @@ SELECT f.traffic_direction AS traffic_direction,
                                             'src-limit', 'synproxy') THEN 'firewall_no_rule'
                       ELSE 'firewall_reason_not_recorded' END
             ELSE 'unknown' END AS decision,
-       sum(n.bytes) AS bytes,
-       sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END) AS allowed_bytes,
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
-       sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END) AS unknown_bytes,
+       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))) AS bytes,
+       sum(CASE WHEN f.action = 'pass' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS allowed_bytes,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS blocked_bytes,
+       sum(CASE WHEN f.action = 'unknown' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS unknown_bytes,
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
-       (netflow_sum(n.parts)).*
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM classified_flow AS f
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
@@ -191,7 +191,7 @@ WHERE f.observed_at >= :from
 GROUP BY 1, 2, 3, 4;
 
 
--- statement: widget_flow_recent_parts_netflow
+-- statement: widget_flow_recent_parts_measured
 SELECT f.observed_at - f.observed_at % :width AS bucket_start,
        f.traffic_direction AS traffic_direction,
        f.protocol AS protocol,
@@ -207,16 +207,16 @@ SELECT f.observed_at - f.observed_at % :width AS bucket_start,
             ELSE 'unknown' END AS decision,
        f.local_interface_id AS interface_id,
        f.local_client_id AS client_id,
-       sum(n.bytes) AS bytes,
-       sum(CASE WHEN f.action = 'pass' THEN n.bytes ELSE 0 END) AS allowed_bytes,
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
-       sum(CASE WHEN f.action = 'unknown' THEN n.bytes ELSE 0 END) AS unknown_bytes,
+       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))) AS bytes,
+       sum(CASE WHEN f.action = 'pass' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS allowed_bytes,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS blocked_bytes,
+       sum(CASE WHEN f.action = 'unknown' THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS unknown_bytes,
        sum(CASE WHEN f.action = 'pass' THEN 1 ELSE 0 END) AS allowed_connections,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked_connections,
        sum(CASE WHEN f.action = 'unknown' THEN 1 ELSE 0 END) AS unknown_connections,
-       (netflow_sum(n.parts)).*
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM classified_flow AS f
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
@@ -228,7 +228,7 @@ WHERE f.observed_at >= :from
 GROUP BY 1, 2, 3, 4, 5, 6, 7;
 
 
--- statement: widget_flow_destinations_netflow
+-- statement: widget_flow_destinations_measured
 SELECT f.local_interface_id AS interface_id,
        f.local_client_id AS client_id,
        c.owner_id AS owner_id,
@@ -242,23 +242,23 @@ SELECT f.local_interface_id AS interface_id,
        f.dst_port AS port,
        f.protocol AS protocol,
        count(*) AS connections,
-       sum(n.bytes) AS bytes,
+       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))) AS bytes,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked,
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS blocked_bytes,
        max(f.observed_at) AS newest,
-       (netflow_sum(n.parts)).*
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM classified_flow AS f
 LEFT JOIN client AS c ON c.id = f.local_client_id
 LEFT JOIN geo_asn AS g ON g.address = f.peer_address
 LEFT JOIN domain_attribution AS a ON a.flow_id = f.id
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
 GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10;
 
 
--- statement: widget_flow_destinations_no_domains_netflow
+-- statement: widget_flow_destinations_no_domains_measured
 SELECT f.local_interface_id AS interface_id,
        f.local_client_id AS client_id,
        c.owner_id AS owner_id,
@@ -272,15 +272,15 @@ SELECT f.local_interface_id AS interface_id,
        f.dst_port AS port,
        f.protocol AS protocol,
        count(*) AS connections,
-       sum(n.bytes) AS bytes,
+       sum(measure_total_bytes(n.parts, CAST(:measure AS TEXT))) AS bytes,
        sum(CASE WHEN f.action IN ('block', 'reject') THEN 1 ELSE 0 END) AS blocked,
-       sum(CASE WHEN f.action IN ('block', 'reject') THEN n.bytes ELSE 0 END) AS blocked_bytes,
+       sum(CASE WHEN f.action IN ('block', 'reject') THEN measure_total_bytes(n.parts, CAST(:measure AS TEXT)) ELSE 0 END) AS blocked_bytes,
        max(f.observed_at) AS newest,
-       (netflow_sum(n.parts)).*
+       measure_parts_sum(n.parts) -> CAST(:measure AS TEXT) AS measure_parts
 FROM classified_flow AS f
 LEFT JOIN client AS c ON c.id = f.local_client_id
 LEFT JOIN geo_asn AS g ON g.address = f.peer_address
-LEFT JOIN LATERAL connection_netflow(f.id, NULL, NULL, f.action) AS n ON true
+LEFT JOIN LATERAL flow_measures(f.id, NULL, NULL, f.action) AS n ON true
 WHERE f.observed_at >= :from
   AND f.observed_at < :to
   AND f.exit_leg_device IS NULL
