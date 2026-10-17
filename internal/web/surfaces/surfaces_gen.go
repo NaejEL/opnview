@@ -12,6 +12,7 @@ import (
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/collection"
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/dashboards"
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/datasets"
+	_ "github.com/NaejEL/opnview/internal/web/surfaces/events"
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/firewallcatalogue"
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/frontend"
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/interfaces"

@@ -542,6 +542,50 @@ measured by LV-C, and the maintainer decides whether it stays on if it exceeds 2
 It is not a live pass: its cadence does not follow the live-interest lease. Logged volume by port and
 protocol is served from the filter log.
 
+## Events
+
+The front is event-driven: it asks a widget again when something the widget reads was stored, and
+polls only while it cannot hear (decided by the orchestrator on the maintainer's instruction,
+18 October 2026; `specs/SPEC-step-7-frontend.md`, D21). **`GET /api/events`**, authenticated like
+every read -- without a session it answers `401` with a JSON condition --, answers
+`text/event-stream` (Server-Sent Events), `Cache-Control: no-store`, same origin. The page opens one
+`EventSource` on it; `connect-src 'self'` already allows it.
+
+The stream relays the notifications the core publishes when what it stored is committed
+(`docs/plugins.md`, *Notifications*), one event each. Every event's SSE name is its `type`, and its
+`data` is one JSON object carrying `type`, `at` (when the server relayed it, UTC epoch seconds) and
+what the notification names. It carries no figure: an answer is only ever composed by the widget
+API, and asking it again is what renews the live-interest lease (*Live figures*).
+
+| `type` | Sent when | Members beside `type` and `at` |
+|---|---|---|
+| `hello` | The stream opened. | `heartbeat_seconds`, `lifetime_seconds` |
+| `collection_pass` | A collection pass of a core kind ended without an error, once per provider it read (`opnview_collection_pass`). | `kind`, `provider_key` |
+| `plugin_pass` | A pass of a plugin's own kind stored its rows (`opnview_plugin_pass`). | `plugin`, `provider` |
+| `aggregate_refresh` | An aggregate refresh rewrote slots (`opnview_aggregate_refresh`). It follows every derivation -- every filter-log pass, every pushed syslog or NetFlow batch stored, every lease, lookup and security-event pass -- because the current slot of each period is rewritten every time. | `periods`, `ranges` (`[{period, from, to}]`, per period the span of the slots rewritten), `families` (`volume`, `rule`, `domain`, `peer`, `client`, `owner`) |
+| `live_sample` | A live pass stored fine samples (`opnview_live_sample`). The baseline pass of the same kind is a `collection_pass` of `measurement_sample`. | `kind`, `provider_key`, `sampled_at` (the newest reading) |
+| `resync` | Events were lost for this reader, which fell behind by more than 64: anything it shows may have changed. | none |
+| `end` | The stream's lifetime elapsed; the server closes it. | none |
+
+**Which widget an event concerns** is read from the widget registry (*The widget registry*): a
+`collection_pass` or `live_sample` concerns the widgets whose `providers` include its `kind`; a
+`plugin_pass` the widgets of that `plugin`; an `aggregate_refresh` every windowed widget whose
+window meets one of its `ranges` -- the current slot is in every refresh, so in practice every
+windowed widget; `hello` after a reconnection and `resync` concern every widget on the canvas shown.
+
+**Bounds.** A comment line (`: heartbeat`) is written every `heartbeat_seconds`, 15, so an
+intermediary does not close an idle stream and a reader that went away is found. After
+`lifetime_seconds`, 300, the stream sends `end` and closes; the browser opens it again after the
+`retry` the stream states, 2 000 ms, through the session check like any request, so a stream never
+outlives its session by more than one lifetime. An event is never replayed: a reader that opens the
+stream again asks again what it shows. Nothing is buffered beyond 64 events per reader; the server
+holds one database listener while at least one stream is open, and none otherwise.
+
+**The freshness these events stand for.** The current slot of every period is rewritten by every
+derivation (`docs/data-model.md`, *Refresh contract*, rule 2), and a filter-log pass runs every
+`poll_interval_firewall_log_seconds`, 10 by default: a windowed answer can change after each pass,
+and its `aggregate_refresh` is on the stream as soon as the pass has committed.
+
 ## Response budgets
 
 Decision 9, measured by the pre-deployment command (`sql/schema-checks.sh`,

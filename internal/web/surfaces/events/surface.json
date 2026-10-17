@@ -1,0 +1,4 @@
+{
+  "name": "events",
+  "description": "The event stream: one Server-Sent Events connection per page, announcing what was stored so the front asks again only what changed."
+}

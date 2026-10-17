@@ -717,6 +717,53 @@ func TestTheSchedulerRefreshesAtItsCadenceOnlyWhileShown(t *testing.T) {
 	}
 }
 
+// TestAnAnswerThatChangedIsDrawnAtTheNextRefresh: the reconciler's short-cut -- a subtree whose view
+// node is the very object it last matched is not walked -- never keeps a card on its previous answer.
+// The second answer renames the first site; once the refresh has asked again, the card shows the
+// new name and no longer the old one.
+func TestAnAnswerThatChangedIsDrawnAtTheNextRefresh(t *testing.T) {
+	t.Parallel()
+	fixture := newCanvasFixture(t, `{"format_version": 1, "canvases": [
+  {"id": "main", "title": "Main", "widgets": [
+    {"id": "sites", "type": "top_sites", "placement": {"x": 0, "y": 0, "w": 12, "h": 8}}
+  ]}]}`)
+	raw := firstDrawable(t, "top_sites").Raw
+	const before, after = "api.example.org", "renamed.example.org"
+	if !bytes.Contains(raw, []byte(before)) {
+		t.Fatalf("the recorded top_sites answer no longer names %s", before)
+	}
+	var mutex sync.Mutex
+	asked := 0
+	fixture.answer("top_sites", func(map[string]any) frontjsAnswer {
+		mutex.Lock()
+		asked++
+		changed := asked > 1
+		mutex.Unlock()
+		text := raw
+		if changed {
+			text = bytes.ReplaceAll(raw, []byte(before), []byte(after))
+		}
+		var body any
+		_ = json.Unmarshal(text, &body)
+		return ok(body)
+	})
+	page := fixture.canvasPage(t, "/canvas/1/main")
+	card := `section[data-widget-card="sites"] [data-widget-body="sites"]`
+	if text := page.Text(card); !strings.Contains(text, before) {
+		t.Fatalf("the first answer is not drawn: %.300s", text)
+	}
+	interval := page.Run(`opnview.scheduler.WINDOWED_MS`).ToInteger()
+	page.Advance(interval)
+	page.Advance(0)
+	if widgetRequests(page, "top_sites") < 2 {
+		t.Fatalf("the refresh did not ask the widget again")
+	}
+	text := page.Text(card)
+	if !strings.Contains(text, after) || strings.Contains(text, before) {
+		t.Errorf("the changed answer is not drawn: %.300s", text)
+	}
+}
+
 // TestEveryRendererDrawnInAPseudoLanguageShowsNoLiteral (F7-AC5 for the renderers): a canvas holding
 // every built-in widget, each drawing its recorded answer, in a pseudo-language that wraps every
 // catalogue string in markers, shows no text, aria-label, title or placeholder that is neither

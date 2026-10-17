@@ -193,11 +193,18 @@ func (c *MeasurementCoordinator) collectLiveFrom(ctx context.Context, active cor
 		}
 	}
 	seconds := int64(cadence / time.Second)
+	newest := int64(0)
 	for _, reading := range readings {
 		reading.LiveCadenceSeconds = &seconds
 		if err := c.Store.InsertMeasurementSample(ctx, reading); err != nil {
 			return err
 		}
+		newest = max(newest, reading.SampledAt)
 	}
-	return nil
+	if len(readings) == 0 {
+		return nil
+	}
+	// The fine samples are stored: whoever shows a live figure hears it (sqldb.ChannelLiveSample,
+	// the event stream of internal/web/surfaces/events) and asks again, which also renews the lease.
+	return c.Store.NotifyLiveSample(ctx, core.KindMeasurementSample, active.ProviderKey, newest)
 }

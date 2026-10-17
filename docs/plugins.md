@@ -181,7 +181,8 @@ The core publishes a notification when a pass commits, on a closed list of Postg
 |---|---|---|
 | `opnview_collection_pass` | A collection pass of a core kind ended without an error, once per provider it read. | `{"kind": ..., "provider_key": ...}` |
 | `opnview_plugin_pass` | A pass of a plugin's own kind stored its rows and state; published inside that transaction, so a pass that rolls back publishes nothing. | `{"plugin": ..., "provider": ...}` |
-| `opnview_aggregate_refresh` | An aggregate refresh rewrote slots. | `{"periods": [...]}` |
+| `opnview_aggregate_refresh` | An aggregate refresh rewrote slots. It follows every derivation, and so every filter-log pass and every pushed batch, because the current slot of each period is rewritten every time. | `{"periods": [...], "ranges": [{"period": ..., "from": ..., "to": ...}], "families": [...]}`, each range spanning the slots of one period rewritten |
+| `opnview_live_sample` | A live pass of a `measurement_sample` provider stored fine samples (`docs/widget-api.md`, *Live figures*). | `{"kind": "measurement_sample", "provider_key": ..., "sampled_at": ...}` |
 
 A provider that states its own cadence may name some of them in `triggered_by`, alone or followed
 by a colon and a subject -- the kind of a collection pass, the plugin of a plugin pass:
