@@ -654,8 +654,26 @@ func (a flowRecordAdapter) Capture(ctx context.Context, session provider.Session
 			return flowrecord.Configuration{}, a.failed(failed), failed
 		}
 		seen[identifier] = true
-		configuration.Interfaces = append(configuration.Interfaces, flowrecord.Interface{Identifier: identifier,
-			Ingress: scripthost.Flag(row, "ingress", false), Egress: scripthost.Flag(row, "egress", false)})
+		captured := flowrecord.Interface{Identifier: identifier, Ingress: scripthost.Flag(row, "ingress", false),
+			Egress: scripthost.Flag(row, "egress", false), Exported: scripthost.Text(row, "exported"),
+			NotExportedReason: scripthost.Text(row, "not_exported_reason"), ParentOf: scripthost.Texts(row, "parent_of")}
+		if captured.Exported == "" {
+			// A provider that does not say whether the interface is exported has not established it.
+			captured.Exported = flowrecord.ExportedUnknown
+		}
+		if (captured.Exported == flowrecord.ExportedNo) != (captured.NotExportedReason != "") {
+			failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: fmt.Sprintf("capture.interfaces[%d] "+
+				"names a not_exported_reason exactly when exported is not \"no\"", index)}
+			return flowrecord.Configuration{}, a.failed(failed), failed
+		}
+		for _, of := range captured.ParentOf {
+			if of == "" || of == identifier {
+				failed := &scripthost.Failure{Code: scripthost.FailureRecords, Detail: fmt.Sprintf("capture.interfaces[%d] "+
+					"lists an empty identifier, or itself, in parent_of", index)}
+				return flowrecord.Configuration{}, a.failed(failed), failed
+			}
+		}
+		configuration.Interfaces = append(configuration.Interfaces, captured)
 	}
 	for _, timeout := range []*int64{configuration.ActiveTimeoutSeconds, configuration.InactiveTimeoutSeconds} {
 		if timeout != nil && *timeout <= 0 {

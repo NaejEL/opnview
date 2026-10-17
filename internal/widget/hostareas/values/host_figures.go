@@ -63,7 +63,7 @@ import (
 //
 // Summable figures are {bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
 // blocked_connections, unknown_connections}; a member left out is 0. Netflow figures also carry
-// measure: "netflow" and the thirty-six columns of netflow_parts (store.NetflowPartsColumns): for each
+// measure: "netflow" and the fifty-four columns of netflow_parts (store.NetflowPartsColumns): for each
 // of the allowed, blocked and unknown parts, its packets, its four coverage classes and the direction
 // states it met. A row of a statement read under netflow carries them as columns of those names --
 // (netflow_sum(n.parts)).* writes them all -- and a Volume handed back is read as its figures.

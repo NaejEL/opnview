@@ -1,0 +1,44 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q3: records identical in every field lie within one node and one datagram and are distinct real one-packet records (TCP FIN or RST); dropping identical twins would delete real packets.",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "A pair identical across two datagrams is added beside the pair within one datagram, which the analysis did not observe.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F9",
+  "legs": [
+    {"digest": "f09in", "at": 0, "device": "exnic0", "dir": "in", "action": "pass", "src": "198.51.100.11",
+     "dst": "192.0.2.86", "src_port": 50009, "dst_port": 443, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4109, "tcp_seq": 7009},
+    {"digest": "f09out", "at": 0, "device": "exnic2", "dir": "out", "action": "pass", "src": "203.0.113.2",
+     "dst": "192.0.2.86", "src_port": 61009, "dst_port": 443, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4109, "tcp_seq": 7009}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "198.51.100.11", "dst": "192.0.2.86", "src_port": 50009, "dst_port": 443, "protocol": 6, "flags": 17,
+     "in": 21, "out": 25, "packets": 1, "octets": 40, "start": 1, "end": 1, "side": "forward", "datagram": 0,
+     "expect": {"join_state": "joined", "leg": "f09in", "orientation": "forward"},
+     "counts": {"connection": "f09in", "direction": "forward"}},
+    {"src": "198.51.100.11", "dst": "192.0.2.86", "src_port": 50009, "dst_port": 443, "protocol": 6, "flags": 17,
+     "in": 21, "out": 25, "packets": 1, "octets": 40, "start": 1, "end": 1, "side": "forward", "datagram": 0,
+     "expect": {"join_state": "joined", "leg": "f09in", "orientation": "forward"},
+     "counts": {"connection": "f09in", "direction": "forward"}},
+    {"src": "198.51.100.11", "dst": "192.0.2.86", "src_port": 50009, "dst_port": 443, "protocol": 6, "flags": 20,
+     "in": 21, "out": 25, "packets": 1, "octets": 40, "start": 2, "end": 2, "side": "forward", "datagram": 1,
+     "expect": {"join_state": "joined", "leg": "f09in", "orientation": "forward"},
+     "counts": {"connection": "f09in", "direction": "forward"}},
+    {"src": "198.51.100.11", "dst": "192.0.2.86", "src_port": 50009, "dst_port": 443, "protocol": 6, "flags": 20,
+     "in": 21, "out": 25, "packets": 1, "octets": 40, "start": 2, "end": 2, "side": "forward", "datagram": 2,
+     "expect": {"join_state": "joined", "leg": "f09in", "orientation": "forward"},
+     "counts": {"connection": "f09in", "direction": "forward"}},
+    {"src": "192.0.2.86", "dst": "198.51.100.11", "src_port": 443, "dst_port": 50009, "protocol": 6, "flags": 17,
+     "in": 25, "out": 21, "packets": 1, "octets": 52, "start": 1, "end": 1, "side": "reverse", "datagram": 0,
+     "expect": {"join_state": "joined", "leg": "f09in", "orientation": "reverse"},
+     "counts": {"connection": "f09in", "direction": "reverse"}}
+  ],
+  "volumes": [
+    {"connection": "f09in", "direction": "forward", "state": "measured"},
+    {"connection": "f09in", "direction": "reverse", "state": "measured"}
+  ]
+}

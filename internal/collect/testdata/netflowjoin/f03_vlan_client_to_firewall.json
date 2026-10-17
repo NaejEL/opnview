@@ -1,0 +1,31 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q2 (delivery to the firewall carries the loopback's index as OUTPUT_SNMP; a firewall-originated packet has INPUT_SNMP 0) and Q3 (the parent copy vlan->lo / parent->lo).",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "Nothing beyond the shape.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F3",
+  "legs": [
+    {"digest": "f03in", "at": 0, "device": "exvlan7", "dir": "in", "action": "pass", "src": "198.51.100.132",
+     "dst": "198.51.100.129", "src_port": 40003, "dst_port": 53, "protocol": "udp", "protocol_number": 17}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "198.51.100.132", "dst": "198.51.100.129", "src_port": 40003, "dst_port": 53, "protocol": 17,
+     "in": 23, "out": 27, "packets": 1, "octets": 70, "start": 0, "end": 0, "side": "forward",
+     "expect": {"join_state": "joined", "leg": "f03in", "orientation": "forward"},
+     "counts": {"connection": "f03in", "direction": "forward"}},
+    {"src": "198.51.100.132", "dst": "198.51.100.129", "src_port": 40003, "dst_port": 53, "protocol": 17,
+     "in": 22, "out": 27, "packets": 1, "octets": 70, "start": 0, "end": 0, "side": "forward",
+     "expect": {"join_state": "copy", "copy_kind": "parent_copy"}},
+    {"src": "198.51.100.129", "dst": "198.51.100.132", "src_port": 53, "dst_port": 40003, "protocol": 17,
+     "in": 0, "out": 23, "packets": 1, "octets": 150, "start": 0, "end": 0, "side": "reverse",
+     "expect": {"join_state": "joined", "leg": "f03in", "orientation": "reverse"},
+     "counts": {"connection": "f03in", "direction": "reverse"}}
+  ],
+  "volumes": [
+    {"connection": "f03in", "direction": "forward", "state": "measured"},
+    {"connection": "f03in", "direction": "reverse", "state": "measured"}
+  ]
+}

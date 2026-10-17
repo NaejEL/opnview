@@ -181,11 +181,16 @@ vocabulary read off an endpoint:
 | a push entry's **liveness** (`liveness_seconds`) | OPNsense sends and knows nothing of whether anybody receives | a push entry is **alive** while messages it accepts arrived within its span; the word is the ordinary one for that test |
 | `push_listener` | nothing upstream records that `opnview` was listening | the last instant each push listener was heard alive, so the interval it was not is a gap |
 | a **flow record**, `flow_record` | NetFlow v9's and IPFIX's **Flow Record** (RFC 3954, RFC 7011) | `flow_record`, kept although a reader may take it for a `flow` (Q16 (a)): **a `flow` is one filter-log record, a `flow_record` one record an exporter sent**, and the two are different things joined by the NetFlow join |
-| the **Observation Point** of a flow record | RFC 7011's **Observation Point**; OPNsense exports none (survey, *Push sources*, S11) | `flow_record.observation_point_identifier` and `_device`: the one interface the capture configuration in force names, when it names exactly one; never inferred from a record |
+| RFC 7011's **Observation Point** | RFC 7011's **Observation Point**: the location where packets are observed | **not exported by OPNsense and not assigned by `opnview`** (survey, *Push sources*, S11): no flow record carries one, and none is inferred. A record names the interface it was received on and the one its route chose (`ingressInterface`, `egressInterface`), and the join reads those instead (NJ4 of the amendment "the NetFlow join with every interface captured") |
+| a record's **mapped ingress and egress interface**, and their **roles** (`flow_record.ingress_role`, `egress_role`) | none: OPNsense's NetFlow export carries raw kernel indexes, and its own aggregation maps them without naming the outcome | **mapped**, the ordinary word for an index looked up in a map, at reception and never again (NJ3). The roles say what an index names when it is not an interface the map holds: `no_receiving_interface` is index 0, which `ng_netflow` writes when a packet has no receiving interface (S6a, worded after the kernel's `rcvif`); `local_delivery` is the loopback's index, which a packet delivered to the firewall itself carries as its egress index (S6b); `unmapped` is any other index the map does not hold; `interface` is one it does |
+| a **translated copy** (`copy_kind = 'translated_copy'`) | pf calls the rewrite **translation** (pf.conf(5), *Translation*); nothing names the second record an exporter sends of one translated packet | **copy**, because the record repeats packets another record already counts, and **translated** after pf's word: the node of the interface a packet leaves by exports it in the form pf translated it to, beside the receiving node's record of its first form (NJ4 rule 5; REPORT Q4) |
+| a **parent copy** (`copy_kind = 'parent_copy'`), and an interface's **`parent_of`** | OPNsense's VLAN model names the interface a VLAN rides on its **parent** (*Interfaces > Devices > VLAN*, the field ifconfig prints as "parent interface", S6c) | **parent**, OPNsense's own term; **copy**, because a parent's node exports a VLAN's received packets again with the parent as the receiving interface (NJ4 rule 6; REPORT Q3). `parent_of` lists the interfaces a parent's node exports so; the plugin fills it, and the core never names the mechanism |
+| a **counted copy** (`flow_record.counted_copy`, `connection_measured_volume.counted_copy`) | none | a translated copy NJ5's sole-copy rule counts for a direction no exporter sees in its first form; **counted** says it is the one copy a figure includes |
 | the **capture configuration**, `capture_configuration` | OPNsense's *Reporting > NetFlow* settings, the `OPNsense.Netflow` model's `capture` | what an exporter captures on and in which directions, as one read found it; `opnview`'s word for the read, since the settings page has no name of its own beyond *NetFlow* |
 | **forward** and **reverse** | RFC 5103's terms for the two directions of a biflow | a record's orientation to the leg it joined: forward is the leg's logged tuple, reverse its swap; and a connection's two directions, as its first leg logged them |
-| the **measured volume** of a connection, `connection_measured_volume`, and the **`netflow` measure** | none: no product names the volume of a logged connection as an exporter counted it | **measured**, against **logged**: the bytes and packets the NetFlow export reported for a logged connection, each direction once, at the single Observation Point; served as the measure `netflow`, never summed with `logged` |
-| an **unmatched record**, `unmatched_record_aggregate_*` | none: nothing upstream joins flow records to logged connections | a flow record with an Observation Point that joined no leg, with its reason (`no_logged_leg`, `ambiguous`, `beyond_flow_horizon`) |
+| the **measured volume** of a connection, `connection_measured_volume`, and the **`netflow` measure** | none: no product names the volume of a logged connection as an exporter counted it | **measured**, against **logged**: the bytes and packets the NetFlow export reported for a logged connection, each direction counted once, from the records of the one exporter that sees it, or from its translated copies where none does; served as the measure `netflow`, never summed with `logged` |
+| an **unmatched record**, `unmatched_record_aggregate_*` | none: nothing upstream joins flow records to logged connections | a flow record that joined no leg and is no copy, with its reason (`no_logged_leg`, `ambiguous`, `beyond_flow_horizon`, `interface_index_unmapped`, `reverse_unconfirmed`), keyed by its ingress and egress interfaces or roles |
+| the per-direction states `forwarding_export_unsettled`, `ingress_not_captured`, `parent_copies_only`, `interface_not_exported`, `interface_not_captured` | none: nothing upstream says why a direction of a logged connection has no exported figure | each names the first cause NJ5 finds: two exporters may see the direction (**unsettled**, because whether a packet is exported once or twice is not settled by any record), the entry interface is captured on egress only, only parent copies exist, the exporter cannot export the interface, or the interface is not captured; `capture_not_known` is the coverage class of a connection that started under no readable, enabled configuration |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
@@ -250,6 +255,7 @@ blocked_event
 blocklist
 capture_configuration
 capture_interface
+capture_interface_parent_of
 classified_flow
 client
 client_volume_aggregate_1h
@@ -269,7 +275,6 @@ encrypted_credential
 eve_ingest_cursor
 flow
 flow_record
-flow_record_condition
 geo_asn
 interface
 interface_address
@@ -376,7 +381,6 @@ domain_volume_aggregate_30d
 domain_volume_aggregate_7d
 flow
 flow_record
-flow_record_condition
 geo_asn
 interface_address
 measurement_sample
@@ -419,6 +423,7 @@ applied_schema
 blocklist
 capture_configuration
 capture_interface
+capture_interface_parent_of
 encrypted_credential
 eve_ingest_cursor
 interface
@@ -531,10 +536,9 @@ foreign key, which a hypertable cannot be.
 | `collection_gap`, `opnview_downtime` | no | `id` is unique without the interval | row `DELETE` | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
 | `state_snapshot`, `state_item` | no | `state_item` references its snapshot | row `DELETE` of whole snapshots | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
 | `flow_record` | **yes**, chunked by day on `start_at` | -- its one unique key, `(identity, start_at)`, holds the time column, and nothing references it | `drop_chunks` of the whole chunks past its own horizon (`retention_flow_record_seconds`, 0 following `retention_seconds`), then row `DELETE` to the exact second | `TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention` |
-| `connection_measured_volume` | no | keyed on the connection's first leg and the direction, not on time; rewritten in place as a figure grows | row `DELETE` with its connection, at the flows' horizon | `TestTheMeasuresAreCountedOnceAndNeverSummed` |
-| `flow_record_condition` | no | `id` is unique without `observed_at` | row `DELETE` at the flow records' horizon | `TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention` |
+| `connection_measured_volume` | no | keyed on the connection's first leg and the direction, not on time; rewritten in place as a figure grows | row `DELETE` with its connection, at the flows' horizon | `TestTheJoinWithEveryInterfaceCaptured` (NJ-AC12) |
 | `provider_source_period` | no | keyed on the provider and the period's start, a period spanning any length of time | row `DELETE` of closed periods ended before the flows' horizon; the open period kept | `sql/schema-checks.sh`, E21 and E22 |
-| `unmatched_record_aggregate_*` | no | keyed on the slot and the record's Observation Point, direction, protocol, version and reason; accumulated by the join, not recomputed | row `DELETE` of slots ended before the flows' horizon | `TestAnUnmatchedRecordIsCountedInNoFigure` |
+| `unmatched_record_aggregate_*` | no | keyed on the slot and the record's ingress and egress interfaces or roles, protocol, version and reason; accumulated by the join, not recomputed | row `DELETE` of slots ended before the flows' horizon | `TestAnUnmatchedRecordIsCountedInNoFigure` |
 | a plugin's table with a time column | **yes**, chunked by day | its declaration may not hold a unique key without the time column (`unique_key_without_time`) | `drop_chunks` of the whole chunks past the horizon, then row `DELETE` to the exact second | `TestAPluginHypertableIsPurgedByChunkToTheExactSecond` |
 
 **The aggregate families.** Every family -- `volume`, `owner`, `client`, `peer`, `domain`,
@@ -3043,113 +3047,127 @@ per provider.
 
 ### NetFlow volumes — `flow_record`, the capture configuration, the join and the measured volume
 
-The NetFlow join amendment to `specs/SPEC-backend-completion-plugins.md` (PS17–PS23, decision 15b): the
-flow records an exporter sends are stored as they came, and **when the capture configuration in force
-names exactly one captured interface**, each record is joined to the filter-log leg logged on that
-interface, and every logged connection gets its **measured volume** beside its logged one. With any
-other configuration -- none, two interfaces or more, unreadable -- the records are stored and nothing
-is joined. **A flow record is not a `flow`**: a `flow` is one filter-log record, a `flow_record` one
-record an exporter sent (*Vocabulary*).
+The NetFlow join amendment to `specs/SPEC-backend-completion-plugins.md` (PS17), as its amendment "the
+NetFlow join with every interface captured" replaces the join (NJ2 to NJ8, decision 15d): **every
+interface may be captured**. The flow records an exporter sends are stored as they came, **each is
+joined from its own interface indexes** to the filter-log leg they name, and every logged connection
+gets its **measured volume** beside its logged one, **each direction counted once**. What the capture
+configuration says decides which exporter counts a direction; nothing is inferred from the records.
+**A flow record is not a `flow`**: a `flow` is one filter-log record, a `flow_record` one record an
+exporter sent (*Vocabulary*).
 
-**`capture_configuration`, `capture_interface`** -- the configurations a `flow_record` provider read,
-as runs of reads: a read equal to the newest run's extends it (`last_read_at`), any other opens a run.
-A configuration is in force over its run; **between two runs that differ, before the first, and over
-an unreadable run (`fingerprint` NULL, `outcome` the broker's) it is `capture_configuration_unknown`**;
-after the newest read the newest configuration is taken as in force until a read says otherwise. The
-captured interfaces are those with a captured direction, each `ingress` and `egress`.
-
-**`flow_record_condition`** -- a condition the decoder detected on the exporter's stream:
-`netflow_sequence_interleaved`, sequence numbers going backwards, which shows several counters behind
-one observation domain. Under a one-interface configuration the stream contradicts the configuration:
-the undecided records starting from `observed_at` lose their Observation Point, and the join is
-suspended until the next read (`resolved_at`), which also has the receiver follow the sequence afresh.
-It never says which interface a record came from.
+**`capture_configuration`, `capture_interface`, `capture_interface_parent_of`** -- the configurations a
+`flow_record` provider read, as runs of reads: a read equal to the newest run's extends it
+(`last_read_at`), any other opens a run. A configuration is in force over its run; **between two runs
+that differ, before the first, and over an unreadable run (`fingerprint` NULL, `outcome` the broker's)
+it is `capture_configuration_unknown`**; after the newest read the newest configuration is taken as in
+force until a read says otherwise. Each interface carries `ingress` and `egress`, **`exported`** --
+`yes`, `no` with `not_exported_reason`, or `unknown`: whether the exporter actually exports what is
+configured -- and its **`parent_of`**, the interfaces whose received packets its exporter also exports
+with it as the receiving interface. The provider fills both; for OPNsense, an interface with no `ether`
+line has no export point (S5c), and a VLAN's parent exports the VLAN's received packets again (S6c).
 
 **`flow_record`** -- one record as its exporter sent it, a hypertable on `start_at` (*Storage fit*):
 the exporter and observation domain, the raw `ingress_interface` and `egress_interface`, version, IANA
 protocol, addresses and ports, cumulative `tcp_flags`, `octets`, `packets`, start and end at the
 precision exported, reception. Its `identity` is the core's, from the delivery: a datagram delivered
-twice is stored once, two identical records of one datagram are two rows. At reception the core writes
-the state of the configuration in force at the start (`capture_state`), the captured-interface count,
-the **Observation Point** -- the one captured interface, mapped to its kernel index through
-`interfaces_info` -- and the **direction** at it (egress for an egress-only interface; ingress when
-`ingress_interface` is the point's index; egress otherwise, a firewall-originated packet's index being
-0, survey S6a); `loss_detectable` is 1 where the configuration made the exporter's sequence one
-counter's. A record is never given a point later, and never loses one, but by the contradiction above.
+twice is stored once, two identical records of one datagram are two rows, and **records are never
+deduplicated by content** -- two identical one-packet records are two real packets (REPORT Q3). At
+reception the core maps both indexes with the **index map in force** -- the latest `interfaces_info/1`
+read through the broker, read afresh after the exporter restarted -- and stores, for each, its
+**role** and, for an interface, its identifier and device: `interface`, `no_receiving_interface`
+(index 0, S6a), `local_delivery` (the loopback's index, S6b) or `unmapped`. Mapped values are never
+re-mapped. `loss_detectable` is 1 where the configuration in force bounds the exporter's sequence
+counters (below).
 
-**The join** (`internal/collect`, `flowrecord.go`), decided from stored rows only, a group -- one
-Observation Point and one unordered tuple -- at a time, oldest record first, so the order of arrival
-changes nothing and a second derivation writes nothing:
+**The join** (`internal/collect/derive`, `join.go`), decided from stored rows only, a group -- one
+unordered tuple -- at a time, oldest record first, so the order of arrival changes nothing and a second
+derivation writes nothing. A record is decided only once the filter log has been read past its start
+plus `netflow_join_tolerance_seconds` (3 by default); until then it is `pending`. Its candidates
+(rules 1 and 2) are legs of its version and protocol (by IANA number, survey S4a) whose addresses -- as
+values -- and ports are the record's (**forward**) or swapped (**reverse**), ICMP, ICMPv6 and ports 0
+comparing the addresses alone, and **never a second leg**:
 
-1. A record is decided only once the filter log has been read past its start plus
-   `netflow_join_tolerance_seconds` (3 by default: the filter log's, NetFlow's and the normaliser's
-   one-second resolutions); until then it is `pending`.
-2. Its candidates are the legs logged on the point's device, of its version and protocol (by IANA
-   number; the filter log's name is read through IANA's keywords, survey S4a), whose addresses -- as
-   values -- and ports are the record's (**forward**) or swapped (**reverse**); ICMP, ICMPv6 and a
-   record with ports 0 compare the addresses alone. The record's direction, its orientation and the
-   leg's pf `dir` must agree: ingress forward or egress reverse with an `in` leg, egress forward or
-   ingress reverse with an `out` leg.
-3. The leg logged latest at or before the start plus the tolerance wins; two at that instant are
-   `ambiguous`. A TCP record carrying SYN joins only a leg logged within the tolerance of its start.
-4. The idle time from the leg, or from its last joined record of that orientation, to the start never
-   exceeds pf's default state timeout (S12): TCP established 86 400 s, 900 s after a FIN, 90 s after a
-   RST, 120 s before any acknowledgement; UDP 60 s; ICMP 20 s; any other 60 s.
-5. Every action joins: a refused `in` leg's forward packets were captured before pf.
-6. A record joining nothing is **unmatched**: `no_logged_leg`, `ambiguous`, or `beyond_flow_horizon`
-   when it started before `retention_purge.purged_before`, or its leg can have been purged.
+1. `ingress_interface` 0 (firewall-originated): forward to the `out` leg on dev(egress), or in reverse
+   to the `in` leg on dev(egress);
+2. otherwise: (a) forward to the `in` leg on dev(ingress); (b) in reverse to the `in` leg on
+   dev(egress); (c) when `egress_interface` is the loopback's, in reverse to the `out` leg on
+   dev(ingress).
+
+The candidates are pooled: the leg logged latest at or before the start plus the tolerance wins; two
+at that instant are `ambiguous`; a TCP record carrying SYN joins only a leg logged within the tolerance
+of its start; the idle time from the leg, or from its last joined record of that orientation, never
+exceeds pf's default state timeout (S12). Every action joins. **A reverse join under rule 1 or 2(b) is
+accepted only once a forward record joined to the same leg left by the interface the reverse record
+arrived on** (0 and the loopback's index counted as equal); until then it is `pending`, up to the
+leg plus the active timeout in force plus the tolerance, and after it `reverse_unconfirmed`. A record
+joining nothing is a **parent copy** when it would join with its receiving interface replaced by one of
+its `parent_of`, or when the reverse check rejected it and the accepted forward record left by one of
+them; a **translated copy** when its tuple is a second leg's logged tuple on one of its interfaces
+(`copy_flow_id` names that leg), or one of its ends is the firewall's; otherwise **unmatched**:
+`no_logged_leg`, `ambiguous`, `beyond_flow_horizon`, `interface_index_unmapped` or
+`reverse_unconfirmed`. A copy is stored and counted nowhere, but a counted copy.
 
 **`connection_measured_volume`** -- per connection (named by its first or single leg) and direction
-(`forward`, `reverse`, as the first leg logged them): the bytes, packets and records joined to **the leg
-logged on the Observation Point** -- the first leg when the point carries it, else the second
-(`measured_at_leg`) -- with the point it was measured at. A row exists only for a connection that
-started under one Observation Point. The state is `measured` (its continuity ended), `in_progress`,
-`awaiting_export` (no record yet, within the active timeout plus the tolerance), `missing` (past it),
-`not_captured` (no leg on the point, or the point does not capture that direction), `export_gap` (a
-gap of the provider meets its span) or `not_exported_when_refused` (a refused `out` leg's forward
-direction: pf refused it before the egress capture). A connection under any other configuration is in
-no row: its state is the interval's. `final` is 1 once nothing can change the row; until then `due_at` is
-the read-through instant at which its state may change by time alone, and the derivation computes an
-open row again when it falls due, or when a record, a leg or the pairing it reads changes.
+(`forward`, `reverse`, as the first leg logged them). Each direction has an **entry** and an **exit**
+(an interface, the firewall itself, or unknown): a first leg `in` on A with a second leg `out` on B is
+A to B forward; a single `in` leg to the firewall is A to the firewall; a single `in` leg elsewhere is A
+to an unknown interface; a single `out` leg is the firewall to A. The **counted exporters** are the
+entry's ingress and the exit's egress wherever exported, less an exporter on the second leg's
+interface of a translated connection (it sees the translated form) and the exit's egress of a refused
+connection (nothing left). With exactly one, the figure is the sum of the records joined to the first
+leg in that orientation, and the state is `measured`, `in_progress`, `awaiting_export`, `missing` or
+`export_gap`. With none, if the second leg's interface exports the translated form, its translated
+copies are counted and marked `counted_copy` (the **sole-copy rule**). With two, the state is
+`forwarding_export_unsettled`, with no bytes. Otherwise the first cause, entry side then exit side:
+`not_exported_when_refused`, `ingress_not_captured`, `parent_copies_only`, `interface_not_exported`,
+`interface_not_captured`, `capture_configuration_unknown`. A connection that started under no
+readable, enabled configuration has no row. `final` is 1 once nothing can change the row; until then
+`due_at` is the read-through instant at which its state may change by time alone.
 
 **`connection_netflow`** -- the one place a logged flow's `netflow` figures are read from
 `connection_measured_volume`: a SQL function of `schema.sql` taking the flow's id, pair outcome,
-paired flow and action, and answering its `bytes` (its connection's, both directions, on a first or
-single leg; on a second leg only the directions measured at that leg) and its `parts`. The aggregate
-refresh, the purge and every `_netflow` twin join it (`LEFT JOIN LATERAL connection_netflow(...) AS n ON
-true`), and none reads the table itself; PostgreSQL inlines it, so the plan is the one the statement
-would have spelled out. `TestNoStatementCopiesThePerLegCounting` fails on a copy.
+paired flow and action, and answering its `bytes` -- its connection's, both directions; on a second
+leg the same, the same packets, but a refused second leg's forward direction, which counts nothing and
+is counted as `not_exported_when_refused` -- and its `parts`. The aggregate refresh, the purge and
+every `_netflow` twin join it (`LEFT JOIN LATERAL connection_netflow(...) AS n ON true`), and none reads
+the table itself; PostgreSQL inlines it. `TestNoStatementCopiesThePerLegCounting` fails on a copy.
 
-**`netflow_parts`** -- a composite type of thirty-six `BIGINT` fields: for each of the `allowed`,
+**`netflow_parts`** -- a composite type of fifty-four `BIGINT` fields: for each of the `allowed`,
 `blocked` and `unknown` parts, `<part>_packets`; the four coverage classes, which sum to the part's
 connections -- `<part>_measured_connections` (both directions `measured`),
 `<part>_partial_connections` (some measured bytes, not both directions measured),
-`<part>_unmeasured_connections` (one Observation Point, no measured byte) and
-`<part>_not_joinable_connections` (no single Observation Point at the connection's start); and, per
-direction state above, `<part>_direction_<state>_connections`, the connections with at least one
-direction in that state (a connection whose two directions are in two states counts under both).
-`netflow_sum` adds values field by field; `(netflow_sum(x)).*` reads one back as its thirty-six named
-columns. A connection is **covered** when it is joinable and none of its directions is
-`not_captured`, `export_gap` or `not_exported_when_refused` (PS22); the widget measure judges it from
-these counts.
+`<part>_unmeasured_connections` (a readable configuration, no measured byte) and
+`<part>_capture_not_known_connections` (no readable, enabled configuration at the connection's start);
+per direction state above, `<part>_direction_<state>_connections`, the connections with at least one
+direction in that state; and `<part>_counted_copy_connections`. `netflow_sum` adds values field by
+field. A connection is **covered** when its capture was known and every direction is `measured`,
+`in_progress`, `awaiting_export` or `missing`; every other state is not covered.
 
 **In the aggregate families.** Every family and period, and `purged_flow_hour`, carries `netflow_bytes`
 split allowed / blocked / unknown by the counting leg's action, and `netflow_parts` -- **beside** the
 logged columns, which are unchanged; no statement sums the two measures. A connection's figure counts
-in its first leg's slot and rows, in the part of that row's action; measured at the second leg it also
-counts under that leg's `exit_leg_device` and in the rule family, as the second leg's logged bytes do.
-A changed figure forces its slot. The purge keeps a purged flow's share in the purged part.
+in its first leg's slot and rows, in the part of that row's action; a connection with a second leg
+also counts it under that leg's `exit_leg_device` and in the rule family, as the second leg's logged
+bytes do. A changed figure forces its slot. The purge keeps a purged flow's share in the purged part.
 
-**`unmatched_record_aggregate_*`** -- the unmatched records, per slot of their start, Observation
-Point, direction, protocol, version and reason: bytes, packets, records. Accumulated by the join in the
-transaction of its decision, so a slot keeps them after the records are purged; in no other family and
-no total.
+**`unmatched_record_aggregate_*`** -- the unmatched records, per slot of their start, ingress and egress
+interface (an identifier, or the role of an index that names none), protocol, version and reason:
+bytes, packets, records. Accumulated by the join in the transaction of its decision, so a slot keeps
+them after the records are purged; in no other family and no total; a copy is in none.
+
+**Loss detection.** One `source_id` may carry several sequence counters -- OPNsense runs one per
+exporting interface -- so the decoder follows several: a datagram continues the counter expecting its
+number, or opens one. A `netflow_sequence_gap` is asserted only when more counters are open than the
+configuration in force reports exporting interfaces; with that number unknown, no loss is asserted and
+`loss_detectable` is 0.
 
 **Retention:** `flow_record` at `retention_flow_record_seconds` (0 follows `retention_seconds`), by
-chunk then row; the conditions and every configuration run but the newest with it; the measured
-volume with its connection; the unmatched family's slots at the flows' horizon. **Indexes:** the
-pending records by provider, the records of a group, the records joined to a leg; on `flow`,
-`idx_flow_join` (device, the two canonical addresses, `observed_at`) for the candidates.
+chunk then row; every configuration run but the newest with it; the measured volume with its
+connection; the unmatched family's slots at the flows' horizon. **Indexes:** the pending records by
+provider, the records of a group (`tuple_key`, `start_at`), the records joined to a leg, the copies of
+a second leg; on `flow`, `idx_flow_join` (device, the two canonical addresses, `observed_at`) for the
+candidates, searched once per device a group's records name.
 
 ### `measurement_sample` — one numeric reading of one subject at one instant
 

@@ -2,29 +2,29 @@ package collect_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/derive"
+	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
-// The capture configuration, the states and loss detectability it gives, and the identity of a record
-// (PS-AC36, PS-AC49, PS-AC51 and PS-AC52 of the NetFlow join amendment).
+// The capture configuration, the states it gives, the index map in force at reception, loss detection
+// under several counters, and the identity of a record (PS-AC51 and PS-AC52 of the NetFlow join amendment,
+// and NJ-AC2, NJ-AC4, NJ-AC10 and NJ-AC15 of its amendment "the NetFlow join with every interface
+// captured").
 
-// states maps each stored record's octets to its capture state.
-func states(t *testing.T, h *collecttest.NetflowHarness) map[int64]string {
-	t.Helper()
-	indexed := map[int64]string{}
-	for _, record := range h.Records(t) {
-		indexed[record.Octets] = record.CaptureState
-	}
-	return indexed
-}
-
-// TestCoverageAndStatesFollowTheConfiguration is PS-AC36.
+// TestCoverageAndStatesFollowTheConfiguration is NJ-AC10 on the default world: what the configuration
+// captures names each direction's state, and nothing is read from the records.
 func TestCoverageAndStatesFollowTheConfiguration(t *testing.T) {
 	t.Parallel()
 	insideForward, insideReverse, _, _ := collecttest.NatRecords()
@@ -32,37 +32,24 @@ func TestCoverageAndStatesFollowTheConfiguration(t *testing.T) {
 
 	t.Run("egress only", func(t *testing.T) {
 		t.Parallel()
+		// The inside interface captured on egress only and the upstream not at all: no forward record exists,
+		// so the reply's reverse join is never confirmed (NJ4 rule 4) and counts nothing.
 		h := collecttest.NewNetflowHarness(t)
 		h.Capture(t, collecttest.CaptureStartAt, collecttest.Captured{Identifier: collecttest.InsideIdentifier, EgressOnly: true})
 		h.At(collecttest.NetflowReadSecond)
 		h.Deliver(t, at+30, insideReverse)
 		h.Logged(t, collecttest.NatLegs("nat", at, "pass")...)
 		connection := h.FlowID(t, "nat1")
-		if volume := volumeOf(t, h, connection, netflow.OrientationForward); volume.State != netflow.VolumeNotCaptured {
-			t.Errorf("the forward direction of an in leg at an egress-only point is %s", volume.State)
+		if volume := volumeOf(t, h, connection, netflow.OrientationForward); volume.State != netflow.VolumeIngressNotCaptured {
+			t.Errorf("the forward direction entering by an egress-only interface is %s", volume.State)
 		}
-		if volume := volumeOf(t, h, connection, netflow.OrientationReverse); volume.State != netflow.VolumeMeasured ||
-			volume.Bytes != 20000 {
-			t.Errorf("the reverse direction is %+v, want measured", volume)
+		if volume := volumeOf(t, h, connection, netflow.OrientationReverse); volume.State != netflow.VolumeMissing ||
+			volume.Bytes != 0 {
+			t.Errorf("the reverse direction is %+v, want missing: its record has no confirming forward record", volume)
 		}
-	})
-
-	t.Run("unreadable", func(t *testing.T) {
-		t.Parallel()
-		h := collecttest.NewNetflowHarness(t)
-		h.At(collecttest.CaptureStartAt)
-		h.Fake.Answer(collecttest.GetconfigEndpoint, http.StatusForbidden, []byte(`{"message":"denied"}`))
-		if err := h.Collector.CollectFlowRecordCapture(context.Background()); err != nil {
-			t.Fatal(err)
-		}
-		h.At(collecttest.NetflowReadSecond)
-		h.Deliver(t, at+30, insideForward)
-		h.Logged(t, collecttest.NatLegs("nat", at, "pass")...)
-		if state := states(t, h)[1000]; state != netflow.CaptureUnknown {
-			t.Errorf("a record under an unreadable configuration is %s", state)
-		}
-		if volumes := h.Volumes(t); len(volumes) != 0 {
-			t.Errorf("a connection under an unreadable configuration has figures: %+v", volumes)
+		if records := byOctets(t, h); collecttest.OrNull(records[20000].Reason) != netflow.UnmatchedReverseUnconfirmed {
+			t.Errorf("the reply is %s (%s), want reverse_unconfirmed", records[20000].JoinState,
+				collecttest.OrNull(records[20000].Reason))
 		}
 	})
 
@@ -94,8 +81,8 @@ func TestCoverageAndStatesFollowTheConfiguration(t *testing.T) {
 		legs[1].Action = "block"
 		h.Logged(t, legs...)
 		if volume := volumeOf(t, h, h.FlowID(t, "nat1"), netflow.OrientationForward); volume.State !=
-			netflow.VolumeNotExportedWhenRefused || collecttest.OrNull(volume.Leg) != netflow.MeasuredAtSecondLeg {
-			t.Errorf("the forward direction of a refused out leg is %+v (leg %s)", volume, collecttest.OrNull(volume.Leg))
+			netflow.VolumeNotExportedWhenRefused {
+			t.Errorf("the forward direction of a refused out leg is %+v", volume)
 		}
 
 		// A refused `in` leg: its forward packets were captured at ingress, before pf.
@@ -109,34 +96,146 @@ func TestCoverageAndStatesFollowTheConfiguration(t *testing.T) {
 			t.Errorf("the forward direction of a refused in leg is %+v, want measured", volume)
 		}
 	})
+}
 
-	t.Run("configuration change", func(t *testing.T) {
-		t.Parallel()
-		h := collecttest.NewNetflowHarness(t)
-		h.Capture(t, collecttest.CaptureStartAt, collecttest.Captured{Identifier: collecttest.InsideIdentifier})
-		h.At(collecttest.NetflowReadSecond)
-		before := collecttest.Forward(17, 41000, 53, 0, 101, at, at+1)
-		h.Deliver(t, at+30, before)
-		h.Capture(t, at+1800, collecttest.Captured{Identifier: collecttest.UpstreamIdentifier})
-		h.At(collecttest.NetflowReadSecond)
-		between := collecttest.Forward(17, 41001, 53, 0, 102, at+100, at+101)
-		after := collecttest.Forward(17, 41002, 53, 0, 103, at+2000, at+2001)
-		h.Deliver(t, at+2100, between, after)
-		got := map[int64]string{}
-		points := map[int64]string{}
-		for _, record := range h.Records(t) {
-			got[record.Octets], points[record.Octets] = record.CaptureState, collecttest.OrNull(record.Point)
+// TestTheIndexMapInForceAtReceptionMapsARecord is NJ-AC4: a record is mapped with the index map in force
+// at reception, and a later change of the map re-maps no stored row; an exporter whose uptime goes
+// backwards has the map read afresh before its next record is mapped (a request counter); index 0, the
+// loopback's index and an index the map does not hold get their roles.
+func TestTheIndexMapInForceAtReceptionMapsARecord(t *testing.T) {
+	t.Parallel()
+	at := collecttest.LegInstant
+	h := collecttest.NewNetflowHarness(t)
+	// The index map is read through the broker at discovery's max age: an hour here, so a read the mirror
+	// can serve is served from it, and only a restart asks the firewall again.
+	settings := config.Defaults()
+	settings.FirewallLogInterval, settings.SecurityEventInterval, settings.MeasurementInterval = 0, 0, 0
+	settings.DHCPLeaseInterval, settings.DNSLookupInterval, settings.ResolverCacheInterval = 0, 0, 0
+	settings.ResolverLocalDataInterval, settings.FlowRecordInterval = 0, 0
+	settings.DiscoveryInterval = time.Hour
+	h.Collector.Configure(settings)
+	h.Capture(t, collecttest.CaptureStartAt, collecttest.Captured{Identifier: collecttest.InsideIdentifier})
+	h.At(collecttest.NetflowReadSecond)
+	index := func(value uint16) collecttest.FlowRecord {
+		return collecttest.FlowRecord{Src: collecttest.InsideClient, Dst: collecttest.OutsideServer, SrcPort: 41000 + value,
+			DstPort: 53, Protocol: 17, In: value, Out: collecttest.UpstreamIndex, Packets: 1, Octets: uint32(value),
+			Start: at, End: at}
+	}
+	h.Deliver(t, at+30, index(collecttest.InsideIndex), index(0), index(collecttest.LoopbackIndex), index(99))
+	reads := len(h.Fake.RequestsTo(opnsense.InterfacesInfo))
+
+	// The map changes: the inside interface's kernel index is now another's. A record already stored
+	// keeps what it was mapped to; nothing reads the map again while the mirror is fresh.
+	changed := collecttest.InterfacesWithIndexes()
+	rows := changed["rows"].([]map[string]any)
+	rows[0]["statistics"] = map[string]any{"index": "99"}
+	h.Fake.AnswerJSON(opnsense.InterfacesInfo, changed)
+	h.Deliver(t, at+31, index(98))
+	if again := len(h.Fake.RequestsTo(opnsense.InterfacesInfo)); again != reads {
+		t.Errorf("a record of a running exporter read the index map again (%d reads, then %d)", reads, again)
+	}
+	// The exporter restarts: its uptime goes backwards. The map is read before its next record is mapped.
+	h.Sequence++
+	h.DeliverRaw(t, collecttest.DatagramBooted(at+32, h.Sequence, at, index(97)))
+	if after := len(h.Fake.RequestsTo(opnsense.InterfacesInfo)); after <= reads {
+		t.Errorf("after the exporter restarted the index map was not read again (%d reads)", after)
+	}
+	roles := map[int64][2]string{}
+	for _, record := range h.Records(t) {
+		roles[record.Octets] = [2]string{record.IngressRole, collecttest.OrNull(record.IngressIdentifier)}
+	}
+	for octets, want := range map[int64][2]string{
+		collecttest.InsideIndex:   {netflow.RoleInterface, collecttest.InsideIdentifier},
+		0:                         {netflow.RoleNoReceivingInterface, "<null>"},
+		collecttest.LoopbackIndex: {netflow.RoleLocalDelivery, "<null>"},
+		99:                        {netflow.RoleUnmapped, "<null>"},
+		98:                        {netflow.RoleUnmapped, "<null>"},
+		97:                        {netflow.RoleUnmapped, "<null>"},
+	} {
+		if roles[octets] != want {
+			t.Errorf("the record of index %d was mapped %v, want %v", octets, roles[octets], want)
 		}
-		if got[101] != netflow.CaptureObservationPoint || points[101] != collecttest.InsideIdentifier {
-			t.Errorf("the record stored before the change is %s at %s, want its earlier point", got[101], points[101])
+	}
+	// After the restart's read the map in force names index 99 the inside interface; the stored record of
+	// index 99 is not re-mapped.
+	h.Deliver(t, at+40, collecttest.FlowRecord{Src: collecttest.InsideClient, Dst: collecttest.OutsideServer,
+		SrcPort: 42000, DstPort: 53, Protocol: 17, In: 99, Out: collecttest.UpstreamIndex, Packets: 1, Octets: 1099,
+		Start: at, End: at})
+	for _, record := range h.Records(t) {
+		switch record.Octets {
+		case 1099:
+			if collecttest.OrNull(record.IngressIdentifier) != collecttest.InsideIdentifier {
+				t.Errorf("a record received under the new map was mapped %s", collecttest.OrNull(record.IngressIdentifier))
+			}
+		case 99:
+			if record.IngressRole != netflow.RoleUnmapped {
+				t.Errorf("a stored record was re-mapped to %s when the map changed", record.IngressRole)
+			}
 		}
-		if got[102] != netflow.CaptureUnknown {
-			t.Errorf("a record starting between the two reads is %s, want capture_configuration_unknown", got[102])
+	}
+}
+
+// TestLossIsDetectedUnderSeveralCounters is NJ-AC15 on F16: five counters interleaving under one
+// observation domain, as many as the configuration reports exporting, assert no loss; one dropped
+// datagram is one netflow_sequence_gap; and every record says its loss is detectable.
+func TestLossIsDetectedUnderSeveralCounters(t *testing.T) {
+	t.Parallel()
+	var fixture struct {
+		Provenance          map[string]any `json:"__provenance__"`
+		Name                string         `json:"name"`
+		Counters            []uint32       `json:"counters"`
+		DatagramsPerCounter int            `json:"datagrams_per_counter"`
+		Dropped             struct {
+			Counter  int `json:"counter"`
+			Datagram int `json:"datagram"`
+		} `json:"dropped"`
+		Record collecttest.FixtureRecord `json:"record"`
+	}
+	raw, err := os.ReadFile(filepath.Join(collecttest.JoinFixtureDirectory, "f16_interleaved_counters.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &fixture); err != nil {
+		t.Fatal(err)
+	}
+	world := collecttest.LoadJoinWorld(t, collecttest.JoinFixtureDirectory)
+	h := collecttest.NewNetflowWorldHarness(t, world.Body, world.Offered())
+	h.Capture(t, collecttest.CaptureStartAt, world.Captured(nil)...)
+	h.At(collecttest.NetflowReadSecond)
+	gaps := func() int {
+		h.RecordGaps()
+		return collecttest.ScalarCount(t, h.Store, "SELECT count(*) FROM collection_gap WHERE reason = 'netflow_sequence_gap'")
+	}
+	export := collecttest.LegInstant + 10
+	for round := 0; round < fixture.DatagramsPerCounter; round++ {
+		if round == fixture.Dropped.Datagram {
+			// Every round so far went through: five interleaved counters, as many as the configuration
+			// exports, and no loss.
+			if found := gaps(); found != 0 {
+				t.Errorf("%s: five interleaved counters, as many as the configuration exports, gave %d sequence gaps",
+					fixture.Name, found)
+			}
 		}
-		if got[103] != netflow.CaptureObservationPoint || points[103] != collecttest.UpstreamIdentifier {
-			t.Errorf("a record after the new read is %s at %s", got[103], points[103])
+		for counter, first := range fixture.Counters {
+			export++
+			if counter == fixture.Dropped.Counter && round == fixture.Dropped.Datagram {
+				continue
+			}
+			record := fixture.Record.FlowRecord()
+			record.SrcPort = uint16(40000 + counter*100 + round)
+			h.DeliverRaw(t, collecttest.Datagram(export, first+uint32(round), record))
 		}
-	})
+	}
+	if found := gaps(); found != 1 {
+		t.Errorf("%s: one dropped datagram gave %d sequence gaps, want 1", fixture.Name, found)
+	}
+	for _, record := range h.Records(t) {
+		if record.LossDetectable != 1 {
+			t.Errorf("%s: a record under a configuration bounding the counters says its loss is not detectable",
+				fixture.Name)
+			break
+		}
+	}
 }
 
 // TestARecordHasOneIdentityPerDelivery is PS-AC51.
@@ -170,42 +269,15 @@ func TestARecordHasOneIdentityPerDelivery(t *testing.T) {
 	}
 }
 
-// TestAnInterleavingStreamSuspendsTheJoinUnderOneInterface is PS-AC51's last clause, PS18's
-// configuration contradicting the stream: under a configuration naming one captured interface, a
-// sequence that goes backwards suspends the join until the next configuration read.
-func TestAnInterleavingStreamSuspendsTheJoinUnderOneInterface(t *testing.T) {
-	t.Parallel()
-	at := collecttest.LegInstant
-	h := collecttest.NewNetflowHarness(t)
-	h.Collector.SetCaptureChangeObserver(func(string) { h.Hub.ResetSequences("netflow") })
-	h.Capture(t, collecttest.CaptureStartAt, collecttest.Captured{Identifier: collecttest.InsideIdentifier})
-	h.At(collecttest.NetflowReadSecond)
-	h.DeliverRaw(t, collecttest.Datagram(at+10, 10, collecttest.Forward(17, 43000, 53, 0, 1, at, at+1)))
-	h.DeliverRaw(t, collecttest.Datagram(at+11, 500, collecttest.Forward(17, 43001, 53, 0, 2, at+1, at+2)))
-	// Back: a second counter shares the domain. The stream contradicts the configuration from here.
-	h.DeliverRaw(t, collecttest.Datagram(at+12, 11, collecttest.Forward(17, 43002, 53, 0, 3, at+12, at+13)))
-	got := states(t, h)
-	if got[1] != netflow.CaptureObservationPoint || got[2] != netflow.CaptureObservationPoint {
-		t.Errorf("records before the contradiction are %s and %s, want their Observation Point", got[1], got[2])
-	}
-	if got[3] != netflow.CaptureUnknown {
-		t.Errorf("a record after the contradiction is %s, want capture_configuration_unknown", got[3])
-	}
-	// A later read ends the suspension.
-	h.Capture(t, at+100, collecttest.Captured{Identifier: collecttest.InsideIdentifier})
-	h.At(collecttest.NetflowReadSecond)
-	h.DeliverRaw(t, collecttest.Datagram(at+120, 12, collecttest.Forward(17, 43003, 53, 0, 4, at+110, at+111)))
-	if state := states(t, h)[4]; state != netflow.CaptureObservationPoint {
-		t.Errorf("a record after the next read is %s, want its Observation Point again", state)
-	}
-}
-
-// TestAnUnavailableConfigurationIsReportedAndNothingIsGuessed is PS-AC52: a 404, a 403 and an
-// unparseable answer each give capture_configuration_unknown, with what the firewall answered in the
-// availability; and the reads are the two read-only actions, by GET, and nothing else.
+// TestAnUnavailableConfigurationIsReportedAndNothingIsGuessed is PS-AC52 and NJ-AC2: a 404, a 403 and an
+// unparseable answer of getconfig each give capture_configuration_unknown, with what the firewall
+// answered in the availability; the same answers of interfaces_info leave the configuration readable with
+// every interface's export unknown, the directions it would measure capture_configuration_unknown, and
+// the broker's outcome named in the availability; and the reads are read-only actions, by GET, and
+// nothing else.
 func TestAnUnavailableConfigurationIsReportedAndNothingIsGuessed(t *testing.T) {
 	t.Parallel()
-	for _, scenario := range []struct {
+	scenarios := []struct {
 		name    string
 		status  int
 		body    string
@@ -214,56 +286,118 @@ func TestAnUnavailableConfigurationIsReportedAndNothingIsGuessed(t *testing.T) {
 		{"not found", http.StatusNotFound, `{"message":"no"}`, vocab.OutcomeNotFound},
 		{"forbidden", http.StatusForbidden, `{"message":"no"}`, vocab.OutcomeDenied},
 		{"unparseable", http.StatusOK, `{"netflow": "not the model"}`, vocab.OutcomeUndecodable},
-	} {
-		t.Run(scenario.name, func(t *testing.T) {
-			t.Parallel()
-			h := collecttest.NewNetflowHarness(t)
-			h.At(collecttest.CaptureStartAt)
+	}
+	t.Run("getconfig", func(t *testing.T) {
+		t.Parallel()
+		// One world, read three times: each failure is its own unreadable run, carrying its outcome.
+		h := collecttest.NewNetflowHarness(t)
+		for index, scenario := range scenarios {
+			h.At(collecttest.CaptureStartAt + int64(index)*10)
 			h.Fake.Answer(collecttest.GetconfigEndpoint, scenario.status, []byte(scenario.body))
 			if err := h.Collector.CollectFlowRecordCapture(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			providerID, err := h.Store.ProviderID(context.Background(), derive.KindFlowRecord, h.Key)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var outcome string
-			if err := h.Store.DB().QueryRowContext(context.Background(),
-				"SELECT outcome FROM source_availability WHERE provider_id = ?", providerID).Scan(&outcome); err != nil {
-				t.Fatal(err)
-			}
-			if outcome != string(scenario.outcome) {
-				t.Errorf("the availability says %s, want %s", outcome, scenario.outcome)
+			if outcome := availabilityOutcomeOf(t, h); outcome != string(scenario.outcome) {
+				t.Errorf("%s: the availability says %s, want %s", scenario.name, outcome, scenario.outcome)
 			}
 			if stored := collecttest.ScalarCount(t, h.Store,
 				"SELECT count(*) FROM capture_configuration WHERE fingerprint IS NULL AND outcome = ?",
 				string(scenario.outcome)); stored != 1 {
-				t.Errorf("the unreadable configuration was recorded %d times with its outcome", stored)
+				t.Errorf("%s: the unreadable configuration was recorded %d times with its outcome", scenario.name, stored)
 			}
-			h.At(collecttest.NetflowReadSecond)
-			h.Deliver(t, collecttest.LegInstant+30, collecttest.Forward(17, 44000, 53, 0, 9, collecttest.LegInstant, collecttest.LegInstant+1))
-			if state := states(t, h)[9]; state != netflow.CaptureUnknown {
-				t.Errorf("a record is %s, want capture_configuration_unknown", state)
+		}
+		h.At(collecttest.NetflowReadSecond)
+		h.Deliver(t, collecttest.LegInstant+30, collecttest.Forward(17, 44000, 53, 0, 9, collecttest.LegInstant, collecttest.LegInstant+1))
+		h.Logged(t, singleLeg("dns", collecttest.LegInstant, "udp", 17, 44000, 53, "pass"))
+		if volumes := h.Volumes(t); len(volumes) != 0 {
+			t.Errorf("a connection under an unreadable configuration has figures: %+v", volumes)
+		}
+		if records := byOctets(t, h); records[9].JoinState != netflow.JoinJoined {
+			t.Errorf("a record under an unreadable configuration is %s: every record is joined from its own indexes",
+				records[9].JoinState)
+		}
+		onlyReadOnlyCalls(t, h)
+	})
+	t.Run("interfaces_info", func(t *testing.T) {
+		t.Parallel()
+		// One world, read three times: each failure leaves the configuration readable, every export
+		// unknown, and the broker's outcome named in the availability's detail.
+		h := collecttest.NewNetflowHarness(t)
+		for index, scenario := range scenarios {
+			body := scenario.body
+			if scenario.status == http.StatusOK {
+				body = `{"rows": "not the envelope"}`
 			}
-			for _, request := range h.Fake.Requests() {
-				if request.Path == collecttest.GetconfigEndpoint.Path || request.Path == collecttest.IsEnabledEndpoint.Path {
-					if request.Method != http.MethodGet {
-						t.Errorf("%s was called with %s", request.Path, request.Method)
-					}
-					continue
-				}
-				if len(request.Path) > len("/api/diagnostics/netflow/") &&
-					request.Path[:len("/api/diagnostics/netflow/")] == "/api/diagnostics/netflow/" {
-					t.Errorf("a NetFlow action other than the two reads was called: %s %s", request.Method,
-						request.Path)
-				}
+			h.Fake.Answer(opnsense.InterfacesInfo, scenario.status, []byte(body))
+			h.Capture(t, collecttest.CaptureStartAt+int64(index)*10, collecttest.Captured{Identifier: collecttest.InsideIdentifier},
+				collecttest.Captured{Identifier: collecttest.UpstreamIdentifier})
+			if unknown := collecttest.ScalarCount(t, h.Store, `SELECT count(*) FROM capture_interface
+				WHERE exported = 'unknown' AND capture_configuration_id = (SELECT max(id) FROM capture_configuration)`); unknown != 2 {
+				t.Errorf("%s: %d captured interfaces have an unknown export, want the two captured", scenario.name, unknown)
 			}
-		})
+			if detail := availabilityDetailOf(t, h); !strings.Contains(detail, "interfaces_info answered") {
+				t.Errorf("%s: the availability's detail %q does not name what interfaces_info answered", scenario.name,
+					detail)
+			}
+		}
+		h.Fake.AnswerJSON(opnsense.InterfacesInfo, collecttest.InterfacesWithIndexes())
+		h.At(collecttest.NetflowReadSecond)
+		h.Logged(t, collecttest.NatLegs("nat", collecttest.LegInstant, "pass")...)
+		if volume := volumeOf(t, h, h.FlowID(t, "nat1"), netflow.OrientationForward); volume.State != netflow.VolumeCaptureUnknown {
+			t.Errorf("a direction entering by an interface whose export is unknown is %s, want "+
+				"capture_configuration_unknown", volume.State)
+		}
+		onlyReadOnlyCalls(t, h)
+	})
+}
+
+// availabilityOutcomeOf and availabilityDetailOf read the flow_record provider's availability.
+func availabilityOutcomeOf(t *testing.T, h *collecttest.NetflowHarness) string {
+	t.Helper()
+	outcome, _ := availabilityOf(t, h)
+	return outcome
+}
+
+func availabilityDetailOf(t *testing.T, h *collecttest.NetflowHarness) string {
+	t.Helper()
+	_, detail := availabilityOf(t, h)
+	return detail
+}
+
+func availabilityOf(t *testing.T, h *collecttest.NetflowHarness) (string, string) {
+	t.Helper()
+	providerID, err := h.Store.ProviderID(context.Background(), derive.KindFlowRecord, h.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var outcome string
+	var detail *string
+	if err := h.Store.DB().QueryRowContext(context.Background(),
+		"SELECT outcome, detail FROM source_availability WHERE provider_id = ?", providerID).Scan(&outcome, &detail); err != nil {
+		t.Fatal(err)
+	}
+	return outcome, collecttest.OrNull(detail)
+}
+
+// onlyReadOnlyCalls checks that no NetFlow action other than the two reads was called, and those by GET
+// (BR-AC15).
+func onlyReadOnlyCalls(t *testing.T, h *collecttest.NetflowHarness) {
+	t.Helper()
+	for _, request := range h.Fake.Requests() {
+		if request.Path == collecttest.GetconfigEndpoint.Path || request.Path == collecttest.IsEnabledEndpoint.Path {
+			if request.Method != http.MethodGet {
+				t.Errorf("%s was called with %s", request.Path, request.Method)
+			}
+			continue
+		}
+		if strings.HasPrefix(request.Path, "/api/diagnostics/netflow/") {
+			t.Errorf("a NetFlow action other than the two reads was called: %s %s", request.Method, request.Path)
+		}
 	}
 }
 
-// TestASequenceGapIsAssertedUnderOneInterface is PS18's loss detectability with one captured interface:
-// a confirmed forward jump is recorded as netflow_sequence_gap, and the records carry loss_detectable.
+// TestASequenceGapIsAssertedUnderOneInterface is NJ7's bound at one exporting interface: a forward jump is
+// recorded as netflow_sequence_gap, and the records carry loss_detectable.
 func TestASequenceGapIsAssertedUnderOneInterface(t *testing.T) {
 	t.Parallel()
 	h := collecttest.NewNetflowHarness(t)
@@ -280,7 +414,7 @@ func TestASequenceGapIsAssertedUnderOneInterface(t *testing.T) {
 	}
 	for _, record := range h.Records(t) {
 		if record.LossDetectable != 1 {
-			t.Errorf("a record under one captured interface says its loss is not detectable")
+			t.Errorf("a record under one exporting interface says its loss is not detectable")
 		}
 	}
 }

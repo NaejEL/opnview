@@ -1,0 +1,51 @@
+{
+  "__provenance__": {
+    "follows": "The configuration table of the capture analysis of 16 October 2026 (scratchpad/capture-analysis/REPORT.md) and its Q2 and Q3 sections: every interface captured, one untagged inside interface, one parent interface with two VLANs, one of them not exporting of its own, an upstream captured egress only (Q4), a tunnel the exporter cannot attach to (Q2, Q7), the loopback as the egress index of local delivery (Q2), and NetFlow v9 with the 1800 s active timeout.",
+    "rewritten_under_x1": "Every identifier, device, kernel index, MAC address and IP address is replaced: identifiers are example_if_*, devices exnic*, exvlan*, extun0 and exlo0, kernel indexes 21 to 28, MAC addresses locally administered, IPv4 addresses from RFC 5737 and IPv6 from RFC 3849. The number of interfaces differs from the capture's: a fifth exporting interface (example_if_c) is added so untranslated forwarding between two exported interfaces can be shaped (F11).",
+    "synthesised": "The answer's shape is interfaces_info/1's as docs/opnsense-api-survey.md (Runtime discovery, Push sources S6, S5c, S6b, S6c) describes it; no field was recorded from a firewall.",
+    "captured_from_a_firewall": false
+  },
+  "capture": [
+    {"identifier": "example_if_a"},
+    {"identifier": "example_if_p"},
+    {"identifier": "example_if_v"},
+    {"identifier": "example_if_u", "egress_only": true},
+    {"identifier": "example_if_w"},
+    {"identifier": "example_if_c"}
+  ],
+  "body": {
+    "total": 8,
+    "rowCount": 8,
+    "current": 1,
+    "rows": [
+      {"identifier": "example_if_a", "device": "exnic0", "description": "example untagged inside", "status": "up",
+       "enabled": "1", "link_type": "static", "macaddr": "02:00:5e:10:00:21", "flags": ["up", "broadcast", "running"],
+       "addr4": "198.51.100.1/26", "addr6": "2001:db8:a::1/64", "gateways": [], "statistics": {"index": "21"}},
+      {"identifier": "example_if_p", "device": "exnic1", "description": "example parent", "status": "up",
+       "enabled": "1", "link_type": "static", "macaddr": "02:00:5e:10:00:22", "flags": ["up", "broadcast", "running"],
+       "addr4": "198.51.100.65/26", "addr6": "", "gateways": [], "statistics": {"index": "22"}},
+      {"identifier": "example_if_v", "device": "exvlan7", "description": "example VLAN exporting", "status": "up",
+       "enabled": "1", "link_type": "static", "vlan_tag": 7, "vlan": {"tag": "7", "parent": "exnic1"},
+       "macaddr": "02:00:5e:10:00:22", "flags": ["up", "broadcast", "running"], "addr4": "198.51.100.129/26",
+       "addr6": "", "gateways": [], "statistics": {"index": "23"}},
+      {"identifier": "example_if_n", "device": "exvlan8", "description": "example VLAN not captured", "status": "up",
+       "enabled": "1", "link_type": "static", "vlan_tag": 8, "vlan": {"tag": "8", "parent": "exnic1"},
+       "macaddr": "02:00:5e:10:00:22", "flags": ["up", "broadcast", "running"], "addr4": "198.51.100.193/26",
+       "addr6": "", "gateways": [], "statistics": {"index": "24"}},
+      {"identifier": "example_if_u", "device": "exnic2", "description": "example upstream", "status": "up",
+       "enabled": "1", "link_type": "static", "macaddr": "02:00:5e:10:00:25", "flags": ["up", "broadcast", "running"],
+       "addr4": "203.0.113.2/24", "addr6": "2001:db8:f::2/64", "gateways": ["203.0.113.1"],
+       "statistics": {"index": "25"}},
+      {"identifier": "example_if_w", "device": "extun0", "description": "example tunnel", "status": "up",
+       "enabled": "1", "link_type": "static", "macaddr": "00:00:00:00:00:00", "flags": ["up", "pointopoint", "running"],
+       "addr4": "192.0.2.129/25", "addr6": "", "gateways": [], "statistics": {"index": "26"}},
+      {"identifier": "example_if_c", "device": "exnic3", "description": "example second untagged inside",
+       "status": "up", "enabled": "1", "link_type": "static", "macaddr": "02:00:5e:10:00:28",
+       "flags": ["up", "broadcast", "running"], "addr4": "192.0.2.1/26", "addr6": "", "gateways": [],
+       "statistics": {"index": "28"}},
+      {"identifier": "", "device": "exlo0", "description": "Unassigned Interface", "status": "up",
+       "macaddr": "00:00:00:00:00:00", "flags": ["up", "loopback", "running", "multicast"],
+       "statistics": {"index": "27"}}
+    ]
+  }
+}

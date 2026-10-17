@@ -1,0 +1,23 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q2 and Q7 (a VLAN exported nothing of its own) and Q3 (its parent's node re-exports its ingress).",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "The VLAN is not in the capture configuration at all, where the analysis's VLAN was captured and silent.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F10",
+  "legs": [
+    {"digest": "f10in", "at": 0, "device": "exvlan8", "dir": "in", "action": "pass", "src": "198.51.100.194",
+     "dst": "198.51.100.193", "src_port": 40010, "dst_port": 53, "protocol": "udp", "protocol_number": 17}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "198.51.100.194", "dst": "198.51.100.193", "src_port": 40010, "dst_port": 53, "protocol": 17,
+     "in": 22, "out": 27, "packets": 1, "octets": 71, "start": 0, "end": 0, "side": "forward",
+     "expect": {"join_state": "copy", "copy_kind": "parent_copy"}}
+  ],
+  "volumes": [
+    {"connection": "f10in", "direction": "forward", "state": "parent_copies_only"},
+    {"connection": "f10in", "direction": "reverse", "state": "interface_not_captured"}
+  ]
+}

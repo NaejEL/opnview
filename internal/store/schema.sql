@@ -2980,82 +2980,110 @@ CREATE INDEX IF NOT EXISTS idx_purged_flow_hour_local_client ON purged_flow_hour
 -- ---------------------------------------------------------------------------
 -- netflow_parts — the figures of the `netflow` measure that are counted per action
 -- (the maintainer's decisions of 11 October 2026 after the PS22 build: finer
--- coverage classes, and coverage per action). One value holds, for each of the
+-- coverage classes, and coverage per action; NJ5 and NJ8 of the amendment "the
+-- NetFlow join with every interface captured"). One value holds, for each of the
 -- allowed (pass), blocked (block, reject) and unknown parts -- the parts the
--- logged figures are split into -- the twelve figures of that part:
+-- logged figures are split into -- the eighteen figures of that part:
 --
---   <part>_packets                       the measured packets
---   <part>_measured_connections          both directions measured       } the four
---   <part>_partial_connections           some measured bytes, not both  } coverage
---                                        directions measured            } classes
---   <part>_unmeasured_connections        one Observation Point, no      } of PS21,
---                                        measured byte                  } summing to
---   <part>_not_joinable_connections      no single Observation Point at } the part's
---                                        the connection's start         } connections
---   <part>_direction_<state>_connections the connections with at least one direction
---                                        in <state> (PS20's per-direction states:
---                                        measured, in_progress, awaiting_export,
---                                        missing, not_captured, export_gap,
---                                        not_exported_when_refused). A connection
---                                        whose two directions are in two states counts
---                                        under both, so these do not sum to the
---                                        connections: they say which states were met,
---                                        and how often.
+--   <part>_packets                         the measured packets
+--   <part>_measured_connections            both directions measured     } the four
+--   <part>_partial_connections             some measured bytes, not     } coverage
+--                                          both directions measured     } classes,
+--   <part>_unmeasured_connections          a readable configuration,    } summing to
+--                                          no measured byte             } the part's
+--   <part>_capture_not_known_connections   no readable, enabled capture } connections
+--                                          configuration at the connection's start
+--   <part>_direction_<state>_connections   the connections with at least one direction
+--                                          in <state>, one of NJ5's twelve states:
+--                                          measured, in_progress, awaiting_export,
+--                                          missing, export_gap,
+--                                          not_exported_when_refused,
+--                                          forwarding_export_unsettled,
+--                                          ingress_not_captured, parent_copies_only,
+--                                          interface_not_exported,
+--                                          interface_not_captured,
+--                                          capture_configuration_unknown. A connection
+--                                          whose two directions are in two states
+--                                          counts under both, so these do not sum to
+--                                          the connections: they say which states
+--                                          were met, and how often.
+--   <part>_counted_copy_connections        the connections with a direction counted
+--                                          from translated copies (NJ5's sole-copy
+--                                          rule)
 --
--- The widget measure judges from them whether every connection an answer counts is
--- covered (internal/widget/request/measure.go): a connection is covered when it is joinable
--- and none of its directions is not_captured, export_gap or
--- not_exported_when_refused (PS22).
+-- Fifty-four fields in all. The widget measure judges from them whether every
+-- connection an answer counts is covered (internal/widget/request/measure.go): a
+-- connection is covered when its capture was known and every direction is
+-- measured, in_progress, awaiting_export or missing (NJ5, "Coverage").
 --
--- One value rather than thirty-six columns, so every statement that carries it --
+-- One value rather than fifty-four columns, so every statement that carries it --
 -- the aggregate refresh, the purge and every `_netflow` twin -- names it once:
 -- netflow_sum adds values field by field, and (netflow_sum(x)).* reads it back as
--- its thirty-six named columns. connection_netflow (below, after
+-- its fifty-four named columns. connection_netflow (below, after
 -- connection_measured_volume) computes one connection's value.
 --
--- The type is created once and never replaced: a change to its fields is a
--- migration, written here when it is needed.
+-- The type is created once and never replaced: the project is rebuilt rather
+-- than migrated before its first release (decided 11 October 2026), so a database
+-- holding an earlier shape of the type is created afresh.
 -- ---------------------------------------------------------------------------
 DO $netflow_parts_type$
 BEGIN
     IF to_regtype('netflow_parts') IS NULL THEN
         CREATE TYPE netflow_parts AS (
-        allowed_packets                                          BIGINT,
-        allowed_measured_connections                             BIGINT,
-        allowed_partial_connections                              BIGINT,
-        allowed_unmeasured_connections                           BIGINT,
-        allowed_not_joinable_connections                         BIGINT,
-        allowed_direction_measured_connections                   BIGINT,
-        allowed_direction_in_progress_connections                BIGINT,
-        allowed_direction_awaiting_export_connections            BIGINT,
-        allowed_direction_missing_connections                    BIGINT,
-        allowed_direction_not_captured_connections               BIGINT,
-        allowed_direction_export_gap_connections                 BIGINT,
-        allowed_direction_not_exported_when_refused_connections  BIGINT,
-        blocked_packets                                          BIGINT,
-        blocked_measured_connections                             BIGINT,
-        blocked_partial_connections                              BIGINT,
-        blocked_unmeasured_connections                           BIGINT,
-        blocked_not_joinable_connections                         BIGINT,
-        blocked_direction_measured_connections                   BIGINT,
-        blocked_direction_in_progress_connections                BIGINT,
-        blocked_direction_awaiting_export_connections            BIGINT,
-        blocked_direction_missing_connections                    BIGINT,
-        blocked_direction_not_captured_connections               BIGINT,
-        blocked_direction_export_gap_connections                 BIGINT,
-        blocked_direction_not_exported_when_refused_connections  BIGINT,
-        unknown_packets                                          BIGINT,
-        unknown_measured_connections                             BIGINT,
-        unknown_partial_connections                              BIGINT,
-        unknown_unmeasured_connections                           BIGINT,
-        unknown_not_joinable_connections                         BIGINT,
-        unknown_direction_measured_connections                   BIGINT,
-        unknown_direction_in_progress_connections                BIGINT,
-        unknown_direction_awaiting_export_connections            BIGINT,
-        unknown_direction_missing_connections                    BIGINT,
-        unknown_direction_not_captured_connections               BIGINT,
-        unknown_direction_export_gap_connections                 BIGINT,
-        unknown_direction_not_exported_when_refused_connections  BIGINT
+        allowed_packets                                             BIGINT,
+        allowed_measured_connections                                BIGINT,
+        allowed_partial_connections                                 BIGINT,
+        allowed_unmeasured_connections                              BIGINT,
+        allowed_capture_not_known_connections                       BIGINT,
+        allowed_direction_measured_connections                      BIGINT,
+        allowed_direction_in_progress_connections                   BIGINT,
+        allowed_direction_awaiting_export_connections               BIGINT,
+        allowed_direction_missing_connections                       BIGINT,
+        allowed_direction_export_gap_connections                    BIGINT,
+        allowed_direction_not_exported_when_refused_connections     BIGINT,
+        allowed_direction_forwarding_export_unsettled_connections   BIGINT,
+        allowed_direction_ingress_not_captured_connections          BIGINT,
+        allowed_direction_parent_copies_only_connections            BIGINT,
+        allowed_direction_interface_not_exported_connections        BIGINT,
+        allowed_direction_interface_not_captured_connections        BIGINT,
+        allowed_direction_capture_configuration_unknown_connections BIGINT,
+        allowed_counted_copy_connections                            BIGINT,
+        blocked_packets                                             BIGINT,
+        blocked_measured_connections                                BIGINT,
+        blocked_partial_connections                                 BIGINT,
+        blocked_unmeasured_connections                              BIGINT,
+        blocked_capture_not_known_connections                       BIGINT,
+        blocked_direction_measured_connections                      BIGINT,
+        blocked_direction_in_progress_connections                   BIGINT,
+        blocked_direction_awaiting_export_connections               BIGINT,
+        blocked_direction_missing_connections                       BIGINT,
+        blocked_direction_export_gap_connections                    BIGINT,
+        blocked_direction_not_exported_when_refused_connections     BIGINT,
+        blocked_direction_forwarding_export_unsettled_connections   BIGINT,
+        blocked_direction_ingress_not_captured_connections          BIGINT,
+        blocked_direction_parent_copies_only_connections            BIGINT,
+        blocked_direction_interface_not_exported_connections        BIGINT,
+        blocked_direction_interface_not_captured_connections        BIGINT,
+        blocked_direction_capture_configuration_unknown_connections BIGINT,
+        blocked_counted_copy_connections                            BIGINT,
+        unknown_packets                                             BIGINT,
+        unknown_measured_connections                                BIGINT,
+        unknown_partial_connections                                 BIGINT,
+        unknown_unmeasured_connections                              BIGINT,
+        unknown_capture_not_known_connections                       BIGINT,
+        unknown_direction_measured_connections                      BIGINT,
+        unknown_direction_in_progress_connections                   BIGINT,
+        unknown_direction_awaiting_export_connections               BIGINT,
+        unknown_direction_missing_connections                       BIGINT,
+        unknown_direction_export_gap_connections                    BIGINT,
+        unknown_direction_not_exported_when_refused_connections     BIGINT,
+        unknown_direction_forwarding_export_unsettled_connections   BIGINT,
+        unknown_direction_ingress_not_captured_connections          BIGINT,
+        unknown_direction_parent_copies_only_connections            BIGINT,
+        unknown_direction_interface_not_exported_connections        BIGINT,
+        unknown_direction_interface_not_captured_connections        BIGINT,
+        unknown_direction_capture_configuration_unknown_connections BIGINT,
+        unknown_counted_copy_connections                            BIGINT
         );
     END IF;
 END
@@ -3065,7 +3093,7 @@ $netflow_parts_type$;
 CREATE OR REPLACE FUNCTION netflow_parts_zero() RETURNS netflow_parts
 LANGUAGE sql IMMUTABLE PARALLEL SAFE
 AS $netflow_parts_zero$
-    SELECT CAST('(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)' AS netflow_parts)
+    SELECT CAST('(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)' AS netflow_parts)
 $netflow_parts_zero$;
 
 -- netflow_parts_add is two values added field by field.
@@ -3078,38 +3106,56 @@ BEGIN
             total.allowed_measured_connections + part.allowed_measured_connections,
             total.allowed_partial_connections + part.allowed_partial_connections,
             total.allowed_unmeasured_connections + part.allowed_unmeasured_connections,
-            total.allowed_not_joinable_connections + part.allowed_not_joinable_connections,
+            total.allowed_capture_not_known_connections + part.allowed_capture_not_known_connections,
             total.allowed_direction_measured_connections + part.allowed_direction_measured_connections,
             total.allowed_direction_in_progress_connections + part.allowed_direction_in_progress_connections,
             total.allowed_direction_awaiting_export_connections + part.allowed_direction_awaiting_export_connections,
             total.allowed_direction_missing_connections + part.allowed_direction_missing_connections,
-            total.allowed_direction_not_captured_connections + part.allowed_direction_not_captured_connections,
             total.allowed_direction_export_gap_connections + part.allowed_direction_export_gap_connections,
             total.allowed_direction_not_exported_when_refused_connections + part.allowed_direction_not_exported_when_refused_connections,
+            total.allowed_direction_forwarding_export_unsettled_connections + part.allowed_direction_forwarding_export_unsettled_connections,
+            total.allowed_direction_ingress_not_captured_connections + part.allowed_direction_ingress_not_captured_connections,
+            total.allowed_direction_parent_copies_only_connections + part.allowed_direction_parent_copies_only_connections,
+            total.allowed_direction_interface_not_exported_connections + part.allowed_direction_interface_not_exported_connections,
+            total.allowed_direction_interface_not_captured_connections + part.allowed_direction_interface_not_captured_connections,
+            total.allowed_direction_capture_configuration_unknown_connections + part.allowed_direction_capture_configuration_unknown_connections,
+            total.allowed_counted_copy_connections + part.allowed_counted_copy_connections,
             total.blocked_packets + part.blocked_packets,
             total.blocked_measured_connections + part.blocked_measured_connections,
             total.blocked_partial_connections + part.blocked_partial_connections,
             total.blocked_unmeasured_connections + part.blocked_unmeasured_connections,
-            total.blocked_not_joinable_connections + part.blocked_not_joinable_connections,
+            total.blocked_capture_not_known_connections + part.blocked_capture_not_known_connections,
             total.blocked_direction_measured_connections + part.blocked_direction_measured_connections,
             total.blocked_direction_in_progress_connections + part.blocked_direction_in_progress_connections,
             total.blocked_direction_awaiting_export_connections + part.blocked_direction_awaiting_export_connections,
             total.blocked_direction_missing_connections + part.blocked_direction_missing_connections,
-            total.blocked_direction_not_captured_connections + part.blocked_direction_not_captured_connections,
             total.blocked_direction_export_gap_connections + part.blocked_direction_export_gap_connections,
             total.blocked_direction_not_exported_when_refused_connections + part.blocked_direction_not_exported_when_refused_connections,
+            total.blocked_direction_forwarding_export_unsettled_connections + part.blocked_direction_forwarding_export_unsettled_connections,
+            total.blocked_direction_ingress_not_captured_connections + part.blocked_direction_ingress_not_captured_connections,
+            total.blocked_direction_parent_copies_only_connections + part.blocked_direction_parent_copies_only_connections,
+            total.blocked_direction_interface_not_exported_connections + part.blocked_direction_interface_not_exported_connections,
+            total.blocked_direction_interface_not_captured_connections + part.blocked_direction_interface_not_captured_connections,
+            total.blocked_direction_capture_configuration_unknown_connections + part.blocked_direction_capture_configuration_unknown_connections,
+            total.blocked_counted_copy_connections + part.blocked_counted_copy_connections,
             total.unknown_packets + part.unknown_packets,
             total.unknown_measured_connections + part.unknown_measured_connections,
             total.unknown_partial_connections + part.unknown_partial_connections,
             total.unknown_unmeasured_connections + part.unknown_unmeasured_connections,
-            total.unknown_not_joinable_connections + part.unknown_not_joinable_connections,
+            total.unknown_capture_not_known_connections + part.unknown_capture_not_known_connections,
             total.unknown_direction_measured_connections + part.unknown_direction_measured_connections,
             total.unknown_direction_in_progress_connections + part.unknown_direction_in_progress_connections,
             total.unknown_direction_awaiting_export_connections + part.unknown_direction_awaiting_export_connections,
             total.unknown_direction_missing_connections + part.unknown_direction_missing_connections,
-            total.unknown_direction_not_captured_connections + part.unknown_direction_not_captured_connections,
             total.unknown_direction_export_gap_connections + part.unknown_direction_export_gap_connections,
-            total.unknown_direction_not_exported_when_refused_connections + part.unknown_direction_not_exported_when_refused_connections
+            total.unknown_direction_not_exported_when_refused_connections + part.unknown_direction_not_exported_when_refused_connections,
+            total.unknown_direction_forwarding_export_unsettled_connections + part.unknown_direction_forwarding_export_unsettled_connections,
+            total.unknown_direction_ingress_not_captured_connections + part.unknown_direction_ingress_not_captured_connections,
+            total.unknown_direction_parent_copies_only_connections + part.unknown_direction_parent_copies_only_connections,
+            total.unknown_direction_interface_not_exported_connections + part.unknown_direction_interface_not_exported_connections,
+            total.unknown_direction_interface_not_captured_connections + part.unknown_direction_interface_not_captured_connections,
+            total.unknown_direction_capture_configuration_unknown_connections + part.unknown_direction_capture_configuration_unknown_connections,
+            total.unknown_counted_copy_connections + part.unknown_counted_copy_connections
         ) AS netflow_parts);
 END
 $netflow_parts_add$;
@@ -3119,7 +3165,7 @@ CREATE OR REPLACE AGGREGATE netflow_sum(netflow_parts) (
     SFUNC = netflow_parts_add,
     STYPE = netflow_parts,
     COMBINEFUNC = netflow_parts_add,
-    INITCOND = '(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)',
+    INITCOND = '(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)',
     PARALLEL = SAFE
 );
 
@@ -3138,17 +3184,17 @@ CREATE OR REPLACE AGGREGATE netflow_sum(netflow_parts) (
 --                   direction states met (netflow_parts, above)
 --
 -- COUNTED AS THE LOGGED FIGURES ARE. A connection's figure counts in the slot of
--- its first leg, on its first leg's rows; when it was measured at its second
--- leg it also counts on that leg's rows -- under exit_leg_device in the volume
--- family, and in the rule family -- exactly as the second leg's logged bytes do,
--- and in no total. A second leg's rows count its connection's class and states,
--- as they count the connection.
+-- its first leg, on its first leg's rows; a connection with a second leg also
+-- counts it on that leg's rows -- under exit_leg_device in the volume family,
+-- and in the rule family -- both directions when the second leg passed, and its
+-- forward direction as not_exported_when_refused when it was refused (decided
+-- question 3 of the amendment "the NetFlow join with every interface captured"):
+-- the same packets, exactly as the second leg's logged bytes count there, and in
+-- no total. A second leg's rows count its connection's class and states, as they
+-- count the connection.
 --
 -- The columns are added in place, so a database the previous text was applied
--- to gains them, at zero, and the next refresh of a slot fills them. The five
--- columns netflow_parts replaced -- netflow_packets and the four
--- netflow_*_connections classes, which were counted per row and not per action
--- -- are dropped.
+-- to gains them, at zero, and the next refresh of a slot fills them.
 -- ---------------------------------------------------------------------------
 DO $netflow_columns$
 DECLARE
@@ -3170,11 +3216,6 @@ BEGIN
             END LOOP;
             EXECUTE format('ALTER TABLE %I ADD COLUMN IF NOT EXISTS netflow_parts netflow_parts NOT NULL '
                            'DEFAULT netflow_parts_zero()', target);
-            FOREACH measure IN ARRAY ARRAY['netflow_packets', 'netflow_measured_connections',
-                                           'netflow_partial_connections', 'netflow_unmeasured_connections',
-                                           'netflow_not_joinable_connections'] LOOP
-                EXECUTE format('ALTER TABLE %I DROP COLUMN IF EXISTS %I', target, measure);
-            END LOOP;
             IF NOT EXISTS (SELECT 1 FROM pg_constraint
                            WHERE conname = target || '_netflow_split'
                              AND conrelid = CAST(target AS regclass)) THEN
@@ -3188,20 +3229,20 @@ BEGIN
         CHECK (netflow_bytes >= 0);
     ALTER TABLE purged_flow_hour ADD COLUMN IF NOT EXISTS netflow_parts netflow_parts NOT NULL
         DEFAULT netflow_parts_zero();
-    FOREACH measure IN ARRAY ARRAY['netflow_packets', 'netflow_measured_connections', 'netflow_partial_connections',
-                                   'netflow_unmeasured_connections', 'netflow_not_joinable_connections'] LOOP
-        EXECUTE format('ALTER TABLE purged_flow_hour DROP COLUMN IF EXISTS %I', measure);
-    END LOOP;
 END
 $netflow_columns$;
 
 -- ---------------------------------------------------------------------------
--- unmatched_record_aggregate_* — the unmatched records (PS19 rule 7, PS21): the
--- flow records with an Observation Point that joined no leg, per slot of their
--- start and per Observation Point interface, direction at it, IANA protocol
--- number, IP version and reason (Q15 (a)). "Unmatched record" is opnview's own
--- term. Bytes, packets and records only, added to no other family and to no
--- total of any other: they are no logged connection's.
+-- unmatched_record_aggregate_* — the unmatched records (NJ4 rule 9 and NJ8 of the
+-- amendment "the NetFlow join with every interface captured"): the flow records
+-- that joined no leg and are no copy, per slot of their start and per ingress
+-- interface, egress interface, IANA protocol number, IP version and reason.
+-- ingress_interface and egress_interface are the mapped interface's identifier,
+-- or, for an index that names no assigned interface, its role
+-- (no_receiving_interface, local_delivery, unmapped, or interface for a device
+-- no assignment names). "Unmatched record" is opnview's own term. Bytes, packets
+-- and records only, added to no other family and to no total of any other: they
+-- are no logged connection's. A copy is in no slot.
 --
 -- THE FAMILY IS ACCUMULATED, NOT RECOMPUTED. The join adds a record to its four
 -- slots when it decides it unmatched, and takes it out again should a later
@@ -3210,20 +3251,21 @@ $netflow_columns$;
 -- updated_at is the last change. Purged by period_end_at, at the flows' horizon.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS unmatched_record_aggregate_1h (
-    period_start_at              BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
-    period_end_at                BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
-    observation_point_identifier TEXT NOT NULL,
-    direction                    TEXT NOT NULL CHECK (direction IN ('ingress', 'egress')),
-    protocol                     BIGINT NOT NULL CHECK (protocol >= 0 AND protocol <= 255),
-    ip_version                   BIGINT NOT NULL CHECK (ip_version IN (4, 6)),
-    reason                       TEXT NOT NULL
-                                 CHECK (reason IN ('no_logged_leg', 'ambiguous', 'beyond_flow_horizon')),
-    bytes                        BIGINT NOT NULL CHECK (bytes >= 0),
-    packets                      BIGINT NOT NULL CHECK (packets >= 0),
-    records                      BIGINT NOT NULL CHECK (records >= 0),
-    updated_at                   BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800),
+    period_start_at   BIGINT NOT NULL CHECK (period_start_at >= 0 AND period_start_at < 4102444800),
+    period_end_at     BIGINT NOT NULL CHECK (period_end_at >= 0 AND period_end_at < 4102444800),
+    ingress_interface TEXT NOT NULL CHECK (length(ingress_interface) > 0),
+    egress_interface  TEXT NOT NULL CHECK (length(egress_interface) > 0),
+    protocol          BIGINT NOT NULL CHECK (protocol >= 0 AND protocol <= 255),
+    ip_version        BIGINT NOT NULL CHECK (ip_version IN (4, 6)),
+    reason            TEXT NOT NULL
+                      CHECK (reason IN ('no_logged_leg', 'ambiguous', 'beyond_flow_horizon',
+                                        'interface_index_unmapped', 'reverse_unconfirmed')),
+    bytes             BIGINT NOT NULL CHECK (bytes >= 0),
+    packets           BIGINT NOT NULL CHECK (packets >= 0),
+    records           BIGINT NOT NULL CHECK (records >= 0),
+    updated_at        BIGINT NOT NULL CHECK (updated_at >= 0 AND updated_at < 4102444800),
     CHECK (period_end_at > period_start_at),
-    PRIMARY KEY (period_start_at, observation_point_identifier, direction, protocol, ip_version, reason)
+    PRIMARY KEY (period_start_at, ingress_interface, egress_interface, protocol, ip_version, reason)
 );
 
 CREATE TABLE IF NOT EXISTS unmatched_record_aggregate_24h (
@@ -3761,22 +3803,23 @@ WHERE NOT EXISTS (
 
 -- ---------------------------------------------------------------------------
 -- NetFlow: the flow records an exporter sends, its capture configuration, and
--- the volume they measure for the logged connections (PS17-PS20 of the NetFlow
--- join amendment to specs/SPEC-backend-completion-plugins.md; docs/data-model.md,
--- "NetFlow volumes").
+-- the volume they measure for the logged connections (PS17 of the NetFlow join
+-- amendment to specs/SPEC-backend-completion-plugins.md, as the amendment "the
+-- NetFlow join with every interface captured" replaces its join, NJ2 to NJ8;
+-- docs/data-model.md, "NetFlow volumes").
 --
 -- THE TERMS. A flow_record is RFC 3954's and RFC 7011's Flow Record, and is not
--- a `flow`, which is one filter-log record. The Observation Point is RFC 7011's.
--- forward and reverse are RFC 5103's. "Measured volume" and the `netflow` measure
--- are opnview's own: no product names the volume of a logged connection as an
--- exporter counted it. docs/data-model.md, *Vocabulary*.
+-- a `flow`, which is one filter-log record. forward and reverse are RFC 5103's.
+-- RFC 7011's Observation Point is neither exported by OPNsense nor assigned by
+-- opnview. "Measured volume", the `netflow` measure, a translated copy, a parent
+-- copy, a counted copy and the index roles are opnview's own: docs/data-model.md,
+-- *Vocabulary*, records each with its reason.
 --
--- THE OBSERVATION POINT IS READ, NEVER INFERRED. OPNsense's export carries no
--- observing interface and no direction element, and with two or more captured
--- interfaces a forwarded packet arrives as two records identical in every field
--- (survey, Push sources, S10 and S11). So a record has an Observation Point only
--- when the capture configuration in force at its start names exactly one
--- captured interface; otherwise it is stored with none and joins nothing.
+-- EVERY RECORD IS JOINED FROM ITS OWN INDEXES. A record names the interface it
+-- was received on and the interface its route chose (ingressInterface and
+-- egressInterface, survey S6), mapped at reception; the join reads them and the
+-- legs logged there (NJ4). Which interfaces export what is read from the capture
+-- configuration, never inferred from the records.
 -- ---------------------------------------------------------------------------
 
 -- canonical_address — an address as one canonical text, for comparing an address
@@ -3791,16 +3834,16 @@ AS $$
     SELECT CASE WHEN pg_input_is_valid(address, 'inet') THEN host(CAST(address AS inet)) END
 $$;
 
--- The join's candidate search (PS19 rule 2): the legs logged on one device whose
--- two addresses are the record's, in either orientation, at or before an
--- instant. Risk 50 of the addendum names its cost on the largest table; LV-NJ and
--- the pre-deployment budget measure it.
+-- The join's candidate search (NJ4): the legs logged on the devices a group's
+-- records name whose two addresses are the records', in either orientation, at
+-- or before an instant -- one index search per device. Risk 7 of the amendment
+-- names its cost; the pre-deployment sweep plans it at both seeds.
 CREATE INDEX IF NOT EXISTS idx_flow_join ON flow
     (interface_device, canonical_address(src_address), canonical_address(dst_address), observed_at);
 
 -- ---------------------------------------------------------------------------
 -- capture_configuration — the capture configurations a flow_record provider
--- read, as INTERVALS BOUNDED BY READ INSTANTS (PS18).
+-- read, as INTERVALS BOUNDED BY READ INSTANTS (PS18, kept by NJ6).
 --
 -- Source: the provider's polled read (docs/plugins.md, `flow_record`): what the
 -- exporter's own configuration says it captures, through the broker. Which
@@ -3840,36 +3883,40 @@ CREATE TABLE IF NOT EXISTS capture_configuration (
     UNIQUE (provider_id, first_read_at)
 );
 
+-- capture_interface — one interface of a readable configuration (NJ2, "the
+-- capture-configuration record"):
+--   identifier          the interface's OPNsense identifier, as discovery names it
+--   ingress, egress     whether the configuration captures its received and its
+--                       sent packets
+--   exported            whether the exporter actually exports what is configured
+--                       for it, for each captured direction: 'yes', 'no' (and
+--                       not_exported_reason names why, for OPNsense
+--                       no_export_point), or 'unknown' when the provider could not
+--                       establish it
+-- What the plugin read to fill exported is its own (NJ9): the core never names it.
 CREATE TABLE IF NOT EXISTS capture_interface (
     capture_configuration_id BIGINT NOT NULL REFERENCES capture_configuration (id) ON DELETE CASCADE,
-    -- identifier is the interface's OPNsense identifier, as discovery names it.
     identifier               TEXT NOT NULL CHECK (length(identifier) > 0),
     ingress                  BIGINT NOT NULL CHECK (ingress IN (0, 1)),
     egress                   BIGINT NOT NULL CHECK (egress IN (0, 1)),
+    exported                 TEXT NOT NULL CHECK (exported IN ('yes', 'no', 'unknown')),
+    not_exported_reason      TEXT CHECK (not_exported_reason IS NULL OR length(not_exported_reason) > 0),
+    CHECK ((exported = 'no') = (not_exported_reason IS NOT NULL)),
     PRIMARY KEY (capture_configuration_id, identifier)
 );
 
--- ---------------------------------------------------------------------------
--- flow_record_condition — a condition the decoder detected on an exporter's
--- stream: today, netflow_sequence_interleaved, which shows several counters
--- behind one observation domain. While the configuration in force names one
--- captured interface, the two disagree: the join is suspended from observed_at
--- until the next configuration read (resolved_at), and the interval is
--- capture_configuration_unknown. It never says which interface a record came from.
--- Purged by observed_at.
--- ---------------------------------------------------------------------------
-CREATE TABLE IF NOT EXISTS flow_record_condition (
-    id          BIGINT PRIMARY KEY,
-    provider_id BIGINT NOT NULL REFERENCES provider (id),
-    reason      TEXT NOT NULL CHECK (length(reason) > 0),
-    scope       TEXT NOT NULL,
-    observed_at BIGINT NOT NULL CHECK (observed_at >= 0 AND observed_at < 4102444800),
-    resolved_at BIGINT CHECK (resolved_at IS NULL OR (resolved_at >= 0 AND resolved_at < 4102444800)),
-    CHECK (resolved_at IS NULL OR resolved_at >= observed_at)
+-- capture_interface_parent_of — an interface's parent_of (NJ2): the interfaces
+-- whose received packets this interface's exporter also exports with this
+-- interface as ingressInterface, one row each. For OPNsense, a VLAN's parent
+-- interface (S6c); the core never names the mechanism.
+CREATE TABLE IF NOT EXISTS capture_interface_parent_of (
+    capture_configuration_id BIGINT NOT NULL,
+    identifier               TEXT NOT NULL,
+    of_identifier            TEXT NOT NULL CHECK (length(of_identifier) > 0),
+    PRIMARY KEY (capture_configuration_id, identifier, of_identifier),
+    FOREIGN KEY (capture_configuration_id, identifier)
+        REFERENCES capture_interface (capture_configuration_id, identifier) ON DELETE CASCADE
 );
-
-CREATE INDEX IF NOT EXISTS idx_flow_record_condition_provider
-    ON flow_record_condition (provider_id, observed_at);
 
 -- ---------------------------------------------------------------------------
 -- flow_record — one flow record as its exporter sent it (PS17), a hypertable
@@ -3883,157 +3930,172 @@ CREATE INDEX IF NOT EXISTS idx_flow_record_condition_provider
 -- identity is the core's: the SHA-256 of the exporter, the observation domain,
 -- the SHA-256 of the datagram and the record's position in it (internal/plugin,
 -- pushkind.go). A datagram delivered twice stores its records once; two records
--- identical in every field keep two rows. Two datagrams identical octet for octet
--- are one delivery: the one case the identity cannot separate.
+-- identical in every field keep two rows, and are never deduplicated by content
+-- (NJ4 rule 7). Two datagrams identical octet for octet are one delivery: the one
+-- case the identity cannot separate.
 --
 -- start_at and end_at are the first and last packets' instants in whole seconds,
 -- and *_millisecond the rest, at the precision exported (OPNsense's is whole
 -- seconds, survey S10). ingress_interface and egress_interface are the raw
 -- indexes; protocol is the IANA number.
 --
--- THE CORE-WRITTEN COLUMNS, set at reception and never by a provider:
---   capture_state      the state of the configuration in force at the start:
---                      'observation_point' when it names exactly one captured
---                      interface that maps to a kernel index, else the named
---                      state (PS18's table)
---   captured_interfaces how many interfaces it captured on, when it was read
---   observation_point_identifier, observation_point_device  that interface
---   direction          the record's direction at it, from the configuration and
---                      ingress_interface, never from egress_interface (PS19 rule 1)
---   loss_detectable    1 when the configuration made the exporter's sequence one
---                      counter's, so a loss would have been recorded as a gap
+-- THE CORE-WRITTEN COLUMNS, set at reception and never by a provider (NJ2, NJ3):
+--   ingress_role, egress_role  what the index names, from the index map in force
+--                      at reception: 'interface', 'no_receiving_interface'
+--                      (index 0, S6a), 'local_delivery' (the loopback's index,
+--                      S6b) or 'unmapped' (an index the map does not hold, or no
+--                      index at all)
+--   ingress_identifier, ingress_device, egress_identifier, egress_device  the
+--                      mapped interface of an 'interface' role: its device always,
+--                      its identifier when an assignment names it. Fixed at
+--                      reception and never re-mapped
+--   loss_detectable    1 when the configuration in force at the start bounded the
+--                      exporter's sequence counters (NJ7), so a loss would have
+--                      been recorded as a gap
 --   tuple_key          the record's two ends, unordered, with its version and
 --                      protocol: what the join groups records by
--- And the join's (PS19), decided from stored rows only:
+-- And the join's (NJ4), decided from stored rows only:
 --   join_state         'pending' until the filter log has been read past the
---                      start plus the tolerance; then 'joined' or 'unmatched';
---                      'not_joinable' for a record with no Observation Point
---   joined_flow_id     the leg it joined, and orientation forward or reverse
---   unmatched_reason   no_logged_leg, ambiguous or beyond_flow_horizon
--- joined_flow_id carries no foreign key, as flow.paired_flow_id does not: the
--- retention purge can remove the leg and keep the record.
+--                      start plus the tolerance, or while a reverse join awaits
+--                      its forward record (NJ4 rule 4); then 'joined', 'copy' or
+--                      'unmatched'
+--   joined_flow_id     the leg it joined, a first or single leg, never a second
+--   copy_kind          translated_copy or parent_copy, exactly on a copy
+--   copy_flow_id       on a translated copy matched by a second leg's logged
+--                      tuple, that second leg: what NJ5's sole-copy rule counts it
+--                      under
+--   orientation        forward or reverse, to joined_flow_id or copy_flow_id
+--   counted_copy       1 on a translated copy NJ5's sole-copy rule counts
+--   unmatched_reason   no_logged_leg, ambiguous, beyond_flow_horizon,
+--                      interface_index_unmapped or reverse_unconfirmed
+-- joined_flow_id and copy_flow_id carry no foreign key, as flow.paired_flow_id
+-- does not: the retention purge can remove the leg and keep the record.
 -- Purged by start_at, at retention_flow_record_seconds (0 follows
 -- retention_seconds).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS flow_record (
-    provider_id                  BIGINT NOT NULL REFERENCES provider (id),
-    identity                     TEXT NOT NULL CHECK (length(identity) = 64),
-    start_at                     BIGINT NOT NULL CHECK (start_at >= 0 AND start_at < 4102444800),
-    start_millisecond            BIGINT NOT NULL CHECK (start_millisecond >= 0 AND start_millisecond < 1000),
-    end_at                       BIGINT NOT NULL CHECK (end_at >= 0 AND end_at < 4102444800),
-    end_millisecond              BIGINT NOT NULL CHECK (end_millisecond >= 0 AND end_millisecond < 1000),
-    received_at                  BIGINT NOT NULL CHECK (received_at >= 0 AND received_at < 4102444800),
-    exporter_address             TEXT NOT NULL,
-    observation_domain           BIGINT NOT NULL CHECK (observation_domain >= 0),
-    ingress_interface            BIGINT CHECK (ingress_interface IS NULL OR ingress_interface >= 0),
-    egress_interface             BIGINT CHECK (egress_interface IS NULL OR egress_interface >= 0),
-    ip_version                   BIGINT NOT NULL CHECK (ip_version IN (4, 6)),
-    protocol                     BIGINT NOT NULL CHECK (protocol >= 0 AND protocol <= 255),
-    src_address                  TEXT NOT NULL,
-    dst_address                  TEXT NOT NULL,
-    src_port                     BIGINT CHECK (src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)),
-    dst_port                     BIGINT CHECK (dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)),
-    tcp_flags                    BIGINT CHECK (tcp_flags IS NULL OR tcp_flags >= 0),
-    octets                       BIGINT NOT NULL CHECK (octets >= 0),
-    packets                      BIGINT NOT NULL CHECK (packets >= 0),
-    capture_state                TEXT NOT NULL
-                                 CHECK (capture_state IN ('observation_point', 'netflow_not_configured',
-                                                          'observation_point_not_exported',
-                                                          'capture_configuration_unknown',
-                                                          'interface_index_unmapped')),
-    captured_interfaces          BIGINT CHECK (captured_interfaces IS NULL OR captured_interfaces >= 0),
-    observation_point_identifier TEXT,
-    observation_point_device     TEXT,
-    direction                    TEXT CHECK (direction IS NULL OR direction IN ('ingress', 'egress')),
-    loss_detectable              BIGINT NOT NULL CHECK (loss_detectable IN (0, 1)),
-    tuple_key                    TEXT NOT NULL,
-    join_state                   TEXT NOT NULL
-                                 CHECK (join_state IN ('pending', 'joined', 'unmatched', 'not_joinable')),
-    joined_flow_id               BIGINT,
-    orientation                  TEXT CHECK (orientation IS NULL OR orientation IN ('forward', 'reverse')),
-    unmatched_reason             TEXT CHECK (unmatched_reason IS NULL
-                                             OR unmatched_reason IN ('no_logged_leg', 'ambiguous',
-                                                                     'beyond_flow_horizon')),
-    decided_at                   BIGINT CHECK (decided_at IS NULL OR (decided_at >= 0 AND decided_at < 4102444800)),
+    provider_id        BIGINT NOT NULL REFERENCES provider (id),
+    identity           TEXT NOT NULL CHECK (length(identity) = 64),
+    start_at           BIGINT NOT NULL CHECK (start_at >= 0 AND start_at < 4102444800),
+    start_millisecond  BIGINT NOT NULL CHECK (start_millisecond >= 0 AND start_millisecond < 1000),
+    end_at             BIGINT NOT NULL CHECK (end_at >= 0 AND end_at < 4102444800),
+    end_millisecond    BIGINT NOT NULL CHECK (end_millisecond >= 0 AND end_millisecond < 1000),
+    received_at        BIGINT NOT NULL CHECK (received_at >= 0 AND received_at < 4102444800),
+    exporter_address   TEXT NOT NULL,
+    observation_domain BIGINT NOT NULL CHECK (observation_domain >= 0),
+    ingress_interface  BIGINT CHECK (ingress_interface IS NULL OR ingress_interface >= 0),
+    egress_interface   BIGINT CHECK (egress_interface IS NULL OR egress_interface >= 0),
+    ip_version         BIGINT NOT NULL CHECK (ip_version IN (4, 6)),
+    protocol           BIGINT NOT NULL CHECK (protocol >= 0 AND protocol <= 255),
+    src_address        TEXT NOT NULL,
+    dst_address        TEXT NOT NULL,
+    src_port           BIGINT CHECK (src_port IS NULL OR (src_port >= 0 AND src_port <= 65535)),
+    dst_port           BIGINT CHECK (dst_port IS NULL OR (dst_port >= 0 AND dst_port <= 65535)),
+    tcp_flags          BIGINT CHECK (tcp_flags IS NULL OR tcp_flags >= 0),
+    octets             BIGINT NOT NULL CHECK (octets >= 0),
+    packets            BIGINT NOT NULL CHECK (packets >= 0),
+    ingress_role       TEXT NOT NULL CHECK (ingress_role IN ('interface', 'no_receiving_interface',
+                                                             'local_delivery', 'unmapped')),
+    ingress_identifier TEXT CHECK (ingress_identifier IS NULL OR length(ingress_identifier) > 0),
+    ingress_device     TEXT CHECK (ingress_device IS NULL OR length(ingress_device) > 0),
+    egress_role        TEXT NOT NULL CHECK (egress_role IN ('interface', 'no_receiving_interface',
+                                                            'local_delivery', 'unmapped')),
+    egress_identifier  TEXT CHECK (egress_identifier IS NULL OR length(egress_identifier) > 0),
+    egress_device      TEXT CHECK (egress_device IS NULL OR length(egress_device) > 0),
+    loss_detectable    BIGINT NOT NULL CHECK (loss_detectable IN (0, 1)),
+    tuple_key          TEXT NOT NULL,
+    join_state         TEXT NOT NULL CHECK (join_state IN ('pending', 'joined', 'copy', 'unmatched')),
+    joined_flow_id     BIGINT,
+    copy_kind          TEXT CHECK (copy_kind IS NULL OR copy_kind IN ('translated_copy', 'parent_copy')),
+    copy_flow_id       BIGINT,
+    orientation        TEXT CHECK (orientation IS NULL OR orientation IN ('forward', 'reverse')),
+    counted_copy       BIGINT NOT NULL DEFAULT 0 CHECK (counted_copy IN (0, 1)),
+    unmatched_reason   TEXT CHECK (unmatched_reason IS NULL
+                                   OR unmatched_reason IN ('no_logged_leg', 'ambiguous', 'beyond_flow_horizon',
+                                                           'interface_index_unmapped', 'reverse_unconfirmed')),
+    decided_at         BIGINT CHECK (decided_at IS NULL OR (decided_at >= 0 AND decided_at < 4102444800)),
     CHECK (end_at > start_at OR (end_at = start_at AND end_millisecond >= start_millisecond)),
-    CHECK ((capture_state = 'observation_point') = (direction IS NOT NULL)),
-    CHECK ((capture_state = 'observation_point') = (observation_point_device IS NOT NULL)),
-    CHECK ((capture_state IN ('observation_point', 'interface_index_unmapped'))
-           = (observation_point_identifier IS NOT NULL)),
-    CHECK (capture_state <> 'observation_point_not_exported' OR coalesce(captured_interfaces, 0) >= 2),
-    CHECK ((join_state = 'not_joinable') = (capture_state <> 'observation_point')),
+    CHECK ((ingress_role = 'interface') = (ingress_device IS NOT NULL)),
+    CHECK (ingress_identifier IS NULL OR ingress_role = 'interface'),
+    CHECK ((egress_role = 'interface') = (egress_device IS NOT NULL)),
+    CHECK (egress_identifier IS NULL OR egress_role = 'interface'),
     CHECK ((join_state = 'joined') = (joined_flow_id IS NOT NULL)),
-    CHECK ((join_state = 'joined') = (orientation IS NOT NULL)),
+    CHECK ((join_state = 'copy') = (copy_kind IS NOT NULL)),
+    CHECK (copy_flow_id IS NULL OR copy_kind = 'translated_copy'),
+    CHECK ((orientation IS NOT NULL) = (joined_flow_id IS NOT NULL OR copy_flow_id IS NOT NULL)),
+    CHECK (counted_copy = 0 OR copy_flow_id IS NOT NULL),
     CHECK ((join_state = 'unmatched') = (unmatched_reason IS NOT NULL)),
-    CHECK ((join_state IN ('joined', 'unmatched')) = (decided_at IS NOT NULL)),
+    CHECK ((join_state IN ('joined', 'copy', 'unmatched')) = (decided_at IS NOT NULL)),
     UNIQUE (identity, start_at)
 );
 
 SELECT create_hypertable('flow_record', by_range('start_at', 86400), if_not_exists => true);
 
 -- The join's two searches: the undecided records of a provider, oldest first,
--- and the records of one group -- one Observation Point and one unordered tuple.
+-- and the records of one group -- one unordered tuple. No device leads the group
+-- key: a group's records name their own interfaces (NJ2).
 CREATE INDEX IF NOT EXISTS idx_flow_record_pending
     ON flow_record (provider_id, start_at) WHERE join_state = 'pending';
 CREATE INDEX IF NOT EXISTS idx_flow_record_group
-    ON flow_record (observation_point_device, tuple_key, start_at);
--- A connection's measured volume reads the records joined to its legs.
+    ON flow_record (tuple_key, start_at);
+-- A connection's measured volume reads the records joined to its first leg, and
+-- the translated copies of its second leg.
 CREATE INDEX IF NOT EXISTS idx_flow_record_joined
     ON flow_record (joined_flow_id) WHERE joined_flow_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_flow_record_copy
+    ON flow_record (copy_flow_id) WHERE copy_flow_id IS NOT NULL;
 
 -- ---------------------------------------------------------------------------
 -- connection_measured_volume — a logged connection's volume as the exporter
--- counted it, per direction, at the single Observation Point (PS20).
+-- counted it, per direction, each direction once (NJ5).
 --
 -- A connection is a first leg with its second leg, or a single leg; it is named
 -- by connection_flow_id, its first (or single) leg. forward and reverse are the
 -- directions the first leg logged. A row exists only for a connection that
--- started under a configuration with one Observation Point; a connection that
--- started under any other is in no row, and its state is the interval's
--- (observation_point_not_exported, capture_configuration_unknown,
--- netflow_not_configured, interface_index_unmapped), read from
--- capture_configuration.
+-- started under a readable, enabled capture configuration; a connection that
+-- started under none has no row -- its coverage class is capture_not_known.
 --
---   state             measured, in_progress, awaiting_export, missing,
---                     not_captured, export_gap, not_exported_when_refused
---   bytes, packets, records  the sum of that direction's records joined to the
---                     leg the figure was measured at; 0 with no record
---   observation_point_*  the interface the figure was measured at, because the
---                     captured interface can change over the retention period
---   measured_at_leg   first_leg or second_leg, and measured_flow_id that leg;
---                     NULL when no leg of the connection was logged on it
---   final             1 once nothing can change it any more
+--   state         measured, in_progress, awaiting_export, missing or export_gap
+--                 where exactly one exporter counts the direction, or the
+--                 sole-copy rule applies; forwarding_export_unsettled where two
+--                 do; otherwise the first cause that applies:
+--                 not_exported_when_refused, ingress_not_captured,
+--                 parent_copies_only, interface_not_exported,
+--                 interface_not_captured, capture_configuration_unknown
+--   bytes, packets, records  the sum of the records joined to the first leg in
+--                 that direction, or of the counted copies; 0 with no record and
+--                 in every state that is not counted
+--   counted_copy  1 when the figure is the translated copies' (NJ5's sole-copy
+--                 rule)
+--   final         1 once nothing can change it any more
 -- The measure identity is `netflow`: packet_bytes and every logged figure are
 -- unchanged, and nothing anywhere sums the two. Purged with its connection.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS connection_measured_volume (
-    connection_flow_id           BIGINT NOT NULL,
-    direction                    TEXT NOT NULL CHECK (direction IN ('forward', 'reverse')),
-    connection_start_at          BIGINT NOT NULL
-                                 CHECK (connection_start_at >= 0 AND connection_start_at < 4102444800),
-    state                        TEXT NOT NULL
-                                 CHECK (state IN ('measured', 'in_progress', 'awaiting_export', 'missing',
-                                                  'not_captured', 'export_gap', 'not_exported_when_refused')),
-    bytes                        BIGINT NOT NULL CHECK (bytes >= 0),
-    packets                      BIGINT NOT NULL CHECK (packets >= 0),
-    records                      BIGINT NOT NULL CHECK (records >= 0),
-    observation_point_identifier TEXT NOT NULL,
-    observation_point_device     TEXT NOT NULL,
-    measured_at_leg              TEXT CHECK (measured_at_leg IS NULL
-                                             OR measured_at_leg IN ('first_leg', 'second_leg')),
-    measured_flow_id             BIGINT,
-    final                        BIGINT NOT NULL CHECK (final IN (0, 1)),
+    connection_flow_id  BIGINT NOT NULL,
+    direction           TEXT NOT NULL CHECK (direction IN ('forward', 'reverse')),
+    connection_start_at BIGINT NOT NULL
+                        CHECK (connection_start_at >= 0 AND connection_start_at < 4102444800),
+    state               TEXT NOT NULL
+                        CHECK (state IN ('measured', 'in_progress', 'awaiting_export', 'missing', 'export_gap',
+                                         'not_exported_when_refused', 'forwarding_export_unsettled',
+                                         'ingress_not_captured', 'parent_copies_only', 'interface_not_exported',
+                                         'interface_not_captured', 'capture_configuration_unknown')),
+    bytes               BIGINT NOT NULL CHECK (bytes >= 0),
+    packets             BIGINT NOT NULL CHECK (packets >= 0),
+    records             BIGINT NOT NULL CHECK (records >= 0),
+    counted_copy        BIGINT NOT NULL CHECK (counted_copy IN (0, 1)),
+    final               BIGINT NOT NULL CHECK (final IN (0, 1)),
     -- due_at is the read-through instant from which the state may change by time alone -- an
     -- in-progress direction ending, an awaited one going missing -- and NULL once final: an open row is
     -- computed again when it falls due, or when a record, a leg or a gap it reads changes.
-    due_at                       BIGINT CHECK (due_at IS NULL OR (due_at >= 0 AND due_at < 4102444800)),
-    computed_at                  BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
+    due_at              BIGINT CHECK (due_at IS NULL OR (due_at >= 0 AND due_at < 4102444800)),
+    computed_at         BIGINT NOT NULL CHECK (computed_at >= 0 AND computed_at < 4102444800),
     CHECK ((final = 1) = (due_at IS NULL)),
-    CHECK ((measured_at_leg IS NULL) = (measured_flow_id IS NULL)),
     CHECK (records > 0 OR (bytes = 0 AND packets = 0)),
     CHECK (state NOT IN ('measured', 'in_progress') OR records > 0),
-    CHECK (state NOT IN ('awaiting_export', 'missing', 'not_captured', 'not_exported_when_refused')
-           OR records = 0),
+    CHECK (state IN ('measured', 'in_progress', 'export_gap') OR records = 0),
+    CHECK (counted_copy = 0 OR state IN ('measured', 'in_progress', 'awaiting_export', 'missing', 'export_gap')),
     PRIMARY KEY (connection_flow_id, direction)
 );
 
@@ -4056,16 +4118,18 @@ CREATE INDEX IF NOT EXISTS idx_connection_measured_volume_due
 -- For the flow given -- its id, pair outcome, paired flow and action -- it answers
 -- one row:
 --   bytes  the measured bytes the flow's row counts: its connection's, both
---          directions, on a first or single leg; on a second leg only the
---          directions measured at that leg (PS20, "Exit-leg figures"), exactly as
---          the second leg's logged bytes count
+--          directions. On a second leg the same, the connection's figure being
+--          the same packets (decided question 3), except that the forward
+--          direction of a refused second leg counts nothing and is counted as
+--          not_exported_when_refused: pf dropped it before it could leave
 --   parts  netflow_parts, with the flow's connection placed in the part of the
 --          flow's action: its packets (counted as its bytes are), its coverage
---          class, and the direction states it met. A second leg's row counts its
+--          class, the direction states it met and whether a direction was
+--          counted from translated copies. A second leg's row counts its
 --          connection's class and states, as it counts the connection.
 -- A connection is the flow itself, or for a second leg the first leg it is
--- paired with. A connection with no row is not_joinable: it started under no
--- single Observation Point.
+-- paired with. A connection with no row is capture_not_known: it started under
+-- no readable, enabled capture configuration.
 --
 -- A plain SQL function returning a set, STABLE and not STRICT, so PostgreSQL
 -- inlines it into the statement calling it: the plan is the one the statement
@@ -4077,73 +4141,114 @@ RETURNS TABLE (bytes BIGINT, parts netflow_parts)
 LANGUAGE sql STABLE PARALLEL SAFE
 AS $connection_netflow$
     SELECT m.bytes,
-           CAST(ROW(
+           -- A connection with no row -- the common case where NetFlow is not configured -- is one
+           -- constant per action: capture_not_known in the part of the flow's action, and nothing else.
+           CASE WHEN m.rows = 0 THEN
+               CASE WHEN leg_action = 'pass' THEN
+                   CAST('(0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)' AS netflow_parts)
+                    WHEN leg_action IN ('block', 'reject') THEN
+                   CAST('(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0)' AS netflow_parts)
+                    WHEN leg_action = 'unknown' THEN
+                   CAST('(0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0)' AS netflow_parts)
+                    ELSE netflow_parts_zero() END
+           ELSE CAST(ROW(
                 m.allowed * m.packets,
                 m.allowed * m.class_measured,
                 m.allowed * m.class_partial,
                 m.allowed * m.class_unmeasured,
-                m.allowed * m.class_not_joinable,
+                m.allowed * m.class_capture_not_known,
                 m.allowed * m.state_measured,
                 m.allowed * m.state_in_progress,
                 m.allowed * m.state_awaiting_export,
                 m.allowed * m.state_missing,
-                m.allowed * m.state_not_captured,
                 m.allowed * m.state_export_gap,
                 m.allowed * m.state_not_exported_when_refused,
+                m.allowed * m.state_forwarding_export_unsettled,
+                m.allowed * m.state_ingress_not_captured,
+                m.allowed * m.state_parent_copies_only,
+                m.allowed * m.state_interface_not_exported,
+                m.allowed * m.state_interface_not_captured,
+                m.allowed * m.state_capture_configuration_unknown,
+                m.allowed * m.counted_copy,
                 m.blocked * m.packets,
                 m.blocked * m.class_measured,
                 m.blocked * m.class_partial,
                 m.blocked * m.class_unmeasured,
-                m.blocked * m.class_not_joinable,
+                m.blocked * m.class_capture_not_known,
                 m.blocked * m.state_measured,
                 m.blocked * m.state_in_progress,
                 m.blocked * m.state_awaiting_export,
                 m.blocked * m.state_missing,
-                m.blocked * m.state_not_captured,
                 m.blocked * m.state_export_gap,
                 m.blocked * m.state_not_exported_when_refused,
+                m.blocked * m.state_forwarding_export_unsettled,
+                m.blocked * m.state_ingress_not_captured,
+                m.blocked * m.state_parent_copies_only,
+                m.blocked * m.state_interface_not_exported,
+                m.blocked * m.state_interface_not_captured,
+                m.blocked * m.state_capture_configuration_unknown,
+                m.blocked * m.counted_copy,
                 m.unknown * m.packets,
                 m.unknown * m.class_measured,
                 m.unknown * m.class_partial,
                 m.unknown * m.class_unmeasured,
-                m.unknown * m.class_not_joinable,
+                m.unknown * m.class_capture_not_known,
                 m.unknown * m.state_measured,
                 m.unknown * m.state_in_progress,
                 m.unknown * m.state_awaiting_export,
                 m.unknown * m.state_missing,
-                m.unknown * m.state_not_captured,
                 m.unknown * m.state_export_gap,
-                m.unknown * m.state_not_exported_when_refused
-           ) AS netflow_parts)
+                m.unknown * m.state_not_exported_when_refused,
+                m.unknown * m.state_forwarding_export_unsettled,
+                m.unknown * m.state_ingress_not_captured,
+                m.unknown * m.state_parent_copies_only,
+                m.unknown * m.state_interface_not_exported,
+                m.unknown * m.state_interface_not_captured,
+                m.unknown * m.state_capture_configuration_unknown,
+                m.unknown * m.counted_copy
+           ) AS netflow_parts) END
     FROM (
-        SELECT CAST(coalesce(sum(v.bytes) FILTER (WHERE leg_pair_outcome IS DISTINCT FROM 'second_leg'
-                                                   OR v.measured_flow_id = leg_id), 0) AS BIGINT) AS bytes,
-               CAST(coalesce(sum(v.packets) FILTER (WHERE leg_pair_outcome IS DISTINCT FROM 'second_leg'
-                                                     OR v.measured_flow_id = leg_id), 0) AS BIGINT) AS packets,
+        SELECT CAST(coalesce(sum(e.bytes), 0) AS BIGINT) AS bytes,
+               count(*) AS rows,
+               CAST(coalesce(sum(e.packets), 0) AS BIGINT) AS packets,
                CASE WHEN leg_action = 'pass' THEN 1 ELSE 0 END AS allowed,
                CASE WHEN leg_action IN ('block', 'reject') THEN 1 ELSE 0 END AS blocked,
                CASE WHEN leg_action = 'unknown' THEN 1 ELSE 0 END AS unknown,
-               CASE WHEN count(*) = 0 THEN 1 ELSE 0 END AS class_not_joinable,
-               CASE WHEN count(*) > 0 AND count(*) FILTER (WHERE v.state = 'measured') = 2
+               CASE WHEN count(*) = 0 THEN 1 ELSE 0 END AS class_capture_not_known,
+               CASE WHEN count(*) > 0 AND count(*) FILTER (WHERE e.state = 'measured') = 2
                     THEN 1 ELSE 0 END AS class_measured,
-               CASE WHEN count(*) > 0 AND count(*) FILTER (WHERE v.state = 'measured') <> 2
-                         AND count(*) FILTER (WHERE v.records > 0) = 0
+               CASE WHEN count(*) > 0 AND count(*) FILTER (WHERE e.state = 'measured') <> 2
+                         AND count(*) FILTER (WHERE e.records > 0) = 0
                     THEN 1 ELSE 0 END AS class_unmeasured,
-               CASE WHEN count(*) > 0 AND count(*) FILTER (WHERE v.state = 'measured') <> 2
-                         AND count(*) FILTER (WHERE v.records > 0) > 0
+               CASE WHEN count(*) > 0 AND count(*) FILTER (WHERE e.state = 'measured') <> 2
+                         AND count(*) FILTER (WHERE e.records > 0) > 0
                     THEN 1 ELSE 0 END AS class_partial,
-               CASE WHEN count(*) FILTER (WHERE v.state = 'measured') > 0 THEN 1 ELSE 0 END AS state_measured,
-               CASE WHEN count(*) FILTER (WHERE v.state = 'in_progress') > 0 THEN 1 ELSE 0 END AS state_in_progress,
-               CASE WHEN count(*) FILTER (WHERE v.state = 'awaiting_export') > 0
-                    THEN 1 ELSE 0 END AS state_awaiting_export,
-               CASE WHEN count(*) FILTER (WHERE v.state = 'missing') > 0 THEN 1 ELSE 0 END AS state_missing,
-               CASE WHEN count(*) FILTER (WHERE v.state = 'not_captured') > 0 THEN 1 ELSE 0 END AS state_not_captured,
-               CASE WHEN count(*) FILTER (WHERE v.state = 'export_gap') > 0 THEN 1 ELSE 0 END AS state_export_gap,
-               CASE WHEN count(*) FILTER (WHERE v.state = 'not_exported_when_refused') > 0
-                    THEN 1 ELSE 0 END AS state_not_exported_when_refused
-        FROM connection_measured_volume AS v
-        WHERE v.connection_flow_id = CASE WHEN leg_pair_outcome = 'second_leg' THEN leg_paired_flow_id
-                                          ELSE leg_id END
+               CASE WHEN count(*) FILTER (WHERE e.state = 'measured') > 0 THEN 1 ELSE 0 END AS state_measured,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'in_progress') > 0 THEN 1 ELSE 0 END AS state_in_progress,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'awaiting_export') > 0 THEN 1 ELSE 0 END AS state_awaiting_export,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'missing') > 0 THEN 1 ELSE 0 END AS state_missing,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'export_gap') > 0 THEN 1 ELSE 0 END AS state_export_gap,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'not_exported_when_refused') > 0 THEN 1 ELSE 0 END AS state_not_exported_when_refused,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'forwarding_export_unsettled') > 0 THEN 1 ELSE 0 END AS state_forwarding_export_unsettled,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'ingress_not_captured') > 0 THEN 1 ELSE 0 END AS state_ingress_not_captured,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'parent_copies_only') > 0 THEN 1 ELSE 0 END AS state_parent_copies_only,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'interface_not_exported') > 0 THEN 1 ELSE 0 END AS state_interface_not_exported,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'interface_not_captured') > 0 THEN 1 ELSE 0 END AS state_interface_not_captured,
+               CASE WHEN count(*) FILTER (WHERE e.state = 'capture_configuration_unknown') > 0 THEN 1 ELSE 0 END AS state_capture_configuration_unknown,
+               CASE WHEN count(*) FILTER (WHERE e.counted_copy = 1) > 0 THEN 1 ELSE 0 END AS counted_copy
+        FROM (
+            SELECT CASE WHEN r.refused_exit AND v.direction = 'forward' THEN 'not_exported_when_refused'
+                        ELSE v.state END AS state,
+                   CASE WHEN r.refused_exit AND v.direction = 'forward' THEN 0 ELSE v.bytes END AS bytes,
+                   CASE WHEN r.refused_exit AND v.direction = 'forward' THEN 0 ELSE v.packets END AS packets,
+                   CASE WHEN r.refused_exit AND v.direction = 'forward' THEN 0 ELSE v.records END AS records,
+                   CASE WHEN r.refused_exit AND v.direction = 'forward' THEN 0 ELSE v.counted_copy END AS counted_copy
+            FROM connection_measured_volume AS v
+            CROSS JOIN (SELECT leg_pair_outcome IS NOT DISTINCT FROM 'second_leg'
+                               AND leg_action IN ('block', 'reject') AS refused_exit) AS r
+            WHERE v.connection_flow_id = CASE WHEN leg_pair_outcome = 'second_leg' THEN leg_paired_flow_id
+                                              ELSE leg_id END
+        ) AS e
     ) AS m
 $connection_netflow$;
 
@@ -4269,8 +4374,7 @@ SELECT install_assign_id(t::regclass) FROM unnest(ARRAY[
     'state_snapshot',
     'state_item',
     'owner_reassigned_hour',
-    'capture_configuration',
-    'flow_record_condition'
+    'capture_configuration'
 ]) AS t;
 
 INSERT INTO setting (key, value, updated_at) VALUES

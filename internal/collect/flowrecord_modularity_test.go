@@ -10,12 +10,10 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/push/ipfixregistry"
-	"github.com/NaejEL/opnview/internal/store/netflow"
 )
 
 // The flow_record kind is a seam: a second exporter is a plugin directory, and the core's join,
@@ -87,7 +85,8 @@ func TestASecondExporterIsAddedByItsDirectoryAlone(t *testing.T) {
 	})
 
 	state := map[string]any{"running": true, "active_timeout": 1800,
-		"points": []any{map[string]any{"name": collecttest.InsideIdentifier, "receive": true, "send": true}}}
+		"points": []any{map[string]any{"name": collecttest.InsideIdentifier, "receive": true, "send": true,
+			"exported": true, "also_received_for": []any{"example_if_b"}}}}
 	second := collecttest.NewNetflowHarnessWith(t, loaded, "example_exporter", func(fake *providertest.Firewall) {
 		fake.AnswerJSON(exampleExporterEndpoint, state)
 	})
@@ -97,6 +96,14 @@ func TestASecondExporterIsAddedByItsDirectoryAlone(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+	// NJ-AC17: the second exporter reports exported and parent_of in its own words, and the core stores them.
+	if rows := collecttest.ScalarCount(t, second.Store, `SELECT count(*) FROM capture_interface AS i
+		JOIN capture_interface_parent_of AS p ON p.capture_configuration_id = i.capture_configuration_id
+		  AND p.identifier = i.identifier
+		WHERE i.identifier = ? AND i.exported = 'yes' AND p.of_identifier = 'example_if_b'`,
+		collecttest.InsideIdentifier); rows != 1 {
+		t.Errorf("the second exporter's exported and parent_of were stored %d times, want once", rows)
+	}
 	if len(second.Records(t)) != 2 {
 		t.Fatalf("the second exporter fed %d records, want 2 (the built-in's, not active, stores none)",
 			len(second.Records(t)))
@@ -136,76 +143,30 @@ func TestASecondExporterIsAddedByItsDirectoryAlone(t *testing.T) {
 	}
 }
 
-// TestTheDirectionAtTheObservationPointComesFromTheConfigurationAndTheIngressIndex is PS-AC50, rule 1:
-// every case, egress-only included, and an egress index that never changes the result.
-func TestTheDirectionAtTheObservationPointComesFromTheConfigurationAndTheIngressIndex(t *testing.T) {
-	t.Parallel()
-	index := func(value int64) *int64 { return &value }
-	both := netflow.CaptureInterface{Identifier: collecttest.InsideIdentifier, Ingress: true, Egress: true}
-	egressOnly := netflow.CaptureInterface{Identifier: collecttest.InsideIdentifier, Egress: true}
-	for _, scenario := range []struct {
-		name    string
-		point   netflow.CaptureInterface
-		ingress *int64
-		want    string
-	}{
-		{"received on the point", both, index(collecttest.InsideIndex), netflow.DirectionIngress},
-		{"received elsewhere", both, index(collecttest.UpstreamIndex), netflow.DirectionEgress},
-		{"originated by the firewall (index 0, S6a)", both, index(0), netflow.DirectionEgress},
-		{"no ingress index", both, nil, netflow.DirectionEgress},
-		{"egress-only point, received on it", egressOnly, index(collecttest.InsideIndex), netflow.DirectionEgress},
-		{"egress-only point, received elsewhere", egressOnly, index(collecttest.UpstreamIndex), netflow.DirectionEgress},
-	} {
-		if got := derive.DirectionAt(scenario.point, collecttest.InsideIndex, scenario.ingress); got != scenario.want {
-			t.Errorf("%s: %s, want %s", scenario.name, got, scenario.want)
-		}
-	}
-}
-
-// TestAPolicyRoutedRecordJoinsByItsIngressIndexAndAContradictionJoinsNothing is PS-AC50's other two
-// clauses: a record whose egress index is not the interface its leg left by -- policy routing -- joins
-// as its ingress index says, the egress index changing nothing; and a record whose derived direction
-// contradicts the only candidate's pf direction and orientation joins nothing.
-func TestAPolicyRoutedRecordJoinsByItsIngressIndexAndAContradictionJoinsNothing(t *testing.T) {
-	t.Parallel()
-	at := collecttest.LegInstant
-	h := collecttest.NewNetflowHarness(t)
-	h.Capture(t, collecttest.CaptureStartAt, collecttest.Captured{Identifier: collecttest.InsideIdentifier})
-	h.At(collecttest.NetflowReadSecond)
-	routed := collecttest.Forward(17, 46000, 53, 0, 7, at, at+1)
-	routed.Out = 4 // the route lookup's interface, not the upstream one the leg left by
-	contradicting := collecttest.Forward(17, 46001, 53, 0, 8, at, at+1)
-	contradicting.In = collecttest.UpstreamIndex // received elsewhere: egress at the point, forward: needs an `out` leg
-	h.Deliver(t, at+30, routed, contradicting)
-	h.Logged(t, singleLeg("routed", at, "udp", 17, 46000, 53, "pass"),
-		singleLeg("contradicted", at, "udp", 17, 46001, 53, "pass"))
-	records := byOctets(t, h)
-	if record := records[7]; record.JoinedFlowID == nil || *record.JoinedFlowID != h.FlowID(t, "routed") ||
-		collecttest.OrNull(record.Direction) != netflow.DirectionIngress {
-		t.Errorf("the policy-routed record is %s %s, want ingress and joined", collecttest.OrNull(record.Direction),
-			record.JoinState)
-	}
-	if record := records[8]; record.JoinState != netflow.JoinUnmatched ||
-		collecttest.OrNull(record.Reason) != netflow.UnmatchedNoLoggedLeg {
-		t.Errorf("the contradicting record is %s (%s), want unmatched", record.JoinState, collecttest.OrNull(record.Reason))
-	}
-}
-
 // TestTheCoreJoinReadsContractFieldsOnly is PS-AC47, extended to the core's join, coverage and state
-// code: it names no OPNsense endpoint, no option of OPNsense's NetFlow model and no Information Element,
-// and reads the contract's fields only.
+// code, and by NJ-AC17 to the code of NJ4 and NJ5: it names no OPNsense endpoint, no option or field of an
+// OPNsense model, no netgraph term, no Information Element, no device name and no address literal, and
+// reads the contract's fields only.
 func TestTheCoreJoinReadsContractFieldsOnly(t *testing.T) {
 	t.Parallel()
 	// The core's flow_record code is the join and the measured volume (derive), the kind's coordinator
 	// (kinds/flowrecords) and the state they share (core).
 	files := []string{filepath.Join("derive", "flowrecord.go"), filepath.Join("derive", "measuredvolume.go"),
+		filepath.Join("derive", "join.go"),
 		filepath.Join("kinds", "flowrecords", "flowrecordkind.go"), filepath.Join("core", "state.go"),
 		filepath.Join("flowrecord", "flowrecord.go"),
-		filepath.Join("..", "store", "netflow", "flowrecord.go"),
+		filepath.Join("..", "store", "netflow", "flowrecord.go"), filepath.Join("..", "store", "netflow", "capture.go"),
+		filepath.Join("..", "store", "netflow", "measuredvolume.go"),
 		filepath.Join("..", "store", "netflow", "flowrecord.statements.sql")}
 	forbidden := []*regexp.Regexp{regexp.MustCompile(`getconfig`), regexp.MustCompile(`is_enabled`),
 		regexp.MustCompile(`capture\.interfaces`), regexp.MustCompile(`egress_only`), regexp.MustCompile(`\bconf\b`),
-		regexp.MustCompile(`/api/`)}
+		regexp.MustCompile(`/api/`), regexp.MustCompile(`macaddr`), regexp.MustCompile(`vlan_tag|vlan\.parent`),
+		regexp.MustCompile(`(?i)netgraph|ng_netflow|ng_ether|ksocket|samplicate`),
+		// A device name: a driver's letters and a unit number, as FreeBSD names an interface.
+		regexp.MustCompile(`\b(?:re|igc|igb|em|ix|ixl|vtnet|bge|vlan|wg|lo|lagg|bridge|ovpn[cs]?|tun|tap|gif|gre|pppoe)\d+\b`),
+		// An address literal, of either family.
+		regexp.MustCompile(`\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b`),
+		regexp.MustCompile(`(?i)\b[0-9a-f]{1,4}::[0-9a-f]{0,4}\b|\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4}){3,7}\b`)}
 	for id := 0; id <= 0xFFFF; id++ {
 		if element, known := ipfixregistry.Lookup(uint16(id)); known {
 			forbidden = append(forbidden, regexp.MustCompile(`\b`+regexp.QuoteMeta(element.Name)+`\b`))

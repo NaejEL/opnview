@@ -1364,13 +1364,13 @@ interface; `opnview` only reads, through the API, whether it has been done (S9).
 | S2 | Without the RFC 5424 option a target sends RFC 3164; with it, RFC 5424; over TCP, newline framing, never octet counting | verified (syslog-ng documentation) |
 | S3 | `filterlog`, `suricata`, `kea-dhcp4`/`kea-dhcp6` are selectable programs; `unbound` logs as `unbound` but is not in the list | verified |
 | S4 | The `filterlog` CSV and its variants by IP version and protocol | verified |
-| S5 | NetFlow v5 or v9 only, no IPFIX; several destinations; per-interface capture with an egress-only option; active and inactive timeouts; S5a: an egress-only interface not captured creates no node; S5b: a packet is accounted at its first pass through a node | verified |
-| S6 | An exported index is the kernel's interface index; `interfaces_info` with details maps it to a device; S6a: a packet the firewall originated carries input index 0 | verified |
+| S5 | NetFlow v5 or v9 only, no IPFIX; several destinations; per-interface capture with an egress-only option; active and inactive timeouts; S5a: an egress-only interface not captured creates no node; S5b: a packet is accounted at its first pass through a node; S5c: only an interface with an `ether` line gets a node (a tunnel such as WireGuard gets none); a VLAN's parent re-exports the VLAN's received packets (observed 16 October 2026) | verified |
+| S6 | An exported index is the kernel's interface index; `interfaces_info` with details maps it to a device; S6a: a packet the firewall originated carries input index 0 (confirmed by data); S6b: the loopback's index, read from the row whose `flags` hold `loopback`, is the output index of local delivery; S6c: a VLAN's **parent** is `vlan.parent` in `interfaces_info` | verified |
 | S7 | Suricata can send **alerts only** to syslog, as eve JSON, program `suricata` | verified |
 | S8 | Unbound query and reply logging can be enabled in the web interface; a reply line has no verdict and no blocklist | verified |
 | S9 | Read-only endpoints show whether a syslog target or a NetFlow destination is configured; S9a: the shape of `getconfig` and `is_enabled` | verified |
 | S10 | The v9 template `ng_netflow` emits, and its time resolution | verified |
-| S11 | Ingress is captured before pf, egress after it; **the observing interface and the direction are not exported** | verified, with one `UNVERIFIED:` sub-fact, built on by the maintainer's decision (below) |
+| S11 | Ingress is captured before pf, egress after it; **the observing interface and the direction are not exported**, but every record names the interface it arrived on and the one its route chose; pflog logs a translated packet in its translated form on the upstream `out` leg | verified, the pflog sub-fact settled by data (16 October 2026); two absences unexplained (below) |
 | S12 | pf's default state timeouts; the values in force are not readable | partly `UNVERIFIED:` |
 | S13 | **Suricata `tls` and `http` eve events cannot be sent to syslog** | verified (negative) |
 | S14 | How Suricata reports `in_iface` | `UNVERIFIED:` (not read: S13 makes it moot) |
@@ -1503,6 +1503,26 @@ Read from source on 11 October 2026 for PS18 and PS19 rule 1 of the NetFlow join
   passes a packet makes through one node, the one that accounts it is its first: a packet received on
   and sent back out of one captured interface is accounted at its ingress, and its egress pass is
   accounted again only if the tag were lost on the way, which the source read here does not show.
+- **S5c. Only an interface with an `ether` line gets a node.** `netflow_setup_interface` creates the
+  node with `ngctl mkpeer $interface: netflow lower iface$ifIndex`, which needs the interface's
+  `ng_ether` node, and fails otherwise (`netflow_node_error ... "cannot create netflow node"`)
+  (https://github.com/opnsense/core/blob/26.7.3/src/etc/rc.d/netflow). `ng_ether` attaches only to
+  interfaces of type `IFT_ETHER`, `IFT_L2VLAN` and `IFT_BRIDGE` (`ng_ether_ifnet_arrival_event` and
+  `vnet_ng_ether_init`, https://github.com/opnsense/src/blob/stable/26.7/sys/netgraph/ng_ether.c),
+  the three types `ifconfig` prints an `ether` line for (`match_ether`,
+  https://github.com/opnsense/src/blob/stable/26.7/sbin/ifconfig/ifconfig.c, called from `print_lladdr`,
+  https://github.com/opnsense/src/blob/stable/26.7/sbin/ifconfig/af_link.c). The read-only field that
+  tells them apart is the row's `macaddr` in `GET /api/interfaces/overview/interfaces_info/1`, which
+  `legacy_interfaces_details` fills from that `ether` line and leaves `00:00:00:00:00:00` without one
+  (https://github.com/opnsense/core/blob/26.7.3/src/etc/inc/interfaces.lib.inc). So a WireGuard tunnel
+  listed in `capture.interfaces` gets no node and exports nothing of its own; the 16 October 2026
+  capture showed exactly that (no record from it, every one of its packets seen at the other
+  interface's node).
+- **A VLAN's parent re-exports the VLAN's received packets** (observed on 16 October 2026, 26.7.3): the
+  parent's node, hooked to the parent's `ng_ether` lower hook, receives the tagged frames before the VLAN
+  does, and exports them with the parent as `ingressInterface` -- 584 such records in a 20-minute
+  window. No copy of the VLAN's sent packets was seen. So "one node per captured interface" holds for
+  the nodes, not for the packets: one received VLAN packet can be exported by two nodes.
 
 
 ### S6. Interface indexes
@@ -1524,7 +1544,27 @@ Read from source on 11 October 2026 for PS18 and PS19 rule 1 of the NetFlow join
   (on the egress hook, or on the ingress hook of a node no `setifindex` configured)
   (https://github.com/opnsense/src/blob/stable/26.7/sys/netgraph/netflow/ng_netflow.c). A packet the
   firewall originated has no `rcvif`, so its record's `ingressInterface` is 0, which no interface's
-  kernel index is.
+  kernel index is. **Confirmed by data** on 16 October 2026: index 0 appears only on firewall-originated
+  records, 2 361 of them.
+- **S6b. The loopback's index is the output index of local delivery.** A packet delivered to the
+  firewall itself is routed to the loopback, so its record's `egressInterface` is the loopback's
+  kernel index (observed on 16 October 2026: that index appears only as output, every such record
+  addressed to the firewall). It is read from `interfaces_info/1`: `parseIfInfo` copies every device's
+  `legacy_interfaces_details` into its row, the loopback included as an unassigned device, with `flags`
+  the lower-cased names of `ifconfig`'s flags -- `loopback` for `IFF_LOOPBACK` -- and `statistics.index`
+  its kernel index
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/OverviewController.php,
+  https://github.com/opnsense/core/blob/26.7.3/src/etc/inc/interfaces.lib.inc). `opnview` identifies the
+  loopback by that flag, never by its device name, and treats the index as unknown when no row, or more
+  than one, carries it. LV-NJ2 compares it with the live data.
+- **S6c. A VLAN's parent is read from `interfaces_info/1`.** `legacy_interfaces_details` parses
+  `ifconfig`'s vlan line into `vlan: {tag, proto, pcp, parent}`, `parent` from its "parent interface"
+  text, and `parseIfInfo` keeps it in the row
+  (https://github.com/opnsense/core/blob/26.7.3/src/etc/inc/interfaces.lib.inc). OPNsense's own word is
+  **Parent**: the VLAN dialog labels the field `vlan.if` "Parent"
+  (https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Interfaces/forms/dialogVlan.xml).
+  The `netflow` plugin reports, for each captured interface that captures ingress, the identifiers of
+  the VLANs whose parent it is as its `parent_of`.
 
 
 ### S7. Suricata to syslog
@@ -1599,6 +1639,8 @@ From https://github.com/opnsense/src/blob/stable/26.7/sys/netgraph/netflow/netfl
 - The header's `source_id` is the FIB number (`fe->domain_id = fib`), 0 on an installation with one
   routing table; the sequence number is **per node**, that is per captured interface.
 - Cache: 1 048 576 flows per node (`CACHESIZE`); timeouts as S5.
+- **Confirmed by data** on 16 October 2026: templates 256 (IPv4) and 259 (IPv6), `OUT_BYTES` and
+  `OUT_PKTS` always 0, whole-second resolution, no options template, `source_id` 0.
 
 ### S11. Where the capture sits relative to pf
 
@@ -1611,22 +1653,24 @@ From https://github.com/opnsense/src/blob/stable/26.7/sys/netgraph/netflow/netfl
   way out are not, and egress addresses are as translated).
 - pf translates before it filters on the same pass (pf.conf(5), *Translation*: "Since translation
   occurs before filtering ...",
-  https://github.com/opnsense/src/blob/stable/26.7/share/man/man5/pf.conf.5). `UNVERIFIED:` which form
-  pflog writes for a translated packet: the source does not state it here, and only the live data
-  (most WAN records post-translation, step 5A) suggests it.
+  https://github.com/opnsense/src/blob/stable/26.7/share/man/man5/pf.conf.5). **pflog writes a
+  translated packet in its translated form on the upstream `out` leg**: settled by data on 16 October
+  2026, 3 376 of 3 376 paired legs carrying the firewall's upstream address and a rewritten source
+  port.
 - **The observing interface is not exported.** Every node exports to the same `samplicate`, which
-  forwards from one socket: all records arrive from one exporter address with one `source_id`. A
-  record's indexes are the receiving interface and the route's interface whichever node saw it, and
-  no direction element exists. With two or more captured interfaces, a forwarded, untranslated
-  packet is exported by both nodes as **two records identical in every field**, and the per-node
-  sequence numbers interleave under one `source_id`, so a sequence gap cannot be detected per
-  RFC 3954. Only an installation capturing one interface knows its observation point.
-- **The NetFlow join is built with the pflog sub-fact open** (maintainer, 11 October 2026, open
-  question 1 of the NetFlow join amendment, answer (a)). The form pflog writes for a translated
-  packet changes how many translated records find their leg, never which leg a record joins: a
-  record matches a leg only in the form logged on its Observation Point, and no translation is
-  inferred. LV-NJ's upstream window measures the share of translated records left `no_logged_leg`,
-  which answers the sub-fact live.
+  forwards from one socket: all records arrive from one exporter address with one `source_id`, and no
+  direction element exists. But **every record names the interface it arrived on and the interface its
+  route chose** (`ingressInterface`, `egressInterface`, S6), and those are what a join reads. Observed on
+  16 October 2026, with all interfaces captured: **no two records of different nodes are identical in
+  every field** -- 26 records identical in every field lay within one node and one datagram, distinct
+  one-packet records (TCP FIN or RST); a translated packet is exported twice, in its first form by the
+  node it arrived at and in its translated form by the node it left by, equal in bytes (2 521 of 2 540);
+  a VLAN's received packet is exported again by its parent (S5); and the per-node sequence numbers
+  interleave under one `source_id`, 5 counters for 5 nodes.
+- **Open: two absences are unexplained.** Ingress is captured before pf for refused UDP (254 of 254
+  refused UDP legs had a record), but blocked ICMP echoes to the firewall had none (0 of 40), and some
+  TCP towards a VLAN had none, refused or passed (0 of 49). The source read here does not explain them;
+  LV-NJ2 item 8 samples them.
 
 ### S12. pf's state timeouts
 
@@ -1673,9 +1717,10 @@ and/or *Log Replies* (S8): the server is "significantly" slower with them, OPNse
 
 **NetFlow** (S5), *Reporting > NetFlow*: choose the interfaces to capture, *Version* v9, and add
 `<address>:<port>` of `opnview` (the port given to `--netflow-udp`) to the destinations; save and apply.
-Local collection (Insight) may stay on: it is one more destination. For the measured volume of the logged
-connections, capture exactly one interface (decision 15b of the backend-completion spec): the capture
-is shared with Insight, so this also narrows what Insight collects.
+Local collection (Insight) may stay on: it is one more destination, on the same capture. Capture the
+interfaces to measure. An interface listed as egress-only has its inbound traffic named
+`ingress_not_captured`; an interface the exporter cannot capture -- one with no `ether` line, S5c -- is
+`interface_not_exported`.
 
 ## What the plugin ecosystem actually exposes, 2026-09-28
 

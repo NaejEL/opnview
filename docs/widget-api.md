@@ -62,7 +62,7 @@ Every `200` carries the same fields.
 | `aggregate_mode` | `full` or `no_domains` |
 | `withheld` | every field or level the aggregate mode withheld, by path |
 | `states` | named states: a figure with no answer for a stated reason |
-| `state_details` | the detail of a state of `states` that carries one, keyed by the state's name: `{"observation_point_not_exported": {"captured_interfaces": 2}}`, `{"netflow_not_covering_window": {"interval_states": ["capture_configuration_unknown", "observation_point"]}}` (*Named states*). **Absent** when no state of the answer carries a detail; `states` stays a list of names |
+| `state_details` | the detail of a state of `states` that carries one, keyed by the state's name: `{"netflow_not_covering_window": {"interval_states": ["capture_configuration_unknown", "capture_configured"]}}` (*Named states*). **Absent** when no state of the answer carries a detail; `states` stays a list of names |
 | `resolver_window_bounded` | on a resolver-fed type: true when a `resolver_window_not_honoured` gap meets the window -- the resolver's ring buffer bounded it (catalogue Part 3, fact 1) |
 | `data` | the preset's data, or null when there is nothing honest to show |
 
@@ -113,10 +113,8 @@ history stored answers that history under the degraded condition. A type that re
 | `registrable_domain_grouping_unavailable` | no Public Suffix List has been downloaded yet; nothing is grouped |
 | `unnamed_destinations_beyond_flow_horizon` | part of the window precedes the purge horizon: no aggregate keeps the destinations no name was inferred for by address, so those hours have no address rows (`top_sites`, `sites_by_client`); never estimated |
 | `netflow_not_configured` | a volume answer is not of the `netflow` measure, or carries no figure: no provider of `flow_record` is active, or the capture configuration in force names no interface or has the export disabled |
-| `observation_point_not_exported` | the same: the capture configuration captures on two or more interfaces, whose records do not say where they were observed (survey, *Push sources*, S11). Its detail, `state_details.observation_point_not_exported.captured_interfaces`, is how many interfaces the configuration in force captures on (the most, should two such configurations meet the window) |
-| `capture_configuration_unknown` | the same: the capture configuration could not be read, lies between two reads that differ, or the exporter's stream contradicted it |
-| `interface_index_unmapped` | the same: the one captured interface could not be mapped to a kernel index, so its records were not joined |
-| `netflow_not_covering_window` | the same: the window mixes intervals in different states, or the answer counts a connection with a direction the Observation Point does not cover (*Volumes and the observation-point limit*). Its detail, `state_details.netflow_not_covering_window.interval_states`, lists the capture states of the intervals the window meets, in name order: `observation_point` for an interval with one Observation Point, and `netflow_not_configured`, `observation_point_not_exported`, `capture_configuration_unknown` or `interface_index_unmapped` for the others. A window with one Observation Point throughout whose answer counts an uncovered connection lists `observation_point` alone |
+| `capture_configuration_unknown` | the same: the capture configuration could not be read, or lies between two reads that differ |
+| `netflow_not_covering_window` | the same: the window mixes intervals in different states, or the answer counts a connection that is not covered (*Volumes and the observation-point limit*). Its detail, `state_details.netflow_not_covering_window.interval_states`, lists the capture states of the intervals the window meets, in name order: `capture_configured` for an interval with a readable capture configuration whose export is enabled and captures an interface (`opnview`'s own term: no product names it), and `netflow_not_configured` or `capture_configuration_unknown` for the others. A window with a configuration throughout whose answer counts an uncovered connection lists `capture_configured` alone |
 | `netflow_not_served_by_type` | the same: the type built a figure the core did not read in the `netflow` measure, so its answer cannot be given in it (`docs/plugins.md`, *Volume figures and their measure*) |
 
 ## Windows, horizon, buckets and freshness
@@ -151,7 +149,7 @@ states the limit, and no screen prints it (`CLAUDE.md`).
 | `measure` | What it is |
 |---|---|
 | `logged` | the filter log: bytes are the sum of the logged packet lengths -- the packet that creates a state, not the connection -- and connections are the logged records |
-| `netflow` | bytes and packets the firewall's NetFlow export reported for the logged connections, each direction counted once, at the single Observation Point the capture configuration establishes (`docs/data-model.md`, *NetFlow volumes*); its connections are the logged connections it reports them for |
+| `netflow` | bytes and packets the firewall's NetFlow export reported for the logged connections, each direction counted once, from the records in the first leg's form, or from the translated form where no exporter sees the first leg's form; copies are otherwise never counted (`docs/data-model.md`, *NetFlow volumes*); its connections are the logged connections it reports them for |
 | `sampled` | the bytes and rates seen in the `traffic/top` samples, a few seconds each (`store.SampleSeconds`) |
 | `interface_counter` | the interface's own counters, which include traffic no logging rule matched |
 | `refusals`, `dns_lookups`, `security_events`, `clients`, `addresses` | counts of those things |
@@ -163,12 +161,15 @@ are split, `allowed_packets`, `blocked_packets`, `unknown_packets` and `allowed_
 `blocked_coverage`, `unknown_coverage`: each part carries its own packets and coverage, so a map,
 which keeps the allowed or the blocked part, serves that part's own. A `coverage` object holds how
 many connections fall in each coverage class -- `measured` (both directions measured), `partial`
-(some measured bytes, not both directions measured), `unmeasured` (one Observation Point, no
-measured byte) and `not_joinable` (no single Observation Point at the connection's start), the four
-summing to its connections -- and `direction_states`: per direction state of the connection's
-measured volume (`measured`, `in_progress`, `awaiting_export`, `missing`, `not_captured`,
-`export_gap`, `not_exported_when_refused`; `docs/data-model.md`, *NetFlow volumes*), the connections
-with at least one direction in it. A connection whose two directions are in two states counts under
+(some measured bytes, not both directions measured), `unmeasured` (a readable configuration, no
+measured byte) and `capture_not_known` (no readable, enabled capture configuration at the
+connection's start), the four summing to its connections -- `direction_states`: per direction state
+of the connection's measured volume (`measured`, `in_progress`, `awaiting_export`, `missing`,
+`export_gap`, `not_exported_when_refused`, `forwarding_export_unsettled`, `ingress_not_captured`,
+`parent_copies_only`, `interface_not_exported`, `interface_not_captured`,
+`capture_configuration_unknown`; `docs/data-model.md`, *NetFlow volumes*), the connections with at
+least one direction in it, so that no direction NetFlow cannot measure is silently zero -- and
+`counted_copy`, the connections with a direction counted from translated copies. A connection whose two directions are in two states counts under
 both, so `direction_states` says which states were met and does not sum to the connections. A
 `Count` carries `measure`, `lower_bound` and `value`. No two measures are ever summed:
 not `logged`, `netflow`, `sampled` and `interface_counter` with one another.
@@ -180,29 +181,27 @@ the answer is given in; the types are those whose row in *Parameters* carries th
 is of one measure, and every figure in it says which.
 
 - **`logged`** answers the filter log's figures, as every volume type always has.
-- **`best_available`** answers `netflow` only when every connection the answer counts has every
-  direction covered at the Observation Point, under a single Observation Point throughout the window.
-  Otherwise it answers `logged` -- byte for byte what `volume_measure = logged` answers, apart from
-  the echoed key, the named state and that state's `state_details` entry when it carries one -- with
-  one named state saying why (*Named states*): `netflow_not_configured`,
-  `observation_point_not_exported`, `capture_configuration_unknown`, `interface_index_unmapped`,
-  `netflow_not_covering_window` or `netflow_not_served_by_type`. With one Observation Point, an
-  answer whose scope includes connections without a leg on the captured interface -- traffic
-  between two interfaces that are not captured -- falls back to `logged`: that is the intended
-  consequence of a single Observation Point, not a fault.
-- **`netflow`** answers the netflow figures. When the window has no single Observation Point at all,
+- **`best_available`** answers `netflow` only when the window has a readable capture configuration
+  with the export enabled throughout, and every connection the answer counts is covered.
+$1  one named state saying why (*Named states*): `netflow_not_configured`,
+  `capture_configuration_unknown`, `netflow_not_covering_window` or `netflow_not_served_by_type`.
+  Every interface may be captured; an answer counting a connection NetFlow cannot measure -- an
+  egress-only interface's inbound traffic, forwarding between two exported interfaces -- falls back
+  to `logged` with `netflow_not_covering_window`. The rule is strict on purpose this cycle (decided
+  question 5 of the amendment "the NetFlow join with every interface captured").
+- **`netflow`** answers the netflow figures. When the window has no readable, enabled configuration,
   or the type built a figure the core did not read in that measure, it carries **no figure** --
   `data` is `null` -- and the same named state; it never carries logged figures labelled `netflow`.
   When NetFlow covered only part of what the answer counts, it answers the netflow figures, each
   with its `coverage`, and the state `netflow_not_covering_window`.
 
 Whether a connection is covered is read from what is stored -- the capture configuration in force,
-never inferred from the records (PS18), and each connection's measured volume, which the aggregates
-count per direction state -- and judged over the figures the answer itself builds. A connection is
-**covered** when it started under one Observation Point and each of its directions is `measured`,
-`in_progress`, `awaiting_export` or `missing`: the export reports it, or should have and reported
-nothing. A direction `not_captured`, `export_gap` or `not_exported_when_refused`, or a connection
-that started under no single Observation Point (`not_joinable`), is not covered. So a figure still
+never inferred from the records, and each connection's measured volume, which the aggregates count
+per direction state -- and judged over the figures the answer itself builds. A connection is
+**covered** when its capture was known and each of its directions is `measured`, `in_progress`,
+`awaiting_export` or `missing`: the export reports it, or should have and reported nothing. Every
+other state of NJ5, or a connection whose capture was not known (`capture_not_known`), is not
+covered. So a figure still
 growing (`in_progress`) or one whose records are late or lost (`awaiting_export`, `missing`) is
 answered in the `netflow` measure, and its `coverage` says so: a covered connection is not
 necessarily `measured`.
@@ -212,13 +211,14 @@ unlogged connection is in no keyed aggregate, and traffic inside one interface i
 `false` only on a single `client_traffic_detail` record of the `netflow` measure whose two
 directions are `measured` -- a `measured` direction is one no NetFlow gap met. Such a record also
 carries, per direction (`forward` and `reverse`, as its first leg logged them), the bytes, the
-packets, the state and the leg the figure was measured at (`first_leg` or `second_leg`), or `null`
-directions when its connection started under no single Observation Point.
+packets, the state and `counted_copy` (whether it was counted from translated copies), and a
+`coverage` object, or `null` directions when its connection started under no readable, enabled capture
+configuration -- the coverage then counts it `capture_not_known`.
 
 `custom_chart`'s `traffic` source offers two measures of its own, `netflow_bytes` and
 `netflow_packets`: a series of either is the `netflow` measure whatever `volume_measure` says, drawn
 beside the chart's other series and never summed with them, and carries no figure, with the named
-state, when the window has no single Observation Point.
+state, when the window has no readable, enabled capture configuration.
 
 ## References
 
@@ -333,15 +333,16 @@ reads and its label), so adding one is adding a directory:
 | `flow_record` | event | `start_at` | `octets` (byte), `packets` (packet), `records` (record) | `flow_record` |
 | `unmatched_record` | event | `period_start_at` | `bytes` (byte), `packets` (packet), `records` (record) | `flow_record` |
 
-`flow_record` serves every flow record stored, whatever the capture configuration was, with the
-configuration's `capture_state`, the `captured_interfaces`, the `observation_point` and `direction` where
-there was one, and **`loss_detectable` per row**: 1 over the intervals whose configuration named one
-captured interface, so that a loss would have been recorded as a gap, and 0 elsewhere. Its label states
-that with two or more captured interfaces a forwarded packet is exported once per interface, as
-identical records whose interface is not known: a sum over it counts such traffic once per captured
-interface, and no built-in widget serves such a sum. `unmatched_record` is the unmatched family's hour
-slots: the records with an Observation Point that joined no logged leg, by Observation Point,
-direction, protocol, IP version and reason.
+`flow_record` serves every flow record stored, whatever the capture configuration was, with what
+its two indexes named at reception (`ingress_role`, `ingress_identifier`, `egress_role`,
+`egress_identifier`), its `join_state`, `copy_kind`, `counted_copy` and `unmatched_reason`, and
+**`loss_detectable` per row**: 1 over the intervals whose configuration bounded the exporter's
+sequence counters, so that a loss would have been recorded as a gap, and 0 elsewhere. Its label states
+that a sum over records that are not joined counts copies -- a packet is exported again in its
+translated form, or by a VLAN's parent -- and no built-in widget serves such a sum.
+`unmatched_record` is the unmatched family's hour slots: the records that joined no logged leg and are
+no copy, by ingress and egress interface (an identifier, or the role of an index that names none),
+protocol, IP version and reason.
 
 **Every table a loaded plugin declares is a dataset**, its columns as its manifest declares them
 (`docs/plugins.md`, *Tables*).
@@ -996,8 +997,8 @@ document -- or carries the reason it cannot be, cited to OPNsense 26.7.3 through
 27 to 29 by destinations shown by address (C2); row 45, the labels and the purposes by the write
 endpoints (C1). A field path is under `data` unless it names the envelope.
 
-The envelope member `state_details`, keyed by state name (for `observation_point_not_exported`, its
-`captured_interfaces`), the `netflow` coverage classes per direction state, and coverage per action
+The envelope member `state_details`, keyed by state name (for `netflow_not_covering_window`, its
+`interval_states`), the `netflow` coverage classes per direction state, and coverage per action
 (allowed, blocked, unknown) on the netflow Volumes of the two map types are built, and `best_available`
 judges "covered" from the stored direction states (*Volumes and the observation-point limit*).
 
@@ -1009,7 +1010,7 @@ export, the field, and what is served without it.
 |---|---|
 | `none` | The row reads nothing a push export carries: the samples of `traffic/top` and `traffic/interface`, the firewall's telemetry, discovery, the rule table, or `opnview`'s own records. No export changes it. |
 | `filter-log` | The filter log may arrive by remote syslog: the `pf` plugin's push entry `filter_log` receives program `filterlog` over TCP (survey, *Push sources*, S1 to S4) and replaces the poll of `/api/diagnostics/firewall/log` while it is alive (`docs/plugins.md`, *Replacing polling*). Its records equal the polled ones in every field of the contract but the identity, so the row's fields are unchanged; a decision series' `complete_until` then trails reception rather than the poll. Without the export: polled, the same answer. |
-| `netflow` | **Export-only second measure.** With a NetFlow v9 export to `opnview`'s `netflow/udp` listener (*Reporting > NetFlow*; 26.7.3 offers v5 or v9 and no IPFIX, S5) **capturing exactly one interface** (decision 15b), that interface is every record's Observation Point and the row's Volumes answer in the `netflow` measure (`volume_measure` `netflow`, or `best_available` when every counted connection is covered: each direction `measured`, `in_progress`, `awaiting_export` or `missing`, as PS22 judges it): `measure: "netflow"`, `packets`, `coverage`. Served without it: the `logged` figures under `best_available`, or no figure (`data: null`) under `netflow`, with one named state: `netflow_not_configured` (no export, no active `flow_record` provider, or a capture naming no interface), `observation_point_not_exported` (two or more captured interfaces: the observing interface is not exported and a forwarded packet is exported once per captured interface, S11; `state_details` carries `captured_interfaces`), `capture_configuration_unknown`, `interface_index_unmapped`, `netflow_not_covering_window` or `netflow_not_served_by_type`. With one Observation Point, a connection with no leg on the captured interface is not measured, and `best_available` answers `logged`. Ingress is captured before pf and egress after it (S11): a packet pf blocks on ingress at the captured interface is exported, one it blocks on egress is not. |
+| `netflow` | **Export-only second measure.** With a NetFlow v9 export to `opnview`'s `netflow/udp` listener (*Reporting > NetFlow*; 26.7.3 offers v5 or v9 and no IPFIX, S5), **every interface may be captured** (decision 15d): each record is joined from its own interface indexes and each direction of a connection counted once, and the row's Volumes answer in the `netflow` measure (`volume_measure` `netflow`, or `best_available` when every counted connection is covered: each direction `measured`, `in_progress`, `awaiting_export` or `missing`, as PS22 judges it): `measure: "netflow"`, `packets`, `coverage`. Served without it: the `logged` figures under `best_available`, or no figure (`data: null`) under `netflow`, with one named state: `netflow_not_configured` (no export, no active `flow_record` provider, or a capture naming no interface), `capture_configuration_unknown`, `netflow_not_covering_window` or `netflow_not_served_by_type`. A direction NetFlow cannot measure carries its named state in `coverage.direction_states` -- an egress-only interface's inbound traffic is `ingress_not_captured`, an interface the exporter cannot capture `interface_not_exported` -- and `best_available` then answers `logged`. Ingress is captured before pf and egress after it (S11): a packet pf blocks on ingress at the captured interface is exported, one it blocks on egress is not. |
 | `site-names` | Site names come **only from resolver lookups** (the `unbound` plugin: `search_queries`, the resolver cache). S13 is negative: Suricata's syslog output carries type `alert` only, so `tls.sni` and `http.hostname` cannot be received over syslog on 26.7.3, and no push source names a site. |
 | `unbound-log` | Unbound's query and reply lines (S8) reach a syslog target only with no program filter (S3) and carry **no verdict and no blocklist**. They are stored as the dataset `unbound.query_log` (provider kind `unbound_query_log`) and replace nothing: refusals, lists and lookups still come from the polled `search_queries`. |
 | `suricata` | Suricata can send **alerts only** to syslog, as eve JSON, program `suricata` (S7). Receiving them is deferred to step 6 (decision 15c); nothing is built. Without it: the polled `query_alerts`. |
@@ -1019,8 +1020,8 @@ export, the field, and what is served without it.
 | 1 | canvas period 1 h / 24 h / 7 d / 30 d | **Served.** Every windowed type: `parameters.period`; envelope `window` (`requested`, `covered`, `coverage`, `flow_horizon_at`) | `none` |
 | 2 | current throughput, inbound / outbound / between interfaces | **Served** (C3). `traffic_composition`: `current_rates.by_direction[]` (`key`, `rate`), `current_rates.outbound_unsplit`; each rate `{state, measure: "sampled", in_bits_per_second, out_bits_per_second, sampled_at, span_seconds, cadence_seconds, lower_bound}` (*Live figures*) | `none`. NetFlow is no rate: a record is exported when its flow ends or at the active timeout (default 1800 s; inactive 15 s, S5) |
 | 3 | the same by interface or by client | **Served** (C3). `traffic_composition` with `group_by` `interface` or `client`: `current_rates.by_member[]` | `none`, as row 2 |
-| 4 | throughput by protocol or by service port | **Served.** Logged volume by protocol and by service, port and protocol together (C4): `traffic_composition` with `group_by` `protocol` or `service_port`, `slices[]` (`key` `port:<port>/<protocol>`, `protocol`, `port`), and `recent` with `window_seconds`. **The current rate by protocol and by port** (C4), from the pf state table, not from `traffic/top`, which runs iftop without `-P`: the `pf_states` plugin's dataset `pf_states.rate` (`GET /api/datasets/pf_states.rate/query`; `sampled_at`, `span_seconds`, `interface_device`, `direction`, `protocol`, `port`, `forward_bits_per_second`, `reverse_bits_per_second`, `bits_per_second`, `states`), filtered `direction` `eq` `in` so a forwarded connection counts once, split by `protocol` or by `port` with `protocol`: the `sampled` measure, a lower bound, over the provider's cadence (60 s by default) (*Live figures*, *Rate by port and protocol*; survey, *Live rate endpoints, read from source for C3*). **In the widget itself:** `traffic_composition` with `group_by` `protocol` or `service_port` fills `current_rates.by_member[]` from the latest pass of `pf_states.rate`, filtered `direction` `eq` `in` and read by its catalogue name through `host.datasets.latest` (`docs/plugins.md`, *The widget host*): one `{key, rate}` per member, `key` the slice's own (`protocol:<protocol>`, or `port:<port>/<protocol>` and `port:not_recorded`), `rate` a live figure as a client's or an interface's, `{state, measure, in_bits_per_second, out_bits_per_second, out_measured, sampled_at, span_seconds, cadence_seconds, lower_bound}`, summed over the pass's interfaces -- `out_bits_per_second` the forward counter, from the connection's initiator, `in_bits_per_second` the reverse one, back to it, `out_measured` true, `cadence_seconds` the pass's `span_seconds` (*Rate by port and protocol*) -- `current`, or `stale_sample` when the pass is older than twice its `span_seconds`. `current_rates.by_member_source` `{dataset, state, at, condition}` names where it was read: `unknown_dataset` (no `pf_states` plugin; the data catalogue API's refusal code for that name) or `no_rows` (no pass within the dataset's horizon) is the named absence, `by_member` then empty, never a rate of 0 | `netflow`: the same slices in the netflow measure (`slices[].volume`, `packets`); and the dataset `flow_record` (`GET /api/datasets/flow_record/query`, `split_by` `protocol` or `dst_port`, `octets` and `packets` per bucket; filter `captured_interfaces` `eq` 1 so no packet counts once per interface). Still not a current rate: a record is dated by its start, at one-second resolution (S10), and arrives after its flow ends or at the active timeout (S5). Without the export: the logged slices; `flow_record` holds no row |
-| 5 | packets by blocking reason, per direction | **Served.** `traffic_composition` with `group_by` `blocking_reason` and `split_by` `direction`: `rings[]` (`direction`, `slices[]` keyed `decision:<decision>`, `other`, `total`), `aside[]`; `traffic_over_time_by_scope`: `series[].buckets[].volume` (allowed / blocked / unknown). The logged measure counts records, not packets | `filter-log`; `netflow`: a packet count is `slices[].volume.packets` in the netflow measure only, and its blocked part holds only what pf refused on ingress at the Observation Point (S11) |
+| 4 | throughput by protocol or by service port | **Served.** Logged volume by protocol and by service, port and protocol together (C4): `traffic_composition` with `group_by` `protocol` or `service_port`, `slices[]` (`key` `port:<port>/<protocol>`, `protocol`, `port`), and `recent` with `window_seconds`. **The current rate by protocol and by port** (C4), from the pf state table, not from `traffic/top`, which runs iftop without `-P`: the `pf_states` plugin's dataset `pf_states.rate` (`GET /api/datasets/pf_states.rate/query`; `sampled_at`, `span_seconds`, `interface_device`, `direction`, `protocol`, `port`, `forward_bits_per_second`, `reverse_bits_per_second`, `bits_per_second`, `states`), filtered `direction` `eq` `in` so a forwarded connection counts once, split by `protocol` or by `port` with `protocol`: the `sampled` measure, a lower bound, over the provider's cadence (60 s by default) (*Live figures*, *Rate by port and protocol*; survey, *Live rate endpoints, read from source for C3*). **In the widget itself:** `traffic_composition` with `group_by` `protocol` or `service_port` fills `current_rates.by_member[]` from the latest pass of `pf_states.rate`, filtered `direction` `eq` `in` and read by its catalogue name through `host.datasets.latest` (`docs/plugins.md`, *The widget host*): one `{key, rate}` per member, `key` the slice's own (`protocol:<protocol>`, or `port:<port>/<protocol>` and `port:not_recorded`), `rate` a live figure as a client's or an interface's, `{state, measure, in_bits_per_second, out_bits_per_second, out_measured, sampled_at, span_seconds, cadence_seconds, lower_bound}`, summed over the pass's interfaces -- `out_bits_per_second` the forward counter, from the connection's initiator, `in_bits_per_second` the reverse one, back to it, `out_measured` true, `cadence_seconds` the pass's `span_seconds` (*Rate by port and protocol*) -- `current`, or `stale_sample` when the pass is older than twice its `span_seconds`. `current_rates.by_member_source` `{dataset, state, at, condition}` names where it was read: `unknown_dataset` (no `pf_states` plugin; the data catalogue API's refusal code for that name) or `no_rows` (no pass within the dataset's horizon) is the named absence, `by_member` then empty, never a rate of 0 | `netflow`: the same slices in the netflow measure (`slices[].volume`, `packets`); and the dataset `flow_record` (`GET /api/datasets/flow_record/query`, `split_by` `protocol` or `dst_port`, `octets` and `packets` per bucket; filter `join_state` `eq` `joined` so no copy counts a packet twice). Still not a current rate: a record is dated by its start, at one-second resolution (S10), and arrives after its flow ends or at the active timeout (S5). Without the export: the logged slices; `flow_record` holds no row |
+| 5 | packets by blocking reason, per direction | **Served.** `traffic_composition` with `group_by` `blocking_reason` and `split_by` `direction`: `rings[]` (`direction`, `slices[]` keyed `decision:<decision>`, `other`, `total`), `aside[]`; `traffic_over_time_by_scope`: `series[].buckets[].volume` (allowed / blocked / unknown). The logged measure counts records, not packets | `filter-log`; `netflow`: a packet count is `slices[].volume.packets` in the netflow measure only, and its blocked part holds only what pf refused after an ingress capture (S11) |
 | 6 | refused lookups beside the rings | **Served.** `traffic_composition` (`blocking_reason`): `aside[]` (`dns_list`, `count`); `blocked_dns_lookups`: `total`; `blocked_traffic_world_map`: `dns_blocked_lookups` | `unbound-log` |
 | 7 | detection-engine figures | **Partly.** State: `source_availability` (`security_event`), `traffic_composition` `aside[]` (`security_engine`, `condition`). Refusals: `blocked_traffic_world_map.security_events`, `.security_unplaced`; `unified_blocked_feed` (`engine_kind` `security_engine`, `decided_by.kind` `signature`). Figures by signature, over time and by client: **step 6** -- `security_alerts_over_time`, `alerts_by_signature`, `alerts_by_client_and_interface` answer `unknown_widget_type`; the target interface is gap G7, the covered interfaces G8 (`docs/widget-catalogue.md`, *Gaps found*) | `suricata` |
 | 8 | rolling strip at 2-second marks | **Served** (C3). `GET /api/live/strip`: `throughput[]` (`outbound`, `inbound`, `inter_interface`, `outbound_unsplit`; sampled) and `decisions[]` (`allowed`, `firewall_rule`, `firewall_no_rule`, `firewall_reason_not_recorded`, `dns_refusal`), each with `complete_until`, buckets after it gaps; `window_seconds`. **2 s** is the floor, one `traffic/top` capture (survey, *Live rate endpoints*); the default live cadence is 10 s pending LV-C, so 2 s marks need the `insight` plugin's `live_cadence_seconds` set to 2 | `filter-log`: the decision series is complete to reception; `unbound-log`: `dns_refusal` stays polled; `netflow`: no rate, as row 2 |
@@ -1040,7 +1041,7 @@ export, the field, and what is served without it.
 | 22 | unplaced volume (`miss`, `pending`, no row, east-west) | **Served.** `passed_traffic_world_map`: `unplaced[]` (`reason` `miss`, `pending`, `no_row`, `no_coordinates`, `east_west`, `this_firewall`; `addresses`, `volume`) | `filter-log`; `netflow` |
 | 23 | blocked map: outbound by destination, unplaced, between interfaces, inbound by source | **Served.** `blocked_traffic_world_map` with `endpoint` `destination` or `source`: `points[]` (`engine`, `geo`, `volume` or `events`), `unplaced[]` (`east_west`, `other_endpoint` and the lookup states), `security_unplaced[]`, `total_refusals` | `filter-log`; `netflow`, with coverage per action, the blocked part as row 5; `suricata` |
 | 24 | client current rate, and the share per destination | **Served** (C3). Current rate: `client_traffic_detail`: `current_rate`. Share per destination: over the period, `records[].bytes` over `total`; now, `current_rate_by_peer[]` (`peer`, `rate`), keyed by the address `records[].destination` carries: the per-pair readings of `traffic/top`, which the core exposes to every widget as `host.rates.clientPeers(id)` and `host.rates.byPeer()` (*Live figures*). No other destination type is drawn with a rate in the mockup | `none` (the rate); `netflow` (the bytes, as row 25) |
-| 25 | `local ⇄ peer:port`, connections, bytes | **Served.** `client_traffic_detail`: `records[]` (`destination`, `port`, `protocol`, `action`, `scope`, `bytes`, `observed_at`, `interface_device`), `total.members`, `remainder` | `filter-log`; `netflow`: `records[].bytes` is exact (`lower_bound: false`) for a connection measured in both directions, and `records[].directions` carries `forward` / `reverse` `bytes`, `packets`, `state`, `measured_at_leg`, or `null` with no single Observation Point at its start |
+| 25 | `local ⇄ peer:port`, connections, bytes | **Served.** `client_traffic_detail`: `records[]` (`destination`, `port`, `protocol`, `action`, `scope`, `bytes`, `observed_at`, `interface_device`), `total.members`, `remainder` | `filter-log`; `netflow`: `records[].bytes` is exact (`lower_bound: false`) for a connection measured in both directions, and `records[].directions` carries `forward` / `reverse` `bytes`, `packets`, `state`, `counted_copy`, and `records[].coverage` its coverage object, or `null` directions with no readable, enabled capture configuration at its start |
 | 26 | connection tree, children summing to their node | **Served** (C2). `connection_tree`: `inside[]`, `outside[]` (`children`, `remainder_members`, `bytes`, `connections`, `blocked_connections`; `site:` and `address:` nodes, the service level at `depth` 3), `total` | `site-names`; `netflow` |
 | 27 | top sites: attribution rate, named / outbound flows; per site flows, clients, bytes, dominant operator | **Served** (C2). `top_sites`: `rows[]` (`kind` `site` or `address`; `name` or `address`, `flows`, `clients`, `client_ids`, `bytes`, `country_code`, `asn`, `operator`, `methods`), `attribution`, `remainder`, `below_min_flows`, `total`; withheld whole under `no_domains` | `site-names`; `netflow` (`bytes`) |
 | 28 | collapse to the registrable domain | **Served** (C2). `top_sites` with `group_by_registrable_domain`: `grouping`, `rows[].site_names`; state `registrable_domain_grouping_unavailable` | `site-names` |

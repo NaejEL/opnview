@@ -145,7 +145,7 @@ var longestTests = []string{
 	"TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce",
 	"TestASecondExporterIsAddedByItsDirectoryAlone",
 	"TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading",
-	"TestTheMeasuresAreCountedOnceAndNeverSummed",
+	"TestTheJoinWithEveryInterfaceCaptured",
 	"TestNoCodeReadsTheAvailabilityDetail",
 }
 

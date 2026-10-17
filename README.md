@@ -150,16 +150,17 @@ each export adds:
   cannot replace the resolver's query report, which also says whether a
   blocklist answered, and it does not.
 - **NetFlow v9**, received by the built-in `netflow` plugin and stored as flow
-  records. OPNsense's export does not say which interface observed a record,
-  so a connection crossing two captured interfaces arrives twice,
-  indistinguishably (survey, *Push sources*, S11). **When the export captures
-  exactly one interface**, that interface is where every record was observed,
-  and the records are joined to the logged connections that crossed it: each
-  connection then has a second figure, its **measured volume** (the `netflow`
-  measure), beside the logged one and never added to it. With any other
-  capture -- none, or two interfaces or more -- the records are still stored
-  and nothing is joined. A connection that never crossed the captured
-  interface has no measured volume.
+  records. **Every interface may be captured.** Each record names the interface
+  it arrived on and the one its route chose, and `opnview` joins it to the
+  logged connection those name: each connection then has a second figure, its
+  **measured volume** (the `netflow` measure), beside the logged one and never
+  added to it. A packet the firewall exports more than once -- translated, or
+  again by a VLAN's parent -- is stored as a named copy and counted once, so
+  each direction of a connection is counted once. What NetFlow cannot measure
+  carries a named state instead of a zero: an egress-only interface's inbound
+  traffic is `ingress_not_captured`, an interface the exporter cannot attach to
+  (a WireGuard tunnel, for instance) `interface_not_exported`, forwarding
+  between two exported interfaces `forwarding_export_unsettled`.
 
 **On OPNsense** (the survey's *Push sources* section is the source of every step):
 
@@ -172,11 +173,11 @@ each export adds:
    and/or *Log Replies* (OPNsense's own help warns that they slow the resolver).
 3. For NetFlow: *Reporting > NetFlow*: the interfaces to capture, *Version* v9,
    and `<address>:<port>` of `opnview` among the destinations. Local collection
-   (Insight) may stay on: it is one more destination, and the two run together.
-   **The capture is one setting for both.** Capturing a single interface, which
-   the measured volume needs, also narrows what Insight collects on the
-   firewall to that interface. Which you prefer is yours to choose: `opnview`
-   reads the capture as it is and never changes it.
+   (Insight) may stay on: it is one more destination, and the two run together
+   on the same capture. Capture the interfaces whose traffic you want measured;
+   an interface listed as egress-only has its inbound traffic named
+   `ingress_not_captured`. `opnview` reads the capture as it is and never
+   changes it.
 
 **On `opnview`**, each listener is a start parameter with no default,
 `--push-listen <protocol>/<transport>=<host:port>`, and, from the development

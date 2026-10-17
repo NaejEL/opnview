@@ -177,9 +177,17 @@ type Record struct {
 // The decoder's own interfaces, which a decoder implements when it has the state they act on.
 
 // SequenceResetter is a decoder that follows its senders' sequence numbers and can forget what it
-// concluded of them: a stream it found interleaved is followed afresh from the next datagram.
+// concluded of them: every counter it follows is followed afresh from the next datagram.
 type SequenceResetter interface {
 	ResetSequences()
+}
+
+// SequenceBounder is a decoder that follows several sequence counters under one observation domain and
+// asserts a loss only once more counters are open than the bound it is given: how many counters the
+// sender runs, which whoever reads the sender's configuration knows. 0 is a bound not known, under which
+// no loss is asserted.
+type SequenceBounder interface {
+	SetSequenceCounters(counters int)
 }
 
 // Framer splits a stream into messages.

@@ -37,8 +37,8 @@ type KindReceiver interface {
 	// push entry is fed by.
 	ObserveFlowRecordCondition(ctx context.Context, key string, condition flowrecord.Condition) error
 	// FlowRecordSequenceAsserted says whether a loss the exporter's sequence numbers show over
-	// [from, to] is asserted: only where the capture configuration in force makes one sequence one
-	// counter (PS18).
+	// [from, to] is asserted: only where the capture configuration in force bounds the exporter's
+	// sequence counters (NJ7 of the amendment "the NetFlow join with every interface captured").
 	FlowRecordSequenceAsserted(ctx context.Context, key string, from, to int64) bool
 }
 

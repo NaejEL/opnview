@@ -4,6 +4,6 @@
 //
 // IT KNOWS THE STANDARDS AND NOTHING OF ANY EXPORTER. Which elements an exporter sends, and what a
 // subscriber stores of them, are the subscribing plugin's. What OPNsense's exporter actually sends --
-// v9 only, no direction, no observation point, interleaved per-interface sequence numbers -- is
+// v9 only, no direction element, several sequence counters under one observation domain -- is
 // recorded in docs/opnsense-api-survey.md, "Push sources", S5, S10 and S11.
 package netflow

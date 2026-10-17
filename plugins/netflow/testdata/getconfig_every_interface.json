@@ -1,0 +1,38 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md, section Push sources (S5 and S9), never by recording what a firewall answered. Do not treat this file as evidence; replace it with a recorded answer rewritten under X1 once LV-NJ2 has run. It follows the shape of the capture analysis of 16 October 2026 (REPORT.md, configuration table): every interface captured, the upstream egress only.",
+    "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources",
+    "field_list_from": "S5: capture.interfaces, capture.egress_only, capture.version, activeTimeout, inactiveTimeout",
+    "why_these_values": "Five interfaces captured -- an untagged inside interface, a parent and one of its two VLANs, a tunnel, and an upstream egress only -- and the second VLAN offered and not captured.",
+    "example_values_are_not_a_network": "Every identifier and description is a synthesised example value, none of the analysed firewall's (X1)."
+  },
+  "body": {
+    "netflow": {
+      "capture": {
+        "interfaces": {
+          "example_if_a": {"value": "Example inside", "selected": 1},
+          "example_if_p": {"value": "Example parent", "selected": 1},
+          "example_if_v": {"value": "Example VLAN", "selected": 1},
+          "example_if_n": {"value": "Example second VLAN", "selected": 0},
+          "example_if_w": {"value": "Example tunnel", "selected": 1},
+          "example_if_u": {"value": "Example upstream", "selected": 1}
+        },
+        "egress_only": {
+          "example_if_a": {"value": "Example inside", "selected": 0},
+          "example_if_p": {"value": "Example parent", "selected": 0},
+          "example_if_v": {"value": "Example VLAN", "selected": 0},
+          "example_if_n": {"value": "Example second VLAN", "selected": 0},
+          "example_if_w": {"value": "Example tunnel", "selected": 0},
+          "example_if_u": {"value": "Example upstream", "selected": 1}
+        },
+        "version": {"v5": {"value": "v5", "selected": 0}, "v9": {"value": "v9", "selected": 1}},
+        "targets": {"192.0.2.10:2055": {"value": "192.0.2.10:2055", "selected": 1}}
+      },
+      "collect": {"enable": "1"},
+      "activeTimeout": "1800",
+      "inactiveTimeout": "15"
+    }
+  }
+}

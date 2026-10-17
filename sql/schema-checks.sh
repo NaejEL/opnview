@@ -2528,7 +2528,7 @@ check 'AC32 the purge leaves no attribution without its lookup or its flow' '0' 
 # growing plugin table -- each of which held such rows before, so the check proves something.
 "$WORK/bin/plugintables" -database "$(dsn "$PURGE_DB")" -now "$NOW" -data-dir "$PLUGIN_DATA" -older \
     > "$WORK/plugin_older_before.txt"
-E22_HORIZONS="flow_record:start_at:flow_record flow_record_condition:observed_at:flow_record
+E22_HORIZONS="flow_record:start_at:flow_record
 connection_measured_volume:connection_start_at:installation unmatched_record_aggregate_1h:period_end_at:installation
 unmatched_record_aggregate_24h:period_end_at:installation unmatched_record_aggregate_7d:period_end_at:installation
 unmatched_record_aggregate_30d:period_end_at:installation provider_source_period:to_at:installation"
@@ -4474,7 +4474,7 @@ done
 # proportion to the flows, in both address families where a table carries an address.
 for db in "$MAIN_DB" "$SCALE_DB"; do
     tag="$(tag_of "$db")"
-    for t in capture_configuration capture_interface flow_record flow_record_condition connection_measured_volume \
+    for t in capture_configuration capture_interface capture_interface_parent_of flow_record connection_measured_volume \
              unmatched_record_aggregate_1h unmatched_record_aggregate_24h unmatched_record_aggregate_7d \
              unmatched_record_aggregate_30d provider_source_period push_listener \
              opnsense.mirror_endpoint opnsense.mirror_parameter opnsense.mirror_datum opnsense.mirror_table \
@@ -4489,16 +4489,29 @@ for db in "$MAIN_DB" "$SCALE_DB"; do
         "$(q "$db" "SELECT count(*) FROM flow_record
             WHERE (strpos(src_address, ':') > 0) <> (ip_version = 6) OR (strpos(dst_address, ':') > 0) <> (ip_version = 6)
                OR (strpos(exporter_address, ':') > 0) <> (ip_version = 6);")"
-    check "E17 $tag: one Observation Point, and an interval capturing on two interfaces" '1,2' \
-        "$(q "$db" "SELECT string_agg(CAST(n AS text), ',' ORDER BY n) FROM
-            (SELECT DISTINCT count(*) AS n FROM capture_interface GROUP BY capture_configuration_id) AS c;")"
-    check "E17 $tag: connection_measured_volume carries every state its CHECK allows" \
-        'awaiting_export,export_gap,in_progress,measured,missing,not_captured,not_exported_when_refused' \
-        "$(q "$db" "SELECT string_agg(state, ',' ORDER BY state) FROM
+    check "E17 $tag: every capture shape of NJ10: egress only, not exported, a parent, and an unreadable run" \
+        'egress_only,not_exported,parent_of,unreadable' \
+        "$(q "$db" "SELECT string_agg(shape, ',' ORDER BY shape) FROM (
+            SELECT 'egress_only' AS shape WHERE EXISTS (SELECT 1 FROM capture_interface WHERE ingress = 0 AND egress = 1)
+            UNION ALL SELECT 'not_exported' WHERE EXISTS (SELECT 1 FROM capture_interface WHERE exported = 'no')
+            UNION ALL SELECT 'parent_of' WHERE EXISTS (SELECT 1 FROM capture_interface_parent_of)
+            UNION ALL SELECT 'unreadable' WHERE EXISTS (SELECT 1 FROM capture_configuration WHERE fingerprint IS NULL)
+            ) AS s;")"
+    check "E17 $tag: connection_measured_volume carries every state its CHECK allows, and a counted copy" \
+        'awaiting_export,capture_configuration_unknown,export_gap,forwarding_export_unsettled,in_progress,ingress_not_captured,interface_not_captured,interface_not_exported,measured,missing,not_exported_when_refused,parent_copies_only:1' \
+        "$(q "$db" "SELECT string_agg(state, ',' ORDER BY state) || ':' ||
+            (SELECT CAST(max(counted_copy) AS text) FROM connection_measured_volume) FROM
             (SELECT DISTINCT state FROM connection_measured_volume) AS s;")"
-    check "E17 $tag: flow_record carries every join state" 'joined,not_joinable,pending,unmatched' \
-        "$(q "$db" "SELECT string_agg(join_state, ',' ORDER BY join_state) FROM
-            (SELECT DISTINCT join_state FROM flow_record) AS s;")"
+    check "E17 $tag: flow_record carries every join state, copy kind, unmatched reason and role, and a counted copy" \
+        'copy,joined,pending,unmatched|parent_copy,translated_copy|ambiguous,beyond_flow_horizon,interface_index_unmapped,no_logged_leg,reverse_unconfirmed|interface,no_receiving_interface,unmapped|interface,local_delivery|1' \
+        "$(q "$db" "SELECT (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT join_state AS v FROM flow_record) AS a)
+            || '|' || (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT copy_kind AS v FROM flow_record
+                       WHERE copy_kind IS NOT NULL) AS b)
+            || '|' || (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT unmatched_reason AS v FROM flow_record
+                       WHERE unmatched_reason IS NOT NULL) AS c)
+            || '|' || (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT ingress_role AS v FROM flow_record) AS d)
+            || '|' || (SELECT string_agg(v, ',' ORDER BY v) FROM (SELECT DISTINCT egress_role AS v FROM flow_record) AS e)
+            || '|' || (SELECT CAST(max(counted_copy) AS text) FROM flow_record);")"
     check "E17 $tag: one pull period and one push period, the push one open" 'pull:closed,push:open' \
         "$(q "$db" "SELECT string_agg(path || ':' || CASE WHEN to_at IS NULL THEN 'open' ELSE 'closed' END, ','
             ORDER BY path) FROM provider_source_period;")"

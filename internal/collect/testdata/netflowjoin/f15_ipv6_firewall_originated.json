@@ -1,0 +1,29 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q1 (template 259 for IPv6) and Q4 ('IPv6: only firewall-originated, 591 records').",
+    "rewritten_under_x1": "Addresses from RFC 3849; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "The destination is a host on the inside interface rather than outside, so both directions are exported.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F15",
+  "legs": [
+    {"digest": "f15out", "at": 0, "device": "exnic0", "dir": "out", "action": "pass", "src": "2001:db8:a::1",
+     "dst": "2001:db8:a::50", "src_port": 40015, "dst_port": 22, "protocol": "tcp", "protocol_number": 6,
+     "tcp_seq": 7015}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "2001:db8:a::1", "dst": "2001:db8:a::50", "src_port": 40015, "dst_port": 22, "protocol": 6, "flags": 27,
+     "in": 0, "out": 21, "packets": 4, "octets": 480, "start": 0, "end": 2, "side": "forward",
+     "expect": {"join_state": "joined", "leg": "f15out", "orientation": "forward"},
+     "counts": {"connection": "f15out", "direction": "forward"}},
+    {"src": "2001:db8:a::50", "dst": "2001:db8:a::1", "src_port": 22, "dst_port": 40015, "protocol": 6, "flags": 27,
+     "in": 21, "out": 27, "packets": 4, "octets": 880, "start": 0, "end": 2, "side": "reverse",
+     "expect": {"join_state": "joined", "leg": "f15out", "orientation": "reverse"},
+     "counts": {"connection": "f15out", "direction": "reverse"}}
+  ],
+  "volumes": [
+    {"connection": "f15out", "direction": "forward", "state": "measured"},
+    {"connection": "f15out", "direction": "reverse", "state": "measured"}
+  ]
+}

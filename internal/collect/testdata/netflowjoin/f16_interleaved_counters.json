@@ -1,0 +1,14 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md, Capture: 5 sequence streams, one per ng_netflow node, under source_id 0, of which 197 of 486 datagrams go backwards, and no datagram lost.",
+    "rewritten_under_x1": "Sequence numbers, ports and sizes chosen for the fixture; addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json, whose configuration reports five exporting interfaces.",
+    "synthesised": "One datagram of the third counter is dropped, which the analysis did not observe.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F16",
+  "counters": [1000, 2000, 3000, 4000, 5000],
+  "datagrams_per_counter": 4,
+  "dropped": {"counter": 2, "datagram": 2},
+  "record": {"src": "198.51.100.18", "dst": "192.0.2.90", "dst_port": 53, "protocol": 17, "in": 21, "out": 25,
+             "packets": 1, "octets": 64}
+}

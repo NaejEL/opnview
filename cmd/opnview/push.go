@@ -124,12 +124,16 @@ func startPush(ctx context.Context, listens pushListens, database *store.Store, 
 		owner := service.providers[subscription.ID]
 		protocolsOf[owner] = append(protocolsOf[owner], subscription.Protocol)
 	}
-	// When a provider's capture configuration changes, or a read follows a condition its stream showed,
-	// the decoders of its push entries follow the exporter's sequence numbers afresh (PS18 of the NetFlow
-	// join amendment): what they concluded of the stream held under the previous configuration.
-	collector.SetCaptureChangeObserver(func(key string) {
+	// After every read of a provider's capture configuration, the decoders of its push entries are given
+	// how many sequence counters the exporter runs; when the configuration changed, they also follow the
+	// exporter's sequence numbers afresh, its counters having been recreated (NJ7 of the amendment "the
+	// NetFlow join with every interface captured").
+	collector.SetCaptureReadObserver(func(key string, changed bool, counters int) {
 		for _, protocol := range protocolsOf[[2]string{derive.KindFlowRecord, key}] {
-			service.hub.ResetSequences(protocol)
+			if changed {
+				service.hub.ResetSequences(protocol)
+			}
+			service.hub.SetSequenceCounters(protocol, counters)
 		}
 	})
 	plugins.AttachPushHub(service.hub)

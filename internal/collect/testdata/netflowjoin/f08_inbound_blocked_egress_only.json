@@ -1,0 +1,19 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q4 (the upstream captured egress only: nothing it receives is exported) and 'What this rule cannot measure': inbound blocks on an egress-only upstream.",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "Nothing beyond the shape: no record, the configuration alone names the states.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F8",
+  "legs": [
+    {"digest": "f08in", "at": 0, "device": "exnic2", "dir": "in", "action": "block", "src": "192.0.2.85",
+     "dst": "203.0.113.2", "src_port": 41008, "dst_port": 23, "protocol": "tcp", "protocol_number": 6}
+  ],
+  "export_at": 30,
+  "records": [],
+  "volumes": [
+    {"connection": "f08in", "direction": "forward", "state": "ingress_not_captured"},
+    {"connection": "f08in", "direction": "reverse", "state": "missing"}
+  ]
+}

@@ -34,7 +34,7 @@ type NetflowState struct {
 	ReadThrough int64
 	// ToleranceSeconds is netflow_join_tolerance_seconds.
 	ToleranceSeconds int64
-	// Histories caches each provider's capture configurations and stream conditions.
+	// Histories caches each provider's capture configurations.
 	Histories map[int64]*CaptureHistory
 	// Dirty is the connection window and legs whose measured volume must be computed again.
 	Dirty     bool
@@ -43,27 +43,25 @@ type NetflowState struct {
 	DirtyLegs map[int64]bool
 	// NotActive counts the records of a provider that is not the active one, which are not stored.
 	NotActive int64
-	// OnCaptureChange is told when a provider's configuration changed, or a read followed a stream
-	// condition: the receiver then follows the exporter's sequence numbers afresh.
-	OnCaptureChange func(key string)
+	// IndexMapStale says the exporter restarted since the index map was last read: the next mapping
+	// reads it afresh, whatever the broker's mirror holds (NJ3, a reboot can renumber interfaces).
+	IndexMapStale bool
+	// OnCaptureRead is told after every read of a provider's capture configuration: whether it opened a
+	// new configuration, and how many sequence counters the configuration in force lets the exporter run
+	// (NJ7; 0 when that is not known). The receiver bounds its decoders' counters with it, and follows
+	// the exporter's sequence numbers afresh when the configuration changed.
+	OnCaptureRead func(key string, changed bool, counters int)
 }
 
-// CaptureHistory is one provider's capture configurations and stream conditions.
+// CaptureHistory is one provider's capture configurations.
 type CaptureHistory struct {
 	Configurations []netflow.CaptureConfiguration
-	Conditions     []netflow.FlowRecordCondition
 }
 
 // ConfigurationAt returns the configuration in force at an instant, or nil when it is unknown
 // (store.CaptureConfigurationAt, which the widget API's measure reads too).
 func (h *CaptureHistory) ConfigurationAt(at int64) *netflow.CaptureConfiguration {
 	return netflow.CaptureConfigurationAt(h.Configurations, at)
-}
-
-// Suspended reports whether a stream condition's suspension holds an instant: from the condition
-// until the next configuration read (store.CaptureSuspendedAt).
-func (h *CaptureHistory) Suspended(at int64) bool {
-	return netflow.CaptureSuspendedAt(h.Conditions, at)
 }
 
 // OrderingHooks let a test stop a pass between its store and its derivation, see a

@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -77,7 +78,7 @@ type VolumeFigures struct {
 }
 
 // NetflowParts are the netflow figures of the allowed, the blocked and the unknown connections: the
-// composite type netflow_parts of schema.sql, whose thirty-six fields are, in order, the twelve
+// composite type netflow_parts of schema.sql, whose fifty-four fields are, in order, the eighteen
 // figures of NetflowPartMembers for each of NetflowPartNames.
 type NetflowParts struct {
 	Allowed NetflowPart
@@ -91,43 +92,61 @@ type NetflowPart struct {
 	Coverage NetflowCoverage
 }
 
-// NetflowCoverage counts connections by how NetFlow covered them. The four coverage classes of PS21
-// sum to the connections counted: Measured, both directions measured; Partial, some measured bytes
-// but not both directions measured; Unmeasured, under one Observation Point with no measured byte;
-// NotJoinable, no single Observation Point at the connection's start. Directions counts, per
-// direction state of PS20, the connections with at least one direction in it: a connection whose two
-// directions are in two states counts under both.
+// NetflowCoverage counts connections by how NetFlow covered them (NJ5 of the amendment "the NetFlow join
+// with every interface captured"). The four coverage classes sum to the connections counted:
+// Measured, both directions measured; Partial, some measured bytes but not both directions measured;
+// Unmeasured, a readable configuration and no measured byte; CaptureNotKnown, no readable, enabled
+// capture configuration at the connection's start. Directions counts, per direction state of NJ5, the
+// connections with at least one direction in it: a connection whose two directions are in two states
+// counts under both. CountedCopy counts the connections with a direction counted from translated
+// copies.
 type NetflowCoverage struct {
-	Measured    int64
-	Partial     int64
-	Unmeasured  int64
-	NotJoinable int64
-	Directions  DirectionStates
+	Measured        int64
+	Partial         int64
+	Unmeasured      int64
+	CaptureNotKnown int64
+	Directions      DirectionStates
+	CountedCopy     int64
 }
 
 // DirectionStates counts connections per direction state met (connection_measured_volume.state).
 type DirectionStates struct {
-	Measured               int64
-	InProgress             int64
-	AwaitingExport         int64
-	Missing                int64
-	NotCaptured            int64
-	ExportGap              int64
-	NotExportedWhenRefused int64
+	Measured                    int64
+	InProgress                  int64
+	AwaitingExport              int64
+	Missing                     int64
+	ExportGap                   int64
+	NotExportedWhenRefused      int64
+	ForwardingExportUnsettled   int64
+	IngressNotCaptured          int64
+	ParentCopiesOnly            int64
+	InterfaceNotExported        int64
+	InterfaceNotCaptured        int64
+	CaptureConfigurationUnknown int64
+}
+
+// Fields are the twelve counts, in the order of NJ5's states (netflow.VolumeStates).
+func (d *DirectionStates) Fields() []*int64 {
+	return []*int64{&d.Measured, &d.InProgress, &d.AwaitingExport, &d.Missing, &d.ExportGap,
+		&d.NotExportedWhenRefused, &d.ForwardingExportUnsettled, &d.IngressNotCaptured, &d.ParentCopiesOnly,
+		&d.InterfaceNotExported, &d.InterfaceNotCaptured, &d.CaptureConfigurationUnknown}
 }
 
 // NetflowPartNames are the parts of netflow figures, in the order netflow_parts holds them.
 var NetflowPartNames = []string{"allowed", "blocked", "unknown"}
 
-// NetflowPartMembers are the twelve figures of a part, in the order netflow_parts holds them: a
+// NetflowPartMembers are the eighteen figures of a part, in the order netflow_parts holds them: a
 // column of the type is a part's name, an underscore and one of these.
-var NetflowPartMembers = []string{"packets", "measured_connections", "partial_connections",
-	"unmeasured_connections", "not_joinable_connections", "direction_measured_connections",
-	"direction_in_progress_connections", "direction_awaiting_export_connections",
-	"direction_missing_connections", "direction_not_captured_connections",
-	"direction_export_gap_connections", "direction_not_exported_when_refused_connections"}
+var NetflowPartMembers = func() []string {
+	members := []string{"packets", "measured_connections", "partial_connections", "unmeasured_connections",
+		"capture_not_known_connections"}
+	for _, state := range netflow.VolumeStates() {
+		members = append(members, "direction_"+state+"_connections")
+	}
+	return append(members, "counted_copy_connections")
+}()
 
-// NetflowPartsColumns are the thirty-six column names of netflow_parts, in order: what
+// NetflowPartsColumns are the fifty-four column names of netflow_parts, in order: what
 // (netflow_sum(...)).* reads back, and the members a script's netflow figures carry.
 func NetflowPartsColumns() []string {
 	columns := make([]string, 0, len(NetflowPartNames)*len(NetflowPartMembers))
@@ -139,12 +158,12 @@ func NetflowPartsColumns() []string {
 	return columns
 }
 
-// Fields are the twelve figures of the part, in the order of NetflowPartMembers.
+// Fields are the eighteen figures of the part, in the order of NetflowPartMembers.
 func (p *NetflowPart) Fields() []*int64 {
 	c := &p.Coverage
-	d := &c.Directions
-	return []*int64{&p.Packets, &c.Measured, &c.Partial, &c.Unmeasured, &c.NotJoinable, &d.Measured,
-		&d.InProgress, &d.AwaitingExport, &d.Missing, &d.NotCaptured, &d.ExportGap, &d.NotExportedWhenRefused}
+	fields := []*int64{&p.Packets, &c.Measured, &c.Partial, &c.Unmeasured, &c.CaptureNotKnown}
+	fields = append(fields, c.Directions.Fields()...)
+	return append(fields, &c.CountedCopy)
 }
 
 // List is the three parts, in the order of NetflowPartNames.
@@ -152,7 +171,7 @@ func (p *NetflowParts) List() []*NetflowPart {
 	return []*NetflowPart{&p.Allowed, &p.Blocked, &p.Unknown}
 }
 
-// Fields are the thirty-six figures, in the order of NetflowPartsColumns.
+// Fields are the fifty-four figures, in the order of NetflowPartsColumns.
 func (p *NetflowParts) Fields() []*int64 {
 	fields := make([]*int64, 0, len(NetflowPartNames)*len(NetflowPartMembers))
 	for _, part := range p.List() {
@@ -181,13 +200,20 @@ func (p NetflowParts) Whole() NetflowPart {
 	return whole
 }
 
-// Covered reports whether every connection counted is covered at the Observation Point, as PS22
-// states it: joinable, and with no direction not_captured, export_gap or not_exported_when_refused.
-// A direction measured, in_progress, awaiting_export or missing is covered: the export is reporting
-// it, or should have and has reported nothing of it.
+// Covered reports whether every connection counted is covered, as NJ5 states it: its capture was
+// known, and every direction is measured, in_progress, awaiting_export or missing -- the export is
+// reporting it, or should have and has reported nothing of it. Every other state is not covered.
 func (c NetflowCoverage) Covered() bool {
-	return c.NotJoinable == 0 && c.Directions.NotCaptured == 0 && c.Directions.ExportGap == 0 &&
-		c.Directions.NotExportedWhenRefused == 0
+	if c.CaptureNotKnown != 0 {
+		return false
+	}
+	d := c.Directions
+	for index, count := range d.Fields() {
+		if *count != 0 && !netflow.CoveredState(netflow.VolumeStates()[index]) {
+			return false
+		}
+	}
+	return true
 }
 
 // Packets are the netflow packets of every connection counted; 0 for logged figures.
@@ -210,7 +236,7 @@ func (f VolumeFigures) BlockedPart() VolumeFigures {
 		BlockedConnections: f.BlockedConnections, Netflow: f.Netflow, Parts: NetflowParts{Blocked: f.Parts.Blocked}}
 }
 
-// NetflowTargets are the scan destinations of the thirty-six columns a netflow read appends to the
+// NetflowTargets are the scan destinations of the fifty-four columns a netflow read appends to the
 // seven summable ones: netflow_parts read back as (netflow_sum(...)).*.
 func (f *VolumeFigures) NetflowTargets() []any {
 	f.Netflow = true

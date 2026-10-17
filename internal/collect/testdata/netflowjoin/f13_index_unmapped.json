@@ -1,0 +1,17 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q2: every index the records carried was mapped empirically; an index the map holds no row for is the case the analysis could not meet.",
+    "rewritten_under_x1": "Addresses from RFC 5737; the unmapped index (31) is in no row of world.json.",
+    "synthesised": "The whole record: no index outside the map was observed.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F13",
+  "legs": [],
+  "export_at": 30,
+  "records": [
+    {"src": "198.51.100.14", "dst": "192.0.2.87", "src_port": 50013, "dst_port": 443, "protocol": 17,
+     "in": 31, "out": 25, "packets": 1, "octets": 90, "start": 0, "end": 0, "side": "forward",
+     "expect": {"join_state": "unmatched", "reason": "interface_index_unmapped"}}
+  ],
+  "volumes": []
+}

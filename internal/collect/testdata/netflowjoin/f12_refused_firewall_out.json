@@ -1,0 +1,19 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md, 'What this rule cannot measure': traffic pf blocks on egress, exported by no node because egress is captured after pf (survey S11).",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "Nothing beyond the shape: no record exists for it.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F12",
+  "legs": [
+    {"digest": "f12out", "at": 0, "device": "exnic0", "dir": "out", "action": "block", "src": "198.51.100.1",
+     "dst": "198.51.100.13", "src_port": 40012, "dst_port": 9, "protocol": "udp", "protocol_number": 17}
+  ],
+  "export_at": 30,
+  "records": [],
+  "volumes": [
+    {"connection": "f12out", "direction": "forward", "state": "not_exported_when_refused"},
+    {"connection": "f12out", "direction": "reverse", "state": "missing"}
+  ]
+}

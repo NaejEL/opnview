@@ -10,27 +10,26 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/flowrecord"
-	"github.com/NaejEL/opnview/internal/ianaprotocol"
-	"github.com/NaejEL/opnview/internal/push"
 	"github.com/NaejEL/opnview/internal/store/netflow"
 )
 
-// The flow_record kind: the records an exporter sends, the capture configuration that gives them an
-// Observation Point, the join of a record to the leg logged at it, and a logged connection's measured
-// volume (PS17-PS20 of the NetFlow join amendment to specs/SPEC-backend-completion-plugins.md;
-// docs/data-model.md, "NetFlow volumes").
+// The flow_record kind: the records an exporter sends, the capture configuration that says what is
+// exported, the join of a record to the leg its own interface indexes name, and a logged connection's
+// measured volume (PS17 of the NetFlow join amendment to specs/SPEC-backend-completion-plugins.md, and
+// NJ3 to NJ5 of its amendment "the NetFlow join with every interface captured"; docs/data-model.md,
+// "NetFlow volumes").
 //
 // THIS FILE READS CONTRACT FIELDS ONLY. Which endpoint a provider reads its configuration from, what
 // its exporter's model calls an option, and which Information Element fills which field are the
-// provider's plugin's (PS-AC47): a second exporter is a second plugin directory, and nothing here
-// changes for it.
+// provider's plugin's (PS-AC47, NJ-AC17): a second exporter is a second plugin directory, and nothing
+// here changes for it. The join reads a record's two mapped indexes, the legs logged on the devices they
+// name, the capture configuration's parent_of, and the addresses discovery holds for the firewall; it
+// names no device, interface, VLAN or address.
 //
-// THE OBSERVATION POINT IS READ, NEVER INFERRED. A record has one only when the configuration in
-// force at its start names exactly one captured interface, and the discovery's index map holds that
-// interface. The configuration in force at an instant is the one of the read run holding it; between
-// two runs that differ, before the first, and in an unreadable run it is unknown; after the newest
-// read the newest configuration is taken as in force. A record's Observation Point is fixed at
-// reception and never rewritten when a later read differs.
+// EVERY RECORD IS JOINED FROM ITS OWN INDEXES (NJ4, the analysis's "Rule B"). No Observation Point is
+// assigned to a record: OPNsense exports none. Records are never deduplicated by content; a copy -- the
+// translated form of a packet a second node exported, or a VLAN's packet its parent's node exported
+// again -- is stored and named, and counted only under NJ5's sole-copy rule.
 
 // KindFlowRecord is the flow_record kind.
 const KindFlowRecord = flowrecord.Kind
@@ -144,11 +143,7 @@ func (c *Deriver) History(ctx context.Context, providerID int64) (*core.CaptureH
 	if err != nil {
 		return nil, err
 	}
-	conditions, err := c.Store.FlowRecordConditions(ctx, providerID)
-	if err != nil {
-		return nil, err
-	}
-	read := &core.CaptureHistory{Configurations: configurations, Conditions: conditions}
+	read := &core.CaptureHistory{Configurations: configurations}
 	c.Netflow.Mutex.Lock()
 	if c.Netflow.Histories == nil {
 		c.Netflow.Histories = map[int64]*core.CaptureHistory{}
@@ -165,85 +160,6 @@ func (c *Deriver) ForgetHistory(providerID int64) {
 	delete(c.Netflow.Histories, providerID)
 }
 
-// MappedInterface is one interface as the index map holds it.
-type MappedInterface struct {
-	index  uint64
-	device string
-}
-
-// IndexesByIdentifier is the index map keyed by interface identifier; an identifier two indexes
-// claim maps to neither.
-func IndexesByIdentifier(indexes map[uint64]push.Interface) map[string]MappedInterface {
-	byIdentifier := map[string]MappedInterface{}
-	claimed := map[string]int{}
-	for index, mapped := range indexes {
-		if mapped.Identifier == "" {
-			continue
-		}
-		claimed[mapped.Identifier]++
-		byIdentifier[mapped.Identifier] = MappedInterface{index: index, device: mapped.Device}
-	}
-	for identifier, count := range claimed {
-		if count > 1 {
-			delete(byIdentifier, identifier)
-		}
-	}
-	return byIdentifier
-}
-
-// pointState is the state of the configuration in force at an instant.
-type pointState struct {
-	// State is store.CaptureObservationPoint or one of PS18's named states.
-	State string
-	// Captured is how many interfaces the configuration captured on; -1 when it is unknown.
-	Captured int64
-	// Point is the one captured interface, its index and device, when there is one.
-	Point  netflow.CaptureInterface
-	Index  uint64
-	Device string
-	// LossDetectable says the exporter's sequence was one counter's.
-	LossDetectable bool
-	// configuration is the configuration in force, nil when unknown.
-	configuration *netflow.CaptureConfiguration
-}
-
-// StateAt evaluates the configuration in force at an instant (PS18's table).
-// What is stored decides all of it but the index mapping (store.CaptureStateAt, which the widget
-// API's measure reads too); the mapping is the collector's.
-func StateAt(history *core.CaptureHistory, at int64, indexes map[string]MappedInterface) pointState {
-	state, count, configuration := netflow.CaptureStateAt(history.Configurations, history.Conditions, at)
-	result := pointState{State: state, Captured: count, configuration: configuration}
-	if state != netflow.CaptureObservationPoint {
-		return result
-	}
-	captured := configuration.Captured()
-	result.Point, result.LossDetectable = captured[0], true
-	mapped, found := indexes[captured[0].Identifier]
-	if !found {
-		result.State = netflow.CaptureIndexUnmapped
-		return result
-	}
-	result.State, result.Index, result.Device = netflow.CaptureObservationPoint, mapped.index, mapped.device
-	return result
-}
-
-// DirectionAt is a record's direction at its Observation Point (PS19 rule 1): from the configuration
-// and the record's ingress interface, never from its egress interface, which is the route lookup's
-// interface rather than the one the packet left by (survey, Push sources, S6).
-//   - An interface captured on egress only exports egress records.
-//   - Otherwise a record whose ingress interface is the point's index was received there: ingress. A
-//     packet both received and sent there is accounted once, at its first pass (S5).
-//   - Otherwise egress: received elsewhere, or originated by the firewall, whose records carry index 0.
-func DirectionAt(point netflow.CaptureInterface, index uint64, ingress *int64) string {
-	if point.Egress && !point.Ingress {
-		return netflow.DirectionEgress
-	}
-	if ingress != nil && *ingress >= 0 && uint64(*ingress) == index {
-		return netflow.DirectionIngress
-	}
-	return netflow.DirectionEgress
-}
-
 // portless reports whether a record joins on its two addresses alone: ICMP, ICMPv6, and any record
 // with no port or ports 0 -- ICMP and non-first fragments carry ports 0 (survey, Push sources, S10).
 func portless(protocol int64, source, destination *int64) bool {
@@ -251,8 +167,8 @@ func portless(protocol int64, source, destination *int64) bool {
 		(*source == 0 && *destination == 0)
 }
 
-// TupleKey is a record's two ends, unordered, with its version and protocol: the join groups the
-// records of one Observation Point by it.
+// TupleKey is a record's two ends, unordered, with its version and protocol: the join groups records
+// by it.
 func TupleKey(addressFamily, protocol int64, source, destination netip.Addr, sourcePort, destinationPort *int64) string {
 	end := func(address netip.Addr, port *int64) string {
 		if portless(protocol, sourcePort, destinationPort) {
@@ -266,33 +182,6 @@ func TupleKey(addressFamily, protocol int64, source, destination netip.Addr, sou
 		low, high = high, low
 	}
 	return fmt.Sprintf("%d|%d|%s|%s", addressFamily, protocol, low, high)
-}
-
-// joinLeg is one candidate leg as the join reads it.
-type joinLeg struct {
-	netflow.JoinLeg
-	source, destination netip.Addr
-	protocol            int64
-	protocolKnown       bool
-}
-
-// candidate is one leg in one orientation.
-type candidate struct {
-	leg         *joinLeg
-	orientation string
-}
-
-// consistent reports whether a record's direction at its Observation Point, its orientation to a leg
-// and the leg's pf direction agree (PS19 rule 2's table): a leg logged `in` on the point is a packet
-// received there, so its forward packets arrive (ingress) and its replies leave (egress).
-func consistent(direction, orientation, legDirection string) bool {
-	switch legDirection {
-	case "in":
-		return (direction == netflow.DirectionIngress) == (orientation == netflow.OrientationForward)
-	case "out":
-		return (direction == netflow.DirectionEgress) == (orientation == netflow.OrientationForward)
-	}
-	return false
 }
 
 // stateTimeout is pf's default timeout bounding the idle time of a connection of a protocol, given the
@@ -327,176 +216,6 @@ func longestStateTimeout(protocol int64) int64 {
 	return stateTimeout(protocol, tcpACK)
 }
 
-// legChain is what the join has decided of one leg so far: per orientation, the end of the last record
-// joined, and the TCP flags of every record joined.
-type legChain struct {
-	lastEnd map[string]int64
-	flags   int64
-}
-
-// joinInput is what a group's decision reads besides its records and legs.
-type joinInput struct {
-	readThrough  int64
-	tolerance    int64
-	purgedBefore int64
-	purged       bool
-	now          int64
-}
-
-// decideGroup decides every record of one group from stored rows only, oldest first: a record
-// starting while the filter log has not been read past its start plus the tolerance stays pending,
-// and so does every later one (PS19 rules 2 to 8).
-func decideGroup(records []netflow.GroupRecord, legs []netflow.JoinLeg, input joinInput) []netflow.FlowRecordDecision {
-	prepared := make([]*joinLeg, 0, len(legs))
-	for index := range legs {
-		leg := &joinLeg{JoinLeg: legs[index]}
-		source, sourceErr := netip.ParseAddr(leg.SrcAddress)
-		destination, destinationErr := netip.ParseAddr(leg.DstAddress)
-		if sourceErr != nil || destinationErr != nil {
-			continue
-		}
-		leg.source, leg.destination = source.Unmap(), destination.Unmap()
-		leg.protocol, leg.protocolKnown = ianaprotocol.Number(leg.Protocol)
-		prepared = append(prepared, leg)
-	}
-	chains := map[int64]*legChain{}
-	chainOf := func(id int64) *legChain {
-		chain := chains[id]
-		if chain == nil {
-			chain = &legChain{lastEnd: map[string]int64{}}
-			chains[id] = chain
-		}
-		return chain
-	}
-	var decisions []netflow.FlowRecordDecision
-	for _, record := range records {
-		if record.StartAt+input.tolerance >= input.readThrough {
-			break
-		}
-		frozen := input.purged && record.StartAt < input.purgedBefore && record.JoinState != netflow.JoinPending
-		if frozen {
-			// Decided before the purge passed it: never decided again, and still the chain's history.
-			if record.JoinState == netflow.JoinJoined && record.JoinedFlowID != nil && record.Orientation != nil {
-				chain := chainOf(*record.JoinedFlowID)
-				chain.lastEnd[*record.Orientation] = max(chain.lastEnd[*record.Orientation], record.EndAt)
-				if record.TCPFlags != nil {
-					chain.flags |= *record.TCPFlags
-				}
-			}
-			continue
-		}
-		decision := netflow.FlowRecordDecision{Record: record, Identity: record.Identity, StartAt: record.StartAt,
-			DecidedAt: input.now}
-		reason, chosen := joinOne(record, prepared, chains, input)
-		if chosen != nil {
-			decision.JoinState = netflow.JoinJoined
-			id, orientation := chosen.leg.FlowID, chosen.orientation
-			decision.JoinedFlowID, decision.Orientation = &id, &orientation
-			chain := chainOf(id)
-			chain.lastEnd[orientation] = max(chain.lastEnd[orientation], record.EndAt)
-			if record.TCPFlags != nil {
-				chain.flags |= *record.TCPFlags
-			}
-		} else {
-			decision.JoinState = netflow.JoinUnmatched
-			decision.UnmatchedReason = &reason
-		}
-		decisions = append(decisions, decision)
-	}
-	return decisions
-}
-
-// joinOne decides one record: the candidate it joins, or why it joins none.
-func joinOne(record netflow.GroupRecord, legs []*joinLeg, chains map[int64]*legChain, input joinInput) (string,
-	*candidate) {
-	source, sourceErr := netip.ParseAddr(record.SrcAddress)
-	destination, destinationErr := netip.ParseAddr(record.DstAddress)
-	if sourceErr != nil || destinationErr != nil {
-		return netflow.UnmatchedNoLoggedLeg, nil
-	}
-	if input.purged && record.StartAt < input.purgedBefore {
-		// Started before the filter log's horizon: its leg may be gone.
-		return netflow.UnmatchedBeyondFlowHorizon, nil
-	}
-	weak := portless(record.Protocol, record.SrcPort, record.DstPort)
-	latestAllowed := record.StartAt + input.tolerance
-	var candidates []candidate
-	for _, leg := range legs {
-		if !leg.protocolKnown || leg.protocol != record.Protocol || leg.ObservedAt > latestAllowed {
-			continue
-		}
-		for _, orientation := range []string{netflow.OrientationForward, netflow.OrientationReverse} {
-			if !sameTuple(record, source, destination, leg, orientation, weak) {
-				continue
-			}
-			if consistent(record.Direction, orientation, leg.Direction) {
-				candidates = append(candidates, candidate{leg: leg, orientation: orientation})
-			}
-		}
-	}
-	if len(candidates) == 0 {
-		if input.purged && record.StartAt-longestStateTimeout(record.Protocol) < input.purgedBefore {
-			// Its leg may have been logged before the horizon and purged: never claimed absent.
-			return netflow.UnmatchedBeyondFlowHorizon, nil
-		}
-		return netflow.UnmatchedNoLoggedLeg, nil
-	}
-	// The latest leg wins; two at that instant are never told apart by guessing.
-	latest := candidates[0]
-	tie := false
-	for _, other := range candidates[1:] {
-		switch {
-		case other.leg.ObservedAt > latest.leg.ObservedAt:
-			latest, tie = other, false
-		case other.leg.ObservedAt == latest.leg.ObservedAt:
-			tie = true
-		}
-	}
-	if tie {
-		return netflow.UnmatchedAmbiguous, nil
-	}
-	// A TCP record opening a connection joins only a leg logged with its first packet.
-	if record.Protocol == protocolTCP && record.TCPFlags != nil && *record.TCPFlags&tcpSYN != 0 {
-		if latest.leg.ObservedAt < record.StartAt-input.tolerance {
-			return netflow.UnmatchedNoLoggedLeg, nil
-		}
-	}
-	// Continuity: the connection's pf state must still be able to exist.
-	base := latest.leg.ObservedAt
-	var flags int64
-	if chain := chains[latest.leg.FlowID]; chain != nil {
-		if end, joined := chain.lastEnd[latest.orientation]; joined && end > base {
-			base = end
-		}
-		flags = chain.flags
-	}
-	if record.StartAt-base > stateTimeout(record.Protocol, flags) {
-		return netflow.UnmatchedNoLoggedLeg, nil
-	}
-	return "", &latest
-}
-
-// sameTuple reports whether a record's tuple is a leg's in an orientation: forward is the leg's logged
-// tuple, reverse its swap (RFC 5103). Addresses are compared as values; a record joining on its
-// addresses alone ignores the ports.
-func sameTuple(record netflow.GroupRecord, source, destination netip.Addr, leg *joinLeg, orientation string,
-	weak bool) bool {
-	legSource, legDestination, legSourcePort, legDestinationPort := leg.source, leg.destination, leg.SrcPort, leg.DstPort
-	if orientation == netflow.OrientationReverse {
-		legSource, legDestination = leg.destination, leg.source
-		legSourcePort, legDestinationPort = leg.DstPort, leg.SrcPort
-	}
-	if source != legSource || destination != legDestination {
-		return false
-	}
-	if weak {
-		return true
-	}
-	return samePort(record.SrcPort, legSourcePort) && samePort(record.DstPort, legDestinationPort)
-}
-
-func samePort(a, b *int64) bool { return a != nil && b != nil && *a == *b }
-
 // joinFlowRecords decides the records of the active provider the filter log has been read past, a
 // group at a time, and marks the connections whose legs gained or lost a record. A second derivation
 // over the same rows writes nothing.
@@ -513,54 +232,174 @@ func (c *Deriver) joinFlowRecords(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	groups, err := c.Store.PendingFlowRecordGroups(ctx, providerID, input.readThrough-input.tolerance)
+	if err != nil || len(groups) == 0 {
+		return 0, err
+	}
+	if input.history, err = c.History(ctx, providerID); err != nil {
+		return 0, err
+	}
+	addresses, err := c.Store.FirewallAddresses(ctx)
 	if err != nil {
 		return 0, err
 	}
+	input.firewall = parseFirewallAddresses(addresses)
+	// The devices of the interfaces a parent_of names, for NJ4 rule 6, as discovery holds them.
+	identifiers, err := c.Store.InterfaceIdentifiers(ctx)
+	if err != nil {
+		return 0, err
+	}
+	input.devices = map[string]string{}
+	for device, identifier := range identifiers {
+		input.devices[identifier] = device
+	}
 	var changed int64
 	for _, group := range groups {
-		records, err := c.Store.FlowRecordGroup(ctx, providerID, group)
-		if err != nil {
-			return changed, err
-		}
-		if len(records) == 0 {
-			continue
-		}
-		latest := int64(0)
-		for _, record := range records {
-			latest = max(latest, record.StartAt)
-		}
-		addressFamily, err := strconv.ParseInt(strings.SplitN(group.TupleKey, "|", 2)[0], 10, 64)
-		if err != nil {
-			return changed, fmt.Errorf("collect: the group key %q names no IP version", group.TupleKey)
-		}
-		legs, err := c.Store.JoinLegs(ctx, group.Device, records[0].SrcAddress, records[0].DstAddress, addressFamily,
-			latest+input.tolerance)
-		if err != nil {
-			return changed, err
-		}
-		decisions := decideGroup(records, legs, input)
-		previous := map[string]*int64{}
-		for index := range records {
-			previous[records[index].Identity] = records[index].JoinedFlowID
-		}
-		written, err := c.Store.DecideFlowRecords(ctx, decisions)
+		written, err := c.joinGroup(ctx, providerID, group, input)
 		if err != nil {
 			return changed, err
 		}
 		changed += written
-		if written == 0 {
-			continue
-		}
-		var touched []int64
-		for _, decision := range decisions {
-			if before := previous[decision.Identity]; before != nil {
-				touched = append(touched, *before)
-			}
-			if decision.JoinedFlowID != nil {
-				touched = append(touched, *decision.JoinedFlowID)
-			}
-		}
-		c.markDirtyLegs(touched)
 	}
 	return changed, nil
+}
+
+// joinGroup decides one group, writes what changed, and marks the legs whose connections changed.
+func (c *Deriver) joinGroup(ctx context.Context, providerID int64, group string, input joinInput) (int64, error) {
+	records, err := c.Store.FlowRecordGroup(ctx, providerID, group)
+	if err != nil || len(records) == 0 {
+		return 0, err
+	}
+	latest := int64(0)
+	devices := map[string]bool{}
+	for _, record := range records {
+		latest = max(latest, record.StartAt)
+		for _, mapped := range []netflow.MappedIndex{record.Ingress, record.Egress} {
+			if mapped.Device != nil {
+				devices[*mapped.Device] = true
+			}
+		}
+		for _, child := range input.childrenOf(record) {
+			devices[child] = true
+		}
+	}
+	addressFamily, err := strconv.ParseInt(strings.SplitN(group, "|", 2)[0], 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("collect: the group key %q names no IP version", group)
+	}
+	deviceList := make([]string, 0, len(devices))
+	for device := range devices {
+		deviceList = append(deviceList, device)
+	}
+	sort.Strings(deviceList)
+	legs, err := c.Store.JoinLegs(ctx, deviceList, records[0].SrcAddress, records[0].DstAddress, addressFamily,
+		latest+input.tolerance)
+	if err != nil {
+		return 0, err
+	}
+	decisions := decideGroup(records, legs, input)
+	written, err := c.Store.DecideFlowRecords(ctx, decisions)
+	if err != nil || written == 0 {
+		return written, err
+	}
+	var touched []int64
+	for _, decision := range decisions {
+		if decision.Same() {
+			continue
+		}
+		for _, leg := range []*int64{decision.Record.JoinedFlowID, decision.Record.CopyFlowID, decision.JoinedFlowID,
+			decision.CopyFlowID} {
+			if leg != nil {
+				touched = append(touched, *leg)
+			}
+		}
+	}
+	c.markDirtyLegs(touched)
+	return written, nil
+}
+
+// joinInput is what a group's decision reads besides its records and legs.
+type joinInput struct {
+	readThrough  int64
+	tolerance    int64
+	purgedBefore int64
+	purged       bool
+	now          int64
+	// history is the provider's capture configurations: parent_of and the active timeout in force.
+	history *core.CaptureHistory
+	// firewall is the addresses discovery holds, or held, for the firewall.
+	firewall []firewallAddress
+	// devices maps an interface identifier to its device.
+	devices map[string]string
+}
+
+// firewallAddress is one address of the firewall and the span it held it over.
+type firewallAddress struct {
+	address     netip.Addr
+	from, until int64
+	current     bool
+}
+
+func parseFirewallAddresses(addresses []netflow.FirewallAddress) []firewallAddress {
+	var parsed []firewallAddress
+	for _, held := range addresses {
+		address, err := netip.ParseAddr(held.Address)
+		if err != nil {
+			continue
+		}
+		parsed = append(parsed, firewallAddress{address: address.Unmap(), from: held.FirstSeenAt,
+			until: held.LastSeenAt, current: held.Current})
+	}
+	return parsed
+}
+
+// firewallHeld reports whether an address was the firewall's at an instant, or is a loopback address.
+func (input joinInput) firewallHeld(address netip.Addr, at int64) bool {
+	if address.IsLoopback() {
+		return true
+	}
+	for _, held := range input.firewall {
+		if held.address == address && at >= held.from && (at <= held.until || held.current) {
+			return true
+		}
+	}
+	return false
+}
+
+// parentOf is the parent_of of an interface in the configuration in force at an instant.
+func (input joinInput) parentOf(identifier *string, at int64) []string {
+	if identifier == nil || input.history == nil {
+		return nil
+	}
+	configuration := input.history.ConfigurationAt(at)
+	if configuration == nil {
+		return nil
+	}
+	captured, found := configuration.Interface(*identifier)
+	if !found {
+		return nil
+	}
+	return captured.ParentOf
+}
+
+// childrenOf are the devices of the interfaces a record's ingress interface is the parent of.
+func (input joinInput) childrenOf(record netflow.GroupRecord) []string {
+	var devices []string
+	for _, child := range input.parentOf(record.Ingress.Identifier, record.StartAt) {
+		if device, found := input.devices[child]; found {
+			devices = append(devices, device)
+		}
+	}
+	return devices
+}
+
+// exportBoundAt is how long after a leg its records may still be exported: the active timeout in force
+// at the leg plus the tolerance, or pf's established TCP timeout when no timeout is known.
+func (input joinInput) exportBoundAt(at int64) int64 {
+	if input.history != nil {
+		if configuration := input.history.ConfigurationAt(at); configuration != nil &&
+			configuration.ActiveTimeoutSeconds != nil {
+			return *configuration.ActiveTimeoutSeconds + input.tolerance
+		}
+	}
+	return pfTCPEstablished + input.tolerance
 }

@@ -421,15 +421,16 @@ var coreContracts = []Contract{
 // The flow_record kind: the Flow Record of RFC 3954 and RFC 7011, which an exporter SENDS rather than
 // opnview asking for it. Its records arrive through a push entry, mapped from IANA Information
 // Elements with no script (docs/plugins.md, "Push sources"); what the provider reads by polling is
-// the exporter's capture configuration, a different record, from which the core establishes the
-// Observation Point (RFC 7011) of every record (PS17 and PS18 of the NetFlow join amendment to
-// specs/SPEC-backend-completion-plugins.md). The term is RFC 3954's and RFC 7011's, and a
+// the exporter's capture configuration, a different record, from which the core reads what each
+// direction of a logged connection can be measured by (PS17 of the NetFlow join amendment to
+// specs/SPEC-backend-completion-plugins.md, and NJ2 of its amendment "the NetFlow join with every
+// interface captured"). The term is RFC 3954's and RFC 7011's, and a
 // flow_record is not a `flow`, which is one filter-log record (docs/data-model.md, *Vocabulary*).
 var flowRecordContract = Contract{
 	Kind: "flow_record",
 	Description: "Flow records an exporter sends, received by a push entry with no script, and the exporter's " +
-		"capture configuration, read by polling. One provider is active at a time. The core establishes each " +
-		"record's Observation Point from the configuration in force at its start, never from the record.",
+		"capture configuration, read by polling. One provider is active at a time. The core joins each record " +
+		"from its own interface indexes, and reads coverage from the configuration, never from the records.",
 	Functions: []Function{probeFunction, {Name: "capture", Arguments: "host", Returns: "capture_answer",
 		Description: "Called at every capture-configuration pass: the exporter's capture configuration now."}},
 	Records: []Record{
@@ -463,9 +464,17 @@ var flowRecordContract = Contract{
 				"interface are accounted."},
 			{Name: "egress", Type: FieldBoolean, Required: true, Description: "Whether packets sent on the interface " +
 				"are accounted."},
+			{Name: "exported", Type: FieldText, Values: []string{"yes", "no", "unknown"}, Description: "Whether " +
+				"the exporter actually exports what is configured for the interface, for each captured direction: " +
+				"yes, no (with not_exported_reason), or unknown when it could not be established. Absent is unknown."},
+			{Name: "not_exported_reason", Type: FieldText, Description: "Why the interface is not exported, " +
+				"exactly when exported is no: the provider's own closed name for it."},
+			{Name: "parent_of", Type: FieldTextList, Description: "The identifiers of the interfaces whose " +
+				"received packets this interface's exporter also exports with this interface as the receiving " +
+				"interface. Absent is none."},
 		}},
 		{Name: "flow_record_record", Description: "One flow record as the exporter sent it, filled from the push " +
-			"entry's Information Element mapping. Its identity and its Observation Point are the core's.",
+			"entry's Information Element mapping. Its identity, and what its interface indexes name, are the core's.",
 			Fields: []Field{
 				{Name: "exporter_address", Type: FieldText, Required: true, Description: "The exporter's address."},
 				{Name: "observation_domain", Type: FieldInteger, Required: true, Description: "The observation " +

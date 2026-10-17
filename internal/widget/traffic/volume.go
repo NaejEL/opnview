@@ -104,46 +104,64 @@ type SummableFigures struct {
 }
 
 // NetflowMembers are what a netflow figure carries beyond the seven summable members: its measure and
-// the thirty-six columns of netflow_parts (store.NetflowPartsColumns), the names a statement read in
+// the fifty-four columns of netflow_parts (store.NetflowPartsColumns), the names a statement read in
 // the netflow measure gives them with (netflow_sum(...)).*.
 type NetflowMembers struct {
-	Measure                                           string `json:"measure,omitempty"`
-	AllowedPackets                                    *int64 `json:"allowed_packets,omitempty"`
-	AllowedMeasuredConnections                        *int64 `json:"allowed_measured_connections,omitempty"`
-	AllowedPartialConnections                         *int64 `json:"allowed_partial_connections,omitempty"`
-	AllowedUnmeasuredConnections                      *int64 `json:"allowed_unmeasured_connections,omitempty"`
-	AllowedNotJoinableConnections                     *int64 `json:"allowed_not_joinable_connections,omitempty"`
-	AllowedDirectionMeasuredConnections               *int64 `json:"allowed_direction_measured_connections,omitempty"`
-	AllowedDirectionInProgressConnections             *int64 `json:"allowed_direction_in_progress_connections,omitempty"`
-	AllowedDirectionAwaitingExportConnections         *int64 `json:"allowed_direction_awaiting_export_connections,omitempty"`
-	AllowedDirectionMissingConnections                *int64 `json:"allowed_direction_missing_connections,omitempty"`
-	AllowedDirectionNotCapturedConnections            *int64 `json:"allowed_direction_not_captured_connections,omitempty"`
-	AllowedDirectionExportGapConnections              *int64 `json:"allowed_direction_export_gap_connections,omitempty"`
-	AllowedDirectionNotExportedWhenRefusedConnections *int64 `json:"allowed_direction_not_exported_when_refused_connections,omitempty"`
-	BlockedPackets                                    *int64 `json:"blocked_packets,omitempty"`
-	BlockedMeasuredConnections                        *int64 `json:"blocked_measured_connections,omitempty"`
-	BlockedPartialConnections                         *int64 `json:"blocked_partial_connections,omitempty"`
-	BlockedUnmeasuredConnections                      *int64 `json:"blocked_unmeasured_connections,omitempty"`
-	BlockedNotJoinableConnections                     *int64 `json:"blocked_not_joinable_connections,omitempty"`
-	BlockedDirectionMeasuredConnections               *int64 `json:"blocked_direction_measured_connections,omitempty"`
-	BlockedDirectionInProgressConnections             *int64 `json:"blocked_direction_in_progress_connections,omitempty"`
-	BlockedDirectionAwaitingExportConnections         *int64 `json:"blocked_direction_awaiting_export_connections,omitempty"`
-	BlockedDirectionMissingConnections                *int64 `json:"blocked_direction_missing_connections,omitempty"`
-	BlockedDirectionNotCapturedConnections            *int64 `json:"blocked_direction_not_captured_connections,omitempty"`
-	BlockedDirectionExportGapConnections              *int64 `json:"blocked_direction_export_gap_connections,omitempty"`
-	BlockedDirectionNotExportedWhenRefusedConnections *int64 `json:"blocked_direction_not_exported_when_refused_connections,omitempty"`
-	UnknownPackets                                    *int64 `json:"unknown_packets,omitempty"`
-	UnknownMeasuredConnections                        *int64 `json:"unknown_measured_connections,omitempty"`
-	UnknownPartialConnections                         *int64 `json:"unknown_partial_connections,omitempty"`
-	UnknownUnmeasuredConnections                      *int64 `json:"unknown_unmeasured_connections,omitempty"`
-	UnknownNotJoinableConnections                     *int64 `json:"unknown_not_joinable_connections,omitempty"`
-	UnknownDirectionMeasuredConnections               *int64 `json:"unknown_direction_measured_connections,omitempty"`
-	UnknownDirectionInProgressConnections             *int64 `json:"unknown_direction_in_progress_connections,omitempty"`
-	UnknownDirectionAwaitingExportConnections         *int64 `json:"unknown_direction_awaiting_export_connections,omitempty"`
-	UnknownDirectionMissingConnections                *int64 `json:"unknown_direction_missing_connections,omitempty"`
-	UnknownDirectionNotCapturedConnections            *int64 `json:"unknown_direction_not_captured_connections,omitempty"`
-	UnknownDirectionExportGapConnections              *int64 `json:"unknown_direction_export_gap_connections,omitempty"`
-	UnknownDirectionNotExportedWhenRefusedConnections *int64 `json:"unknown_direction_not_exported_when_refused_connections,omitempty"`
+	Measure                                                string `json:"measure,omitempty"`
+	AllowedPackets                                         *int64 `json:"allowed_packets,omitempty"`
+	AllowedMeasuredConnections                             *int64 `json:"allowed_measured_connections,omitempty"`
+	AllowedPartialConnections                              *int64 `json:"allowed_partial_connections,omitempty"`
+	AllowedUnmeasuredConnections                           *int64 `json:"allowed_unmeasured_connections,omitempty"`
+	AllowedCaptureNotKnownConnections                      *int64 `json:"allowed_capture_not_known_connections,omitempty"`
+	AllowedDirectionMeasuredConnections                    *int64 `json:"allowed_direction_measured_connections,omitempty"`
+	AllowedDirectionInProgressConnections                  *int64 `json:"allowed_direction_in_progress_connections,omitempty"`
+	AllowedDirectionAwaitingExportConnections              *int64 `json:"allowed_direction_awaiting_export_connections,omitempty"`
+	AllowedDirectionMissingConnections                     *int64 `json:"allowed_direction_missing_connections,omitempty"`
+	AllowedDirectionExportGapConnections                   *int64 `json:"allowed_direction_export_gap_connections,omitempty"`
+	AllowedDirectionNotExportedWhenRefusedConnections      *int64 `json:"allowed_direction_not_exported_when_refused_connections,omitempty"`
+	AllowedDirectionForwardingExportUnsettledConnections   *int64 `json:"allowed_direction_forwarding_export_unsettled_connections,omitempty"`
+	AllowedDirectionIngressNotCapturedConnections          *int64 `json:"allowed_direction_ingress_not_captured_connections,omitempty"`
+	AllowedDirectionParentCopiesOnlyConnections            *int64 `json:"allowed_direction_parent_copies_only_connections,omitempty"`
+	AllowedDirectionInterfaceNotExportedConnections        *int64 `json:"allowed_direction_interface_not_exported_connections,omitempty"`
+	AllowedDirectionInterfaceNotCapturedConnections        *int64 `json:"allowed_direction_interface_not_captured_connections,omitempty"`
+	AllowedDirectionCaptureConfigurationUnknownConnections *int64 `json:"allowed_direction_capture_configuration_unknown_connections,omitempty"`
+	AllowedCountedCopyConnections                          *int64 `json:"allowed_counted_copy_connections,omitempty"`
+	BlockedPackets                                         *int64 `json:"blocked_packets,omitempty"`
+	BlockedMeasuredConnections                             *int64 `json:"blocked_measured_connections,omitempty"`
+	BlockedPartialConnections                              *int64 `json:"blocked_partial_connections,omitempty"`
+	BlockedUnmeasuredConnections                           *int64 `json:"blocked_unmeasured_connections,omitempty"`
+	BlockedCaptureNotKnownConnections                      *int64 `json:"blocked_capture_not_known_connections,omitempty"`
+	BlockedDirectionMeasuredConnections                    *int64 `json:"blocked_direction_measured_connections,omitempty"`
+	BlockedDirectionInProgressConnections                  *int64 `json:"blocked_direction_in_progress_connections,omitempty"`
+	BlockedDirectionAwaitingExportConnections              *int64 `json:"blocked_direction_awaiting_export_connections,omitempty"`
+	BlockedDirectionMissingConnections                     *int64 `json:"blocked_direction_missing_connections,omitempty"`
+	BlockedDirectionExportGapConnections                   *int64 `json:"blocked_direction_export_gap_connections,omitempty"`
+	BlockedDirectionNotExportedWhenRefusedConnections      *int64 `json:"blocked_direction_not_exported_when_refused_connections,omitempty"`
+	BlockedDirectionForwardingExportUnsettledConnections   *int64 `json:"blocked_direction_forwarding_export_unsettled_connections,omitempty"`
+	BlockedDirectionIngressNotCapturedConnections          *int64 `json:"blocked_direction_ingress_not_captured_connections,omitempty"`
+	BlockedDirectionParentCopiesOnlyConnections            *int64 `json:"blocked_direction_parent_copies_only_connections,omitempty"`
+	BlockedDirectionInterfaceNotExportedConnections        *int64 `json:"blocked_direction_interface_not_exported_connections,omitempty"`
+	BlockedDirectionInterfaceNotCapturedConnections        *int64 `json:"blocked_direction_interface_not_captured_connections,omitempty"`
+	BlockedDirectionCaptureConfigurationUnknownConnections *int64 `json:"blocked_direction_capture_configuration_unknown_connections,omitempty"`
+	BlockedCountedCopyConnections                          *int64 `json:"blocked_counted_copy_connections,omitempty"`
+	UnknownPackets                                         *int64 `json:"unknown_packets,omitempty"`
+	UnknownMeasuredConnections                             *int64 `json:"unknown_measured_connections,omitempty"`
+	UnknownPartialConnections                              *int64 `json:"unknown_partial_connections,omitempty"`
+	UnknownUnmeasuredConnections                           *int64 `json:"unknown_unmeasured_connections,omitempty"`
+	UnknownCaptureNotKnownConnections                      *int64 `json:"unknown_capture_not_known_connections,omitempty"`
+	UnknownDirectionMeasuredConnections                    *int64 `json:"unknown_direction_measured_connections,omitempty"`
+	UnknownDirectionInProgressConnections                  *int64 `json:"unknown_direction_in_progress_connections,omitempty"`
+	UnknownDirectionAwaitingExportConnections              *int64 `json:"unknown_direction_awaiting_export_connections,omitempty"`
+	UnknownDirectionMissingConnections                     *int64 `json:"unknown_direction_missing_connections,omitempty"`
+	UnknownDirectionExportGapConnections                   *int64 `json:"unknown_direction_export_gap_connections,omitempty"`
+	UnknownDirectionNotExportedWhenRefusedConnections      *int64 `json:"unknown_direction_not_exported_when_refused_connections,omitempty"`
+	UnknownDirectionForwardingExportUnsettledConnections   *int64 `json:"unknown_direction_forwarding_export_unsettled_connections,omitempty"`
+	UnknownDirectionIngressNotCapturedConnections          *int64 `json:"unknown_direction_ingress_not_captured_connections,omitempty"`
+	UnknownDirectionParentCopiesOnlyConnections            *int64 `json:"unknown_direction_parent_copies_only_connections,omitempty"`
+	UnknownDirectionInterfaceNotExportedConnections        *int64 `json:"unknown_direction_interface_not_exported_connections,omitempty"`
+	UnknownDirectionInterfaceNotCapturedConnections        *int64 `json:"unknown_direction_interface_not_captured_connections,omitempty"`
+	UnknownDirectionCaptureConfigurationUnknownConnections *int64 `json:"unknown_direction_capture_configuration_unknown_connections,omitempty"`
+	UnknownCountedCopyConnections                          *int64 `json:"unknown_counted_copy_connections,omitempty"`
 	// AllowedCoverage, BlockedCoverage and UnknownCoverage are read from a netflow Volume handed back as
 	// its figures, which carries each part's coverage as an object beside the part's packets; summable
 	// figures are never written with them.
@@ -152,45 +170,63 @@ type NetflowMembers struct {
 	UnknownCoverage *envelope.VolumeCoverage `json:"unknown_coverage,omitempty"`
 }
 
-// slots are the thirty-six members, in the order of store.NetflowPartsColumns.
+// slots are the fifty-four members, in the order of store.NetflowPartsColumns.
 func (m *NetflowMembers) slots() []**int64 {
 	return []**int64{
 		&m.AllowedPackets,
 		&m.AllowedMeasuredConnections,
 		&m.AllowedPartialConnections,
 		&m.AllowedUnmeasuredConnections,
-		&m.AllowedNotJoinableConnections,
+		&m.AllowedCaptureNotKnownConnections,
 		&m.AllowedDirectionMeasuredConnections,
 		&m.AllowedDirectionInProgressConnections,
 		&m.AllowedDirectionAwaitingExportConnections,
 		&m.AllowedDirectionMissingConnections,
-		&m.AllowedDirectionNotCapturedConnections,
 		&m.AllowedDirectionExportGapConnections,
 		&m.AllowedDirectionNotExportedWhenRefusedConnections,
+		&m.AllowedDirectionForwardingExportUnsettledConnections,
+		&m.AllowedDirectionIngressNotCapturedConnections,
+		&m.AllowedDirectionParentCopiesOnlyConnections,
+		&m.AllowedDirectionInterfaceNotExportedConnections,
+		&m.AllowedDirectionInterfaceNotCapturedConnections,
+		&m.AllowedDirectionCaptureConfigurationUnknownConnections,
+		&m.AllowedCountedCopyConnections,
 		&m.BlockedPackets,
 		&m.BlockedMeasuredConnections,
 		&m.BlockedPartialConnections,
 		&m.BlockedUnmeasuredConnections,
-		&m.BlockedNotJoinableConnections,
+		&m.BlockedCaptureNotKnownConnections,
 		&m.BlockedDirectionMeasuredConnections,
 		&m.BlockedDirectionInProgressConnections,
 		&m.BlockedDirectionAwaitingExportConnections,
 		&m.BlockedDirectionMissingConnections,
-		&m.BlockedDirectionNotCapturedConnections,
 		&m.BlockedDirectionExportGapConnections,
 		&m.BlockedDirectionNotExportedWhenRefusedConnections,
+		&m.BlockedDirectionForwardingExportUnsettledConnections,
+		&m.BlockedDirectionIngressNotCapturedConnections,
+		&m.BlockedDirectionParentCopiesOnlyConnections,
+		&m.BlockedDirectionInterfaceNotExportedConnections,
+		&m.BlockedDirectionInterfaceNotCapturedConnections,
+		&m.BlockedDirectionCaptureConfigurationUnknownConnections,
+		&m.BlockedCountedCopyConnections,
 		&m.UnknownPackets,
 		&m.UnknownMeasuredConnections,
 		&m.UnknownPartialConnections,
 		&m.UnknownUnmeasuredConnections,
-		&m.UnknownNotJoinableConnections,
+		&m.UnknownCaptureNotKnownConnections,
 		&m.UnknownDirectionMeasuredConnections,
 		&m.UnknownDirectionInProgressConnections,
 		&m.UnknownDirectionAwaitingExportConnections,
 		&m.UnknownDirectionMissingConnections,
-		&m.UnknownDirectionNotCapturedConnections,
 		&m.UnknownDirectionExportGapConnections,
 		&m.UnknownDirectionNotExportedWhenRefusedConnections,
+		&m.UnknownDirectionForwardingExportUnsettledConnections,
+		&m.UnknownDirectionIngressNotCapturedConnections,
+		&m.UnknownDirectionParentCopiesOnlyConnections,
+		&m.UnknownDirectionInterfaceNotExportedConnections,
+		&m.UnknownDirectionInterfaceNotCapturedConnections,
+		&m.UnknownDirectionCaptureConfigurationUnknownConnections,
+		&m.UnknownCountedCopyConnections,
 	}
 }
 

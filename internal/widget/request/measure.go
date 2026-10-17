@@ -34,29 +34,24 @@ import (
 // fails is not served as netflow: the answer falls back to logged with a named state, or, for an
 // explicit netflow, carries no figure. Two measures are never summed.
 //
-// best_available answers netflow only when every connection the answer counts has every direction
-// covered at the Observation Point -- measured, in_progress, awaiting_export or missing, never
-// not_captured, export_gap or not_exported_when_refused -- under a single Observation Point throughout
-// the window (store.NetflowCoverage.Covered); otherwise it answers logged, byte for byte what
-// volume_measure = logged answers, with the named state that says why and, for a state that carries
-// one, its detail in state_details.
+// best_available answers netflow only when the window has a readable configuration with the export
+// enabled throughout, and every connection the answer counts is covered -- its capture known, and
+// every direction measured, in_progress, awaiting_export or missing, never one of the other states of
+// NJ5 (store.NetflowCoverage.Covered; decided question 5 of the amendment "the NetFlow join with every
+// interface captured"); otherwise it answers logged, byte for byte what volume_measure = logged
+// answers, with the named state that says why and, for a state that carries one, its detail in
+// state_details.
 
 // The named states of a volume answer that is not of the netflow measure, or carries no figure.
 const (
 	// StateNetflowNotConfigured: no active provider of flow_record, or the capture configuration
 	// in force names no interface or has the export disabled.
 	StateNetflowNotConfigured = netflow.CaptureNotConfigured
-	// StateObservationPointNotExported: the configuration captures on two or more interfaces, so no
-	// record says where it was observed.
-	StateObservationPointNotExported = netflow.CaptureObservationPointHidden
-	// StateCaptureConfigurationUnknown: the configuration could not be read, lies between two reads
-	// that differ, or the stream contradicted it.
+	// StateCaptureConfigurationUnknown: the configuration could not be read, or lies between two reads
+	// that differ.
 	StateCaptureConfigurationUnknown = netflow.CaptureUnknown
-	// StateInterfaceIndexUnmapped: the configuration names one interface whose kernel index could
-	// not be mapped.
-	StateInterfaceIndexUnmapped = netflow.CaptureIndexUnmapped
 	// StateNetflowNotCoveringWindow: the window mixes intervals in different states, or the answer
-	// counts a connection with a direction the Observation Point does not cover.
+	// counts a connection that is not covered.
 	StateNetflowNotCoveringWindow = "netflow_not_covering_window"
 	// StateNetflowNotServedByType: the widget built a figure the core did not read under netflow,
 	// so its answer cannot be given in that measure. opnview's own term: no product names it.
@@ -188,8 +183,8 @@ func (r *Request) ServeMeasured(serve ServeFunc) (any, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
-	// coverageFallback says the state is the run's own judgment, not the window's: the window has one
-	// Observation Point throughout, and a connection the answer counts is not covered.
+	// coverageFallback says the state is the run's own judgment, not the window's: the window has a
+	// readable, enabled capture configuration throughout, and a connection the answer counts is not covered.
 	coverageFallback := false
 	if state == "" {
 		before := r.snapshot()
@@ -239,14 +234,11 @@ func (r *Request) ServeMeasured(serve ServeFunc) (any, bool, error) {
 
 // netflowWindow is what the request's window says of NetFlow.
 type netflowWindow struct {
-	// state is "" when one Observation Point is established throughout the window, and the named
-	// state otherwise.
+	// state is "" when a readable, enabled capture configuration is in force throughout the window, and
+	// the named state otherwise.
 	state string
 	// intervalStates are the capture states of the intervals the window meets, in name order.
 	intervalStates []string
-	// capturedInterfaces is the most interfaces a configuration in force over the window captures on,
-	// counted where the window's intervals are observation_point_not_exported.
-	capturedInterfaces int64
 }
 
 // NetflowWindowState says whether NetFlow can answer the request's window, read once per request:
@@ -273,24 +265,19 @@ func (r *Request) netflowWindowRead() (netflowWindow, error) {
 }
 
 // NetflowState records a named state of a volume answer and, for a state that carries one, its
-// detail (state_details): the interfaces captured for observation_point_not_exported, the interval
-// states met for netflow_not_covering_window. coverage says the state is the run's judgment that a
-// connection is not covered rather than the window's: the window then has one Observation Point
-// throughout, and its interval state is observation_point.
+// detail (state_details): the interval states met for netflow_not_covering_window. coverage says the
+// state is the run's judgment that a connection is not covered rather than the window's: the window
+// then has a readable, enabled configuration throughout, and its interval state is capture_configured.
 func (r *Request) NetflowState(state string, coverage bool) {
 	r.State(state)
 	window := netflowWindow{}
 	if r.netflowWindow != nil {
 		window = *r.netflowWindow
 	}
-	switch state {
-	case StateObservationPointNotExported:
-		captured := window.capturedInterfaces
-		r.StateDetail(state, envelope.StateDetail{CapturedInterfaces: &captured})
-	case StateNetflowNotCoveringWindow:
+	if state == StateNetflowNotCoveringWindow {
 		states := window.intervalStates
 		if coverage && len(states) == 0 {
-			states = []string{netflow.CaptureObservationPoint}
+			states = []string{netflow.CaptureConfigured}
 		}
 		r.StateDetail(state, envelope.StateDetail{IntervalStates: append([]string{}, states...)})
 	}
@@ -304,10 +291,9 @@ func (r *Request) StateDetail(state string, detail envelope.StateDetail) {
 	r.Response.StateDetails[state] = detail
 }
 
-// readNetflowWindow reads whether NetFlow can answer the request's window: "" when one Observation
-// Point is established throughout it, and the named state otherwise -- the interval state when the
-// window holds one, netflow_not_covering_window when it mixes several -- with the interval states met
-// and the interfaces captured.
+// readNetflowWindow reads whether NetFlow can answer the request's window: "" when a readable, enabled
+// configuration is in force throughout it, and the named state otherwise -- the interval state when the
+// window holds one, netflow_not_covering_window when it mixes several -- with the interval states met.
 func (r *Request) readNetflowWindow() (netflowWindow, error) {
 	var providers []int64
 	err := r.Db.WidgetRows(r.Ctx, "widget_flow_record_providers", vocab.Period{}, nil,
@@ -330,43 +316,23 @@ func (r *Request) readNetflowWindow() (netflowWindow, error) {
 		window = envelope.Interval{From: r.Now, To: r.Now + 1}
 	}
 	states := map[string]bool{}
-	var captured int64
 	for _, provider := range providers {
-		configurations, conditions, err := r.captureHistory(provider, window)
+		configurations, err := r.captureHistory(provider)
 		if err != nil {
 			return netflowWindow{}, err
 		}
-		for _, at := range netflow.CaptureChangePoints(configurations, conditions, window.From, window.To) {
-			state, interfaces, _ := netflow.CaptureStateAt(configurations, conditions, at)
+		for _, at := range netflow.CaptureChangePoints(configurations, window.From, window.To) {
+			state, _ := netflow.CaptureStateAt(configurations, at)
 			states[state] = true
-			if state == netflow.CaptureObservationPointHidden && interfaces > captured {
-				captured = interfaces
-			}
-		}
-		if states[netflow.CaptureObservationPoint] {
-			// The index mapping is the collector's, held in memory; what it decided is on the records
-			// stored. One captured interface whose records were all stored unmapped is that state; some
-			// mapped and some not mixes two states over the window.
-			var unmapped, mapped int64
-			if _, err := r.Db.WidgetRow(r.Ctx, "widget_flow_record_unmapped", map[string]any{
-				"provider_id": provider, "from": window.From, "to": window.To}, &unmapped, &mapped); err != nil {
-				return netflowWindow{}, err
-			}
-			if unmapped > 0 {
-				states[netflow.CaptureIndexUnmapped] = true
-				if mapped == 0 {
-					delete(states, netflow.CaptureObservationPoint)
-				}
-			}
 		}
 	}
-	read := netflowWindow{intervalStates: SortedNames(states), capturedInterfaces: captured}
+	read := netflowWindow{intervalStates: SortedNames(states)}
 	switch {
 	case len(providers) > 1:
-		// One active provider of an exclusive kind is the rule (store, kinds.go); two would make two
-		// Observation Points, which the join never has.
+		// One active provider of an exclusive kind is the rule (store, kinds.go); two would count every
+		// direction twice.
 		read.state = StateNetflowNotCoveringWindow
-	case len(states) == 1 && states[netflow.CaptureObservationPoint]:
+	case len(states) == 1 && states[netflow.CaptureConfigured]:
 		read.state = ""
 	case len(states) == 1:
 		read.state = read.intervalStates[0]
@@ -376,10 +342,8 @@ func (r *Request) readNetflowWindow() (netflowWindow, error) {
 	return read, nil
 }
 
-// captureHistory reads a provider's capture configurations and the stream conditions meeting a
-// window.
-func (r *Request) captureHistory(provider int64, window envelope.Interval) ([]netflow.CaptureConfiguration,
-	[]netflow.FlowRecordCondition, error) {
+// captureHistory reads a provider's capture configurations.
+func (r *Request) captureHistory(provider int64) ([]netflow.CaptureConfiguration, error) {
 	var configurations []netflow.CaptureConfiguration
 	byID := map[int64]int{}
 	parameters := map[string]any{"provider_id": provider}
@@ -400,7 +364,7 @@ func (r *Request) captureHistory(provider int64, window envelope.Interval) ([]ne
 			return nil
 		})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	err = r.Db.WidgetRows(r.Ctx, "widget_capture_interfaces", vocab.Period{}, parameters,
 		func(row reads.RowScanner) error {
@@ -417,25 +381,7 @@ func (r *Request) captureHistory(provider int64, window envelope.Interval) ([]ne
 			}
 			return nil
 		})
-	if err != nil {
-		return nil, nil, err
-	}
-	var conditions []netflow.FlowRecordCondition
-	err = r.Db.WidgetRows(r.Ctx, "widget_flow_record_conditions", vocab.Period{},
-		map[string]any{"provider_id": provider, "from": window.From, "to": window.To},
-		func(row reads.RowScanner) error {
-			var (
-				condition netflow.FlowRecordCondition
-				resolved  reads.NullInt64
-			)
-			if err := row.Scan(&condition.ObservedAt, &resolved); err != nil {
-				return err
-			}
-			condition.ResolvedAt = NullableNumber(resolved)
-			conditions = append(conditions, condition)
-			return nil
-		})
-	return configurations, conditions, err
+	return configurations, err
 }
 
 // responseSnapshot is what a run of a widget may change of the response and the request: restored

@@ -836,7 +836,7 @@ says so beside its measure.
 
 | Function | What it answers |
 |---|---|
-| `volume(figures)` | The Volume of summable figures, in their own measure: `{measure, lower_bound, bytes, allowed_bytes, blocked_bytes, unknown_bytes, connections, allowed_connections, blocked_connections, unknown_connections}`, and for a netflow Volume its packets and its coverage, whole and per part: `packets`, `allowed_packets`, `blocked_packets`, `unknown_packets`, `coverage`, `allowed_coverage`, `blocked_coverage`, `unknown_coverage`, each coverage `{measured, partial, unmeasured, not_joinable, direction_states}` (`docs/widget-api.md`, *Volumes and the observation-point limit*). |
+| `volume(figures)` | The Volume of summable figures, in their own measure: `{measure, lower_bound, bytes, allowed_bytes, blocked_bytes, unknown_bytes, connections, allowed_connections, blocked_connections, unknown_connections}`, and for a netflow Volume its packets and its coverage, whole and per part: `packets`, `allowed_packets`, `blocked_packets`, `unknown_packets`, `coverage`, `allowed_coverage`, `blocked_coverage`, `unknown_coverage`, each coverage `{measured, partial, unmeasured, capture_not_known, direction_states, counted_copy}` (`docs/widget-api.md`, *Volumes and the observation-point limit*). |
 | `logged(figures)` | The same as `volume`: the name it had while every figure was logged. |
 | `count(value)` | A count of the connections or records the answer's figures count, `{measure, lower_bound: true, value}`, in the measure the request is answered under. |
 | `byteCount(figures)` | The Count of the figures' bytes, in their measure. |
@@ -855,11 +855,11 @@ says so beside its measure.
 
 Summable figures are `{bytes, allowed_bytes, blocked_bytes, unknown_bytes, allowed_connections,
 blocked_connections, unknown_connections}`; a member left out is `0`. Figures of the netflow measure
-also carry `measure: "netflow"` and the thirty-six columns of `netflow_parts` (`docs/data-model.md`,
+also carry `measure: "netflow"` and the fifty-four columns of `netflow_parts` (`docs/data-model.md`,
 *NetFlow volumes*): for each part `allowed`, `blocked` and `unknown`, `<part>_packets`,
 `<part>_measured_connections`, `<part>_partial_connections`, `<part>_unmeasured_connections`,
-`<part>_not_joinable_connections` and `<part>_direction_<state>_connections` for each direction
-state. A script never needs to name them: `host.figures.add` and `host.figures.zero` keep them, and a
+`<part>_capture_not_known_connections`, `<part>_direction_<state>_connections` for each of the twelve
+direction states, and `<part>_counted_copy_connections`. A script never needs to name them: `host.figures.add` and `host.figures.zero` keep them, and a
 Volume handed back is read as its figures, its parts included.
 
 #### `host.volume`
@@ -1109,7 +1109,7 @@ chart whose series each degrade on their own.
 | Function | What it answers |
 |---|---|
 | `traffic(filter, width)` | The traffic of the window per bucket start and traffic direction, in the measure the request is answered under: `{buckets, covered}`, `buckets` mapping a bucket start to `{direction: summable figures}` and `covered` the interval read, `null` for none. `filter` is `{interfaces, client_id, rule_id, asn, country, site, netflow}`, each `null` or left out for no restriction; `netflow: true` reads the netflow measure whatever the request is answered under, for a series whose measure is `netflow_bytes` or `netflow_packets`. Whole-hour buckets the flows no longer hold are read from the 1 h slots when only interfaces restrict the series, and the answer then carries the state `series_read_from_hour_slots_beyond_flow_horizon`. |
-| `netflowState()` | `null` when NetFlow can answer the window -- one Observation Point established throughout it -- and otherwise the named state, which the answer then carries: a series of the netflow measure then carries no figure. |
+| `netflowState()` | `null` when NetFlow can answer the window -- a readable capture configuration with the export enabled throughout it -- and otherwise the named state, which the answer then carries: a series of the netflow measure then carries no figure. |
 | `providers()` | Every registered provider with its availability and condition, as `host.envelope.availability()` writes one. |
 | `kindCondition(availability, kind)` | The condition of a provider kind among an availability list: its active providers' best. |
 | `bind(kinds)` | Adds every registered provider of those kinds to the response's availability: for a widget whose kinds depend on its parameters, and which declares none. |
@@ -1163,9 +1163,8 @@ withheld whole -- condition `withheld_by_aggregate_mode`, `data` null, `"data"` 
 ### Volume figures and their measure
 
 A volume figure is of one **measure**: `logged`, what the filter log recorded, or `netflow`, the bytes
-and packets the firewall's NetFlow export reported for the same logged connections at the single
-Observation Point its capture configuration establishes (`docs/widget-api.md`, *Volumes and the
-observation-point limit*). The two are never summed, and an answer carries one of them.
+and packets the firewall's NetFlow export reported for the same logged connections, each direction
+counted once (`docs/widget-api.md`, *Volumes and the observation-point limit*). The two are never summed, and an answer carries one of them.
 
 **The choice is the core's, and a widget names no measure.** A widget serving Volume or byte Count
 figures declares `"volumes": true` in its manifest, and that is all:
@@ -1175,7 +1174,7 @@ figures declares `"volumes": true` in its manifest, and that is all:
   tries);
 - the core decides, from what is stored, whether NetFlow can answer the window, runs the script in the
   measure chosen, and judges what it built: `best_available` answers `netflow` only when every
-  connection the answer counts has every direction covered at the Observation Point, and falls back
+  connection the answer counts is covered, under a readable configuration throughout, and falls back
   to `logged` -- byte for byte what `volume_measure = logged` answers -- with the named state that says
   why, and that state's detail in `state_details` when it carries one;
 - every figure the core hands the script is already of that measure: `host.volume`, `host.clients`,
@@ -1440,7 +1439,7 @@ One filter-log record, decoded and normalised.
 <!-- contract:flow_record -->
 ### `flow_record`
 
-Flow records an exporter sends, received by a push entry with no script, and the exporter's capture configuration, read by polling. One provider is active at a time. The core establishes each record's Observation Point from the configuration in force at its start, never from the record.
+Flow records an exporter sends, received by a push entry with no script, and the exporter's capture configuration, read by polling. One provider is active at a time. The core joins each record from its own interface indexes, and reads coverage from the configuration, never from the records.
 
 | Function | Called with | Returns | When |
 |---|---|---|---|
@@ -1488,10 +1487,13 @@ One interface the exporter captures on.
 | `identifier` | text | yes |  | The interface's configuration identifier, as discovery names it. |
 | `ingress` | boolean | yes |  | Whether packets received on the interface are accounted. |
 | `egress` | boolean | yes |  | Whether packets sent on the interface are accounted. |
+| `exported` | text | no | `yes`, `no`, `unknown` | Whether the exporter actually exports what is configured for the interface, for each captured direction: yes, no (with not_exported_reason), or unknown when it could not be established. Absent is unknown. |
+| `not_exported_reason` | text | no |  | Why the interface is not exported, exactly when exported is no: the provider's own closed name for it. |
+| `parent_of` | text_list | no |  | The identifiers of the interfaces whose received packets this interface's exporter also exports with this interface as the receiving interface. Absent is none. |
 
 #### `flow_record_record`
 
-One flow record as the exporter sent it, filled from the push entry's Information Element mapping. Its identity and its Observation Point are the core's.
+One flow record as the exporter sent it, filled from the push entry's Information Element mapping. Its identity, and what its interface indexes name, are the core's.
 
 | Field | Type | Required | Unit or values | Description |
 |---|---|---|---|---|
@@ -2059,15 +2061,17 @@ firewall and `opnview` is invisible. Every dataset a push entry feeds therefore 
 `loss_detectable`: true when every transport the entry accepts detects its loss -- TCP syslog,
 NetFlow -- and false when it accepts UDP syslog.
 
-**A NetFlow exporter whose counters interleave.** A sequence number that goes backwards shows that
-several counters share one observation domain; from then on no gap is asserted for that exporter, the
-listener's catalogue entry carries the flag `netflow_sequence_interleaved`, and an entry of a core kind
-is told of it. OPNsense's export is such an exporter as soon as two interfaces are captured (survey,
-*Push sources*, S11). The stream is followed afresh when the `flow_record` provider's capture
-configuration changes, or is read again after such a condition; and a gap the sequence numbers show is
-recorded for a `flow_record` entry only while its configuration names exactly one captured interface
--- otherwise it is counted as `sequence_gap_not_asserted`, and the records of that interval say
-`loss_detectable` 0.
+**A NetFlow exporter running several counters.** One observation domain may carry several sequence
+counters -- OPNsense runs one per exporting interface behind one forwarder (survey, *Push sources*,
+S11). The decoder follows several: a datagram continues the counter expecting its number, or opens
+one. A `netflow_sequence_gap` is asserted only once more counters are open than the exporter runs,
+which the `flow_record` provider's capture configuration says -- the interfaces it reports exporting
+-- and the core passes to the decoder after every read; a decoder told nothing assumes one counter.
+With that number unknown no gap is asserted: it is counted as `sequence_gap_not_asserted`, and the
+records of that interval say `loss_detectable` 0. The counters are followed afresh when the
+configuration changes, and when the exporter's uptime goes backwards -- a restart, which the decoder
+tells the subscribers as the condition `netflow_exporter_restarted`, and after which the core reads
+the index map afresh before it maps the next record.
 
 | Bound | Value |
 |---|---|
@@ -2133,8 +2137,10 @@ under *Kinds*):
   `sourceIPv4Address` or `sourceIPv6Address` into `src_address`, `ingressInterface` into
   `ingress_interface`, `octetDeltaCount` into `octets`, and so on (`plugins/netflow/plugin.json`);
 - **a polled function**, `capture`, which reads the exporter's **capture configuration** through the
-  broker -- every interface it captures on, by its OPNsense identifier, and whether ingress and egress
-  are captured -- and the active timeout. A read that fails answers its `error` with the `result`
+  broker -- every interface it captures on, by its OPNsense identifier, whether ingress and egress
+  are captured, whether each is actually exported (`exported`, with `not_exported_reason` when it is
+  not), and the interfaces whose received packets its exporter also exports as the receiving interface
+  (`parent_of`) -- and the active timeout. A read that fails answers its `error` with the `result`
   naming what the firewall answered: `opnview` records the configuration as unreadable, never as empty.
 
 **What the core adds, which no provider fills.**
@@ -2143,20 +2149,16 @@ under *Kinds*):
   the record's place in it. A datagram delivered twice stores its records once; two records identical
   in every field of one datagram are two rows. Two datagrams identical octet for octet are one delivery,
   the one case the identity cannot tell apart.
-- **The Observation Point** (RFC 7011), at reception, from the capture configuration in force at the
-  record's start -- never from the record: exactly one captured interface, mapped to its kernel index
-  through `interfaces_info` (survey, *Push sources*, S6), is every record's Observation Point. With none,
-  with two or more, with a configuration that could not be read, between two reads that differ, or
-  while the exporter's sequence numbers contradict a one-interface configuration, the record is stored
-  with none and is never joined; its state names why (`netflow_not_configured`,
-  `observation_point_not_exported` with the count, `capture_configuration_unknown`,
-  `interface_index_unmapped`).
-- **The direction at it**: egress when the interface captures egress only; otherwise ingress when the
-  record's `ingress_interface` is the interface's index, else egress. `egress_interface` never decides
-  it.
-- **The join** of each record with an Observation Point to the filter-log leg logged on that interface,
-  and each logged connection's **measured volume**, the `netflow` measure (`docs/data-model.md`,
-  *NetFlow volumes*).
+- **What the two indexes name**, at reception, with the index map in force -- `interfaces_info` read
+  through the broker (survey, *Push sources*, S6), afresh after the exporter restarted: an interface,
+  index 0 (`no_receiving_interface`), the loopback's index (`local_delivery`, S6b) or an index the map
+  does not hold (`unmapped`). Nothing is re-mapped later. No Observation Point is assigned: the
+  exporter sends none.
+- **The join** of each record, from its own indexes, to the filter-log leg they name; its
+  classification as a translated or a parent copy when it joins none; and each logged connection's
+  **measured volume**, the `netflow` measure, each direction counted once, from the configuration's
+  `exported` and `parent_of` (`docs/data-model.md`, *NetFlow volumes*). Records are never
+  deduplicated by content.
 
 **Adding a second exporter is adding its directory.** A plugin directory under `<data-dir>/plugins/`
 with a manifest declaring a `flow_record` provider, an endpoint its `capture` reads, a push entry with
@@ -2424,10 +2426,11 @@ test("each message with an event is a row, the others are skipped", function (t)
 
 ### A NetFlow subscriber
 
-`example_flows` keeps the volume of every IPv4 and IPv6 flow record an exporter sends. A connection
-crossing two captured interfaces is exported once per interface, as identical records whose interface
-is not exported (survey, *Push sources*, S11), so **a sum of this table across interfaces counts such a
-connection once per interface**. Traffic inside one interface's network never
+`example_flows` keeps the volume of every IPv4 and IPv6 flow record an exporter sends. A packet can be
+exported more than once -- by the node of the interface it arrived on, in its translated form by the
+node of the interface it left by, again by its VLAN's parent's node (survey, *Push sources*, S5 and
+S11) -- so **a sum of this table counts such packets once per copy**; the core's `flow_record` names
+each copy, and a plugin's own table does not. Traffic inside one interface's network never
 reaches the exporter at all.
 
 ```json path=example_flows/plugin.json

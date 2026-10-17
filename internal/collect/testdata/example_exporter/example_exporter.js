@@ -1,6 +1,8 @@
 // A second implementation of the flow_record kind, which exists only for the test proving that an
 // exporter is added by its directory alone: it reads its capture configuration from an endpoint of its
-// own, in a shape of its own, and maps its records from Information Elements in an order of its own.
+// own, in a shape of its own -- whether each point exports, and for which other interfaces it also
+// receives, which it reports as exported and parent_of -- and maps its records from Information Elements in
+// an order of its own.
 
 function readState(host) {
   var result = { probe: "export_state", state: "unavailable", outcome: "request_not_made" };
@@ -41,7 +43,15 @@ exports.flow_record = {
     var capture = {
       enabled: read.body.running === true,
       interfaces: read.body.points.map(function (point) {
-        return { identifier: point.name, ingress: point.receive === true, egress: point.send === true };
+        var captured = { identifier: point.name, ingress: point.receive === true, egress: point.send === true,
+          exported: point.exported ? "yes" : "no" };
+        if (!point.exported) {
+          captured.not_exported_reason = "not_sending";
+        }
+        if (Array.isArray(point.also_received_for)) {
+          captured.parent_of = point.also_received_for;
+        }
+        return captured;
       })
     };
     if (typeof read.body.active_timeout === "number") {
