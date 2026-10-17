@@ -449,7 +449,6 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/store/storetest` — what the store's tests share: a database of its own for each test, and the test network.
 - `internal/store/vocab` — the store's closed vocabularies and row types.
 - `internal/suffixlist` — the Public Suffix List format, and a name's registrable domain.
-- `internal/testorder` — a package's longest tests started first, from its TestMain.
 - `internal/testtiming` — where the everyday suite's time goes, per package, recorded while a CI-only switch is on.
 - `internal/web` — the HTTP core: the server, the route table, sessions and CSRF, the layout, the themes, the string catalogue and the surfaces' seam.
 - `internal/web/messages` — the catalogue keys the core chooses, and the keys composed from a registry row.

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/providertest"
-	"github.com/NaejEL/opnview/internal/testorder"
 )
 
 // TestEveryFixtureSaysInItsOwnFileThatItIsSynthesisedAndNotACapture is the honesty
@@ -107,7 +106,7 @@ func readSurveyDocument(t *testing.T) string {
 	return readTextFile(t, "../../docs/opnsense-api-survey.md")
 }
 
-// TestMain sets a non-UTC zone for every test in this package, and starts the longest tests first.
+// TestMain sets a non-UTC zone for every test in this package.
 //
 // It is here as well as in internal/decode, and deliberately not only there. Normalisation is
 // where a host zone would be read by accident, and that package tests it; but the collection
@@ -130,23 +129,7 @@ func TestMain(m *testing.M) {
 		panic("collect_test: the zone database does not carry Australia/Sydney: " + err.Error())
 	}
 	time.Local = location
-	if err := testorder.StartFirst(m, longestTests...); err != nil {
-		panic("collect_test: " + err.Error())
-	}
 	os.Exit(m.Run())
-}
-
-// longestTests are this package's longest tests, longest first, and TestMain starts them before
-// every other (internal/testorder says why). Each is a single database's sequence of steps that
-// cannot be split; started in source order, the first of them began 7.7 s into a 24 s run of
-// this package alone and decided its wall time. Measured on 16 October 2026 on 16 CPUs with
-// go test -json, the package alone: 16.3, 8.1, 7.4, 4.0 and 3.7 s.
-var longestTests = []string{
-	"TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce",
-	"TestASecondExporterIsAddedByItsDirectoryAlone",
-	"TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading",
-	"TestTheMeasuresAreCountedOnceAndNeverSummed",
-	"TestNoCodeReadsTheAvailabilityDetail",
 }
 
 // readTextFile returns a file's contents.

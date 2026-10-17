@@ -170,7 +170,28 @@ fail() {
     printf -- '  FAIL %s\n' "$1" >&2
 }
 
+# EVERY SECTION IS TIMED (Phase E decision 8, 17 October 2026): section closes the one before it
+# and prints its wall time, and the table at the end lists every section, slowest first, so a
+# run that is cut short still says where its time went, section by section, in the output it had
+# written so far. What runs before the first section -- the programs' build, the databases'
+# removal -- is timed as the preamble.
+SECTION_NAME='preamble: the programs under ci/, and the declared databases dropped'
+SECTION_BEGUN="$(date +%s%N)"
+RUN_BEGUN="$SECTION_BEGUN"
+SECTION_TIMES=''
+close_section() {
+    local now elapsed_ms
+    now="$(date +%s%N)"
+    elapsed_ms=$(( ( now - SECTION_BEGUN ) / 1000000 ))
+    printf -- '   -- %d.%03d s (%d s into the run)\n' $(( elapsed_ms / 1000 )) $(( elapsed_ms % 1000 )) \
+        $(( ( now - RUN_BEGUN ) / 1000000000 ))
+    SECTION_TIMES="$SECTION_TIMES$(printf -- '%10d.%03d s  %s' $(( elapsed_ms / 1000 )) $(( elapsed_ms % 1000 )) "$SECTION_NAME")
+"
+    SECTION_BEGUN="$now"
+}
 section() {
+    close_section
+    SECTION_NAME="$1"
     printf -- '\n== %s\n' "$1"
 }
 
@@ -262,16 +283,26 @@ DECLARED_DATABASES=("$MAIN_DB" "$REPEAT_DB" "$ALT_DB" "$PURGE_DB" "$UNLIMITED_DB
     "$RECLASSIFY_DB" "$RESTORED_DB")
 
 # drop_database <name> — one database, and the read role the store creates for it
-# (internal/store/sqldb/readers.go names it <database>_reader), each by its exact name.
+# (internal/store/sqldb/readers.go names it <database>_reader), each by its exact name. The role
+# is dropped when no other database still holds a grant to it; remove_declared_databases below
+# drops every declared role again once every declared database is gone.
 drop_database() {
     admin "DROP DATABASE IF EXISTS \"$1\" WITH (FORCE);" > /dev/null
-    admin "DROP ROLE IF EXISTS \"$1_reader\";" > /dev/null
+    admin "DROP ROLE IF EXISTS \"$1_reader\";" > /dev/null 2>&1 || :
 }
 
+# Every database first, then every read role again: a role cannot be dropped while any database
+# still holds a privilege granted to it, and a copy of a database carries the grants of the
+# original's role -- the backup restored for P-AC22 carries schema_checks_main_reader's -- so a
+# role whose database went first could outlive the run when its copy is dropped after it (found
+# on 17 October 2026: schema_checks_main_reader and schema_checks_scale_reader survived runs).
 remove_declared_databases() {
     local db
     for db in "${DECLARED_DATABASES[@]}"; do
         drop_database "$db"
+    done
+    for db in "${DECLARED_DATABASES[@]}"; do
+        admin "DROP ROLE IF EXISTS \"${db}_reader\";" > /dev/null
     done
 }
 
@@ -573,10 +604,10 @@ printf -- 'server          : %s\n' "$(admin 'SHOW server_version;')"
 printf -- 'timescaledb     : %s\n' "$(admin "SELECT default_version FROM pg_available_extensions WHERE name = 'timescaledb';")"
 
 # The programs the checks read plans and reference rows with, find the statements files with,
-# and create, seed and purge the plugins' tables with, built once.
+# create, seed and purge the plugins' tables with, and time the widgets with, built once.
 mkdir -p "$WORK/bin"
 if ! (cd "$REPO_ROOT" && go build -o "$WORK/bin/" ./ci/planjson ./ci/referencerows ./ci/statementfiles \
-        ./ci/plugintables); then
+        ./ci/plugintables ./ci/widgetbudget); then
     printf -- 'schema-checks: the programs under ci/ the checks run do not build\n' >&2
     exit 1
 fi
@@ -4279,17 +4310,31 @@ section 'S5B-AC18 — every served widget type answers within its response budge
 # store, as the product does, which only reads it. C-AC14 adds, on the 1 000 000-row seed,
 # the live part of a response -- the current rates and the rolling strip -- whose median is
 # held to 100 ms.
+#
+# THE TWO SEEDS ARE TIMED SIDE BY SIDE (Phase E decision 8, 17 October 2026): each is its own
+# database and its own process, and neither reads the other, so the 100 000-row seed's timing no
+# longer waits for the 1 000 000-row one's. The program is built once, with the others under ci/,
+# rather than compiled by go run for each seed. Each seed's output is printed in one block once
+# both have ended, the 100 000-row one first.
 budget_seed() {
     local db="$1" label="$2" day="$3" month="$4" live="${5:-0}"
-    if (cd "$REPO_ROOT" && go run ./ci/widgetbudget -database "$(dsn "$db")" -now "$NOW" -label "$label" \
-        -budget-24h "$day" -budget-30d "$month" -budget-live "$live"); then
+    (cd "$REPO_ROOT" && "$WORK/bin/widgetbudget" -database "$(dsn "$db")" -now "$NOW" -label "$label" \
+        -budget-24h "$day" -budget-30d "$month" -budget-live "$live") > "$WORK/budget_$label.txt" 2>&1
+}
+budget_seed "$MAIN_DB" 100k 250ms 500ms &
+BUDGET_PID_MAIN=$!
+budget_seed "$SCALE_DB" 1m 1s 2s 100ms &
+BUDGET_PID_SCALE=$!
+for budget in "100k:$BUDGET_PID_MAIN" "1m:$BUDGET_PID_SCALE"; do
+    label="${budget%%:*}"
+    if wait "${budget#*:}"; then
+        cat "$WORK/budget_$label.txt"
         pass "S5B-AC18 every served type answers within its budget on the $label seed"
     else
+        cat "$WORK/budget_$label.txt"
         fail "S5B-AC18 a served type is over its response budget on the $label seed"
     fi
-}
-budget_seed "$MAIN_DB" 100k 250ms 500ms
-budget_seed "$SCALE_DB" 1m 1s 2s 100ms
+done
 
 # ===========================================================================
 section 'S5B-AC35 — the wall time of ReclassifyEverything at the 1 000 000-row seed'
@@ -5270,6 +5315,11 @@ else
 fi
 
 # ===========================================================================
+close_section
+printf -- '\n== the sections by wall time, slowest first\n'
+printf -- '%s' "$SECTION_TIMES" | sort -rn
+RUN_ELAPSED_MS=$(( ( $(date +%s%N) - RUN_BEGUN ) / 1000000 ))
+printf -- '-- schema checks wall time: %d.%03d s\n' $(( RUN_ELAPSED_MS / 1000 )) $(( RUN_ELAPSED_MS % 1000 ))
 printf -- '\n==========================================================\n'
 printf -- 'checks passed : %s\n' "$PASS_COUNT"
 printf -- 'checks failed : %s\n' "$FAIL_COUNT"

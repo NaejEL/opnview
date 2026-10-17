@@ -68,18 +68,41 @@ TREE_COPY=/tmp/opnview-checks-tree
 # and the run then fails with a message naming the limit. go test's own -timeout is the test
 # budget, so a test binary that hangs is stopped sooner still.
 CHECKS_HARD_LIMIT_SECONDS=90
+
+# THE BACKGROUND STEP'S LOG, at one fixed path that the limited run writes and this wrapper reads
+# (Phase E decision 8, 17 October 2026). ci/mover's build, vet and test run in the background and
+# their output is held until they end; when the hard limit stops the run first, the wrapper prints
+# what they had written so far and how long they ran, which mover.begun and mover.status say. The
+# budget self-test's run starts no background step and leaves the directory alone. The directory
+# is created and removed by this exact path, by the wrapper alone.
+CHECKS_STEPS_DIR=/tmp/opnview-checks-steps
+
 if [ -z "${OPNVIEW_CHECKS_UNDER_LIMIT:-}" ]; then
+  if [ -z "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
+    rm -rf -- "$CHECKS_STEPS_DIR"
+    mkdir -p "$CHECKS_STEPS_DIR"
+  fi
   OPNVIEW_CHECKS_UNDER_LIMIT=1 timeout --kill-after=5 "$CHECKS_HARD_LIMIT_SECONDS" bash "${BASH_SOURCE[0]}" "$@"
   limited_status=$?
   if [ "$limited_status" -eq 124 ] || [ "$limited_status" -eq 137 ]; then
     # The stopped run's own clean-up may not have run, so the copy is removed by its exact path.
     if [ -z "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
-      rm -rf -- "$TREE_COPY"
+      if [ -f "$CHECKS_STEPS_DIR/mover.begun" ] && [ ! -f "$CHECKS_STEPS_DIR/mover.status" ]; then
+        mover_elapsed_ms=$(( ( $(date +%s%N) - $(cat "$CHECKS_STEPS_DIR/mover.begun") ) / 1000000 ))
+        printf -- '== ci/mover: UNFINISHED at the hard limit, after %d.%03d s; its output so far:\n' \
+          $(( mover_elapsed_ms / 1000 )) $(( mover_elapsed_ms % 1000 ))
+        cat "$CHECKS_STEPS_DIR/mover.log" 2> /dev/null
+        printf -- '== end of the partial output of ci/mover\n'
+      fi
+      rm -rf -- "$TREE_COPY" "$CHECKS_STEPS_DIR"
     fi
     printf -- 'checks: STOPPED at the hard limit of %d s for the whole run (test budget: %d s).\n' \
       "$CHECKS_HARD_LIMIT_SECONDS" "$TEST_BUDGET_SECONDS" >&2
     printf -- 'checks: FAILED\n' >&2
     exit 1
+  fi
+  if [ -z "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
+    rm -rf -- "$CHECKS_STEPS_DIR"
   fi
   exit "$limited_status"
 fi
@@ -151,11 +174,15 @@ fi
 
 test_started="$(date +%s%N)"
 # The move tooling, its own module, is built, vetted and tested inside the timed span, beside the
-# suite rather than after it; its output is printed once the suite's is.
-mover_log="$(mktemp)"
+# suite rather than after it; its output is printed once the suite's is, and it is written to the
+# fixed log the wrapper above reads should the hard limit stop the run first.
+mover_log="$CHECKS_STEPS_DIR/mover.log"
 mover_pid=''
 if [ -z "${OPNVIEW_BUDGET_PROBE_ONLY:-}" ]; then
-  (cd ci/mover && go build ./... && go vet ./... && go test -count=1 -timeout "${TEST_BUDGET_SECONDS}s" ./...) > "$mover_log" 2>&1 &
+  mkdir -p "$CHECKS_STEPS_DIR"
+  date +%s%N > "$CHECKS_STEPS_DIR/mover.begun"
+  ( (cd ci/mover && go build ./... && go vet ./... && go test -count=1 -timeout "${TEST_BUDGET_SECONDS}s" ./...) > "$mover_log" 2>&1
+    status=$?; echo "$status" > "$CHECKS_STEPS_DIR/mover.status"; exit "$status" ) &
   mover_pid=$!
 fi
 printf -- '== go test -count=1 -timeout %ds %s\n' "$TEST_BUDGET_SECONDS" "${test_packages[*]}"
@@ -168,7 +195,6 @@ if [ -n "$mover_pid" ]; then
   cat "$mover_log"
   report 'ci/mover' "$mover_status"
 fi
-rm -f -- "$mover_log"
 test_elapsed_ms=$(( ( $(date +%s%N) - test_started ) / 1000000 ))
 
 if [ -n "$breakdown_dir" ]; then

@@ -35,7 +35,9 @@
 # targets, the budget self-test (most of which is its probe's sleep) and the schema
 # checks start in the background, and so does the non-race go test run, while the
 # -race run and then the broker budgets run in the foreground; each background step's
-# output is held and printed, in one block, when it ends.
+# output is held and printed, in one block, when it ends. When the hard limit stops the
+# run, every step that had not ended is printed with how long it ran and, for a
+# background step, the output it had written so far (STEPS_DIR below).
 #
 # The command's own wall time has a budget, PRE_DEPLOYMENT_BUDGET_SECONDS below, and
 # exceeding it fails the run. The wall time of every step is printed at the end,
@@ -80,17 +82,61 @@ PRE_DEPLOYMENT_BUDGET_SECONDS=180
 # under coreutils timeout, which stops the run and every process it started when the limit is
 # reached, and the run then fails with a message naming the limit.
 PRE_DEPLOYMENT_HARD_LIMIT_SECONDS=240
+
+# THE STEPS' LOGS, in one fixed directory that the limited run writes and this wrapper reads (Phase E
+# decision 8, 17 October 2026). Every step started registers its id in steps.txt, its name in
+# <id>.name and its start in <id>.begun; a background step writes its output to <id>.log as it
+# comes, and every step writes <id>.status when it ends. When the hard limit stops the run, a step
+# with no status is one the limit cut short, and the wrapper prints its name, how long it ran and,
+# for a background step, the output it had written so far: without that, a step whose output is
+# held until it ends leaves nothing to say where its time went. The directory is created and
+# removed by this exact path, by the wrapper alone.
+STEPS_DIR=/tmp/opnview-pre-deployment-steps
+# The copy of the working tree the limited run makes (see below), named here so the wrapper can
+# remove it by its exact path when the limit stopped the run before its own clean-up.
+TREE_COPY=/tmp/opnview-checks-tree
+
+# report_unfinished — every step the hard limit stopped, with its elapsed time and partial output.
+report_unfinished() {
+  local id name begun elapsed_ms
+  [ -f "$STEPS_DIR/steps.txt" ] || return 0
+  while IFS= read -r id; do
+    [ -f "$STEPS_DIR/$id.status" ] && continue
+    name="$(cat "$STEPS_DIR/$id.name" 2> /dev/null)"
+    begun="$(cat "$STEPS_DIR/$id.begun" 2> /dev/null)"
+    elapsed_ms=$(( ( $(date +%s%N) - ${begun:-0} ) / 1000000 ))
+    printf -- '== %s: UNFINISHED at the hard limit, after %d.%03d s\n' "$name" \
+      $(( elapsed_ms / 1000 )) $(( elapsed_ms % 1000 ))
+    if [ -f "$STEPS_DIR/$id.log" ]; then
+      printf -- '   its output so far:\n'
+      cat "$STEPS_DIR/$id.log"
+      printf -- '== end of the partial output of %s\n' "$name"
+    else
+      printf -- '   (a foreground step: its output so far is printed above)\n'
+    fi
+  done < "$STEPS_DIR/steps.txt"
+}
+
 if [ -z "${OPNVIEW_PRE_DEPLOYMENT_UNDER_LIMIT:-}" ]; then
+  rm -rf -- "$STEPS_DIR"
+  mkdir -p "$STEPS_DIR"
   OPNVIEW_PRE_DEPLOYMENT_UNDER_LIMIT=1 timeout --kill-after=5 "$PRE_DEPLOYMENT_HARD_LIMIT_SECONDS" \
     bash "${BASH_SOURCE[0]}" "$@"
   limited_status=$?
   if [ "$limited_status" -eq 124 ] || [ "$limited_status" -eq 137 ]; then
+    report_unfinished
+    rm -rf -- "$STEPS_DIR" "$TREE_COPY"
     printf -- 'pre-deployment: STOPPED at the hard limit of %d s for the whole run (pre-deployment budget: %d s).\n' \
       "$PRE_DEPLOYMENT_HARD_LIMIT_SECONDS" "$PRE_DEPLOYMENT_BUDGET_SECONDS" >&2
     printf -- 'pre-deployment: FAILED\n' >&2
     exit 1
   fi
+  rm -rf -- "$STEPS_DIR"
   exit "$limited_status"
+fi
+if [ ! -d "$STEPS_DIR" ]; then
+  printf -- 'pre-deployment: %s does not exist; run the command, never its limited run alone\n' "$STEPS_DIR" >&2
+  exit 1
 fi
 
 # THE COMMAND RUNS ON A COPY OF THE WORKING TREE, at the path ci/checks.sh copies it to. Go keys
@@ -100,7 +146,6 @@ fi
 # path, every package the everyday suite compiled is a cache hit here. The copy is made only
 # after the data-directory guard above, which the everyday suite runs from inside its own copy
 # at this path, and it is removed by its exact path at the end.
-TREE_COPY=/tmp/opnview-checks-tree
 copy_started="$(date +%s%N)"
 rm -rf -- "$TREE_COPY"
 mkdir -p "$TREE_COPY"
@@ -121,8 +166,7 @@ PUSH_FUZZ_SECONDS=10
 
 failed=0
 started="$(date +%s%N)"
-STEPS_DIR="$(mktemp -d)"
-trap 'cd / && rm -rf -- "$STEPS_DIR" "$TREE_COPY"' EXIT
+trap 'cd / && rm -rf -- "$TREE_COPY"' EXIT
 
 # Every step's name, exit code and wall time, in the order they ended, for the table at the end.
 step_names=()
@@ -139,37 +183,55 @@ record() {
   fi
 }
 
+# register_step <id> <name> — a step in the steps directory, for the wrapper above to report should
+# the hard limit stop it.
+register_step() {
+  printf -- '%s\n' "$2" > "$STEPS_DIR/$1.name"
+  date +%s%N > "$STEPS_DIR/$1.begun"
+  printf -- '%s\n' "$1" >> "$STEPS_DIR/steps.txt"
+}
+
 # run_step <name> <command...> — a step in the foreground, its output as it comes.
+foreground_steps=0
 run_step() {
-  local name="$1" begun status
+  local name="$1" id begun status
   shift
+  foreground_steps=$(( foreground_steps + 1 ))
+  id="foreground_$foreground_steps"
+  register_step "$id" "$name"
   printf -- '== %s\n' "$name"
   begun="$(date +%s%N)"
   "$@"
   status=$?
+  echo "$status" > "$STEPS_DIR/$id.status"
   record "$name" "$status" $(( ( $(date +%s%N) - begun ) / 1000000 ))
 }
 
 # start_step <id> <name> <command...> — a step in the background, its output held until it ends.
+# Its wall time runs from its start to its own end, written when it ends, not to the moment it is
+# waited for.
 declare -A step_pid=() step_name=() step_begun=()
 start_step() {
   local id="$1" name="$2"
   shift 2
   step_name[$id]="$name"
   step_begun[$id]="$(date +%s%N)"
-  ( "$@" > "$STEPS_DIR/$id.log" 2>&1; echo $? > "$STEPS_DIR/$id.status" ) &
+  register_step "$id" "$name"
+  ( "$@" > "$STEPS_DIR/$id.log" 2>&1; status=$?; date +%s%N > "$STEPS_DIR/$id.ended"
+    echo "$status" > "$STEPS_DIR/$id.status" ) &
   step_pid[$id]=$!
   printf -- '.. %s started in the background\n' "$name"
 }
 
 # wait_step <id> — waits for a background step and prints its block.
 wait_step() {
-  local id="$1" status
+  local id="$1" status ended
   wait "${step_pid[$id]}"
   status="$(cat "$STEPS_DIR/$id.status" 2> /dev/null || echo 1)"
+  ended="$(cat "$STEPS_DIR/$id.ended" 2> /dev/null || date +%s%N)"
   printf -- '== %s\n' "${step_name[$id]}"
   cat "$STEPS_DIR/$id.log"
-  record "${step_name[$id]}" "$status" $(( ( $(date +%s%N) - ${step_begun[$id]} ) / 1000000 ))
+  record "${step_name[$id]}" "$status" $(( ( ended - ${step_begun[$id]} ) / 1000000 ))
 }
 
 # THE RACE SELECTION, first, because the two go test runs follow from it.
