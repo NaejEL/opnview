@@ -5456,3 +5456,25 @@ Each lot ends with `docker compose run --rm checks` green within 60 s. The lots 
 - the `_netflow` twin paragraph of *Volume figures and their measure*.
 
 **In code:** every comment citing the removed packages or the per-kind lists named in *Context*.
+## Live validation of 17 October 2026: findings and the orchestrator's decisions
+
+The third live run (`scratchpad/LIVE-VALIDATION-3.md`, from `live-fixes` f2eeeba) passed:
+- LV-NJ2 items 1, 2, 3 and 6, and item 4 with the shortfall explained;
+- the fixes D1, D2 and D3.
+
+These findings are decided by the orchestrator under the maintainer's instruction to deliver end to end without questions. They are not the maintainer's decisions.
+
+1. **N1, broker deadlock (fix now, core).** A plugin call and the broker's advance refresh of the same datum can wait on each other until the 2-minute script timeout:
+   - `internal/broker/broker.go` ~539/711/733;
+   - `internal/broker/schedule/schedule.go` ~365-370 and ~512.
+
+   The fix makes a refresh that finds a call in flight for the same datum share that call's result, rather than waiting for a scheduler job it is itself blocking. A test reproduces the collision with a fake clock.
+2. **N4, a gap dated two hours ahead (fix now).** The first read after start used the firewall's local time as UTC, before the offset was known. No timestamp is derived from firewall local time until the offset has been read.
+3. **N5, the first measurement pass ran before discovery (fix now).** Measurement passes wait for the first discovery.
+4. **N2, a new unmatched reason (in Lot 3, the JS join).** A NetFlow record whose logged leg falls inside a recorded filter-log gap gets its own reason, distinct from `no_logged_leg` ("pf did not log"). It means "the log for that time was not read". The name follows the existing reasons' vocabulary.
+5. **N3 (in Lot 3).** A direction whose records exist but were all `ambiguous` is not settled `missing`, which counts as covered. It takes the state that says the records were seen but could not be attributed, and it is not covered.
+6. **D5 (in Lot 3, and in classification):**
+   - The reverse direction of a connection pf blocked is not `forwarding_export_unsettled`. No reverse traffic is expected, so it takes a state saying so, and it is not counted as a coverage failure.
+   - Broadcast and multicast destinations (255.255.255.255, 224.0.0.0/4, ff00::/8) delivered to the firewall are local delivery. They are classified `this_firewall`, never `north_south`.
+7. **LV-SND on Docker Desktop.** The extra-sender setting (Q10(b), `--push-extra-senders`) is the documented answer for port proxies that rewrite the source. The README states the host-filtering requirement. The production target (Proxmox LXC with Docker Engine) keeps the source address, and needs no extra sender.
+8. **Accepted figures.** The NJ2-4 shortfall (77.0 % / 84.8 %) is explained by the 16:19–16:36 downtime. Without it the shares are 81.4 % / 98.0 %. The orchestrator accepts it, pending the maintainer's own review of the live figures.
