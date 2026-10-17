@@ -1,0 +1,19 @@
+# Overlay: serve a coverage-instrumented binary, to find code the live service never runs.
+# The counters are written to /data/coverage when the service stops cleanly; read them with
+# `docker compose run --rm dev go tool covdata percent -i /data/coverage`.
+services:
+  serve:
+    environment:
+      OPNVIEW_BUILD_FLAGS: "-cover -coverpkg=./..."
+      GOCOVERDIR: "/data/coverage"
+    command:
+      - "sh"
+      - "-c"
+      - |
+        mkdir -p /data/coverage
+        set --
+        [ -n "$$OPNVIEW_PUSH_SYSLOG_TCP" ] && set -- "$$@" --push-listen "syslog/tcp=0.0.0.0:$$OPNVIEW_PUSH_SYSLOG_TCP"
+        [ -n "$$OPNVIEW_PUSH_SYSLOG_UDP" ] && set -- "$$@" --push-listen "syslog/udp=0.0.0.0:$$OPNVIEW_PUSH_SYSLOG_UDP"
+        [ -n "$$OPNVIEW_PUSH_NETFLOW_UDP" ] && set -- "$$@" --push-listen "netflow/udp=0.0.0.0:$$OPNVIEW_PUSH_NETFLOW_UDP"
+        go build $${OPNVIEW_BUILD_FLAGS:-} -o /tmp/opnview ./cmd/opnview
+        exec /tmp/opnview --data-dir /data --database "$$OPNVIEW_DATABASE" --listen 0.0.0.0:${OPNVIEW_LISTEN} "$$@"

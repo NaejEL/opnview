@@ -95,7 +95,8 @@ services:
         [ -n "$$OPNVIEW_PUSH_SYSLOG_TCP" ] && set -- "$$@" --push-listen "syslog/tcp=0.0.0.0:$$OPNVIEW_PUSH_SYSLOG_TCP"
         [ -n "$$OPNVIEW_PUSH_SYSLOG_UDP" ] && set -- "$$@" --push-listen "syslog/udp=0.0.0.0:$$OPNVIEW_PUSH_SYSLOG_UDP"
         [ -n "$$OPNVIEW_PUSH_NETFLOW_UDP" ] && set -- "$$@" --push-listen "netflow/udp=0.0.0.0:$$OPNVIEW_PUSH_NETFLOW_UDP"
-        exec go run ./cmd/opnview --data-dir /data --database "$$OPNVIEW_DATABASE" --listen 0.0.0.0:${OPNVIEW_LISTEN} "$$@"
+        go build $${OPNVIEW_BUILD_FLAGS:-} -o /tmp/opnview ./cmd/opnview
+        exec /tmp/opnview --data-dir /data --database "$$OPNVIEW_DATABASE" --listen 0.0.0.0:${OPNVIEW_LISTEN} "$$@"
 
   # The everyday test database of the base file, declared here because serve
   # extends dev, and dev waits for it: `extends` carries that dependency with it.

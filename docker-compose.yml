@@ -173,6 +173,12 @@ services:
       - "timescaledb.license=apache"
       - "-c"
       - "max_connections=500"
+      # 1 GB of buffers, here and on db-schema-checks, which extends this service (maintainer,
+      # 17 October 2026). The image's own setting, about 4 GB each, put this 16 GB machine into
+      # swap with both instances and db-test running: the non-race Go step went from about 100 s
+      # to 209 s, and the kernel killed a VACUUM of the 1 000 000-row seed.
+      - "-c"
+      - "shared_buffers=1GB"
 
   # The schema checks' database (Phase E decision 10, 17 October 2026): configured
   # exactly as db-predeployment -- on a disk, with production durability, every
