@@ -1,0 +1,24 @@
+{
+  "format_version": 1,
+  "title": "Scoped canvases",
+  "canvases": [
+    {
+      "id": "kitchen",
+      "title": "Kitchen devices",
+      "period": "7d",
+      "scope": {
+        "interfaces": [{"kind": "interface", "by": "user_label", "value": "IoT", "label": "IoT"}],
+        "clients": [
+          {"kind": "client", "by": "hostname", "value": "fridge.example.org"},
+          {"kind": "client", "by": "mac", "value": "00:00:5e:00:53:2a"}
+        ],
+        "owners": [{"kind": "owner", "by": "display_name", "value": "Example Person"}]
+      },
+      "widgets": [
+        {"id": "ranking", "type": "client_volume_ranking", "placement": {"x": 0, "y": 0, "w": 12, "h": 6},
+         "parameters": {"period": "1h"}}
+      ]
+    },
+    {"id": "everything", "title": "Everything", "period": "30d", "widgets": []}
+  ]
+}

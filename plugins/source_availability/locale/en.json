@@ -1,0 +1,12 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.source_availability.widget.source_availability.title": "Source availability",
+    "plugin.source_availability.widget.source_availability.question": "Which of my sources is actually working, and what am I therefore not seeing?",
+    "plugin.source_availability.widget.source_availability.column.condition": "Condition",
+    "plugin.source_availability.widget.source_availability.column.outcome": "Last outcome",
+    "plugin.source_availability.widget.source_availability.column.key": "Key",
+    "plugin.source_availability.widget.source_availability.active": "active",
+    "plugin.source_availability.widget.source_availability.inactive": "inactive"
+  }
+}

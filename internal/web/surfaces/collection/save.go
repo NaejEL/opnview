@@ -10,12 +10,10 @@ import (
 	"github.com/NaejEL/opnview/internal/web/settingfields"
 )
 
-// What a save of a card checks and stores, written once for the page and its JSON equivalent
-// (api.go), so the two refuse the same inputs, in the same order, and make the same change. A
-// figure reaches these functions in seconds: the page has applied its unit, and the JSON route
-// carries seconds.
+// What a save of a card checks and stores, written once for the JSON routes (api.go). A figure reaches these functions in
+// seconds.
 
-// The fields of an edit a refusal names, independent of how the page or the JSON body spells them.
+// The fields of an edit a refusal names, independent of how the JSON body spells them.
 const (
 	editFieldInterval = "interval"
 	editFieldPageSize = "page_size"

@@ -92,6 +92,6 @@
   ],
   "script": "owner_activity.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

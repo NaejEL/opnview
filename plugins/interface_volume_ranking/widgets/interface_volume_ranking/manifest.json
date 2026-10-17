@@ -63,6 +63,6 @@
   "queries": [],
   "script": "interface_volume_ranking.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

@@ -13,9 +13,10 @@ func CoreKeys() []string {
 		KeyGeoLookupInterval, KeyPublicSuffixRefreshInterval, KeyAttributionMaxDelay, KeyCacheAnswerDelay,
 		KeyLegPairingWindow, KeyLeaseBackendFailurePassLimit, KeyHeartbeatInterval, KeyDowntimeThreshold,
 		KeyFirewallLogPageSize, KeySecurityEventPageSize, KeyDHCPLeasePageSize,
-		KeyOPNsenseBaseURL, KeyOPNsenseAPIKey, KeyOPNsenseCertificateFingerprint, KeyTheme,
+		KeyOPNsenseBaseURL, KeyOPNsenseAPIKey, KeyOPNsenseCertificateFingerprint,
 		KeyLiveInterestSeconds, KeyLiveSampleRetentionSeconds, KeyFlowRecordInterval, KeyNetflowJoinTolerance,
-		KeyFlowRecordRetention,
+		KeyFlowRecordRetention, KeyAppearancePalette, KeyAppearanceMode, KeyAppearanceLanguage,
+		KeyDashboardDefaultSeeded,
 	}
 }
 

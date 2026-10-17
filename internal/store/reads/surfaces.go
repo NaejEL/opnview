@@ -38,6 +38,9 @@ type InterfaceRow struct {
 	// LinkLocalEvidence is the operator's rule: whether an IPv6 link-local address
 	// seen on the interface is evidence that it belongs there.
 	LinkLocalEvidence bool
+	// UserLabel is interface.user_label: the label the user gave the interface, nil when none was
+	// given. It is never derived from the description.
+	UserLabel *string
 }
 
 // Interfaces returns every interface row, ordered by its id.
@@ -48,7 +51,7 @@ type InterfaceRow struct {
 // and no name decides anything in opnview.
 func (s *ReadStore) Interfaces(ctx context.Context) ([]InterfaceRow, error) {
 	rows, err := s.SQL.QueryContext(ctx,
-		`SELECT id, identifier, device, description, is_upstream, link_local_evidence
+		`SELECT id, identifier, device, description, is_upstream, link_local_evidence, user_label
 		 FROM interface ORDER BY id`)
 	if err != nil {
 		return nil, fmt.Errorf("store: listing the interfaces: %w", err)
@@ -61,7 +64,7 @@ func (s *ReadStore) Interfaces(ctx context.Context) ([]InterfaceRow, error) {
 			upstream, linkLocal int64
 		)
 		if err := rows.Scan(&row.ID, &row.Identifier, &row.Device, &row.Description,
-			&upstream, &linkLocal); err != nil {
+			&upstream, &linkLocal, &row.UserLabel); err != nil {
 			return nil, fmt.Errorf("store: listing the interfaces: %w", err)
 		}
 		row.IsUpstream = upstream == 1

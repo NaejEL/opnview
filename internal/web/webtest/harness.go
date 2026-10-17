@@ -388,81 +388,70 @@ func (h *Harness) Get(path string) *http.Response {
 	return answer
 }
 
-// Post issues a POST carrying the form token the page it names was rendered with.
-func (h *Harness) Post(path string, form url.Values) *http.Response {
+// SessionToken reads GET /api/session as the application does at start: the form token this
+// reader writes with -- the session's own, or the one in this browser's cookie, which the read
+// sets when there is none -- and whether an account exists and the reader is signed in.
+func (h *Harness) SessionToken() (token string, accountExists, signedIn bool) {
 	h.T.Helper()
-	if _, present := form["csrf_token"]; !present {
-		form.Set("csrf_token", h.FormToken(path))
-	}
-	return h.PostRaw(path, form)
-}
-
-// PostRaw issues a POST exactly as given, token included or omitted.
-func (h *Harness) PostRaw(path string, form url.Values) *http.Response {
-	h.T.Helper()
-	request, err := http.NewRequest(http.MethodPost, h.HTTP.URL+path,
-		strings.NewReader(form.Encode()))
-	if err != nil {
-		h.T.Fatalf("building a POST for %s: %v", path, err)
-	}
-	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	answer, err := h.Client.Do(request)
-	if err != nil {
-		h.T.Fatalf("issuing a POST for %s: %v", path, err)
-	}
-	return answer
-}
-
-// FormToken fetches a page and reads the form token out of it, which is what a
-// browser does.
-func (h *Harness) FormToken(path string) string {
-	h.T.Helper()
-	source := path
-	switch path {
-	case web.PathSignOut:
-		// The sign-out control lives in the bar of whatever page is open.
-		source = web.PathSettings
-	case PathCollectionSettings:
-		// The settings cards' forms live on the collection surface.
-		source = PathCollection
-	}
-	answer := h.Get(source)
+	answer := h.Get(PathAPISession)
 	defer func() { _ = answer.Body.Close() }()
 	body := ReadBody(h.T, answer)
-	token := AttributeAfter(body, `name="csrf_token" value="`)
-	if token == "" {
-		h.T.Fatalf("no form token was rendered on %s (status %d)", source, answer.StatusCode)
+	if answer.StatusCode != http.StatusOK {
+		h.T.Fatalf("GET %s answered %d: %s", PathAPISession, answer.StatusCode, body)
 	}
+	var state struct {
+		AccountExists bool   `json:"account_exists"`
+		SignedIn      bool   `json:"signed_in"`
+		CSRFToken     string `json:"csrf_token"`
+	}
+	if err := json.Unmarshal([]byte(body), &state); err != nil || state.CSRFToken == "" {
+		h.T.Fatalf("GET %s answered no form token: %s", PathAPISession, body)
+	}
+	return state.CSRFToken, state.AccountExists, state.SignedIn
+}
+
+// FormToken is the form token this reader writes with, read from GET /api/session.
+func (h *Harness) FormToken() string {
+	h.T.Helper()
+	token, _, _ := h.SessionToken()
 	return token
 }
 
-// CompleteSetup runs the setup surface end to end and returns the login and
-// password it used, both generated here.
+// PostWithToken issues a JSON write carrying this reader's own form token, read as the
+// application reads it.
+func (h *Harness) PostWithToken(path, body string) *http.Response {
+	h.T.Helper()
+	return h.PostJSON(path, body, h.FormToken(), "")
+}
+
+// CompleteSetup runs the setup end to end through the JSON API and returns the login and
+// password it used, both generated here. The session it issues is left in the jar.
 func (h *Harness) CompleteSetup() (login, password string) {
 	h.T.Helper()
 	login = "operator-" + RandomHex(h.T, 4)
 	password = RandomHex(h.T, 12)
-	answer := h.Post(web.PathSetup, url.Values{
-		"setup_token":    {h.SetupToken.Token()},
-		"login":          {login},
-		"password":       {password},
-		"password_again": {password},
-	})
+	answer := h.PostWithToken(PathAPISetup, string(MustJSON(h.T, map[string]string{
+		"setup_token":    h.SetupToken.Token(),
+		"login":          login,
+		"password":       password,
+		"password_again": password,
+	})))
 	defer func() { _ = answer.Body.Close() }()
-	if answer.StatusCode != http.StatusSeeOther {
-		h.T.Fatalf("setup answered %d rather than a redirect: %s",
-			answer.StatusCode, ReadBody(h.T, answer))
+	if answer.StatusCode != http.StatusOK {
+		h.T.Fatalf("setup answered %d: %s", answer.StatusCode, ReadBody(h.T, answer))
 	}
 	return login, password
 }
 
-// SignIn signs in and leaves the session in the Harness's cookie jar.
+// SignIn signs in through the JSON API and leaves the session in the Harness's cookie jar.
 func (h *Harness) SignIn(login, password string) {
 	h.T.Helper()
-	answer := h.Post(web.PathSignIn, url.Values{"login": {login}, "password": {password}})
+	answer := h.PostWithToken(PathAPISignIn, string(MustJSON(h.T, map[string]string{
+		"login": login, "password": password,
+	})))
 	defer func() { _ = answer.Body.Close() }()
-	if answer.StatusCode != http.StatusSeeOther {
-		h.T.Fatalf("signing in answered %d rather than a redirect", answer.StatusCode)
+	if answer.StatusCode != http.StatusOK {
+		h.T.Fatalf("signing in answered %d: %s", answer.StatusCode, ReadBody(h.T, answer))
 	}
 }
 

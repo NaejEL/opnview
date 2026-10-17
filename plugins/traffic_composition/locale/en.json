@@ -1,0 +1,31 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.traffic_composition.widget.traffic_composition.title": "Traffic composition, now",
+    "plugin.traffic_composition.widget.traffic_composition.question": "What is the traffic made of right now, and in what proportion?",
+    "plugin.traffic_composition.widget.traffic_composition.port_not_recorded": "Port not recorded",
+    "plugin.traffic_composition.widget.traffic_composition.not_recorded": "Not recorded",
+    "plugin.traffic_composition.widget.traffic_composition.not_in_ring": "not drawn in the ring",
+    "plugin.traffic_composition.widget.traffic_composition.other": "Other",
+    "plugin.traffic_composition.widget.traffic_composition.recent": "Recent traffic",
+    "plugin.traffic_composition.widget.traffic_composition.recent_window": "Last {duration}",
+    "plugin.traffic_composition.widget.traffic_composition.grouped_by": "By {group}",
+    "plugin.traffic_composition.widget.traffic_composition.group_by.client": "client",
+    "plugin.traffic_composition.widget.traffic_composition.group_by.interface": "interface",
+    "plugin.traffic_composition.widget.traffic_composition.group_by.protocol": "protocol",
+    "plugin.traffic_composition.widget.traffic_composition.group_by.service_port": "service port",
+    "plugin.traffic_composition.widget.traffic_composition.group_by.blocking_reason": "blocking reason",
+    "plugin.traffic_composition.widget.traffic_composition.whole.all_traffic": "All traffic",
+    "plugin.traffic_composition.widget.traffic_composition.whole.traffic_with_an_inside_client": "Traffic of inside clients",
+    "plugin.traffic_composition.widget.traffic_composition.direction.to_this_firewall": "To this firewall",
+    "plugin.traffic_composition.widget.traffic_composition.direction.from_this_firewall": "From this firewall",
+    "plugin.traffic_composition.widget.traffic_composition.decision.allowed": "Allowed",
+    "plugin.traffic_composition.widget.traffic_composition.decision.firewall_rule": "Blocked by a rule",
+    "plugin.traffic_composition.widget.traffic_composition.decision.firewall_no_rule": "Dropped, no rule",
+    "plugin.traffic_composition.widget.traffic_composition.decision.firewall_reason_not_recorded": "Blocked, reason not recorded",
+    "plugin.traffic_composition.widget.traffic_composition.decision.unknown": "Action not read",
+    "plugin.traffic_composition.widget.traffic_composition.aside.dns_list": "Refused lookups",
+    "plugin.traffic_composition.widget.traffic_composition.aside.security_engine": "Detections",
+    "plugin.traffic_composition.widget.traffic_composition.port_protocol": "{port}/{protocol}"
+  }
+}

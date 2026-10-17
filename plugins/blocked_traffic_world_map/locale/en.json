@@ -1,0 +1,10 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.title": "Blocked-traffic world map",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.question": "Where in the world was the traffic that was stopped trying to go, or coming from?",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.security_unplaced": "Security events not placed",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.total_refusals": "Every refusal",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.other_endpoint": "the other end"
+  }
+}

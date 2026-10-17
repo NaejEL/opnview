@@ -1,0 +1,7 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.destination_countries.widget.destination_countries.title": "Destination countries",
+    "plugin.destination_countries.widget.destination_countries.question": "Which countries, ranked, and how much of that was blocked?"
+  }
+}

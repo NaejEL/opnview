@@ -1,0 +1,14 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.blocked_by_firewall_rule.widget.blocked_by_firewall_rule.title": "Blocked by firewall rule",
+    "plugin.blocked_by_firewall_rule.widget.blocked_by_firewall_rule.question": "Which firewall rules are actually firing, and against whom?",
+    "plugin.blocked_by_firewall_rule.widget.blocked_by_firewall_rule.rule_not_found": "rule no longer exists",
+    "plugin.blocked_by_firewall_rule.widget.blocked_by_firewall_rule.automatic": "automatic",
+    "plugin.blocked_by_firewall_rule.widget.blocked_by_firewall_rule.column.label": "Label",
+    "plugin.blocked_by_firewall_rule.widget.blocked_by_firewall_rule.column.rule": "Rule",
+    "plugin.blocked_by_firewall_rule.widget.blocked_by_firewall_rule.column.timeline": "Over the window",
+    "plugin.blocked_by_firewall_rule.widget.blocked_by_firewall_rule.excluded_automatic.one": "{count} automatic rule left out",
+    "plugin.blocked_by_firewall_rule.widget.blocked_by_firewall_rule.excluded_automatic.other": "{count} automatic rules left out"
+  }
+}

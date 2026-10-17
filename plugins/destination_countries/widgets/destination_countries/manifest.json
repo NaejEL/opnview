@@ -69,6 +69,6 @@
   "queries": [],
   "script": "destination_countries.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

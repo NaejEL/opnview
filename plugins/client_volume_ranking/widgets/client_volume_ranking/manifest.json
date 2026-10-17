@@ -74,6 +74,6 @@
   "queries": [],
   "script": "client_volume_ranking.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

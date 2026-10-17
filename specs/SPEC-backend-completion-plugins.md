@@ -4883,3 +4883,576 @@ LV-NJ2 runs after deployment, on the maintainer's firewall, with every interface
 9. **The scale purge result is kept (17 October 2026).** RC-AC14 purges a copy of the 1M-row seed once per digest, where the digest covers the seed and `purge.sql`. The purged copy is kept beside the seed. RC-AC14 and the foreign-key check after it read that copy. Speeding up the product's purge (per-row triggers on `purged_flow_hour`) is a later spec, after the NetFlow join, which edits the same file.
 10. **The schema checks get their own database instance.** It is disk-backed and configured like `db-predeployment`, so `DROP DATABASE` checkpoints no longer queue behind the Go suite. The kept seeds move to it.
 11. **The 100k seeds are kept by digest,** like the 1M seed. AC7's determinism check compares two kept builds, both rebuilt whenever their definition changes.
+
+# Amendment: an open plugin API, NetFlow moved to JavaScript, and the superseded Go removed (17 October 2026)
+
+Status: APPROVED — by the orchestrator, 17 October 2026, under the maintainer's instruction to deliver end to end without questions.
+
+Cycle kind: standard
+
+**Placement.** This amendment follows "Phase E: decisions after the partial build". It is built **after** the NetFlow join amendment (merged as `a7b47a7`) and **in place of** the cycle `cleanup-amendment.md` describes: that amendment's section B is folded in here as PA16, and its acceptance criteria CL-AC1 to CL-AC6 become PA-AC24. Anything earlier in this spec that this amendment does not name stays as approved. §J lists the sentences it makes obsolete.
+
+**Why `standard`.** The cycle writes Go, SQL, server-side plugin JavaScript, JSON manifests, fixtures, shell and documents. It designs no HTML, CSS, browser script, template, theme or catalogue string.
+
+- Where a Go-rendered page shows a per-kind card, the card is built from declarations instead of per-kind Go, and X3's snapshot stays byte-identical.
+- The only rendered removals are the MaxMind and Public Suffix List cards that `cleanup-amendment.md` B8 already approved.
+- Every new capability (plugin-declared pages, measures, datasets) is served as JSON for the step-7 application, as decision 11 requires.
+
+**Modularity, binding (CLAUDE.md, *The user interface*).** "A kind of thing is a seam and an implementation is a file behind it … Adding a second implementation is adding a file and a registry row and touching nothing else." This amendment makes that true past storage. PA-AC27 and PA-AC28 test it.
+
+## Context
+
+**The maintainer's requirement, 17 October 2026 (translated from French):** "The idea is that a third-party developer can write a plugin in JavaScript only. That every time we add a feature we write more Go scares me." He also judges about 85k lines of product Go far too much for what `opnview` does.
+
+**What the 17 October audits established** (`audit-js-boundary.md`, `cleanup-amendment.md`, session scratchpad; line numbers re-located by symbol):
+
+1. **A third party cannot add a feature in JS.**
+   - Every firewall read is JS: 11 source plugins.
+   - Everything after storage is closed Go: kinds, measures, derivations, aggregates, provider bindings, settings pages.
+   - Since `b32b850`, 8 of 9 feature commits changed product Go.
+2. **The closed lists**, by symbol:
+   - `widget/params/providerkinds.go` `ProviderKinds`;
+   - `plugin/pushkind.go` `pushKinds` (only `firewall_log` and `flow_record`) and its `KindReceiver` methods named after the two kinds;
+   - `store/vocab/kinds.go` `concurrentKinds`, mirrored by `uq_provider_active_per_exclusive_kind` in `schema.sql`;
+   - `collect/scheduler.go` loops, `internal/sizing` (4 kinds), the `config.go` per-kind interval and page keys, and the per-kind cards of `web/surfaces/collection`;
+   - `request/measure.go` `VolumeMeasures`, the `envelope` measure enum, the `_netflow` twin suffix and the `netflow_parts` columns;
+   - `widget/figures/samples.go` `MetricMeasures`, and the Insight subject-key formats (`vocab.InterfaceEndpointKey`, `InterfaceEndpointPairKey`);
+   - `web/surfaces/sources/opnsense_pages.go`;
+   - the product rows seeded in `schema.sql`'s DDL.
+3. **The missing seams:**
+   - a source script reads only its own tables (`scripthost/hostextras.go` `Query`);
+   - the manifest has no `datasets` key;
+   - there is no measure declaration, no generic per-connection measure output and no generic aggregation;
+   - `triggered_by` exists, but a triggered pass cannot see core data;
+   - there is no generic push protocol with a JS decode function.
+4. **NetFlow is the biggest violation:** about 4,500 Go lines, plus about 1,400 from the join.
+   - Where it lives: `collect/derive/{flowrecord,measuredvolume,pushindexes,join}.go`, `store/netflow/*`, `collect/kinds/flowrecords`, `collect/flowrecord`, `request/measure.go`, `config/netflow.go`, `web/surfaces/netflow`, and the NetFlow branches in reads, aggregates, envelope, `host_figures` and traffic.
+   - It hard-codes OPNsense, `ng_netflow` and FreeBSD conventions: index 0, loopback-as-egress, VLAN parent copies, pf leg semantics, pf default state timeouts, and 12 states plus 5 unmatched reasons as Go constants.
+   - A second exporter would be silently mis-joined.
+   - Rule B takes about 53 s in Go over the 16 October capture (11,193 records), because it re-reads legs per group.
+5. **Source-specific Go:**
+   - `dhcplease.DecodeLease`, `NormaliseLeaseState` and `dnslookup.NormaliseAction`, exported to scripts by `scripthost/script.go` (`host.dhcp_lease.*`, `host.dns_lookup.*`, `host.measurement_sample.*`);
+   - ARP/NDP reading in `collect/kinds/leases/dhcplease.go` (`collectNeighbours`, `ingestNeighbour`), a source with no plugin;
+   - `internal/live/strip` (408 lines), a feature in Go.
+6. **Structural leftovers:**
+   - the per-kind Source interface layer: `internal/collect/{firewalllog,dhcplease,dnslookup,flowrecord,measurement,resolvercache,resolverlocaldata,securityevent,ipgeolocation,registrabledomain}`, `collect/sources/sources.go`, `plugin/adapters.go` and `plugin/serviceadapters.go`. Each interface has one implementor, and each record is described three times (`provider/contract.go`, a per-kind struct, `store/vocab/rows.go`);
+   - the SQLite shape of the store: `store/sqldb/driver.go` rewrites `:name` and `?` to `$n` and reads booleans back as 0/1; `schema.sql` holds 20 `BIGINT … CHECK (x IN (0, 1))` columns; `boolToInt` sits in `store/flows`.
+
+**The size today** (branch `wip/backend-plugins` at `e47f8ef`; all lines of non-`_test.go` `.go` files, measured by a search count. PA21's counter replaces these figures as the baseline):
+
+| Package | Lines |
+|---|---|
+| `internal/store` | 16,436 (plus 7,747 lines of `.sql`) |
+| `internal/web` | 13,376 |
+| `internal/collect` | 12,427 |
+| `internal/widget` | 11,878 |
+| `internal/plugin` | 10,842 |
+| `internal/broker` | 7,699 |
+| `internal/push` | 3,977 |
+| `internal/opnsense` | 1,851 |
+| `internal/dataset` | 1,642 |
+| `internal/config` | 1,357 |
+| the other `internal/*` | 3,757 |
+| `cmd/` | 933 |
+| **Total** | **86,175** |
+
+For comparison: 55,639 lines of `_test.go` and 10,466 lines of plugin JS.
+
+**Remaining failures on `e47f8ef`:**
+- `checks` takes 69 s against a 60 s budget; `internal/collect` and `internal/store` take about 49 s each when run alone. The cause is database CPU: many statements per test, and per-row writes.
+- `pre-deployment` exceeds 180 s.
+- S5A-AC35's plan sweep (no growing-table scan) fails on the owner aggregates, which lack an index leading on `owner_id`, and on `clients_list`, which pages by offset.
+- S5B-AC18 at 100k: `connection_tree` 30d takes 950 ms, about 790 ms of it in the interpreter over about 27k rows.
+- S5B-AC18 at 1M: `+netflow` answers are empty, because `sql/seed.sql` sets `capture_configuration_unknown` everywhere (E19).
+- Phase F items still open:
+  - `docs/widget-api.md` is 1,086 lines against a 900-line cap;
+  - the push-class table (`| Class | Re-examination |`, *Coverage of the mockup*) belongs in `docs/plugins.md`;
+  - the term "segment" survives in `README.md`, `ROADMAP.md`, `docker-compose.yml`, `docs/` and `sql/schema-checks.sh`.
+
+## Scope
+
+### PA1. Plugin API version 2
+
+- The manifest, host and contract changes below are not survivable by a version-1 plugin, so `api_version` becomes **2**.
+- This build reads version 2 only. A version-1 plugin is refused, naming both versions (*The plugin API version*).
+- No compatibility code is written: the project is pre-POC and no third-party plugin exists.
+
+### PA2. Kinds, bindings, push kinds and concurrency are data
+
+- **Core kind contracts move into data files.** Each core kind's contract (`provider/contract.go` today) is a data file, found by walking a directory as the core datasets are (`dataset/core.go`): adding a core kind is adding a file.
+  - The contract test (A13) compares those files with `docs/plugins.md`.
+  - A plugin's own kind is declared in its manifest, as today.
+- **Each kind declaration carries, as data:**
+  - **`concurrent`**: whether several active providers are allowed. It replaces `vocab.concurrentKinds`. The database still rejects a second active provider of an exclusive kind by a constraint, which reads the attribute from data. No kind name appears in that constraint's definition in `schema.sql`.
+  - **`push`**: whether a push entry may deliver it. It replaces `pushKinds`, and the receiver takes contract records of any push-deliverable kind through one method. The two methods named after `firewall_log` and `flow_record` go.
+  - **`bindable`**: whether a widget manifest may bind it in `providers` / `primary`. It replaces `ProviderKinds`. A plugin's own kind is bindable unless it says otherwise.
+  - **The paged reads** that sizing measures, and the **cadence and page-size settings** of each provider. These replace the closed lists of `internal/sizing`, `config.go` and `collect/scheduler.go`. One scheduler loop serves every provider from its declaration.
+- **Per-provider "enable" pages come from the manifest.** A provider declares the OPNsense page that turns it on: path, label key, and the menu definition's 26.7.3 URL. This replaces `opnsense_pages.go`.
+- **The DDL seeds no product rows** (the `provider` and kind rows of `schema.sql`, audit item 12). The built-ins' own declarations write them at load.
+
+### PA3. The manifest `datasets` key, and core-dataset reads for source plugins
+
+- **The new key.** A manifest gains `datasets`: the catalogue names the plugin's scripts read, core and plugin datasets alike.
+- **Who may read.** A source script, a triggered derivation (PA4) and a widget script may read every dataset they declare, through the host's existing dataset reads (`host.datasets`) and a read-only `host.query`. Their own tables need no declaration.
+- **Refusals.**
+  - Reading an undeclared dataset is refused with a closed code at load, or at the call if the name is computed.
+  - Nothing in `account`, `session`, `encrypted_credential` or `setting` is reachable.
+- **Set-based reads.** A read may filter by a list of keys: a set of connection identifiers, or a set of tuples. A derivation therefore reads what a batch needs in a bounded number of statements, independent of the batch's size.
+- **The core datasets served to plugins** include what the NetFlow join needs, expressed in the core's own vocabulary:
+  - logged connection legs (`flow` rows), with `pair_outcome`, the pf direction, the interface and the logged tuple;
+  - the firewall's own addresses, as discovery holds them;
+  - interfaces with their identifiers and devices.
+
+  Each is a directory under `internal/dataset/core/`, planned by the sweep (E20).
+
+### PA4. Triggers: derivations run on collection passes, push batches and a cadence
+
+- **What a derivation declares.** A plugin declares derivations in its manifest. Each one names:
+  - a function of its script;
+  - what triggers it: a collection pass of a named kind or provider, a batch delivered by one of its own push entries, and/or a cadence in seconds;
+  - the datasets it reads (PA3);
+  - its outputs: its own tables, and/or a declared measure's per-connection output (PA5).
+- **A run is one transaction:** its outputs are written together or not at all, and a failure is recorded in the plugin's availability with a closed outcome.
+- **Runs of one derivation are serialised:** two triggers never run the same derivation concurrently.
+- **Order and repetition.**
+  - The result must not depend on the order in which triggers arrive.
+  - Running a derivation twice over the same inputs writes nothing the second time.
+  - The host gives the run the instants and keys that changed, never "everything".
+- **The clock is the host's**, so tests run under a fake clock.
+- **Writing counters.** A plugin may keep a table of counters by its primary key, adding to existing rows in one batched write. The netflow plugin's unmatched family needs this, because it outlives the purge of its records.
+
+### PA5. Declared measures
+
+- **The `measures` declaration.** A manifest gains `measures`. Each measure declares:
+  - **its name**, which becomes a value of `volume_measure`;
+  - **its label key and description**;
+  - **its per-direction states**, each marked covered or not covered;
+  - **its markers**: named booleans per direction, counted in the coverage object (for example `counted_copy`);
+  - **its window states, by role.** The core decides three generic conditions: no active provider or configuration, the window not covered, and the type not serving the measure. The measure names the state the answer carries for each, plus any window states of its own, such as `capture_configuration_unknown`, which its derivation records per interval;
+  - **whether `best_available` may choose it.**
+- **One generic per-connection measure output** replaces `connection_measured_volume`. A derivation writes rows: the measure, the connection, the direction, bytes, packets, the state and the markers.
+  - One core reader replaces `connection_netflow`, and it must stay inlinable (E18).
+  - No core table, column, statement name or enum value names a specific measure. Adding a measure adds no column.
+- **Generic aggregation.** The aggregate families and `purged_flow_hour` carry each declared measure's parts, keyed by measure name. This replaces the `netflow_parts` columns and `netflow_parts_add`.
+  - The purge keeps a purged part's figures in every measure.
+  - The exit-row rule (NJ5, decided question 3) is applied generically: a second leg's exit row carries the connection's figure in every measure, as it carries the logged bytes.
+- **Generic twins.** A statement that reads volume columns declares one twin, which serves every declared measure with the measure bound as a parameter. This replaces the `_<statement>_netflow` suffix.
+  - The built-in widgets' statements are rewritten to it.
+  - A twin that does not bind exactly its statement's parameters is refused, as `netflow_twin_mismatch` is today, under a generic code.
+- **Serving.**
+  - `volume_measure` takes `logged`, `best_available` and every declared measure's name.
+  - The envelope's `measure` is open: the core's own values (`logged`, `sampled`, `dns_lookups`) plus the declared ones.
+  - `best_available` answers a declared measure only under that measure's strict rule as NJ8 states it (readable configuration throughout, every counted connection covered). Otherwise it answers `logged` with the role's declared state.
+  - With several eligible measures, the first in measure-name order that covers the window is answered (decided, question 4).
+- **The observation-point limit applies to every declared measure.** `docs/widget-api.md` and `docs/plugins.md` say so where a measure is declared, documented rather than printed (CLAUDE.md, ROADMAP).
+
+### PA6. Contract values readable by other plugins; the pf state timeouts
+
+- A kind's contract may declare **values** that its active provider exports (the `Values` of a contract today). The core publishes the active provider's values as a read-only core dataset, which other plugins read under PA3.
+- **pf's default state timeouts** (`derive/flowrecord.go` today) become values of the `firewall_log` contract, exported by the `pf` plugin and cited in its manifest from the pf source at the version the survey pins.
+- The netflow plugin reads them; no Go file holds them.
+- NetFlow's own active and inactive timeouts stay the netflow plugin's, read from `getconfig`.
+
+### PA7. A generic push protocol decoded in JavaScript
+
+- **Two new protocols:**
+  - **`datagram`**: UDP, one datagram per call;
+  - **`line`**: TCP or UDP, newline-framed, one line per call.
+
+  A push entry using either names a JS `decode` function of its script, which returns contract records of a push-deliverable kind, or rows of the plugin's own tables.
+- The terms are `opnview`'s own, because neither OPNsense nor RFC 5424 names "a protocol whose decoder is a script". They are recorded in *Vocabulary* with that reason.
+- **Core decoders stay core:** syslog framing, and the NetFlow v9/IPFIX template decoder, for speed (`internal/push/protocols/{syslog,netflow}`, `internal/push/ipfixregistry`). They name no OPNsense concept.
+- **The NJ7 sequence-loss bound** is supplied by the plugin through its push entry: a declared function or a value it records from its capture configuration. The decoder names no product concept and keeps following several counters per `source_id`.
+- Listener sizes, liveness and gap reporting are unchanged, and apply to the new protocols.
+
+### PA8. Plugin-declared configuration pages and settings
+
+- **Pages.** A manifest may declare **pages**: sections of its settings, each with label keys, settings in display order, and a help key. They are served as JSON with the plugin listing and `/api/plugins/{name}/settings`, for the step-7 application.
+- **Removed, replaced by plugin settings and pages:**
+  - the MaxMind and Public Suffix List settings and cards (`cleanup-amendment.md` B8);
+  - the NetFlow surface `web/surfaces/netflow` (`/api/netflow/settings`). `netflow_join_tolerance_seconds` and `retention_flow_record_seconds` become netflow plugin settings, with unchanged bounds and defaults;
+  - `config/netflow.go` and every per-kind interval or page key of `config.go` (PA2).
+- **The Go-rendered collection, settings and sources pages** build their per-kind cards from the declarations, and their output stays byte-identical (X3). Only B8's two cards disappear.
+
+### PA9. NetFlow moves into the netflow plugin's JavaScript
+
+- **Into `plugins/netflow/`** (JS, manifest, tables, measure, derivation, settings):
+  - the index map: the plugin reads `interfaces_info` itself, keeps its map in its own table, and maps indexes at reception. That covers the exporter-restart rule, the roles `no_receiving_interface`, `local_delivery` and `unmapped`, and S6b/S6c and their fallbacks;
+  - the capture configuration and its runs (`exported`, `parent_of`, `loss_detectable`);
+  - Rule B (NJ4 rules 1 to 9);
+  - the copy kinds and the sole-copy rule;
+  - the per-direction states, the coverage classes and the markers (NJ5);
+  - the unmatched family (NJ8, PS21), as a plugin counter table (PA4);
+  - the `netflow` measure (PA5).
+- **The flow records** are stored in the plugin's own tables, so the catalogue names become `netflow.flow_record` and `netflow.unmatched_record` (decided, question 2). The core `flow_record` contract, kind and datasets are removed.
+- **Removed from Go and SQL:**
+  - `internal/collect/derive/{flowrecord,measuredvolume,pushindexes,join}.go`;
+  - `internal/store/netflow`;
+  - `internal/collect/kinds/flowrecords`;
+  - `internal/collect/flowrecord`;
+  - `internal/collect/collecttest/netflowfixture.go`;
+  - `config/netflow.go`;
+  - `web/surfaces/netflow`;
+  - the NetFlow branches of `request/measure.go`, `envelope`, reads, `host_figures`, traffic and the aggregate SQL;
+  - the NetFlow tables and columns of `schema.sql` that PA5's generic tables replace.
+- **The join reads legs set-wise** (PA3): a bounded number of dataset reads per batch, never one per group.
+- **The plugin's header and `description`** state the all-interface rule and cite every endpoint it reads, with the response fields.
+
+### PA10. NJ behaviour preserved bit for bit
+
+- **Before anything is removed, the Go join's output is recorded** over fixtures F1 to F17 (NJ12), through the real v9 decoder and the real filter-log parser:
+  - every flow record's core-derived fields: mapped interfaces, roles, `join_state`, `copy_kind`, `counted_copy`, `unmatched_reason`, `loss_detectable` and the joined leg;
+  - every per-direction figure and state;
+  - every unmatched slot;
+  - every aggregate's netflow figures at `1h`, `24h`, `7d` and `30d`.
+
+  The recording is committed under the netflow plugin's `testdata/` (the fixtures are synthetic and pass X1). One file maps each Go column name to its new name.
+- **Over the 16 October capture** (`scratchpad/capture/netflow.bin`, `syslog.log`, REPORT Q2's mapping supplied as a test-only index map), a per-record outcome file is recorded the same way, **outside the repository**. The capture and that file are never committed.
+- **The JS join must reproduce both exactly.** Every NJ criterion (NJ-AC4 to NJ-AC15, NJ-AC18, NJ-AC20) is re-run against the plugin. NJ-AC3, NJ-AC13, NJ-AC16 and NJ-AC17 are restated by PA-AC15, PA-AC27 and PA-AC28.
+- **The F fixtures run as the netflow plugin's own tests** (`tests/*.test.js`) in the everyday suite.
+
+### PA11. Source-specific helpers move to the plugins' JavaScript
+
+- **Leases.**
+  - `DecodeLease` and `NormaliseLeaseState`: each of `kea`, `isc` and `dnsmasq` decodes and normalises its own backend's fields in its own JS.
+  - `host.dhcp_lease.decodeLease` and `host.dhcp_lease.normaliseMAC` are removed. MAC normalisation stays in the core, applied to contract records, because the identity cascade is core.
+- **Resolver lookups.** `NormaliseAction` moves into the `unbound` and `dnsmasq` plugins. The `dns_lookup` contract keeps its closed `action` vocabulary, and `host.dns_lookup` is removed.
+- **Insight.**
+  - Subjects are reported as structured contract fields: interface identifier, endpoint, and the pair. No Go or core SQL builds or parses a subject key, and `host.measurement_sample.interfaceEndpointKey` / `interfaceEndpointPairKey` are removed.
+  - The gauge metrics (`MetricMeasures`) are declared by the `insight` plugin's manifest.
+- **Site names stay unchanged in behaviour.** Every record keeps its attribution method, and every degraded state keeps its explanation (CLAUDE.md; PA-AC19).
+
+### PA12. ARP and NDP neighbours become a plugin
+
+- **The plugin.** A built-in `neighbours` plugin reads `/api/diagnostics/interface/get_arp` and `get_ndp` through its manifest's endpoints, each with `survey_section` and a 26.7.3 `upstream_url` verified against OPNsense's source. It reports records of a new core kind, `neighbour` (decided, question 7).
+- **What stays core:** the identity cascade, the "this firewall is never a client" rule and the upstream-interface exclusion. `collectNeighbours` and `ingestNeighbour` are removed.
+- **Unavailability.** A 404, 403 or unparseable answer is reported in the `neighbour` provider's availability with the broker's outcome, and is never worked around.
+
+### PA13. The live strip becomes a widget plugin
+
+- `internal/live/strip` (Go and statements) becomes a widget plugin directory: a manifest, statements and a script, served by the generic widget path.
+- `internal/live` keeps the sampler and the interest tracking.
+- Its JSON answers are byte-identical to today's goldens.
+
+### PA14. The per-kind Source layer and the triple record representation are removed
+
+- **Removed:** `internal/collect/{firewalllog,dhcplease,dnslookup,flowrecord,measurement,resolvercache,resolverlocaldata,securityevent,ipgeolocation,registrabledomain}`, `collect/sources/sources.go`, `plugin/adapters.go` and `plugin/serviceadapters.go`.
+- **One record representation.** Plugins hand the core contract records, checked once against the contract data (PA2), and kind coordinators take those records directly.
+- **The per-kind structs and `store/vocab/rows.go`** survive only where a field is derived by the core rather than reported, and each survivor is named in the hand-back.
+
+### PA15. The SQLite shape of the store is removed
+
+- **Booleans.** Every `BIGINT … CHECK (x IN (0, 1))` column becomes `BOOLEAN`, and `boolToInt` is removed.
+  - The JSON the widget, dataset and settings APIs serve keeps its documented types: a field documented as 0/1 is still served 0/1, by its declared column type (decided, question 5).
+  - The pre-POC database is rebuilt. No migration (decided 11 October 2026).
+- **Parameters.**
+  - Core Go statements use PostgreSQL's native parameters.
+  - The `?` form is removed.
+  - `:name` stays the documented authoring syntax for plugin- and widget-authored statements only, translated once when the statement is loaded, never per execution.
+  - The `database/sql` connection no longer rewrites statements, or the types of the values it reads.
+- **Whole-number results.** Reading an integral `numeric` result as an integer is kept for plugin- and widget-authored statements, at the plugin host's result conversion, and documented in `docs/plugins.md` (decided, question 6).
+
+### PA16. The certain and likely removals of `cleanup-amendment.md`
+
+- Section B, items 1 to 11, is built as written, with the same keep-and-say rules.
+- B2's runtime-coverage pass stays after deployment and out of this cycle.
+
+### PA17. Writes and refreshes in batches; the two budgets with margin
+
+- **Batching.**
+  - A collection pass or push batch writes its rows in a number of statements independent of its row count: multi-row writes or `COPY`, never one statement per row.
+  - The aggregate refresh after a pass runs a bounded number of statements per pass, independent of the number of slots touched.
+  - The same holds for plugin-table writes (`WritePluginPass`) and for PA5's measure output.
+- **The shared test helpers** keep E.1's mechanisms. No assertion is weakened, and E.1.3's prohibitions stand.
+- **Targets** on 16 CPUs:
+  - `docker compose run --rm checks`: `go test` wall time **≤ 45 s**, median of three consecutive runs, none above 50 s;
+  - `internal/collect` and `internal/store`: each **≤ 25 s** when run alone;
+  - `docker compose run --rm pre-deployment`: **≤ 150 s** total, seeds reused by digest as E.2.6 allows, with a cold seed build printed apart.
+  - The hard limits (90 s and 240 s) and both budget constants are unchanged.
+
+### PA18. The remaining backend failures
+
+1. **S5A-AC35.**
+   - The owner aggregates gain an index leading on `owner_id`, justified in `schema.sql` with its write cost.
+   - `clients_list` pages by keyset, never by offset; the first page is unchanged and a cursor resumes after the last key.
+   - The sweep passes at both seeds.
+2. **S5B-AC18 at 100k.** `connection_tree` 30d median **≤ 500 ms** and 24h **≤ 250 ms**.
+   - The fix lies in the generic host (the rows crossing into the script, or the row conversion), or in the widget's own statements, so that other widgets benefit.
+   - Never a special case for one type in Go.
+   - The golden is byte-unchanged.
+3. **S5B-AC18 at 1M, and E19.** `sql/seed.sql` fills the netflow plugin's tables and PA5's generic measure tables with covered states over windows that include the 24h and 30d timing windows. Every type offering a volume measure then answers a non-empty `netflow` within budget at both seeds.
+
+### PA19. Phase F documentation items
+
+- `docs/widget-api.md` ≤ 900 lines.
+- The push-class table moves to `docs/plugins.md`, *Push sources*; `docs/widget-api.md`'s mockup-coverage rows cite it by class.
+- "Segment", as a term for an OPNsense interface, is removed from `README.md`, `ROADMAP.md`, `docker-compose.yml`, `docs/` (except the step-3 mockup, which F.2 keeps unchanged), `sql/`, `internal/` and `plugins/`.
+  - `CLAUDE.md`'s historical sentence about the mistake stays; `CLAUDE.md` is not edited by the Builder (F.2).
+- `docs/plugins.md` documents PA1 to PA8 and stays ≤ 1,200 lines (F.2). Worked examples that a test fixture already shows are cited, not restated.
+- `docs/architecture.md`'s *Map of the tree* and *Decisions in force* follow every removal.
+- `docs/data-model.md` gains *Vocabulary* rows, each with its reason: measure, derivation, marker, `datagram`, `line`, `neighbour`.
+
+### PA20. The proof: a third-party plugin and a modularity test
+
+- **The third-party fixture.** A fixture plugin under a `testdata/` directory (for example `internal/plugin/testdata/plugins/<name>/`) holds only JSON, JS and SQL. It declares:
+  - a push entry under `datagram`, decoded by its JS, into its own table;
+  - a derivation, triggered by that push batch and by a cadence, that reads core datasets (logged legs, the firewall's addresses, interfaces) and writes a new measure's per-connection output;
+  - a measure with two states (one covered, one not) and one marker;
+  - a settings page;
+  - a widget with `"volumes": true` whose statement declares the generic twin.
+- **The fixture test**, copying the fixture into a temporary plugin tree, shows:
+  - the plugin loads, the measure is a `volume_measure` value, and the widget binds it;
+  - figures equal an independent computation;
+  - `best_available` follows PA5;
+  - the coverage object counts the declared states and marker;
+  - the page and settings are served.
+
+  No shipped file is edited, and the test fails if the fixture directory holds a `.go` file.
+- **The modularity test.** It parses every non-`_test.go` Go file under `cmd/` and `internal/` (test-support packages included) and inspects identifiers, split on case and underscores, and string literals.
+  - It fails on any token of a list written in the test, outside an allow-list written in the test with one reason per entry.
+  - Minimum token list: `netflow`, `ng_netflow`, `ipfix`, `flow_record`, `capture_configuration`, `capture_interface`, `parent_of`, `observation_point`, `interfaces_info`, `kea`, `dnsmasq`, `isc`, `unbound`, `suricata`, `insight`, `maxmind`, `geolite`, `publicsuffix`, `public_suffix`, `arp`, `ndp`, `iftop`, `lo0`, `tcp.established`, and any string literal beginning `/api/`.
+  - Minimum allow-list:
+    - `internal/opnsense` and `internal/collect/discovery`: discovery and the clock, `/api/` and `interfaces_info`;
+    - `internal/broker`: `/api/`;
+    - `internal/push/protocols/netflow` and `internal/push/ipfixregistry`: `netflow` and `ipfix`, as protocol names.
+  - The list may only grow. Every allow-list entry is restated in `docs/architecture.md`, *Decisions in force*.
+
+### PA21. Go line counts, measured once by one program
+
+- **The counter.** A `ci/` program, run in the dev container, prints per top-level package under `cmd/` and `internal/`, for non-`_test.go` and for `_test.go` files: total, code (non-blank, non-comment), comment and blank lines. It also prints plugin JS lines.
+- **Baseline.** It is run before Lot 1 and its output is the baseline. The figures in *Context* are only orientation.
+- **Ceilings on non-test code lines**, after the cycle against that baseline:
+
+  | Scope | Required cut |
+  |---|---|
+  | total `cmd/` + `internal/` | at least 15 % fewer |
+  | `internal/collect` | at least 35 % fewer |
+  | `internal/config` | at least 40 % fewer |
+  | `internal/store` | at least 10 % fewer |
+  | `internal/web` | at least 10 % fewer |
+  | `internal/widget` | at least 8 % fewer |
+  | `internal/plugin`, `internal/push`, `internal/dataset` | each at most 5 % more |
+  | every other package | no growth |
+
+- **What does not count as a cut:** deleting doc comments, joining lines, or moving code into test-support packages.
+- **A ceiling missed** is reported with the figure and the reason. It is never met by weakening a criterion.
+
+## Acceptance criteria
+
+Every test runs on the PostgreSQL test instance, under a fake clock where time matters.
+
+- [ ] **PA-AC1. API version.**
+  - `api_version` 2 is the only version read.
+  - A version-1 fixture is refused, naming both versions.
+  - Every built-in manifest says 2.
+- [ ] **PA-AC2. Kinds as data.**
+  - A grep finds no Go map, slice or switch listing kind names in `widget/params`, `plugin`, `store/vocab`, `collect`, `sizing`, `config` or `web/surfaces`.
+  - A test plugin declaring a kind with `concurrent`, `push` and `bindable` gets each behaviour with no Go change.
+  - A second active provider of an exclusive kind is still rejected by the database.
+  - `schema.sql`'s constraint names no kind.
+- [ ] **PA-AC3. Contracts.** The contract data files equal `docs/plugins.md`'s tables (A13), and adding a contract file in a test tree adds a kind with no Go change.
+- [ ] **PA-AC4. No product rows in the DDL.** `schema.sql` inserts no provider or kind row. A fresh database, after the built-ins load, holds the same provider rows as today's.
+- [ ] **PA-AC5. `datasets` key.**
+  - A script reading an undeclared dataset is refused with its closed code.
+  - Reads of `account`, `session`, `encrypted_credential` and `setting` are refused.
+  - A set-filtered read of N keys runs the same number of statements for N = 10 and N = 1,000 (statement counter).
+- [ ] **PA-AC6. Triggers.**
+  - A derivation runs after a pass of its named kind, after a batch of its push entry, and on its cadence.
+  - Two triggers arriving together run it serially.
+  - A run that throws writes nothing and records the closed outcome.
+  - A second run over the same inputs writes nothing.
+  - Its outputs are identical under forward, reverse and interleaved arrival (PS-AC34's method).
+- [ ] **PA-AC7. Measures.**
+  - `volume_measure`'s values are `logged`, `best_available` and the declared measures.
+  - A grep finds no measure name in core Go, core SQL, statement names or enum values, outside the netflow plugin and its tests.
+  - Adding the fixture's measure adds no column.
+- [ ] **PA-AC8. Generic aggregation.**
+  - At `1h`, `24h`, `7d` and `30d`, every family's logged columns equal the baseline (P-AC9).
+  - Every declared measure's parts equal an independent computation.
+  - The purge keeps a purged part's figures in every measure.
+  - The exit row follows NJ5's decided rule.
+- [ ] **PA-AC9. Plans.**
+  - At both seeds, the single generic per-connection reader is inlined: no `Function Scan`; the measure output is read through its primary key; no growing table is scanned; the same indexes are used at 100k and 1M.
+  - E18's teeth check catches a non-inlinable copy.
+- [ ] **PA-AC10. Contract values.**
+  - The `pf` plugin exports the state timeouts, each cited to source in its manifest.
+  - Another plugin reads them through a dataset.
+  - No Go file holds a pf timeout (grep for the values beside `tcp`).
+- [ ] **PA-AC11. Generic push.**
+  - A `datagram` entry and a `line` entry, each with a JS `decode`, deliver records to a push-deliverable kind and rows to a plugin table, with liveness and gaps reported as for core protocols.
+  - The syslog and v9/IPFIX decoders still pass their tests.
+  - F16's loss detection passes with the bound supplied by the netflow plugin.
+- [ ] **PA-AC12. Pages and settings.**
+  - Plugin-declared pages are served in the plugin listing and by `/api/plugins/{name}/settings`.
+  - `/api/netflow/settings`, `web/surfaces/netflow`, `config/netflow.go` and every per-kind key of `config.go` are gone.
+  - The two netflow settings keep their bounds and defaults as plugin settings.
+- [ ] **PA-AC13. Rendered pages.**
+  - X3's snapshot is byte-identical except for the removal of the MaxMind and Public Suffix List cards (B8).
+  - The diff lists exactly those fragments.
+- [ ] **PA-AC14. NJ preserved, fixtures.** For F1 to F17, the plugin's per-record fields, per-direction figures, states, markers, unmatched slots and aggregate figures equal the recorded Go golden under the column-name map, value for value.
+- [ ] **PA-AC15. NJ criteria re-run.**
+  - NJ-AC4 to NJ-AC15, NJ-AC18 and NJ-AC20 pass against the plugin.
+  - NJ-AC3's and NJ-AC14's greps pass over the new tree.
+  - NJ-AC17 is restated by PA-AC27.
+- [ ] **PA-AC16. NJ replay.**
+  - Over the 16 October capture, the plugin's per-record outcome file equals the Go join's, record for record. The hand-back prints both outcome tables beside REPORT Q5's.
+  - The replay's wall time is printed and is **≤ 30 s** on 16 CPUs, against about 53 s in Go.
+  - Neither the capture nor any file derived from it is in the repository (`git ls-files`).
+- [ ] **PA-AC17. NetFlow Go gone.**
+  - Every path PA9 lists is absent.
+  - `internal/push/protocols/netflow` and `internal/push/ipfixregistry` remain.
+  - The hand-back lists each removal with its line count.
+- [ ] **PA-AC18. OPNsense sources verified, and unavailable sources reported.**
+  - Every endpoint the `neighbours`, `netflow` and `pf` plugins read is in its manifest with `survey_section` and a 26.7.3 `upstream_url`, verified against OPNsense's source and cited in the plugin's header with the response fields read.
+  - A 404, 403 or unparseable answer is reported in availability with the broker outcome, and nothing is inferred from other data.
+  - No mutating action is called (BR-AC15).
+  - No endpoint is added to the compiled registry.
+- [ ] **PA-AC19. Helpers moved, behaviour kept.**
+  - `host.dhcp_lease`, `host.dns_lookup` and `host.measurement_sample` are gone from `scripthost`.
+  - The lease, lookup and Insight tests pass against the plugins.
+  - Every widget golden touching leases, lookups, site names or samples is byte-unchanged, including each record's attribution method and the explanatory degraded states.
+- [ ] **PA-AC20. Neighbours.**
+  - The pre-existing neighbour tests pass against the `neighbours` plugin: MAC-level client created, this firewall never a client, upstream neighbours excluded.
+  - `collectNeighbours` and `ingestNeighbour` are gone.
+- [ ] **PA-AC21. Live strip.**
+  - `internal/live/strip` is gone.
+  - The strip's answers equal their recorded goldens byte for byte through the widget plugin.
+- [ ] **PA-AC22. Source layer gone.**
+  - The ten `internal/collect/<kind>` packages, `collect/sources`, `plugin/adapters.go` and `plugin/serviceadapters.go` are absent.
+  - Each record field is defined once, in contract data, except the core-derived survivors the hand-back names.
+- [ ] **PA-AC23. SQLite shape gone.**
+  - `schema.sql` holds no `IN (0, 1)` CHECK; `boolToInt` and the `?` form are absent.
+  - The connection layer rewrites no statement and converts no result type.
+  - Plugin `:name` statements are translated at load (a test counts zero translations per execution).
+  - Every API golden is byte-unchanged.
+- [ ] **PA-AC24. Cleanup.** CL-AC1 to CL-AC6 of `cleanup-amendment.md` pass, with CL-AC5's budgets read as PA17's targets.
+- [ ] **PA-AC25. Batching.**
+  - A pass of 10 records and one of 1,000 run the same number of write statements, for the filter log, a lease source, a plugin table and the measure output (statement counter).
+  - The same holds for the aggregate refresh over 1 and 100 touched slots.
+- [ ] **PA-AC26. Budgets.**
+  - `checks`: `go test` ≤ 45 s, median of three consecutive runs, none above 50 s, exit 0, printed with the CPU count.
+  - `internal/collect` and `internal/store` ≤ 25 s each alone.
+  - `pre-deployment` ≤ 150 s with seeds reused, and the cold seed build printed apart.
+  - E6's rules hold for the whole diff.
+- [ ] **PA-AC27. Third-party proof.** PA20's fixture test passes with the fixture holding no Go, and with no shipped file edited (the test compares a digest of the shipped tree before and after).
+- [ ] **PA-AC28. Modularity test.** PA20's token test passes. Adding a fixture Go file containing `netflow` outside the allow-list makes it fail.
+- [ ] **PA-AC29. Remaining failures.**
+  - S5A-AC35's sweep passes at both seeds, with the owner index and keyset `clients_list`; a cursor test shows no row skipped or repeated across pages under concurrent inserts.
+  - `connection_tree` meets PA18.2 at 100k, and stays within 1 s / 2 s at 1M.
+  - E19 passes: every `netflow` line is non-empty and within budget at both seeds.
+- [ ] **PA-AC30. Documents.**
+  - `docs/widget-api.md` ≤ 900 lines and `docs/plugins.md` ≤ 1,200.
+  - The push-class table is in `docs/plugins.md`.
+  - A grep for `\bsegments?\b` over PA19's paths matches nothing.
+  - The *Vocabulary* rows exist, each with its reason.
+  - The observation-point limit is stated for declared measures.
+  - F-AC4 and F-AC5 hold.
+- [ ] **PA-AC31. Line counts.** PA21's program prints the before and after tables in the hand-back, and every PA21 ceiling is met or reported with its figure and reason.
+
+## Out of scope
+
+- B2's runtime-coverage pass (after deployment).
+- Removing the Go-rendered pages (step 7).
+- A cross-plugin `require` or shared JS module.
+- The closed enums of the endpoint `argument` and of the declarative mapping types (audit item 11). No plugin needs another value.
+- A join for exporters other than OPNsense's: only the seam is proved, by PA20's fixture.
+- Re-joining stored records when the index map or the configuration changes (NJ, *Out of scope*).
+- Raising any budget.
+- Migration, backfill or compatibility (decided 11 October 2026).
+- Writing to the firewall.
+- New outbound destinations: the core still contacts only the firewall.
+- A set-based `ReclassifyAll` (Phase E decision 3).
+
+## Risks
+
+1. **Interpreter cost.** The join and the derivations run in goja. PA-AC16's 30 s ceiling and PA-AC25's statement counts bound the risk, but throughput at 1M is not measured (declined 11 October 2026).
+2. **Bit-for-bit preservation depends on the Go recording made before removal.** If Lot 3 removes Go before recording, the proof is lost. The order is binding.
+3. **Generic aggregation may break inlining** (E18) or regress the families' plans. PA-AC9 catches this. A per-measure keyed representation may cost write throughput, and the figure is reported.
+4. **Turning columns into `BOOLEAN` changes index and plan shapes.** The sweep reruns at both seeds.
+5. **The 0/1 JSON compatibility layer** must be driven by declared types, or it becomes a new hidden coercion.
+6. **Scope.** This is the largest cycle since Phase B. Each lot must leave `checks` green, or the next cannot start.
+7. **The budget targets assume** that batching removes most database CPU. If it does not, PA-AC26 reports per-package figures rather than relaxing anything.
+8. **API-name change.** The catalogue names `netflow.flow_record` and `netflow.unmatched_record` change for any client already written against the old names. Only the mockup and the documents cite them.
+9. **Splitting ARP/NDP out of the lease coordinator** changes availability reporting: neighbours get their own provider row. The lease kind's availability semantics must not degrade.
+10. **The 16 October capture lives in a session scratchpad** and could be lost. If it is, PA-AC16 cannot run, and the hand-back says so rather than substituting fixtures.
+11. **The modularity token list** may hit legitimate core words (`arp` inside an identifier). Matching is by identifier segment, and every allow-list entry carries a reason.
+
+## Open questions
+
+The maintainer is unavailable and asked for end-to-end delivery. Each question below carries the orchestrator's answer, not the maintainer's.
+
+1. **API version.** *Decided by the orchestrator (17 October 2026):* raise to 2, with no version-1 compatibility. Removing `host.dhcp_lease` and the core `flow_record` kind breaks version-1 plugins; pre-POC, none exist outside the repository, and compatibility code would be a speculative placeholder.
+2. **Where flow records live.** *Decided by the orchestrator (17 October 2026):* in the netflow plugin's tables, published as `netflow.flow_record` and `netflow.unmatched_record`. A core `flow_record` kind would keep OPNsense's exporter conventions in a shared contract, which is the mis-join the audit names. A second exporter is its own plugin with its own measure.
+3. **Measure state names.** *Decided by the orchestrator (17 October 2026):* the core decides generic roles, and each measure names its states in its manifest. The netflow plugin declares today's names (`netflow_not_configured`, `capture_configuration_unknown`, `netflow_not_covering_window`, `netflow_not_served_by_type`), so every golden stays byte-identical and no Go file names them.
+4. **`best_available` with several eligible measures.** *Decided by the orchestrator (17 October 2026):* the first, in measure-name order, whose strict rule covers the window. It is deterministic and documented, and needs no ranking setting. Today only one measure exists.
+5. **Booleans in JSON.** *Decided by the orchestrator (17 October 2026):* storage becomes `BOOLEAN`, and the APIs keep serving the documented 0/1, by declared column type. Changing JSON types would break E13 and X3's byte identity for no user benefit before step 7.
+6. **Whole-number results.** *Decided by the orchestrator (17 October 2026):* kept for plugin- and widget-authored statements, at the plugin host's result conversion, and documented. A widget author should not learn PostgreSQL's numeric typing (the rule behind `:name`). Core Go statements cast explicitly.
+7. **The neighbour kind's name.** *Decided by the orchestrator (17 October 2026):* plugin `neighbours`, kind `neighbour`. OPNsense names the endpoints `get_arp` / `get_ndp` ("ARP table", "NDP table") and has no shared term. RFC 4861's "neighbor" covers both families, and `docs/data-model.md` already says "the neighbour tables". This is recorded in *Vocabulary* with that reason.
+8. **Code shared between the lease plugins.** *Decided by the orchestrator (17 October 2026):* none. Each plugin decodes only its own backend's fields. `DecodeLease` decoded the union of three backends, which no single plugin needs.
+9. **Go-rendered pages.** *Decided by the orchestrator (17 October 2026):* the per-kind cards are built from declarations, with byte-identical output. Only B8's cards are removed. Decision 11 keeps the pages until step 7, and redesigning them would be interface work in a `standard` cycle.
+10. **Where the pf timeouts live.** *Decided by the orchestrator (17 October 2026):* as values of the `firewall_log` contract, exported by `pf`, read by other plugins through a dataset. They are pf's facts, and the netflow plugin must not restate them.
+11. **The push protocol names.** *Decided by the orchestrator (17 October 2026):* `datagram` and `line`, as `opnview`'s own terms, recorded with the reason that no product names a script-decoded protocol.
+12. **Line-count targets.** *Decided by the orchestrator (17 October 2026):* cuts in code lines measured by one `ci/` program, rather than absolute figures. Absolute figures from a search count would reward deleting comments and could not be checked consistently.
+13. **Budget margins.** *Decided by the orchestrator (17 October 2026):* 45 s and 150 s. "Well under" the budgets needs room for this cycle's new JS tests and the next cycle's growth; three runs remove noise.
+14. **The B2 coverage pass.** *Decided by the orchestrator (17 October 2026):* stays after deployment, as `cleanup-amendment.md` A says. It needs a day of real traffic.
+15. **The modularity test's reach.** *Decided by the orchestrator (17 October 2026):* every non-`_test.go` file, test-support packages included. That is where `netflowfixture.go` lives today, and excluding it would leave the convention in Go.
+16. **The NJ fixtures' home.** *Decided by the orchestrator (17 October 2026):* the netflow plugin's own tests, in the everyday suite, so the behaviour lives beside the code that implements it.
+17. **The replay ceiling.** *Decided by the orchestrator (17 October 2026):* 30 s. It must beat the Go join's 53 s, which the audit attributes to per-group leg reads that PA3's set reads remove, while leaving room for the interpreter.
+18. **Absorbing `cleanup-amendment.md`.** *Decided by the orchestrator (17 October 2026):* it is absorbed as PA16, so its removals and this cycle's structural removals touch the same files once (decision 1, "Nothing is written twice").
+
+## Builder lots
+
+Each lot ends with `docker compose run --rm checks` green within 60 s. The lots run in order. Phase E's rules (E6) apply to every lot.
+
+**Lot 1. Foundation: cleanup, store shape, batching, budgets.**
+- Covers PA16, PA15, PA17 and PA18.1.
+- Before anything else: PA21's counter, run to record the baseline, and PA10's recording of the Go join over F1 to F17 and over the capture. That recording is made against Go that later lots remove, so it comes first.
+- Criteria: PA-AC23 to PA-AC26, PA-AC29 (S5A-AC35 part).
+
+**Lot 2. The open plugin API.**
+- Covers PA1 to PA8, PA14, and PA20's third-party fixture with its test.
+- Criteria: PA-AC1 to PA-AC13, PA-AC22, PA-AC27.
+- NetFlow still runs in Go here, behind the new generic measure tables, so `checks` stays green.
+
+**Lot 3. NetFlow into JavaScript.**
+- Covers PA9, PA10's comparison and replay, and PA18.3 (the seed).
+- Criteria: PA-AC14 to PA-AC18 (netflow and pf parts), PA-AC29 (E19 part).
+
+**Lot 4. The remaining moves, the proof and the documents.**
+- Covers PA11, PA12, PA13, PA18.2, PA20's modularity test, PA19 and PA21's final count.
+- Criteria: PA-AC18 (neighbours part), PA-AC19 to PA-AC21, PA-AC28, PA-AC29 (`connection_tree` part), PA-AC30, PA-AC31.
+
+**Parallel worktrees.**
+- Lots 1 and 2 cannot run in parallel with anything: both rewrite `internal/store/schema.sql`, `internal/store/sqldb`, `internal/plugin` and the write paths.
+- **Lots 3 and 4 may run in parallel, in separate worktrees, after Lot 2 is merged**, on one condition: Lot 4 defers its edits to `internal/store/schema.sql`, `sql/seed.sql`, `docs/` and `plugins/netflow/` until Lot 3 is merged.
+  - Lot 3 owns `plugins/netflow/`, `plugins/pf/`, the NetFlow Go removals, the seed and `widget/request`.
+  - Lot 4 owns `plugins/{kea,isc,dnsmasq,unbound,insight}/`, the new `plugins/neighbours/` and the live strip's plugin directory, `internal/collect/kinds/leases`, `internal/live` and `plugin/scripthost`.
+  - If the condition cannot be kept, they run in sequence.
+
+## Documents
+
+- **`docs/plugins.md`:** PA1 to PA8, the push-class table, the 0/1 and whole-number result rules, the observation-point limit for declared measures, and *A NetFlow subscriber* rewritten as a plugin-owned measure.
+- **`docs/widget-api.md`:** `volume_measure` open values, the dataset renames, and PA19's cap.
+- **`docs/architecture.md`:** *Map of the tree*, and *Decisions in force*, including this amendment's decisions and the allow-list.
+- **`docs/data-model.md`:** the *Vocabulary* rows, the generic measure tables, and *Storage fit* for them.
+- **`README.md`:** the NetFlow paragraph names the plugin, with no change of meaning.
+- **`CLAUDE.md`:** its sentence "the step-3 mockup is … exempt" and the NetFlow sentence stay true. The Builder hands back a proposed diff only if a reference it cites is removed.
+
+## J. Sentences that become obsolete
+
+**In this spec:**
+1. Decision 4's "classification, aggregation" stays core, but NetFlow-specific derivation leaves the core. Add: "derivations and measures may be plugins' (amendment of 17 October 2026)".
+2. NJ9's "Core. The join, the states, coverage and counting are core (`internal/collect/derive`, `internal/store/netflow`)": replaced by PA9.
+3. NJ2's core-written columns of `flow_record`: now written by the netflow plugin.
+4. NJ8's `netflow_parts` columns and `_netflow` twin: replaced by PA5.
+5. E.6.1's and E18's references to `connection_measured_volume`, `connection_netflow` and `netflow_parts`: read as PA5's generic tables and reader.
+6. `cleanup-amendment.md` A's "The structural items go into the post-deployment plugin-API spec": they are in this amendment.
+
+**In `docs/plugins.md`:**
+- the `flow_record` kind section;
+- *A push-only kind: `flow_record`*;
+- `netflowState()`;
+- every `host.dhcp_lease`, `host.dns_lookup` and `host.measurement_sample` entry;
+- the `_netflow` twin paragraph of *Volume figures and their measure*.
+
+**In code:** every comment citing the removed packages or the per-kind lists named in *Context*.

@@ -243,7 +243,7 @@ func walkSourceFiles(t *testing.T, directory string, visit func(path, content st
 			return nil
 		}
 		switch filepath.Ext(path) {
-		case ".go", ".gohtml", ".css", ".json", ".sql", ".html":
+		case ".go", ".css", ".json", ".sql", ".html":
 		default:
 			return nil
 		}

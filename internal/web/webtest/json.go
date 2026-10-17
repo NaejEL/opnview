@@ -29,8 +29,9 @@ func (h *Harness) PostJSON(path, body, token, origin string) *http.Response {
 	return answer
 }
 
-// SessionFormToken is the signed-in session's own form token, read off a page as a browser would.
+// SessionFormToken is the signed-in session's own form token, read from GET /api/session as the
+// application reads it.
 func (h *Harness) SessionFormToken() string {
 	h.T.Helper()
-	return h.FormToken(web.PathSettings)
+	return h.FormToken()
 }

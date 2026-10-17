@@ -6,18 +6,13 @@
     "action.fetch_certificate": "Fetch from the firewall",
     "field.api_key": "API key",
     "field.api_secret": "API secret",
-    "field.maxmind_licence_key": "MaxMind licence key",
-    "field.maxmind_account_id": "MaxMind account ID",
-    "field.theme": "Theme",
 
     "settings.title": "Settings",
     "settings.heading.firewall": "OPNsense",
-    "settings.heading.geolocation": "Geolocation",
     "settings.heading.appearance": "Appearance",
 
     "settings.label.credential_state": "Stored credentials",
     "settings.label.verification": "Verification",
-    "settings.label.maxmind_licence_key_state": "Stored licence key",
     "settings.label.geoip_state": "GeoLite2 databases",
     "settings.label.geoip_build": "Database build",
 
@@ -49,13 +44,11 @@
 
     "notice.certificate_presented": "The firewall presented this certificate",
 
-    "error.maxmind_account_id_invalid": "The MaxMind account ID must be a positive whole number.",
     "error.firewall_url_invalid": "The firewall URL must be an http or https address.",
     "error.fingerprint_invalid": "The certificate fingerprint must be 64 hexadecimal characters",
     "error.firewall_url_required": "Enter the firewall URL first",
     "error.certificate_not_fetched": "No certificate could be read from that address",
     "error.api_key_required": "An API key is required beside an API secret.",
-    "error.theme_unknown": "That theme does not exist.",
 
     "settings.label.public_suffix_state": "Last refresh",
     "settings.label.public_suffix_in_use": "Copy in use",
@@ -71,7 +64,6 @@
     "state.public_suffix.never_confirmed": "Never",
     "state.public_suffix.version_not_stated": "Not stated",
 
-    "error.settings_card_unknown": "That settings card does not exist.",
     "state.secret_not_kept": "Typed, not saved: type it again"
   }
 }

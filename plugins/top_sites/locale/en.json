@@ -1,0 +1,10 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.top_sites.widget.top_sites.title": "Top sites",
+    "plugin.top_sites.widget.top_sites.question": "Which sites is this network actually using?",
+    "plugin.top_sites.widget.top_sites.total.one": "{count} site",
+    "plugin.top_sites.widget.top_sites.total.other": "{count} sites",
+    "plugin.top_sites.widget.top_sites.named_share": "{share} of the flows named: {named} of {eligible}"
+  }
+}

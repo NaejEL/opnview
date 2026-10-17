@@ -2,16 +2,19 @@ package account_test
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/auth"
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/surfaces/account"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
 )
+
+// pathFirewallSave is an authenticated write the form-token rule is tested against.
+const pathFirewallSave = "/api/settings/firewall"
 
 // TestSignInSucceedsAndItsFailuresAreIndistinguishable is AC8.
 func TestSignInSucceedsAndItsFailuresAreIndistinguishable(t *testing.T) {
@@ -21,39 +24,35 @@ func TestSignInSucceedsAndItsFailuresAreIndistinguishable(t *testing.T) {
 
 	// Setup signed this reader in. Sign out so the sign-in path is exercised from
 	// nothing.
-	signOut := harness.Post(web.PathSignOut, url.Values{})
-	accounttest.AssertStatus(t, signOut, http.StatusSeeOther)
+	accounttest.AssertStatus(t, harness.PostWithToken(account.PathAPISignOut, "{}"), http.StatusOK)
 
 	t.Run("the right password yields a session", func(t *testing.T) {
 		harness.SignIn(login, password)
 		if harness.SessionCookie() == "" {
 			t.Fatal("signing in set no session cookie")
 		}
-		answer := harness.Get(web.PathSettings)
-		accounttest.AssertStatus(t, answer, http.StatusOK)
+		accounttest.AssertStatus(t, harness.Get(pathSettingsAnswer), http.StatusOK)
 	})
 
 	t.Run("the two failures disclose the same thing", func(t *testing.T) {
-		wrongPassword := webtest.FreshClient(t, harness).Post(web.PathSignIn,
-			url.Values{"login": {login}, "password": {password + "x"}})
-		unknownLogin := webtest.FreshClient(t, harness).Post(web.PathSignIn,
-			url.Values{"login": {"nobody-" + webtest.RandomHex(t, 4)}, "password": {password}})
-
-		wrongStatus, wrongBody := webtest.StatusAndBody(t, wrongPassword)
-		unknownStatus, unknownBody := webtest.StatusAndBody(t, unknownLogin)
+		wrongPassword := webtest.FreshClient(t, harness)
+		unknownLogin := webtest.FreshClient(t, harness)
+		wrongStatus, wrongBody := webtest.StatusAndBody(t, wrongPassword.PostWithToken(account.PathAPISignIn,
+			setupBody(t, map[string]string{"login": login, "password": password + "x"})))
+		unknownStatus, unknownBody := webtest.StatusAndBody(t, unknownLogin.PostWithToken(account.PathAPISignIn,
+			setupBody(t, map[string]string{"login": "nobody-" + webtest.RandomHex(t, 4), "password": password})))
 
 		if wrongStatus != unknownStatus {
-			t.Errorf("a wrong password answered %d and an unknown login %d",
-				wrongStatus, unknownStatus)
+			t.Errorf("a wrong password answered %d and an unknown login %d", wrongStatus, unknownStatus)
 		}
 		if wrongStatus != http.StatusUnauthorized {
 			t.Errorf("a refused sign-in answered %d rather than 401", wrongStatus)
 		}
-		// The bodies differ only in the login put back into the form and in the form
-		// token. Strip both and the remainder has to be identical, or the page is
+		// The answers carry no login and no token: they have to be identical, or the route is
 		// telling somebody which logins exist.
-		if strippedWrong, strippedUnknown := stripVarying(wrongBody), stripVarying(unknownBody); strippedWrong != strippedUnknown {
-			t.Error("the two sign-in failures render differently, so the page discloses whether a login exists")
+		if wrongBody != unknownBody {
+			t.Errorf("the two sign-in failures answer differently (%q, %q), so the route discloses "+
+				"whether a login exists", wrongBody, unknownBody)
 		}
 	})
 
@@ -63,23 +62,31 @@ func TestSignInSucceedsAndItsFailuresAreIndistinguishable(t *testing.T) {
 		if token == "" {
 			t.Fatal("signing in set no session cookie")
 		}
-		answer := harness.Post(web.PathSignOut, url.Values{})
-		accounttest.AssertStatus(t, answer, http.StatusSeeOther)
+		accounttest.AssertStatus(t, harness.PostWithToken(account.PathAPISignOut, "{}"), http.StatusOK)
 
 		// The replay presents the exact token the browser was given, which is what an
 		// attacker who copied a cookie has.
 		replayed := webtest.FreshClient(t, harness)
 		replayed.PresentSession(token)
-		refused := replayed.Get(web.PathSettings)
+		refused := replayed.Get(pathSettingsAnswer)
 		defer func() { _ = refused.Body.Close() }()
-		if refused.StatusCode != http.StatusSeeOther {
-			t.Fatalf("a replayed session answered %d rather than being turned away",
-				refused.StatusCode)
-		}
-		if location := refused.Header.Get("Location"); location != web.PathSignIn {
-			t.Errorf("a replayed session was sent to %q rather than to sign-in", location)
+		if refused.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("a replayed session answered %d rather than being turned away", refused.StatusCode)
 		}
 	})
+}
+
+// assertExpired fails unless an authenticated read is refused as an EXPIRED session, which is a
+// different answer from never having had one.
+func assertExpired(t *testing.T, harness *webtest.Harness) {
+	t.Helper()
+	status, body := webtest.StatusAndBody(t, harness.Get(pathSettingsAnswer))
+	if status != http.StatusUnauthorized {
+		t.Fatalf("an expired session answered %d rather than being turned away", status)
+	}
+	if want := `"condition":"session_expired"`; !strings.Contains(body, want) {
+		t.Errorf("an expired session was answered %s, without %s", body, want)
+	}
 }
 
 // TestASessionExpiresOnBothBoundsAndIsNeverRenewed is AC9.
@@ -101,20 +108,16 @@ func TestASessionExpiresOnBothBoundsAndIsNeverRenewed(t *testing.T) {
 		// well past one window's worth of wall-clock time.
 		for range 4 {
 			harness.Clock.Advance(lifetimes.Idle - lifetimes.Idle/4)
-			accounttest.AssertStatus(t, harness.Get(web.PathSettings), http.StatusOK)
+			accounttest.AssertStatus(t, harness.Get(pathSettingsAnswer), http.StatusOK)
 		}
 
 		// Past it: refused, and refused as EXPIRED rather than as never having existed.
 		harness.Clock.Advance(lifetimes.Idle)
-		answer := harness.Get(web.PathSettings)
-		defer func() { _ = answer.Body.Close() }()
-		if answer.StatusCode != http.StatusSeeOther {
-			t.Fatalf("an idle session answered %d rather than being turned away",
-				answer.StatusCode)
-		}
+		session := harness.SessionCookie()
+		assertExpired(t, harness)
 
 		// And it is not renewed by arriving: a second request finds nothing at all.
-		if session := harness.SessionCookie(); session != "" {
+		if session != "" {
 			if _, err := harness.Server.Sessions().Validate(
 				t.Context(), session, harness.Clock.Now()); err == nil {
 				t.Error("an expired session still validates, so it was renewed rather than refused")
@@ -132,16 +135,11 @@ func TestASessionExpiresOnBothBoundsAndIsNeverRenewed(t *testing.T) {
 		step := lifetimes.Idle / 2
 		for elapsed := step; elapsed < lifetimes.Absolute; elapsed += step {
 			harness.Clock.Advance(step)
-			accounttest.AssertStatus(t, harness.Get(web.PathSettings), http.StatusOK)
+			accounttest.AssertStatus(t, harness.Get(pathSettingsAnswer), http.StatusOK)
 		}
 
 		harness.Clock.Advance(step)
-		answer := harness.Get(web.PathSettings)
-		defer func() { _ = answer.Body.Close() }()
-		if answer.StatusCode != http.StatusSeeOther {
-			t.Fatalf("a session past its absolute cap answered %d rather than being turned away",
-				answer.StatusCode)
-		}
+		assertExpired(t, harness)
 	})
 }
 
@@ -150,32 +148,35 @@ func TestASessionExpiresOnBothBoundsAndIsNeverRenewed(t *testing.T) {
 // IT ENUMERATES THE REGISTERED ROUTES rather than a list written here, so a route
 // added later fails this test rather than shipping open. The membership of each set is
 // pinned as well as the behaviour: a new route declared public without a decision
-// changes the first set and fails.
+// fails.
 func TestEveryRouteIsPublicByDecisionOrRefusesAnUnauthenticatedRequest(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
 	harness.CompleteSetup()
 
 	// The declared public set, pinned. Changing it is changing this literal, which is
-	// the decision being made explicitly.
-	expectedPublic := map[string]bool{
-		http.MethodGet + " " + web.PathSetup:      true,
-		http.MethodPost + " " + web.PathSetup:     true,
-		http.MethodGet + " " + web.PathSignIn:     true,
-		http.MethodPost + " " + web.PathSignIn:    true,
-		http.MethodGet + " " + web.PathRecover:    true,
-		http.MethodGet + " " + web.PathStylesheet: true,
-		// The JSON equivalents of the setup and sign-in pages (C5 of the backend-completion
-		// cycle), public for the same reason the pages are, and the session state that hands a
-		// reader with no session the form token those two writes carry.
+	// the decision being made explicitly: the session state that hands a reader with no
+	// session the form token, the setup and the sign-in.
+	requiredPublic := map[string]bool{
 		http.MethodGet + " " + account.PathAPISession: true,
 		http.MethodPost + " " + account.PathAPISetup:  true,
 		http.MethodPost + " " + account.PathAPISignIn: true,
 	}
-	// The routes authorised by possession of the key file rather than by a session: the reset
-	// page's form and its JSON equivalent.
+	// The front's public routes (specs/SPEC-step-7-frontend.md, A3 to A5), decided public: the
+	// shell at every unmatched path, which carries no data; an unknown path under /api/, answered
+	// in JSON and carrying no data; the front's assets; its registry; the string catalogue; and the
+	// appearance read. They are the frontend surface's, which is built
+	// beside this change, so each is accepted where it is mounted and not required here.
+	frontPublic := map[string]bool{
+		http.MethodGet + " /":                       true,
+		http.MethodGet + " /api/":                   true,
+		http.MethodGet + " /front/{path...}":        true,
+		http.MethodGet + " /api/front":              true,
+		http.MethodGet + " /api/strings/{language}": true,
+		http.MethodGet + " /api/appearance":         true,
+	}
+	// The one route authorised by possession of the key file rather than by a session.
 	expectedKeyFile := map[string]bool{
-		http.MethodPost + " " + web.PathRecover:        true,
 		http.MethodPost + " " + account.PathAPIRecover: true,
 	}
 
@@ -191,6 +192,9 @@ func TestEveryRouteIsPublicByDecisionOrRefusesAnUnauthenticatedRequest(t *testin
 		switch route.Access {
 		case web.AccessPublic:
 			seenPublic[name] = true
+			if !requiredPublic[name] && !frontPublic[name] {
+				t.Errorf("%s is public, and nobody decided it should be", name)
+			}
 		case web.AccessKeyFile:
 			seenKeyFile[name] = true
 		case web.AccessAuthenticated:
@@ -201,34 +205,37 @@ func TestEveryRouteIsPublicByDecisionOrRefusesAnUnauthenticatedRequest(t *testin
 			t.Errorf("%s declares no access level, so nobody decided who may reach it", name)
 		}
 	}
-
-	webtest.AssertSameSet(t, "the explicitly public routes", expectedPublic, seenPublic)
+	for name := range requiredPublic {
+		if !seenPublic[name] {
+			t.Errorf("the public routes no longer include %s", name)
+		}
+	}
 	webtest.AssertSameSet(t, "the key-file routes", expectedKeyFile, seenKeyFile)
 
-	// And a key-file route refuses an unauthenticated request that does not present
-	// the key file, which is what puts it in the second of AC10's two sets.
-	anonymous := webtest.FreshClient(t, harness)
+	// And the key-file route refuses an unauthenticated request that does not present the key
+	// file, which is what puts it in the second of AC10's two sets.
 	password := webtest.RandomHex(t, 12)
-	answer := anonymous.Post(web.PathRecover, url.Values{
-		"login": {"operator"}, "password": {password}, "password_again": {password},
+	answer := postReset(t, webtest.FreshClient(t, harness), map[string]string{
+		"login": "operator", "password": password, "password_again": password,
 	})
 	accounttest.AssertStatus(t, answer, http.StatusForbidden)
 }
 
-// TestEveryMutatingFormCarriesAFormToken is AC11.
+// TestEveryMutatingFormCarriesAFormToken is AC11, for the JSON writes: a write without its token,
+// or with another session's, is refused before its handler runs, and stores nothing.
 func TestEveryMutatingFormCarriesAFormToken(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
 
 	t.Run("setup without a token", func(t *testing.T) {
 		password := webtest.RandomHex(t, 12)
-		// The page is loaded first, so the cookie exists and the only thing missing is
-		// the field.
-		_ = harness.FormToken(web.PathSetup)
-		answer := harness.PostRaw(web.PathSetup, url.Values{
-			"setup_token": {harness.SetupToken.Token()},
-			"login":       {"operator"}, "password": {password}, "password_again": {password},
-		})
+		// The session state is read first, so the cookie exists and the only thing missing
+		// is the header.
+		_ = harness.FormToken()
+		answer := harness.PostJSON(account.PathAPISetup, setupBody(t, map[string]string{
+			"setup_token": harness.SetupToken.Token(),
+			"login":       "operator", "password": password, "password_again": password,
+		}), "", "")
 		accounttest.AssertStatus(t, answer, http.StatusForbidden)
 		accounttest.AssertNoAccount(t, harness)
 		if harness.SetupToken.Spent() {
@@ -237,64 +244,45 @@ func TestEveryMutatingFormCarriesAFormToken(t *testing.T) {
 	})
 
 	login, password := harness.CompleteSetup()
+	firewallURL := harness.Fake.BaseURL()
+	saveBody := setupBody(t, map[string]string{"url": firewallURL})
 
-	t.Run("settings without a token", func(t *testing.T) {
-		answer := harness.PostRaw(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
-			"theme": {string(web.ThemeDark)}})
-		accounttest.AssertStatus(t, answer, http.StatusForbidden)
+	assertURLNotStored := func(t *testing.T) {
+		t.Helper()
+		if value, present, err := harness.Store.Setting(t.Context(), config.KeyOPNsenseBaseURL); err != nil {
+			t.Fatalf("reading the setting: %v", err)
+		} else if present {
+			t.Errorf("a refused write stored the firewall URL %q", value)
+		}
+	}
+
+	t.Run("a write without a token", func(t *testing.T) {
+		accounttest.AssertStatus(t, harness.PostJSON(pathFirewallSave, saveBody, "", ""), http.StatusForbidden)
+		assertURLNotStored(t)
 	})
 
-	t.Run("settings with another session's token", func(t *testing.T) {
+	t.Run("a write with another session's token", func(t *testing.T) {
 		// A second browser, signed in as the same account: a real second session with a
 		// real form token of its own.
 		other := webtest.FreshClient(t, harness)
 		other.SignIn(login, password)
-		otherToken := other.FormToken(web.PathSettings)
+		otherToken := other.FormToken()
 
-		mine := harness.FormToken(web.PathSettings)
+		mine := harness.FormToken()
 		if otherToken == mine {
 			t.Fatal("the two sessions were issued the same form token, so this proves nothing")
 		}
-
-		answer := harness.PostRaw(web.PathSettings, url.Values{
-			"csrf_token":              {otherToken},
-			webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
-			"theme":                   {string(web.ThemeDark)},
-		})
-		accounttest.AssertStatus(t, answer, http.StatusForbidden)
-
+		accounttest.AssertStatus(t, harness.PostJSON(pathFirewallSave, saveBody, otherToken, ""),
+			http.StatusForbidden)
 		// And nothing was stored: the refusal happened before the handler ran.
-		if theme := harness.Server.ReadTheme(t.Context()); theme != web.ThemeSystem {
-			t.Errorf("a refused submission stored the theme %q", theme)
-		}
+		assertURLNotStored(t)
 	})
 
-	t.Run("settings with its own token", func(t *testing.T) {
-		answer := harness.Post(web.PathSettings, url.Values{webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
-			"theme": {string(web.ThemeDark)}})
-		accounttest.AssertStatus(t, answer, http.StatusSeeOther)
-		if theme := harness.Server.ReadTheme(t.Context()); theme != web.ThemeDark {
-			t.Errorf("an accepted submission stored the theme %q rather than dark", theme)
+	t.Run("a write with its own token", func(t *testing.T) {
+		accounttest.AssertStatus(t, harness.PostWithToken(pathFirewallSave, saveBody), http.StatusOK)
+		if value, _, err := harness.Store.Setting(t.Context(), config.KeyOPNsenseBaseURL); err != nil ||
+			value != firewallURL {
+			t.Errorf("an accepted write stored %q (%v) rather than %q", value, err, firewallURL)
 		}
 	})
-}
-
-// stripVarying removes the two things two renderings of one page legitimately differ
-// in: the form token, and the login put back into the field. What is left has to be
-// identical, or the page is saying something about whether a login exists.
-func stripVarying(body string) string {
-	for _, marker := range []string{`name="csrf_token"`, `name="login"`} {
-		for {
-			start := strings.Index(body, marker)
-			if start < 0 {
-				break
-			}
-			end := strings.Index(body[start:], ">")
-			if end < 0 {
-				break
-			}
-			body = body[:start] + body[start+end:]
-		}
-	}
-	return body
 }

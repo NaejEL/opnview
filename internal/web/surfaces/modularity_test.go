@@ -88,26 +88,6 @@ func TestEveryDirectoryRegistersASurfaceAndEverySurfaceHasADirectory(t *testing.
 	}
 }
 
-// TestEverySurfaceDeclaresItsOwnTabAndItsOwnWords: nothing about a surface lives in the core's
-// files except what several surfaces share.
-func TestEverySurfaceDeclaresItsOwnTabAndItsOwnWords(t *testing.T) {
-	t.Parallel()
-	for _, surface := range web.RegisteredSurfaces() {
-		if len(surface.Pages) == 0 {
-			continue // the widget API draws no page
-		}
-		if surface.Files == nil {
-			t.Errorf("the surface %q draws pages and carries no files", surface.Name)
-			continue
-		}
-		for _, page := range surface.Pages {
-			if _, err := fs.Stat(surface.Files, "template/"+page.Name+".gohtml"); err != nil {
-				t.Errorf("the page %q of %q has no template of its own: %v", page.Name, surface.Name, err)
-			}
-		}
-	}
-}
-
 // surfaceNames are the names of the surface directories.
 func surfaceNames(t *testing.T) map[string]bool {
 	t.Helper()

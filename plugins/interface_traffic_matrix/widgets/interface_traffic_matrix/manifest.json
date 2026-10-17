@@ -68,6 +68,6 @@
   ],
   "script": "interface_traffic_matrix.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

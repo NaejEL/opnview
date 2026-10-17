@@ -68,6 +68,6 @@
   "queries": [],
   "script": "sites_by_client.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

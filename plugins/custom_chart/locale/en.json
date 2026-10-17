@@ -1,0 +1,14 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.custom_chart.widget.custom_chart.title": "Custom chart",
+    "plugin.custom_chart.widget.custom_chart.question": "Whatever the reader wants to ask by putting two or more series on the same chart.",
+    "plugin.custom_chart.widget.custom_chart.axis.left": "Left axis: {unit}",
+    "plugin.custom_chart.widget.custom_chart.axis.right": "Right axis: {unit}",
+    "plugin.custom_chart.widget.custom_chart.annotations": "Annotations",
+    "plugin.custom_chart.widget.custom_chart.column.series": "Series",
+    "plugin.custom_chart.widget.custom_chart.column.measure": "Measure",
+    "plugin.custom_chart.widget.custom_chart.column.aggregation": "Aggregation",
+    "plugin.custom_chart.widget.custom_chart.series_label": "{source} {measure}"
+  }
+}

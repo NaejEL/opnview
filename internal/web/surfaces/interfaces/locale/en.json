@@ -10,7 +10,6 @@
     "interfaces.heading.overlaps": "Overlapping networks on other interfaces",
     "interfaces.column.network": "Network",
     "interfaces.column.origin": "Origin",
-    "interfaces.column.removed": "Removed",
     "interfaces.column.counts": "Counts now",
     "interfaces.column.action": "Action",
     "state.origin.detected": "Detected",

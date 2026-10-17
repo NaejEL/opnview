@@ -320,13 +320,20 @@ func run() (err error) {
 			extraSenders.String())
 	}
 
+	// The handler served: the server itself, or, in a review build only, the server behind the recorded
+	// widget answers (review.go).
+	handler, err := reviewHandler(server)
+	if err != nil {
+		return err
+	}
+
 	// The long-running things, stopped by the one cancellation above.
 	var running sync.WaitGroup
 	var serveErr error
 	running.Add(1)
 	go func() {
 		defer running.Done()
-		serveErr = server.ListenAndServe(ctx, *listen, httpGrace)
+		serveErr = server.ListenAndServeHandler(ctx, *listen, httpGrace, handler)
 	}()
 
 	fmt.Printf("%s: the interface is listening on %s\n", buildinfo.AppName, *listen)

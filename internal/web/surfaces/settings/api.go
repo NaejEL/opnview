@@ -7,19 +7,20 @@ import (
 	"strings"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/web"
 )
 
-// The settings surface's JSON equivalents (docs/widget-api.md, "Settings API"): every figure the
-// page draws, and every save of its cards. The MaxMind card's JSON equivalent is the maxmind
+// The settings surface's JSON routes (docs/widget-api.md, "Settings API"): every figure of the
+// settings, and every save of its cards. The MaxMind settings are the maxmind
 // plugin's declared settings, written through POST /api/plugins/maxmind/settings, which stores
 // the same rows under the same keys; this surface reports their state and does not write them a
 // second way.
 
 // The JSON paths.
 const (
-	// PathAPISettings is every figure of the page.
+	// PathAPISettings is every figure of the settings.
 	PathAPISettings = "/api/settings"
 	// PathAPIFirewall saves the firewall card and verifies it.
 	PathAPIFirewall = "/api/settings/firewall"
@@ -28,8 +29,6 @@ const (
 	PathAPIFirewallCertificate = "/api/settings/firewall/certificate"
 	// PathAPIPublicSuffix saves the Public Suffix List's refresh interval.
 	PathAPIPublicSuffix = "/api/settings/public-suffix"
-	// PathAPITheme saves the theme preference.
-	PathAPITheme = "/api/settings/theme"
 )
 
 // GeolocationPlugin is the plugin whose declared settings are the MaxMind card's.
@@ -46,17 +45,14 @@ func (s *surface) apiRoutes() []web.Route {
 			JSON: true, Handler: s.handleAPIFirewallCertificate},
 		{Method: http.MethodPost, Pattern: PathAPIPublicSuffix, Access: web.AccessAuthenticated, JSON: true,
 			Handler: s.handleAPIPublicSuffix},
-		{Method: http.MethodPost, Pattern: PathAPITheme, Access: web.AccessAuthenticated, JSON: true,
-			Handler: s.handleAPITheme},
 	}
 }
 
-// SettingsAnswer is every figure of the settings page.
+// SettingsAnswer is every figure of the settings answer.
 type SettingsAnswer struct {
 	Firewall     FirewallState     `json:"firewall"`
 	Geolocation  GeolocationState  `json:"geolocation"`
 	PublicSuffix PublicSuffixState `json:"public_suffix"`
-	Theme        ThemeState        `json:"theme"`
 }
 
 // FirewallState is the firewall card. No secret is ever in it: the API secret is reported by the
@@ -103,12 +99,6 @@ type PublicSuffixState struct {
 	RefreshIntervalSeconds int64 `json:"refresh_interval_seconds"`
 }
 
-// ThemeState is the appearance card: the preference in force and the values offered.
-type ThemeState struct {
-	Value   string   `json:"value"`
-	Choices []string `json:"choices"`
-}
-
 // CertificateAnswer is the fingerprint a firewall presented.
 type CertificateAnswer struct {
 	PresentedFingerprint string `json:"presented_fingerprint"`
@@ -122,37 +112,64 @@ func nullable(value string) *string {
 	return &value
 }
 
-// settingsAnswer reads every figure of the page, as fillSettings reads them for the page.
+// settingsAnswer reads every figure of the answer.
+//
+// IT READS NO SECRET INTO THE ANSWER. What it reads is whether each one is there and whether it
+// can be opened, which are states, and it reports them as closed codes.
 func (s *surface) settingsAnswer(request *http.Request, verification messageKey) (SettingsAnswer, error) {
-	var built view
-	if err := s.fillSettings(request, &built, verification); err != nil {
+	ctx := request.Context()
+	text := func(key string) (*string, error) {
+		value, _, err := s.store.Setting(ctx, key)
+		return nullable(value), err
+	}
+	var answer SettingsAnswer
+	var err error
+	if answer.Firewall.URL, err = text(config.KeyOPNsenseBaseURL); err != nil {
 		return SettingsAnswer{}, err
 	}
-	answer := SettingsAnswer{
-		Firewall: FirewallState{URL: nullable(built.FirewallURL), APIKey: nullable(built.APIKey),
-			CertificateFingerprint: nullable(built.CertificateFingerprint),
-			CredentialState:        web.ConditionOf(built.CredentialState),
-			Verification:           web.ConditionOf(built.VerificationState)},
-		Geolocation: GeolocationState{Plugin: GeolocationPlugin,
-			SettingsPath:    "/api/plugins/" + GeolocationPlugin + "/settings",
-			AccountID:       nullable(built.MaxMindAccountID),
-			LicenceKeyState: web.ConditionOf(built.LicenceKeyState),
-			DownloadState:   web.ConditionOf(built.GeoIPState)},
-		Theme: ThemeState{Value: string(s.ReadTheme(request.Context()))},
+	if answer.Firewall.APIKey, err = text(config.KeyOPNsenseAPIKey); err != nil {
+		return SettingsAnswer{}, err
 	}
+	if answer.Firewall.CertificateFingerprint, err = text(config.KeyOPNsenseCertificateFingerprint); err != nil {
+		return SettingsAnswer{}, err
+	}
+	_, state, err := config.LoadFirewallCredentials(ctx, s.store, s.unsealer())
+	if err != nil {
+		return SettingsAnswer{}, err
+	}
+	answer.Firewall.CredentialState = web.ConditionOf(credentialStateKey(state))
+	answer.Firewall.Verification = web.ConditionOf(verification)
+
+	answer.Geolocation = GeolocationState{Plugin: GeolocationPlugin,
+		SettingsPath: "/api/plugins/" + GeolocationPlugin + "/settings"}
+	if answer.Geolocation.AccountID, err = text(config.KeyMaxMindAccountID); err != nil {
+		return SettingsAnswer{}, err
+	}
+	licenceState, err := s.licenceKeyState(ctx)
+	if err != nil {
+		return SettingsAnswer{}, err
+	}
+	answer.Geolocation.LicenceKeyState = web.ConditionOf(licenceState)
+	geoIPState, err := s.geoIPState(ctx)
+	if err != nil {
+		return SettingsAnswer{}, err
+	}
+	answer.Geolocation.DownloadState = web.ConditionOf(geoIPState)
 	if s.geoip != nil {
 		if build, ready := s.geoip.Ready(); ready {
 			answer.Geolocation.BuildAt = &build
 		}
 	}
-	for _, option := range built.Themes {
-		answer.Theme.Choices = append(answer.Theme.Choices, string(option.Value))
+
+	suffixState, err := s.publicSuffixState(ctx)
+	if err != nil {
+		return SettingsAnswer{}, err
 	}
-	card := built.PublicSuffix
-	answer.PublicSuffix = PublicSuffixState{State: web.ConditionOf(card.StateKey), InUse: card.InUse}
+	answer.PublicSuffix = PublicSuffixState{State: web.ConditionOf(suffixState)}
 	if s.publicSuffix != nil {
 		version, rules, confirmedAt, held := s.publicSuffix.Held()
 		if held {
+			answer.PublicSuffix.InUse = true
 			answer.PublicSuffix.Rules = &rules
 			answer.PublicSuffix.Version = nullable(version)
 			answer.PublicSuffix.VersionStated = version != ""
@@ -161,7 +178,7 @@ func (s *surface) settingsAnswer(request *http.Request, verification messageKey)
 			answer.PublicSuffix.ConfirmedAt = &confirmedAt
 		}
 	}
-	settings, err := s.Configuration(request.Context())
+	settings, err := s.Configuration(ctx)
 	if err != nil {
 		return SettingsAnswer{}, err
 	}
@@ -193,8 +210,7 @@ func member(body map[string]any, key string) string {
 	return value
 }
 
-// handleAPIFirewall saves the firewall card: the body is the card's whole content, as the page's
-// form carries it -- an absent or empty url, api_key or certificate_fingerprint removes that
+// handleAPIFirewall saves the firewall card: the body is the card's whole content, as one card -- an absent or empty url, api_key or certificate_fingerprint removes that
 // setting, and an absent or empty api_secret keeps the one stored.
 func (s *surface) handleAPIFirewall(writer http.ResponseWriter, request *http.Request) {
 	body, ok := readBody(writer, request)
@@ -227,8 +243,7 @@ func (s *surface) handleAPIFirewall(writer http.ResponseWriter, request *http.Re
 }
 
 // handleAPIFirewallCertificate connects to the firewall at the given URL and answers the
-// fingerprint of the certificate it presents. It stores nothing and verifies nothing, as the
-// page's fetch control.
+// fingerprint of the certificate it presents. It stores nothing and verifies nothing, as a fetch control.
 func (s *surface) handleAPIFirewallCertificate(writer http.ResponseWriter, request *http.Request) {
 	body, ok := readBody(writer, request)
 	if !ok {
@@ -276,25 +291,7 @@ func (s *surface) handleAPIPublicSuffix(writer http.ResponseWriter, request *htt
 	s.answerSaved(writer, request, msgVerifyNotAttempted)
 }
 
-// handleAPITheme saves the theme preference.
-func (s *surface) handleAPITheme(writer http.ResponseWriter, request *http.Request) {
-	body, ok := readBody(writer, request)
-	if !ok {
-		return
-	}
-	refusal, err := s.saveTheme(request.Context(), member(body, "theme"), s.now().UTC().Unix())
-	if err != nil {
-		web.FailJSON(writer, request, err)
-		return
-	}
-	if refusal != "" {
-		web.RefuseJSON(writer, http.StatusBadRequest, web.ConditionOf(refusal), "theme")
-		return
-	}
-	s.answerSaved(writer, request, msgVerifyNotAttempted)
-}
-
-// answerSaved answers a save with every figure of the page as it now stands.
+// answerSaved answers a save with every figure as it now stands.
 func (s *surface) answerSaved(writer http.ResponseWriter, request *http.Request, verification messageKey) {
 	answer, err := s.settingsAnswer(request, verification)
 	if err != nil {

@@ -3,62 +3,51 @@ package hello
 import (
 	"embed"
 	"net/http"
-	"strconv"
 
 	"github.com/NaejEL/opnview/internal/web"
 )
 
-//go:embed template locale surface.json
+//go:embed locale surface.json
 var files embed.FS
 
-// PathHello is where the page lives.
-const PathHello = "/hello"
+// PathHello is where the answer lives.
+const PathHello = "/api/hello"
 
-// The page and the catalogue keys its code chooses. The words are in locale/en.json.
+// The catalogue keys the front uses to name the figure. The words are in locale/en.json.
 const (
-	pageHello                    = "hello"
-	msgTitleHello web.MessageKey = "hello.title"
+	msgTitleHello    web.MessageKey = "hello.title"
+	msgGreetingHello web.MessageKey = "hello.greeting"
 )
 
 func init() {
 	web.RegisterSurface(web.Surface{
 		Name:  "hello",
 		Files: files,
-		Pages: []web.Page{{Name: pageHello, TitleKey: msgTitleHello}},
 		Routes: func(host web.Host) []web.Route {
 			s := &surface{host}
 			return []web.Route{
-				{Method: http.MethodGet, Pattern: PathHello, Access: web.AccessAuthenticated, Handler: s.handle},
+				{Method: http.MethodGet, Pattern: PathHello, Access: web.AccessAuthenticated, JSON: true,
+					Handler: s.handle},
 			}
 		},
-		Tab:  &web.Tab{Page: pageHello, Path: PathHello, TitleKey: msgTitleHello, Order: 90},
-		Keys: func() []web.MessageKey { return []web.MessageKey{msgTitleHello} },
+		Keys: func() []web.MessageKey { return []web.MessageKey{msgTitleHello, msgGreetingHello} },
 	})
 }
 
 // surface is the handlers, over what the host grants.
 type surface struct{ web.Host }
 
-// view is everything the template may read: the common part, and the one figure.
-type view struct {
-	web.Base
-	Accounts string
+// Answer is the route's answer: the one figure.
+type Answer struct {
+	Accounts int `json:"accounts"`
 }
 
-// handle draws the page.
+// handle answers the figure.
 func (s *surface) handle(writer http.ResponseWriter, request *http.Request) {
-	base, err := s.NewBase(writer, request, web.SessionFrom(request), msgTitleHello)
-	if err != nil {
-		s.FailInternal(writer, request, err)
-		return
-	}
 	count, err := s.Store().CountAccounts(request.Context())
 	if err != nil {
-		s.FailInternal(writer, request, err)
+		web.FailJSON(writer, request, err)
 		return
 	}
-	built := view{Base: base, Accounts: strconv.Itoa(count)}
-	if err := s.Render(writer, http.StatusOK, pageHello, &built); err != nil {
-		s.FailInternal(writer, request, err)
-	}
+	web.WriteJSON(writer, http.StatusOK, Answer{Accounts: count})
 }

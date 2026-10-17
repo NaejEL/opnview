@@ -123,7 +123,7 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | who sends syslog, who receives it | RFC 5424's **originator** and **collector** | the `sender` of a pushed message; `opnview` is the collector | RFC 5424, section 3 |
 | who sends NetFlow and its records | RFC 7011's **Exporter**, **Collector**, **Observation Domain**, **Information Element** | `exporterIPv4Address`, `observationDomainId`, the IANA registry's element names | RFC 7011, section 2; RFC 3954 |
 
-**Fifty-seven terms are `opnview`'s own, because OPNsense has no word for them.**
+**The terms below are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -191,6 +191,13 @@ vocabulary read off an endpoint:
 | the **measured volume** of a connection, `connection_measured_volume`, and the **`netflow` measure** | none: no product names the volume of a logged connection as an exporter counted it | **measured**, against **logged**: the bytes and packets the NetFlow export reported for a logged connection, each direction counted once, from the records of the one exporter that sees it, or from its translated copies where none does; served as the measure `netflow`, never summed with `logged` |
 | an **unmatched record**, `unmatched_record_aggregate_*` | none: nothing upstream joins flow records to logged connections | a flow record that joined no leg and is no copy, with its reason (`no_logged_leg`, `ambiguous`, `beyond_flow_horizon`, `interface_index_unmapped`, `reverse_unconfirmed`), keyed by its ingress and egress interfaces or roles |
 | the per-direction states `forwarding_export_unsettled`, `ingress_not_captured`, `parent_copies_only`, `interface_not_exported`, `interface_not_captured` | none: nothing upstream says why a direction of a logged connection has no exported figure | each names the first cause NJ5 finds: two exporters may see the direction (**unsettled**, because whether a packet is exported once or twice is not settled by any record), the entry interface is captured on egress only, only parent copies exist, the exporter cannot export the interface, or the interface is not captured; `capture_not_known` is the coverage class of a connection that started under no readable, enabled configuration |
+| a **dashboard** | OPNsense's own *Lobby > Dashboard* is one page of **widgets**; it has no word for a portable file of several arranged pages | the word the surveyed products use for the same object (Grafana, Home Assistant, Kibana, Datadog): one document of `docs/dashboard-format.md`, stored in the `dashboard` table, holding one or more canvases. **"Widget" keeps OPNsense's meaning**, a placed tile that draws one thing |
+| a **canvas** | none: OPNsense's dashboard is a single page with no named pages | one named page of a dashboard, shown as a tab and composed of placed widgets (`ROADMAP.md`, step 7, *Named canvases, not fixed screens*); the word says it is a surface the reader composes, not a screen the product fixes |
+| a **front plugin** | OPNsense's plugins are packages installed on the firewall; nothing names a part that extends a third program's browser interface | a part of the data directory read at start that extends the front -- a theme, a language, a widget's renderer, a front-only widget (`docs/front-plugins.md`); **front** names the interface a browser draws, as against the server's surfaces, and **plugin** is the word `opnview` already uses for its backend parts (`docs/plugins.md`), under the same precedence and reload rules |
+| a **renderer** | none: OPNsense's widgets are drawn by its own code and expose no drawing contract | the classic script that turns a widget's answer into a view tree in the browser (`renderer.entry` of a widget manifest); the ordinary word for what draws, and distinct from the widget's server-side **script**, which answers the data |
+| a **theme** | OPNsense has **themes** for its own web interface (*System > Settings > General*), each a stylesheet; none is read by `opnview` | one file mapping the front's colour tokens in a light and a dark mode (`<data-dir>/themes/<id>.json`); the same word for the same idea, kept because a reader of both products means the same thing by it |
+| a **palette** | none | a theme as the reader picks it in the header: the set of colours a theme names (`appearance_palette`), industrial by default, five more at the values of the maintainer's site; kept apart from **theme** because the picker chooses colours, while the theme file is the part that carries them |
+| a **mode** | none; OPNsense's themes are light or dark by being different themes | `system`, `light` or `dark` (`appearance_mode`): which of a palette's two sets is drawn, `system` following the operating system's preference; the word the operating systems and the browsers use (`prefers-color-scheme`) |
 
 **What this replaced.** `segment` was invented before any research existed and
 was never reconciled with what OPNsense calls the thing. It is gone: the entity
@@ -262,6 +269,7 @@ client_volume_aggregate_30d
 client_volume_aggregate_7d
 collection_gap
 connection_measured_volume
+dashboard
 dhcp_lease
 dns_resolution
 domain_attribution
@@ -422,6 +430,7 @@ blocklist
 capture_configuration
 capture_interface
 capture_interface_parent_of
+dashboard
 encrypted_credential
 eve_ingest_cursor
 interface
@@ -471,6 +480,7 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `source_availability` | exactly one row per `provider` row, for the life of the database |
 | `eve_ingest_cursor` | one watermark per rotated `eve.json` file; the firewall keeps the current file plus four archives |
 | `setting` | one row per configuration key |
+| `dashboard` | one row per dashboard the user keeps; a row is only ever created by hand, by an import or by the one default |
 | `account` | one row per opnview login, created by hand in the setup surface |
 | `session` | one row per session issued and not yet expired and collected; a browser holds one |
 | `encrypted_credential` | one row per named credential opnview has to send somewhere; two exist |
@@ -1128,6 +1138,33 @@ side of that gap, which is that document's to close.
 purging a client leaves its owner alone.
 
 **Indexes:** the primary key and the uniqueness constraint on `display_name`.
+
+### `dashboard` — a dashboard, as the file that describes it
+
+One dashboard the user composed, imported or was given as the default: a named
+set of canvases, each holding placed widgets, described by the file format of
+`docs/dashboard-format.md` (`specs/SPEC-step-7-frontend.md`, A7).
+
+**Source: none.** Like `owner`, it is user input and no endpoint feeds it. The
+term is `opnview`'s own: OPNsense's dashboard is one fixed page of widgets, and
+this is a document the user writes, exports and imports.
+
+**Identity:** `id`, numbered as every row id is. `position` orders the
+dashboards, lowest first; `revision` counts the saves from 1, and a save naming
+another revision than the stored one is refused, so two editors never overwrite
+each other silently. `origin` is `created`, `imported` or `default`, and
+`source_name` the imported file's name, null otherwise.
+
+**The document is `json`, not `jsonb`.** It is kept as the text it was sent,
+member order and unknown keys included, because a dashboard exported again
+without repair must come back unchanged; nothing queries inside it. Its structure
+is validated before it is written, fail-closed (`internal/dashboard`); its
+references are never checked on a save.
+
+**Retention:** never purged, and the read role holds no privilege on it: no
+widget query reads a user's dashboards.
+
+**Indexes:** the primary key. The table holds a handful of rows.
 
 ### `dhcp_lease` — one observed lease generation
 

@@ -76,6 +76,6 @@
   "queries": [],
   "script": "passed_traffic_world_map.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

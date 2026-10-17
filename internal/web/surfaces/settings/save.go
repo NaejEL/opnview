@@ -6,11 +6,9 @@ import (
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/accounts"
-	"github.com/NaejEL/opnview/internal/web"
 )
 
-// What a save of a card checks and stores, written once for the page and its JSON equivalent
-// (api.go), so the two refuse the same inputs and make the same change.
+// What a save of a card checks and stores, written once for the JSON routes (api.go).
 
 // firewallURLRefusal refuses a typed firewall URL that is not the address of a firewall API. An
 // empty URL is accepted: it removes the setting.
@@ -71,13 +69,4 @@ func (s *surface) saveFirewall(ctx context.Context, firewallURL, apiKey, apiSecr
 	// One call to the firewall, and the only one this package makes. It is the first of the
 	// permitted outbound calls and not another; see verify.go.
 	return s.verify(ctx), nil
-}
-
-// saveTheme stores a theme, or refuses one this build does not offer.
-func (s *surface) saveTheme(ctx context.Context, value string, now int64) (messageKey, error) {
-	parsedTheme, err := web.ParseTheme(value)
-	if err != nil {
-		return msgThemeUnknown, nil
-	}
-	return "", s.store.SetSetting(ctx, config.KeyTheme, string(parsedTheme), now)
 }

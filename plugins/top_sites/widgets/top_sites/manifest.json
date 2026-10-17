@@ -68,6 +68,6 @@
   "queries": [],
   "script": "top_sites.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

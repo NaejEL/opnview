@@ -1,0 +1,10 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.connection_tree.widget.connection_tree.title": "Connection tree",
+    "plugin.connection_tree.widget.connection_tree.question": "Where does a chosen subject — an interface, a machine or a person — go preferentially?",
+    "plugin.connection_tree.widget.connection_tree.root.client": "From each client",
+    "plugin.connection_tree.widget.connection_tree.root.interface": "From each interface",
+    "plugin.connection_tree.widget.connection_tree.root.owner": "From each person"
+  }
+}

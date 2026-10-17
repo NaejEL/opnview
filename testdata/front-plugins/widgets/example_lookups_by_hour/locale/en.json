@@ -1,0 +1,10 @@
+{
+  "language": "en",
+  "strings": {
+    "widget.example_lookups_by_hour.title": "Lookups per hour",
+    "widget.example_lookups_by_hour.question": "How many resolver lookups were made in each hour?",
+    "widget.example_lookups_by_hour.column.hour": "Hour",
+    "widget.example_lookups_by_hour.column.lookups": "Lookups",
+    "widget.example_lookups_by_hour.parameter.period": "Range"
+  }
+}

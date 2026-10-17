@@ -1,0 +1,12 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.sites_by_client.widget.sites_by_client.title": "Sites by client",
+    "plugin.sites_by_client.widget.sites_by_client.question": "Which site was used, and by whom?",
+    "plugin.sites_by_client.widget.sites_by_client.eligible_flows": "Flows that could be named",
+    "plugin.sites_by_client.widget.sites_by_client.named_flows": "Flows named",
+    "plugin.sites_by_client.widget.sites_by_client.named_share": "Named",
+    "plugin.sites_by_client.widget.sites_by_client.sites": "Sites",
+    "plugin.sites_by_client.widget.sites_by_client.rate_undefined": "No flow to name"
+  }
+}

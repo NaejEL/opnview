@@ -1,0 +1,80 @@
+{
+  "format_version": 1,
+  "title": "Interface review",
+  "description": "Weekly look at what leaves each interface and what was stopped.",
+  "generated_by": "opnview 0.1",
+  "generated_at": 1758499200,
+  "canvases": [
+    {
+      "id": "main-floor",
+      "title": "Main floor",
+      "description": "Volume, destinations and blocks for one interface.",
+      "grid": { "columns": 12, "row_height": 40 },
+      "widgets": [
+        {
+          "id": "volume-by-interface",
+          "type": "interface_volume_ranking",
+          "title": "Where the traffic is",
+          "placement": { "x": 0, "y": 0, "w": 12, "h": 6 },
+          "parameters": {
+            "period": "7d",
+            "measure": "bytes",
+            "scope": "all",
+            "limit": 10,
+            "include_unlabelled": true
+          }
+        },
+        {
+          "id": "world-map",
+          "type": "passed_traffic_world_map",
+          "placement": { "x": 0, "y": 6, "w": 8, "h": 9 },
+          "parameters": {
+            "period": "7d",
+            "scope": "north_south",
+            "size_by": "bytes",
+            "show_unplaced": true,
+            "interfaces": [
+              { "kind": "interface", "by": "identifier", "value": "opt3", "label": "Workshop" }
+            ]
+          }
+        },
+        {
+          "id": "what-was-blocked",
+          "type": "unified_blocked_feed",
+          "title": "Blocked, and by what",
+          "placement": { "x": 8, "y": 6, "w": 4, "h": 9 },
+          "parameters": {
+            "period": "7d",
+            "engines": ["firewall_rule", "dns_advertising_list", "dns_threat_list", "security_engine"],
+            "group_by": "engine",
+            "limit": 50
+          }
+        },
+        {
+          "id": "load-against-throughput",
+          "type": "custom_chart",
+          "title": "Load against throughput",
+          "placement": { "x": 0, "y": 15, "w": 12, "h": 7 },
+          "parameters": {
+            "period": "24h",
+            "tooltip": "all_series",
+            "legend": "table",
+            "series": [
+              { "label": "CPU", "source": "firewall_metric", "metric": "cpu", "axis": "left",
+                "render": "line", "aggregation": "mean" },
+              { "label": "Temperature", "source": "firewall_metric", "metric": "temperature", "axis": "left",
+                "render": "line", "aggregation": "max" },
+              { "label": "Workshop throughput out", "source": "interface_throughput",
+                "measure": "bits_per_second", "axis": "right", "render": "area", "aggregation": "mean",
+                "interface": { "kind": "interface", "by": "identifier", "value": "opt3", "label": "Workshop" } }
+            ],
+            "axes": {
+              "left": { "unit": "percent_or_celsius", "scale": "linear" },
+              "right": { "unit": "bits_per_second", "scale": "linear" }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

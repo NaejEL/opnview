@@ -2,12 +2,9 @@ package interfaces_test
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"net/netip"
-	"net/url"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/store/flows"
@@ -15,170 +12,147 @@ import (
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/surfaces/interfaces"
 	"github.com/NaejEL/opnview/internal/web/webtest"
-	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
 	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 	"github.com/NaejEL/opnview/internal/web/webtest/interfacestest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
-// interfaceCardOf returns one interface's card out of a page.
-func interfaceCardOf(t *testing.T, page string, id int64) string {
+// interfaceOf is one interface of the answer, failing when it is absent.
+func interfaceOf(t *testing.T, answer map[string]any, id int64) any {
 	t.Helper()
-	start := strings.Index(page, `<section class="card" id="interface_`+strconv.FormatInt(id, 10)+`"`)
-	if start < 0 {
-		t.Fatalf("the page has no card for interface %d", id)
+	for _, raw := range settingstest.Path(answer, "interfaces").([]any) {
+		if settingstest.Path(raw, "id") == float64(id) {
+			return raw
+		}
 	}
-	end := strings.Index(page[start:], "</section>")
-	if end < 0 {
-		t.Fatalf("the card of interface %d is not closed", id)
-	}
-	return page[start : start+end]
+	t.Fatalf("the answer has no interface %d", id)
+	return nil
 }
 
-// TestTheInterfacesRouteIsAuthenticatedAndLinkedFromEveryPage is AC1.
-func TestTheInterfacesRouteIsAuthenticatedAndLinkedFromEveryPage(t *testing.T) {
+// networkOf is one network of an answered interface, nil when absent.
+func networkOf(answered any, prefix netip.Prefix) any {
+	for _, raw := range settingstest.Path(answered, "networks").([]any) {
+		if settingstest.Path(raw, "network") == prefix.String() {
+			return raw
+		}
+	}
+	return nil
+}
+
+// edit sends one edit and fails unless it was saved, returning the answer.
+func edit(t *testing.T, h *webtest.Harness, body map[string]any) map[string]any {
+	t.Helper()
+	status, answer := settingstest.SendJSON(h, interfaces.PathAPIInterfaceNetworks, body)
+	if status != http.StatusOK {
+		t.Fatalf("the edit %v answered %d %v", body, status, answer)
+	}
+	return answer
+}
+
+// TestTheInterfacesRouteIsAuthenticated is AC1: the listing and the edit refuse a reader with no
+// session.
+func TestTheInterfacesRouteIsAuthenticated(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
-
 	declared := map[string]web.Access{}
 	for _, route := range h.Server.Routes() {
 		declared[route.Method+" "+route.Pattern] = route.Access
 	}
-	for _, name := range []string{
-		http.MethodGet + " " + webtest.PathInterfaces, http.MethodPost + " " + webtest.PathInterfaces,
-		http.MethodGet + " " + webtest.PathSources, http.MethodPost + " " + webtest.PathCollectionSettings,
-	} {
+	for _, name := range []string{http.MethodGet + " " + interfaces.PathAPIInterfaceNetworks,
+		http.MethodPost + " " + interfaces.PathAPIInterfaceNetworks} {
 		if declared[name] != web.AccessAuthenticated {
 			t.Errorf("%s is declared %q, want authenticated", name, declared[name])
 		}
 	}
-
-	anonymous := webtest.FreshClient(t, h)
-	for _, path := range []string{webtest.PathInterfaces, webtest.PathSources} {
-		answer := anonymous.Get(path)
-		status, _ := webtest.StatusAndBody(t, answer)
-		if status != http.StatusSeeOther || answer.Header.Get("Location") != web.PathSignIn {
-			t.Errorf("GET %s without a session answered %d to %q, want a redirect to sign-in",
-				path, status, answer.Header.Get("Location"))
-		}
-	}
-
-	for _, path := range []string{web.PathSettings, webtest.PathCollection, webtest.PathInterfaces, webtest.PathSources} {
-		page := webtest.PageSource(t, h, path)
-		for _, link := range []string{webtest.PathInterfaces, webtest.PathSources} {
-			if !strings.Contains(page, `<a href="`+link+`"`) {
-				t.Errorf("the top bar of %s does not link to %s", path, link)
-			}
-		}
+	status, _ := webtest.StatusAndBody(t, webtest.FreshClient(t, h).Get(interfaces.PathAPIInterfaceNetworks))
+	if status != http.StatusUnauthorized {
+		t.Errorf("the listing without a session answered %d, want 401", status)
 	}
 }
 
-// TestEveryInterfaceRowHasOneCardShowingItsNetworks is AC2, at one inside interface
-// and at four.
-func TestEveryInterfaceRowHasOneCardShowingItsNetworks(t *testing.T) {
+// TestEveryInterfaceRowIsAnsweredWithItsNetworks is AC2: one entry per interface row, the upstream
+// one carrying no network, and every stored network with its origin, removal and count.
+func TestEveryInterfaceRowIsAnsweredWithItsNetworks(t *testing.T) {
 	t.Parallel()
 	for _, insideCount := range []int{1, 4} {
-		t.Run(strconv.Itoa(insideCount), func(t *testing.T) {
+		t.Run(map[int]string{1: "one inside interface", 4: "four inside interfaces"}[insideCount], func(t *testing.T) {
 			t.Parallel()
 			h := collectiontest.SignedInHarness(t)
 			network := interfacestest.SeedBundleNetwork(h, insideCount)
-			// One network removed and one stale detection, so every combination of the
-			// three facts is drawn.
 			ctx := context.Background()
-			now := h.Clock.Now().Unix()
 			if _, err := h.Store.RemoveInterfaceNetwork(ctx, network.Inside[0],
-				interfacestest.ExampleNetworkV6(0).String(), now); err != nil {
+				interfacestest.ExampleNetworkV6(0).String(), h.Clock.Now().Unix()); err != nil {
 				t.Fatalf("removing a network: %v", err)
 			}
-			page := webtest.PageSource(t, h, webtest.PathInterfaces)
-
-			if got := strings.Count(page, `<section class="card" id="interface_`); got != insideCount+1 {
-				t.Errorf("the page draws %d interface cards for %d interface rows", got, insideCount+1)
+			answer := settingstest.GetJSON(h, interfaces.PathAPIInterfaceNetworks)
+			if got := len(settingstest.Path(answer, "interfaces").([]any)); got != insideCount+1 {
+				t.Errorf("the answer lists %d interfaces for %d interface rows", got, insideCount+1)
 			}
-			upstream := interfaceCardOf(t, page, network.Upstream)
-			for _, control := range []string{`name="` + webtest.FieldNetwork + `"`, `name="` + webtest.FieldLinkLocal + `"`,
-				`<table`} {
-				if strings.Contains(upstream, control) {
-					t.Errorf("the upstream card carries %s", control)
-				}
+			upstream := interfaceOf(t, answer, network.Upstream)
+			if settingstest.Path(upstream, "upstream") != true || len(settingstest.Path(upstream, "networks").([]any)) != 0 {
+				t.Errorf("the upstream interface is answered %v", upstream)
 			}
-			if !strings.Contains(upstream, "<dd>"+collectiontest.CatalogueText(t, msgYes)+"</dd>") {
-				t.Error("the upstream card does not say it is upstream")
-			}
-
-			networks, err := h.Store.InterfaceNetworks(ctx)
+			stored, err := h.Store.InterfaceNetworks(ctx)
 			if err != nil {
 				t.Fatalf("reading the networks: %v", err)
 			}
 			for _, id := range network.Inside {
-				card := interfaceCardOf(t, page, id)
-				drawn := 0
-				for _, stored := range networks {
-					if stored.InterfaceID != id {
+				answered := interfaceOf(t, answer, id)
+				count := 0
+				for _, network := range stored {
+					if network.InterfaceID != id {
 						continue
 					}
-					drawn++
-					counts := collectiontest.CatalogueText(t, webtest.YesNo(stored.Counts))
-					if reason := interfaces.NotCountingReason(stored); reason != "" {
-						counts += `<span class="counts-reason">` + collectiontest.CatalogueText(t, reason) + "</span>"
+					count++
+					drawn := networkOf(answered, network.Network)
+					if drawn == nil {
+						t.Errorf("interface %d does not answer %s", id, network.Network)
+						continue
 					}
-					row := `<td class="network"` + dataLabel(t, "interfaces.column.network") +
-						`><span class="datum" translate="no">` + stored.Network.String() + "</span></td>\n" +
-						"<td" + dataLabel(t, "interfaces.column.origin") + ">" +
-						collectiontest.CatalogueText(t, interfaces.OriginKey(stored.Origin)) + "</td>\n" +
-						"<td" + dataLabel(t, "interfaces.column.removed") + ">" +
-						collectiontest.CatalogueText(t, webtest.YesNo(stored.Removed)) + "</td>\n" +
-						"<td" + dataLabel(t, "interfaces.column.counts") + ">" + counts + "</td>"
-					if !strings.Contains(card, row) {
-						t.Errorf("interface %d does not draw %s with its origin, removal and count", id, stored)
+					if settingstest.Path(drawn, "origin") != web.ConditionOf(interfaces.OriginKey(network.Origin)) ||
+						settingstest.Path(drawn, "removed") != network.Removed ||
+						settingstest.Path(drawn, "counts") != network.Counts {
+						t.Errorf("interface %d answers %v for %+v", id, drawn, network)
 					}
 				}
-				if drawn != 2 {
-					t.Fatalf("interface %d holds %d networks, want one of each family", id, drawn)
+				if count != 2 {
+					t.Fatalf("interface %d holds %d networks, want one of each family", id, count)
 				}
 			}
 		})
 	}
 }
 
-// TestConfirmRemoveAndRestoreThroughThePage is AC3.
-func TestConfirmRemoveAndRestoreThroughThePage(t *testing.T) {
+// TestConfirmRemoveAndRestore is AC3.
+func TestConfirmRemoveAndRestore(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
 	network := interfacestest.SeedBundleNetwork(h, 2)
 	id, prefix := network.Inside[1], interfacestest.ExampleNetworkV4(1)
 
-	page := interfaceCardOf(t, webtest.PageSource(t, h, webtest.PathInterfaces), id)
-	if !strings.Contains(page, `value="`+webtest.ActionConfirmNetwork+`"`) {
-		t.Fatal("a detected network carries no confirm control")
-	}
-
 	before := interfacestest.Fingerprint(h)
-	body := interfacestest.SavedEdit(h, interfacestest.NetworkForm(webtest.ActionConfirmNetwork, id, prefix.String()), id)
+	edit(t, h, map[string]any{"interface": id, "action": webtest.ActionConfirmNetwork, "network": prefix.String()})
 	if got := interfacestest.NetworkOf(h, id, prefix); got.Origin != flows.NetworkOriginOperator || !got.Counts {
 		t.Errorf("a confirmed network is %+v, want the operator's and counting", got)
-	}
-	if !strings.Contains(interfaceCardOf(t, body, id), collectiontest.CatalogueText(t, msgInterfaceSaved)) {
-		t.Error("the confirmation is not drawn in the card it was made in")
 	}
 	afterConfirm := interfacestest.Fingerprint(h)
 	if afterConfirm == before {
 		t.Error("confirming did not change the on-link fingerprint")
 	}
 
-	body = interfacestest.SavedEdit(h, interfacestest.NetworkForm(webtest.ActionRemoveNetwork, id, prefix.String()), id)
+	answer := edit(t, h, map[string]any{"interface": id, "action": webtest.ActionRemoveNetwork, "network": prefix.String()})
 	if got := interfacestest.NetworkOf(h, id, prefix); !got.Removed || got.Counts {
 		t.Errorf("a removed network is %+v, want removed and not counting", got)
 	}
-	card := interfaceCardOf(t, body, id)
-	if !strings.Contains(card, prefix.String()) || !strings.Contains(card, `value="`+webtest.ActionRestoreNetwork+`"`) {
-		t.Error("a removed network is not listed with a restore control")
+	if drawn := networkOf(interfaceOf(t, answer, id), prefix); drawn == nil || settingstest.Path(drawn, "removed") != true {
+		t.Error("a removed network is not listed as removed, so it cannot be restored")
 	}
 	afterRemove := interfacestest.Fingerprint(h)
 	if afterRemove == afterConfirm {
 		t.Error("removing did not change the on-link fingerprint")
 	}
 
-	_ = interfacestest.SavedEdit(h, interfacestest.NetworkForm(webtest.ActionRestoreNetwork, id, prefix.String()), id)
+	edit(t, h, map[string]any{"interface": id, "action": webtest.ActionRestoreNetwork, "network": prefix.String()})
 	if got := interfacestest.NetworkOf(h, id, prefix); got.Removed || !got.Counts {
 		t.Errorf("a restored network is %+v, want counting again", got)
 	}
@@ -186,15 +160,15 @@ func TestConfirmRemoveAndRestoreThroughThePage(t *testing.T) {
 		t.Error("restoring did not change the on-link fingerprint")
 	}
 
-	// A network the interface does not carry is refused at the page, and nothing moves.
-	status, body := webtest.StatusAndBody(t, h.Post(webtest.PathInterfaces,
-		interfacestest.NetworkForm(webtest.ActionRemoveNetwork, id, interfacestest.ExampleOperatorV4(9).String())))
-	if status != http.StatusBadRequest || !strings.Contains(body, collectiontest.CatalogueText(t, msgNetworkUnknown)) {
-		t.Errorf("removing a network the interface does not carry answered %d", status)
+	status, refused := settingstest.SendJSON(h, interfaces.PathAPIInterfaceNetworks, map[string]any{"interface": id,
+		"action": webtest.ActionRemoveNetwork, "network": interfacestest.ExampleOperatorV4(9).String()})
+	if status != http.StatusBadRequest || refused["condition"] != web.ConditionOf(msgNetworkUnknown) {
+		t.Errorf("removing a network the interface does not carry answered %d %v", status, refused)
 	}
 }
 
-// TestAddingANetworkAndEachRefusal is AC4.
+// TestAddingANetworkAndEachRefusal is AC4: each refusal its own code, against the network the
+// edit typed, and nothing stored.
 func TestAddingANetworkAndEachRefusal(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
@@ -202,7 +176,7 @@ func TestAddingANetworkAndEachRefusal(t *testing.T) {
 	id := network.Inside[0]
 
 	for _, prefix := range []netip.Prefix{interfacestest.ExampleOperatorV4(0), interfacestest.ExampleNetworkV6(7)} {
-		_ = interfacestest.SavedEdit(h, interfacestest.NetworkForm(webtest.ActionAddNetwork, id, prefix.String()), id)
+		edit(t, h, map[string]any{"interface": id, "action": webtest.ActionAddNetwork, "network": prefix.String()})
 		if got := interfacestest.NetworkOf(h, id, prefix); got.Origin != flows.NetworkOriginOperator || !got.Counts {
 			t.Errorf("an added network is %+v, want the operator's and counting", got)
 		}
@@ -213,112 +187,73 @@ func TestAddingANetworkAndEachRefusal(t *testing.T) {
 	mapped := netip.AddrFrom16(netip.AddrFrom4([4]byte{198, 51, 100, 0}).As16())
 	for _, refused := range []struct {
 		name    string
+		id      int64
 		typed   string
 		refusal messageKey
+		field   string
 	}{
-		{"malformed", "not a network", msgNetworkMalformed},
-		{"host bits set", netip.PrefixFrom(netip.AddrFrom4([4]byte{198, 51, 100, 1}), 24).String(),
-			msgNetworkHostBits},
-		{"IPv4-mapped", netip.PrefixFrom(mapped, 120).String(), msgNetworkIPv4Mapped},
-		{"link-local", netip.PrefixFrom(netip.AddrFrom16(linkLocal), 64).String(), msgNetworkLinkLocal},
+		{"malformed", id, "not a network", msgNetworkMalformed, "network"},
+		{"host bits set", id, netip.PrefixFrom(netip.AddrFrom4([4]byte{198, 51, 100, 1}), 24).String(),
+			msgNetworkHostBits, "network"},
+		{"IPv4-mapped", id, netip.PrefixFrom(mapped, 120).String(), msgNetworkIPv4Mapped, "network"},
+		{"link-local", id, netip.PrefixFrom(netip.AddrFrom16(linkLocal), 64).String(), msgNetworkLinkLocal, "network"},
+		{"upstream", network.Upstream, interfacestest.ExampleOperatorV4(3).String(), msgInterfaceUpstream, "interface"},
+		{"unknown", network.Inside[0] + network.Upstream + 1000, interfacestest.ExampleOperatorV4(3).String(),
+			msgInterfaceUnknown, "interface"},
 	} {
 		t.Run(refused.name, func(t *testing.T) {
 			rows := interfacestest.NetworkRowCount(h)
-			status, body := webtest.StatusAndBody(t, h.Post(webtest.PathInterfaces, interfacestest.NetworkForm(webtest.ActionAddNetwork, id, refused.typed)))
-			if status != http.StatusBadRequest {
-				t.Errorf("answered %d, want 400", status)
+			status, answer := settingstest.SendJSON(h, interfaces.PathAPIInterfaceNetworks, map[string]any{
+				"interface": refused.id, "action": webtest.ActionAddNetwork, "network": refused.typed})
+			if status != http.StatusBadRequest || answer["condition"] != web.ConditionOf(refused.refusal) ||
+				answer["field"] != refused.field {
+				t.Errorf("answered %d %v, want 400 %s on %s", status, answer, web.ConditionOf(refused.refusal), refused.field)
 			}
 			if interfacestest.NetworkRowCount(h) != rows {
 				t.Error("a refused network was stored")
 			}
-			card := interfaceCardOf(t, body, id)
-			field := card[strings.Index(card, `<input id="network_`):]
-			field = field[:strings.Index(field, ">")]
-			describedBy := "network_refusal_" + strconv.FormatInt(id, 10)
-			if !strings.Contains(field, `aria-invalid="true"`) ||
-				!strings.Contains(field, `aria-describedby="`+describedBy+`"`) {
-				t.Error("the add field is not marked as the cause of the refusal")
-			}
-			if collectiontest.FieldValue(card, "network_"+strconv.FormatInt(id, 10)) != refused.typed {
-				t.Error("the typed text was not kept")
-			}
-			if !strings.Contains(card, `id="`+describedBy+`">`+collectiontest.CatalogueText(t, refused.refusal)+"</p>") {
-				t.Errorf("the refusal is not the %s sentence", refused.refusal)
-			}
 		})
-	}
-
-	// The two refusals that are not about what was typed: there is no field to draw
-	// them against, so the page says them, at 400, with nothing stored.
-	for _, refused := range []struct {
-		name    string
-		id      int64
-		refusal messageKey
-	}{
-		{"upstream", network.Upstream, msgInterfaceUpstream},
-		{"unknown", network.Inside[0] + network.Upstream + 1000, msgInterfaceUnknown},
-	} {
-		rows := interfacestest.NetworkRowCount(h)
-		status, body := webtest.StatusAndBody(t, h.Post(webtest.PathInterfaces,
-			interfacestest.NetworkForm(webtest.ActionAddNetwork, refused.id, interfacestest.ExampleOperatorV4(3).String())))
-		if status != http.StatusBadRequest {
-			t.Errorf("an add to the %s interface answered %d", refused.name, status)
-		}
-		if interfacestest.NetworkRowCount(h) != rows {
-			t.Errorf("an add to the %s interface stored a network", refused.name)
-		}
-		if !strings.Contains(body, `<p class="notice bad">`+collectiontest.CatalogueText(t, refused.refusal)+"</p>") {
-			t.Errorf("the %s refusal is not its own sentence", refused.name)
-		}
 	}
 }
 
-// TestAnOverlapIsStoredAndNamed is AC5.
+// TestAnOverlapIsStoredAndNamed is AC5: an overlap is answered on both interfaces, with the other
+// interface named by its id, for as long as it exists.
 func TestAnOverlapIsStoredAndNamed(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
 	network := interfacestest.SeedBundleNetwork(h, 3)
 	wide := interfacestest.ExampleWideV4()
 
-	body := interfacestest.SavedEdit(h, interfacestest.NetworkForm(webtest.ActionAddNetwork, network.Inside[2], wide.String()), network.Inside[2])
+	edit(t, h, map[string]any{"interface": network.Inside[2], "action": webtest.ActionAddNetwork, "network": wide.String()})
 	if got := interfacestest.NetworkOf(h, network.Inside[2], wide); !got.Counts {
 		t.Error("an overlapping network was not stored as counting")
 	}
-	// The overlap is a state of the card, read on every draw: on the page the save
-	// lands on, and on a plain load of the page afterwards.
-	for name, page := range map[string]string{"after the save": body,
-		"on a later load": webtest.PageSource(t, h, webtest.PathInterfaces)} {
-		card := interfaceCardOf(t, page, network.Inside[2])
-		if !strings.Contains(card, collectiontest.CatalogueText(t, "interfaces.heading.overlaps")) {
-			t.Fatalf("the card does not report the overlaps %s", name)
+	answer := settingstest.GetJSON(h, interfaces.PathAPIInterfaceNetworks)
+	overlaps := settingstest.Path(interfaceOf(t, answer, network.Inside[2]), "overlaps").([]any)
+	for index := 0; index < 2; index++ {
+		found := false
+		for _, overlap := range overlaps {
+			if settingstest.Path(overlap, "network") == wide.String() &&
+				settingstest.Path(overlap, "other") == interfacestest.ExampleNetworkV4(index).String() &&
+				settingstest.Path(overlap, "other_interface_id") == float64(network.Inside[index]) {
+				found = true
+			}
 		}
-		for index := 0; index < 2; index++ {
-			overlap := `<td class="network"` + dataLabel(t, "interfaces.column.network") +
-				`><span class="datum" translate="no">` + wide.String() + `</span></td>` + "\n" +
-				`<td class="network"` + dataLabel(t, "interfaces.column.overlapping") +
-				`><span class="datum" translate="no">` + interfacestest.ExampleNetworkV4(index).String() + `</span></td>` + "\n" +
-				`<td` + dataLabel(t, "interfaces.column.interface") + `><span class="datum" translate="no">` +
-				fmt.Sprintf("inside-%d.example", index) +
-				`</span></td>`
-			if !strings.Contains(card, overlap) {
-				t.Errorf("the overlap with interface %d is not named with its network and its interface %s",
-					index, name)
-			}
-			// And the other interface's card names it too.
-			other := `<td class="network"` + dataLabel(t, "interfaces.column.network") +
-				`><span class="datum" translate="no">` + interfacestest.ExampleNetworkV4(index).String() + `</span></td>` + "\n" +
-				`<td class="network"` + dataLabel(t, "interfaces.column.overlapping") +
-				`><span class="datum" translate="no">` + wide.String() + `</span></td>`
-			if !strings.Contains(interfaceCardOf(t, page, network.Inside[index]), other) {
-				t.Errorf("interface %d's card does not name the overlap %s", index, name)
-			}
+		if !found {
+			t.Errorf("the overlap with interface %d is not named: %v", index, overlaps)
+		}
+		other := settingstest.Path(interfaceOf(t, answer, network.Inside[index]), "overlaps").([]any)
+		if len(other) != 1 || settingstest.Path(other[0], "other") != wide.String() {
+			t.Errorf("interface %d does not name the overlap: %v", index, other)
 		}
 	}
 
-	// Resolved -- the wide network removed -- the overlap is gone from every card.
-	_ = interfacestest.SavedEdit(h, interfacestest.NetworkForm(webtest.ActionRemoveNetwork, network.Inside[2], wide.String()), network.Inside[2])
-	if strings.Contains(webtest.PageSource(t, h, webtest.PathInterfaces), collectiontest.CatalogueText(t, "interfaces.heading.overlaps")) {
-		t.Error("a resolved overlap is still reported")
+	edit(t, h, map[string]any{"interface": network.Inside[2], "action": webtest.ActionRemoveNetwork, "network": wide.String()})
+	answer = settingstest.GetJSON(h, interfaces.PathAPIInterfaceNetworks)
+	for _, id := range network.Inside {
+		if overlaps := settingstest.Path(interfaceOf(t, answer, id), "overlaps").([]any); len(overlaps) != 0 {
+			t.Errorf("a resolved overlap is still answered on interface %d: %v", id, overlaps)
+		}
 	}
 }
 
@@ -328,17 +263,14 @@ func TestTheLinkLocalRule(t *testing.T) {
 	h := collectiontest.SignedInHarness(t)
 	network := interfacestest.SeedBundleNetwork(h, 2)
 	id := network.Inside[1]
-	field := "link_local_" + strconv.FormatInt(id, 10)
 
-	if got := collectiontest.SelectedIn(t, interfaceCardOf(t, webtest.PageSource(t, h, webtest.PathInterfaces), id), field); got != webtest.LinkLocalNo {
-		t.Errorf("a fresh interface's link-local rule shows %q, want no", got)
+	if got := settingstest.Path(interfaceOf(t, settingstest.GetJSON(h, interfaces.PathAPIInterfaceNetworks), id), "link_local"); got != false {
+		t.Errorf("a fresh interface's link-local rule is answered %v, want false", got)
 	}
 	before := interfacestest.Fingerprint(h)
-	form := url.Values{webtest.FieldNetworkAction: {webtest.ActionLinkLocal}, webtest.FieldInterfaceID: {strconv.FormatInt(id, 10)},
-		webtest.FieldLinkLocal: {webtest.LinkLocalYes}}
-	body := interfacestest.SavedEdit(h, form, id)
-	if collectiontest.SelectedIn(t, interfaceCardOf(t, body, id), field) != webtest.LinkLocalYes {
-		t.Error("the card does not show the rule now stored")
+	answer := edit(t, h, map[string]any{"interface": id, "action": webtest.ActionLinkLocal, "link_local": true})
+	if settingstest.Path(interfaceOf(t, answer, id), "link_local") != true {
+		t.Error("the answer does not report the rule now stored")
 	}
 	if interfacestest.Fingerprint(h) == before {
 		t.Error("setting the rule did not change the on-link fingerprint")
@@ -352,26 +284,23 @@ func TestTheLinkLocalRule(t *testing.T) {
 			t.Errorf("interface %d carries link_local_evidence %t", row.ID, row.LinkLocalEvidence)
 		}
 	}
-
-	// A value that is neither, and the rule on an upstream interface, are refused.
-	form.Set(webtest.FieldLinkLocal, "maybe")
-	if status, _ := webtest.StatusAndBody(t, h.Post(webtest.PathInterfaces, form)); status != http.StatusBadRequest {
-		t.Errorf("a rule that is neither yes nor no answered %d", status)
-	}
-	form.Set(webtest.FieldLinkLocal, webtest.LinkLocalYes)
-	form.Set(webtest.FieldInterfaceID, strconv.FormatInt(network.Upstream, 10))
-	if status, _ := webtest.StatusAndBody(t, h.Post(webtest.PathInterfaces, form)); status != http.StatusBadRequest {
-		t.Errorf("the rule on an upstream interface answered %d", status)
+	for _, refused := range []map[string]any{
+		{"interface": id, "action": webtest.ActionLinkLocal, "link_local": "maybe"},
+		{"interface": network.Upstream, "action": webtest.ActionLinkLocal, "link_local": true},
+	} {
+		if status, answer := settingstest.SendJSON(h, interfaces.PathAPIInterfaceNetworks, refused); status != http.StatusBadRequest {
+			t.Errorf("the rule %v answered %d %v", refused, status, answer)
+		}
 	}
 }
 
-// TestAnInterfaceWithNoNetworkIsANamedState is AC7, and the page with no interface at
-// all.
-func TestAnInterfaceWithNoNetworkIsANamedState(t *testing.T) {
+// TestAnInterfaceWithNoNetworkIsAnsweredWithNone is AC7: no interface is an empty list, and an
+// interface with no network an empty one, never a fabricated row.
+func TestAnInterfaceWithNoNetworkIsAnsweredWithNone(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
-	if !strings.Contains(webtest.PageSource(t, h, webtest.PathInterfaces), collectiontest.CatalogueText(t, "state.interface.none")) {
-		t.Error("a page with no interface does not say so")
+	if got := settingstest.Path(settingstest.GetJSON(h, interfaces.PathAPIInterfaceNetworks), "interfaces").([]any); len(got) != 0 {
+		t.Errorf("an installation with no interface answers %v", got)
 	}
 	id, err := h.Store.UpsertInterface(context.Background(), vocab.Interface{
 		Identifier: "example_bare", Device: "exbare0", Description: "bare.example",
@@ -380,92 +309,41 @@ func TestAnInterfaceWithNoNetworkIsANamedState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("writing an interface: %v", err)
 	}
-	card := interfaceCardOf(t, webtest.PageSource(t, h, webtest.PathInterfaces), id)
-	if !strings.Contains(card, `<p class="empty-state">`+collectiontest.CatalogueText(t, "state.interface.no_network")+"</p>") {
-		t.Error("an interface with no network does not name that state")
-	}
-	if strings.Contains(card, "<table") {
-		t.Error("an interface with no network draws an empty table")
+	bare := interfaceOf(t, settingstest.GetJSON(h, interfaces.PathAPIInterfaceNetworks), id)
+	if networks := settingstest.Path(bare, "networks").([]any); len(networks) != 0 {
+		t.Errorf("an interface with no network answers %v", networks)
 	}
 }
 
-// TestEveryNewMutatingRouteRefusesAMissingFormToken is AC8, one route at a time.
-func TestEveryNewMutatingRouteRefusesAMissingFormToken(t *testing.T) {
+// TestEveryEditRefusesAMissingFormToken is AC8: an edit without its token is refused and changes
+// nothing.
+func TestEveryEditRefusesAMissingFormToken(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
 	network := interfacestest.SeedBundleNetwork(h, 1)
-
 	rows := interfacestest.NetworkRowCount(h)
-	_ = h.FormToken(webtest.PathInterfaces)
 	for _, action := range []string{webtest.ActionAddNetwork, webtest.ActionConfirmNetwork, webtest.ActionRemoveNetwork,
-		webtest.ActionRestoreNetwork} {
-		accounttest.AssertStatus(t, h.PostRaw(webtest.PathInterfaces,
-			interfacestest.NetworkForm(action, network.Inside[0], interfacestest.ExampleNetworkV4(0).String())), http.StatusForbidden)
-	}
-	accounttest.AssertStatus(t, h.PostRaw(webtest.PathInterfaces, url.Values{webtest.FieldNetworkAction: {webtest.ActionLinkLocal},
-		webtest.FieldInterfaceID: {strconv.FormatInt(network.Inside[0], 10)}, webtest.FieldLinkLocal: {webtest.LinkLocalYes}}),
-		http.StatusForbidden)
-	if interfacestest.NetworkRowCount(h) != rows || interfacestest.NetworkOf(h, network.Inside[0], interfacestest.ExampleNetworkV4(0)).Origin !=
-		flows.NetworkOriginDetected {
-		t.Error("a submission refused for its form token changed a network")
-	}
-
-	_ = h.FormToken(webtest.PathCollection)
-	accounttest.AssertStatus(t, h.PostRaw(webtest.PathCollectionSettings, url.Values{
-		webtest.FieldCard: {"resolver_cache"}, webtest.FieldInterval: {"90"},
-	}), http.StatusForbidden)
-	accounttest.AssertStatus(t, h.PostRaw(webtest.PathCollectionSettings, url.Values{
-		webtest.FieldCard: {"pairing"}, "leg_pairing_window_seconds": {"3"},
-	}), http.StatusForbidden)
-	for _, key := range []string{"poll_interval_resolver_cache_seconds"} {
-		if _, present, err := h.Store.Setting(context.Background(), key); err != nil || present {
-			t.Errorf("a submission refused for its form token stored %s", key)
+		webtest.ActionRestoreNetwork, webtest.ActionLinkLocal} {
+		body := string(webtest.MustJSON(t, map[string]any{"interface": network.Inside[0], "action": action,
+			"network": interfacestest.ExampleNetworkV4(0).String(), "link_local": true}))
+		status, _ := webtest.StatusAndBody(t, h.PostJSON(interfaces.PathAPIInterfaceNetworks, body, "", ""))
+		if status != http.StatusForbidden {
+			t.Errorf("the edit %s without its token answered %d", action, status)
 		}
 	}
-	if got := collectiontest.Setting(h, "leg_pairing_window_seconds"); got != "1" {
-		t.Errorf("a submission refused for its form token stored the pairing window %q", got)
+	if interfacestest.NetworkRowCount(h) != rows ||
+		interfacestest.NetworkOf(h, network.Inside[0], interfacestest.ExampleNetworkV4(0)).Origin != flows.NetworkOriginDetected {
+		t.Error("an edit refused for its form token changed a network")
 	}
 }
 
-// TestASavedEditReturnsToItsCard: every control posts to its card's anchor, a saved
-// edit redirects there with the card named, and only that card says it was saved.
-func TestASavedEditReturnsToItsCard(t *testing.T) {
-	t.Parallel()
-	h := collectiontest.SignedInHarness(t)
-	network := interfacestest.SeedBundleNetwork(h, 3)
-	id := network.Inside[1]
-	page := webtest.PageSource(t, h, webtest.PathInterfaces)
-	card := interfaceCardOf(t, page, id)
-	action := `action="` + webtest.PathInterfaces + `#interface_` + strconv.FormatInt(id, 10) + `"`
-	// Confirm and remove for each of two networks, add, and the link-local rule.
-	if got := strings.Count(card, "<form "); got != 6 || strings.Count(card, action) != got {
-		t.Errorf("the card's %d forms do not all post to its anchor", got)
-	}
-
-	body := interfacestest.SavedEdit(h, interfacestest.NetworkForm(webtest.ActionConfirmNetwork, id, interfacestest.ExampleNetworkV4(1).String()), id)
-	saved := collectiontest.CatalogueText(t, msgInterfaceSaved)
-	if !strings.Contains(interfaceCardOf(t, body, id), saved) {
-		t.Error("the card the edit was made in does not say it was saved")
-	}
-	if strings.Count(body, saved) != 1 {
-		t.Error("the saved notice is drawn outside the card the edit was made in")
-	}
-	// A plain load says nothing was saved.
-	if strings.Contains(webtest.PageSource(t, h, webtest.PathInterfaces), saved) {
-		t.Error("a plain load of the surface says an edit was saved")
-	}
-}
-
-// TestANetworkThatDoesNotCountSaysWhy: removed by the operator, or no longer detected
-// -- decision D1's two ways out -- each named beside the "no".
+// TestANetworkThatDoesNotCountSaysWhy: removed by the operator, or no longer detected.
 func TestANetworkThatDoesNotCountSaysWhy(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
 	network := interfacestest.SeedBundleNetwork(h, 2)
 	ctx := context.Background()
 	now := h.Clock.Now().Unix()
-	// Discovery reports a different network on the second interface: its first two
-	// detections are stale from then on.
 	if err := h.Store.DetectNetworks(ctx, network.Inside[1], []netip.Prefix{interfacestest.ExampleNetworkV4(9)},
 		now+60); err != nil {
 		t.Fatalf("recording a later detection: %v", err)
@@ -474,72 +352,52 @@ func TestANetworkThatDoesNotCountSaysWhy(t *testing.T) {
 		now); err != nil {
 		t.Fatalf("removing a network: %v", err)
 	}
-	page := webtest.PageSource(t, h, webtest.PathInterfaces)
 	stale := interfacestest.NetworkOf(h, network.Inside[1], interfacestest.ExampleNetworkV4(1))
 	if stale.Counts || stale.Removed {
 		t.Fatalf("the fixture's stale detection is %+v, want detected, not removed, not counting", stale)
 	}
+	answer := settingstest.GetJSON(h, interfaces.PathAPIInterfaceNetworks)
 	for _, expected := range []struct {
 		id     int64
 		prefix netip.Prefix
-		reason messageKey
+		reason any
 	}{
-		{network.Inside[1], interfacestest.ExampleNetworkV4(1), msgCountsNoLongerDetected},
-		{network.Inside[0], interfacestest.ExampleNetworkV4(0), msgCountsNoRemoved},
+		{network.Inside[1], interfacestest.ExampleNetworkV4(1), web.ConditionOf(msgCountsNoLongerDetected)},
+		{network.Inside[0], interfacestest.ExampleNetworkV4(0), web.ConditionOf(msgCountsNoRemoved)},
+		{network.Inside[1], interfacestest.ExampleNetworkV4(9), nil},
 	} {
-		row := `<span class="datum" translate="no">` + expected.prefix.String() + "</span>"
-		card := interfaceCardOf(t, page, expected.id)
-		at := strings.Index(card, row)
-		if at < 0 {
-			t.Fatalf("interface %d does not list %s", expected.id, expected.prefix)
+		drawn := networkOf(interfaceOf(t, answer, expected.id), expected.prefix)
+		if drawn == nil {
+			t.Fatalf("interface %d does not answer %s", expected.id, expected.prefix)
 		}
-		line := card[at : at+strings.Index(card[at:], "</tr>")]
-		if !strings.Contains(line, collectiontest.CatalogueText(t, msgNo)+`<span class="counts-reason">`+
-			collectiontest.CatalogueText(t, expected.reason)+"</span>") {
-			t.Errorf("%s does not say why it does not count: %s", expected.prefix, line)
+		if got := settingstest.Path(drawn, "not_counting_reason"); got != expected.reason {
+			t.Errorf("%s answers the reason %v, want %v", expected.prefix, got, expected.reason)
 		}
-	}
-	// A network that counts gives no reason.
-	if interfaces.NotCountingReason(interfacestest.NetworkOf(h, network.Inside[1], interfacestest.ExampleNetworkV4(9))) != "" {
-		t.Error("a counting network is given a reason not to count")
 	}
 }
 
-// dataLabel is the data-label attribute a table cell carries: its column's name from
-// the catalogue, which a narrow screen draws beside the value when the row stacks.
-func dataLabel(t *testing.T, key messageKey) string {
-	t.Helper()
-	return ` data-label="` + collectiontest.CatalogueText(t, key) + `"`
-}
-
-// TestANarrowScreenStacksTheInterfaceTables: below the narrow breakpoint the networks
-// and overlaps tables stack rather than scroll, every cell carrying its column's name,
-// so whether a network counts, why not, its controls and the other interface's name
-// are all on screen.
-func TestANarrowScreenStacksTheInterfaceTables(t *testing.T) {
+// TestTheInterfaceLabelIsAnsweredAndNeverDerived: the label the user gives an interface is
+// answered with it, null until one is given; it is never derived from the description.
+func TestTheInterfaceLabelIsAnsweredAndNeverDerived(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
 	network := interfacestest.SeedBundleNetwork(h, 2)
-	_ = interfacestest.SavedEdit(h, interfacestest.NetworkForm(webtest.ActionAddNetwork, network.Inside[1], interfacestest.ExampleWideV4().String()),
-		network.Inside[1])
-	page := webtest.PageSource(t, h, webtest.PathInterfaces)
-	for _, table := range []string{`<table class="data stack">`, `<table class="data overlaps stack">`} {
-		if !strings.Contains(page, table) {
-			t.Errorf("the page carries no %s", table)
+	id := network.Inside[0]
+	answer := settingstest.GetJSON(h, interfaces.PathAPIInterfaceNetworks)
+	for _, raw := range settingstest.Path(answer, "interfaces").([]any) {
+		if label, present := raw.(map[string]any)["user_label"]; !present || label != nil {
+			t.Errorf("an interface nobody labelled answers user_label %v (present %v)", label, present)
 		}
 	}
-	if !strings.Contains(page, `<td class="row-actions"`+dataLabel(t, "interfaces.column.action")+`>`) {
-		t.Error("the controls' cell carries no column name")
+	if status, labelled := settingstest.SendJSON(h, "/api/interfaces/"+strconv.FormatInt(id, 10)+"/label",
+		map[string]any{"user_label": "Workshop"}); status != http.StatusOK {
+		t.Fatalf("labelling the interface answered %d %v", status, labelled)
 	}
-	stylesheet, err := web.Stylesheet()
-	if err != nil {
-		t.Fatalf("reading the stylesheet: %v", err)
+	answer = settingstest.GetJSON(h, interfaces.PathAPIInterfaceNetworks)
+	if got := settingstest.Path(interfaceOf(t, answer, id), "user_label"); got != "Workshop" {
+		t.Errorf("the labelled interface answers user_label %v", got)
 	}
-	rules := webtest.StripCSSComments(string(stylesheet))
-	for _, rule := range []string{"table.data.stack td::before {\n    content: attr(data-label);",
-		"table.data.stack thead {"} {
-		if !strings.Contains(rules, rule) {
-			t.Errorf("the stylesheet has no %q rule", rule)
-		}
+	if got := settingstest.Path(interfaceOf(t, answer, network.Inside[1]), "user_label"); got != nil {
+		t.Errorf("the other interface answers user_label %v", got)
 	}
 }

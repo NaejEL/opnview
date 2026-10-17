@@ -15,15 +15,13 @@ import (
 	"github.com/NaejEL/opnview/internal/web"
 )
 
-// The collection surface's JSON equivalents (docs/widget-api.md, "Settings API"): every figure the
-// page draws -- per sized kind the pair in force, the measurement and the suggestion; per polled
+// The collection surface's JSON routes (docs/widget-api.md, "Settings API"): every figure -- per sized kind the pair in force, the measurement and the suggestion; per polled
 // kind its interval; every collection setting, aggregate_mode included -- and every save of its
-// cards, checked and stored by the functions the page uses (save.go). The page's fill and cancel
-// controls store nothing and have no JSON route: the suggestion is in the answer.
+// cards, checked and stored by save.go. The suggestion is in the answer.
 
 // The JSON paths.
 const (
-	// PathAPICollection is every figure of the page.
+	// PathAPICollection is every figure of the collection.
 	PathAPICollection = "/api/collection"
 	// PathAPICollectionKind saves one kind's interval, page size and selections.
 	PathAPICollectionKind = "/api/collection/kinds/{kind}"
@@ -47,7 +45,7 @@ func (s *surface) apiRoutes() []web.Route {
 	}
 }
 
-// CollectionAnswer is every figure of the collection page.
+// CollectionAnswer is every figure of the collection.
 type CollectionAnswer struct {
 	// Kinds are the sized kinds the provider table holds, in the registry's order.
 	Kinds []SizedKindState `json:"kinds"`
@@ -198,7 +196,7 @@ func rateState(rate attribution.Rate, clock bool) RateState {
 	return RateState{PerSecond: &value}
 }
 
-// collectionAnswer reads every figure of the page from the same reads the page draws from.
+// collectionAnswer reads every figure of the collection.
 func (s *surface) collectionAnswer(ctx context.Context) (CollectionAnswer, error) {
 	answer := CollectionAnswer{Kinds: []SizedKindState{}, PolledKinds: []PolledKindState{},
 		Settings: []SettingCardState{}}
@@ -344,7 +342,7 @@ func (s *surface) handleAPICollection(writer http.ResponseWriter, request *http.
 	s.answerCollection(writer, request)
 }
 
-// answerCollection answers with every figure of the page as it now stands.
+// answerCollection answers with every figure as it now stands.
 func (s *surface) answerCollection(writer http.ResponseWriter, request *http.Request) {
 	answer, err := s.collectionAnswer(request.Context())
 	if err != nil {
@@ -395,7 +393,7 @@ func refusedField(refused string) string {
 	return refused
 }
 
-// handleAPIKind saves one kind's edit: {interval_seconds, page_size, selections}. As on the page,
+// handleAPIKind saves one kind's edit: {interval_seconds, page_size, selections}. As every save,
 // the interval is required, the page size is required where it is a setting, and a selection the
 // body does not carry is left as it is.
 func (s *surface) handleAPIKind(writer http.ResponseWriter, request *http.Request) {

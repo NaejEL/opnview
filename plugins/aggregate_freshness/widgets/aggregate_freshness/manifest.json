@@ -44,6 +44,6 @@
   ],
   "script": "aggregate_freshness.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

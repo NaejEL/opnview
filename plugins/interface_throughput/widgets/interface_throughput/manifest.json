@@ -71,6 +71,6 @@
   "queries": [],
   "script": "interface_throughput.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

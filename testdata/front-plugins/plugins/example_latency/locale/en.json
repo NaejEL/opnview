@@ -1,0 +1,10 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.example_latency.widget.example_latency_targets.title": "Slowest probe targets",
+    "plugin.example_latency.widget.example_latency_targets.question": "Which probe target answered most slowly in the window?",
+    "plugin.example_latency.widget.example_latency_targets.parameter.show_samples": "Show the number of samples",
+    "plugin.example_latency.widget.example_latency_targets.samples.one": "{count} sample",
+    "plugin.example_latency.widget.example_latency_targets.samples.other": "{count} samples"
+  }
+}

@@ -211,7 +211,7 @@ The widget API of step 5B (`docs/widget-api.md`) is a seam of the same kind, on 
 side. A served preset of `docs/widget-catalogue.md` is **one directory** of a widget plugin,
 `plugins/<plugin>/widgets/<type>/`, holding its `manifest.json` (type, shape, the provider
 kinds its binding names, its declared parameters with their defaults and their data or
-rendering class, its no_domains rule, a `renderer` slot reserved for step 7), its statement
+rendering class, its no_domains rule, and its `renderer`, the file the front draws it with), its statement
 files and, for the logic a shape cannot express, its JavaScript, run by the widget host
 (`docs/plugins.md`, *Widgets*). Every built-in widget is such a plugin, embedded in the binary
 and found by walking the embedded tree, and a third party's is the same directory under
@@ -236,26 +236,60 @@ answer `unknown_widget_type` like any type with none.
 
 ## The web surfaces — the third seam
 
-The interface is modular in the same way. A **surface** is **a directory**
-`internal/web/surfaces/<name>/` holding its handlers, its page templates (`template/`), its
-catalogue files (`locale/<language>.json`) and a `surface.json` marker, and registering itself
-from an `init()` with `web.RegisterSurface`. The core in `internal/web` owns what is shared --
-the server, the route table and its access levels, the session and CSRF middleware, the layout,
-the themes, the stylesheet, the string catalogue and the helpers several surfaces use -- and
-hands a surface exactly what it may use through the `web.Host` interface. Six surfaces ship:
-`account` (setup, sign-in, sign-out, the key-file reset), `settings`, `collection`,
-`interfaces`, `sources` (which also contributes the top bar's outage indicator) and
-`widgetapi`.
+The server side of the interface is modular in the same way. A **surface** is **a directory**
+`internal/web/surfaces/<name>/` holding its handlers, its catalogue files
+(`locale/<language>.json`) and a `surface.json` marker, and registering itself from an `init()`
+with `web.RegisterSurface`. **A surface draws no page.** It answers JSON and closed codes, and
+the words a reader sees for those codes are its catalogue's, drawn by the front (below). The
+Go-rendered pages, their templates, the layout and the stylesheet of the steps before 7 are gone;
+their paths are routes of the shell, so a bookmark still lands on the same view. The core in
+`internal/web` owns what is shared -- the server, the route table and its access levels, the
+session and CSRF middleware, the string catalogue and the helpers several surfaces use -- and hands
+a surface exactly what it may use through the `web.Host` interface. The surfaces that ship are
+listed in *Map of the tree*: among them `account` (setup, sign-in, sign-out, the key-file reset),
+`settings`, `collection`, `interfaces`, `sources`, `people`, `labels`, `widgetapi`,
+`dashboards`, `references` and `frontend`, which serves the front itself.
 
 Everything that varies with the set of surfaces is built from the registered ones at start: the
-route table, the pages, the tabs of the top bar, the indicators, the closed list of keys a
-redirect may carry, and the catalogue (the core's file merged with each surface's). The only
-file that names the surfaces is `internal/web/surfaces/surfaces_gen.go`, written by
-`go generate` from the directories (`internal/discover`) and checked by a test that fails, naming
-the command, when it is stale. A surface that cannot be served -- a missing or non-compiling
-template, a malformed or clashing catalogue file, a taken name or route, no access level -- is
-left out with a named reason and the server starts without it. `docs/extending.md` is the
-procedure, with a worked example the tests run.
+route table and the catalogue (the core's file merged with each surface's). The only file that
+names the surfaces is `internal/web/surfaces/surfaces_gen.go`, written by `go generate` from the
+directories (`internal/discover`) and checked by a test that fails, naming the command, when it is
+stale. A surface that cannot be served -- a malformed or clashing catalogue file, a taken name or
+route, no access level -- is left out with a named reason and the server starts without it.
+`docs/extending.md` is the procedure, with a worked example the tests run.
+
+## The front — the fourth seam
+
+The interface a browser draws is **the front**: one shell document and the scripts that draw every
+view in the browser from the JSON routes (`specs/SPEC-step-7-frontend.md`, A1 to A9). It is the
+fourth seam, and the one a third party extends without a Go toolchain at all.
+
+- **The built-in front** is the top-level `front/` tree, embedded in the binary the way `plugins/`
+  is (`front.go`): the shell, the core scripts and the stylesheet, the views, the twelve shape
+  renderers, the six theme files, the colour-token set, the basemap and the default dashboard. A
+  built-in widget's renderer is a file of its own widget directory, `plugins/<plugin>/widgets/<type>/`:
+  the widget is one directory, manifest, statements, script and renderer together.
+- **The data directory's parts** are read at start: a theme is `<data-dir>/themes/<id>.json`, a
+  language `<data-dir>/languages/<code>.json`, and a widget's renderer a file of its widget's
+  directory -- a plugin's, an operator widget's, or a front-only widget's, which has a renderer and
+  no query. The built-in wins every collision; a part that breaks a rule is refused with a closed
+  code, listed by `GET /api/widgets`, and the service starts without it. A part added to a running
+  service takes effect at the next restart. `docs/front-plugins.md` is the contract.
+- **The index serves only what it declares.** At start `internal/front` builds an in-memory index
+  of every file the browser may be served -- the core's assets, the generated palette stylesheet,
+  each theme, each renderer entry the manifests name -- and the `frontend` surface answers
+  `/front/{path}` from it alone. A widget's server-side script, a statement file, a manifest or any
+  other file of a plugin or of the data directory is never served, and a path that escapes the index
+  is impossible by construction rather than filtered. Every asset carries a policy that refuses any
+  other origin; the front contacts no host but its own server.
+- **Strings, appearance, dashboards.** The front asks for every word by key
+  (`GET /api/strings/{language}`), keeps the palette, the mode and the language as installation
+  settings (`/api/appearance`), and stores its canvases as dashboard documents
+  (`docs/dashboard-format.md`) through the `dashboards` surface. `docs/widget-api.md`, *Front API*,
+  is the reference.
+- **Tested without a browser.** `internal/front/frontjs` runs the front's own files -- the bytes a
+  browser is served -- in the interpreter the server already embeds, over a minimal document, so the
+  reconciler, the views, the document module and every renderer are tested by `go test`.
 
 ## The broker — the one path to the firewall
 
@@ -409,10 +443,13 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/collect/services` — the service kinds, geolocation and the registrable-domain list, as their providers last answered.
 - `internal/collect/sources` — a set of provider implementations, every kind's, by key.
 - `internal/config` — the only reader of configuration.
+- `internal/dashboard` — the authoritative structural validator of the dashboard file format.
 - `internal/dataset` — the data catalogue: every dataset, its columns, its filters and its queries.
 - `internal/decode` — what an OPNsense endpoint actually said, turned into the shapes opnview reads.
 - `internal/discover` — the generator, and the check, of the one file linking a family of directories into the binary.
 - `internal/ianaprotocol` — the keywords of IANA's Assigned Internet Protocol Numbers.
+- `internal/front` — the front's index: the shell, the assets served, the themes, the languages and the widget registry.
+- `internal/front/frontjs` — runs the front's own files in the interpreter over a minimal document, for the front's tests.
 - `internal/layout` — the tests that keep this map, the fifteen-file limit and the package comments true.
 - `internal/live` — the live-interest lease.
 - `internal/live/strip` — the rolling strip.
@@ -439,6 +476,7 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/store/accounts` — accounts, sessions, encrypted credentials and setting rows.
 - `internal/store/aggregates` — the aggregate families and their refresh, and the service's downtime.
 - `internal/store/attribution` — DNS resource records, the attribution of flows to names, hostnames and the record rate.
+- `internal/store/dashboards` — the stored dashboards.
 - `internal/store/flows` — the typed writes, classification, networks, this firewall's addresses and the pairing of legs.
 - `internal/store/geo` — geolocation and autonomous-system rows.
 - `internal/store/netflow` — NetFlow records, the capture configuration, the join and the measured volumes.
@@ -454,20 +492,23 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/store/vocab` — the store's closed vocabularies and row types.
 - `internal/suffixlist` — the Public Suffix List format, and a name's registrable domain.
 - `internal/testtiming` — where the everyday suite's time goes, per package, recorded while a CI-only switch is on.
-- `internal/web` — the HTTP core: the server, the route table, sessions and CSRF, the layout, the themes, the string catalogue and the surfaces' seam.
+- `internal/web` — the HTTP core: the server, the route table, sessions and CSRF, the string catalogue and the surfaces' seam.
 - `internal/web/messages` — the catalogue keys the core chooses, and the keys composed from a registry row.
 - `internal/web/settingfields` — the fields of the settings forms.
 - `internal/web/surfaces` — the generated link of every surface into the binary.
 - `internal/web/surfaces/account` — the surface that creates the first account and signs readers in and out.
 - `internal/web/surfaces/collection` — the collection surface.
+- `internal/web/surfaces/dashboards` — the API of the stored dashboards.
 - `internal/web/surfaces/datasets` — the data catalogue's API.
 - `internal/web/surfaces/firewallcatalogue` — the learned API catalogue's API.
+- `internal/web/surfaces/frontend` — the shell, the front's assets, the string catalogue, the appearance and the widget registry.
 - `internal/web/surfaces/interfaces` — the interfaces surface.
 - `internal/web/surfaces/labels` — the JSON API of the labels interfaces are given and the purposes blocklists are given.
 - `internal/web/surfaces/live` — the live figures that are not a widget's.
 - `internal/web/surfaces/netflow` — the NetFlow join's settings.
 - `internal/web/surfaces/people` — the API of the people the user creates and their machines.
 - `internal/web/surfaces/plugins` — the plugin listing and the plugin settings.
+- `internal/web/surfaces/references` — the candidates of each reference kind, and the resolution of reference objects.
 - `internal/web/surfaces/settings` — the settings surface, where credentials enter the product.
 - `internal/web/surfaces/sources` — the sources surface.
 - `internal/web/surfaces/widgetapi` — the widget API.

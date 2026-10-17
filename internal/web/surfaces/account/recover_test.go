@@ -2,16 +2,24 @@ package account_test
 
 import (
 	"net/http"
-	"net/url"
 	"os"
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/secret"
-	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/surfaces/account"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
 )
+
+// pathSettingsAnswer is an authenticated read a session is tested against.
+const pathSettingsAnswer = "/api/settings"
+
+// postReset issues a reset carrying this reader's own form token.
+func postReset(t *testing.T, h *webtest.Harness, fields map[string]string) *http.Response {
+	t.Helper()
+	return h.PostWithToken(account.PathAPIRecover, setupBody(t, fields))
+}
 
 // TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse is AC15.
 func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.T) {
@@ -26,9 +34,8 @@ func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.
 	}
 
 	t.Run("without the key file it is refused", func(t *testing.T) {
-		anonymous := webtest.FreshClient(t, harness)
-		answer := anonymous.Post(web.PathRecover, url.Values{
-			"login": {login}, "password": {newPassword}, "password_again": {newPassword},
+		answer := postReset(t, webtest.FreshClient(t, harness), map[string]string{
+			"login": login, "password": newPassword, "password_again": newPassword,
 		})
 		accounttest.AssertStatus(t, answer, http.StatusForbidden)
 		assertPasswordIs(t, harness, login, oldPassword)
@@ -45,22 +52,20 @@ func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.
 		if err != nil {
 			t.Fatalf("reading the other key file: %v", err)
 		}
-		anonymous := webtest.FreshClient(t, harness)
-		answer := anonymous.Post(web.PathRecover, url.Values{
-			"login": {login}, "key_file": {string(wrong)},
-			"password": {newPassword}, "password_again": {newPassword},
+		answer := postReset(t, webtest.FreshClient(t, harness), map[string]string{
+			"login": login, "key_file": string(wrong),
+			"password": newPassword, "password_again": newPassword,
 		})
 		accounttest.AssertStatus(t, answer, http.StatusForbidden)
 		assertPasswordIs(t, harness, login, oldPassword)
 	})
 
 	t.Run("with the key file it succeeds", func(t *testing.T) {
-		anonymous := webtest.FreshClient(t, harness)
-		answer := anonymous.Post(web.PathRecover, url.Values{
-			"login": {login}, "key_file": {string(keyFile)},
-			"password": {newPassword}, "password_again": {newPassword},
+		answer := postReset(t, webtest.FreshClient(t, harness), map[string]string{
+			"login": login, "key_file": string(keyFile),
+			"password": newPassword, "password_again": newPassword,
 		})
-		accounttest.AssertStatus(t, answer, http.StatusSeeOther)
+		accounttest.AssertStatus(t, answer, http.StatusOK)
 		assertPasswordIs(t, harness, login, newPassword)
 
 		// And the new password actually signs in, which the stored record alone does
@@ -75,19 +80,18 @@ func TestAForgottenPasswordIsRecoverableByTheKeyFileAndByNothingElse(t *testing.
 		if signedIn.SessionCookie() == "" {
 			t.Fatal("signing in set no session cookie")
 		}
-		accounttest.AssertStatus(t, signedIn.Get(web.PathSettings), http.StatusOK)
+		accounttest.AssertStatus(t, signedIn.Get(pathSettingsAnswer), http.StatusOK)
 
 		later := webtest.RandomHex(t, 12)
-		resetter := webtest.FreshClient(t, harness)
-		answer := resetter.Post(web.PathRecover, url.Values{
-			"login": {login}, "key_file": {string(keyFile)},
-			"password": {later}, "password_again": {later},
+		answer := postReset(t, webtest.FreshClient(t, harness), map[string]string{
+			"login": login, "key_file": string(keyFile),
+			"password": later, "password_again": later,
 		})
-		accounttest.AssertStatus(t, answer, http.StatusSeeOther)
+		accounttest.AssertStatus(t, answer, http.StatusOK)
 
-		stale := signedIn.Get(web.PathSettings)
+		stale := signedIn.Get(pathSettingsAnswer)
 		defer func() { _ = stale.Body.Close() }()
-		if stale.StatusCode != http.StatusSeeOther {
+		if stale.StatusCode != http.StatusUnauthorized {
 			t.Errorf("a session issued before a password reset answered %d rather than "+
 				"being turned away", stale.StatusCode)
 		}
@@ -107,9 +111,9 @@ func TestTheResetIsRefusedWhenThereIsNoKeyFileAtAll(t *testing.T) {
 
 	withoutKey := webtest.ReopenWithoutKeyFile(t, harness)
 	replacement := webtest.RandomHex(t, 12)
-	answer := withoutKey.Post(web.PathRecover, url.Values{
-		"login": {login}, "key_file": {string(keyFile)},
-		"password": {replacement}, "password_again": {replacement},
+	answer := postReset(t, withoutKey, map[string]string{
+		"login": login, "key_file": string(keyFile),
+		"password": replacement, "password_again": replacement,
 	})
 	accounttest.AssertStatus(t, answer, http.StatusForbidden)
 	assertPasswordIs(t, withoutKey, login, password)
@@ -119,14 +123,14 @@ func TestTheResetIsRefusedWhenThereIsNoKeyFileAtAll(t *testing.T) {
 // nothing else.
 func assertPasswordIs(t *testing.T, harness *webtest.Harness, login, expected string) {
 	t.Helper()
-	account, found, err := harness.Store.AccountByLogin(t.Context(), login)
+	stored, found, err := harness.Store.AccountByLogin(t.Context(), login)
 	if err != nil {
 		t.Fatalf("reading the account: %v", err)
 	}
 	if !found {
 		t.Fatalf("there is no account called %q", login)
 	}
-	if err := auth.VerifyPassword(account.Password, expected); err != nil {
+	if err := auth.VerifyPassword(stored.Password, expected); err != nil {
 		t.Errorf("the stored password is not the expected one: %v", err)
 	}
 }

@@ -108,6 +108,6 @@
   ],
   "script": "client_traffic_detail.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

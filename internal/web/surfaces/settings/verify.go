@@ -69,7 +69,7 @@ func (s *surface) verify(ctx context.Context) messageKey {
 		// certificate was presented, or which host refused the connection, and
 		// dropping it left the operator with a one-line state and no way to find out
 		// more. It is written where every other opnview diagnostic is written, and
-		// not onto the page: it can name a host and a path.
+		// not into an answer: it can name a host and a path.
 		fmt.Fprintf(os.Stderr, "opnview: web: verifying the firewall credentials: %v\n", err)
 		// A transport failure carries an error as well as an outcome; every other
 		// outcome arrives with a nil error. Falling through to the switch on the

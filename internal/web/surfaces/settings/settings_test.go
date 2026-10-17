@@ -2,7 +2,6 @@ package settings_test
 
 import (
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/NaejEL/opnview/internal/web/surfaces/settings"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
-	"github.com/NaejEL/opnview/internal/web/webtest/collectiontest"
 	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
@@ -23,14 +21,12 @@ import (
 func TestChangingACredentialTakesEffectWithoutARestart(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
-	login, password := harness.CompleteSetup()
-	_ = login
-	_ = password
+	harness.CompleteSetup()
 
 	apiKey := webtest.RandomHex(t, 12)
 	firstSecret := webtest.RandomHex(t, 16)
 
-	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, apiKey, firstSecret), http.StatusSeeOther)
+	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, apiKey, firstSecret), http.StatusOK)
 
 	// The pass the verification made is a real pass: it carried the credentials.
 	first := harness.Fake.Last()
@@ -49,7 +45,7 @@ func TestChangingACredentialTakesEffectWithoutARestart(t *testing.T) {
 		t.Fatal("the two generated secrets collided, so this proves nothing")
 	}
 	generationBefore := harness.Creds.Generation()
-	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, apiKey, secondSecret), http.StatusSeeOther)
+	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, apiKey, secondSecret), http.StatusOK)
 	if harness.Creds.Generation() <= generationBefore {
 		t.Error("the settings surface stored a credential without writing it into the live holder")
 	}
@@ -102,97 +98,75 @@ func credentialRowCount(t *testing.T, harness *webtest.Harness, name string) int
 }
 
 // TestVerificationTellsTheThreeAnswersApart is AC17's mapping half.
+// TestVerificationTellsTheThreeAnswersApart is AC17's mapping half.
 //
-// NONE OF THE THREE IS WORKED AROUND OR REPORTED AS SUCCESS, and each is asserted by
-// the string the surface actually renders rather than by an internal value.
+// NONE OF THE THREE IS WORKED AROUND OR REPORTED AS SUCCESS, and each is asserted by the code the
+// save answers rather than by an internal value.
 func TestVerificationTellsTheThreeAnswersApart(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
 	harness.CompleteSetup()
 	apiKey, apiSecret := webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)
 
-	verified := settingstest.Text(t, harness.Server.Catalogue(), msgVerifyVerified)
-	rejected := settingstest.Text(t, harness.Server.Catalogue(), msgVerifyCredentialsBad)
-	notFound := settingstest.Text(t, harness.Server.Catalogue(), msgVerifyEndpointNotFound)
-	unreachable := settingstest.Text(t, harness.Server.Catalogue(), msgVerifyUnreachable)
-
-	t.Run("the firewall answers", func(t *testing.T) {
-		harness.Fake.Answer(http.StatusOK, webtest.MustJSON(t, map[string]any{"rows": []any{}}))
-		body := submitAndRead(t, harness, apiKey, apiSecret)
-		settingstest.AssertContains(t, body, verified)
-		assertLacks(t, body, rejected, notFound, unreachable)
-	})
-
-	t.Run("401 is a credential failure", func(t *testing.T) {
-		harness.Fake.Answer(http.StatusUnauthorized, []byte(`{}`))
-		body := submitAndRead(t, harness, apiKey, apiSecret)
-		settingstest.AssertContains(t, body, rejected)
-		assertLacks(t, body, verified, notFound, unreachable)
-	})
-
-	t.Run("403 is a credential failure too", func(t *testing.T) {
-		harness.Fake.Answer(http.StatusForbidden, []byte(`{}`))
-		body := submitAndRead(t, harness, apiKey, apiSecret)
-		settingstest.AssertContains(t, body, rejected)
-		assertLacks(t, body, verified)
-	})
-
-	t.Run("404 is an absent endpoint", func(t *testing.T) {
-		harness.Fake.Answer(http.StatusNotFound, []byte(`{"errorMessage":"Not Found"}`))
-		body := submitAndRead(t, harness, apiKey, apiSecret)
-		settingstest.AssertContains(t, body, notFound)
-		assertLacks(t, body, verified, rejected, unreachable)
-	})
-
-	t.Run("no answer at all is unreachable", func(t *testing.T) {
-		harness.Fake.GoDown()
-		body := submitAndRead(t, harness, apiKey, apiSecret)
-		settingstest.AssertContains(t, body, unreachable)
-		assertLacks(t, body, verified, rejected, notFound)
-	})
-}
-
-// submitAndRead stores the credentials and returns the page that came back.
-func submitAndRead(t *testing.T, harness *webtest.Harness, apiKey, apiSecret string) string {
-	t.Helper()
-	answer := settingstest.StoreCredentials(harness, apiKey, apiSecret)
-	status, body := webtest.Followed(t, harness, answer)
-	if status != http.StatusSeeOther {
-		t.Fatalf("the settings surface answered %d: %s", status, body)
+	for _, answer := range []struct {
+		what    string
+		arrange func()
+		want    messageKey
+	}{
+		{"the firewall answers", func() {
+			harness.Fake.Answer(http.StatusOK, webtest.MustJSON(t, map[string]any{"rows": []any{}}))
+		}, msgVerifyVerified},
+		{"401 is a credential failure", func() { harness.Fake.Answer(http.StatusUnauthorized, []byte(`{}`)) },
+			msgVerifyCredentialsBad},
+		{"403 is a credential failure too", func() { harness.Fake.Answer(http.StatusForbidden, []byte(`{}`)) },
+			msgVerifyCredentialsBad},
+		{"404 is an absent endpoint", func() {
+			harness.Fake.Answer(http.StatusNotFound, []byte(`{"errorMessage":"Not Found"}`))
+		}, msgVerifyEndpointNotFound},
+		{"no answer at all is unreachable", func() { harness.Fake.GoDown() }, msgVerifyUnreachable},
+	} {
+		t.Run(answer.what, func(t *testing.T) {
+			answer.arrange()
+			if got := saveAndVerify(t, harness, apiKey, apiSecret); got != web.ConditionOf(answer.want) {
+				t.Errorf("the save's verification is %q, want %q", got, web.ConditionOf(answer.want))
+			}
+		})
 	}
-	return body
 }
 
-// TestNothingButTheFirewallIsContactedDuringTheThreeSurfaces is AC17's destination
-// half and AC18.
+// saveAndVerify stores the credentials and returns the verification the save answered.
+func saveAndVerify(t *testing.T, harness *webtest.Harness, apiKey, apiSecret string) string {
+	t.Helper()
+	status, body := webtest.StatusAndBody(t, settingstest.StoreCredentials(harness, apiKey, apiSecret))
+	if status != http.StatusOK {
+		t.Fatalf("the firewall save answered %d: %s", status, body)
+	}
+	verification, _ := settingstest.Path(settingstest.DecodeJSON(t, body), "firewall", "verification").(string)
+	return verification
+}
+
+// TestNothingButTheFirewallIsContactedDuringTheThreeSurfaces is AC17's destination half and
+// AC18.
 //
-// The transport behind the client fails any host but the fake AND fails the test, so
-// reaching the end of this with no error is the assertion. The explicit MaxMind check
-// is here as well, because "no second destination" and "no MaxMind call" are two
-// different mistakes and the second one is the one this cycle could plausibly make.
+// The transport behind the client fails any host but the fake AND fails the test, so reaching the
+// end of this with no error is the assertion. The explicit MaxMind check is here as well, because
+// "no second destination" and "no MaxMind call" are two different mistakes.
 func TestNothingButTheFirewallIsContactedDuringTheThreeSurfaces(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
 	login, password := harness.CompleteSetup()
 
-	_ = harness.Get(web.PathSetup)
-	_ = harness.Get(web.PathSignIn)
-	_ = harness.Get(web.PathRecover)
-	_ = harness.Get(web.PathStylesheet)
+	webtest.Discard(t, harness.Get(webtest.PathAPISession))
 	harness.SignIn(login, password)
-	_ = harness.Get(web.PathSettings)
+	webtest.Discard(t, harness.Get(settings.PathAPISettings))
 
 	licenceKey := webtest.RandomHex(t, 16)
-	accounttest.AssertStatus(t, harness.Post(web.PathSettings, url.Values{
-		webtest.FieldSettingsCard: {webtest.SettingsCardFirewall},
-		"firewall_url":            {harness.Fake.BaseURL()},
-		"api_key":                 {webtest.RandomHex(t, 12)},
-		"api_secret":              {webtest.RandomHex(t, 16)},
-	}), http.StatusSeeOther)
-	accounttest.AssertStatus(t, harness.Post(web.PathSettings, url.Values{
-		webtest.FieldSettingsCard: {webtest.SettingsCardGeolocation},
-		"maxmind_licence_key":     {licenceKey},
-	}), http.StatusSeeOther)
+	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, webtest.RandomHex(t, 12),
+		webtest.RandomHex(t, 16)), http.StatusOK)
+	if status, answer := settingstest.SendJSON(harness, "/api/plugins/"+settings.GeolocationPlugin+"/settings",
+		map[string]any{"licence_key": licenceKey}); status != http.StatusOK {
+		t.Fatalf("saving the licence key answered %d %v", status, answer)
+	}
 
 	received := harness.Fake.Received()
 	if len(received) == 0 {
@@ -211,8 +185,8 @@ func TestNothingButTheFirewallIsContactedDuringTheThreeSurfaces(t *testing.T) {
 		}
 	}
 
-	// The endpoint is in the registry. A path invented here could not be issued at
-	// all, and this is the recording half of that guarantee.
+	// The endpoint is in the registry. A path invented here could not be issued at all, and
+	// this is the recording half of that guarantee.
 	registered := false
 	for _, endpoint := range opnsense.Registry() {
 		if endpoint.Path == settings.VerificationEndpoint().Path {
@@ -223,10 +197,9 @@ func TestNothingButTheFirewallIsContactedDuringTheThreeSurfaces(t *testing.T) {
 		t.Error("the verification endpoint is not in opnsense.Registry()")
 	}
 
-	// AC18: the licence key was stored and NOTHING was downloaded for it. The
-	// transport would have failed the test on a MaxMind host; this asserts the key
-	// reached the database all the same, so the absence of a call is not the absence
-	// of the feature.
+	// AC18: the licence key was stored and NOTHING was downloaded for it. The transport would
+	// have failed the test on a MaxMind host; this asserts the key reached the database all the
+	// same, so the absence of a call is not the absence of the feature.
 	if _, stored, err := harness.Store.Credential(
 		t.Context(), accounts.CredentialMaxMindLicenceKey); err != nil {
 		t.Fatalf("reading the stored licence key: %v", err)
@@ -238,48 +211,47 @@ func TestNothingButTheFirewallIsContactedDuringTheThreeSurfaces(t *testing.T) {
 	}
 }
 
-// TestAnUnreadableCredentialIsItsOwnStateAndNotAnAbsence is AC14 as the settings
-// surface reports it.
+// credentialState is the firewall's credential state the settings answer reports.
+func credentialState(t *testing.T, harness *webtest.Harness) string {
+	t.Helper()
+	state, _ := settingstest.Path(settingstest.GetJSON(harness, settings.PathAPISettings),
+		"firewall", "credential_state").(string)
+	return state
+}
+
+// TestAnUnreadableCredentialIsItsOwnStateAndNotAnAbsence is AC14 as the settings answer reports
+// it.
 func TestAnUnreadableCredentialIsItsOwnStateAndNotAnAbsence(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
 	login, password := harness.CompleteSetup()
 	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)),
-		http.StatusSeeOther)
+		http.StatusOK)
+	if state := credentialState(t, harness); state != web.ConditionOf(msgCredentialReady) {
+		t.Errorf("stored credentials answer %q", state)
+	}
 
-	absent := settingstest.Text(t, harness.Server.Catalogue(), msgCredentialAbsent)
-	ready := settingstest.Text(t, harness.Server.Catalogue(), msgCredentialReady)
-	unreadable := settingstest.Text(t, harness.Server.Catalogue(), msgCredentialUndecryptable)
-
-	readable := pageText(t, harness, web.PathSettings)
-	settingstest.AssertContains(t, readable, ready)
-
-	// The database survives; the key file does not. THIS IS THE CASE THE CRITERION IS
-	// ABOUT: the service comes up, and what it says is not "no firewall is configured".
+	// The database survives; the key file does not. THIS IS THE CASE THE CRITERION IS ABOUT: the
+	// service comes up, and what it says is not "no firewall is configured".
 	withoutKey := webtest.ReopenWithoutKeyFile(t, harness)
 	withoutKey.SignIn(login, password)
-	page := pageText(t, withoutKey, web.PathSettings)
-
-	settingstest.AssertContains(t, page, unreadable)
-	assertLacks(t, page, ready)
-	// AND IT IS NOT REPORTED AS AN ABSENCE. The two are different sentences, and
-	// reporting the second as the first sends the reader to look for a setting that is
-	// already there.
-	if absent == unreadable {
-		t.Fatal("the two states share a string, so they cannot be told apart at all")
+	state := credentialState(t, withoutKey)
+	if state != web.ConditionOf(msgCredentialUndecryptable) {
+		t.Errorf("a lost key file answers %q, not undecryptable", state)
 	}
-	assertLacks(t, page, absent)
-
-	// And re-entry is offered: the fields are there to type into.
-	for _, field := range []string{`name="firewall_url"`, `name="api_key"`, `name="api_secret"`} {
-		if !strings.Contains(webtest.PageSource(t, withoutKey, web.PathSettings), field) {
-			t.Errorf("the settings surface offers no %s field, so re-entry is not offered", field)
-		}
+	// AND IT IS NOT REPORTED AS AN ABSENCE. Reporting the second as the first sends the reader to
+	// look for a setting that is already there.
+	if state == web.ConditionOf(msgCredentialAbsent) {
+		t.Error("a lost key file is answered as an absence")
+	}
+	// And re-entry is possible: the configuration is still answered, so the front can offer it.
+	if url := settingstest.Path(settingstest.GetJSON(withoutKey, settings.PathAPISettings), "firewall", "url"); url == nil {
+		t.Error("the firewall URL is no longer answered once the key file is lost")
 	}
 }
 
-// TestTheTwoStatesAreDistinguishableAtTheSource is AC14 below the interface: the
-// values themselves differ, so nothing downstream has to guess.
+// TestTheTwoStatesAreDistinguishableAtTheSource is AC14 below the interface: the values
+// themselves differ, so nothing downstream has to guess.
 func TestTheTwoStatesAreDistinguishableAtTheSource(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
@@ -294,7 +266,7 @@ func TestTheTwoStatesAreDistinguishableAtTheSource(t *testing.T) {
 	}
 
 	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)),
-		http.StatusSeeOther)
+		http.StatusOK)
 	_, ready, err := config.LoadFirewallCredentials(t.Context(), harness.Store, harness.Box)
 	if err != nil {
 		t.Fatalf("loading the stored credentials: %v", err)
@@ -316,80 +288,38 @@ func TestTheTwoStatesAreDistinguishableAtTheSource(t *testing.T) {
 	}
 }
 
-// TestSavingTheThemeDoesNotDestroyTheCredentials is the consequence of a secret field
-// that renders empty: an empty submission must leave what is stored alone.
-func TestSavingTheThemeDoesNotDestroyTheCredentials(t *testing.T) {
+// TestAnEmptySecretDoesNotDestroyTheCredentials is the consequence of a secret field that is
+// never filled: a save carrying no secret must leave the stored one alone.
+func TestAnEmptySecretDoesNotDestroyTheCredentials(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
 	harness.CompleteSetup()
 	apiKey, apiSecret := webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)
-	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, apiKey, apiSecret), http.StatusSeeOther)
+	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, apiKey, apiSecret), http.StatusOK)
 
-	// The page posts every card's fields with every save; the firewall's come back
-	// as they are stored, the secret field empty.
-	answer := harness.Post(web.PathSettings, url.Values{
-		webtest.FieldSettingsCard: {webtest.SettingsCardAppearance},
-		"firewall_url":            {harness.Fake.BaseURL()},
-		"api_key":                 {apiKey},
-		"api_secret":              {""},
-		"theme":                   {string(web.ThemeDark)},
-	})
-	accounttest.AssertStatus(t, answer, http.StatusSeeOther)
-
+	// The front sends the card's whole content back; the secret field is empty.
+	accounttest.AssertStatus(t, settingstest.StoreCredentials(harness, apiKey, ""), http.StatusOK)
 	assertPassCarries(t, harness, apiKey, apiSecret)
-	if theme := harness.Server.ReadTheme(t.Context()); theme != web.ThemeDark {
-		t.Errorf("the theme was not saved: %q", theme)
-	}
 }
 
-// TestASecretIsNeverRenderedBackIntoThePage asserts what the surface may not say.
-func TestASecretIsNeverRenderedBackIntoThePage(t *testing.T) {
+// TestASecretIsNeverAnsweredBack asserts what the surface may not say.
+func TestASecretIsNeverAnsweredBack(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
-	login, password := harness.CompleteSetup()
+	_, password := harness.CompleteSetup()
 	apiKey, apiSecret := webtest.RandomHex(t, 12), webtest.RandomHex(t, 16)
 	licenceKey := webtest.RandomHex(t, 16)
 
-	// The firewall card is saved with a licence key typed in the geolocation card and
-	// not saved: the page is drawn in place, the other card kept as it was typed --
-	// except the secret, which is never put back, and is reported as not kept.
-	answer := harness.Post(web.PathSettings, url.Values{
-		webtest.FieldSettingsCard: {webtest.SettingsCardFirewall},
-		"firewall_url":            {harness.Fake.BaseURL()},
-		"api_key":                 {apiKey},
-		"api_secret":              {apiSecret},
-		"maxmind_licence_key":     {licenceKey},
-		"theme":                   {string(web.ThemeSystem)},
-	})
-	status, submitted := webtest.StatusAndBody(t, answer)
-	if status != http.StatusOK {
-		t.Fatalf("the settings surface answered %d", status)
-	}
-	if !strings.Contains(submitted, `<p class="field-state" id="maxmind_licence_key_state">`+
-		collectiontest.CatalogueText(t, msgSecretNotKept)+"</p>") {
-		t.Error("a licence key typed and not saved is not reported as not kept")
-	}
-	// The same page, as the geolocation card's save draws it, with an API secret typed
-	// in the firewall card and not saved.
-	answer = harness.Post(web.PathSettings, url.Values{
-		webtest.FieldSettingsCard: {webtest.SettingsCardGeolocation},
-		"api_secret":              {apiSecret},
-		"maxmind_licence_key":     {licenceKey},
-	})
-	status, typedElsewhere := webtest.StatusAndBody(t, answer)
-	if status != http.StatusOK || !strings.Contains(typedElsewhere,
-		`<p class="field-state" id="api_secret_state">`+collectiontest.CatalogueText(t, msgSecretNotKept)+"</p>") {
-		t.Errorf("an API secret typed and not saved answered %d and was not reported as not kept", status)
-	}
-	submitted += typedElsewhere
+	_, saved := webtest.StatusAndBody(t, settingstest.StoreCredentials(harness, apiKey, apiSecret))
+	_, licence := webtest.StatusAndBody(t, harness.PostWithToken("/api/plugins/"+settings.GeolocationPlugin+"/settings",
+		string(webtest.MustJSON(t, map[string]any{"licence_key": licenceKey}))))
+	_, read := webtest.StatusAndBody(t, harness.Get(settings.PathAPISettings))
 
 	account, found, err := harness.Store.AnyAccount(t.Context())
 	if err != nil || !found {
 		t.Fatalf("reading the account: found=%v err=%v", found, err)
 	}
-
-	pages := []string{submitted, webtest.PageSource(t, harness, web.PathSettings)}
-	for _, page := range pages {
+	for _, body := range []string{saved, licence, read} {
 		for name, forbidden := range map[string]string{
 			"the API secret":    apiSecret,
 			"the licence key":   licenceKey,
@@ -398,26 +328,9 @@ func TestASecretIsNeverRenderedBackIntoThePage(t *testing.T) {
 			"the password hash": string(account.Password.Digest),
 			"the key file":      harness.Box.KeyID(),
 		} {
-			if forbidden != "" && strings.Contains(page, forbidden) {
+			if forbidden != "" && strings.Contains(body, forbidden) {
 				t.Errorf("a response body carries %s", name)
 			}
-		}
-	}
-	_ = login
-}
-
-// pageText fetches one page and returns only what a reader sees.
-func pageText(t *testing.T, harness *webtest.Harness, path string) string {
-	t.Helper()
-	return webtest.VisibleText(webtest.PageSource(t, harness, path))
-}
-
-// assertLacks fails if any value appears.
-func assertLacks(t *testing.T, body string, values ...string) {
-	t.Helper()
-	for _, value := range values {
-		if strings.Contains(body, value) {
-			t.Errorf("the page says %q, which it should not", value)
 		}
 	}
 }

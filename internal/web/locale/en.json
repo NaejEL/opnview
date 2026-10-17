@@ -13,7 +13,6 @@
     "collection.kind.dhcp_lease": "DHCP leases",
     "collection.kind.dns_lookup": "Resolver lookups",
 
-    "collection.label.selection": "Operator selection",
     "collection.label.missed_seconds": "Time missed",
     "collection.label.gap_reason": "Gap reason",
 
@@ -24,10 +23,6 @@
     "state.sizing.selection_auto": "Left to the probe round",
     "state.sizing.selection_on": "Turned on by the operator",
     "state.sizing.selection_off": "Declined by the operator",
-
-    "theme.system": "Follow the operating system",
-    "theme.light": "Industrial, light",
-    "theme.dark": "Industrial, dark",
 
     "notice.settings_saved": "Saved.",
 
@@ -77,11 +72,7 @@
     "unit.minute.other": "minutes",
     "unit.second.one": "second",
     "unit.second.other": "seconds",
-    "field.unit": "Unit",
     "error.duration_unit_unknown": "That unit does not exist.",
-    "range.accepted_from": "Accepted from",
-    "range.to": "to",
-    "error.card_not_named": "Nothing saved: use the Save button of a card.",
     "notice.edited_not_saved": "Edited, not saved"
   }
 }

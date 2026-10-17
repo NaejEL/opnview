@@ -17,8 +17,9 @@ func TestAManifestMayLeaveOutWhatHasADefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if manifest.NoDomains != params.NoDomainsNone || !manifest.Renderer.Reserved || manifest.Windowed {
-		t.Errorf("the defaults are no_domains none, renderer reserved, not windowed: %+v", manifest)
+	if manifest.NoDomains != params.NoDomainsNone || manifest.Renderer != nil || manifest.Windowed {
+		t.Errorf("the defaults are no_domains none, no renderer of its own (its shape's draws it), not windowed: %+v",
+			manifest)
 	}
 	if refusal := params.ValidateManifest(manifest); refusal != nil {
 		t.Errorf("the minimal manifest is refused: %v", refusal)
@@ -53,13 +54,21 @@ func TestValidateManifestNamesTheRuleBroken(t *testing.T) {
 	cases := map[string]struct {
 		text, code string
 	}{
-		"version":      {mutate(`"manifest_version": 1`, `"manifest_version": 7`), params.RefusalUnsupportedManifestVersion},
-		"type":         {mutate(`example_minimal`, `Example Minimal`), params.RefusalManifestInvalid},
-		"shape":        {mutate(`"table"`, `"gauge"`), params.RefusalUnknownShape},
-		"provider":     {mutate(`"queries"`, `"providers": ["x"], "queries"`), params.RefusalUnknownProviderKind},
-		"no_domains":   {mutate(`"queries"`, `"no_domains": "some", "queries"`), params.RefusalManifestInvalid},
-		"measure":      {mutate(`"queries"`, `"measure": "Bad Measure", "queries"`), params.RefusalManifestInvalid},
-		"renderer":     {mutate(`"queries"`, `"renderer": {}, "queries"`), params.RefusalRendererInvalid},
+		"version":    {mutate(`"manifest_version": 1`, `"manifest_version": 7`), params.RefusalUnsupportedManifestVersion},
+		"type":       {mutate(`example_minimal`, `Example Minimal`), params.RefusalManifestInvalid},
+		"shape":      {mutate(`"table"`, `"gauge"`), params.RefusalUnknownShape},
+		"provider":   {mutate(`"queries"`, `"providers": ["x"], "queries"`), params.RefusalUnknownProviderKind},
+		"no_domains": {mutate(`"queries"`, `"no_domains": "some", "queries"`), params.RefusalManifestInvalid},
+		"measure":    {mutate(`"queries"`, `"measure": "Bad Measure", "queries"`), params.RefusalManifestInvalid},
+		"renderer":   {mutate(`"queries"`, `"renderer": {}, "queries"`), params.RefusalRendererInvalid},
+		"retired reserved renderer": {mutate(`"queries"`, `"renderer": {"reserved": true}, "queries"`),
+			params.RefusalRendererInvalid},
+		"renderer not a file": {mutate(`"queries"`, `"renderer": {"entry": "../draw.js"}, "queries"`),
+			params.RefusalRendererInvalid},
+		"renderer not a script": {mutate(`"queries"`, `"renderer": {"entry": "draw.mjs"}, "queries"`),
+			params.RefusalRendererInvalid},
+		"renderer of the wrong type": {mutate(`"queries"`, `"renderer": {"entry": 7}, "queries"`),
+			params.RefusalRendererInvalid},
 		"query path":   {mutate(`query.sql`, `sub/query.sql`), params.RefusalManifestInvalid},
 		"query suffix": {mutate(`query.sql`, `query.txt`), params.RefusalManifestInvalid},
 		"duplicate parameter": {mutate(`"queries"`, `"parameters": [{"key": "a", "kind": "boolean", "default": true},

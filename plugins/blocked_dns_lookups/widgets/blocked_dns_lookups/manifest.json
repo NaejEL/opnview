@@ -89,6 +89,6 @@
   ],
   "script": "blocked_dns_lookups.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

@@ -68,6 +68,6 @@
   "queries": [],
   "script": "traffic_over_time_by_scope.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

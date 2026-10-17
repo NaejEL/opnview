@@ -102,6 +102,6 @@
   ],
   "script": "traffic_sankey.js",
   "renderer": {
-    "reserved": true
+    "entry": "renderer.js"
   }
 }

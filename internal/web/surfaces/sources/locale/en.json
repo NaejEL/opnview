@@ -7,7 +7,6 @@
     "indicator.no_outage": "No outage",
 
     "sources.heading.providers": "Providers",
-    "sources.heading.gaps": "Collection gaps, last 24 hours",
     "sources.column.kind": "Kind",
     "sources.column.provider": "Provider",
     "sources.column.active": "Active",
@@ -29,7 +28,6 @@
     "opnsense_page.netflow": "Reporting: NetFlow",
     "indicator.unknown": "Outages unknown",
     "sources.heading.outages": "Current outages",
-    "sources.column.outage": "In outage",
     "state.outage.kind": "No implementation healthy",
     "state.outage.provider": "Turned on by the operator, not healthy"
   }
