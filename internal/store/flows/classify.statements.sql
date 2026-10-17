@@ -525,6 +525,14 @@ SELECT min(src_address) FROM security_event WHERE src_address > :address;
 -- and the heap fetch each due row costs for its address is the address the purge needs.
 -- No index is added. sql/schema-checks.sh, section E16, asserts all of this at both
 -- seeds and three horizons.
+--
+-- THE TWO BRANCHES ARE APPENDED, NOT UNITED (17 October 2026), and the caller drops the
+-- repeated addresses (PurgeDueAddresses, internal/store/purge/purge.go). With UNION, the
+-- plan the S5A-AC35 sweep reads -- every growing table planned at a trillion rows, nested
+-- loops only -- sorted the second branch by reading idx_flow_dst_address whole, in
+-- address order, to feed the deduplication, rather than sort what idx_flow_observed_at
+-- returns: a scan of flow, at both seeds. Appended, each branch keeps its index
+-- condition on observed_at under every plan, and the set returned is the same.
 -- statement: purge_due_addresses
 SELECT src_address
 FROM flow
@@ -532,7 +540,7 @@ WHERE observed_at < (SELECT :now - CAST(value AS BIGINT)
                      FROM setting
                      WHERE key = 'retention_seconds' AND CAST(value AS BIGINT) > 0)
   AND src_interface_id IS NULL
-UNION
+UNION ALL
 SELECT dst_address
 FROM flow
 WHERE observed_at < (SELECT :now - CAST(value AS BIGINT)

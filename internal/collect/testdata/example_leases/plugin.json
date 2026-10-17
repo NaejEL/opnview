@@ -1,0 +1,30 @@
+{
+  "api_version": 1,
+  "name": "example_leases",
+  "version": "1.0.0",
+  "display_name": "Example leases",
+  "description": "Reads the lease table of an example DHCP server.",
+  "endpoints": [
+    { "name": "status", "path": "/api/exampledhcp/service/status", "method": "GET" },
+    { "name": "leases", "path": "/api/exampledhcp/leases/search", "method": "POST", "body": "form" }
+  ],
+  "providers": [
+    {
+      "kind": "dhcp_lease",
+      "display_name": "Example leases",
+      "read_strategy": "full_reread",
+      "probe": { "endpoint": "status", "check": "service_running" },
+      "read": {
+        "endpoint": "leases",
+        "paginate": true,
+        "fields": {
+          "address": "address",
+          "mac": { "from": "hwaddr", "as": "mac" },
+          "hostname": "hostname",
+          "lease_state": { "value": "active" },
+          "expires_at": { "from": "expire", "as": "epoch" }
+        }
+      }
+    }
+  ]
+}

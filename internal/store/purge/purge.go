@@ -6,6 +6,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -46,8 +47,11 @@ func (s *PurgeStore) PurgeDueAddresses(ctx context.Context, now int64) ([]string
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("store: %s: %w", name, err)
 	}
+	// The statement appends its two branches rather than uniting them, so that each keeps its
+	// index condition under every plan (classify.statements.sql); an address both ends of a due
+	// flow carry, or several flows, is returned more than once and kept once here.
 	sort.Strings(addresses)
-	return addresses, nil
+	return slices.Compact(addresses), nil
 }
 
 // PurgedBefore returns the furthest horizon the retention purge has applied, and whether a purge

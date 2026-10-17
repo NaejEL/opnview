@@ -119,7 +119,9 @@ CREATE TABLE IF NOT EXISTS setting (
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS applied_schema (
     singleton  BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
-    digest     TEXT NOT NULL CHECK (digest ~ '^[0-9a-f]{64}$'),
+    -- Sixty-four lowercase hexadecimal digits, said without a pattern: the DDL holds no LIKE,
+    -- GLOB or regular-expression predicate at all (docs/data-model.md, AC14).
+    digest     TEXT NOT NULL CHECK (length(digest) = 64 AND translate(digest, '0123456789abcdef', '') = ''),
     applied_at BIGINT NOT NULL CHECK (applied_at >= 0 AND applied_at < 4102444800)
 );
 
@@ -835,8 +837,10 @@ CREATE TABLE IF NOT EXISTS dhcp_lease (
     -- backend is the normalised vocabulary of RESPONSE SHAPES, and it is kept
     -- beside provider_id rather than replaced by it: it is what says which
     -- field-name normalisation produced the row. It is NOT an identity for the
-    -- server, and it is not in the uniqueness constraint any more.
-    backend        TEXT NOT NULL CHECK (backend IN ('kea', 'dnsmasq', 'isc')),
+    -- server, and it is not in the uniqueness constraint any more. The collector writes the
+    -- provider key here, so its values are an open set, as provider_key's are: a third-party
+    -- dhcp_lease plugin writes its own key, and no list of the built-in ones refuses it.
+    backend        TEXT NOT NULL CHECK (length(backend) BETWEEN 1 AND 255),
     address        TEXT NOT NULL,
     mac            TEXT CHECK (mac IS NULL OR (length(mac) = 17 AND mac = lower(mac))),
     hostname       TEXT,
@@ -1411,7 +1415,10 @@ CREATE TABLE IF NOT EXISTS dns_resolution (
     hostname_examined_at BIGINT CHECK (hostname_examined_at IS NULL
                                         OR (hostname_examined_at >= 0 AND hostname_examined_at < 4102444800)),
     domain         TEXT NOT NULL,
-    resolver       TEXT NOT NULL CHECK (resolver IN ('unbound', 'dnsmasq')),
+    -- The provider key of the dns_lookup provider that read the lookup: an open set, as
+    -- provider_key's is, so a third-party resolver plugin's lookups are stored like the
+    -- built-in ones'.
+    resolver       TEXT NOT NULL CHECK (length(resolver) BETWEEN 1 AND 255),
     action         TEXT NOT NULL CHECK (action IN ('pass', 'block', 'drop', 'unknown')),
     answer_source  TEXT,
     rcode          TEXT,
@@ -4310,7 +4317,11 @@ ON CONFLICT (key) DO NOTHING;
 -- its kind, key and display name in its manifest, and the collector registers its
 -- row (and the availability row below) at the first probe round with
 -- Store.EnsureProvider, so adding one edits nothing in this file, a new kind
--- included.
+-- included. The columns a collected row names its provider in --
+-- dhcp_lease.backend and dns_resolution.resolver, which hold the provider key --
+-- take any non-empty key, as provider.provider_key does, so a third-party lease
+-- or lookup plugin's rows are stored like the built-in ones'
+-- (internal/collect/thirdparty_test.go).
 --
 -- No provider is active. Activeness says which implementation opnview reads,
 -- and it is decided by the probe round in internal/collect against a live

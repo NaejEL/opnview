@@ -123,7 +123,7 @@ rule itself is in `ROADMAP.md`, under *Rules that apply to every step*, and in
 | who sends syslog, who receives it | RFC 5424's **originator** and **collector** | the `sender` of a pushed message; `opnview` is the collector | RFC 5424, section 3 |
 | who sends NetFlow and its records | RFC 7011's **Exporter**, **Collector**, **Observation Domain**, **Information Element** | `exporterIPv4Address`, `observationDomainId`, the IANA registry's element names | RFC 7011, section 2; RFC 3954 |
 
-**Fifty-one terms are `opnview`'s own, because OPNsense has no word for them.**
+**Fifty-seven terms are `opnview`'s own, because OPNsense has no word for them.**
 Each is marked as such where it is defined, so nobody later mistakes it for
 vocabulary read off an endpoint:
 
@@ -171,7 +171,7 @@ vocabulary read off an endpoint:
 | the **broker** (`internal/broker`) | OPNsense has an API and no notion of a reader of it that sits between other readers and the firewall | **broker** is the ordinary word for one party that every request goes through and that serves many from one source; it is the only caller of the firewall API (A9 of the broker amendment to `specs/SPEC-backend-completion-plugins.md`) |
 | the **mirror**, the `opnsense` schema | the firewall keeps its own state and history, and has no word for a reader's copy of its answers | **mirror**, because it holds what the API answered and nothing derived: the fields some reader read, under the API's own names, learned from the answers (A10) |
 | a **datum** (`opnsense.mirror_datum`) | an endpoint answers one request at a time; nothing names "one endpoint called with one set of identifying parameters, on one firewall" | **datum**, the thing the broker refreshes, serves and records reads of; two requests differing only by a page or a window are one datum (A10) |
-| the **max age** of a request | OPNsense answers now, every time, and has no notion of an answer young enough | **max age** is HTTP's own word for how old a stored answer may be and still be served (RFC 9111, section 5.2.1.1), and it means that here (A11) |
+| the **max age** of a request | OPNsense answers now, every time, and has no notion of an answer young enough | **max age** is HTTP's own word for how old a stored answer may be and still be served (RFC 9111, the request directive `max-age`), and it means that here (A11) |
 | the **freshness floor** of an endpoint | nothing upstream says how often an endpoint may usefully be asked | the shortest interval an endpoint is refreshed at -- the largest of its declared floor and its median latency -- below which a request is served at the floor's age (A12) |
 | **live interest**, the lease a request for a live figure renews (`live_interest_seconds`) | OPNsense's dashboard polls the firewall itself and has no notion of a reader asking a third party for a live figure | it says what the lease stands for: somebody's interest in a live figure, which lapses when nobody renews it |
 | the **live cadence** of a live pass, and the **live pass** itself | OPNsense has one cadence per widget of its own dashboard and no notion of a second pass that runs only while someone looks | **live** is the word the mockup's strip and the spec use; the cadence is the declaring plugin's setting (`docs/plugins.md`, *Live pass*) |
@@ -219,20 +219,18 @@ an interface, a client or a rule by what it is called.
 number of interfaces, clients, owners, rules or address families. The checks prove
 it by re-running every query against a second seed built with different counts.
 
-**Durability: `synchronous = NORMAL` beside WAL.** `internal/store` opens the
-database with `journal_mode(WAL)` and `synchronous(NORMAL)`, approved by the
-maintainer on 9 October 2026 (`specs/SPEC-resolver-cache-attribution.md`, scope G).
-In WAL mode NORMAL syncs the write-ahead log at a checkpoint rather than at every
-commit, which took a commit from about 5 ms to about 13 µs in the development
-container. The trade, as sqlite.org states it
-(<https://www.sqlite.org/pragma.html#pragma_synchronous>,
-<https://www.sqlite.org/wal.html>, *Performance Considerations*): a transaction
-committed shortly before a **power loss or an operating-system crash may be rolled
-back** when the database recovers; the database **is not corrupted** — "WAL mode is
-safe from corruption with synchronous=NORMAL"; and an **application crash alone loses
-nothing** — "Transactions are durable across application crashes regardless of the
-synchronous setting". What a power loss can cost is the last moments of collected
-history, much of which the next polls read again.
+**Durability: `synchronous_commit = on`.** The store is PostgreSQL, and the
+installation's database runs with its default durability: `synchronous_commit = on`,
+with `fsync` and `full_page_writes` on, none of them overridden by
+`docker-compose.serve.yml` or the service it extends. A commit returns only once its
+write-ahead log is on disk, so a committed transaction survives an application crash,
+an operating-system crash and a power loss alike
+(<https://www.postgresql.org/docs/17/runtime-config-wal.html#GUC-SYNCHRONOUS-COMMIT>);
+what a crash can cost is the work not yet committed. The trade the resolver-cache cycle
+approved for SQLite (`specs/SPEC-resolver-cache-attribution.md`, scope G: a commit
+synced at the next checkpoint rather than at once) went with that engine, and none is
+made here. Only the everyday test instance turns durability off, because the tmpfs
+under it loses everything at a stop anyway (`docker-compose.yml`, `db-test`).
 
 ## Entities
 
@@ -726,9 +724,11 @@ vocabulary's adequacy for a second provider is unproven until one is surveyed.
 ### `provider` — the registry
 
 One row per implementation that can feed `opnview`, keyed
-`(kind, provider_key)`. `kind` is constrained to the eleven `docs/architecture.md`
-names: the nine before the resolver-cache cycle, and `resolver_cache` and
-`resolver_local_data`, which it added.
+`(kind, provider_key)`. The core kinds are the twelve `docs/architecture.md`
+names: the nine before the resolver-cache cycle, `resolver_cache` and
+`resolver_local_data`, which it added, and `flow_record`, which the NetFlow addendum
+added; a plugin may bring kinds of its own, and `kind` is constrained to a snake_case
+name.
 
 **`is_active` is not reachability.** It says which implementation `opnview`
 actually reads for that kind; `source_availability.state` says which ones can

@@ -246,19 +246,32 @@ maintainer's test budget of 7 October 2026,
     at a time and took 1.5 to 2 minutes alone, which the budget cannot hold; it runs
     on request, `docker compose run --rm -e OPNVIEW_RECLASSIFY_COST=1 schema-checks`.
 
-  **The 1 000 000-row seed is built once and reused while its digest holds.** A
-  cold build takes minutes -- more than the whole budget -- so the analysed seed is
-  kept on `db-predeployment` under one exact name, `schema_checks_scale_seed`, with
-  the digest of what it was built from written on it: `schema.sql`, `sql/seed.sql`,
-  the seed's parameters, and the server's PostgreSQL and TimescaleDB versions. A
-  run whose digest matches clones it, and prints the digest it reused; a run whose
+  **The seeds are built once and reused while their digest holds.** A cold build
+  of the 1 000 000-row seed takes minutes -- more than the whole budget -- so every
+  seed is kept under its exact name with the digest of what it was built from
+  written on it: `schema.sql`, `sql/seed.sql`, the seed's parameters, and the
+  server's PostgreSQL and TimescaleDB versions. Five are kept: the 1 000 000-row
+  seed, `schema_checks_scale_seed`; its purged copy, `schema_checks_scale_purged`,
+  purged once per digest of the seed and of `purge.sql`, which RC-AC14 and the
+  foreign-key check after it read; and the 100 000-row seeds,
+  `schema_checks_main_seed`, `schema_checks_repeat_seed` -- a second build of the
+  same definition, which AC7's determinism check compares with the first, both
+  built again whenever their digest changes -- and `schema_checks_alt_seed`
+  (Phase E decisions 9 and 11). A run whose digest matches reads the kept seed, or
+  a clone of it where a check writes, and prints the digest it reused; a run whose
   digest differs builds it cold, prints the build's breakdown -- the schema apply,
   each table's generation, `VACUUM (ANALYZE)` -- and its time apart from the
-  budgeted run. Every consumer reads the clone: the plans, the widget budgets, the
-  live budget, and, on request, the reclassification, on a copy of it. The pre-deployment
-  command runs with `/tmp` on the overlay filesystem, against `db-predeployment`,
-  a disk-backed instance with production durability, so the whole suite meets a
-  real disk once before a deployment.
+  budgeted run, and announces at its start that it does. **After a change to what
+  the seeds are built from, `docker compose run --rm schema-checks` builds them**:
+  run on its own it has no hard limit, where the pre-deployment command would stop
+  a cold build at its own. The kept seeds live on **`db-schema-checks`**, the
+  schema checks' own instance, configured like `db-predeployment` on a volume of
+  its own (decision 10): beside the Go suite on one instance, every `DROP
+  DATABASE` of the schema checks waited for a checkpoint writing the Go suite's
+  buffers too. The pre-deployment command runs with `/tmp` on the overlay
+  filesystem, its non-race step against `db-predeployment` and its schema checks
+  against `db-schema-checks`, both disk-backed with production durability, so the
+  whole suite meets a real disk once before a deployment.
 - **Moving a test out of the everyday suite** is allowed only for a `-race` check
   or a check on the 1 000 000-row seed, with the `predeployment` build tag, which
   the pre-deployment command passes to `go vet` and `go test`, never by deleting or
@@ -280,8 +293,8 @@ maintainer's test budget of 7 October 2026,
 **`OPNVIEW_DATA_DIR` and Git Bash.** The data directory of the scripts the
 pre-deployment command runs is `OPNVIEW_DATA_DIR`, **`/data` by default** — the
 `data` volume, mounted outside the bind-mounted working tree so that nothing they
-write lands in the repository; their databases live on the PostgreSQL instance
-`db-predeployment`. The value is a path **inside the container**: a relative one resolves
+write lands in the repository; their databases live on the PostgreSQL instances
+`db-predeployment` and `db-schema-checks`. The value is a path **inside the container**: a relative one resolves
 against `/workspace`, the repository itself. From Git Bash, MSYS path conversion
 rewrites a POSIX-looking path into a Windows one before docker sees it — `/data`
 arrives as `C:/Program Files/Git/data` — so a docker command passing a container

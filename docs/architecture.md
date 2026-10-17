@@ -8,18 +8,21 @@ stops there. It is a seam document, not a plugin specification.
 The authority on the schema is `internal/store/schema.sql`; on the sources,
 `docs/opnsense-api-survey.md`; on the entities, `docs/data-model.md`.
 
-## Eleven kinds
+## Twelve kinds
 
 A **kind** is a contract `opnview` implements: a shape of material, with a
-normalised destination in the schema. Exactly eleven exist, and the `provider`
-table constrains its `kind` column to them. The resolver-cache cycle added the last
-two (`specs/SPEC-resolver-cache-attribution.md`, decision 1).
+normalised destination in the schema. Exactly twelve core kinds exist; a plugin may
+bring kinds of its own, and the `provider` table refuses a `kind` that is not a
+snake_case name. The resolver-cache cycle added `resolver_cache` and
+`resolver_local_data` (`specs/SPEC-resolver-cache-attribution.md`, decision 1), and
+the NetFlow addendum `flow_record` (`specs/SPEC-backend-completion-plugins.md`, PS17).
 
 <!-- provider-kinds:begin -->
 ```
 dhcp_lease
 dns_lookup
 firewall_log
+flow_record
 flow_volume
 ip_geolocation
 measurement_sample
@@ -34,6 +37,7 @@ security_event
 | Kind | What it supplies | Normalised into |
 |---|---|---|
 | `firewall_log` | one record per logged packet decision | `flow`, and `blocked_event` over it |
+| `flow_record` | one record of a flow as an exporter reported it, pushed over NetFlow -- the *Flow Record* of RFC 3954 and RFC 7011, a different thing from `flow`, one filter-log record | `flow_record`, joined to the logged connections, and `connection_measured_volume` from the joined records, which the `netflow` measure reads |
 | `security_event` | one record per detection | `security_event`, with `provider_rule_info` for severity |
 | `flow_volume` | per-pair byte and packet counters | `pair_volume_observation`, **derived from `flow` and collected from nowhere** |
 | `dhcp_lease` | one record per lease generation | `dhcp_lease`, naming the server that issued each one, feeding `client` identity |

@@ -156,3 +156,29 @@ func TestThePurgeDueAddressesAreTheUnplacedEndsOfTheFlowsItWillRemove(t *testing
 		t.Errorf("the due addresses are %v, not %v", due, want)
 	}
 }
+
+// TestThePurgeDueAddressesNameEachAddressOnce: purge_due_addresses appends its two branches rather
+// than uniting them, so that each keeps its index condition on observed_at under every plan; an
+// address several due flows carry, at either end, is still returned once.
+func TestThePurgeDueAddressesNameEachAddressOnce(t *testing.T) {
+	t.Parallel()
+	network := storetest.NewNetwork(t, 2, 4)
+	ctx := context.Background()
+	unplaced := network.Clients[1]
+	network.Insert(t, []storetest.Flow{
+		outboundFlow(unplaced, network.Now-1500, 20, 2, 0),
+		outboundFlow(unplaced, network.Now-1400, 30, 2, 0),
+	})
+	if err := network.DB.SetSetting(ctx, "retention_seconds", "600", network.Now); err != nil {
+		t.Fatalf("setting the retention: %v", err)
+	}
+	due, err := network.DB.PurgeDueAddresses(ctx, network.Now)
+	if err != nil {
+		t.Fatalf("reading the due addresses: %v", err)
+	}
+	want := []string{storetest.Outside(2, unplaced.V6), unplaced.Address}
+	sort.Strings(want)
+	if !reflect.DeepEqual(due, want) {
+		t.Errorf("two due flows between the same two ends gave %v, not each address once: %v", due, want)
+	}
+}

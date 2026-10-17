@@ -152,8 +152,8 @@ services:
   # The pre-deployment test database: on a disk (a named volume) with
   # PostgreSQL's production durability, so the whole suite meets a real disk
   # once before a deployment -- every package outside the race detector's
-  # selection, and the schema checks with their seeds and query plans. The
-  # pre-deployment command's -race step runs on db-test instead (see that
+  # selection. The schema checks have an instance of their own, db-schema-checks
+  # below, and the pre-deployment command's -race step runs on db-test (see that
   # command below). Background workers are off for the same reason as above.
   db-predeployment:
     <<: *database-base
@@ -173,6 +173,27 @@ services:
       - "timescaledb.license=apache"
       - "-c"
       - "max_connections=500"
+
+  # The schema checks' database (Phase E decision 10, 17 October 2026): configured
+  # exactly as db-predeployment -- on a disk, with production durability, every
+  # setting above -- and on a named volume of its own. Run beside the non-race Go
+  # suite on one instance, every DROP DATABASE of the schema checks waited for a
+  # checkpoint that wrote the Go suite's dirty buffers too: their preamble took
+  # 122 s inside the pre-deployment command against 11 s alone. The kept seeds
+  # live here, each under its exact name with the digest it was built from
+  # (sql/schema-checks.sh), so this volume keeps them from one run to the next.
+  db-schema-checks:
+    extends:
+      service: db-predeployment
+    volumes:
+      - schema-checks-database:/var/lib/postgresql/data
+    # The one setting that differs: the schema checks read their seeds side by side -- the widget
+    # budgets of both seeds, the foreign keys, the plan sweep -- and PostgreSQL's parallel workers
+    # share their hash tables in /dev/shm, which Docker sizes at 64 MB. On 17 October 2026 the
+    # foreign-key check of the 1 000 000-row seed failed beside the widget budgets with "could not
+    # resize shared memory segment ... No space left on device". It is a size limit, not memory
+    # reserved: a page of it is held only while a query uses it.
+    shm_size: 1gb
 
   # Arbitrary commands inside the Debian toolchain.
   dev:
@@ -209,9 +230,12 @@ services:
   # tag), the test budget's own check, and the schema checks below with their
   # 100 000- and 1 000 000-row seeds and their query plans.
   #
-  # TWO INSTANCES. The packages outside the race detector's selection and the
-  # schema checks run against db-predeployment, a disk-backed instance with
-  # production durability. The -race step runs against db-test, the everyday
+  # THREE INSTANCES. The packages outside the race detector's selection run
+  # against db-predeployment, a disk-backed instance with production durability,
+  # and the schema checks against db-schema-checks, configured the same way and
+  # holding the kept seeds (Phase E decision 10); ci/pre-deployment.sh hands the
+  # schema checks OPNVIEW_SCHEMA_CHECKS_DATABASE as their OPNVIEW_TEST_DATABASE.
+  # The -race step runs against db-test, the everyday
   # instance on its tmpfs (the maintainer's decision of 16 October 2026, Phase E
   # decision 6): under the race detector every package selected runs several
   # times slower, and on the disk-backed instance internal/collect,
@@ -226,6 +250,7 @@ services:
     environment:
       OPNVIEW_TEST_DATABASE: "host=db-predeployment port=5432 user=postgres dbname=postgres sslmode=disable"
       OPNVIEW_RACE_TEST_DATABASE: *everyday-test-database
+      OPNVIEW_SCHEMA_CHECKS_DATABASE: &schema-checks-database "host=db-schema-checks port=5432 user=postgres dbname=postgres sslmode=disable"
       # The tests clone their databases with WAL_LOG here, and with FILE_COPY, the default, on the
       # everyday tmpfs instance: FILE_COPY forces a checkpoint before and after each clone, which on
       # this disk with production durability made 64 create-then-drop cycles, 16 at a time, take
@@ -235,6 +260,8 @@ services:
       db-test:
         condition: service_healthy
       db-predeployment:
+        condition: service_healthy
+      db-schema-checks:
         condition: service_healthy
     command: ["bash", "/workspace/ci/pre-deployment.sh"]
 
@@ -246,13 +273,16 @@ services:
   #     docker compose run --rm schema-checks
   #
   # quoting-free and identical in PowerShell and in bash. Every database it
-  # creates is created and dropped by its exact name on db-predeployment.
+  # creates is created and dropped by its exact name on db-schema-checks, but the
+  # kept seeds, which it keeps there under their exact names. Run on its own, it
+  # has no hard limit, which is how the kept seeds are built cold after a change
+  # to what they are built from.
   schema-checks:
     <<: *dev-base
     environment:
-      OPNVIEW_TEST_DATABASE: "host=db-predeployment port=5432 user=postgres dbname=postgres sslmode=disable"
+      OPNVIEW_TEST_DATABASE: *schema-checks-database
     depends_on:
-      db-predeployment:
+      db-schema-checks:
         condition: service_healthy
     command: ["bash", "/workspace/sql/schema-checks.sh"]
 
@@ -261,4 +291,5 @@ volumes:
   go-build-cache:
   data:
   predeployment-database:
+  schema-checks-database:
   test-database-socket:

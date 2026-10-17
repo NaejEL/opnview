@@ -46,11 +46,13 @@
 # the end. The script exits 0 only when every check passed.
 #
 # THE DATABASES. Every database the script uses is created on the instance
-# OPNVIEW_TEST_DATABASE names (docker-compose.yml points it at db-predeployment), each
-# under an exact name declared below, and each is dropped by that exact name at the start
-# of the run and again at its end, with the read role the store gives it. No wildcard
-# names a database anywhere: the instance is shared with the pre-deployment Go suite, and
-# a database this list does not declare survives a run, which the RC-AC19 check proves.
+# OPNVIEW_TEST_DATABASE names (docker-compose.yml points it at db-schema-checks, the schema
+# checks' own instance, Phase E decision 10), each under an exact name declared below, and each
+# is dropped by that exact name at the start of the run and again at its end, with the read role
+# the store gives it -- but the kept seeds, which a run leaves behind on purpose under their exact
+# names, each with the digest of what it was built from (KEPT_DATABASES below). No wildcard names
+# a database anywhere: a database this list does not declare survives a run, which the RC-AC19
+# check proves.
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -81,25 +83,39 @@ fi
 SCHEMA_FILE="$REPO_ROOT/internal/store/schema.sql"
 PURGE_FILE="$REPO_ROOT/internal/store/purge/purge.sql"
 REFERENCE_FILE="$REPO_ROOT/sql/testdata/sqlite_reference_queries.json"
+# The rows the seed gained since that reference was recorded, each named with the cycle that added
+# it (ci/referencerows, -added): the reference cannot be recorded again, the image carrying no SQLite.
+REFERENCE_ADDED_FILE="$REPO_ROOT/sql/testdata/reference_rows_added_since.json"
 WORK="$(mktemp -d)"
 
 # Every connection reads the core's schema first, as the store's own connections do
 # (internal/store/sqldb/driver.go), and a notice -- "already exists, skipping" from an
 # idempotent statement -- is not printed: a warning or an error still is.
 export PGOPTIONS='-c search_path=opnview,public -c client_min_messages=warning'
-PSQL=(psql -X -q -A -t -v ON_ERROR_STOP=1)
+# THE psql BINARY OF THE SERVER'S MAJOR, called directly. Debian's `psql` is pg_wrapper, a Perl
+# script that picks a client version and then runs it: measured on 17 October 2026 in the
+# development container, starting the wrapper alone took 22.9 ms, and a whole `SELECT 1` through it
+# 29 ms against 9.8 ms through the binary it runs. This script makes thousands of psql calls, so
+# the wrapper is asked once, for the server's major, and the binary of that major is called from
+# then on -- the one the wrapper itself would have picked, postgresql-client of the pinned major
+# being the one the Dockerfile installs. Where it is not there, the wrapper is used as before.
+PSQL_BINARY=psql
+PG_SERVER_MAJOR="$(psql -X -q -A -t -d "$ADMIN" -c 'SHOW server_version_num;' 2> /dev/null)"
+PG_SERVER_MAJOR="$(( ${PG_SERVER_MAJOR:-0} / 10000 ))"
+if [ -x "/usr/lib/postgresql/$PG_SERVER_MAJOR/bin/psql" ]; then
+    PSQL_BINARY="/usr/lib/postgresql/$PG_SERVER_MAJOR/bin/psql"
+fi
+PSQL=("$PSQL_BINARY" -X -q -A -t -v ON_ERROR_STOP=1)
 
 # The run's databases, each by its exact name. Copies the SQLite script made under its
 # own mktemp directory are databases here, so they are declared like the others; a check
 # that only needs to look at a change and undo it runs in a transaction it rolls back.
 MAIN_DB=schema_checks_main
-REPEAT_DB=schema_checks_repeat
 ALT_DB=schema_checks_alt
 PURGE_DB=schema_checks_purge
 UNLIMITED_DB=schema_checks_unlimited
 FRESH_DB=schema_checks_fresh
 REGISTER_DB=schema_checks_register
-SCALE_DB=schema_checks_scale
 # Copies of the seeded database for the checks that have to WRITE: a check
 # whose statement is expected to succeed must not leave its rows behind for every
 # later count to trip over.
@@ -114,6 +130,26 @@ RATE_DB=schema_checks_record_rate
 PURGE_ALT_DB=schema_checks_purge_alt
 RECLASSIFY_DB=schema_checks_reclassify
 RESTORED_DB=schema_checks_restored
+
+# THE KEPT SEEDS, each by its exact name, and never among the declared databases: a run leaves
+# them behind on purpose, each carrying the digest of what it was built from, and the next run
+# whose digest matches reads them instead of building them again (E.2.6 of the Phase E amendment,
+# and Phase E decisions 9, 10 and 11 of 17 October 2026; docker-compose.yml gives them an instance
+# of their own, db-schema-checks). A kept seed is dropped, by its exact name, only to be built
+# again when its digest no longer holds. Every check that writes reads a clone of one, never the
+# kept seed itself.
+#   * the 1 000 000-row seed (E.2.6);
+#   * its purged copy (decision 9): the 1 000 000-row seed purged once per digest of the seed and
+#     of purge.sql, which RC-AC14 and the foreign-key check after it read;
+#   * the 100 000-row seeds (decision 11): the main one, which every check of the baseline reads
+#     a clone of, a second build of the same definition, which AC7's determinism check compares
+#     with the first, and the alternative one.
+SCALE_SEED_DB=schema_checks_scale_seed
+SCALE_PURGED_DB=schema_checks_scale_purged
+MAIN_SEED_DB=schema_checks_main_seed
+REPEAT_SEED_DB=schema_checks_repeat_seed
+ALT_SEED_DB=schema_checks_alt_seed
+KEPT_DATABASES=("$SCALE_SEED_DB" "$SCALE_PURGED_DB" "$MAIN_SEED_DB" "$REPEAT_SEED_DB" "$ALT_SEED_DB")
 
 # Seed parameters. The default run and the alternative run below differ in
 # every count, so nothing may assume an interface, client, owner or rule count.
@@ -153,6 +189,10 @@ WINDOW_START=$((NOW - 86400))
 PLANTED_FLOW_IDS='2000000001, 2000000002'
 INTERFACE_ID=1
 CLIENT_ID=3
+# The retention horizon of the purge checks: the default retention, 90 days, before the seed's
+# instant. Written here because the kept purged copy of the 1 000 000-row seed is prepared at it
+# from the start of the run (RC-AC14).
+CUTOFF=$((NOW - 7776000))
 
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -278,8 +318,8 @@ expect_sql_success() {
 # --------------------------------------------------------------------------
 # The databases.
 # --------------------------------------------------------------------------
-DECLARED_DATABASES=("$MAIN_DB" "$REPEAT_DB" "$ALT_DB" "$PURGE_DB" "$UNLIMITED_DB" "$FRESH_DB"
-    "$REGISTER_DB" "$SCALE_DB" "$MEAS_DB" "$STATE_DB" "$LEASE_DB" "$RATE_DB" "$PURGE_ALT_DB"
+DECLARED_DATABASES=("$MAIN_DB" "$ALT_DB" "$PURGE_DB" "$UNLIMITED_DB" "$FRESH_DB"
+    "$REGISTER_DB" "$MEAS_DB" "$STATE_DB" "$LEASE_DB" "$RATE_DB" "$PURGE_ALT_DB"
     "$RECLASSIFY_DB" "$RESTORED_DB")
 
 # drop_database <name> — one database, and the read role the store creates for it
@@ -327,6 +367,9 @@ database_exists() {
 }
 
 cleanup() {
+    # A background step still running -- a seed build, a widget budget -- when the run ends early is
+    # stopped first, so it holds no session on a database dropped below.
+    jobs -p | xargs -r kill 2> /dev/null
     remove_declared_databases 2> /dev/null
     # A recursive removal, kept by decision 9 of specs/SPEC-resolver-cache-attribution.md: it
     # names one exact path, the directory mktemp created for this run alone, with no glob, so
@@ -364,33 +407,41 @@ analyse() {
     "${PSQL[@]}" -d "$(dsn "$1")" -c 'VACUUM (ANALYZE);' > /dev/null
 }
 
-# THE SEEDED DATABASES ARE BUILT IN THE BACKGROUND, each in a psql session of its own,
-# while the checks that need none of them run: the 1 000 000-row seed alone takes minutes,
-# and it is built ONCE per run (P9), with set-based generation, then analysed. A build's
-# exit status says which step failed: 10 the schema, 11 the seed, 12 the analysis.
+# THE SEEDED DATABASES ARE PREPARED IN THE BACKGROUND, each in a job of its own, while the checks
+# that need none of them run: the kept seeds below, built cold only when their digest changes, and
+# the clones the checks read.
 declare -A BUILD_PIDS=()
-build_seeded() {
-    local db="$1"
-    shift
-    create_database "$db" || return 9
-    apply_schema "$db" "$WORK/apply_$db.err" || return 10
-    seed_database "$db" "$@" || return 11
-    analyse "$db" || return 12
-}
+# start_build <id> <command...> — a background job, its output held in $WORK/build_<id>.log.
 start_build() {
-    local db="$1"
-    build_seeded "$@" > "$WORK/build_$db.log" 2>&1 &
-    BUILD_PIDS[$db]=$!
+    local id="$1"
+    shift
+    "$@" > "$WORK/build_$id.log" 2>&1 &
+    BUILD_PIDS[$id]=$!
 }
-# wait_build <db> — waits for a background build and prints its exit status.
+# wait_build <id> — waits for a background job and returns its exit status, printing its output
+# when it failed.
+declare -A BUILD_STATUS=()
 wait_build() {
     local status=0
+    # A job waited for once keeps its status: a second wait answers with it.
+    if [ -n "${BUILD_STATUS[$1]:-}" ]; then
+        return "${BUILD_STATUS[$1]}"
+    fi
     wait "${BUILD_PIDS[$1]}" || status=$?
+    BUILD_STATUS[$1]="$status"
     if [ "$status" -ne 0 ]; then
-        printf -- '  the build of %s exited %s:\n' "$1" "$status" >&2
-        sed 's/^/    /' "$WORK/build_$1.log" "$WORK/apply_$1.err" >&2 2> /dev/null
+        printf -- '  the job %s exited %s:\n' "$1" "$status" >&2
+        sed 's/^/    /' "$WORK/build_$1.log" >&2 2> /dev/null
     fi
     return "$status"
+}
+# wait_marker <id> <marker> — waits until a running job has written a marker file under $WORK, or
+# has ended; succeeds when the marker is there.
+wait_marker() {
+    while [ ! -f "$WORK/$2" ] && kill -0 "${BUILD_PIDS[$1]}" 2> /dev/null; do
+        sleep 0.2
+    done
+    [ -f "$WORK/$2" ]
 }
 
 # Split a query file on its "-- <prefix>: <Name>" markers into one file per
@@ -625,6 +676,11 @@ fi
 UNDECLARED_DB=schema_checks_undeclared_sentinel
 drop_database "$UNDECLARED_DB"
 create_database "$UNDECLARED_DB"
+# The kept seeds there before the removal must be there after it: none is declared.
+KEPT_BEFORE=''
+for db in "${KEPT_DATABASES[@]}"; do
+    [ "$(database_exists "$db")" = '0' ] || KEPT_BEFORE="$KEPT_BEFORE $db"
+done
 for db in "${DECLARED_DATABASES[@]}"; do
     drop_database "$db"
     create_database "$db"
@@ -635,13 +691,25 @@ for db in "${DECLARED_DATABASES[@]}"; do
     [ "$(database_exists "$db")" = '0' ] || LEFT_BEHIND="$LEFT_BEHIND $db"
 done
 UNDECLARED_SURVIVED="$( [ "$(database_exists "$UNDECLARED_DB")" = '1' ] && echo yes || echo no)"
+KEPT_LOST=''
+for db in $KEPT_BEFORE; do
+    [ "$(database_exists "$db")" = '1' ] || KEPT_LOST="$KEPT_LOST $db"
+done
 drop_database "$UNDECLARED_DB"
 
 # ===========================================================================
 section 'RC-AC19 — the databases are removed by exact name, and nothing else is'
 # ===========================================================================
-check 'RC-AC19 fifteen databases are declared' '15' \
+# Restated by Phase E decision 11 (17 October 2026): the second 100 000-row build AC7 compares is a
+# kept seed now, schema_checks_repeat_seed, so schema_checks_repeat is no longer declared; and the
+# 1 000 000-row seed is read in place rather than cloned, so schema_checks_scale is not either.
+# Fifteen became thirteen.
+check 'RC-AC19 thirteen databases are declared' '13' \
     "${#DECLARED_DATABASES[@]}"
+check 'RC-AC19 no kept seed is a declared database, so none is dropped with them' '' \
+    "$(printf -- '%s\n' "${DECLARED_DATABASES[@]}" | grep -Fx -f <(printf -- '%s\n' "${KEPT_DATABASES[@]}") |
+        tr '\n' ' ')"
+check 'RC-AC19 every kept seed there before the removal survived it' '' "$KEPT_LOST"
 check 'RC-AC19 every declared database was dropped' '' "$LEFT_BEHIND"
 check 'RC-AC19 an undeclared database beside them survived the removal' 'yes' "$UNDECLARED_SURVIVED"
 # The pattern is assembled from pieces so this line does not match itself. The command is
@@ -655,39 +723,55 @@ DROP_PATTERN='DROP ''DATABASE'
 check 'RC-AC19 no wildcard drop exists: every database is dropped by one quoted name' '1' \
     "$(grep -c "$DROP_PATTERN" "$REPO_ROOT/sql/schema-checks.sh")"
 
-# THE 1 000 000-ROW SEED IS BUILT COLD ONCE AND REUSED WHILE ITS DIGEST HOLDS (E.2.6 of the
-# Phase E amendment to specs/SPEC-backend-completion-plugins.md, decided 16 October 2026). A cold
-# build takes minutes, past the pre-deployment budget on its own, so the analysed seed is kept, as
-# the one database a run leaves behind, under its exact name, SCALE_SEED_DB, with the digest of
+# THE SEEDS ARE KEPT, AND BUILT COLD ONLY WHEN WHAT THEY ARE BUILT FROM CHANGES (E.2.6 of the
+# Phase E amendment to specs/SPEC-backend-completion-plugins.md, decided 16 October 2026, and
+# Phase E decisions 9 and 11 of 17 October 2026). A cold build of the 1 000 000-row seed takes
+# minutes, past the pre-deployment budget on its own, and the three 100 000-row builds took 80 s of
+# it, so every seed is kept under its exact name (KEPT_DATABASES, above) with the digest of
 # everything it was built from written on it: schema.sql, seed.sql, the seed's parameters, and the
-# server's PostgreSQL and TimescaleDB versions. A run whose digest matches clones it into SCALE_DB,
-# which every consumer below reads and the checks that write may rewrite; a run whose digest
-# differs drops the kept seed by its exact name, builds it cold, prints the build's breakdown and
-# its time apart, and records the digest only once the build is whole.
-SCALE_SEED_DB=schema_checks_scale_seed
-scale_seed_digest() {
+# server's PostgreSQL and TimescaleDB versions. A run whose digest matches reads the kept seed, or
+# a clone of it where a check writes; a run whose digest differs drops the kept seed by its exact
+# name, builds it cold, prints the build's breakdown and its time apart, and records the digest
+# only once the build is whole, so a build cut short is built again by the next run.
+#
+# seed_digest <interfaces> <clients> <rules> <flow_rows> <alerts> <pair_rows> <owners> [ipv6_every]
+# -- the digest of a seed of those parameters, the arguments seed_database takes.
+seed_digest() {
     {
         cat "$SCHEMA_FILE" "$REPO_ROOT/sql/seed.sql"
         printf -- 'now=%s interfaces=%s clients=%s rules=%s flow_rows=%s alerts=%s pair_rows=%s owners=%s ipv6_every=%s\n' \
-            "$NOW" "$INTERFACES" "$CLIENTS" "$RULES" "$SCALE_FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS" "$IPV6_EVERY"
+            "$NOW" "$1" "$2" "$3" "$4" "$5" "$6" "$7" "${8:-$IPV6_EVERY}"
         admin 'SELECT version();'
         admin "SELECT extversion FROM pg_extension WHERE extname = 'timescaledb';"
         admin "SELECT default_version FROM pg_available_extensions WHERE name = 'timescaledb';"
     } | sha256sum | cut -c 1-64
 }
-SCALE_SEED_DIGEST="$(scale_seed_digest)"
-# The digest the kept seed carries, empty when there is none.
-scale_seed_recorded() {
+# recorded_digest <db> -- the digest a kept database carries, empty when there is none.
+recorded_digest() {
     admin "SELECT substr(shobj_description(oid, 'pg_database'), length('seed-digest:') + 1)
-        FROM pg_database WHERE datname = '$SCALE_SEED_DB';"
+        FROM pg_database WHERE datname = '$1';"
 }
+# record_digest <db> <digest> -- written on a kept database once its build is whole.
+record_digest() {
+    admin "COMMENT ON DATABASE \"$1\" IS 'seed-digest:$2';" > /dev/null
+}
+# The two 100 000-row builds share one definition, so one digest: AC7 compares them.
+MAIN_SEED_PARAMS=("$INTERFACES" "$CLIENTS" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS" "$IPV6_EVERY")
+ALT_SEED_PARAMS=("$ALT_INTERFACES" "$ALT_CLIENTS" "$ALT_RULES" "$ALT_FLOW_ROWS" "$ALT_ALERTS" "$ALT_PAIR_ROWS"
+    "$ALT_OWNERS" "$ALT_IPV6_EVERY")
+SCALE_SEED_PARAMS=("$INTERFACES" "$CLIENTS" "$RULES" "$SCALE_FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"
+    "$IPV6_EVERY")
+MAIN_SEED_DIGEST="$(seed_digest "${MAIN_SEED_PARAMS[@]}")"
+ALT_SEED_DIGEST="$(seed_digest "${ALT_SEED_PARAMS[@]}")"
+SCALE_SEED_DIGEST="$(seed_digest "${SCALE_SEED_PARAMS[@]}")"
+
 # seed_breakdown <db> <params...> — the seed, with psql's timing of every statement, summed by the
-# table each one generates: the build's breakdown.
+# table each one generates: the build's breakdown, in $WORK/kept_<db>_breakdown.txt.
 seed_breakdown() {
     local db="$1"
     "${PSQL[@]}" -e -d "$(dsn "$db")" -v now="$NOW" -v interfaces="$2" -v clients="$3" -v rules="$4" \
-        -v flow_rows="$5" -v alerts="$6" -v pair_rows="$7" -v owners="$8" -v ipv6_every="$IPV6_EVERY" \
-        -c '\timing on' -f "$REPO_ROOT/sql/seed.sql" > "$WORK/scale_seed_timing.log" || return 1
+        -v flow_rows="$5" -v alerts="$6" -v pair_rows="$7" -v owners="$8" -v ipv6_every="${9:-$IPV6_EVERY}" \
+        -c '\timing on' -f "$REPO_ROOT/sql/seed.sql" > "$WORK/kept_${db}_timing.log" || return 1
     awk '
         /^Time: / {
             table = "(transaction and generator statements)"
@@ -700,51 +784,255 @@ seed_breakdown() {
         }
         { text = text " " $0 }
         END { for (table in spent) printf "%10.1f s  %s\n", spent[table] / 1000, table }' \
-        "$WORK/scale_seed_timing.log" | sort -rn > "$WORK/scale_seed_breakdown.txt"
+        "$WORK/kept_${db}_timing.log" | sort -rn > "$WORK/kept_${db}_breakdown.txt"
 }
-# build_scale_seed — the cold build of the kept seed, each step timed.
-build_scale_seed() {
-    local begun
-    drop_database "$SCALE_SEED_DB"
-    create_database "$SCALE_SEED_DB" || return 9
+# build_kept_seed <db> <digest> <params...> — the cold build of a kept seed, each step timed in
+# $WORK/kept_<db>_steps.txt. A build's exit status says which step failed: 9 the database, 10 the
+# schema, 11 the seed, 12 the analysis.
+build_kept_seed() {
+    local db="$1" digest="$2" begun
+    shift 2
+    drop_database "$db"
+    create_database "$db" || return 9
     begun="$(date +%s%N)"
-    apply_schema "$SCALE_SEED_DB" "$WORK/apply_$SCALE_SEED_DB.err" || return 10
-    printf -- 'schema apply\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) > "$WORK/scale_seed_steps.txt"
+    apply_schema "$db" "$WORK/apply_$db.err" || return 10
+    printf -- 'schema apply\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) > "$WORK/kept_${db}_steps.txt"
     begun="$(date +%s%N)"
-    seed_breakdown "$SCALE_SEED_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$SCALE_FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" \
-        "$OWNERS" || return 11
+    seed_breakdown "$db" "$@" || return 11
     printf -- 'generation, every index maintained as rows arrive\t%d\n' \
-        $(( ( $(date +%s%N) - begun ) / 1000000 )) >> "$WORK/scale_seed_steps.txt"
+        $(( ( $(date +%s%N) - begun ) / 1000000 )) >> "$WORK/kept_${db}_steps.txt"
     begun="$(date +%s%N)"
-    analyse "$SCALE_SEED_DB" || return 12
-    printf -- 'VACUUM (ANALYZE)\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) >> "$WORK/scale_seed_steps.txt"
-    admin "COMMENT ON DATABASE \"$SCALE_SEED_DB\" IS 'seed-digest:$SCALE_SEED_DIGEST';" > /dev/null
+    analyse "$db" || return 12
+    printf -- 'VACUUM (ANALYZE)\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) >> "$WORK/kept_${db}_steps.txt"
+    record_digest "$db" "$digest"
 }
-# prepare_scale — the kept seed, built if its digest does not hold, cloned into SCALE_DB.
-prepare_scale() {
-    local begun status
-    if [ "$(scale_seed_recorded)" = "$SCALE_SEED_DIGEST" ]; then
-        printf -- 'reused\n' > "$WORK/scale_seed_origin.txt"
-    else
-        printf -- 'built\n' > "$WORK/scale_seed_origin.txt"
-        begun="$(date +%s%N)"
-        build_scale_seed
-        status=$?
-        printf -- '%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) > "$WORK/scale_seed_build_ms.txt"
-        [ "$status" -eq 0 ] || return "$status"
+# prepare_kept_seed <db> <digest> <params...> — the kept seed, built if its digest does not hold;
+# $WORK/kept_<db>_origin.txt says "reused" or "built", and $WORK/kept_<db>_build_ms.txt how long a
+# build took.
+prepare_kept_seed() {
+    local db="$1" digest="$2" begun status
+    if [ "$(recorded_digest "$db")" = "$digest" ]; then
+        printf -- 'reused\n' > "$WORK/kept_${db}_origin.txt"
+        return 0
     fi
+    printf -- 'built\n' > "$WORK/kept_${db}_origin.txt"
     begun="$(date +%s%N)"
-    copy_database "$SCALE_SEED_DB" "$SCALE_DB" || return 13
-    printf -- '%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) > "$WORK/scale_clone_ms.txt"
+    build_kept_seed "$@"
+    status=$?
+    printf -- '%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) > "$WORK/kept_${db}_build_ms.txt"
+    return "$status"
 }
-prepare_scale > "$WORK/build_$SCALE_DB.log" 2>&1 &
-BUILD_PIDS[$SCALE_DB]=$!
+# report_kept_seed <db> <label> — one line saying whether the run reused or built a kept seed, and
+# a build's breakdown, apart from the checks' own time (E10).
+report_kept_seed() {
+    local db="$1" label="$2" ms
+    if [ "$(cat "$WORK/kept_${db}_origin.txt" 2> /dev/null)" = 'reused' ]; then
+        printf -- '  the %s was REUSED: %s carries the digest %s\n' "$label" "$db" "$(recorded_digest "$db")"
+        return
+    fi
+    ms="$(cat "$WORK/kept_${db}_build_ms.txt" 2> /dev/null || echo 0)"
+    printf -- '  the %s was BUILT cold into %s, its digest now %s, in %d.%03d s (apart from the budgeted run):\n' \
+        "$label" "$db" "$(recorded_digest "$db")" $(( ms / 1000 )) $(( ms % 1000 ))
+    awk -F'\t' '{ printf "    %10.1f s  %s\n", $2 / 1000, $1 }' "$WORK/kept_${db}_steps.txt" 2> /dev/null
+    if [ -s "$WORK/kept_${db}_breakdown.txt" ]; then
+        printf -- '    the generation, by table:\n'
+        sed 's/^/      /' "$WORK/kept_${db}_breakdown.txt"
+    fi
+}
 
-# The other seeded databases are started now, in the background: the main one is built in the
-# foreground below, because its first apply is what AC1 asserts.
-start_build "$REPEAT_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"
-start_build "$ALT_DB" "$ALT_INTERFACES" "$ALT_CLIENTS" "$ALT_RULES" "$ALT_FLOW_ROWS" \
-    "$ALT_ALERTS" "$ALT_PAIR_ROWS" "$ALT_OWNERS" "$ALT_IPV6_EVERY"
+# run_purge <db> — purge.sql, at the seed's instant, as the store runs it.
+run_purge() {
+    "${PSQL[@]}" -d "$(dsn "$1")" -v now="$NOW" -f "$PURGE_FILE" > /dev/null
+}
+# RC14_OLD_SQL — RC-AC14's two sets, recorded in a table of the database about to be purged,
+# rc_ac14_old: every resolver record whose coverage ended before the horizon, and whether an
+# attribution of a flow the purge keeps names it. A table rather than an id list: at the scale
+# seed the records nothing names number in the hundred thousands, past what one psql command-line
+# argument should carry.
+RC14_OLD_SQL="DROP TABLE IF EXISTS rc_ac14_old;
+    CREATE TABLE rc_ac14_old AS
+    SELECT o.id AS id,
+           CAST(EXISTS (SELECT 1 FROM domain_attribution a JOIN flow f ON f.id = a.flow_id
+                   WHERE a.address_observation_id = o.id AND f.observed_at >= $CUTOFF
+                     AND a.attributed_at >= $CUTOFF) AS integer) AS named
+    FROM resource_record_observation AS o
+    WHERE o.covered_until_at < $CUTOFF;"
+# THE PURGED COPY OF THE 1 000 000-ROW SEED (Phase E decision 9, 17 October 2026). Purging a clone
+# of the scale seed took 129 s and its clone 25 s on every run, so the purge is run once per digest
+# of the seed and of purge.sql: on a copy of the kept seed, at the default retention, with
+# RC-AC14's two sets recorded before it runs (rc_ac14_old) and its exit status after
+# (rc_ac14_purge). The copy is kept beside the seed, and RC-AC14 and the foreign-key check after
+# it read it. Speeding up the purge itself is a later spec.
+SCALE_PURGED_DIGEST="$(
+    {
+        printf -- 'seed %s\n' "$SCALE_SEED_DIGEST"
+        cat "$PURGE_FILE"
+        printf -- '%s\n' "$RC14_OLD_SQL"
+    } | sha256sum | cut -c 1-64)"
+# prepare_scale_purged — the kept purged copy, built if its digest does not hold. It is copied
+# from the kept seed, which no session may hold meanwhile: the scale job below runs it after its
+# clone of the seed has ended.
+prepare_scale_purged() {
+    local begun status
+    if [ "$(recorded_digest "$SCALE_PURGED_DB")" = "$SCALE_PURGED_DIGEST" ]; then
+        printf -- 'reused\n' > "$WORK/kept_${SCALE_PURGED_DB}_origin.txt"
+        return 0
+    fi
+    printf -- 'built\n' > "$WORK/kept_${SCALE_PURGED_DB}_origin.txt"
+    begun="$(date +%s%N)"
+    drop_database "$SCALE_PURGED_DB"
+    create_database "$SCALE_PURGED_DB" "$SCALE_SEED_DB" || return 14
+    printf -- 'copy of the kept seed\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) \
+        > "$WORK/kept_${SCALE_PURGED_DB}_steps.txt"
+    begun="$(date +%s%N)"
+    q "$SCALE_PURGED_DB" "UPDATE setting SET value = '7776000' WHERE key = 'retention_seconds';
+        $RC14_OLD_SQL" > /dev/null || return 15
+    printf -- 'RC-AC14 sets recorded\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) \
+        >> "$WORK/kept_${SCALE_PURGED_DB}_steps.txt"
+    begun="$(date +%s%N)"
+    run_purge "$SCALE_PURGED_DB"
+    status=$?
+    printf -- 'purge.sql\t%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) \
+        >> "$WORK/kept_${SCALE_PURGED_DB}_steps.txt"
+    q "$SCALE_PURGED_DB" "CREATE TABLE rc_ac14_purge AS SELECT $status AS purge_status;" > /dev/null || return 16
+    record_digest "$SCALE_PURGED_DB" "$SCALE_PURGED_DIGEST"
+}
+
+# fk_violations <db> — every foreign key of the database that does not hold: a constraint
+# not validated, or a row whose reference finds no parent. PostgreSQL enforces a validated
+# foreign key on every statement, so this is the PRAGMA foreign_key_check of SQLite asked
+# as the question itself: each key is checked against the rows by an anti-join.
+fk_violations() {
+    q "$1" "SELECT 'not validated: ' || conname FROM pg_constraint WHERE contype = 'f' AND NOT convalidated;
+        SELECT format('SELECT %L FROM %s AS c WHERE %s AND NOT EXISTS (SELECT 1 FROM %s AS p WHERE %s) LIMIT 1;',
+                      'violated: ' || con.conname, con.conrelid::regclass,
+                      string_agg(format('c.%I IS NOT NULL', a.attname), ' AND '),
+                      con.confrelid::regclass,
+                      string_agg(format('p.%I = c.%I', b.attname, a.attname), ' AND '))
+        FROM pg_constraint AS con
+        CROSS JOIN LATERAL unnest(con.conkey, con.confkey) AS k(child, parent)
+        JOIN pg_attribute AS a ON a.attrelid = con.conrelid AND a.attnum = k.child
+        JOIN pg_attribute AS b ON b.attrelid = con.confrelid AND b.attnum = k.parent
+        WHERE con.contype = 'f'
+        GROUP BY con.oid, con.conname, con.conrelid, con.confrelid
+        ORDER BY con.conname
+        \\gexec"
+}
+
+# timed <file> <command...> — runs a command and writes its wall time, in milliseconds, to a file.
+timed() {
+    local file="$1" begun status
+    shift
+    begun="$(date +%s%N)"
+    "$@"
+    status=$?
+    printf -- '%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) > "$file"
+    return "$status"
+}
+
+# budget_seed <db> <label> <24h budget> <30d budget> [live budget] — ci/widgetbudget on one seed,
+# its output in $WORK/budget_<label>.txt (S5B-AC18).
+budget_seed() {
+    local db="$1" label="$2" day="$3" month="$4" live="${5:-0}"
+    (cd "$REPO_ROOT" && "$WORK/bin/widgetbudget" -database "$(dsn "$db")" -now "$NOW" -label "$label" \
+        -budget-24h "$day" -budget-30d "$month" -budget-live "$live") > "$WORK/budget_$label.txt" 2>&1
+}
+
+# THE PLUGIN TABLES (E21). The built-in plugins' tables are created as the product creates them, by
+# the plugin loader (ci/plugintables), and so is the table of a plugin this run adds the way a user
+# adds one: the fixture plugin of testdata/plugins, copied into a data directory's plugin tree.
+PLUGIN_DATA="$WORK/plugin-data"
+mkdir -p "$PLUGIN_DATA/plugins"
+cp -R "$REPO_ROOT/testdata/plugins/example_peers" "$PLUGIN_DATA/plugins/"
+# plugin_tables <db> <rows> <tag> — creates and seeds the plugin tables of a database, and writes
+# "<schema>.<table> TAB <class> TAB <time column>" to $WORK/plugin_tables_<tag>.txt and the
+# plugin datasets' statements to $WORK/plugin_datasets_<tag>.statements.sql.
+plugin_tables() {
+    "$WORK/bin/plugintables" -database "$(dsn "$1")" -now "$NOW" -seed "$2" -data-dir "$PLUGIN_DATA" \
+        -statements "$WORK/plugin_datasets_$3.statements.sql" > "$WORK/plugin_tables_$3.txt"
+}
+
+# THE 1 000 000-ROW SEED IS READ IN PLACE (17 October 2026). Cloning it took 25 s alone and up to
+# 103 s beside the other copies of a run, and every consumer of the scale seed only reads it: the
+# plans, read in transactions rolled back; the widget, data catalogue and live budgets, through the
+# store, which only reads; the foreign keys; the counts. What a run writes there is the plugin
+# tables, and only they: every plugin schema of the kept seed is dropped, by its exact name, and the
+# loader creates and seeds the plugin tables again, as it did on a clone -- the core's tables are
+# never written. The reclassification, which rewrites, still runs on a copy (S5B-AC35).
+SCALE_DB="$SCALE_SEED_DB"
+# refresh_scale_plugin_tables — the plugin tables of the kept scale seed, dropped and created again;
+# the loader's exit status is written to $WORK/scale_plugin_status, and its time to
+# $WORK/scale_plugin_ms.txt.
+refresh_scale_plugin_tables() {
+    local begun schema status
+    begun="$(date +%s%N)"
+    for schema in $(q "$SCALE_DB" "SELECT nspname FROM pg_namespace WHERE nspname LIKE 'plugin\_%' ORDER BY 1;"); do
+        q "$SCALE_DB" "DROP SCHEMA \"$schema\" CASCADE;" > /dev/null || return 17
+    done
+    plugin_tables "$SCALE_DB" 4000 scale
+    status=$?
+    printf -- '%d\n' "$status" > "$WORK/scale_plugin_status"
+    # Only the plugin tables are analysed: the kept seed carries the statistics its build gave it.
+    while IFS=$'\t' read -r table _ _; do
+        q "$SCALE_DB" "ANALYZE $table;" > /dev/null
+    done < "$WORK/plugin_tables_scale.txt"
+    printf -- '%d\n' $(( ( $(date +%s%N) - begun ) / 1000000 )) > "$WORK/scale_plugin_ms.txt"
+}
+
+# THE JOBS, all started now, side by side, each in the background. The main 100 000-row seed is
+# cloned in the foreground, under AC7, once AC1 has applied the schema to an empty database.
+#   * scale: the kept 1 000 000-row seed; then its kept purged copy, which is copied from the seed
+#     when its digest does not hold, before any session reads the seed; then the seed's plugin
+#     tables; then the marker scale_ready, from which every consumer may read the seed; then the
+#     foreign keys of the purged copy, which RC-AC14 reads.
+#   * main and repeat: the two kept 100 000-row builds of one definition.
+#   * alt: the kept alternative seed, cloned into ALT_DB.
+scale_job() {
+    local budget_pid fk_pid
+    prepare_kept_seed "$SCALE_SEED_DB" "$SCALE_SEED_DIGEST" "${SCALE_SEED_PARAMS[@]}" || return
+    prepare_scale_purged || return
+    refresh_scale_plugin_tables || return
+    : > "$WORK/scale_ready"
+    # From here the seed is complete and only read until this job ends, so its response budgets
+    # (S5B-AC18) and its foreign keys (PN-AC30) are read now, side by side, each verdict written to
+    # a file its section reads; then the foreign keys of the purged copy (RC-AC14).
+    ( budget_seed "$SCALE_DB" 1m 1s 2s 100ms; printf -- '%d\n' "$?" > "$WORK/budget_1m.status" ) &
+    budget_pid=$!
+    ( fk_violations "$SCALE_DB" > "$WORK/fk_scale.txt" 2>&1; printf -- '%d\n' "$?" > "$WORK/fk_scale.status" ) &
+    fk_pid=$!
+    fk_violations "$SCALE_PURGED_DB" > "$WORK/fk_scale_purged.txt" 2>&1
+    wait "$fk_pid"
+    wait "$budget_pid"
+}
+alt_job() {
+    prepare_kept_seed "$ALT_SEED_DB" "$ALT_SEED_DIGEST" "${ALT_SEED_PARAMS[@]}" || return
+    copy_database "$ALT_SEED_DB" "$ALT_DB" || return 13
+}
+# A cold build is announced before the jobs start, so a run a hard limit stops says why it was long.
+for kept in "$SCALE_SEED_DB:$SCALE_SEED_DIGEST" "$SCALE_PURGED_DB:$SCALE_PURGED_DIGEST" \
+            "$MAIN_SEED_DB:$MAIN_SEED_DIGEST" "$REPEAT_SEED_DB:$MAIN_SEED_DIGEST" "$ALT_SEED_DB:$ALT_SEED_DIGEST"; do
+    if [ "$(recorded_digest "${kept%%:*}")" != "${kept#*:}" ]; then
+        printf -- '  %s does not carry the digest of what it is built from: this run builds it cold, past the\n' \
+            "${kept%%:*}"
+        printf -- '  pre-deployment budget; docker compose run --rm schema-checks builds it with no hard limit\n'
+    fi
+done
+start_build scale scale_job
+start_build main prepare_kept_seed "$MAIN_SEED_DB" "$MAIN_SEED_DIGEST" "${MAIN_SEED_PARAMS[@]}"
+start_build repeat prepare_kept_seed "$REPEAT_SEED_DB" "$MAIN_SEED_DIGEST" "${MAIN_SEED_PARAMS[@]}"
+start_build alt alt_job
+
+# THE SHELL SCRIPTS' STATIC ANALYSIS, started now beside the jobs: it reads only the files, and its
+# verdicts are read under PN-AC28.
+SHELLCHECKED_SCRIPTS=("$REPO_ROOT/sql/schema-checks.sh" "$REPO_ROOT/ci/checks.sh" "$REPO_ROOT/ci/pre-deployment.sh"
+    "$REPO_ROOT/ci/data-dir-guard.sh" "$REPO_ROOT/ci/budget-self-test.sh")
+declare -A SHELLCHECK_PIDS=()
+if command -v shellcheck > /dev/null 2>&1; then
+    for script in "${SHELLCHECKED_SCRIPTS[@]}"; do
+        shellcheck -S error -x -P "$REPO_ROOT" "$script" > "$WORK/shellcheck_$(basename "$script").txt" 2>&1 &
+        SHELLCHECK_PIDS[$script]=$!
+    done
+fi
 
 # --------------------------------------------------------------------------
 # Catalogue readers: what sqlite_master and the pragmas answered.
@@ -815,27 +1103,6 @@ every_schema_counts() {
               AND schemaname NOT LIKE 'pg\\_%' AND schemaname NOT LIKE '\\_timescaledb%'
             ORDER BY schemaname, tablename
             \\gexec"
-}
-
-# fk_violations <db> — every foreign key of the database that does not hold: a constraint
-# not validated, or a row whose reference finds no parent. PostgreSQL enforces a validated
-# foreign key on every statement, so this is the PRAGMA foreign_key_check of SQLite asked
-# as the question itself: each key is checked against the rows by an anti-join.
-fk_violations() {
-    q "$1" "SELECT 'not validated: ' || conname FROM pg_constraint WHERE contype = 'f' AND NOT convalidated;
-        SELECT format('SELECT %L FROM %s AS c WHERE %s AND NOT EXISTS (SELECT 1 FROM %s AS p WHERE %s) LIMIT 1;',
-                      'violated: ' || con.conname, con.conrelid::regclass,
-                      string_agg(format('c.%I IS NOT NULL', a.attname), ' AND '),
-                      con.confrelid::regclass,
-                      string_agg(format('p.%I = c.%I', b.attname, a.attname), ' AND '))
-        FROM pg_constraint AS con
-        CROSS JOIN LATERAL unnest(con.conkey, con.confkey) AS k(child, parent)
-        JOIN pg_attribute AS a ON a.attrelid = con.conrelid AND a.attnum = k.child
-        JOIN pg_attribute AS b ON b.attrelid = con.confrelid AND b.attnum = k.parent
-        WHERE con.contype = 'f'
-        GROUP BY con.oid, con.conname, con.conrelid, con.confrelid
-        ORDER BY con.conname
-        \\gexec"
 }
 
 # columns_sql <table> — the SQL of the core table's columns, as pragma_table_info gave
@@ -973,24 +1240,42 @@ check 'E15 no continuous aggregate exists in the applied schema' '0' \
 # ===========================================================================
 section 'AC7 — deterministic seed, and the baseline row count'
 # ===========================================================================
-SEED_STARTED="$(date +%s)"
-if seed_database "$MAIN_DB" "$INTERFACES" "$CLIENTS" "$RULES" "$FLOW_ROWS" "$ALERTS" "$PAIR_ROWS" "$OWNERS"; then
+# RESTATED by Phase E decision 11 (17 October 2026): the 100 000-row seed is kept by digest, as the
+# 1 000 000-row one is, and so is a second build of the same definition. The determinism check
+# compares the two kept builds, which are both built again whenever their digest -- schema.sql,
+# seed.sql, the parameters, the server -- changes, so a change that made the seed depend on
+# anything else than its definition still shows as two builds that differ. MAIN_DB, the database
+# AC1 applied the schema to, is replaced by a clone of the kept main build: every check below that
+# writes writes to the clone.
+MAIN_SEED_STATUS=0
+wait_build main || MAIN_SEED_STATUS=$?
+REPEAT_SEED_STATUS=0
+wait_build repeat || REPEAT_SEED_STATUS=$?
+if [ "$MAIN_SEED_STATUS" -eq 0 ]; then
     pass 'AC7 the 100 000-row seed ran'
 else
-    fail 'AC7 the 100 000-row seed failed'
+    fail "AC7 the 100 000-row seed failed (exit $MAIN_SEED_STATUS)"
 fi
-analyse "$MAIN_DB"
-printf -- '  the 100 000-row seed took %d s\n' $(( $(date +%s) - SEED_STARTED ))
-wait_build "$REPEAT_DB" || fail 'AC7 repeat database schema apply failed'
+[ "$REPEAT_SEED_STATUS" -eq 0 ] || fail "AC7 the second 100 000-row build failed (exit $REPEAT_SEED_STATUS)"
+report_kept_seed "$MAIN_SEED_DB" '100 000-row seed'
+report_kept_seed "$REPEAT_SEED_DB" 'second 100 000-row build'
+check 'E10 the kept 100 000-row seed carries the digest of what it was built from (decision 11)' \
+    "$MAIN_SEED_DIGEST" "$(recorded_digest "$MAIN_SEED_DB")"
+check 'E10 the second kept 100 000-row build carries the same digest (decision 11)' \
+    "$MAIN_SEED_DIGEST" "$(recorded_digest "$REPEAT_SEED_DB")"
+timed "$WORK/main_clone_ms.txt" copy_database "$MAIN_SEED_DB" "$MAIN_DB" ||
+    fail 'AC7 the kept 100 000-row seed could not be cloned into the database the checks read'
+printf -- '  the kept seed was cloned into %s in %d ms\n' "$MAIN_DB" "$(cat "$WORK/main_clone_ms.txt")"
 
-table_counts "$MAIN_DB" > "$WORK/counts_main.txt"
-table_counts "$REPEAT_DB" > "$WORK/counts_repeat.txt"
+table_counts "$MAIN_SEED_DB" > "$WORK/counts_main.txt"
+table_counts "$REPEAT_SEED_DB" > "$WORK/counts_repeat.txt"
 if diff -u "$WORK/counts_main.txt" "$WORK/counts_repeat.txt" > "$WORK/counts.diff"; then
     pass 'AC7 two seed runs produce identical row counts per table'
 else
     fail "AC7 seed is not deterministic: $(cat "$WORK/counts.diff")"
 fi
-drop_database "$REPEAT_DB"
+check 'AC7 the clone the checks read holds the kept seed'"'"'s rows' '' \
+    "$(table_counts "$MAIN_DB" | diff - "$WORK/counts_main.txt" | tr '\n' ' ')"
 printf -- '  seeded row counts:\n'
 sed 's/^/    /' "$WORK/counts_main.txt"
 
@@ -1034,22 +1319,17 @@ section 'E21 — the plugins'"'"' tables, created by the plugin loader'
 # instants on both sides of its retention horizon, and the data catalogue's statements on each
 # plugin dataset are written for the plan sweep below. Every later section reads these tables as it
 # reads the core's: the foreign keys, the plans at both seeds, and the purge.
-PLUGIN_DATA="$WORK/plugin-data"
-mkdir -p "$PLUGIN_DATA/plugins"
-cp -R "$REPO_ROOT/testdata/plugins/example_peers" "$PLUGIN_DATA/plugins/"
-# plugin_tables <db> <rows> <tag> — creates and seeds the plugin tables of a database, and writes
-# "<schema>.<table> TAB <class> TAB <time column>" to $WORK/plugin_tables_<tag>.txt and the
-# plugin datasets' statements to $WORK/plugin_datasets_<tag>.statements.sql.
-plugin_tables() {
-    "$WORK/bin/plugintables" -database "$(dsn "$1")" -now "$NOW" -seed "$2" -data-dir "$PLUGIN_DATA" \
-        -statements "$WORK/plugin_datasets_$3.statements.sql" > "$WORK/plugin_tables_$3.txt"
-}
+# The data directory the plugin loader reads, and plugin_tables, are set up with the seed jobs, above.
 if plugin_tables "$MAIN_DB" 400 main; then
     pass 'E21 the plugin loader created and seeded the plugin tables of the 100 000-row seed'
 else
     fail 'E21 the plugin loader failed on the 100 000-row seed'
 fi
-analyse "$MAIN_DB"
+# Only the plugin tables are vacuumed and analysed: the clone carries the kept seed's statistics and
+# visibility map, which its VACUUM (ANALYZE) set, as the scale seed's clone does below.
+while IFS=$'\t' read -r table _ _; do
+    q "$MAIN_DB" "VACUUM (ANALYZE) $table;" > /dev/null
+done < "$WORK/plugin_tables_main.txt"
 printf -- '  plugin tables, by the class their manifest gives them:\n'
 sed 's/^/    /' "$WORK/plugin_tables_main.txt"
 cut -f1 "$WORK/plugin_tables_main.txt" | sort > "$WORK/plugin_tables_printed.txt"
@@ -1070,6 +1350,46 @@ while IFS=$'\t' read -r table _ _; do
 done < "$WORK/plugin_tables_main.txt"
 check 'E21 the seed fills every plugin table' '' "$EMPTY_PLUGIN_TABLES"
 check 'E21 every foreign key holds once the plugin tables are seeded' '' "$(fk_violations "$MAIN_DB")"
+
+# THE COPIES OF MAIN_DB, ALL MADE NOW (17 October 2026). The checks that have to write -- MEAS-AC6,
+# the purge, the unlimited purge, PN-AC8, ST-AC4, DL-AC5 -- each write to a copy of their own, so
+# their rows trip no later count. MAIN_DB holds what it will hold for the rest of the run once its
+# plugin tables are seeded: no check commits a change to it after this point. So the six copies are
+# made here, side by side, rather than each where its check runs, which no session may hold the
+# source of -- and from here on MAIN_DB is free to be read in the background: its response budgets
+# (S5B-AC18) and its backup round trip (P-AC22) start now, and are read in their sections.
+COPY_PIDS=()
+for copy in "$MEAS_DB" "$PURGE_DB" "$UNLIMITED_DB" "$REGISTER_DB" "$STATE_DB" "$LEASE_DB"; do
+    copy_database "$MAIN_DB" "$copy" &
+    COPY_PIDS+=("$!")
+done
+COPIES_FAILED=0
+for pid in "${COPY_PIDS[@]}"; do
+    wait "$pid" || COPIES_FAILED=$((COPIES_FAILED + 1))
+done
+check 'E21 the six copies of the 100 000-row seed the writing checks read were made' '0' "$COPIES_FAILED"
+budget_seed "$MAIN_DB" 100k 250ms 500ms &
+BUDGET_PID_MAIN=$!
+# backup_job — P-AC22's round trip, every verdict written to a file its section reads: the dump,
+# the source's row counts as dumped, the restore into RESTORED_DB, and the restored row counts.
+backup_job() {
+    local status=0
+    (cd "$WORK" && pg_dump --format=custom --file=opnview.dump "$(dsn "$MAIN_DB")") 2> "$WORK/pg_dump.err"
+    printf -- '%d\n' "$?" > "$WORK/pg_dump.status"
+    every_schema_counts "$MAIN_DB" > "$WORK/backup_source_counts.txt"
+    drop_database "$RESTORED_DB"
+    create_database "$RESTORED_DB"
+    "${PSQL[@]}" -d "$(dsn "$RESTORED_DB")" -c 'CREATE EXTENSION IF NOT EXISTS timescaledb;' \
+        -c 'SELECT timescaledb_pre_restore();' > /dev/null 2> "$WORK/restore.err" || status=1
+    pg_restore --exit-on-error --dbname="$(dsn "$RESTORED_DB")" "$WORK/opnview.dump" 2>> "$WORK/restore.err" || status=1
+    "${PSQL[@]}" -d "$(dsn "$RESTORED_DB")" -c 'SELECT timescaledb_post_restore();' > /dev/null \
+        2>> "$WORK/restore.err" || status=1
+    printf -- '%d\n' "$status" > "$WORK/restore.status"
+    every_schema_counts "$RESTORED_DB" > "$WORK/backup_restored_counts.txt"
+    drop_database "$RESTORED_DB"
+}
+backup_job > "$WORK/backup_job.log" 2>&1 &
+BACKUP_PID=$!
 
 # ===========================================================================
 section 'AC5, AC6 — the entity list, and the absence of a TLS/HTTP entity'
@@ -1275,11 +1595,39 @@ expect_sql_failure 'AC13 a traffic_scope disagreeing with interface membership i
 
 # A predicate is SQL, so the comments are left out: the schema's prose may say "read it
 # like any other" without matching a name. Line numbers are kept for the report.
-if sed 's/--.*$//' "$SCHEMA_FILE" | grep -inE '\b(like|ilike|similar|glob|regexp)\b|~' \
-        > "$WORK/namematch.txt"; then
+#
+# CREATE TABLE's copy clause -- `CREATE TABLE b (LIKE a INCLUDING ALL)`, which gives b the columns,
+# defaults and constraints of a -- shares the keyword and is no predicate: it compares no value
+# with anything, it names a table. It is recognised by its whole form, the keyword, one table
+# name and an INCLUDING or EXCLUDING option, alone on its line, and only that form is left out;
+# the patterns below still catch a LIKE in any predicate, a copy clause carrying anything more
+# included (Phase E, 17 October 2026: unmatched_record_aggregate_* are declared that way).
+name_matching_predicates() {
+    sed 's/--.*$//' | grep -vE '^[[:space:]]*LIKE[[:space:]]+[a-z_][a-z0-9_.]*[[:space:]]+(INCLUDING|EXCLUDING)[[:space:]]+[A-Z]+[[:space:]]*$' |
+        grep -inE '\b(like|ilike|similar|glob|regexp)\b|~'
+}
+if name_matching_predicates < "$SCHEMA_FILE" > /dev/null; then
+    # The same reading, with each line's number, for the report.
+    sed 's/--.*$//' "$SCHEMA_FILE" | grep -nE '' |
+        grep -vE '^[0-9]+:[[:space:]]*LIKE[[:space:]]+[a-z_][a-z0-9_.]*[[:space:]]+(INCLUDING|EXCLUDING)[[:space:]]+[A-Z]+[[:space:]]*$' |
+        grep -iE '^[0-9]+:.*(\b(like|ilike|similar|glob|regexp)\b|~)' > "$WORK/namematch.txt"
     fail "AC14 the DDL contains a name-matching predicate: $(cat "$WORK/namematch.txt")"
 else
     pass 'AC14 the DDL contains no LIKE, GLOB or REGEXP predicate at all'
+fi
+# And the check has teeth: every predicate form is caught, the copy clause alone is not.
+for sample in "CHECK (description LIKE 'lan%')" "WHERE identifier ILIKE 'opt%'" "CHECK (device ~ '^igb')" \
+              "WHERE name SIMILAR TO 'vlan%'" "    LIKE interface INCLUDING ALL, CHECK (device LIKE 'em%')"; do
+    if printf -- '%s\n' "$sample" | name_matching_predicates > /dev/null; then
+        pass "AC14 the predicate check catches: $sample"
+    else
+        fail "AC14 the predicate check misses: $sample"
+    fi
+done
+if printf -- '    LIKE unmatched_record_aggregate_1h INCLUDING ALL\n' | name_matching_predicates > /dev/null; then
+    fail 'AC14 the predicate check reads the copy clause of CREATE TABLE as a predicate'
+else
+    pass 'AC14 the predicate check leaves the copy clause of CREATE TABLE alone, which names a table'
 fi
 # The relabelling is made in a transaction that is rolled back: what SQLite needed a copy
 # of the database for.
@@ -1421,7 +1769,8 @@ reference_check() {
         return
     fi
     if out="$("$WORK/bin/referencerows" -reference "$REFERENCE_FILE" -key "$key" \
-            -actual "$WORK/reference_actual.txt" -order "$order" -list-columns "$lists" 2>&1)"; then
+            -actual "$WORK/reference_actual.txt" -order "$order" -list-columns "$lists" \
+            -added "$REFERENCE_ADDED_FILE" 2>&1)"; then
         [ -z "$out" ] || printf -- '  %s: %s\n' "$key" "$out"
         pass "P-AC6: $key equals the SQLite reference ($order order)"
     else
@@ -1774,7 +2123,7 @@ check 'MEAS-AC6 the sampled pair volume is attributed to the measurement provide
 # change, and reads it back. The DDL is compared before and after, because "no
 # schema change" is the half of the claim that a successful insert alone would not
 # prove.
-copy_database "$MAIN_DB" "$MEAS_DB"
+# MEAS_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
 MEAS_DDL_BEFORE="$(schema_objects "$MEAS_DB")"
 expect_sql_success 'MEAS-AC6 a provider may introduce a subject, a measure and a unit' "$MEAS_DB" \
     "INSERT INTO measurement_sample (provider_id, subject_kind, subject_key, measure,
@@ -2302,18 +2651,13 @@ else
     pass 'AC30 no retention duration appears as a literal in any query or in the purge'
 fi
 
-run_purge() {
-    "${PSQL[@]}" -d "$(dsn "$1")" -v now="$NOW" -f "$PURGE_FILE" > /dev/null
-}
-
-copy_database "$MAIN_DB" "$PURGE_DB"
+# PURGE_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
 HORIZON_HOURS=$((6 * 3600))
 q "$PURGE_DB" "UPDATE setting SET value = '$HORIZON_HOURS' WHERE key = 'retention_seconds';" > /dev/null
 check 'AC30 the horizon is settable to a value of hours' "$HORIZON_HOURS" \
     "$(q "$PURGE_DB" "SELECT value FROM setting WHERE key = 'retention_seconds';")"
 q "$PURGE_DB" "UPDATE setting SET value = '7776000' WHERE key = 'retention_seconds';" > /dev/null
 
-CUTOFF=$((NOW - 7776000))
 PURGEABLE='flow:observed_at dns_resolution:looked_up_at security_event:occurred_at
 dhcp_lease:observed_at client:last_seen_at pair_volume_observation:day_start_at
 geo_asn:looked_up_at domain_attribution:attributed_at
@@ -2398,18 +2742,15 @@ BEFORE_NEW_ALERT="$(q "$PURGE_DB" "SELECT count(*) FROM security_event WHERE occ
 # hundred thousands, past what one psql command-line argument should carry. Every check reads a count,
 # so a query that fails reads empty and fails the check rather than passing it.
 #
-# rc_ac14_before <db> <tag> -- records both sets before the purge, and checks the seed
-# holds a row in each, so neither branch passes for want of a row. RC14_NAMED is the ids
-# of the named set, a handful, for the exact-set check of the main seed below.
+# rc_ac14_before <db> <tag> [recorded] -- records both sets before the purge (RC14_OLD_SQL), and
+# checks the seed holds a row in each, so neither branch passes for want of a row. RC14_NAMED is the
+# ids of the named set, a handful, for the exact-set check of the main seed below. With "recorded",
+# the sets were recorded before an earlier purge of the database -- the kept purged copy of the
+# 1 000 000-row seed (Phase E decision 9) -- and are only read.
 rc_ac14_before() {
-    q "$1" "DROP TABLE IF EXISTS rc_ac14_old;
-        CREATE TABLE rc_ac14_old AS
-        SELECT o.id AS id,
-               CAST(EXISTS (SELECT 1 FROM domain_attribution a JOIN flow f ON f.id = a.flow_id
-                       WHERE a.address_observation_id = o.id AND f.observed_at >= $CUTOFF
-                         AND a.attributed_at >= $CUTOFF) AS integer) AS named
-        FROM resource_record_observation AS o
-        WHERE o.covered_until_at < $CUTOFF;" > /dev/null
+    if [ "${3:-}" != 'recorded' ]; then
+        q "$1" "$RC14_OLD_SQL" > /dev/null
+    fi
     RC14_NAMED="$(q "$1" "SELECT string_agg(CAST(id AS text), ',' ORDER BY id) FROM
         (SELECT id FROM rc_ac14_old WHERE named = 1 ORDER BY id);")"
     check_ge "RC-AC14 $2: the seed holds a resolver record ended before the horizon that a surviving attribution names" 1 \
@@ -2417,10 +2758,12 @@ rc_ac14_before() {
     check_ge "RC-AC14 $2: the seed holds resolver records ended before the horizon that nothing surviving names" 1 \
         "$(q "$1" 'SELECT count(*) FROM rc_ac14_old WHERE named = 0;')"
 }
-# rc_ac14_after <db> <tag> <purge exit status> -- the keep branch and the purge branch,
-# then the table is dropped. Without the purge's reference exclusion, the foreign key
-# refuses the purge outright (purge.sql turns foreign_keys on), so the keep branch
-# requires the purge to have completed as well as the named records to remain.
+# rc_ac14_after <db> <tag> <purge exit status> [foreign-key file] -- the keep branch and the purge
+# branch, then the table is dropped. Without the purge's reference exclusion, the foreign key
+# refuses the purge outright (purge.sql turns foreign_keys on), so the keep branch requires the
+# purge to have completed as well as the named records to remain. With a foreign-key file -- the
+# kept purged copy, whose foreign keys the scale job checked once its purge was there -- the table
+# stays, for the next run that reads the copy, and the foreign-key verdict is read from the file.
 rc_ac14_after() {
     check "RC-AC14 $2: keep branch: the purge completed and no record ended before the horizon a surviving attribution names is missing" \
         '0|0' \
@@ -2429,6 +2772,10 @@ rc_ac14_after() {
     check "RC-AC14 $2: purge branch: no record ended before the horizon that nothing surviving names remains" '0' \
         "$(q "$1" 'SELECT count(*) FROM rc_ac14_old WHERE named = 0
             AND id IN (SELECT id FROM resource_record_observation);')"
+    if [ -n "${4:-}" ]; then
+        check "RC-AC14 $2: the foreign keys are consistent after the purge" '' "$(cat "$4" 2> /dev/null || echo 'not checked')"
+        return
+    fi
     q "$1" 'DROP TABLE rc_ac14_old;' > /dev/null
     check "RC-AC14 $2: the foreign keys are consistent after the purge" '' "$(fk_violations "$1")"
 }
@@ -2613,7 +2960,7 @@ sed 's/^/    /' "$WORK/coverage_after.txt"
 EMPTY_AFTER="$(awk -F'|' '$2 + 0 == 0 { print $1 }' "$WORK/coverage_after.txt")"
 check 'AC32 every period the document says survives a purge is still queryable' '' "$EMPTY_AFTER"
 
-copy_database "$MAIN_DB" "$UNLIMITED_DB"
+# UNLIMITED_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
 q "$UNLIMITED_DB" "UPDATE setting SET value = '0' WHERE key = 'retention_seconds';" > /dev/null
 table_counts "$UNLIMITED_DB" > "$WORK/counts_unlimited_before.txt"
 run_purge "$UNLIMITED_DB"
@@ -2685,9 +3032,30 @@ fi
 # not configuration. The code may not even do that. Every non-test Go and SQL file
 # under the three packages step 5A writes is read, so a file added later is covered
 # without being listed.
+#
+# A TEST-SUPPORT PACKAGE IS TEST CODE, as a _test.go file is (17 October 2026). The fixtures the
+# tests of several packages share -- a generated network, a collector harness -- live in packages
+# of their own, named after the package they serve with a "test" suffix, as net/http/httptest is,
+# and they hold example values, documentation addresses among them, which the code under test
+# never presupposes: ROADMAP.md ("Zero hardcoded configuration") rules them out of the code, the
+# templates and the default values, and a fixture is none of the three. Such
+# a package is left out exactly when its name ends in "test" AND the product does not compile it:
+# it is not among the packages the binary under cmd/ is built from, so nothing it holds can reach
+# an installation. A package the binary compiles is read whatever its name.
+PRODUCT_PACKAGES="$(cd "$REPO_ROOT" && go list -deps ./cmd/... 2> "$WORK/product_packages.err" | sort -u)"
+MODULE_PATH="$(cd "$REPO_ROOT" && go list -m)"
+TEST_SUPPORT_DIRS="$(cd "$REPO_ROOT" && go list ./internal/store/... ./internal/collect/... ./internal/broker/... |
+    awk '/test$/' | LC_ALL=C sort | comm -23 - <(printf -- '%s\n' "$PRODUCT_PACKAGES" | LC_ALL=C sort) |
+    sed "s|^$MODULE_PATH/|$REPO_ROOT/|")"
+check_ge 'S5A-AC36 the packages the product binary is built from were listed' 20 \
+    "$(printf -- '%s\n' "$PRODUCT_PACKAGES" | grep -c "^$MODULE_PATH/internal/")"
+printf -- '  test-support packages left out of the literal check: %s\n' \
+    "$(printf -- '%s\n' "$TEST_SUPPORT_DIRS" | sed "s|^$REPO_ROOT/||" | tr '\n' ' ')"
 STEP5A_CODE_FILES="$(find "$REPO_ROOT/internal/store" "$REPO_ROOT/internal/collect" \
     "$REPO_ROOT/internal/broker" \( -name '*.go' -o -name '*.sql' \) \
-    ! -name '*_test.go' | sort)"
+    ! -name '*_test.go' | sort | awk -v dirs="$TEST_SUPPORT_DIRS" '
+        BEGIN { n = split(dirs, d, "\n"); for (i = 1; i <= n; i++) if (d[i] != "") skip[d[i]] = 1 }
+        { dir = $0; sub(/\/[^\/]*$/, "", dir); if (!(dir in skip) || $0 ~ /\.sql$/) print }')"
 # A compressed group is bounded on both sides by something that is not part of a word,
 # so PostgreSQL's cast syntax -- target::oid::integer -- is not read as an address.
 IPV6_COMPRESSED='(^|[^[:alnum:]_])[0-9A-Fa-f]{1,4}::([0-9A-Fa-f]{1,4})?([^[:alnum:]_]|$)|(^|[^[:alnum:]_])::[0-9A-Fa-f]{1,4}([^[:alnum:]_]|$)'
@@ -2722,8 +3090,11 @@ check 'AC34 every seeded address was synthesised from a counter at generation ti
 # ===========================================================================
 section 'AC35 — no assumed interface, client or interface count'
 # ===========================================================================
-# Built in the background since the start of the run.
-wait_build "$ALT_DB" || fail 'AC35 the alternative database failed to take the schema'
+# Kept by digest (decision 11), and cloned into ALT_DB in the background since the start of the run.
+wait_build alt || fail 'AC35 the alternative database failed to take the schema'
+report_kept_seed "$ALT_SEED_DB" 'alternative seed'
+check 'E10 the kept alternative seed carries the digest of what it was built from (decision 11)' \
+    "$ALT_SEED_DIGEST" "$(recorded_digest "$ALT_SEED_DB")"
 # RESTATED by step 5A: the seed now discovers one more interface, the UPSTREAM one
 # (a gateway was reported behind it), and no client sits behind it. The parameter
 # counts the interfaces clients sit behind, so it is compared with those, and the
@@ -2951,12 +3322,14 @@ check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
 # eleven. Restated again by the plugin cycle (specs/SPEC-backend-completion-plugins.md, A3): the
 # kind set is open -- a plugin brings kinds of its own, the core kinds being the eleven listed --
 # so the registry refuses a kind that is not a snake_case name, no longer one it does not know.
+# Restated by the NetFlow addendum (PS17): flow_record is a core kind, whose example exporter the
+# seed registers (E.6.1), so eleven became twelve.
 expect_sql_failure 'PN-AC9 a registry row whose kind is not a snake_case name is rejected' "$FRESH_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
      VALUES ('Tele-Pathy', 'pn-ac9', 'PN-AC9', 0, $NOW);"
 extract_block "$ARCH_DOC" '<!-- provider-kinds:begin -->' '<!-- provider-kinds:end -->' |
     sort > "$WORK/doc_kinds.txt"
-check 'PN-AC9 the document lists exactly eleven kinds' '11' \
+check 'PN-AC9 the document lists exactly twelve kinds' '12' \
     "$(wc -l < "$WORK/doc_kinds.txt" | tr -d ' ')"
 q "$MAIN_DB" 'SELECT DISTINCT kind FROM provider ORDER BY kind;' | sort > "$WORK/db_kinds.txt"
 if diff -u "$WORK/doc_kinds.txt" "$WORK/db_kinds.txt" > "$WORK/kinds.diff"; then
@@ -2994,18 +3367,20 @@ KIND_COUNT="$(q "$MAIN_DB" 'SELECT count(DISTINCT kind) FROM provider;')"
 # is asserted by name below rather than as a count.
 EXCLUSIVE_PREDICATE="p.kind NOT IN ('security_event', 'dhcp_lease', 'measurement_sample',
                                     'reconciled_state', 'resolver_cache', 'resolver_local_data')"
-check 'PN-AC12 the registry holds a provider of every one of the eleven kinds' '11' "$KIND_COUNT"
+check 'PN-AC12 the registry holds a provider of every one of the twelve kinds' '12' "$KIND_COUNT"
 # The active set is asserted as a SET rather than as a count derived from the kind
 # count, and that is the restatement: the seed used to activate exactly one provider
 # per kind, and it now models a two-DHCP-server estate, so a count alone would no
 # longer say which shape it is in. Written out, it fails loudly whichever way it
 # drifts -- a server that stopped being read, or one that started. Restated against the
 # renamed kinds: geo_asn is ip_geolocation and public_suffix is registrable_domain in the
-# registry the seed fills.
+# registry the seed fills. Restated by the NetFlow addendum: the seed's example exporter of the
+# flow_record kind (E.6.1) is active, as the pretend-installation runs it.
 EXPECTED_ACTIVE='dhcp_lease/dnsmasq
 dhcp_lease/kea
 dns_lookup/unbound
 firewall_log/pf
+flow_record/example-exporter
 ip_geolocation/maxmind_geolite2
 measurement_sample/insight
 reconciled_state/example-state-source
@@ -3075,7 +3450,7 @@ check 'PN-AC13 the two active DHCP servers carry two different probes' '2' \
 section 'PN-AC8, PN-AC18 — registering a second provider of an existing kind'
 # ===========================================================================
 # No DDL: an INSERT into the registry, an INSERT into availability, and events.
-copy_database "$MAIN_DB" "$REGISTER_DB"
+# REGISTER_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
 expect_sql_success 'PN-AC8 registering a second security-event provider needs no DDL' "$REGISTER_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
        VALUES ('security_event', 'second-event-provider', 'Second event provider', 0, $NOW);
@@ -3267,7 +3642,7 @@ check 'ST-AC3 nothing is silently dropped: the departed thing is still readable 
               AND s.captured_at = d.last_present_at AND i.item_key = d.item_key);')"
 
 # ST-AC4: the constraints that make a set a set rather than a bag of rows.
-copy_database "$MAIN_DB" "$STATE_DB"
+# STATE_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
 expect_sql_failure 'ST-AC4 a member with no identity is rejected' "$STATE_DB" \
     "INSERT INTO state_item (snapshot_id, item_key) SELECT id, '' FROM state_snapshot LIMIT 1;"
 expect_sql_failure 'ST-AC4 one capture cannot report one thing twice' "$STATE_DB" \
@@ -3397,7 +3772,7 @@ section 'DL-AC5 — one machine, two servers, two VLANs: one client, two leases'
 # The seed models the deployment explicitly: one client, a lease from each server, on
 # two different interfaces. The cascade itself is exercised in Go, in
 # internal/collect, where the two backends' reports of one MAC actually meet.
-copy_database "$MAIN_DB" "$LEASE_DB"
+# LEASE_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
 check_ge 'DL-AC5 a machine holds leases from two different servers' 1 \
     "$(q "$LEASE_DB" "SELECT count(*) FROM (
         SELECT l.client_id FROM dhcp_lease AS l
@@ -3825,36 +4200,35 @@ done
 # ===========================================================================
 section 'PN-AC30 — the scale run: 1 000 000 rows in the largest growing table'
 # ===========================================================================
-# Built in the background since the start of the run, once, with set-based generation,
-# and analysed before any plan below is read (P9).
-printf -- '  waiting for the %s-row seed started in the background...\n' "$SCALE_FLOW_ROWS"
+# Kept by digest (E.2.6), with set-based generation, analysed before any plan below is read (P9),
+# and read in place; its plugin tables were created again in the background since the start of the
+# run.
+printf -- '  waiting for the %s-row seed prepared in the background...\n' "$SCALE_FLOW_ROWS"
 SCALE_WAIT_STARTED="$(date +%s)"
-wait_build "$SCALE_DB" || fail 'PN-AC30 the scale database failed to take the schema'
+wait_marker scale scale_ready || {
+    wait_build scale
+    fail 'PN-AC30 the scale database failed to take the schema'
+}
 printf -- '  the scale seed was ready %d s after this point was reached\n' $(( $(date +%s) - SCALE_WAIT_STARTED ))
 # E10: one build or one reuse a run, its digest, and the build's breakdown when it was built.
-if [ "$(cat "$WORK/scale_seed_origin.txt" 2> /dev/null)" = 'reused' ]; then
-    printf -- '  the 1 000 000-row seed was REUSED: %s carries the digest %s\n' "$SCALE_SEED_DB" "$SCALE_SEED_DIGEST"
-else
-    printf -- '  the 1 000 000-row seed was BUILT cold, its digest now %s, in %d.%03d s (apart from the budgeted run):\n' \
-        "$SCALE_SEED_DIGEST" $(( $(cat "$WORK/scale_seed_build_ms.txt") / 1000 )) \
-        $(( $(cat "$WORK/scale_seed_build_ms.txt") % 1000 ))
-    awk -F'\t' '{ printf "    %10.1f s  %s\n", $2 / 1000, $1 }' "$WORK/scale_seed_steps.txt"
-    printf -- '    the generation, by table:\n'
-    sed 's/^/      /' "$WORK/scale_seed_breakdown.txt"
-fi
-printf -- '  the seed was cloned into %s in %d ms\n' "$SCALE_DB" "$(cat "$WORK/scale_clone_ms.txt" 2> /dev/null || echo 0)"
+report_kept_seed "$SCALE_SEED_DB" '1 000 000-row seed'
 check 'E10 the kept 1 000 000-row seed carries the digest of what it was built from' "$SCALE_SEED_DIGEST" \
-    "$(scale_seed_recorded)"
+    "$(recorded_digest "$SCALE_SEED_DB")"
 # The plugins' tables of the scale seed, as of the 100 000-row one, ten times the rows; only they
-# are analysed again, the clone carrying the seed's statistics.
-if plugin_tables "$SCALE_DB" 4000 scale; then
+# are analysed again, the kept seed carrying its own statistics.
+printf -- '  the plugin tables of %s were created again in %d ms\n' "$SCALE_DB" \
+    "$(cat "$WORK/scale_plugin_ms.txt" 2> /dev/null || echo 0)"
+if [ "$(cat "$WORK/scale_plugin_status" 2> /dev/null)" = 0 ]; then
     pass 'E21 the plugin loader created and seeded the plugin tables of the scale seed'
 else
     fail 'E21 the plugin loader failed on the scale seed'
 fi
-while IFS=$'\t' read -r table _ _; do
-    q "$SCALE_DB" "ANALYZE $table;" > /dev/null
-done < "$WORK/plugin_tables_scale.txt"
+check 'E21 the scale seed holds every plugin table the 100 000-row seed'"'"'s loader declared' '' \
+    "$(cut -f1 "$WORK/plugin_tables_main.txt" | diff - <(cut -f1 "$WORK/plugin_tables_scale.txt" 2> /dev/null) |
+        tr '\n' ' ')"
+# Its foreign keys are checked, and its widget budgets timed (S5B-AC18, below), by the scale job
+# from the moment the seed was ready, side by side with the checks; each verdict is read where its
+# criterion is reported.
 printf -- '  consumers of the 1 000 000-row seed (E10): the screen plans and the statement sweep, the widget and\n'
 if [ "${OPNVIEW_RECLASSIFY_COST:-}" = 1 ]; then
     printf -- '  data catalogue budgets, the live budget, and the reclassification on a copy, each named below\n'
@@ -3864,7 +4238,6 @@ else
 fi
 SCALE_COUNT="$(q "$SCALE_DB" 'SELECT count(*) FROM flow;')"
 check_ge 'PN-AC30 the scale database holds 1 000 000 rows in flow' 1000000 "$SCALE_COUNT"
-check 'PN-AC30 the scale database is consistent' '' "$(fk_violations "$SCALE_DB")"
 
 # The screen plans. AC10 (no scan of a growing table) and the plan-shape check of PN-AC30
 # are read on the analysed scale seed, and the plan of the analysed 100 000-row seed is read
@@ -3904,6 +4277,13 @@ for f in "$WORK"/screens/[0-9]*.sql; do
         fail "PN-AC30 the $name plan changed shape at scale: $(diff "$WORK/shape_$name.txt" "$WORK/scale_shape_$name.txt" | tr '\n' ' ')"
     fi
 done
+# The foreign keys of the complete scale database, checked in the background by the scale job since
+# its plugin tables were seeded.
+if wait_marker scale fk_scale.status && [ "$(cat "$WORK/fk_scale.status")" = 0 ]; then
+    check 'PN-AC30 the scale database is consistent' '' "$(cat "$WORK/fk_scale.txt")"
+else
+    fail "PN-AC30 the scale database is consistent (the check failed: $(head -n 3 "$WORK/fk_scale.txt"))"
+fi
 
 # ===========================================================================
 section 'AC11 — the good plans are the indexes, not the data size'
@@ -4021,8 +4401,8 @@ plan_statement() {
         [ "$mode" != 'index_paths' ] || index_paths_settings
         "$WORK/bin/planjson" explain "$stmt" "$NOW" || return 1
         printf -- 'ROLLBACK;\n'
-    } > "$WORK/plan_statement.sql"
-    "${PSQL[@]}" -d "$(dsn "$db")" -f "$WORK/plan_statement.sql" | to_nodes "$db"
+    } > "$WORK/plan_statement${PLAN_SLOT:-}.sql"
+    "${PSQL[@]}" -d "$(dsn "$db")" -f "$WORK/plan_statement${PLAN_SLOT:-}.sql" | to_nodes "$db"
 }
 # netflow_statement <statement file> — a statement of the netflow measure: a _netflow twin, or one
 # that reads connection_netflow.
@@ -4032,9 +4412,19 @@ netflow_statement() {
     esac
     grep -q 'connection_netflow(' "$1"
 }
-PLANNED=0
-SCANNING=''
-UNPLANNABLE=''
+# THE PLANS ARE READ SIDE BY SIDE (Phase E decision 8, 17 October 2026). Every statement, at every
+# period of a template, on each of the two databases, is one task, independent of every other --
+# planned and never run, in a transaction rolled back -- so the tasks are dealt to SWEEP_WORKERS
+# workers, each a background shell with files of its own, and their verdicts are gathered, sorted,
+# once every worker has ended. Planned one after the other, the sweep took 44 s of the run.
+SWEEP_WORKERS=8
+mkdir -p "$WORK/sweep" "$WORK/netflow-plans"
+# The chunk and index maps every worker reads are built once, before any worker starts.
+for db in "$MAIN_DB" "$SCALE_DB"; do
+    chunk_map "$db" > /dev/null
+    index_map "$db" > /dev/null
+done
+: > "$WORK/sweep/tasks.txt"
 for stmt in "$WORK"/statements/*.sql; do
     base="$(basename "$stmt" .sql)"
     # A composition template names a period AND the finer period its slots are
@@ -4056,26 +4446,58 @@ for stmt in "$WORK"/statements/*.sql; do
             label="${base}[$period]"
         fi
         for db in "$MAIN_DB" "$SCALE_DB"; do
-            if ! plan_statement "$db" "$target" index_paths > "$WORK/stmt_plan.txt" 2> "$WORK/stmt_plan.err" ||
-                    [ ! -s "$WORK/stmt_plan.txt" ]; then
-                UNPLANNABLE="$UNPLANNABLE $label($(grep -m 1 . "$WORK/stmt_plan.err"))"
-                continue
-            fi
-            PLANNED=$((PLANNED + 1))
-            scanned="$(scanned_growing "$db" "$WORK/stmt_plan.txt" | tr '\n' ' ')"
-            if [ -n "$scanned" ]; then
-                SCANNING="$SCANNING $label@$(tag_of "$db"):$scanned"
-            fi
-            # E18: a statement of the netflow measure -- a _netflow twin, or one that reads
-            # connection_netflow -- keeps its plan beside the others, for the checks below.
-            if netflow_statement "$stmt"; then
-                mkdir -p "$WORK/netflow-plans"
-                cp "$WORK/stmt_plan.txt" "$WORK/netflow-plans/$(tag_of "$db")_${label}.txt"
-                printf -- '%s\n' "$label" >> "$WORK/netflow-plans/labels_$(tag_of "$db").txt"
-            fi
+            printf -- '%s\t%s\t%s\t%s\n' "$label" "$target" "$db" "$stmt" >> "$WORK/sweep/tasks.txt"
         done
     done
 done
+# sweep_task <label> <statement file> <db> <source statement> — one task's verdicts, one per line:
+# "planned", "unplannable TAB <label>(<error>)", "scanning TAB <label>@<tag>:<tables>", and
+# "netflow TAB <tag> TAB <label>" for a statement of the netflow measure, whose plan is kept beside
+# the others for E18 below.
+sweep_task() {
+    local label="$1" target="$2" db="$3" stmt="$4" plan="$WORK/sweep/plan_$PLAN_SLOT.txt" scanned
+    if ! plan_statement "$db" "$target" index_paths > "$plan" 2> "$WORK/sweep/error_$PLAN_SLOT.txt" ||
+            [ ! -s "$plan" ]; then
+        printf -- 'unplannable\t%s(%s)\n' "$label" "$(grep -m 1 . "$WORK/sweep/error_$PLAN_SLOT.txt")"
+        return
+    fi
+    printf -- 'planned\n'
+    scanned="$(scanned_growing "$db" "$plan" | tr '\n' ' ')"
+    if [ -n "$scanned" ]; then
+        printf -- 'scanning\t%s@%s:%s\n' "$label" "$(tag_of "$db")" "$scanned"
+    fi
+    if netflow_statement "$stmt"; then
+        cp "$plan" "$WORK/netflow-plans/$(tag_of "$db")_${label}.txt"
+        printf -- 'netflow\t%s\t%s\n' "$(tag_of "$db")" "$label"
+    fi
+}
+SWEEP_PIDS=()
+for worker in $(seq 1 "$SWEEP_WORKERS"); do
+    (
+        PLAN_SLOT="w$worker"
+        awk -v n="$SWEEP_WORKERS" -v w="$worker" 'NR % n == w % n' "$WORK/sweep/tasks.txt" |
+            while IFS=$'\t' read -r label target db stmt; do
+                sweep_task "$label" "$target" "$db" "$stmt"
+            done > "$WORK/sweep/verdicts_$worker.txt"
+    ) &
+    SWEEP_PIDS+=("$!")
+done
+for pid in "${SWEEP_PIDS[@]}"; do
+    wait "$pid"
+done
+cat "$WORK"/sweep/verdicts_*.txt > "$WORK/sweep/verdicts.txt"
+PLANNED="$(grep -cx 'planned' "$WORK/sweep/verdicts.txt")"
+UNPLANNABLE="$(awk -F'\t' '$1 == "unplannable" { print $2 }' "$WORK/sweep/verdicts.txt" | LC_ALL=C sort |
+    awk '{ printf " %s", $0 }')"
+SCANNING="$(awk -F'\t' '$1 == "scanning" { print $2 }' "$WORK/sweep/verdicts.txt" | LC_ALL=C sort |
+    awk '{ printf " %s", $0 }')"
+for tag in "$(tag_of "$MAIN_DB")" "$(tag_of "$SCALE_DB")"; do
+    awk -F'\t' -v t="$tag" '$1 == "netflow" && $2 == t { print $3 }' "$WORK/sweep/verdicts.txt" \
+        > "$WORK/netflow-plans/labels_$tag.txt"
+done
+check_ge 'S5A-AC35 the sweep planned every task it dealt out' \
+    "$(wc -l < "$WORK/sweep/tasks.txt" | tr -d ' ')" \
+    "$(( PLANNED + $(grep -c '^unplannable' "$WORK/sweep/verdicts.txt") ))"
 check_ge 'S5A-AC35 every statement and every period of every template was planned on both databases' \
     80 "$PLANNED"
 check 'S5A-AC35 every statement plans against the schema' '' "$UNPLANNABLE"
@@ -4280,10 +4702,12 @@ for db in "$MAIN_DB" "$SCALE_DB"; do
             "$(grep -cE 'Index Cond: .*observed_at < ' "$WORK/e16_${tag}_$mode.txt")"
         if [ "$db" = "$SCALE_DB" ]; then
             buffers="$(e16_root_buffers < "$WORK/e16_${tag}_$mode.txt")"
-            if [ "$buffers" -le 100 ]; then
-                pass "E16 $tag, $mode, nothing due: the plan reads $buffers shared buffers (at most 100)"
-            else
+            # Written with -gt rather than its converse: the AC42 language check reads this file,
+            # and the converse operator is spelled like a French article.
+            if [ "$buffers" -gt 100 ] || ! [ "$buffers" -ge 0 ]; then
                 fail "E16 $tag, $mode, nothing due: the plan reads $buffers shared buffers, over 100"
+            else
+                pass "E16 $tag, $mode, nothing due: the plan reads $buffers shared buffers (at most 100)"
             fi
         fi
     done
@@ -4311,23 +4735,18 @@ section 'S5B-AC18 — every served widget type answers within its response budge
 # the live part of a response -- the current rates and the rolling strip -- whose median is
 # held to 100 ms.
 #
-# THE TWO SEEDS ARE TIMED SIDE BY SIDE (Phase E decision 8, 17 October 2026): each is its own
-# database and its own process, and neither reads the other, so the 100 000-row seed's timing no
-# longer waits for the 1 000 000-row one's. The program is built once, with the others under ci/,
-# rather than compiled by go run for each seed. Each seed's output is printed in one block once
-# both have ended, the 100 000-row one first.
-budget_seed() {
-    local db="$1" label="$2" day="$3" month="$4" live="${5:-0}"
-    (cd "$REPO_ROOT" && "$WORK/bin/widgetbudget" -database "$(dsn "$db")" -now "$NOW" -label "$label" \
-        -budget-24h "$day" -budget-30d "$month" -budget-live "$live") > "$WORK/budget_$label.txt" 2>&1
-}
-budget_seed "$MAIN_DB" 100k 250ms 500ms &
-BUDGET_PID_MAIN=$!
-budget_seed "$SCALE_DB" 1m 1s 2s 100ms &
-BUDGET_PID_SCALE=$!
-for budget in "100k:$BUDGET_PID_MAIN" "1m:$BUDGET_PID_SCALE"; do
-    label="${budget%%:*}"
-    if wait "${budget#*:}"; then
+# THE TWO SEEDS ARE TIMED SIDE BY SIDE (Phase E decision 8, 17 October 2026), each its own
+# database and its own process, and BOTH IN THE BACKGROUND, from the moment their database is
+# complete and nothing copies it any more: the 100 000-row seed's after the last copy of MAIN_DB
+# (E21), the 1 000 000-row one's as soon as the scale job has it ready, its plugin tables included.
+# The program is built once, with the others under ci/. Each seed's output is printed here, in one
+# block once both have ended, the 100 000-row one first.
+wait "$BUDGET_PID_MAIN"
+printf -- '%d\n' "$?" > "$WORK/budget_100k.status"
+# The 1 000 000-row seed's budget is the scale job's last step but one; the job's end is waited for.
+wait_build scale || :
+for label in 100k 1m; do
+    if [ "$(cat "$WORK/budget_$label.status" 2> /dev/null)" = 0 ]; then
         cat "$WORK/budget_$label.txt"
         pass "S5B-AC18 every served type answers within its budget on the $label seed"
     else
@@ -4381,25 +4800,17 @@ section 'P-AC22 — the backup round trip'
 # a logical backup (https://www.tigerdata.com/docs/self-hosted/latest/backup-and-restore/logical-backup):
 # create the database and the extension, timescaledb_pre_restore(), pg_restore without
 # -j, timescaledb_post_restore(). Then every table of every schema holds the same number
-# of rows on both sides.
-BACKUP_FILE="$WORK/opnview.dump"
-if (cd "$WORK" && pg_dump --format=custom --file=opnview.dump "$(dsn "$MAIN_DB")") 2> "$WORK/pg_dump.err"; then
+# of rows on both sides. The round trip ran in the background since E21 (backup_job); its
+# verdicts are read here.
+wait "$BACKUP_PID"
+if [ "$(cat "$WORK/pg_dump.status" 2> /dev/null)" = 0 ]; then
     pass 'P-AC22 pg_dump wrote the backup of the 100 000-row seed'
 else
-    fail "P-AC22 pg_dump failed: $(head -n 3 "$WORK/pg_dump.err")"
+    fail "P-AC22 pg_dump failed: $(head -n 3 "$WORK/pg_dump.err" 2> /dev/null)"
 fi
-drop_database "$RESTORED_DB"
-create_database "$RESTORED_DB"
-RESTORE_STATUS=0
-"${PSQL[@]}" -d "$(dsn "$RESTORED_DB")" -c 'CREATE EXTENSION IF NOT EXISTS timescaledb;' \
-    -c 'SELECT timescaledb_pre_restore();' > /dev/null 2> "$WORK/restore.err" || RESTORE_STATUS=1
-pg_restore --exit-on-error --dbname="$(dsn "$RESTORED_DB")" "$BACKUP_FILE" 2>> "$WORK/restore.err" || RESTORE_STATUS=1
-"${PSQL[@]}" -d "$(dsn "$RESTORED_DB")" -c 'SELECT timescaledb_post_restore();' > /dev/null \
-    2>> "$WORK/restore.err" || RESTORE_STATUS=1
+RESTORE_STATUS="$(cat "$WORK/restore.status" 2> /dev/null || echo 1)"
 check 'P-AC22 the backup restores by the documented procedure, with no error' '0' \
     "$RESTORE_STATUS$( [ "$RESTORE_STATUS" = 0 ] || printf -- ' (%s)' "$(head -n 3 "$WORK/restore.err" | tr '\n' ' ')")"
-every_schema_counts "$MAIN_DB" > "$WORK/backup_source_counts.txt"
-every_schema_counts "$RESTORED_DB" > "$WORK/backup_restored_counts.txt"
 check_ge 'P-AC22 the comparison covers the tables of the core schema' 40 \
     "$(grep -c '^opnview\.' "$WORK/backup_source_counts.txt")"
 if diff -u "$WORK/backup_source_counts.txt" "$WORK/backup_restored_counts.txt" > "$WORK/backup.diff"; then
@@ -4407,13 +4818,14 @@ if diff -u "$WORK/backup_source_counts.txt" "$WORK/backup_restored_counts.txt" >
 else
     fail "P-AC22 the restored row counts differ: $(head -n 20 "$WORK/backup.diff")"
 fi
+check 'P-AC22 the source still holds the rows it held when it was dumped' '' \
+    "$(every_schema_counts "$MAIN_DB" | diff - "$WORK/backup_source_counts.txt" | tr '\n' ' ')"
 README_BACKUP_COMMAND='pg_dump --format=custom --file=opnview.dump'
 if grep -qF -- "$README_BACKUP_COMMAND" "$REPO_ROOT/README.md"; then
     pass 'P-AC22 the README gives the backup command this check runs'
 else
     fail "P-AC22 the README does not give the backup command this check runs: $README_BACKUP_COMMAND"
 fi
-drop_database "$RESTORED_DB"
 
 # ===========================================================================
 section 'S5A-AC35 — the seed fills every new table and column, in both families'
@@ -4901,20 +5313,25 @@ for db in "$MAIN_DB" "$ALT_DB"; do
             $1 == "local_data" || $1 == "local_data_not_at_instant" { print $1 }' | sort | tr '\n' ',' | sed 's/,$//')"
 done
 # RC-AC14 on the two other seeds (the main one is checked with the purge above). The
-# alternative database is purged in a copy, a database of its own; the
-# scale database is purged in place, because nothing reads it after this point and a
-# copy of it would cost a second scale database for nothing.
+# alternative database is purged in a copy, a database of its own. The scale seed is purged in
+# its kept purged copy (Phase E decision 9, 17 October 2026): purged once per digest of the seed
+# and of purge.sql, with the two sets recorded before the purge and the purge's exit status after
+# it, and read here as a purge run now would be; its foreign keys were checked by the scale job.
 copy_database "$ALT_DB" "$PURGE_ALT_DB"
-RC14_PURGE_TARGETS="$PURGE_ALT_DB:schema-checks-alt $SCALE_DB:schema-checks-scale"
-for target in $RC14_PURGE_TARGETS; do
-    db="${target%%:*}"
-    tag="${target##*:}"
-    q "$db" "UPDATE setting SET value = '7776000' WHERE key = 'retention_seconds';" > /dev/null
-    rc_ac14_before "$db" "$tag"
-    run_purge "$db"
-    rc_ac14_after "$db" "$tag" "$?"
-done
+q "$PURGE_ALT_DB" "UPDATE setting SET value = '7776000' WHERE key = 'retention_seconds';" > /dev/null
+rc_ac14_before "$PURGE_ALT_DB" 'schema-checks-alt'
+run_purge "$PURGE_ALT_DB"
+rc_ac14_after "$PURGE_ALT_DB" 'schema-checks-alt' "$?"
 drop_database "$PURGE_ALT_DB"
+SCALE_JOB_STATUS=0
+wait_build scale || SCALE_JOB_STATUS=$?
+[ "$SCALE_JOB_STATUS" -eq 0 ] || fail "RC-AC14 the kept purged copy of the scale seed could not be prepared (exit $SCALE_JOB_STATUS)"
+report_kept_seed "$SCALE_PURGED_DB" 'purged copy of the 1 000 000-row seed'
+check 'E10 the kept purged copy carries the digest of the scale seed and of purge.sql (decision 9)' \
+    "$SCALE_PURGED_DIGEST" "$(recorded_digest "$SCALE_PURGED_DB")"
+rc_ac14_before "$SCALE_PURGED_DB" 'schema-checks-scale' recorded
+rc_ac14_after "$SCALE_PURGED_DB" 'schema-checks-scale' \
+    "$(q "$SCALE_PURGED_DB" 'SELECT purge_status FROM rc_ac14_purge;')" "$WORK/fk_scale_purged.txt"
 check 'RC-AC4 the two resolver-record kinds each register both resolvers' \
     'resolver_cache:dnsmasq,resolver_cache:unbound,resolver_local_data:dnsmasq,resolver_local_data:unbound' \
     "$(q "$FRESH_DB" "SELECT string_agg(kind || ':' || provider_key, ',' ORDER BY kind, provider_key) FROM
@@ -5036,9 +5453,22 @@ VOCAB_ROWS="$(awk '/terms are `opnview`.s own, because OPNsense has no word for 
 # The word "ter"+"ms" is split so this line does not match the wildcard-deletion check.
 VOCAB_SED="s/^\\*\\*\\([A-Z][a-z-]*\\) ter""ms are \`opnview\`.s own.*/\\1/p"
 VOCAB_WORD="$(sed -n "$VOCAB_SED" "$DOC" | head -n 1)"
+# The count is read as English words, one to ninety-nine: a count past the forty the first reader
+# knew read as nothing, and failed the check for that alone (17 October 2026, at fifty-one).
 VOCAB_NUMBER="$(printf -- '%s\n' "$VOCAB_WORD" | awk '
-    BEGIN { split("twenty twenty-one twenty-two twenty-three twenty-four twenty-five twenty-six twenty-seven twenty-eight twenty-nine thirty thirty-one thirty-two thirty-three thirty-four thirty-five thirty-six thirty-seven thirty-eight thirty-nine forty", w, " ") }
-    { for (i = 1; i <= 21; i++) if (tolower($0) == w[i]) print 19 + i }')"
+    BEGIN {
+        split("one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen eighteen nineteen", u, " ")
+        for (i = 1; i <= 19; i++) unit[u[i]] = i
+        split("twenty thirty forty fifty sixty seventy eighty ninety", t, " ")
+        for (i = 1; i <= 8; i++) ten[t[i]] = 10 * (i + 1)
+    }
+    {
+        word = tolower($0)
+        if (word in unit) { print unit[word]; next }
+        if (word in ten) { print ten[word]; next }
+        n = split(word, part, "-")
+        if (n == 2 && (part[1] in ten) && (part[2] in unit) && unit[part[2]] < 10) print ten[part[1]] + unit[part[2]]
+    }')"
 check 'RC-AC21 the count of opnview-own terms equals the rows of their table' "$VOCAB_ROWS" "$VOCAB_NUMBER"
 VOCAB_SECTION="$(awk '/^## Vocabulary/ { f = 1 } /^## Conventions/ { f = 0 } f' "$DOC")"
 for term in 'domain_attribution.method' 'resolver_cache_answer' 'lookup_timing' \
@@ -5058,13 +5488,30 @@ for needle in 'There is no second method on OPNsense 26.7' 'There is deliberatel
         pass "RC-AC21 no document still says: $needle"
     fi
 done
-for needle in 'every name the firewall' 'synchronous = NORMAL' 'resolver_cache_answer'; do
+# RESTATED for PostgreSQL (17 October 2026). The README stated the durability the store ran with,
+# SQLite's `synchronous = NORMAL` beside WAL, which the resolver-cache cycle approved (its scope G);
+# the subject of that setting went with SQLite, and the README lost the sentence when the store
+# moved. What the check holds the README to is unchanged -- it states the durability the store runs
+# with -- and on PostgreSQL that is `synchronous_commit = on`, the server's default, which neither
+# compose file overrides for the installation's database. The SQLite setting is stated nowhere any
+# more.
+for needle in 'every name the firewall' 'synchronous_commit = on' 'resolver_cache_answer'; do
     if grep -qF -- "$needle" "$REPO_ROOT/README.md"; then
         pass "RC-AC21 the README states: $needle"
     else
         fail "RC-AC21 the README does not state: $needle"
     fi
 done
+check_ge 'RC-AC21 the data model states the durability the store runs with' 1 \
+    "$(grep -cF 'synchronous_commit = on' "$DOC")"
+check 'RC-AC21 no document still states the SQLite durability setting' '' \
+    "$(grep -lF 'synchronous = NORMAL' "$DOC" "$REPO_ROOT/README.md" "$REPO_ROOT/docs/architecture.md" | tr '\n' ' ')"
+check 'RC-AC21 the installation'"'"'s database does not override the durability the documents state' '' \
+    "$( { grep -E 'synchronous_commit|fsync|full_page_writes' "$REPO_ROOT/docker-compose.serve.yml"
+          # db-serve extends db-predeployment, so that service's settings are the installation's too.
+          awk '/^  db-predeployment:/ { inside = 1; next } /^  [a-z]/ { inside = 0 } inside' \
+              "$REPO_ROOT/docker-compose.yml" | grep -v '^[[:space:]]*#' |
+              grep -E 'synchronous_commit|fsync|full_page_writes'; } | tr '\n' ' ')"
 for needle in 'resolver_cache_answer' 'lookup_timing' 'named_by_resolver_cache_answer'; do
     if grep -qF -- "$needle" "$CATALOGUE" "$DOC"; then
         pass "RC-AC21 the catalogue and the data model carry: $needle"
@@ -5297,16 +5744,16 @@ section 'PN-AC28 — shellcheck'
 # The static analyser is part of the development image (the Dockerfile pins and
 # verifies it like the Go toolchain), so it runs here, over every shell script of the
 # repository the containers run: this harness and the scripts under ci/. A missing
-# tool is a failure, never a pass: the image promises it.
+# tool is a failure, never a pass: the image promises it. It was started at the beginning of the
+# run, one script per process, beside the seed jobs; its verdicts are read here.
 if command -v shellcheck > /dev/null 2>&1; then
     printf -- '  %s\n' "$(shellcheck --version | grep '^version:')"
-    for script in "$REPO_ROOT/sql/schema-checks.sh" "$REPO_ROOT/ci/checks.sh" \
-                  "$REPO_ROOT/ci/pre-deployment.sh" "$REPO_ROOT/ci/data-dir-guard.sh" \
-                  "$REPO_ROOT/ci/budget-self-test.sh"; do
+    for script in "${SHELLCHECKED_SCRIPTS[@]}"; do
         name="${script#"$REPO_ROOT"/}"
-        if shellcheck -S error -x -P "$REPO_ROOT" "$script"; then
+        if wait "${SHELLCHECK_PIDS[$script]}"; then
             pass "PN-AC28 shellcheck reports no error-level finding on $name"
         else
+            cat "$WORK/shellcheck_$(basename "$script").txt"
             fail "PN-AC28 shellcheck reported an error-level finding on $name"
         fi
     done

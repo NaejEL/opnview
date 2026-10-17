@@ -17,6 +17,18 @@
 // built with group_concat, whose element order SQLite leaves undefined: its elements are compared
 // as a multiset, each byte for byte, and a different order is reported as a note. The exit status is 0 when they are equal, 1 when they
 // differ -- the first differing row printed -- and 2 when the input cannot be read.
+//
+// ROWS THE SEED GAINED SINCE THE REFERENCE WAS RECORDED. The reference cannot be recorded again:
+// the image no longer carries SQLite. When a later cycle adds to the seed a row a query returns --
+// the example exporter of the core kind flow_record, which the NetFlow addendum's seed registers,
+// is a row of the source availability -- that row is named in a second file, -added, under the
+// query's key, with the cycle that added it:
+//
+//	{"diagnostic: Source availability": {"added_by": "<spec and item>", "rows": [ ... ]}}
+//
+// Each named row must then be among the PostgreSQL rows exactly once, as it is written, or the
+// comparison fails naming it; it is taken out, the other rows keeping their order, and what is
+// left is compared with the reference as above. A row nobody named still fails the comparison.
 package main
 
 import (
@@ -39,6 +51,8 @@ func main() {
 	order := flag.String("order", "", "exact or multiset")
 	lists := flag.String("list-columns", "", "comma-separated columns holding a group_concat list whose "+
 		"element order SQLite left undefined; their elements are compared as a multiset")
+	added := flag.String("added", "", "a file naming, per query, the rows the seed gained since the "+
+		"reference was recorded, and the cycle that added them")
 	flag.Parse()
 	for _, column := range strings.Split(*lists, ",") {
 		if column = strings.TrimSpace(column); column != "" {
@@ -61,6 +75,22 @@ func main() {
 	}
 	notes := map[string]bool{}
 	var difference string
+	if *added != "" {
+		gained, addedBy, err := readAdded(*added, *key)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "referencerows:", err)
+			os.Exit(2)
+		}
+		if len(gained) > 0 {
+			notes[fmt.Sprintf("%d rows the seed gained since the reference was recorded are taken out first (%s)",
+				len(gained), addedBy)] = true
+		}
+		got, difference = withoutAdded(got, gained, notes)
+	}
+	if difference != "" {
+		fmt.Println(difference)
+		os.Exit(1)
+	}
 	if *order == "exact" {
 		difference = compareExact(expected, got, notes)
 	} else {
@@ -137,6 +167,68 @@ func readActual(path string) ([]row, error) {
 		rows = append(rows, value)
 	}
 	return rows, scanner.Err()
+}
+
+// addedRows is one query's entry of the -added file: the rows the seed gained since the reference
+// was recorded, and the cycle that added them.
+type addedRows struct {
+	AddedBy string            `json:"added_by"`
+	Rows    []json.RawMessage `json:"rows"`
+}
+
+// readAdded reads one query's gained rows from the -added file; a query the file does not name
+// gained none. An entry that does not say which cycle added its rows is refused.
+func readAdded(path, key string) ([]row, string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, "", err
+	}
+	var queries map[string]addedRows
+	if err := json.Unmarshal(raw, &queries); err != nil {
+		return nil, "", fmt.Errorf("reading %s: %w", path, err)
+	}
+	entry, found := queries[key]
+	if !found {
+		return nil, "", nil
+	}
+	if strings.TrimSpace(entry.AddedBy) == "" || len(entry.Rows) == 0 {
+		return nil, "", fmt.Errorf("%s: %q names no cycle that added its rows, or no row", path, key)
+	}
+	rows := make([]row, 0, len(entry.Rows))
+	for _, item := range entry.Rows {
+		value, err := decode(item)
+		if err != nil {
+			return nil, "", fmt.Errorf("reading a gained row of %q: %w", key, err)
+		}
+		rows = append(rows, value)
+	}
+	return rows, entry.AddedBy, nil
+}
+
+// withoutAdded takes every gained row out of the PostgreSQL rows, the others keeping their order.
+// Each gained row must be there exactly once; when one is not, or is there twice, the difference
+// names it.
+func withoutAdded(got, gained []row, notes map[string]bool) ([]row, string) {
+	kept := got
+	for _, want := range gained {
+		at := -1
+		for index, have := range kept {
+			if rowsDiffer(want, have, notes) != "" {
+				continue
+			}
+			if at >= 0 {
+				return nil, fmt.Sprintf("a row the seed gained is returned twice: %s", show(want))
+			}
+			at = index
+		}
+		if at < 0 {
+			return nil, fmt.Sprintf("a row the seed gained is not returned: %s", show(want))
+		}
+		next := make([]row, 0, len(kept)-1)
+		next = append(next, kept[:at]...)
+		kept = append(next, kept[at+1:]...)
+	}
+	return kept, ""
 }
 
 func compareExact(expected, got []row, notes map[string]bool) string {

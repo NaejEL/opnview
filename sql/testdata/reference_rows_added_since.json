@@ -1,0 +1,6 @@
+{
+"diagnostic: Source availability": {
+  "added_by": "PS17 and E.6.1 of specs/SPEC-backend-completion-plugins.md: the core kind flow_record, whose example exporter the seed registers and activates",
+  "rows": [{"checked_at":1750000000,"detail":null,"display_name":"Example exporter","is_active":1,"kind":"flow_record","outcome":"not_yet_probed","probe":"example-exporter-probe","provider_key":"example-exporter","state":"reachable"}]
+}
+}

@@ -47,9 +47,13 @@
 # here are listed in ROADMAP.md, "Development and test environment".
 #
 # Unlike checks, this command runs with /tmp on the container's overlay
-# filesystem. The non-race go test and the schema checks run against
-# db-predeployment, a disk-backed PostgreSQL instance with production durability,
-# so the suite meets a real disk once before a deployment. The -race step runs
+# filesystem. The non-race go test runs against db-predeployment, a disk-backed
+# PostgreSQL instance with production durability, so the suite meets a real disk once
+# before a deployment, and the schema checks against db-schema-checks, configured the
+# same way and holding the kept seeds, which docker-compose.yml hands this command as
+# OPNVIEW_SCHEMA_CHECKS_DATABASE (Phase E decision 10, 17 October 2026): beside the Go
+# suite on one instance, every DROP DATABASE of the schema checks waited for a
+# checkpoint writing the Go suite's buffers too. The -race step runs
 # against db-test, the everyday instance on its tmpfs, which docker-compose.yml
 # hands this command as OPNVIEW_RACE_TEST_DATABASE (Phase E decision 6, 16 October
 # 2026): on the disk-backed instance four of the selected packages reached the
@@ -257,7 +261,16 @@ record 'race selection' "$selection_status" $(( ( $(date +%s%N) - selection_begu
 # The steps that need nothing from the others, in the background.
 start_step vet 'go vet -tags predeployment,reclassifycost,brokerbudget ./...' \
   go vet -tags predeployment,reclassifycost,brokerbudget ./...
-start_step schema 'sql/schema-checks.sh' bash "$REPO_ROOT/sql/schema-checks.sh"
+# The schema checks run on their own instance, db-schema-checks, which holds the kept seeds (Phase E
+# decision 10): docker-compose.yml hands its connection string as OPNVIEW_SCHEMA_CHECKS_DATABASE.
+schema_test_database="${OPNVIEW_SCHEMA_CHECKS_DATABASE:-}"
+if [ -z "$schema_test_database" ]; then
+  printf -- 'OPNVIEW_SCHEMA_CHECKS_DATABASE is not set: docker-compose.yml names the schema checks their instance.\n' >&2
+  record 'OPNVIEW_SCHEMA_CHECKS_DATABASE' 1 0
+else
+  start_step schema 'sql/schema-checks.sh (on the schema checks'"'"' instance)' \
+    env OPNVIEW_TEST_DATABASE="$schema_test_database" bash "$REPO_ROOT/sql/schema-checks.sh"
+fi
 start_step selftest 'ci/budget-self-test.sh' bash "$REPO_ROOT/ci/budget-self-test.sh"
 fuzz_ids=()
 for target in "FuzzHeader ./internal/push/protocols/syslog" "FuzzFraming ./internal/push/protocols/syslog" \
@@ -271,7 +284,7 @@ done
 
 # THE TWO GO TEST RUNS SIDE BY SIDE, then the broker budgets. The -race step's test databases are
 # created on the everyday test instance, with that instance's clone strategy (the default,
-# FILE_COPY; internal/store/testdatabase.go); every other step keeps db-predeployment. The two runs
+# FILE_COPY; internal/store/testdatabase.go); the non-race run keeps db-predeployment. The two runs
 # share no database instance, so the non-race run starts in the background as the -race run starts
 # in the foreground: measured on 16 October 2026 on 16 CPUs, one after the other they took 95.2 s
 # and 103.1 s, and the run reached the hard limit before the schema checks ended.
@@ -300,6 +313,7 @@ broker_budgets() {
 run_step 'broker budgets (go test -tags brokerbudget -run Budget)' broker_budgets
 
 for id in vet "${fuzz_ids[@]}" selftest schema; do
+  [ -n "${step_pid[$id]:-}" ] || continue
   wait_step "$id"
 done
 

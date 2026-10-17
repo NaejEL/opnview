@@ -345,6 +345,13 @@ stored.
 In a workplace setting, informing the people concerned is a legal obligation
 in most jurisdictions.
 
+### Durability
+
+The installation's database runs with PostgreSQL's own durability,
+`synchronous_commit = on`: a commit returns only once it is written to disk, so a crash
+or a power loss loses no committed row — only work not yet committed
+(<https://www.postgresql.org/docs/17/runtime-config-wal.html#GUC-SYNCHRONOUS-COMMIT>).
+
 ### Backup
 
 A backup is two things: the database, and the key file in the data directory.

@@ -1,0 +1,29 @@
+{
+  "api_version": 1,
+  "name": "example_lookups",
+  "version": "1.0.0",
+  "display_name": "Example lookups",
+  "description": "Reads the query report of an example resolver.",
+  "endpoints": [
+    { "name": "status", "path": "/api/exampledns/service/status", "method": "GET" },
+    { "name": "queries", "path": "/api/exampledns/queries/search", "method": "GET" }
+  ],
+  "providers": [
+    {
+      "kind": "dns_lookup",
+      "display_name": "Example lookups",
+      "read_strategy": "full_reread",
+      "probe": { "endpoint": "status", "check": "service_running" },
+      "read": {
+        "endpoint": "queries",
+        "fields": {
+          "deduplication_key": "id",
+          "client_address": "client",
+          "domain": "name",
+          "action": { "value": "pass" },
+          "looked_up_at": { "from": "time", "as": "epoch" }
+        }
+      }
+    }
+  ]
+}
