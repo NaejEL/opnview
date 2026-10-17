@@ -20,5 +20,5 @@
 //
 // WHAT AN IMPLEMENTATION IS. A directory internal/collect/measurement/<product>/ holding a
 // provider.json whose kind is "measurement_sample", a Go package whose init() calls Register with
-// the embedded manifest and a Source, its fixtures and its tests. See docs/extending.md.
+// the embedded manifest and a Source, its fixtures and its tests. See docs/plugins.md.
 package measurement

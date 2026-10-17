@@ -27,8 +27,8 @@
 // ADDING AN IMPLEMENTATION IS ADDING A DIRECTORY, and touches nothing else. A Kea equivalent for
 // another firewall is `dhcplease/<product>/` with a provider.json; no file here changes, because
 // nothing selects an implementation at compile time, nothing branches on a product name outside
-// that product's own directory, and the one file linking the directories into the binary
-// (providers_gen.go) is generated from the tree. See docs/extending.md.
+// that product's own directory, and an implementation is a plugin directory the loader finds at
+// start (internal/plugin). See docs/plugins.md.
 //
 // Three further properties are worth stating before the code, because each one is
 // the answer to something measured rather than a style choice.

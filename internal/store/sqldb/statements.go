@@ -246,12 +246,6 @@ func ComposeStatement(name string, period vocab.Period) (string, error) {
 	return strings.ReplaceAll(text, childToken, child.Name), nil
 }
 
-// IsComposeTemplate reports whether a statement is a composition template.
-func IsComposeTemplate(name string) bool {
-	text, err := Statement(name)
-	return err == nil && strings.Contains(text, childToken)
-}
-
 // SplitStatements splits a SQL file into statements on the semicolons that end one.
 //
 // It understands what would otherwise corrupt a statement rather than fail loudly: a semicolon
@@ -377,4 +371,17 @@ func pretranslate(text string) error {
 		}
 	}
 	return nil
+}
+
+// ComposeOrPeriodStatement returns a template statement expanded for one period: a composition template
+// with its finer period too (ComposeStatement), any other template with its period alone.
+func ComposeOrPeriodStatement(name string, period vocab.Period) (string, error) {
+	text, err := Statement(name)
+	if err != nil {
+		return "", err
+	}
+	if strings.Contains(text, childToken) {
+		return ComposeStatement(name, period)
+	}
+	return PeriodStatement(name, period)
 }

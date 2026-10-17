@@ -2320,7 +2320,7 @@ ingesting concurrently, which passes `now` as the watermark:
 4. `computed_at` is the refresh's **watermark**, not its clock: the instant
    before which every flow stamped with an `ingested_at` is known to have been
    committed when the slot was read. A filter-log pass stamps every row with the
-   instant it began and commits them one by one, while other passes' refreshes run
+   instant it began and writes them in one statement, while other passes' refreshes run
    in their own goroutines; so the collector records each pass's stamp as in
    flight until its rows are written, and a refresh's watermark is the older of its
    own instant and the oldest stamp in flight. A slot that is neither current nor

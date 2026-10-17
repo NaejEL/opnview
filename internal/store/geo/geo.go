@@ -7,9 +7,8 @@ import (
 )
 
 // The geo and ASN enrichment of the addresses opnview has seen. The dataset that
-// answers is the active geo_asn provider's — today the MaxMind GeoLite2 City and
-// ASN databases, read by internal/maxmind. This file only stores the answers and
-// says which addresses still need one.
+// answers is the active ip_geolocation provider's, a plugin (plugins/maxmind today). This file only
+// stores the answers and says which addresses still need one.
 
 // GeoLookupState is geo_asn.lookup_state.
 type GeoLookupState string
@@ -91,7 +90,7 @@ func (s *GeoStore) AddressesToGeolocate(ctx context.Context, providerID, build i
 		   LEFT JOIN geo_asn AS g ON g.address = seen.address
 		  WHERE seen.address IS NOT NULL
 		    AND (g.address IS NULL OR g.dataset_build_at IS NULL OR g.dataset_build_at < $1
-		         OR g.provider_id IS NOT $2)
+		         OR g.provider_id IS DISTINCT FROM $2)
 		  ORDER BY seen.address`,
 		build, providerID)
 	if err != nil {

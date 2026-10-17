@@ -22,7 +22,6 @@ import (
 	"github.com/NaejEL/opnview/internal/store/reads"
 	"github.com/NaejEL/opnview/internal/store/samples"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
-	"github.com/NaejEL/opnview/internal/testtiming"
 )
 
 // The schema, embedded. It lives in this directory rather than under sql/ because Go's embed
@@ -122,8 +121,8 @@ const (
 )
 
 // timingSteps names each step of an open as the suite's breakdown counts it.
-var timingSteps = map[string]string{StepWait: testtiming.StepWait, StepSchemaApplied: testtiming.StepSchema,
-	StepSchemaRecorded: testtiming.StepSchema, StepReadRole: testtiming.StepRole}
+var timingSteps = map[string]string{StepWait: TimingWait, StepSchemaApplied: TimingSchema,
+	StepSchemaRecorded: TimingSchema, StepReadRole: TimingRole}
 
 // DefaultWait is how long a start waits for the database: long enough for a database container
 // started beside opnview to finish its own start, short enough that a misconfigured connection
@@ -153,13 +152,13 @@ func OpenWith(ctx context.Context, options Options) (*Store, error) {
 		return nil, ErrNoDatabase
 	}
 	// Each step is also recorded for the suite's breakdown, which does nothing unless the CI-only
-	// switch is on (internal/testtiming).
+	// switch is on (internal/testtiming, through Timing).
 	timed := func(step string, started time.Time) {
 		took := time.Since(started)
 		if options.Timed != nil {
 			options.Timed(step, took)
 		}
-		testtiming.Record(timingSteps[step], took)
+		recordTiming(timingSteps[step], took)
 	}
 	db, err := sqldb.OpenPool(options.DSN)
 	if err != nil {
@@ -235,7 +234,7 @@ func waitForDatabase(ctx context.Context, db *sql.DB, options Options) error {
 			options.Log(fmt.Sprintf("waiting for the database (attempt %d): %v", attempt, err))
 		}
 		// A retry is an event, never a silent sleep: the suite's breakdown counts it.
-		testtiming.Record(testtiming.StepRetry, time.Second)
+		recordTiming(TimingRetry, time.Second)
 		if time.Now().After(deadline) || ctx.Err() != nil {
 			return fmt.Errorf("%w within %s: %w", ErrDatabaseUnreachable, wait, err)
 		}

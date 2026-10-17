@@ -18,9 +18,9 @@
 //
 // Adding an implementation is adding its directory. Nothing selects an implementation at
 // compile time, nothing branches on a product name outside that product's own directory, and
-// detection chooses among them at runtime from the firewall's own configuration. The one file
-// that links the directories into the binary, internal/collect/providers_gen.go, is generated
-// from the tree by `go generate` and checked by a test, never edited (internal/discover).
+// detection chooses among them at runtime from the firewall's own configuration. Today
+// every implementation is a plugin directory the loader finds at start (internal/plugin,
+// docs/plugins.md).
 //
 // WHAT AN IMPLEMENTATION IS GIVEN, AND WHAT IT RETURNS. The contract has two directions. The
 // kind's Source interface says what a connector must PRODUCE: the records it yields, the Result
@@ -37,8 +37,8 @@
 // transport and is in-process today; the contract beside it should not have to move for that.
 //
 // WHY THERE IS NO SOURCE FOR THE geo_asn AND public_suffix KINDS HERE. Their one implementation
-// each is an acquisition -- the MaxMind dataset, the Public Suffix List -- that internal/maxmind
-// and internal/publicsuffix download and read; neither is a firewall source, and the port below,
+// each is an acquisition -- the MaxMind dataset, the Public Suffix List -- that the maxmind
+// and publicsuffix plugins download and read; neither is a firewall source, and the port below,
 // whose only outbound capability is the firewall, could not serve it. They still DECLARE
 // themselves, with a Manifest, so their registry rows are created the same way.
 package provider

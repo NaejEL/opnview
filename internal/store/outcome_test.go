@@ -2,14 +2,15 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"os"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 
-	"github.com/NaejEL/opnview/internal/store/sqldb"
 	"github.com/NaejEL/opnview/internal/store/vocab"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // TestTheOutcomeCheckHoldsExactlyTheClosedSet is AD1's schema half: the CHECK on
@@ -55,7 +56,7 @@ func TestTheOutcomeCheckHoldsExactlyTheClosedSet(t *testing.T) {
 		t.Error("SetAvailability accepted a code outside the set")
 	}
 	if _, err := database.DB().ExecContext(ctx,
-		"UPDATE source_availability SET outcome = 'invented_code' WHERE provider_id = $1", providerID); !sqldb.IsConstraintViolation(err) {
+		"UPDATE source_availability SET outcome = 'invented_code' WHERE provider_id = $1", providerID); !isConstraintViolation(err) {
 		t.Errorf("the schema accepted a code outside the set: %v", err)
 	}
 	for _, outcome := range vocab.AvailabilityOutcomes {
@@ -63,4 +64,11 @@ func TestTheOutcomeCheckHoldsExactlyTheClosedSet(t *testing.T) {
 			t.Errorf("the code %q was refused: %v", outcome, err)
 		}
 	}
+}
+
+// isConstraintViolation reports whether an error is PostgreSQL's refusal of a row by a constraint:
+// SQLSTATE class 23 (integrity constraint violation), whichever constraint it was.
+func isConstraintViolation(err error) bool {
+	var failure *pgconn.PgError
+	return errors.As(err, &failure) && strings.HasPrefix(failure.Code, "23")
 }

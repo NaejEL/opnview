@@ -210,25 +210,52 @@ func (c *FilterLogCoordinator) storePushed(ctx context.Context, providerID int64
 	return derive.On(c.Collector).DeriveAfter(ctx, stored, passErr)
 }
 
-// storeRecords stores records that are not stored yet, recording what it wrote in stored.
+// storeRecords stores records that are not stored yet, recording what it wrote in stored. It costs two
+// statements whatever the number of records (PA17 of specs/SPEC-backend-completion-plugins.md): one
+// reads which digests are stored already, one writes the rest.
 func (c *FilterLogCoordinator) storeRecords(ctx context.Context, records []firewalllog.Record, snapshot core.Discovery, now int64,
 	stored *derive.Derivation) error {
+	digests := make([]string, 0, len(records))
 	for _, record := range records {
-		seen, err := c.Store.HasFlowDigest(ctx, record.Digest)
-		if err != nil {
-			return err
-		}
-		if seen {
+		digests = append(digests, record.Digest)
+	}
+	seen, err := c.Store.StoredFlowDigests(ctx, digests)
+	if err != nil {
+		return err
+	}
+	flows := make([]vocab.Flow, 0, len(records))
+	var kept []firewalllog.Record
+	for _, record := range records {
+		// The endpoint echoes back records already seen, and the schema's uniqueness would reject them
+		// anyway; a record repeated within the page is written once.
+		if seen[record.Digest] {
 			continue
 		}
-		if err := c.Store.InsertFlow(ctx, buildFlow(record, snapshot, now)); err != nil {
-			return err
+		seen[record.Digest] = true
+		flows = append(flows, buildFlow(record, snapshot, now))
+		kept = append(kept, record)
+	}
+	var passErr error
+	if err := c.Store.InsertFlows(ctx, flows); err != nil {
+		// A record the schema refuses fails the whole statement. The records before it are then stored
+		// one by one, as a pass of single writes would have stored them, and the pass fails with the
+		// refusal: what was stored is still placed (AC7 of the step-5A live corrections).
+		passErr = err
+		for index, flow := range flows {
+			if err := c.Store.InsertFlow(ctx, flow); err != nil {
+				passErr = err
+				kept = kept[:index]
+				break
+			}
 		}
+	}
+	for _, record := range kept {
 		stored.Addresses = append(stored.Addresses, record.SrcAddress, record.DstAddress)
 		stored.Widen(record.ObservedAt, record.ObservedAt)
+		// Its other leg may be stored already, by this pass or an earlier one.
 		stored.WidenPairing(record.ObservedAt, record.ObservedAt)
 	}
-	return nil
+	return passErr
 }
 
 // pullPlan is what the source periods decide of one pull pass.

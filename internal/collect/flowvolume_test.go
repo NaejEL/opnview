@@ -27,17 +27,17 @@ func arrangeMeasurementCollection(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
 	harness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	harness.Fake.AnswerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_local.json")
-	harness.Fake.AnswerFixture(opnsense.TrafficTop, "traffic_top.json")
-	harness.Fake.AnswerFixture(opnsense.TrafficInterface, "traffic_interface.json")
-	harness.Fake.AnswerFixture(opnsense.SystemResources, "system_resources.json")
-	harness.Fake.AnswerFixture(opnsense.SystemTemperature, "system_temperature.json")
+	harness.Fake.AnswerFixture(collecttest.NetflowIsEnabled, "netflow_is_enabled_local.json")
+	harness.Fake.AnswerFixture(collecttest.TrafficTop, "traffic_top.json")
+	harness.Fake.AnswerFixture(collecttest.TrafficInterface, "traffic_interface.json")
+	harness.Fake.AnswerFixture(collecttest.SystemResources, "system_resources.json")
+	harness.Fake.AnswerFixture(collecttest.SystemTemperature, "system_temperature.json")
 	harness.Fake.AnswerFixture(opnsense.SystemTime, "system_time.json")
-	harness.Fake.AnswerFixture(opnsense.SystemDisk, "system_disk.json")
+	harness.Fake.AnswerFixture(collecttest.SystemDisk, "system_disk.json")
 	// The processor figure's source since the resolver-cache cycle: a stream that never ends.
 	harness.Fake.AnswerStreamFixture(opnsense.CPUUsageStream, "cpu_usage_stream.json")
-	harness.Fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status.json")
-	harness.Fake.AnswerFixture(opnsense.SystemSwap, "system_swap.json")
+	harness.Fake.AnswerFixture(collecttest.GatewayStatus, "gateway_status.json")
+	harness.Fake.AnswerFixture(collecttest.SystemSwap, "system_swap.json")
 	if err := harness.Collector.ProbeMeasurement(context.Background()); err != nil {
 		t.Fatalf("probing the volume source: %v", err)
 	}
@@ -74,7 +74,7 @@ func TestThePerPairSamplerSendsInterfaceNamesAndNeverADeviceName(t *testing.T) {
 		}
 	}
 
-	requests := harness.Fake.RequestsTo(opnsense.TrafficTop)
+	requests := harness.Fake.RequestsTo(collecttest.TrafficTop)
 	if len(requests) == 0 {
 		t.Fatal("the per-pair endpoint was never requested")
 	}
@@ -248,7 +248,7 @@ func TestATelemetryReadingThatDoesNotAnswerIsRecordedAndNeverWrittenAsAZero(t *t
 	// An empty array: the endpoint answered and reported no sensor, which is a fact about
 	// the hardware. Written here rather than as a fixture because the empty value is the
 	// whole of what it says.
-	harness.Fake.AnswerJSON(opnsense.SystemTemperature, []any{})
+	harness.Fake.AnswerJSON(collecttest.SystemTemperature, []any{})
 
 	before := harness.AvailabilityInstant(t, core.KindMeasurementSample, collecttest.ProviderInsight)
 	// The clock is advanced so "the row moved" is an observable fact rather than an
@@ -301,7 +301,7 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 	// Every telemetry endpoint answers with a well-formed body whose keys are none of the
 	// ones the collector tries.
 	for _, endpoint := range []opnsense.Endpoint{
-		opnsense.SystemResources, opnsense.SystemTime,
+		collecttest.SystemResources, opnsense.SystemTime,
 	} {
 		harness.Fake.AnswerJSON(endpoint, map[string]any{
 			"a_key_no_candidate_list_names": 1, "another": "two",
@@ -312,9 +312,9 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 	harness.Fake.AnswerStream(opnsense.CPUUsageStream, [][]byte{
 		[]byte(`{"a_key_no_candidate_list_names":1}`), []byte(`{"another":"two"}`),
 	}, true)
-	harness.Fake.AnswerJSON(opnsense.SystemDisk,
+	harness.Fake.AnswerJSON(collecttest.SystemDisk,
 		map[string]any{"devices": []any{map[string]any{"a_key_no_candidate_list_names": 1}}})
-	harness.Fake.AnswerJSON(opnsense.TrafficInterface, map[string]any{
+	harness.Fake.AnswerJSON(collecttest.TrafficInterface, map[string]any{
 		"example_if_a": map[string]any{"a_key_no_candidate_list_names": 1},
 	})
 
@@ -346,7 +346,7 @@ func TestTelemetryWhoseFieldNamesDoNotMatchIsRecordedAsAbsent(t *testing.T) {
 func TestAnEmptyTrafficSnapshotIsNotReportedAsAnAbsenceOfTraffic(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.Fake.AnswerJSON(opnsense.TrafficTop, map[string]any{})
+	harness.Fake.AnswerJSON(collecttest.TrafficTop, map[string]any{})
 
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)

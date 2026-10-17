@@ -8,7 +8,7 @@
 //
 // WHAT AN IMPLEMENTATION IS. A directory internal/collect/securityevent/<product>/ holding a
 // provider.json whose kind is "security_event", a Go package whose init() calls Register with the
-// embedded manifest and a Source, its fixtures and its tests. See docs/extending.md. Keeping the
+// embedded manifest and a Source, its fixtures and its tests. See docs/plugins.md. Keeping the
 // watermark, detecting a lost rotation and resolving a client are the kind's business, written
 // once in internal/collect (securityevent.go).
 package securityevent

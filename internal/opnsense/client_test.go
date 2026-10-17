@@ -78,13 +78,13 @@ func TestClientRefusesAnUnsafePositionalArgument(t *testing.T) {
 	client := NewClient(Credentials{BaseURL: "https://firewall.invalid"}, transport, time.Second)
 
 	for _, argument := range []string{"a/b", "a?b", "a b", "a%2Fb", "a#b"} {
-		_, err := client.Call(context.Background(), TrafficTop,
+		_, err := client.Call(context.Background(), interfaceNamesEndpoint,
 			RequestOptions{Arguments: []string{argument}})
 		if !errors.Is(err, ErrUnsafeArgument) {
 			t.Errorf("the argument %q returned %v, not the unsafe-argument refusal", argument, err)
 		}
 	}
-	_, err := client.Call(context.Background(), TrafficTop, RequestOptions{Arguments: []string{""}})
+	_, err := client.Call(context.Background(), interfaceNamesEndpoint, RequestOptions{Arguments: []string{""}})
 	if !errors.Is(err, ErrEmptyArgument) {
 		t.Errorf("an empty argument returned %v, not the empty-argument refusal", err)
 	}
@@ -99,7 +99,7 @@ func TestClientRefusesAnUnsafePositionalArgument(t *testing.T) {
 func TestClientRefusesToCallWithNoBaseURL(t *testing.T) {
 	transport := &countingTransport{}
 	client := NewClient(Credentials{}, transport, time.Second)
-	_, err := client.Call(context.Background(), IDSStatus, RequestOptions{})
+	_, err := client.Call(context.Background(), statusEndpoint, RequestOptions{})
 	if !errors.Is(err, ErrNoBaseURL) {
 		t.Fatalf("calling with no base URL returned %v", err)
 	}
@@ -172,7 +172,7 @@ func TestEachFailureShapeProducesADistinctOutcomeAndNoneIsNoData(t *testing.T) {
 			defer server.Close()
 
 			client := NewClient(Credentials{BaseURL: server.URL}, nil, time.Second)
-			response, err := client.Call(context.Background(), IDSStatus, RequestOptions{})
+			response, err := client.Call(context.Background(), statusEndpoint, RequestOptions{})
 			if err != nil {
 				t.Fatalf("the call failed outright: %v", err)
 			}
@@ -209,7 +209,7 @@ func TestEachFailureShapeProducesADistinctOutcomeAndNoneIsNoData(t *testing.T) {
 func TestATransportFailureIsItsOwnOutcome(t *testing.T) {
 	client := NewClient(Credentials{BaseURL: "https://firewall.invalid"},
 		&countingTransport{}, time.Second)
-	response, err := client.Call(context.Background(), IDSStatus, RequestOptions{})
+	response, err := client.Call(context.Background(), statusEndpoint, RequestOptions{})
 	if err == nil {
 		t.Fatal("a transport failure returned no error")
 	}
@@ -242,7 +242,7 @@ func TestAJSONBodyCarriesIntegersAndTheRightContentType(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Credentials{BaseURL: server.URL}, nil, time.Second)
-	_, err := client.Call(context.Background(), SearchQueries, RequestOptions{
+	_, err := client.Call(context.Background(), jsonBodyEndpoint, RequestOptions{
 		JSON: map[string]any{"timeStart": int64(1749989000), "timeEnd": int64(1749990000)},
 	})
 	if err != nil {
@@ -313,12 +313,25 @@ func TestPositionalArgumentsAreAppendedVerbatim(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient(Credentials{BaseURL: server.URL}, nil, time.Second)
-	if _, err := client.Call(context.Background(), TrafficTop,
+	if _, err := client.Call(context.Background(), interfaceNamesEndpoint,
 		RequestOptions{Arguments: []string{"example_if_a,example_if_b"}}); err != nil {
 		t.Fatalf("the call failed: %v", err)
 	}
-	want := TrafficTop.Path + "/example_if_a,example_if_b"
+	want := interfaceNamesEndpoint.Path + "/example_if_a,example_if_b"
 	if gotPath != want {
 		t.Fatalf("the request path was %q, want %q", gotPath, want)
 	}
 }
+
+// interfaceNamesEndpoint is an endpoint taking interface names as its positional argument, as the
+// Insight plugin's traffic_top does (plugins/insight/plugin.json).
+var interfaceNamesEndpoint = Endpoint{Path: "/api/diagnostics/traffic/top", Method: http.MethodGet,
+	Argument: InterfaceNameArgument}
+
+// statusEndpoint is a plain GET, as the Suricata plugin's status is (plugins/suricata/plugin.json).
+var statusEndpoint = Endpoint{Path: "/api/ids/service/status", Method: http.MethodGet}
+
+// jsonBodyEndpoint is a POST with a JSON body, as the Unbound plugin's search_queries is
+// (plugins/unbound/plugin.json).
+var jsonBodyEndpoint = Endpoint{Path: "/api/unbound/overview/search_queries", Method: http.MethodPost,
+	Encoding: JSONBody}

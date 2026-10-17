@@ -60,11 +60,11 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		{
 			name: "the intrusion-detection engine is installed and stopped",
 			arrange: func(fake *providertest.Firewall) {
-				fake.AnswerFixture(opnsense.IDSStatus, "ids_status_stopped.json")
+				fake.AnswerFixture(collecttest.IDSStatus, "ids_status_stopped.json")
 			},
 			kind: core.KindSecurityEvent, key: collecttest.ProviderSuricata,
 			wantState: vocab.StatePresentButDisabled,
-			wantProbe: opnsense.IDSStatus.Path,
+			wantProbe: collecttest.IDSStatus.Path,
 			// The survey's own words: 404, 401 or 403 is absent; a status of stopped,
 			// disabled or unknown is present but disabled.
 			wantDetailContains: "stopped",
@@ -74,11 +74,11 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		{
 			name: "the firewall exports its flow data elsewhere and keeps none",
 			arrange: func(fake *providertest.Firewall) {
-				fake.AnswerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_export_only.json")
+				fake.AnswerFixture(collecttest.NetflowIsEnabled, "netflow_is_enabled_export_only.json")
 			},
 			kind: core.KindMeasurementSample, key: collecttest.ProviderInsight,
 			wantState:          vocab.StatePresentButDisabled,
-			wantProbe:          opnsense.NetflowIsEnabled.Path,
+			wantProbe:          collecttest.NetflowIsEnabled.Path,
 			wantDetailContains: "local collection is off",
 			wantMoved:          []string{"measurement_sample/insight"},
 			wantStateTotal:     1,
@@ -86,12 +86,12 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		{
 			name: "the DHCP backend runs and serves no range",
 			arrange: func(fake *providertest.Firewall) {
-				fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-				fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings_no_ranges.json")
+				fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
+				fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings_no_ranges.json")
 			},
 			kind: core.KindDHCPLease, key: collecttest.ProviderDnsmasq,
 			wantState:          vocab.StatePresentButDisabled,
-			wantProbe:          opnsense.DnsmasqStatus.Path,
+			wantProbe:          collecttest.DnsmasqStatus.Path,
 			wantDetailContains: "dhcp_ranges is empty",
 			// TWO rows, and that is correct rather than a smear: one service status
 			// endpoint informs two registry rows, because Dnsmasq is an implementation of
@@ -103,13 +103,13 @@ func TestEachSourcePresentButDisabledMovesExactlyOneAvailabilityRowAndWritesNoDa
 		{
 			name: "the resolver runs and its query reporting is off",
 			arrange: func(fake *providertest.Firewall) {
-				fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-				fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-				fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_off.json")
+				fake.AnswerFixture(collecttest.UnboundStatus, "unbound_status_running.json")
+				fake.AnswerFixture(collecttest.UnboundSettings, "unbound_settings.json")
+				fake.AnswerFixture(collecttest.UnboundIsEnabled, "unbound_is_enabled_off.json")
 			},
 			kind: core.KindDNSLookup, key: collecttest.ProviderUnbound,
 			wantState: vocab.StatePresentButDisabled,
-			wantProbe: opnsense.UnboundStatus.Path,
+			wantProbe: collecttest.UnboundStatus.Path,
 			// The survey is explicit that this is a setting to turn on and never an
 			// absence of lookups, and the detail has to say so.
 			wantDetailContains: "query reporting is off",
@@ -213,7 +213,7 @@ func TestASourceThatAnswers404IsUnavailableAndNotActivated(t *testing.T) {
 
 	for _, provider := range everyProvider(t, harness.Store) {
 		if provider.kind == core.KindIPGeolocation {
-			// Not probed here: internal/maxmind records the dataset's availability, and
+			// Not probed here: the maxmind plugin records the dataset's availability, and
 			// this package makes no call outside the firewall.
 			continue
 		}
@@ -240,7 +240,7 @@ func TestASourceThatAnswers404IsUnavailableAndNotActivated(t *testing.T) {
 func TestAReachableSourceWithNothingToSayStaysReachable(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.NewProbeHarness(t)
-	harness.Fake.AnswerFixture(opnsense.IDSStatus, "ids_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.IDSStatus, "ids_status_running.json")
 	// An empty array, written here rather than as a fixture because the value is the
 	// whole of what it says: the engine answered and had nothing to report.
 	harness.Fake.AnswerJSON(opnsense.FirewallLog, []any{})
@@ -294,7 +294,7 @@ func TestTwoProvidersOfAnExclusiveKindTheFirewallDoesNotSeparateActivateNeitherA
 			return provider.Result{
 				State:     vocab.StateReachable,
 				Outcome:   vocab.OutcomeHealthy,
-				Probe:     opnsense.UnboundIsEnabled,
+				Probe:     collecttest.UnboundIsEnabled,
 				Separable: true,
 			}, nil
 		}}
@@ -336,7 +336,7 @@ func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *te
 			return provider.Result{
 				State:     vocab.StateReachable,
 				Outcome:   vocab.OutcomeHealthy,
-				Probe:     opnsense.KeaStatus,
+				Probe:     collecttest.KeaStatus,
 				Separable: true,
 			}, nil
 		}}
@@ -363,9 +363,9 @@ func TestTwoProvidersOfAConcurrentKindAreBothActivatedAndRecordNoAmbiguity(t *te
 func TestOneBackendTheFirewallSeparatesIsActivated(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.NewProbeHarness(t)
-	harness.Fake.AnswerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(collecttest.KeaStatus, "kea_status_disabled.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
 
 	if err := harness.Collector.ProbeAll(context.Background()); err != nil {
 		t.Logf("the probe round reported: %v", err)
@@ -390,12 +390,12 @@ func TestOneBackendTheFirewallSeparatesIsActivated(t *testing.T) {
 func TestTheDnsmasqResolverIsDetectedAndReportedAndNeverActivated(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.NewProbeHarness(t)
-	harness.Fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	harness.Fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-	harness.Fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.UnboundStatus, "unbound_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.UnboundSettings, "unbound_settings.json")
+	harness.Fake.AnswerFixture(collecttest.UnboundIsEnabled, "unbound_is_enabled_on.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
 	// log_queries is on in this fixture, so the state is detected rather than inferred.
-	harness.Fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
 
 	if err := harness.Collector.ProbeAll(context.Background()); err != nil {
 		t.Logf("the probe round reported: %v", err)
@@ -429,7 +429,7 @@ func TestTheEndOfLifeISCPluginIsRecordedAsAbsentRatherThanRead(t *testing.T) {
 	if state != vocab.StateUnavailable {
 		t.Errorf("the end-of-life plugin reads %q", state)
 	}
-	if !strings.Contains(probe, opnsense.ISCStatus.Path) {
+	if !strings.Contains(probe, collecttest.ISCStatus.Path) {
 		t.Errorf("the probe is %q, which does not name the presence check", probe)
 	}
 	if detail := harness.DetailOf(t, core.KindDHCPLease, collecttest.ProviderISC); !strings.Contains(
@@ -479,7 +479,7 @@ func everyProvider(t *testing.T, database *store.Store) []registryRow {
 func reachableAndSeparable(key string) core.Probeable {
 	return core.Probeable{ProviderKey: key, Run: func(context.Context, provider.Session) (provider.Result, error) {
 		return provider.Result{State: vocab.StateReachable, Outcome: vocab.OutcomeHealthy,
-			Probe: opnsense.UnboundIsEnabled, Separable: true}, nil
+			Probe: collecttest.UnboundIsEnabled, Separable: true}, nil
 	}}
 }
 

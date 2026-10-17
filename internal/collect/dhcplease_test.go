@@ -114,9 +114,9 @@ func TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsStoreNone(t
 	// Kea, where the figure is real.
 	keaHarness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, keaHarness.Fake, keaHarness.Collector)
-	keaHarness.Fake.AnswerFixture(opnsense.KeaStatus, "kea_status_running.json")
-	keaHarness.Fake.AnswerFixture(opnsense.KeaDHCPv4, "kea_dhcpv4_get.json")
-	keaHarness.Fake.AnswerFixture(opnsense.KeaLeases, "kea_leases.json")
+	keaHarness.Fake.AnswerFixture(collecttest.KeaStatus, "kea_status_running.json")
+	keaHarness.Fake.AnswerFixture(collecttest.KeaDHCPv4, "kea_dhcpv4_get.json")
+	keaHarness.Fake.AnswerFixture(collecttest.KeaLeases, "kea_leases.json")
 	// The neighbour tables are read on every lease pass, whichever backend is active.
 	keaHarness.Fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
 	keaHarness.Fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
@@ -253,10 +253,10 @@ func TestTwoDHCPServersBothServingAreBothActivated(t *testing.T) {
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 
 	// Both servers running and serving a range.
-	harness.Fake.AnswerFixture(opnsense.KeaStatus, "kea_status_running.json")
-	harness.Fake.AnswerFixture(opnsense.KeaDHCPv4, "kea_dhcpv4_get.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(collecttest.KeaStatus, "kea_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.KeaDHCPv4, "kea_dhcpv4_get.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
 
 	if err := harness.Collector.ProbeDHCPLease(ctx); err != nil {
 		t.Logf("the lease probe reported: %v", err)

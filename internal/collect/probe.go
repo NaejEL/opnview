@@ -28,8 +28,8 @@ import (
 // ProbeAll runs one probe round over every kind this cycle reads.
 //
 // Three kinds are not probed, each for its own recorded reason. geo_asn: the dataset is acquired
-// and its availability recorded by internal/maxmind, the second outbound call, which this
-// package never makes. flow_volume: its
+// and its availability recorded by the maxmind plugin (plugins/maxmind), through an outbound call
+// this package never makes. flow_volume: its
 // destination is DERIVED from flow by step 5, so no implementation of it is registered.
 // reconciled_state: the kind gives the surveyed state-shaped sources a destination, and writing
 // a connector for one of them is not this cycle's work.

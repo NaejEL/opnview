@@ -59,7 +59,7 @@ func TestTheLimitIsAValidatedSettingOfTheLeasePass(t *testing.T) {
 	if err := harness.Store.SetActiveProviders(ctx, core.KindDHCPLease, collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
-	harness.Fake.Answer(opnsense.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
+	harness.Fake.Answer(collecttest.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
 	settings := config.Defaults()
 	settings.LeaseBackendFailurePassLimit = 1
 	harness.Collector.Configure(settings)

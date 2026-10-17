@@ -251,26 +251,26 @@ func (c *LeaseCoordinator) collectLeasesFrom(ctx context.Context, active core.Ac
 	}
 
 	// THE AVAILABILITY IS WRITTEN AFTER THE LEASES ARE STORED, not before (SPEC-step-5b-
-	// widget-api.md, B8g). Written first, a store failure in ingestLease left the backend
+	// widget-api.md, B8g). Written first, a store failure in storeLeases left the backend
 	// reading `reachable` with the read's detail, which said the opposite of what had
 	// happened: the firewall answered, and opnview kept nothing of it.
 	snapshot := c.Discovery()
 	now := c.Now()
-	for _, observation := range observations {
-		if err := c.ingestLease(ctx, observation, snapshot, providerID, providerKey, now); err != nil {
-			// A failed pass for the host-name retry, exactly as a read failure is: the
-			// leases this pass would have contributed are not in the store.
-			failed, limit := c.noteLeaseFailure(providerID)
-			detail := fmt.Sprintf("the backend answered and its leases could not be stored: %v; %s",
-				err, leaseFailureDetail(failed, limit))
-			// Unavailable, because nothing of this backend's answer reached the store a
-			// widget reads; the outcome says the fault is opnview's, not the firewall's.
-			if writeErr := c.WriteAvailability(ctx, providerID, vocab.StateUnavailable,
-				vocab.OutcomeStoreFailure, result.Probe, detail); writeErr != nil {
-				return failedOutcome(failed, limit), core.JoinErrors([]error{err, writeErr})
-			}
-			return failedOutcome(failed, limit), err
+	if err := c.storeLeases(ctx, observations, snapshot, providerID, providerKey, now); err != nil {
+		// A failed pass for the host-name retry, exactly as a read failure is: the
+		// leases this pass would have contributed are not in the store.
+		failed, limit := c.noteLeaseFailure(providerID)
+		detail := fmt.Sprintf("the backend answered and its leases could not be stored: %v; %s",
+			err, leaseFailureDetail(failed, limit))
+		// Unavailable, because nothing of this backend's answer reached the store a
+		// widget reads; the outcome says the fault is opnview's, not the firewall's.
+		if writeErr := c.WriteAvailability(ctx, providerID, vocab.StateUnavailable,
+			vocab.OutcomeStoreFailure, result.Probe, detail); writeErr != nil {
+			return failedOutcome(failed, limit), core.JoinErrors([]error{err, writeErr})
 		}
+		return failedOutcome(failed, limit), err
+	}
+	for _, observation := range observations {
 		*seen = append(*seen, observation.Address)
 	}
 	c.clearLeaseFailures(providerID)
@@ -281,7 +281,8 @@ func (c *LeaseCoordinator) collectLeasesFrom(ctx context.Context, active core.Ac
 	return leaseBackendRead, nil
 }
 
-// ingestLease turns one lease observation into a machine and a lease generation.
+// storeLeases stores the machines and the lease generations of a pass: two statements whatever the
+// number of observations (PA17 of specs/SPEC-backend-completion-plugins.md).
 //
 // The provider and the backend are both passed, and they are not the same thing: the
 // provider is WHICH SERVER issued the lease, which the row records so a screen can
@@ -289,8 +290,27 @@ func (c *LeaseCoordinator) collectLeasesFrom(ctx context.Context, active core.Ac
 // implementation has one backend; the row keeps both so that a second
 // implementation reading the same shape somewhere else does not collapse into the
 // first.
-func (c *LeaseCoordinator) ingestLease(ctx context.Context, observation dhcplease.Observation,
+func (c *LeaseCoordinator) storeLeases(ctx context.Context, observations []dhcplease.Observation,
 	snapshot core.Discovery, providerID int64, backend string, now int64) error {
+	clients := make([]vocab.Client, len(observations))
+	leases := make([]vocab.DHCPLease, len(observations))
+	for index, observation := range observations {
+		clients[index], leases[index] = leaseRows(observation, snapshot, backend, now)
+	}
+	ids, err := c.Store.UpsertClients(ctx, clients, now)
+	if err != nil {
+		return err
+	}
+	for index := range leases {
+		leases[index].ClientID = &ids[index]
+	}
+	return c.Store.InsertDHCPLeases(ctx, providerID, leases)
+}
+
+// leaseRows is the machine and the lease generation of one observation, the lease's client still to be
+// written.
+func leaseRows(observation dhcplease.Observation, snapshot core.Discovery, backend string,
+	now int64) (vocab.Client, vocab.DHCPLease) {
 	// The lease endpoints report the interface under up to three names. Only two of them are
 	// join keys opnview already holds — the configuration key and the device — so both are
 	// tried against the maps discovery built, and never the description, which is a name.
@@ -310,20 +330,15 @@ func (c *LeaseCoordinator) ingestLease(ctx context.Context, observation dhcpleas
 	generationKey := vocab.GenerationKeyOf(observation.StartsAt, observation.ExpiresAt, identity.DayStart(now))
 
 	identity := leaseIdentity(observation, interfaceID, now)
-	clientID, err := c.Store.UpsertClient(ctx, vocab.Client{
+	client := vocab.Client{
 		Identity:    identity,
 		InterfaceID: interfaceID,
 		MAC:         observation.MAC,
 		Hostname:    observation.Hostname,
 		VendorHint:  observation.VendorHint,
 		LastAddress: &observation.Address,
-	}, now)
-	if err != nil {
-		return err
 	}
-
-	return c.Store.InsertDHCPLease(ctx, providerID, vocab.DHCPLease{
-		ClientID:      &clientID,
+	return client, vocab.DHCPLease{
 		Backend:       backend,
 		Address:       observation.Address,
 		MAC:           observation.MAC,
@@ -338,7 +353,7 @@ func (c *LeaseCoordinator) ingestLease(ctx context.Context, observation dhcpleas
 		GenerationKey: generationKey,
 		ExpiresAt:     observation.ExpiresAt,
 		ObservedAt:    now,
-	})
+	}
 }
 
 // leaseIdentity picks the most stable level of the cascade the observation supports.
@@ -460,13 +475,6 @@ func (c *LeaseCoordinator) ingestNeighbour(ctx context.Context, row decode.Objec
 		LastAddress: &address,
 	}, now)
 	return err
-}
-
-// leaseFailurePasses is how many lease passes in a row one backend has failed.
-func (c *LeaseCoordinator) leaseFailurePasses(providerID int64) int64 {
-	c.Mutex.RLock()
-	defer c.Mutex.RUnlock()
-	return c.LeaseFailures[providerID]
 }
 
 // ProbeDHCPLease probes every implementation of the dhcp_lease kind. The probe round (collect.ProbeAll)

@@ -985,7 +985,7 @@ func TestTheMethodCheckRefusesAnUnknownValue(t *testing.T) {
 		"UPDATE domain_attribution SET method = 'resolver_cache_answer'",
 	} {
 		_, err := scenario.network.DB.DB().Exec(statement)
-		if !sqldb.IsConstraintViolation(err) {
+		if !isConstraintViolation(err) {
 			t.Errorf("%s gave %v, not a constraint failure", statement, err)
 		}
 	}

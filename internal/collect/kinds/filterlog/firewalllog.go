@@ -132,26 +132,8 @@ func (c *FilterLogCoordinator) storeFirewallLog(ctx context.Context, records []f
 			oldestReturned = record.ObservedAt
 		}
 	}
-	for _, record := range plan.keep {
-		seen, err := c.Store.HasFlowDigest(ctx, record.Digest)
-		if err != nil {
-			return err
-		}
-		if seen {
-			// The endpoint echoes back records already seen, and the schema's uniqueness would
-			// reject them anyway. Skipping here keeps the pass from doing work for a row that
-			// cannot land.
-			continue
-		}
-
-		flow := buildFlow(record, snapshot, now)
-		if err := c.Store.InsertFlow(ctx, flow); err != nil {
-			return err
-		}
-		stored.Addresses = append(stored.Addresses, record.SrcAddress, record.DstAddress)
-		stored.Widen(record.ObservedAt, record.ObservedAt)
-		// Its other leg may be stored already, by this pass or an earlier one.
-		stored.WidenPairing(record.ObservedAt, record.ObservedAt)
+	if err := c.storeRecords(ctx, plan.keep, snapshot, now, stored); err != nil {
+		return err
 	}
 
 	// The gap test, clipped by the newest push period: an interval whose records the push path

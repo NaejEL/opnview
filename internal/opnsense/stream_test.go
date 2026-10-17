@@ -215,12 +215,15 @@ func TestOnlyTheProcessorEndpointStreams(t *testing.T) {
 
 // TestTheRegistryAddsExactlyTheResolverCacheCycleEndpoints is AC3's registry half: the
 // three endpoints this cycle adds are registered, GET, and cite their 26.7.3 controller,
-// configd action file, script and ACL page; and getActivity, which carries no processor
+// configd action file, script and ACL page -- the cache dump and the local data in the unbound
+// plugin's manifest, the processor stream in the compiled registry; and getActivity, which carries no processor
 // figure, is removed (AC3 as amended by specs/SPEC-resolver-cache-closing.md).
 func TestTheRegistryAddsExactlyTheResolverCacheCycleEndpoints(t *testing.T) {
 	added := map[string]Endpoint{}
-	for _, endpoint := range Registry() {
-		added[endpoint.Path] = endpoint
+	for _, endpoint := range callable(t) {
+		if _, compiled := added[endpoint.Path]; !compiled {
+			added[endpoint.Path] = endpoint
+		}
 	}
 	for _, want := range []struct {
 		path      string
@@ -251,10 +254,10 @@ func TestTheRegistryAddsExactlyTheResolverCacheCycleEndpoints(t *testing.T) {
 			}
 		}
 	}
-	if got := len(Registry()); got != 35 {
-		t.Errorf("the registry holds %d endpoints; 32 before this cycle, the three it adds and the "+
-			"getActivity entry it removes make 34, and systemInformation, which A19 of the broker "+
-			"amendment adds, 35", got)
+	if got := len(Registry()); got != 9 {
+		t.Errorf("the compiled registry holds %d endpoints; it holds what discovery, the filter log, the "+
+			"neighbour tables, the clock, the versions and the processor stream read, 9, every other "+
+			"endpoint being a plugin's declaration (PA16 B7)", got)
 	}
 }
 

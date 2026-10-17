@@ -109,15 +109,9 @@ const (
 	srcTraffic      = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/TrafficController.php"
 	// srcISCService is the end-of-life ISC DHCP plugin's service controller, in the plugins
 	// repository at the tag matching the core: its status action is ApiMutableServiceControllerBase's.
-	srcISCService = "https://github.com/opnsense/plugins/blob/26.7.3/net/isc-dhcp/src/opnsense/mvc/app/controllers/OPNsense/DHCPv4/Api/ServiceController.php"
-	srcSwapInfo   = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/system/swapinfo.py"
 
 	// The resolver's cache and local data: the controller, the configd actions it runs,
 	// the script those actions run, and the ACL page that admits the paths.
-	srcUnboundDiag    = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/DiagnosticsController.php"
-	srcUnboundActions = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_unbound.conf"
-	srcUnboundWrapper = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/wrapper.py"
-	srcUnboundACL     = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/ACL/ACL.xml"
 	// The processor stream: the controller, the configd action, its script and the ACL
 	// page that admits the path.
 	srcCPUUsage      = "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/CpuUsageController.php"
@@ -181,124 +175,6 @@ var (
 		Note: "limit defaults to 1000; limit=0 is coerced back to 1000. An empty array does not distinguish disabled logging from no matching traffic.",
 	}
 
-	// QueryAlerts is data source 2, the only path that opens
-	// /var/log/suricata/eve.json. It returns a record only if it carries a
-	// top-level `alert` key, and the nested alert object is overwritten with the
-	// signature text before opnview sees it.
-	QueryAlerts = Endpoint{
-		Path: "/api/ids/service/query_alerts", Method: http.MethodPost, Encoding: FormBody,
-		SurveySection: sectionSource2, UpstreamURL: srcIDSService,
-		Note: "Read-only. Paging is offset-from-end-of-file and therefore unstable; the durable cursor is (fileid, filepos).",
-	}
-	// AlertLogs enumerates the rotated eve.json files. A watermark whose file no
-	// longer appears here is a permanent loss.
-	AlertLogs = Endpoint{
-		Path: "/api/ids/service/get_alert_logs", Method: http.MethodGet,
-		SurveySection: sectionSource2, UpstreamURL: srcAlertLogs,
-		Note: "One entry per rotated file with filename, size, modified and sequence.",
-	}
-	// IDSStatus separates Suricata absent from installed-but-stopped from
-	// running. 404, 401 or 403 means absent or not permitted.
-	IDSStatus = Endpoint{
-		Path: "/api/ids/service/status", Method: http.MethodGet,
-		SurveySection: sectionSource2, UpstreamURL: srcIDSService,
-		Note: "status of running / stopped / disabled / unknown.",
-	}
-	// IDSSettings carries the configured state and the covered interfaces.
-	IDSSettings = Endpoint{
-		Path: "/api/ids/settings/get", Method: http.MethodGet,
-		SurveySection: sectionSource2, UpstreamURL: srcIDSSettings,
-		Note: "ids.general.enabled is the configured state, independent of the running state.",
-	}
-
-	// NetflowIsEnabled is data source 3's first degradation probe. Insight data
-	// exists only when `local` is 1: a firewall exporting to an external
-	// collector reports netflow 1, local 0 and has no Insight data at all.
-	NetflowIsEnabled = Endpoint{
-		Path: "/api/diagnostics/netflow/is_enabled", Method: http.MethodGet,
-		SurveySection: sectionSource3, UpstreamURL: srcNetflow,
-		Note: "Returns {netflow: 0|1, local: 0|1}.",
-	}
-	// NetflowStatus is the companion probe. The survey lists the endpoint and
-	// gives no response shape, so nothing is read from its body beyond whether
-	// the call succeeded.
-	NetflowStatus = Endpoint{
-		Path: "/api/diagnostics/netflow/status", Method: http.MethodGet,
-		SurveySection: sectionSource3, UpstreamURL: srcNetflow,
-		Note: "The survey establishes the endpoint and not its response shape.",
-	}
-	// TrafficTop is the measured replacement for the per-pair aggregate the
-	// survey's inferred text expected. /api/diagnostics/netflow/top,
-	// netflow/get_metadata and netflow/aggregate all answered 404 on a live
-	// 26.7.3_11; the per-pair data is here, and it is a LIVE RATE SNAPSHOT
-	// rather than history.
-	//
-	// IT TAKES INTERFACE NAMES. A device name returns an empty array with
-	// HTTP 200, which is indistinguishable from an absence of traffic — hence
-	// the InterfaceNameArgument kind declared here, and the guard that acts on
-	// it, which is GuardInterfaceNames in internal/collect/measurement/insight:
-	// it compares the names about to be sent against the device set discovery
-	// read from the firewall, and refuses rather than sampling.
-	TrafficTop = Endpoint{
-		Path: "/api/diagnostics/traffic/top", Method: http.MethodGet, Argument: InterfaceNameArgument,
-		SurveySection: sectionVerified, UpstreamURL: srcTraffic,
-		Note: "Per interface, a records[] of local addresses with rate_bits_in/out, cumulative_bytes_in/out and a details[] of peers. No port and no protocol.",
-	}
-	// TrafficInterface carries the per-interface packet and byte counters,
-	// errors, link state and line rate.
-	TrafficInterface = Endpoint{
-		Path: "/api/diagnostics/traffic/interface", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: srcTraffic,
-		Note: "Per-interface counters. The survey establishes the endpoint and not its field names.",
-	}
-
-	// KeaLeases is one of the two current lease backends.
-	KeaLeases = Endpoint{
-		Path: "/api/kea/leases4/search", Method: http.MethodPost, Encoding: FormBody,
-		SurveySection: sectionSource4, UpstreamURL: srcKeaLeases,
-		Note: "Read-only grid search against the running Kea daemon through its control agent. If that agent is off the list is empty although DHCP works.",
-	}
-	// KeaStatus probes the Kea service.
-	KeaStatus = Endpoint{
-		Path: "/api/kea/service/status", Method: http.MethodGet,
-		SurveySection: sectionSource4, UpstreamURL: srcKeaService,
-		Note: "status field.",
-	}
-	// KeaDHCPv4 confirms the configured state behind the service status.
-	KeaDHCPv4 = Endpoint{
-		Path: "/api/kea/dhcpv4/get", Method: http.MethodGet,
-		SurveySection: sectionSource4, UpstreamURL: srcKeaDHCPv4,
-		Note: "dhcpv4.general.enabled.",
-	}
-	// DnsmasqLeases is the other current lease backend, and it returns
-	// structured JSON. The survey's inferred text claimed Dnsmasq needed a
-	// free-text parser; that is wrong for leases, measured on a live firewall.
-	DnsmasqLeases = Endpoint{
-		Path: "/api/dnsmasq/leases/search", Method: http.MethodPost, Encoding: FormBody,
-		SurveySection: sectionVerified, UpstreamURL: srcDnsmasqLease,
-		Note: "Rows carry hwaddr, address, hostname, client_id, expire, is_reserved, mac_info and the interface under all three of its names. No parser is needed.",
-	}
-	// DnsmasqStatus probes the Dnsmasq service, which serves both DHCP and DNS.
-	DnsmasqStatus = Endpoint{
-		Path: "/api/dnsmasq/service/status", Method: http.MethodGet,
-		SurveySection: sectionSource4, UpstreamURL: srcDnsmasqSvc,
-		Note: "status field.",
-	}
-	// DnsmasqSettings carries the enable flag, the DHCP ranges and the
-	// query-logging flag. opnview reads them and never writes them.
-	DnsmasqSettings = Endpoint{
-		Path: "/api/dnsmasq/settings/get", Method: http.MethodGet,
-		SurveySection: sectionSource4, UpstreamURL: srcDnsmasqModel,
-		Note: "dnsmasq.enable (not `enabled`), dnsmasq.dhcp_ranges, dnsmasq.log_queries. See also " + docsDnsmasq,
-	}
-	// ISCStatus is the presence probe for the end-of-life ISC plugin. A 404 is
-	// the expected answer on a 26.7 installation and means the plugin is absent,
-	// which is a state and not a fault.
-	ISCStatus = Endpoint{
-		Path: "/api/dhcpv4/service/status", Method: http.MethodGet,
-		SurveySection: sectionSource4, UpstreamURL: srcISCService,
-		Note: "404 means the end-of-life plugin is not installed. /api/dhcpv4/leases/searchLease answered 404 on a live 26.7.3_11, so no lease read is attempted. See also " + docsKea,
-	}
 	// ARPTable is a client-identity source the survey's inferred text did not
 	// name. On a firewall whose DHCP is unreadable it is the only identity there
 	// is.
@@ -314,95 +190,11 @@ var (
 		Note: "The IPv6 neighbour table, same shape as get_arp.",
 	}
 
-	// SearchQueries is data source 5, and the one endpoint whose CALL FORM is
-	// load-bearing: timeStart and timeEnd are kept only if is_int() holds, which
-	// they can be only in a JSON body.
-	//
-	// And the window is not honoured at all. Measured: a 5-minute and a 24-hour
-	// request both returned the same ~410-second span, `total` is 1000 whatever
-	// is asked, and pages walk further back. It is a ring buffer of the last
-	// 1000 lookups. `uuid` is null on every row.
-	SearchQueries = Endpoint{
-		Path: "/api/unbound/overview/search_queries", Method: http.MethodPost, Encoding: JSONBody,
-		SurveySection: sectionVerified, UpstreamURL: srcUnboundOver,
-		Note: "Read-only. JSON body with integer timeStart/timeEnd is the correct form and is confirmed; the window is nevertheless ignored, so what comes back is never coverage of the window asked for.",
-	}
-	// UnboundIsEnabled says whether query reporting is on, which is what
-	// separates "reporting is switched off" from "the resolver is down".
-	UnboundIsEnabled = Endpoint{
-		Path: "/api/unbound/overview/is_enabled", Method: http.MethodGet,
-		SurveySection: sectionSource5, UpstreamURL: srcUnboundOver,
-		Note: "enabled field.",
-	}
-	// UnboundStatus probes the Unbound service.
-	UnboundStatus = Endpoint{
-		Path: "/api/unbound/service/status", Method: http.MethodGet,
-		SurveySection: sectionSource5, UpstreamURL: srcUnboundSvc,
-		Note: "status field.",
-	}
-	// UnboundSettings confirms the configured state behind the service status.
-	UnboundSettings = Endpoint{
-		Path: "/api/unbound/settings/get", Method: http.MethodGet,
-		SurveySection: sectionSource5, UpstreamURL: srcUnboundModel,
-		Note: "unbound.general.enabled.",
-	}
-
-	// SystemResources, SystemTemperature, SystemTime and SystemDisk are the
-	// telemetry the data model recorded as gaps G9 and G10. The survey establishes
-	// that all four answer on a live firewall and does NOT establish their field
-	// names, which is why internal/collect extracts from them tolerantly and marks
-	// the key names UNVERIFIED.
-	//
-	// /api/diagnostics/activity/getActivity, registered beside them until the
-	// resolver-cache cycle, is no longer registered: none of its fields carries a
-	// processor figure as a number (survey, items A1-A6 of the resolver-cache cycle),
-	// the processor figure comes from CPUUsageStream, and nothing else was read from it.
-	SystemResources = Endpoint{
-		Path: "/api/diagnostics/system/systemResources", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: srcSystem,
-		Note: "Memory figures. Field names not established by the survey.",
-	}
-	// SystemTemperature carries the per-sensor temperatures.
-	SystemTemperature = Endpoint{
-		Path: "/api/diagnostics/system/systemTemperature", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: srcSystem,
-		Note: "Per-sensor temperatures. Absent on hardware with no sensor, which is a state and not a zero.",
-	}
 	// SystemTime carries the uptime and the load averages.
 	SystemTime = Endpoint{
 		Path: "/api/diagnostics/system/systemTime", Method: http.MethodGet,
 		SurveySection: sectionVerified, UpstreamURL: srcSystem,
 		Note: "Uptime and load average. Field names not established by the survey.",
-	}
-	// SystemDisk carries the filesystem usage.
-	SystemDisk = Endpoint{
-		Path: "/api/diagnostics/system/systemDisk", Method: http.MethodGet,
-		SurveySection: sectionVerified, UpstreamURL: srcSystem,
-		Note: "Filesystem usage. Field names not established by the survey.",
-	}
-
-	// GatewayStatus is the first of the two firewall endpoints step 5 adds: each gateway's
-	// round-trip time and packet loss, as dpinger measures them. Read from the
-	// 26.7.3 source and not yet probed against a live firewall.
-	GatewayStatus = Endpoint{
-		Path: "/api/routes/gateway/status", Method: http.MethodGet,
-		SurveySection: sectionGateway, UpstreamURL: srcGateways,
-		Note: "Returns {items: [...], status: ok | failed}; each item carries name, address, status, " +
-			"loss (\"0.0 %\"), delay and stddev (\"1.2 ms\") and monitor, or \"~\" where dpinger has no " +
-			"figure. Listed in " + docsRoutes,
-	}
-
-	// SystemSwap is the second firewall endpoint step 5 adds, by the amendment of
-	// 4 October 2026: each swap device's size and use. systemSwapAction returns the
-	// configd action `system show swapinfo` unchanged, which runs swapinfo.py over
-	// `swapinfo -k`. Read from the 26.7.3 source and not yet probed against a live
-	// firewall.
-	SystemSwap = Endpoint{
-		Path: "/api/diagnostics/system/systemSwap", Method: http.MethodGet,
-		SurveySection: sectionSwap, UpstreamURL: srcSystem,
-		Note: "Returns {swap: [{device, total, used}]}, total and used as strings in KiB, one " +
-			"entry per /dev/ line of swapinfo -k and no Total line; {swap: []} with no swap " +
-			"device. Script: " + srcSwapInfo + ". Listed in " + docsDiagnostics,
 	}
 
 	// SystemInformation carries the firewall's OPNsense version, read at every discovery pass so
@@ -413,41 +205,6 @@ var (
 		Note: "The first versions entry is '<product name> <version>-<arch>'.",
 	}
 
-	// UnboundDumpCache is the resolver's cache: every record Unbound holds and has not
-	// expired. dumpcacheAction (GET, no write) runs the configd action `unbound dumpcache`,
-	// which is wrapper.py -c over `unbound-control dump_cache`: one {host, ttl, type,
-	// rrtype, value} per line holding the class IN, `ttl` the seconds REMAINING as a
-	// string of digits, `type` the CLASS and never the record type, which is `rrtype`
-	// (wrapper.py, lines 65-68). A row whose `ttl` is null is NOT a record: it is a line of
-	// the dump's message-cache section, which Unbound's dump_msg_ref (daemon/cachedump.c)
-	// prints as `name class type flags`, with no TTL and no record data. The regular
-	// expression matches it with its optional TTL group absent, re.split yields None, and
-	// json.dumps writes null; `value` is then the flags, typically "0". The answer is
-	// {status: "ok", data: [...]}, or {status: "failed"} with no data when the script
-	// printed nothing -- which it does when Unbound is not running. Admitted by the ACL
-	// page "Services: Unbound" (page-services-unbound, pattern api/unbound/*).
-	UnboundDumpCache = Endpoint{
-		Path: "/api/unbound/diagnostics/dumpcache", Method: http.MethodGet,
-		SurveySection: sectionCache, UpstreamURL: srcUnboundDiag,
-		Note: "{status, data: [{host, ttl, type, rrtype, value}]}; ttl is the remaining seconds as a " +
-			"string, or null on a message-cache reference line (dump_msg_ref, daemon/cachedump.c), " +
-			"which is not a record; type is the class. configd: " + srcUnboundActions + " [dumpcache]; script: " +
-			srcUnboundWrapper + "; ACL: " + srcUnboundACL,
-	}
-	// UnboundListLocalData is the resolver's local data: host overrides and every other
-	// `local-data:` record Unbound serves. listlocaldataAction (GET, no write) runs the
-	// configd action `unbound listlocaldata`, which is wrapper.py -d over `unbound-control
-	// list_local_data`: one {name, ttl, type, rrtype, value} per line of five or more
-	// whitespace-separated fields, `value` the first field of the record data only. The
-	// owner name is `name` here and `host` in the cache dump. Same envelope and ACL page as
-	// the cache dump.
-	UnboundListLocalData = Endpoint{
-		Path: "/api/unbound/diagnostics/listlocaldata", Method: http.MethodGet,
-		SurveySection: sectionCache, UpstreamURL: srcUnboundDiag,
-		Note: "{status, data: [{name, ttl, type, rrtype, value}]}; ttl is the configured TTL, type is " +
-			"the class. configd: " + srcUnboundActions + " [listlocaldata]; script: " +
-			srcUnboundWrapper + "; ACL: " + srcUnboundACL,
-	}
 	// CPUUsageStream is the processor figure, as a server-sent event stream that never
 	// ends. streamAction (GET, no write) streams the configd action `system cpu stream`
 	// with an interval of 1, which is scripts/system/cpu.py running `iostat -w 1 cpu` and
@@ -470,18 +227,8 @@ var (
 // reach the transport.
 func Registry() []Endpoint {
 	return []Endpoint{
-		InterfacesInfo, InterfaceNames, SearchRule,
-		FirewallLog,
-		QueryAlerts, AlertLogs, IDSStatus, IDSSettings,
-		NetflowIsEnabled, NetflowStatus, TrafficTop, TrafficInterface,
-		KeaLeases, KeaStatus, KeaDHCPv4,
-		DnsmasqLeases, DnsmasqStatus, DnsmasqSettings,
-		ISCStatus, ARPTable, NDPTable,
-		SearchQueries, UnboundIsEnabled, UnboundStatus, UnboundSettings,
-		SystemResources, SystemTemperature, SystemTime, SystemDisk,
-		GatewayStatus, SystemSwap,
-		UnboundDumpCache, UnboundListLocalData, CPUUsageStream,
-		SystemInformation,
+		InterfacesInfo, InterfaceNames, SearchRule, FirewallLog, ARPTable, NDPTable, SystemTime,
+		SystemInformation, CPUUsageStream,
 	}
 }
 

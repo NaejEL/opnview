@@ -99,11 +99,11 @@ func (r *Request) Install() (*installation, error) {
 		clients: map[int64]*ClientInfo{}, geo: map[string]*GeoInfo{}, rules: map[int64]*RuleInfo{}}
 	err := r.Db.WidgetRows(r.Ctx, "widget_interfaces", vocab.Period{}, nil, func(row reads.RowScanner) error {
 		var (
-			info              InterfaceInfo
-			label             reads.NullString
-			vlan              reads.NullInt64
-			labeled           int64
-			upstream          bool
+			info     InterfaceInfo
+			label    reads.NullString
+			vlan     reads.NullInt64
+			labeled  int64
+			upstream bool
 		)
 		if err := row.Scan(&info.ID, &info.Identifier, &info.Device, &info.Description, &label,
 			&info.LinkKind, &vlan, &upstream, &info.Label, &labeled); err != nil {

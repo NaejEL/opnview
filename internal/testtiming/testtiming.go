@@ -89,3 +89,17 @@ var (
 	packageOnce sync.Once
 	packagePath string
 )
+
+// Recorder hands Record, RecordFor and Package to a package that must not link this one: the store
+// records the steps of its opens and of its test databases through it (internal/store, timing.go),
+// set by the test binaries (internal/store/storetest).
+type Recorder struct{}
+
+// Record is Record.
+func (Recorder) Record(step string, took time.Duration) { Record(step, took) }
+
+// RecordFor is RecordFor.
+func (Recorder) RecordFor(pkg, step string, took time.Duration) { RecordFor(pkg, step, took) }
+
+// Package is Package.
+func (Recorder) Package() string { return Package() }

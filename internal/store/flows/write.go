@@ -3,6 +3,7 @@ package flows
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -413,30 +414,94 @@ func (s *FlowStore) UpsertClient(ctx context.Context, client vocab.Client, now i
 // upsertClient is UpsertClient on a querier, so classification can mint a
 // client inside its own transaction.
 func upsertClient(ctx context.Context, q sqldb.Querier, client vocab.Client, now int64) (int64, error) {
-	_, err := q.ExecContext(ctx,
+	ids, err := upsertClients(ctx, q, []vocab.Client{client}, now)
+	if err != nil {
+		return 0, err
+	}
+	return ids[0], nil
+}
+
+// UpsertClients is UpsertClient over every client of a pass, in ONE statement whatever their number
+// (PA17 of specs/SPEC-backend-completion-plugins.md). It returns each client's id, in the order given.
+// Two clients of one identity are written as the second of two UpsertClient calls would leave the
+// row: each field the later one reports replaces the earlier one's.
+func (s *FlowStore) UpsertClients(ctx context.Context, clients []vocab.Client, now int64) ([]int64, error) {
+	return upsertClients(ctx, s.SQL, clients, now)
+}
+
+func upsertClients(ctx context.Context, q sqldb.Querier, clients []vocab.Client, now int64) ([]int64, error) {
+	if len(clients) == 0 {
+		return nil, nil
+	}
+	type identity struct{ kind, key string }
+	merged := map[identity]int{}
+	var rows []map[string]any
+	for _, client := range clients {
+		key := identity{string(client.Identity.Kind), client.Identity.Key}
+		index, seen := merged[key]
+		if !seen {
+			index = len(rows)
+			merged[key] = index
+			rows = append(rows, map[string]any{"identity_kind": key.kind, "identity_key": key.key, "ordinal": index})
+		}
+		row := rows[index]
+		for name, value := range map[string]*string{"mac": client.MAC, "hostname": client.Hostname,
+			"vendor_hint": client.VendorHint, "last_address": client.LastAddress} {
+			if value != nil {
+				row[name] = *value
+			}
+		}
+		if client.InterfaceID != nil {
+			row["interface_id"] = *client.InterfaceID
+		}
+	}
+	encoded, err := json.Marshal(rows)
+	if err != nil {
+		return nil, fmt.Errorf("store: encoding clients: %w", err)
+	}
+	result, err := q.QueryContext(ctx,
 		`INSERT INTO client (identity_kind, identity_key, interface_id, mac, hostname,
 		                     vendor_hint, last_address, first_seen_at, last_seen_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 SELECT r.identity_kind, r.identity_key, r.interface_id, r.mac, r.hostname, r.vendor_hint,
+		        r.last_address, $2, $2
+		 FROM jsonb_to_recordset(CAST($1 AS jsonb)) AS r (identity_kind TEXT,
+		      identity_key TEXT, interface_id BIGINT, mac TEXT, hostname TEXT, vendor_hint TEXT,
+		      last_address TEXT, ordinal BIGINT)
+		 ORDER BY r.ordinal
 		 ON CONFLICT (identity_kind, identity_key) DO UPDATE SET
 		     interface_id = coalesce(excluded.interface_id, client.interface_id),
 		     mac          = coalesce(excluded.mac, client.mac),
 		     hostname     = coalesce(excluded.hostname, client.hostname),
 		     vendor_hint  = coalesce(excluded.vendor_hint, client.vendor_hint),
 		     last_address = coalesce(excluded.last_address, client.last_address),
-		     last_seen_at = excluded.last_seen_at`,
-		client.Identity.Kind, client.Identity.Key, client.InterfaceID, client.MAC,
-		client.Hostname, client.VendorHint, client.LastAddress, now, now)
+		     last_seen_at = excluded.last_seen_at
+		 RETURNING id, identity_kind, identity_key`, string(encoded), now)
 	if err != nil {
-		return 0, fmt.Errorf("store: writing client %s/%s: %w", client.Identity.Kind, client.Identity.Key, err)
+		return nil, fmt.Errorf("store: writing %d clients: %w", len(rows), err)
 	}
-	var id int64
-	if err := q.QueryRowContext(ctx,
-		"SELECT id FROM client WHERE identity_kind = $1 AND identity_key = $2",
-		client.Identity.Kind, client.Identity.Key).Scan(&id); err != nil {
-		return 0, fmt.Errorf("store: reading back client %s/%s: %w",
-			client.Identity.Kind, client.Identity.Key, err)
+	defer func() { _ = result.Close() }()
+	idOf := map[identity]int64{}
+	for result.Next() {
+		var id int64
+		var key identity
+		if err := result.Scan(&id, &key.kind, &key.key); err != nil {
+			return nil, fmt.Errorf("store: reading back the clients: %w", err)
+		}
+		idOf[key] = id
 	}
-	return id, nil
+	if err := result.Err(); err != nil {
+		return nil, fmt.Errorf("store: reading back the clients: %w", err)
+	}
+	ids := make([]int64, len(clients))
+	for index, client := range clients {
+		id, found := idOf[identity{string(client.Identity.Kind), client.Identity.Key}]
+		if !found {
+			return nil, fmt.Errorf("store: the client %s/%s was not written", client.Identity.Kind,
+				client.Identity.Key)
+		}
+		ids[index] = id
+	}
+	return ids, nil
 }
 
 // ClientRefByAddressSince returns the machine most recently seen at an address,
@@ -482,17 +547,43 @@ func (s *FlowStore) ClientRefByAddressSince(ctx context.Context, address string,
 // struct so that a caller cannot leave it out of a sixteen-field literal and
 // discover it from a foreign-key violation.
 func (s *FlowStore) InsertDHCPLease(ctx context.Context, providerID int64, lease vocab.DHCPLease) error {
-	_, err := s.SQL.ExecContext(ctx,
+	return s.InsertDHCPLeases(ctx, providerID, []vocab.DHCPLease{lease})
+}
+
+// InsertDHCPLeases is InsertDHCPLease over every lease of a pass, in ONE statement whatever their
+// number (PA17 of specs/SPEC-backend-completion-plugins.md).
+func (s *FlowStore) InsertDHCPLeases(ctx context.Context, providerID int64, leases []vocab.DHCPLease) error {
+	if len(leases) == 0 {
+		return nil
+	}
+	rows := make([]map[string]any, len(leases))
+	for index, lease := range leases {
+		rows[index] = map[string]any{"client_id": lease.ClientID, "backend": lease.Backend,
+			"address": lease.Address, "mac": lease.MAC, "hostname": lease.Hostname,
+			"dhcp_client_id": lease.DHCPClientID, "duid": lease.DUID, "iaid": lease.IAID,
+			"vendor_hint": lease.VendorHint, "lease_state": lease.LeaseState, "interface_id": lease.InterfaceID,
+			"starts_at": lease.StartsAt, "generation_key": lease.GenerationKey, "expires_at": lease.ExpiresAt,
+			"observed_at": lease.ObservedAt, "ordinal": index}
+	}
+	encoded, err := json.Marshal(rows)
+	if err != nil {
+		return fmt.Errorf("store: encoding leases: %w", err)
+	}
+	_, err = s.SQL.ExecContext(ctx,
 		`INSERT INTO dhcp_lease (provider_id, client_id, backend, address, mac, hostname,
 		                         dhcp_client_id, duid, iaid, vendor_hint, lease_state,
 		                         interface_id, starts_at, generation_key, expires_at, observed_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-		 ON CONFLICT (address, generation_key, provider_id) DO NOTHING`,
-		providerID, lease.ClientID, lease.Backend, lease.Address, lease.MAC, lease.Hostname,
-		lease.DHCPClientID, lease.DUID, lease.IAID, lease.VendorHint, lease.LeaseState,
-		lease.InterfaceID, lease.StartsAt, lease.GenerationKey, lease.ExpiresAt, lease.ObservedAt)
+		 SELECT CAST($1 AS BIGINT), r.client_id, r.backend, r.address, r.mac, r.hostname, r.dhcp_client_id,
+		        r.duid, r.iaid, r.vendor_hint, r.lease_state, r.interface_id, r.starts_at, r.generation_key,
+		        r.expires_at, r.observed_at
+		 FROM jsonb_to_recordset(CAST($2 AS jsonb)) AS r (client_id BIGINT, backend TEXT,
+		      address TEXT, mac TEXT, hostname TEXT, dhcp_client_id TEXT, duid TEXT, iaid TEXT,
+		      vendor_hint TEXT, lease_state TEXT, interface_id BIGINT, starts_at BIGINT, generation_key TEXT,
+		      expires_at BIGINT, observed_at BIGINT, ordinal BIGINT)
+		 ORDER BY r.ordinal
+		 ON CONFLICT (address, generation_key, provider_id) DO NOTHING`, providerID, string(encoded))
 	if err != nil {
-		return fmt.Errorf("store: writing a lease: %w", err)
+		return fmt.Errorf("store: writing %d leases: %w", len(leases), err)
 	}
 	return nil
 }

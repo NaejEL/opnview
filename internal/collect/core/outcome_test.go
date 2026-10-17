@@ -24,8 +24,8 @@ func TestAStoreFailureInTheRecordPassIsRecorded(t *testing.T) {
 		kind     string
 		collect  func(*collect.Collector, context.Context) error
 	}{
-		{opnsense.UnboundDumpCache, core.KindResolverCache, (*collect.Collector).CollectResolverCache},
-		{opnsense.UnboundListLocalData, core.KindResolverLocalData, (*collect.Collector).CollectResolverLocalData},
+		{collecttest.UnboundDumpCache, core.KindResolverCache, (*collect.Collector).CollectResolverCache},
+		{collecttest.UnboundListLocalData, core.KindResolverLocalData, (*collect.Collector).CollectResolverLocalData},
 	} {
 		harness := collecttest.ArrangeRecordCollection(t)
 		ctx := context.Background()

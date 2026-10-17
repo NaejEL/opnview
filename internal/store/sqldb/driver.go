@@ -2,6 +2,7 @@ package sqldb
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -15,9 +16,10 @@ import (
 // its Go reader takes (an integral sum is cast to bigint), and the plugin host converts an integral
 // numeric of a plugin's or widget's statement (internal/store/reads, widgetrows.go).
 //
-// PARAMETERS ARE SENT AS TEXT AND TYPED BY THE SERVER (pgx's exec mode): PostgreSQL types each from
-// the place it stands in, as it types a literal, and a statement casts the one whose place does not
-// type it. Each execution is one round trip and prepares nothing on the connection.
+// PARAMETERS ARE TYPED BY THE SERVER: each statement text is prepared once per connection (pgx's
+// statement cache), PostgreSQL types each parameter from the place it stands in, and the value is
+// encoded as that type; a statement casts a parameter whose place does not type it. Preparing once
+// is what keeps the database's planning off every execution.
 
 // OpenPool opens a database/sql pool over the connection string.
 func OpenPool(dsn string) (*sql.DB, error) {
@@ -30,13 +32,19 @@ func OpenPool(dsn string) (*sql.DB, error) {
 
 // openPoolWithConfig opens a database/sql pool over a parsed connection.
 func openPoolWithConfig(config *pgx.ConnConfig) (*sql.DB, error) {
-	config.DefaultQueryExecMode = pgx.QueryExecModeExec
+	return sql.OpenDB(connectorFor(config)), nil
+}
+
+// connectorFor is the connector over a parsed connection: the statement cache, the search path and
+// the application name.
+func connectorFor(config *pgx.ConnConfig) driver.Connector {
+	config.DefaultQueryExecMode = pgx.QueryExecModeCacheStatement
 	if config.RuntimeParams == nil {
 		config.RuntimeParams = map[string]string{}
 	}
 	config.RuntimeParams["search_path"] = searchPath
 	config.RuntimeParams["application_name"] = "opnview"
-	return sql.OpenDB(stdlib.GetConnector(*config)), nil
+	return stdlib.GetConnector(*config)
 }
 
 // CoreSchema is the PostgreSQL schema the core's objects live in. No plugin schema can take

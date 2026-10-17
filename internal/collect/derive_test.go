@@ -271,7 +271,7 @@ func TestOnePairReadOnTwoInterfacesAtOneInstantIsTwoReadings(t *testing.T) {
 			"details": []any{map[string]any{"address": "203.0.113.9", "rate_bits": 100, "cumulative_bytes": 25}},
 		}}}
 	}
-	harness.Fake.AnswerJSON(opnsense.TrafficTop, map[string]any{"example_if_a": pair(), "example_if_b": pair()})
+	harness.Fake.AnswerJSON(collecttest.TrafficTop, map[string]any{"example_if_a": pair(), "example_if_b": pair()})
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestTelemetryIsSampledFromVerifiedFieldsAndAMissingFieldIsNoSample(t *testi
 		}
 	}
 	// Swap comes from systemSwap and from nothing else: systemResources carries no swap figure.
-	if registered := opnsense.SystemSwap.Path; registered != "/api/diagnostics/system/systemSwap" {
+	if registered := collecttest.SystemSwap.Path; registered != "/api/diagnostics/system/systemSwap" {
 		t.Errorf("the swap endpoint is registered at %s", registered)
 	}
 	for _, text := range []string{"1.2 ms", "0.0 ms"} {
@@ -372,7 +372,7 @@ func TestTelemetryIsSampledFromVerifiedFieldsAndAMissingFieldIsNoSample(t *testi
 func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.Fake.Answer(opnsense.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
+	harness.Fake.Answer(collecttest.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 		t.Errorf("%d gateway readings were stored from an endpoint that did not answer", rows)
 	}
 
-	harness.Fake.AnswerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "failed"})
+	harness.Fake.AnswerJSON(collecttest.GatewayStatus, map[string]any{"items": []any{}, "status": "failed"})
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
@@ -393,7 +393,7 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 		"gateway latency and loss (the endpoint answered \"status\": \"failed\"") {
 		t.Errorf("an answer reporting a failure left the detail %q", detail)
 	}
-	if registered := opnsense.GatewayStatus.Path; registered != "/api/routes/gateway/status" {
+	if registered := collecttest.GatewayStatus.Path; registered != "/api/routes/gateway/status" {
 		t.Errorf("the gateway endpoint is registered at %s", registered)
 	}
 }
@@ -403,7 +403,7 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.Fake.Answer(opnsense.SystemSwap, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
+	harness.Fake.Answer(collecttest.SystemSwap, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
@@ -418,7 +418,7 @@ func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 
 	// A firewall with no swap device is a fact about the machine, recorded, never a zero.
 	harness.Clock.Advance(time.Minute)
-	harness.Fake.AnswerJSON(opnsense.SystemSwap, map[string]any{"swap": []any{}})
+	harness.Fake.AnswerJSON(collecttest.SystemSwap, map[string]any{"swap": []any{}})
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}

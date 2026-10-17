@@ -484,17 +484,17 @@ func arrangeEveryStoringSource(t *testing.T) *collecttest.ProbeHarness {
 	harness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	for endpoint, fixture := range map[opnsense.Endpoint]string{
-		opnsense.FirewallLog:      "firewall_log.json",
-		opnsense.KeaStatus:        "kea_status_disabled.json",
-		opnsense.DnsmasqStatus:    "dnsmasq_status_running.json",
-		opnsense.DnsmasqSettings:  "dnsmasq_settings.json",
-		opnsense.DnsmasqLeases:    "dnsmasq_leases.json",
-		opnsense.ARPTable:         "get_arp.json",
-		opnsense.NDPTable:         "get_ndp.json",
-		opnsense.UnboundStatus:    "unbound_status_running.json",
-		opnsense.UnboundSettings:  "unbound_settings.json",
-		opnsense.UnboundIsEnabled: "unbound_is_enabled_on.json",
-		opnsense.SearchQueries:    "search_queries_page1.json",
+		opnsense.FirewallLog:         "firewall_log.json",
+		collecttest.KeaStatus:        "kea_status_disabled.json",
+		collecttest.DnsmasqStatus:    "dnsmasq_status_running.json",
+		collecttest.DnsmasqSettings:  "dnsmasq_settings.json",
+		collecttest.DnsmasqLeases:    "dnsmasq_leases.json",
+		opnsense.ARPTable:            "get_arp.json",
+		opnsense.NDPTable:            "get_ndp.json",
+		collecttest.UnboundStatus:    "unbound_status_running.json",
+		collecttest.UnboundSettings:  "unbound_settings.json",
+		collecttest.UnboundIsEnabled: "unbound_is_enabled_on.json",
+		collecttest.SearchQueries:    "search_queries_page1.json",
 	} {
 		harness.Fake.AnswerFixture(endpoint, fixture)
 	}
@@ -573,7 +573,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 	}
 	// The resolver's page starts empty; each resolver pass replaces it.
 	emptyLookups := map[string]any{"total": 0, "rowCount": 0, "current": 1, "rows": []any{}}
-	harness.Fake.AnswerJSON(opnsense.SearchQueries, emptyLookups)
+	harness.Fake.AnswerJSON(collecttest.SearchQueries, emptyLookups)
 
 	const iterations = 36
 	var (
@@ -658,7 +658,7 @@ func TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce(t *te
 		}
 		offeredMutex.Unlock()
 		// The lookups are generated, one just before every outbound record, newest first.
-		harness.Fake.AnswerJSON(opnsense.SearchQueries, map[string]any{
+		harness.Fake.AnswerJSON(collecttest.SearchQueries, map[string]any{
 			"total": len(rows), "rowCount": len(rows), "current": 1, "rows": rows})
 		return harness.Collector.CollectDNSLookup(ctx)
 	})

@@ -17,9 +17,8 @@ import (
 //
 // EVERY VALUE IS BOUND, AS TEXT OR A NUMBER, AND CAST IN THE STATEMENT. A boolean, an address, a
 // MAC address and an instant each travel as text and are cast by PostgreSQL to the column's own
-// type (CAST(? AS inet), ...), so a value that is not one is refused by the database rather than
-// coerced, and the driver's rule that a value is bound as the type its Go value has
-// (internal/store/sqldb/driver.go) holds for every column.
+// type (CAST($n AS inet), ...), so a value that is not one is refused by the database rather than
+// coerced; a number is typed by the column it is written into.
 
 // maxBoundParameters bounds the parameters of one statement, below PostgreSQL's 65535.
 const maxBoundParameters = 60000
@@ -36,17 +35,30 @@ func (s *PluginTableStore) InsertPluginRows(ctx context.Context, table plugindec
 		return 0, fmt.Errorf("store: %s is not a plugin table ensured on this store", table.SQLName())
 	}
 	table = held
-	rows = plugindecl.LastPerKey(table, rows)
-	perStatement := max(1, maxBoundParameters/len(table.Columns))
 	transaction, err := s.SQL.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, fmt.Errorf("store: writing into %s: %w", table.SQLName(), err)
 	}
 	defer func() { _ = transaction.Rollback() }()
+	statements, err := writeRows(ctx, transaction, table, rows)
+	if err != nil {
+		return 0, err
+	}
+	if err := transaction.Commit(); err != nil {
+		return 0, fmt.Errorf("store: writing into %s: %w", table.SQLName(), err)
+	}
+	return statements, nil
+}
+
+// writeRows writes rows into one plugin table inside a transaction, as multi-row INSERTs of at most
+// maxBoundParameters parameters each, and returns how many statements it ran. Of rows sharing a
+// primary key the last is kept, as a sequence of single writes would keep it.
+func writeRows(ctx context.Context, transaction *sql.Tx, table plugindecl.PluginTable, rows []map[string]any) (int, error) {
+	rows = plugindecl.LastPerKey(table, rows)
+	perStatement := max(1, maxBoundParameters/len(table.Columns))
 	statements := 0
 	for start := 0; start < len(rows); start += perStatement {
-		chunk := rows[start:min(len(rows), start+perStatement)]
-		statement, arguments, err := table.MultiRowInsert(chunk)
+		statement, arguments, err := table.MultiRowInsert(rows[start:min(len(rows), start+perStatement)])
 		if err != nil {
 			return 0, err
 		}
@@ -54,9 +66,6 @@ func (s *PluginTableStore) InsertPluginRows(ctx context.Context, table plugindec
 			return 0, fmt.Errorf("store: writing into %s: %w", table.SQLName(), err)
 		}
 		statements++
-	}
-	if err := transaction.Commit(); err != nil {
-		return 0, fmt.Errorf("store: writing into %s: %w", table.SQLName(), err)
 	}
 	return statements, nil
 }
@@ -397,19 +406,11 @@ func (s *PluginTableStore) WritePluginPass(ctx context.Context, plugin, provider
 		if !found {
 			return fmt.Errorf("store: the plugin %s wrote into %q, which it does not own", plugin, name)
 		}
-		statement := table.UpsertStatement()
-		for _, row := range rows[name] {
-			arguments := make([]any, 0, len(table.Columns))
-			for _, column := range table.Columns {
-				argument, err := plugindecl.PluginArgument(column, row[column.Name])
-				if err != nil {
-					return fmt.Errorf("store: a row of %s: %w", table.SQLName(), err)
-				}
-				arguments = append(arguments, argument)
-			}
-			if _, err := transaction.ExecContext(ctx, statement, arguments...); err != nil {
-				return fmt.Errorf("store: writing a row of %s: %w", table.SQLName(), err)
-			}
+		if len(rows[name]) == 0 {
+			continue
+		}
+		if _, err := writeRows(ctx, transaction, table, rows[name]); err != nil {
+			return err
 		}
 	}
 	keys := make([]string, 0, len(state))

@@ -98,34 +98,6 @@ func TestMutatingCommandRecognisesEveryForbiddenCommand(t *testing.T) {
 	}
 }
 
-// TestOnlyTrafficTopTakesInterfaceNames pins the one endpoint whose argument kind
-// matters, so the guard in internal/collect cannot be pointed at the wrong path.
-func TestOnlyTrafficTopTakesInterfaceNames(t *testing.T) {
-	for _, endpoint := range Registry() {
-		wantsNames := endpoint.Argument == InterfaceNameArgument
-		isTrafficTop := endpoint.Path == TrafficTop.Path
-		if wantsNames != isTrafficTop {
-			t.Errorf("%s declares argument kind %v, which disagrees with it being traffic/top (%v)",
-				endpoint.Path, endpoint.Argument, isTrafficTop)
-		}
-	}
-}
-
-// TestOnlySearchQueriesUsesAJSONBody pins the one endpoint whose call form is
-// load-bearing. Every other POST is a grid search, for which a form body is
-// correct; this one silently degrades to the unwindowed branch unless the bounds
-// arrive as JSON integers.
-func TestOnlySearchQueriesUsesAJSONBody(t *testing.T) {
-	for _, endpoint := range Registry() {
-		usesJSON := endpoint.Encoding == JSONBody
-		isSearchQueries := endpoint.Path == SearchQueries.Path
-		if usesJSON != isSearchQueries {
-			t.Errorf("%s declares encoding %v, which disagrees with it being search_queries (%v)",
-				endpoint.Path, endpoint.Encoding, isSearchQueries)
-		}
-	}
-}
-
 // TestRegistryHasNoDuplicatePath keeps two entries from disagreeing about one path.
 func TestRegistryHasNoDuplicatePath(t *testing.T) {
 	seen := map[string]bool{}

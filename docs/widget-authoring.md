@@ -101,7 +101,7 @@ The ten kinds, and what a declarative query receives for each:
 | Kind | JSON value | Bound to `:key` as |
 |---|---|---|
 | `enum` | a string from `values` | the text |
-| `enum_set` | an array of strings from `values`, no duplicates | JSON array text, for `json_each(:key)` (`[]` when none selected) |
+| `enum_set` | an array of strings from `values`, no duplicates | JSON array text, for `jsonb_array_elements_text(CAST(:key AS jsonb))` (`[]` when none selected) |
 | `boolean` | `true`/`false` | `1`/`0` |
 | `integer` | a whole number | the integer |
 | `number` | a number | the real |
@@ -124,19 +124,21 @@ A declarative widget runs **one read-only `SELECT`** on the store's read connect
   The check reads tokens, so a semicolon inside a string, a quoted identifier or a comment is not a
   second statement, and one terminating semicolon is fine.
 * **Read-only.** The text must be a `SELECT` or `WITH ... SELECT` (`query_not_read_only` otherwise:
-  `INSERT`, `UPDATE`, `DELETE`, `REPLACE`, DDL, `PRAGMA`, `ATTACH`, `VACUUM`, `EXPLAIN`). SQLite then
-  plans it at load, and a plan that opens a persistent table for writing is refused too — which is
+  `INSERT`, `UPDATE`, `DELETE`, `MERGE`, DDL, `VACUUM`, `EXPLAIN` and the other writing keywords). PostgreSQL then
+  plans it at load, in a read-only transaction, and a statement that writes is refused too — which is
   how `WITH x AS (...) DELETE ...`, a statement that starts like a read, is recognised. Beyond the
-  check, the connections themselves are opened `query_only`: SQLite refuses a write whatever the text
-  says, and a test proves it.
+  check, the read connections run as a role that can write nothing: PostgreSQL refuses a write whatever
+  the text says, and a test proves it.
 * **It plans.** The text is prepared and planned on the read connections at load
-  (`query_does_not_plan` if SQLite cannot).
+  (`query_does_not_plan` if PostgreSQL cannot). It is translated to PostgreSQL's own numbering then,
+  once; a parameter whose place does not type it -- `:x IS NULL`, `:a - :b` -- is cast in the text.
 * **Named parameters only.** The query may use `:now`; `:from` and `:to` when the widget is windowed
   (the window `[from, to)` in UTC epoch seconds); and `:key` for each parameter the manifest declares
   (except `series` and `object`). Any other `:name`, and any `?`, `@name` or `$name`, is refused
   (`unknown_query_parameter`). A parameter the query does not use is simply not bound.
-* **Sets arrive as JSON text.** Use `json_each`:
-  `(:interfaces IS NULL OR f.src_interface_id IN (SELECT value FROM json_each(:interfaces)))`.
+* **Sets arrive as JSON text.** Read them with `jsonb_array_elements_text`:
+  `(CAST(:interfaces AS jsonb) IS NULL OR f.src_interface_id IN (SELECT CAST(j.value AS BIGINT) FROM
+  jsonb_array_elements_text(CAST(:interfaces AS jsonb)) AS j(value)))`.
   `NULL` means "no restriction".
 * **Do not `LIMIT` the rows the shape truncates.** Declare a `limit` integer parameter instead: the
   engine applies it and reports what it dropped as an explicit remainder, so the parts and the
@@ -309,8 +311,8 @@ log; the reason is specific to the rule, and the other widgets still load.
 | `query_unreadable` | the query file cannot be read |
 | `too_many_queries` | more than one query declared |
 | `query_multiple_statements` | the query holds more than one statement |
-| `query_not_read_only` | the query is not a `SELECT`, or SQLite plans it as a write |
-| `query_does_not_plan` | SQLite cannot prepare the query |
+| `query_not_read_only` | the query is not a `SELECT`, or it names a keyword only a write uses |
+| `query_does_not_plan` | PostgreSQL cannot plan the query |
 | `unknown_query_parameter` | the query uses a parameter nothing binds |
 | `missing_column` | the query lacks a column its shape requires |
 | `statement_registration_failed` | the query's statement name was already taken |

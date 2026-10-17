@@ -17,17 +17,13 @@ import (
 // them. The session token is never stored at all — what is stored is a digest of
 // it, so this package cannot hand back a token even if something asked.
 
-// The names of the two encrypted credentials. They are the exact two
-// ROADMAP.md, "Rules that apply to every step", names as secrets: the OPNsense
-// secret and the MaxMind key. The OPNsense API key is the Basic-auth username
-// half of the pair and is a setting row, not a ciphertext.
+// The name of the core's encrypted credential: the OPNsense API secret, a secret ROADMAP.md, "Rules
+// that apply to every step", names. The OPNsense API key is the Basic-auth username half of the pair
+// and is a setting row, not a ciphertext; a plugin's secret setting, such as the MaxMind licence key,
+// is the plugin's (internal/plugin, settings).
 const (
 	// CredentialOPNsenseAPISecret is the secret half of the firewall API pair.
 	CredentialOPNsenseAPISecret = "opnsense_api_secret"
-	// CredentialMaxMindLicenceKey is the MaxMind licence key. A download, which
-	// sends it to MaxMind with the account ID, is what finds out whether MaxMind
-	// accepts it; see internal/maxmind.
-	CredentialMaxMindLicenceKey = "maxmind_licence_key"
 )
 
 // PasswordHash is a stored password verifier: the digest, the salt it was

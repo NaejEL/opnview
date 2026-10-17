@@ -66,10 +66,10 @@ func TestEveryStatementPreparesForEveryPeriod(t *testing.T) {
 	if _, err := sqldb.PeriodStatement("dirty_hours", vocab.PeriodHour); err == nil {
 		t.Error("a statement that is not a template was expanded as one")
 	}
-	if _, err := sqldb.ComposeStatement("compose_volume", vocab.PeriodHour); err == nil {
+	if _, err := sqldb.ComposeStatement("compose_volume_slots", vocab.PeriodHour); err == nil {
 		t.Error("an hour, which has no finer period, was composed")
 	}
-	if _, err := sqldb.ComposeStatement("insert_volume", vocab.PeriodDay); err == nil {
+	if _, err := sqldb.ComposeStatement("insert_volume_hours", vocab.PeriodDay); err == nil {
 		t.Error("a statement that is not a composition was expanded as one")
 	}
 }

@@ -38,23 +38,23 @@ func TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 		wording string
 	}{
 		{"authentication failed", func(fake *providertest.Firewall) {
-			fake.Answer(opnsense.GatewayStatus, http.StatusUnauthorized,
+			fake.Answer(collecttest.GatewayStatus, http.StatusUnauthorized,
 				[]byte(`{"status":401,"message":"Authentication Failed"}`))
 		}, "gateway latency and loss (authentication failed (HTTP 401): the firewall did not accept the API key and secret)"},
 		{"denied", func(fake *providertest.Firewall) {
-			fake.Answer(opnsense.GatewayStatus, http.StatusForbidden, []byte(`{"status":403,"message":"Forbidden"}`))
+			fake.Answer(collecttest.GatewayStatus, http.StatusForbidden, []byte(`{"status":403,"message":"Forbidden"}`))
 		}, "gateway latency and loss (denied, HTTP 403: the API key's user needs the privilege \"System: Gateways\""},
 		{"not found", func(fake *providertest.Firewall) {
-			fake.Answer(opnsense.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
+			fake.Answer(collecttest.GatewayStatus, http.StatusNotFound, []byte(`{"errorMessage":"Endpoint not found"}`))
 		}, "gateway latency and loss (not found, HTTP 404"},
 		{"failed", func(fake *providertest.Firewall) {
-			fake.AnswerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "failed"})
+			fake.AnswerJSON(collecttest.GatewayStatus, map[string]any{"items": []any{}, "status": "failed"})
 		}, "gateway latency and loss (the endpoint answered \"status\": \"failed\" with no item, which it does both when no gateway is configured"},
 		{"no gateway", func(fake *providertest.Firewall) {
-			fake.AnswerJSON(opnsense.GatewayStatus, map[string]any{"items": []any{}, "status": "ok"})
+			fake.AnswerJSON(collecttest.GatewayStatus, map[string]any{"items": []any{}, "status": "ok"})
 		}, "gateway latency and loss (the endpoint answered \"status\": \"ok\" and listed no gateway)"},
 		{"no figure", func(fake *providertest.Firewall) {
-			fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status_unmonitored.json")
+			fake.AnswerFixture(collecttest.GatewayStatus, "gateway_status_unmonitored.json")
 		}, "gateway latency and loss (2 of 2 gateways listed with no figure: dpinger.inc reports \"~\""},
 	}
 	// Every absence gets a harness of its own, so the absences run as parallel subtests, each with
@@ -123,7 +123,7 @@ func TestTheGatewayMeasuresOfTheLiveShapeAreStoredPerGatewayWithFigures(t *testi
 func TestTheProbeRoundKeepsWhatTheLastSamplingPassCouldNotRead(t *testing.T) {
 	t.Parallel()
 	harness := arrangeMeasurementCollection(t)
-	harness.Fake.AnswerFixture(opnsense.GatewayStatus, "gateway_status_unmonitored.json")
+	harness.Fake.AnswerFixture(collecttest.GatewayStatus, "gateway_status_unmonitored.json")
 	ctx := context.Background()
 	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("sampling: %v", err)
@@ -149,7 +149,7 @@ func answerLookups(fake *providertest.Firewall, rows ...map[string]any) {
 	for _, row := range rows {
 		list = append(list, row)
 	}
-	fake.AnswerJSON(opnsense.SearchQueries, map[string]any{"total": len(rows), "rowCount": len(rows),
+	fake.AnswerJSON(collecttest.SearchQueries, map[string]any{"total": len(rows), "rowCount": len(rows),
 		"current": 1, "rows": list})
 }
 
@@ -396,7 +396,7 @@ func TestAFailedLeasePassDoesNotUseUpALookupsRetry(t *testing.T) {
 	collecttest.UnresolvedLookup(t, harness.Store, "example-key-failed-pass", "example-host-failed.example.invalid",
 		collecttest.ReferenceEpoch()-120, collecttest.ReferenceEpoch()-100)
 
-	harness.Fake.Answer(opnsense.DnsmasqLeases, http.StatusInternalServerError, []byte(`{}`))
+	harness.Fake.Answer(collecttest.DnsmasqLeases, http.StatusInternalServerError, []byte(`{}`))
 	if err := harness.Collector.CollectDHCPLease(ctx); err == nil {
 		t.Fatal("a lease pass whose backend answered 500 reported no failure")
 	}
@@ -404,7 +404,7 @@ func TestAFailedLeasePassDoesNotUseUpALookupsRetry(t *testing.T) {
 		t.Fatal("a lease pass that read no lease examined the lookup, using up its retry")
 	}
 
-	harness.Fake.AnswerFixture(opnsense.DnsmasqLeases, "dnsmasq_leases.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqLeases, "dnsmasq_leases.json")
 	provider, err := harness.Store.ProviderID(ctx, "dhcp_lease", "dnsmasq")
 	if err != nil {
 		t.Fatalf("looking up the provider: %v", err)

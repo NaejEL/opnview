@@ -7,8 +7,9 @@ import (
 )
 
 // TestTextOrdersAsBytesAndFoldsAsciiAlone is P-AC7's first half: on the database opnview runs on,
-// mixed-case and non-ASCII names order exactly as their bytes do, as SQLite ordered them, and
-// lower() folds ASCII letters and leaves every other letter as it is, as SQLite's lower() did.
+// mixed-case and non-ASCII names order exactly as their bytes do, and lower() folds ASCII letters and
+// leaves every other letter as it is -- the byte-order rule docs/architecture.md, "Storage", states and
+// the store enforces by refusing a database not created with the C collation.
 func TestTextOrdersAsBytesAndFoldsAsciiAlone(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)

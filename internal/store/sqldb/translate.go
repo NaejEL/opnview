@@ -34,12 +34,10 @@ type Translated struct {
 
 var (
 	translations sync.Map // source text -> Translated
-	translated   atomic.Int64
+	// translated counts the texts translated since the process started: a test runs a statement many
+	// times and asserts that it does not move (export_test.go).
+	translated atomic.Int64
 )
-
-// TranslationCount is how many texts were translated since the process started: a test runs a
-// statement many times and asserts that this does not move.
-func TranslationCount() int64 { return translated.Load() }
 
 // Translate returns a text's translation, translating it the first time the text is seen.
 func Translate(text string) (Translated, error) {

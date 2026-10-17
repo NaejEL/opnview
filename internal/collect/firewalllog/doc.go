@@ -10,7 +10,7 @@
 //
 // WHAT AN IMPLEMENTATION IS. A directory internal/collect/firewalllog/<product>/ holding a
 // provider.json whose kind is "firewall_log", a Go package whose init() calls Register with the
-// embedded manifest and a Source, its fixtures and its tests. See docs/extending.md for a worked
+// embedded manifest and a Source, its fixtures and its tests. See docs/plugins.md for a worked
 // example. An implementation reports; it never writes, never reads the store and never chooses
 // whether it is the active one.
 //

@@ -35,6 +35,9 @@ type controllerAudit struct {
 	// mutating and readOnly are the actions, camelCase, without "Action".
 	mutating []string
 	readOnly []string
+	// uncalled, when set, says why nothing the binary calls reaches the controller: its audit still
+	// proves the guard refuses every mutating action.
+	uncalled string
 }
 
 var serviceBaseMutating = []string{"start", "stop", "restart", "reconfigure"}
@@ -91,7 +94,7 @@ func checkControllerAudit(t *testing.T, audit controllerAudit) {
 		}
 	}
 	called := 0
-	for _, endpoint := range Registry() {
+	for _, endpoint := range callable(t) {
 		elements := strings.Split(strings.Trim(endpoint.Path, "/"), "/")
 		if len(elements) < 4 || elements[1] != audit.module || elements[2] != audit.controller {
 			continue
@@ -102,8 +105,8 @@ func checkControllerAudit(t *testing.T, audit controllerAudit) {
 				endpoint.Path, audit.module, audit.controller)
 		}
 	}
-	if called == 0 {
-		t.Errorf("no registry endpoint reaches %s/%s, so this audit tests nothing the registry uses",
+	if called == 0 && audit.uncalled == "" {
+		t.Errorf("no registry endpoint reaches %s/%s, so this audit tests nothing the binary uses",
 			audit.module, audit.controller)
 	}
 }
@@ -235,6 +238,7 @@ var auditIDSService = controllerAudit{
 // https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/IDS/Api/SettingsController.php
 var auditIDSSettings = controllerAudit{
 	module: "ids", controller: "settings",
+	uncalled: "no built-in plugin reads ids/settings; the compiled entry nothing called was removed (PA16 B7)",
 	mutating: []string{"set", "setRulesetproperties", "setRuleset", "toggleRuleset",
 		"toggleRule", "setRule", "setUserRule", "addUserRule", "delUserRule",
 		"toggleUserRule", "setPolicy", "addPolicy", "delPolicy", "togglePolicy",

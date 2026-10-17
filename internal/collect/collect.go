@@ -63,14 +63,6 @@ func compose(state *core.Collector) *Collector {
 	}
 }
 
-// New returns a collector. The client is the only thing in opnview that builds an
-// HTTP request, so passing it here is what makes "one outbound destination" hold
-// for every collector at once. The page sizes start at their defaults until
-// Configure is called with the loaded configuration.
-func New(client *opnsense.Client, database *store.Store, clock core.Clock) *Collector {
-	return NewWithSources(client, database, clock, plugin.Builtins())
-}
-
 // NewWithSources returns a collector reading the implementations of one source set: the built-in
 // plugins and those of a data directory, as plugin.Load returns them.
 func NewWithSources(client *opnsense.Client, database *store.Store, clock core.Clock, set *sources.Set) *Collector {

@@ -56,8 +56,8 @@ func TestEveryRecordReadOutcomeWritesItsOwnCode(t *testing.T) {
 		kind     string
 		collect  func(*collect.Collector, context.Context) error
 	}{
-		{opnsense.UnboundDumpCache, core.KindResolverCache, (*collect.Collector).CollectResolverCache},
-		{opnsense.UnboundListLocalData, core.KindResolverLocalData, (*collect.Collector).CollectResolverLocalData},
+		{collecttest.UnboundDumpCache, core.KindResolverCache, (*collect.Collector).CollectResolverCache},
+		{collecttest.UnboundListLocalData, core.KindResolverLocalData, (*collect.Collector).CollectResolverLocalData},
 	} {
 		t.Run(read.kind, func(t *testing.T) {
 			t.Parallel()
@@ -120,7 +120,7 @@ func TestEachNamedAbsenceHasItsOwnCode(t *testing.T) {
 	}
 
 	// The plugin answers: present, and not read, which is not the same as absent.
-	harness.Fake.AnswerJSON(opnsense.ISCStatus, map[string]any{"status": "running"})
+	harness.Fake.AnswerJSON(collecttest.ISCStatus, map[string]any{"status": "running"})
 	if err := harness.Collector.ProbeDHCPLease(ctx); err != nil {
 		t.Logf("the lease probe round reported %v", err)
 	}
@@ -137,8 +137,8 @@ func TestTheProbeRoundsOutcomesFollowWhatTheFirewallAnswered(t *testing.T) {
 	ctx := context.Background()
 
 	stopped := collecttest.NewProbeHarness(t)
-	stopped.Fake.AnswerFixture(opnsense.IDSStatus, "ids_status_stopped.json")
-	stopped.Fake.AnswerFixture(opnsense.NetflowIsEnabled, "netflow_is_enabled_export_only.json")
+	stopped.Fake.AnswerFixture(collecttest.IDSStatus, "ids_status_stopped.json")
+	stopped.Fake.AnswerFixture(collecttest.NetflowIsEnabled, "netflow_is_enabled_export_only.json")
 	stopped.Fake.Answer(opnsense.FirewallLog, http.StatusOK, []byte(`{"not":"an array"}`))
 	_ = stopped.Collector.ProbeAll(ctx)
 	for _, want := range []struct {
@@ -165,7 +165,7 @@ func TestTheProbeRoundsOutcomesFollowWhatTheFirewallAnswered(t *testing.T) {
 
 	refused := collecttest.NewProbeHarness(t)
 	refused.Fake.Answer(opnsense.FirewallLog, http.StatusUnauthorized, []byte(`{}`))
-	refused.Fake.Answer(opnsense.IDSStatus, http.StatusForbidden, []byte(`{}`))
+	refused.Fake.Answer(collecttest.IDSStatus, http.StatusForbidden, []byte(`{}`))
 	_ = refused.Collector.ProbeAll(ctx)
 	if got := refused.OutcomeOf(t, core.KindFirewallLog, collecttest.ProviderPf); got != vocab.OutcomeAuthenticationFailed {
 		t.Errorf("a 401: the outcome is %q", got)
@@ -184,7 +184,7 @@ func TestEveryWrittenAvailabilityCarriesACodeInTheClosedSet(t *testing.T) {
 	_ = harness.Collector.ProbeAll(context.Background())
 	for _, provider := range everyProvider(t, harness.Store) {
 		if provider.kind == core.KindIPGeolocation || provider.kind == core.KindRegistrableDomain || provider.kind == core.KindFlowVolume {
-			// Recorded by internal/maxmind and internal/publicsuffix, or (flow_volume) by nothing,
+			// Recorded by the maxmind and publicsuffix plugins, or (flow_volume) by nothing,
 			// none of which this round runs.
 			continue
 		}
@@ -264,7 +264,7 @@ const a1e2707DumpDetail = "read 11 records of the cache (1381 bytes) in 0 ms: A 
 func TestMovingTheMessageCacheRuleLeavesTheDumpDetailByteIdentical(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.ArrangeRecordCollection(t)
-	answerRecords(harness.Fake, opnsense.UnboundDumpCache, fixtureRows(t, "unbound_dumpcache.json"))
+	answerRecords(harness.Fake, collecttest.UnboundDumpCache, fixtureRows(t, "unbound_dumpcache.json"))
 	if err := harness.Collector.CollectResolverCache(context.Background()); err != nil {
 		t.Fatalf("reading the cache: %v", err)
 	}
@@ -309,8 +309,8 @@ func TestARecordWhoseValueIsNotValidIsCountedUnderItsNamedCategory(t *testing.T)
 				map[string]any{"name": prefix + "host.example.test.", "ttl": "3600", "type": "IN", "rrtype": "PTR", "value": "host.example.test."},
 				map[string]any{"name": "." + prefix + "host.example.test.", "ttl": "3600", "type": "IN", "rrtype": "A", "value": "192.0.2.30"})
 		}
-		answerRecords(harness.Fake, opnsense.UnboundDumpCache, cache)
-		answerRecords(harness.Fake, opnsense.UnboundListLocalData, local)
+		answerRecords(harness.Fake, collecttest.UnboundDumpCache, cache)
+		answerRecords(harness.Fake, collecttest.UnboundListLocalData, local)
 		ctx := context.Background()
 		if err := harness.Collector.CollectResolverCache(ctx); err != nil {
 			t.Fatalf("reading the cache: %v", err)
@@ -355,7 +355,7 @@ func TestAStoreFailureInTheLeasePassIsRecordedAndCountsAsAFailedPass(t *testing.
 	t.Parallel()
 	harness := collecttest.LeaseRetryHarness(t, "example-key-store-failure", "example-host-store-failure")
 	ctx := context.Background()
-	harness.Fake.AnswerFixture(opnsense.KeaLeases, "kea_leases.json")
+	harness.Fake.AnswerFixture(collecttest.KeaLeases, "kea_leases.json")
 	if err := harness.Store.SetActiveProviders(ctx, core.KindDHCPLease, collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}

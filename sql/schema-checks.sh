@@ -2110,7 +2110,7 @@ check 'MEAS-AC6 introducing a term changed no DDL at all' "$MEAS_DDL_BEFORE" \
 # offered twice is still one row.
 expect_sql_success 'MEAS-AC7 a second provider may report the same subject at the same instant' "$MEAS_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-       VALUES ('measurement_sample', 'meas-ac7-second', 'MEAS-AC7 second sampler', 1, $NOW);
+       VALUES ('measurement_sample', 'meas-ac7-second', 'MEAS-AC7 second sampler', true, $NOW);
      INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
        SELECT id, 'reachable', 'meas-ac7-probe', NULL, $NOW
        FROM provider WHERE provider_key = 'meas-ac7-second';
@@ -3267,15 +3267,15 @@ expect_sql_success 'AD1 an outcome inside the closed set is accepted' "$FRESH_DB
 # AD3 (D2): the heartbeat is one row, and an interval opnview was not running is
 # a positive span.
 expect_sql_success 'AD3 the heartbeat row is written' "$FRESH_DB" \
-    "INSERT INTO opnview_heartbeat (id, beat_at, clean_stop) VALUES (1, $NOW, 0);"
+    "INSERT INTO opnview_heartbeat (id, beat_at, clean_stop) VALUES (1, $NOW, false);"
 expect_sql_failure 'AD3 a second heartbeat row is rejected' "$FRESH_DB" \
-    "INSERT INTO opnview_heartbeat (id, beat_at, clean_stop) VALUES (2, $NOW, 0);"
+    "INSERT INTO opnview_heartbeat (id, beat_at, clean_stop) VALUES (2, $NOW, false);"
 expect_sql_failure 'AD3 an interval opnview was not running that does not move forward is rejected' "$FRESH_DB" \
     "INSERT INTO opnview_downtime (interval_start_at, interval_end_at, clean_stop, detected_at)
-     VALUES ($NOW, $NOW, 0, $NOW);"
+     VALUES ($NOW, $NOW, false, $NOW);"
 expect_sql_success 'AD3 an interval opnview was not running is recorded' "$FRESH_DB" \
     "INSERT INTO opnview_downtime (interval_start_at, interval_end_at, clean_stop, detected_at)
-     VALUES ($((NOW - 600)), $NOW, 1, $NOW);"
+     VALUES ($((NOW - 600)), $NOW, true, $NOW);"
 
 check 'VOC-AC4 a freshly migrated database attributes nothing to anybody' '0' \
     "$(q "$FRESH_DB" 'SELECT count(*) FROM owner;')"
@@ -3290,7 +3290,7 @@ check 'PN-AC12 no provider is active on a freshly migrated database' '0' \
 # seed registers (E.6.1), so eleven became twelve.
 expect_sql_failure 'PN-AC9 a registry row whose kind is not a snake_case name is rejected' "$FRESH_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-     VALUES ('Tele-Pathy', 'pn-ac9', 'PN-AC9', 0, $NOW);"
+     VALUES ('Tele-Pathy', 'pn-ac9', 'PN-AC9', false, $NOW);"
 extract_block "$ARCH_DOC" '<!-- provider-kinds:begin -->' '<!-- provider-kinds:end -->' |
     sort > "$WORK/doc_kinds.txt"
 check 'PN-AC9 the document lists exactly twelve kinds' '12' \
@@ -3417,7 +3417,7 @@ section 'PN-AC8, PN-AC18 — registering a second provider of an existing kind'
 # REGISTER_DB is a copy of MAIN_DB, made with the others once its plugin tables were seeded (E21).
 expect_sql_success 'PN-AC8 registering a second security-event provider needs no DDL' "$REGISTER_DB" \
     "INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-       VALUES ('security_event', 'second-event-provider', 'Second event provider', 0, $NOW);
+       VALUES ('security_event', 'second-event-provider', 'Second event provider', false, $NOW);
      INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
        SELECT id, 'reachable', 'pn-ac8-probe', NULL, $NOW
        FROM provider WHERE provider_key = 'second-event-provider';

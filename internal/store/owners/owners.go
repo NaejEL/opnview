@@ -583,13 +583,34 @@ func (s *OwnerStore) UnassignClients(ctx context.Context, clientIDs []int64, now
 	return changes, nil
 }
 
-// Clients lists every machine, with or without traffic, by id.
+// ClientsPageSize is how many clients one page of the listing reads.
+const ClientsPageSize = 500
+
+// Clients lists every machine, with or without traffic, by id, reading it page by page (ClientsPage).
 func (s *OwnerStore) Clients(ctx context.Context) ([]ListedClient, error) {
+	clients := []ListedClient{}
+	after := int64(0)
+	for {
+		page, err := s.ClientsPage(ctx, after, ClientsPageSize)
+		if err != nil {
+			return nil, err
+		}
+		clients = append(clients, page...)
+		if len(page) < ClientsPageSize {
+			return clients, nil
+		}
+		after = page[len(page)-1].ID
+	}
+}
+
+// ClientsPage is one page of the listing: at most limit clients whose id follows after, by id. The next
+// page follows the last id of this one (clients_list, owners.statements.sql).
+func (s *OwnerStore) ClientsPage(ctx context.Context, after int64, limit int) ([]ListedClient, error) {
 	text, err := sqldb.Statement("clients_list")
 	if err != nil {
 		return nil, err
 	}
-	rows, err := s.SQL.QueryContext(ctx, text)
+	rows, err := sqldb.Query(ctx, s.SQL, text, map[string]any{"after": after, "limit": int64(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("store: clients_list: %w", err)
 	}

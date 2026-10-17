@@ -20,6 +20,6 @@
 // WHAT AN IMPLEMENTATION IS. A directory internal/collect/dhcplease/<product>/ holding a
 // provider.json whose kind is "dhcp_lease", a Go package whose init() calls Register with the
 // embedded manifest and a Source, its fixtures and its tests. An implementation that can never be
-// read returns provider.ErrUnsupportedRead from Leases and says why. See docs/extending.md for a
+// read returns provider.ErrUnsupportedRead from Leases and says why. See docs/plugins.md for a
 // complete worked example.
 package dhcplease

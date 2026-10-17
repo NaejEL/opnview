@@ -9,7 +9,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
 )
 
@@ -48,7 +47,7 @@ func TestEveryRegisteredImplementationHasARegistryRow(t *testing.T) {
 // named here rather than in a comment on the registry so that adding a fourth has to be argued
 // for in a test file somebody reads.
 //
-//   - geo_asn: the MaxMind dataset is acquired and read by internal/maxmind, not by a
+//   - geo_asn: the MaxMind dataset is acquired and read by the maxmind plugin, not by a
 //     connector behind this package's port, whose only outbound capability is the firewall.
 //   - flow_volume: its destination, pair_volume_observation, is DERIVED from `flow` by step 5 —
 //     the maintainer's ruling — so nothing collects the kind. Its registry row records that the
@@ -117,9 +116,9 @@ func TestAnImplementationTheFirewallDoesNotSeparateIsNeverActivatedWhateverItsPo
 	ctx := context.Background()
 
 	// Kea is the first key in sort order and is disabled; Dnsmasq is second and is serving.
-	harness.Fake.AnswerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(collecttest.KeaStatus, "kea_status_disabled.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
 
 	if err := harness.Collector.ProbeDHCPLease(ctx); err != nil {
 		t.Logf("the lease probe reported: %v", err)

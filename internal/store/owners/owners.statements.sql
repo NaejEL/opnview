@@ -151,6 +151,10 @@ WHERE id IN (SELECT CAST(j.value AS BIGINT) FROM jsonb_array_elements_text(CAST(
 -- The client listing: every machine, with or without traffic.
 -- ---------------------------------------------------------------------------
 
+-- One page of the listing, by keyset: the clients whose id follows :after, at most :limit of them, in id
+-- order. A page is read through the primary key, never by an offset, so a client inserted while the
+-- pages are read is neither skipped nor read twice: ids only grow, and a page resumes after the last id
+-- the previous one returned.
 -- statement: clients_list
 SELECT c.id, c.identity_kind, c.identity_key, c.hostname, c.mac, c.last_address,
        c.interface_id, i.identifier, i.description, i.user_label,
@@ -159,7 +163,9 @@ SELECT c.id, c.identity_kind, c.identity_key, c.hostname, c.mac, c.last_address,
 FROM client AS c
 LEFT JOIN interface AS i ON i.id = c.interface_id
 LEFT JOIN owner AS o ON o.id = c.owner_id
-ORDER BY c.id;
+WHERE c.id > :after
+ORDER BY c.id
+LIMIT :limit;
 
 
 -- ---------------------------------------------------------------------------

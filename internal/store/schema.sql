@@ -2349,6 +2349,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_volume_aggregate_30d_slot
 --
 -- Reassigning a client to another owner invalidates every slot holding one of its
 -- flows, because ownership is an attribute of the person and not of the flow.
+--
+-- THE INDEX LEADING ON owner_id (idx_owner_volume_aggregate_<period>_owner) serves the statements that
+-- read or delete one person's rows -- an owner's deletion, renaming and reassignment
+-- (internal/store/owners) -- with an index range instead of a scan of every slot (S5A-AC35). Its write
+-- cost is one more index entry per owner row a refresh writes: a family of a few rows per slot,
+-- one per owner and scope, so the cost is small beside the peer and client families.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS owner_volume_aggregate_1h (
     id                  BIGINT PRIMARY KEY,
@@ -2371,6 +2377,8 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_1h (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_1h_slot
     ON owner_volume_aggregate_1h (period_start_at, coalesce(owner_id, -1), traffic_scope);
+CREATE INDEX IF NOT EXISTS idx_owner_volume_aggregate_1h_owner
+    ON owner_volume_aggregate_1h (owner_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS owner_volume_aggregate_24h (
     id                  BIGINT PRIMARY KEY,
@@ -2393,6 +2401,8 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_24h (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_24h_slot
     ON owner_volume_aggregate_24h (period_start_at, coalesce(owner_id, -1), traffic_scope);
+CREATE INDEX IF NOT EXISTS idx_owner_volume_aggregate_24h_owner
+    ON owner_volume_aggregate_24h (owner_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS owner_volume_aggregate_7d (
     id                  BIGINT PRIMARY KEY,
@@ -2415,6 +2425,8 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_7d (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_7d_slot
     ON owner_volume_aggregate_7d (period_start_at, coalesce(owner_id, -1), traffic_scope);
+CREATE INDEX IF NOT EXISTS idx_owner_volume_aggregate_7d_owner
+    ON owner_volume_aggregate_7d (owner_id, period_start_at);
 
 CREATE TABLE IF NOT EXISTS owner_volume_aggregate_30d (
     id                  BIGINT PRIMARY KEY,
@@ -2437,6 +2449,8 @@ CREATE TABLE IF NOT EXISTS owner_volume_aggregate_30d (
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_owner_volume_aggregate_30d_slot
     ON owner_volume_aggregate_30d (period_start_at, coalesce(owner_id, -1), traffic_scope);
+CREATE INDEX IF NOT EXISTS idx_owner_volume_aggregate_30d_owner
+    ON owner_volume_aggregate_30d (owner_id, period_start_at);
 
 -- ---------------------------------------------------------------------------
 -- client_volume_aggregate_* — per machine. Closes G4.

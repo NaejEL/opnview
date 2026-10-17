@@ -36,7 +36,7 @@ func TestCollectionDoesNotWaitForASignIn(t *testing.T) {
 	}
 
 	// A real collector, built the way cmd/opnview builds one, over the same client.
-	collector := collect.New(harness.Server.Client(), harness.Store, core.SystemClock{})
+	collector := collect.NewWithSources(harness.Server.Client(), harness.Store, core.SystemClock{}, nil)
 	if err := collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("a collection pass with nobody signed in failed: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestTheStepFourValidationSequenceIsPerformable(t *testing.T) {
 	settingstest.AssertContains(t, body, settingstest.Text(t, harness.Server.Catalogue(), msgVerifyVerified))
 
 	// 7. A collection pass uses what was entered, in this same process.
-	collector := collect.New(harness.Server.Client(), harness.Store, core.SystemClock{})
+	collector := collect.NewWithSources(harness.Server.Client(), harness.Store, core.SystemClock{}, nil)
 	if err := collector.RefreshDiscovery(context.Background()); err != nil {
 		t.Fatalf("the collection pass failed: %v", err)
 	}

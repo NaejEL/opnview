@@ -703,6 +703,10 @@ ORDER BY target, latency_ms;
 - **A name is `widget_` and a snake_case word.** The script runs a statement by that name and no
   other: nothing else of the database is reachable from a script.
 - **Parameters are `:name`.** The script binds each by name; one it leaves out is bound to `null`.
+  The statement is translated to PostgreSQL's own numbering once, when the widget loads, never when
+  it runs. PostgreSQL types each parameter from the place it stands in, as it types a literal; where
+  the place does not type it -- `:x IS NULL`, `:a - :b`, a bare `SELECT :x` -- cast it:
+  `CAST(:interfaces AS jsonb) IS NULL`.
 - **`@period@` makes a template.** `volume_aggregate_@period@` reads the aggregates of the period
   the script names when it runs it: `1h`, `24h`, `7d` or `30d`.
 - **Every column has a name of its own.** The script reads a row as an object of its columns, so a
@@ -808,7 +812,11 @@ The references the core resolved. One that matched nothing has already made the 
 | `carriesDomain(name)` | Whether the statement reads a column carrying a domain name. |
 
 A bound value is a number, a string, a boolean, `null`, or an array, bound as its JSON text. A cell
-is a number, a string or `null`: an integer sum is a number, and a comparison is `0` or `1`.
+is a number, a string, a boolean or `null`, as PostgreSQL types the column: a `numeric` whose value is
+whole -- an integer sum is one -- is an integer and any other `numeric` a number with a fraction, so a
+script never meets PostgreSQL's numeric typing; a comparison and a `BOOLEAN` column are booleans, and
+`CAST(x AS INTEGER)` reads one as `0` or `1`. The connection itself converts nothing: this is the
+plugin host's conversion, made for a plugin's and a widget's statements only.
 
 #### `host.envelope`
 

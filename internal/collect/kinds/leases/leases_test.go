@@ -11,7 +11,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/config"
-	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -361,7 +360,7 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 	if err := harness.Store.SetActiveProviders(ctx, core.KindDHCPLease, collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
-	harness.Fake.Answer(opnsense.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
+	harness.Fake.Answer(collecttest.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
 
 	limit := int(config.DefaultLeaseBackendFailurePassLimit)
 	if limit < 2 {
@@ -394,7 +393,7 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 
 	// A read that succeeds again ends the count: the next failure holds the retry back
 	// from the start.
-	harness.Fake.AnswerFixture(opnsense.KeaLeases, "kea_leases.json")
+	harness.Fake.AnswerFixture(collecttest.KeaLeases, "kea_leases.json")
 	collecttest.SetClock(harness, collecttest.ReferenceInstant().Add(time.Duration(limit+1)*5*time.Minute))
 	if err := harness.Collector.CollectDHCPLease(ctx); err != nil {
 		t.Fatalf("the pass whose backends both answered: %v", err)

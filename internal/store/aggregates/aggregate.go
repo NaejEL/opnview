@@ -165,23 +165,11 @@ func (s *AggregateStore) RefreshAggregatesAt(ctx context.Context, since, waterma
 			continue
 		}
 
-		for _, start := range starts {
-			end := period.SlotEnd(start)
-			if start != current && bounded && period.Purgeable(start, horizon) {
-				continue
-			}
-			if !candidates[start] {
-				stale, err := slotIsStale(ctx, s.SQL, period, start, end)
-				if err != nil {
-					return result, err
-				}
-				if !stale {
-					continue
-				}
-			}
-			if err := s.rewriteSlot(ctx, period, start, end, watermark); err != nil {
-				return result, err
-			}
+		rewritten, err := s.rewriteSlots(ctx, period, starts, candidates, current, bounded, horizon, watermark)
+		if err != nil {
+			return result, err
+		}
+		for _, start := range rewritten {
 			result.Rewritten = append(result.Rewritten, SlotRef{Period: period.Name, Start: start})
 		}
 	}
@@ -267,97 +255,109 @@ func hourParameters(hours []int64, watermark int64) map[string]any {
 		"now": watermark}
 }
 
-// slotIsStale is rule 3: a slot is stale when its computed_at is not strictly later
-// than the newest ingested_at among the flows inside it or the newest purged_at of its
-// purged part, and when it holds rows while neither is left inside it. Equal instants
-// count as stale because one-second stamps cannot be ordered: a row stamped in the
-// second a refresh ran may have committed after the refresh read the slot.
-func slotIsStale(ctx context.Context, q sqldb.Querier, period vocab.Period, start, end int64) (bool, error) {
-	newest, hasFlows, err := sqldb.QueryOptionalInt(ctx, q, "slot_newest_ingested",
-		map[string]any{"slot_start": start, "slot_end": end})
-	if err != nil {
-		return false, err
+// rewriteSlots is rewriteHours for a day, a week or a month: among the candidate slots of the period it
+// selects those the contract rewrites -- a forced or the current slot, or a stale one, never one the
+// purge would remove outright unless current -- and rewrites them together, in one transaction, every
+// family composed from the finer period and the client and owner families regrouped
+// (aggregateslots.statements.sql); a day rewrites the derived per-pair volume as well. Its statements
+// are as many whatever the number of slots (PA17 of specs/SPEC-backend-completion-plugins.md). It
+// returns the slots rewritten, in order.
+func (s *AggregateStore) rewriteSlots(ctx context.Context, period vocab.Period, starts []int64,
+	forced map[int64]bool, current int64, bounded bool, horizon, watermark int64) ([]int64, error) {
+	var kept, unforced []int64
+	for _, start := range starts {
+		if start != current && bounded && period.Purgeable(start, horizon) {
+			continue
+		}
+		kept = append(kept, start)
+		if !forced[start] {
+			unforced = append(unforced, start)
+		}
 	}
-	text, err := sqldb.PeriodStatement("slot_computed_at", period)
-	if err != nil {
-		return false, err
+	if len(kept) == 0 {
+		return nil, nil
 	}
-	computed, hasRows, err := sqldb.QueryOptionalIntText(ctx, q, "slot_computed_at", text,
-		map[string]any{"slot_start": start})
-	if err != nil {
-		return false, err
+	stale := map[int64]bool{}
+	if len(unforced) > 0 {
+		text, err := sqldb.PeriodStatement("stale_slots", period)
+		if err != nil {
+			return nil, err
+		}
+		rows, err := sqldb.Query(ctx, s.SQL, text, slotParameters(period, unforced, watermark))
+		if err != nil {
+			return nil, fmt.Errorf("store: stale_slots: %w", err)
+		}
+		for rows.Next() {
+			var start int64
+			if err := rows.Scan(&start); err != nil {
+				_ = rows.Close()
+				return nil, fmt.Errorf("store: stale_slots: %w", err)
+			}
+			stale[start] = true
+		}
+		err = rows.Err()
+		_ = rows.Close()
+		if err != nil {
+			return nil, fmt.Errorf("store: stale_slots: %w", err)
+		}
 	}
-	switch {
-	case !hasFlows:
-		return hasRows, nil
-	case !hasRows:
-		return true, nil
-	default:
-		return computed <= newest, nil
+	var rewrite []int64
+	for _, start := range kept {
+		if forced[start] || stale[start] {
+			rewrite = append(rewrite, start)
+		}
 	}
-}
-
-// rewriteSlot replaces one slot of every family, in one transaction: an hour from
-// `flow` and its purged part, any other period composed from its finer period's
-// slots, and the client and owner families regrouped from the slot itself.
-func (s *AggregateStore) rewriteSlot(ctx context.Context, period vocab.Period,
-	start, end, computedAt int64) error {
+	if len(rewrite) == 0 {
+		return nil, nil
+	}
 	transaction, err := s.SQL.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("store: starting the %s slot at %d: %w", period.Name, start, err)
+		return nil, fmt.Errorf("store: starting the %s slots: %w", period.Name, err)
 	}
 	defer func() { _ = transaction.Rollback() }()
-	cached := transaction
-
-	parameters := map[string]any{"slot_start": start, "slot_end": end, "now": computedAt}
+	parameters := slotParameters(period, rewrite, watermark)
+	var names []string
 	for _, family := range append(append([]string{}, baseFamilies...), regroupedFamilies...) {
-		deletion := "delete_" + family
-		text, err := sqldb.PeriodStatement(deletion, period)
-		if err != nil {
-			return err
-		}
-		if _, err := sqldb.ExecText(ctx, cached, deletion, text, parameters); err != nil {
-			return err
-		}
+		names = append(names, "delete_"+family+"_slots")
 	}
 	for _, family := range baseFamilies {
-		var name, text string
-		if _, composed := period.Child(); composed {
-			name = "compose_" + family
-			text, err = sqldb.ComposeStatement(name, period)
-		} else {
-			name = "insert_" + family
-			text, err = sqldb.Statement(name)
-		}
-		if err != nil {
-			return err
-		}
-		if _, err := sqldb.ExecText(ctx, cached, name, text, parameters); err != nil {
-			return err
-		}
+		names = append(names, "compose_"+family+"_slots")
 	}
 	for _, family := range regroupedFamilies {
-		name := "regroup_" + family
-		text, err := sqldb.PeriodStatement(name, period)
+		names = append(names, "regroup_"+family+"_slots")
+	}
+	for _, name := range names {
+		text, err := sqldb.ComposeOrPeriodStatement(name, period)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if _, err := sqldb.ExecText(ctx, cached, name, text, parameters); err != nil {
-			return err
+		if _, err := sqldb.ExecText(ctx, transaction, name, text, parameters); err != nil {
+			return nil, err
 		}
 	}
-	// The per-pair volume of a day is derived from `flow` and has no purged part: the
-	// purge removes the rows of a day starting before the horizon, which are exactly
-	// the days a rewrite could no longer read whole.
+	// The per-pair volume of a day is derived from `flow` and has no purged part: the purge removes the
+	// rows of a day starting before the horizon, which are exactly the days a rewrite could no longer
+	// read whole.
 	if period == vocab.PeriodDay {
 		for _, name := range []string{"delete_pair_volume", "insert_pair_volume"} {
-			if _, err := sqldb.ExecNamed(ctx, cached, name, parameters); err != nil {
-				return err
+			if _, err := sqldb.ExecNamed(ctx, transaction, name, parameters); err != nil {
+				return nil, err
 			}
 		}
 	}
 	if err := transaction.Commit(); err != nil {
-		return fmt.Errorf("store: committing the %s slot at %d: %w", period.Name, start, err)
+		return nil, fmt.Errorf("store: committing the %s slots: %w", period.Name, err)
 	}
-	return nil
+	return rewrite, nil
+}
+
+// slotParameters are the parameters of the slot statements over a set of slots of one period.
+func slotParameters(period vocab.Period, starts []int64, watermark int64) map[string]any {
+	slots := make([][2]int64, len(starts))
+	for index, start := range starts {
+		slots[index] = [2]int64{start, period.SlotEnd(start)}
+	}
+	encoded, _ := json.Marshal(slots)
+	return map[string]any{"slots": string(encoded), "from": starts[0], "to": period.SlotEnd(starts[len(starts)-1]),
+		"now": watermark}
 }

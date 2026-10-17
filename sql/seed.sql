@@ -141,7 +141,7 @@ FROM every_slot;
 -- the one it pretends to run, which is the INSERT such a connector's cycle would
 -- add. The name is an example value in a fixture and matches no product.
 INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-VALUES ('reconciled_state', 'example-state-source', 'Example state source', 0, :now)
+VALUES ('reconciled_state', 'example-state-source', 'Example state source', false, :now)
 ON CONFLICT (kind, provider_key) DO NOTHING;
 
 INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
@@ -221,7 +221,7 @@ INSERT INTO interface (id, identifier, device, description, user_label, status, 
                        first_seen_at, last_seen_at)
 VALUES (:interfaces + 1, format('interface-identifier-%s', :interfaces + 1),
         format('device-%s', :interfaces + 1), format('discovered-description-%s', :interfaces + 1),
-        NULL, 'link-state-primary', 'admin-state-primary', 'other', 'other', NULL, 4, 1,
+        NULL, 'link-state-primary', 'admin-state-primary', 'other', 'other', NULL, 4, true,
         :now - 8640000, :now);
 
 -- The interface map covers every discovered interface. Flows carrying a raw
@@ -323,13 +323,13 @@ SELECT
                                    ((n - 1) % :interfaces) + 1, (n % :interfaces) + 1)
         ELSE format('interface-identifier-%s', ((n - 1) % :interfaces) + 1)
     END,
-    CASE WHEN n % 5 = 0 THEN 1 ELSE 0 END,
+    CASE WHEN n % 5 = 0 THEN true ELSE false END,
     -- All three states of the logging flag, because all three occur: a rule
     -- that logs, a rule that does not -- whose traffic opnview can never see,
     -- the second observation-point limit -- and a rule discovered from a
     -- source that did not report the flag at all.
-    CASE WHEN n % 7 = 0 THEN 0 WHEN n % 11 = 0 THEN NULL ELSE 1 END,
-    CASE WHEN n % 9 = 0 THEN 1 ELSE 0 END,
+    CASE WHEN n % 7 = 0 THEN false WHEN n % 11 = 0 THEN NULL ELSE true END,
+    CASE WHEN n % 9 = 0 THEN true ELSE false END,
     :now - 8640000,
     -- The endpoint's `destination_net`, verbatim and never evaluated (B8a of
     -- specs/SPEC-step-5b-widget-api.md): `any`, an IPv4 and an IPv6 network from the
@@ -1368,7 +1368,7 @@ SELECT :alerts + n, (SELECT id FROM provider WHERE kind = 'security_event' AND i
        format('eve-file-3:this-firewall-%s', n), :now - n * 700, :now - n * 700 + 30,
        format('%s', 1000000 + n), format('signature-text-%s', n), 'allowed', NULL,
        u.address_v4, 30000 + n, x.address_v4, 443, 'tcp', format('device-%s', :interfaces + 1),
-       NULL, :interfaces + 1, 1, NULL
+       NULL, :interfaces + 1, true, NULL
 FROM counter
 JOIN synth_address AS u ON u.slot = 900000 + :interfaces + 1
 JOIN synth_address AS x ON x.slot = 1000000 + 600 + n;
@@ -1383,14 +1383,14 @@ INSERT INTO dns_resolution (id, lookup_key, client_address, client_hostname, cli
                             answer_source, rcode, dnssec_status, looked_up_at, ingested_at,
                             interface_id, interface_lookup_state)
 SELECT 1300000000 + n, format('this-firewall-lookup-uuid-%s', n), a.address_v4, NULL,
-       'logged_address', CAST(NULL AS BIGINT), 1, format('firewall-name-%s.example-zone.invalid', n), 'unbound',
+       'logged_address', CAST(NULL AS BIGINT), true, format('firewall-name-%s.example-zone.invalid', n), 'unbound',
        'pass', 'Recursion', 'NOERROR', NULL, :now - n * 333, :now - n * 333 + 2,
        ((n - 1) % :interfaces) + 1, 'resolved'
 FROM counter
 JOIN synth_address AS a ON a.slot = 900000 + ((n - 1) % :interfaces) + 1
 UNION ALL
 SELECT 1300000100, 'this-firewall-localhost-lookup-uuid', 'localhost', 'localhost',
-       'this_firewall_hostname', NULL, 1, 'firewall-name-localhost.example-zone.invalid',
+       'this_firewall_hostname', NULL, true, 'firewall-name-localhost.example-zone.invalid',
        'unbound', 'pass', 'Recursion', 'NOERROR', NULL, :now - 222, :now - 220, NULL, 'not_found';
 
 -- Half the unresolved host-name lookups have been examined by a lease pass since they
@@ -2603,7 +2603,7 @@ WHERE m.n <= 1 + (
 -- The exporter, a provider of the flow_record kind this pretend-installation
 -- runs: an example value, as the reconciled_state source above is.
 INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
-VALUES ('flow_record', 'example-exporter', 'Example exporter', 1, :now)
+VALUES ('flow_record', 'example-exporter', 'Example exporter', true, :now)
 ON CONFLICT (kind, provider_key) DO NOTHING;
 
 INSERT INTO source_availability (provider_id, state, probe, detail, checked_at)
@@ -2624,7 +2624,7 @@ INSERT INTO capture_configuration (id, provider_id, first_read_at, last_read_at,
 SELECT c.id, p.id, c.first_read_at, c.last_read_at, c.fingerprint,
        CASE WHEN c.fingerprint IS NULL THEN 'unavailable' END,
        CASE WHEN c.fingerprint IS NULL THEN 'example-unreadable-detail' END,
-       CASE WHEN c.fingerprint IS NOT NULL THEN 1 END,
+       CASE WHEN c.fingerprint IS NOT NULL THEN true END,
        CASE WHEN c.fingerprint IS NOT NULL THEN '9' END,
        CASE WHEN c.fingerprint IS NOT NULL THEN 1800 END,
        CASE WHEN c.fingerprint IS NOT NULL THEN 15 END
@@ -2639,8 +2639,8 @@ WHERE p.kind = 'flow_record' AND p.provider_key = 'example-exporter';
 INSERT INTO capture_interface (capture_configuration_id, identifier, ingress, egress, exported,
                                not_exported_reason)
 SELECT c.id, i.identifier,
-       CASE WHEN i.id = :interfaces + 1 THEN 0 ELSE 1 END,
-       1,
+       i.id <> :interfaces + 1,
+       true,
        CASE WHEN i.id = 2 THEN 'no' ELSE 'yes' END,
        CASE WHEN i.id = 2 THEN 'example-no-export-point' END
 FROM capture_configuration AS c
@@ -2703,7 +2703,7 @@ SELECT
     r.egress_role,
     CASE WHEN r.egress_role = 'interface' THEN upstream.identifier END,
     CASE WHEN r.egress_role = 'interface' THEN upstream.device END,
-    CASE WHEN r.observed_at BETWEEN :now - 3888000 + 60 AND :now - 3456000 THEN 0 ELSE 1 END,
+    NOT (r.observed_at BETWEEN :now - 3888000 + 60 AND :now - 3456000),
     format('%s|%s|%s|%s', r.ip_version, r.protocol, least(r.src_address, r.dst_address),
            greatest(r.src_address, r.dst_address)),
     r.join_state,
@@ -2713,7 +2713,7 @@ SELECT
     CASE WHEN r.join_state = 'copy' AND r.n % 7 = 2 THEN r.flow_id END,
     CASE WHEN r.join_state = 'joined' OR (r.join_state = 'copy' AND r.n % 7 = 2)
          THEN CASE WHEN r.n % 2 = 0 THEN 'forward' ELSE 'reverse' END END,
-    CASE WHEN r.join_state = 'copy' AND r.n % 14 = 2 THEN 1 ELSE 0 END,
+    r.join_state = 'copy' AND r.n % 14 = 2,
     CASE WHEN r.join_state = 'unmatched'
          THEN (ARRAY['no_logged_leg', 'ambiguous', 'beyond_flow_horizon', 'interface_index_unmapped',
                      'reverse_unconfirmed'])[1 + (r.n / 7) % 5] END,
@@ -2748,8 +2748,8 @@ SELECT d.flow_id, d.direction, d.start_at, d.state,
        CASE WHEN d.state IN ('measured', 'in_progress') THEN 1500 + d.n % 900 ELSE 0 END,
        CASE WHEN d.state IN ('measured', 'in_progress') THEN 3 ELSE 0 END,
        CASE WHEN d.state IN ('measured', 'in_progress') THEN 1 ELSE 0 END,
-       CASE WHEN d.state IN ('measured', 'in_progress') AND d.n % 5 = 0 THEN 1 ELSE 0 END,
-       CASE WHEN d.state IN ('in_progress', 'awaiting_export') THEN 0 ELSE 1 END,
+       d.state IN ('measured', 'in_progress') AND d.n % 5 = 0,
+       d.state NOT IN ('in_progress', 'awaiting_export'),
        CASE WHEN d.state IN ('in_progress', 'awaiting_export') THEN d.start_at + 3600 END,
        d.start_at + 120
 FROM directed AS d;

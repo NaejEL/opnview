@@ -14,13 +14,15 @@ func (c *LeaseCoordinator) CollectLeases(ctx context.Context, seen *[]string) (b
 	return c.collectLeases(ctx, seen)
 }
 
-// IngestLease is ingestLease.
+// IngestLease stores one observation as a pass stores its observations.
 func (c *LeaseCoordinator) IngestLease(ctx context.Context, observation dhcplease.Observation,
 	snapshot core.Discovery, providerID int64, backend string, now int64) error {
-	return c.ingestLease(ctx, observation, snapshot, providerID, backend, now)
+	return c.storeLeases(ctx, []dhcplease.Observation{observation}, snapshot, providerID, backend, now)
 }
 
-// LeaseFailurePasses is leaseFailurePasses.
+// LeaseFailurePasses is how many lease passes in a row one backend has failed.
 func (c *LeaseCoordinator) LeaseFailurePasses(providerID int64) int64 {
-	return c.leaseFailurePasses(providerID)
+	c.Mutex.RLock()
+	defer c.Mutex.RUnlock()
+	return c.LeaseFailures[providerID]
 }

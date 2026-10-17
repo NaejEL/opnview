@@ -357,6 +357,17 @@ v0.24.0 and `golang.org/x/text` v0.43.0 (both raised from pgx's own requirement,
 v0.29.0, by the rest of the module graph -- upgrades, never downgrades). The test-only modules
 pgx's own `go.mod` names (`testify` and its dependencies) are not linked into `opnview`.
 
+**Statements and values, PostgreSQL's own** (PA15 of the amendment of 17 October 2026). The connection
+rewrites no statement and converts no value: each text is prepared once per connection by pgx's
+statement cache, and PostgreSQL types its parameters. A statement written in Go numbers its
+parameters (`$1`); a statements file -- the store's, a widget's, a plugin's -- names them `:name`,
+the authoring form `docs/plugins.md` documents, and is translated to `$n` once, when it is registered
+(`internal/store/sqldb`, `translate.go`). A flag is a `BOOLEAN` column. A plugin's or widget's
+statement reads a whole `numeric` as an integer through the plugin host's conversion
+(`internal/store/reads`, `cells.go`); a core statement casts what it reads. A pass writes its rows in
+a number of statements independent of their count, and the refresh after it rewrites each period's
+slots together (PA17).
+
 **The schema** is one file, `internal/store/schema.sql`, applied in place in one transaction on
 every start. The core's objects live in the schema `opnview`; each plugin's tables in its own
 schema `plugin_<plugin>`; tables set aside by a changed plugin declaration in `opnview_aside`.
@@ -452,7 +463,7 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/store/storetest` — what the store's tests share: a database of its own for each test, and the test network.
 - `internal/store/vocab` — the store's closed vocabularies and row types.
 - `internal/suffixlist` — the Public Suffix List format, and a name's registrable domain.
-- `internal/testtiming` — where the everyday suite's time goes, per package, recorded while a CI-only switch is on.
+- `internal/testtiming` — where the everyday suite's time goes, per package, recorded while a CI-only switch is on; test binaries hand it to the store (`store.Timing`), so the product binary does not link it.
 - `internal/web` — the HTTP core: the server, the route table, sessions and CSRF, the layout, the themes, the string catalogue and the surfaces' seam.
 - `internal/web/messages` — the catalogue keys the core chooses, and the keys composed from a registry row.
 - `internal/web/settingfields` — the fields of the settings forms.

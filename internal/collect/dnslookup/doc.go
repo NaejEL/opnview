@@ -17,5 +17,5 @@
 // provider.json whose kind is "dns_lookup", a Go package whose init() calls Register with the
 // embedded manifest and a Source, its fixtures and its tests. A resolver whose lookups cannot be
 // read (Dnsmasq: free-text log under an unrecorded grammar) is still registered and probed, and
-// returns provider.ErrUnsupportedRead with the reason. See docs/extending.md.
+// returns provider.ErrUnsupportedRead with the reason. See docs/plugins.md.
 package dnslookup

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/broker"
+	"github.com/NaejEL/opnview/internal/broker/schedule"
 	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"github.com/NaejEL/opnview/internal/collect/firewalllog"
@@ -81,14 +82,8 @@ type Clock interface {
 	After(d time.Duration) <-chan time.Time
 }
 
-// SystemClock is the real clock.
-type SystemClock struct{}
-
-// Now returns the current instant.
-func (SystemClock) Now() time.Time { return time.Now() }
-
-// After returns a channel that delivers once, after d.
-func (SystemClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
+// SystemClock is the real clock: the broker's, which is the same wall clock.
+type SystemClock = schedule.SystemClock
 
 // Discovery is the snapshot of the firewall's own configuration the collectors join against.
 // It is declared in the provider contract, because the measurement sampler is handed it.

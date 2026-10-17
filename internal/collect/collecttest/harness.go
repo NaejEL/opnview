@@ -172,7 +172,7 @@ func ReferenceEpoch() int64 { return ReferenceInstant().Unix() }
 // ever -- and its broker closed when the test ends, so no subscription holds the fake firewall.
 func NewTestCollector(t *testing.T, client *opnsense.Client, database *store.Store, clock core.Clock) *collect.Collector {
 	t.Helper()
-	collector := collect.New(client, database, clock)
+	collector := collect.NewWithSources(client, database, clock, nil)
 	collector.Broker().Scheduler().SetSettings(schedule.Settings{MaxInFlight: 64, MaxPerSecond: 1e6})
 	// A test runs its passes back to back at one frozen instant, where a pass at its interval would
 	// find the answer it read an instant before fresh in the mirror: its readers' max ages are zero,
@@ -193,10 +193,10 @@ func ArrangeLeaseCollection(t *testing.T) *ProbeHarness {
 	t.Helper()
 	harness := NewProbeHarness(t)
 	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	harness.Fake.AnswerFixture(opnsense.KeaStatus, "kea_status_disabled.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqLeases, "dnsmasq_leases.json")
+	harness.Fake.AnswerFixture(KeaStatus, "kea_status_disabled.json")
+	harness.Fake.AnswerFixture(DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(DnsmasqLeases, "dnsmasq_leases.json")
 	harness.Fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
 	harness.Fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
 	if err := harness.Collector.ProbeDHCPLease(context.Background()); err != nil {
@@ -290,7 +290,7 @@ func InterfacesWithIndexes() map[string]any {
 // The two endpoints the built-in netflow plugin reads its configuration from.
 var (
 	GetconfigEndpoint = opnsense.Endpoint{Path: "/api/diagnostics/netflow/getconfig", Method: "GET"}
-	IsEnabledEndpoint = opnsense.NetflowIsEnabled
+	IsEnabledEndpoint = NetflowIsEnabled
 )
 
 // Captured is one interface a test configuration captures on.
@@ -1120,11 +1120,11 @@ func ArrangeRecordCollection(t *testing.T) *ProbeHarness {
 	t.Helper()
 	harness := NewProbeHarness(t)
 	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	harness.Fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	harness.Fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-	harness.Fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(UnboundStatus, "unbound_status_running.json")
+	harness.Fake.AnswerFixture(UnboundSettings, "unbound_settings.json")
+	harness.Fake.AnswerFixture(UnboundIsEnabled, "unbound_is_enabled_on.json")
+	harness.Fake.AnswerFixture(DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(DnsmasqSettings, "dnsmasq_settings.json")
 	ctx := context.Background()
 	if err := harness.Collector.ProbeResolverCache(ctx); err != nil {
 		t.Fatalf("probing the cache: %v", err)

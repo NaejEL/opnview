@@ -46,7 +46,7 @@
       "method": "GET",
       "survey_section": "Resolver cache and local data, read from source for the resolver-cache cycle",
       "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/DiagnosticsController.php",
-      "note": "{status, data: [{host, ttl, type, rrtype, value}]}; ttl is the remaining seconds as a string, or null on a message-cache reference line, which is not a record; type is the class."
+      "note": "{status, data: [{host, ttl, type, rrtype, value}]}; ttl is the remaining seconds as a string, or null on a message-cache reference line, which is not a record; type is the class. configd: https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_unbound.conf [dumpcache]; script: https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/wrapper.py; ACL: https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/ACL/ACL.xml"
     },
     {
       "name": "list_local_data",
@@ -54,7 +54,7 @@
       "method": "GET",
       "survey_section": "Resolver cache and local data, read from source for the resolver-cache cycle",
       "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Unbound/Api/DiagnosticsController.php",
-      "note": "{status, data: [{name, ttl, type, rrtype, value}]}; ttl is the configured TTL, type is the class."
+      "note": "{status, data: [{name, ttl, type, rrtype, value}]}; ttl is the configured TTL, type is the class. configd: https://github.com/opnsense/core/blob/26.7.3/src/opnsense/service/conf/actions.d/actions_unbound.conf [listlocaldata]; script: https://github.com/opnsense/core/blob/26.7.3/src/opnsense/scripts/unbound/wrapper.py; ACL: https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/ACL/ACL.xml"
     }
   ],
   "tables": [

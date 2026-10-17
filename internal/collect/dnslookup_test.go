@@ -10,7 +10,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/decode"
-	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -29,12 +28,12 @@ func arrangeResolverCollection(t *testing.T) *collecttest.ProbeHarness {
 	t.Helper()
 	harness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
-	harness.Fake.AnswerFixture(opnsense.UnboundStatus, "unbound_status_running.json")
-	harness.Fake.AnswerFixture(opnsense.UnboundSettings, "unbound_settings.json")
-	harness.Fake.AnswerFixture(opnsense.UnboundIsEnabled, "unbound_is_enabled_on.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqStatus, "dnsmasq_status_running.json")
-	harness.Fake.AnswerFixture(opnsense.DnsmasqSettings, "dnsmasq_settings.json")
-	harness.Fake.AnswerFixture(opnsense.SearchQueries, "search_queries_page1.json")
+	harness.Fake.AnswerFixture(collecttest.UnboundStatus, "unbound_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.UnboundSettings, "unbound_settings.json")
+	harness.Fake.AnswerFixture(collecttest.UnboundIsEnabled, "unbound_is_enabled_on.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
+	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
+	harness.Fake.AnswerFixture(collecttest.SearchQueries, "search_queries_page1.json")
 	if err := harness.Collector.ProbeDNSLookup(context.Background()); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
@@ -57,7 +56,7 @@ func TestTheResolverQueryIsAJSONPostWithIntegerBounds(t *testing.T) {
 	}
 	harness.Fake.AssertEveryPathIsRegistered()
 
-	requests := harness.Fake.RequestsTo(opnsense.SearchQueries)
+	requests := harness.Fake.RequestsTo(collecttest.SearchQueries)
 	if len(requests) == 0 {
 		t.Fatal("the query report was never requested")
 	}
@@ -306,7 +305,7 @@ func TestTheCollectorWalksTheRingBufferAndStopsWhenAPageIsAllKnown(t *testing.T)
 	if err := harness.Collector.CollectDNSLookup(ctx); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	requests := harness.Fake.RequestsTo(opnsense.SearchQueries)
+	requests := harness.Fake.RequestsTo(collecttest.SearchQueries)
 	if len(requests) < 2 {
 		t.Fatalf("the collector made %d requests; it must page rather than read one page", len(requests))
 	}

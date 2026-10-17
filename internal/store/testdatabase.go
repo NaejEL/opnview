@@ -16,7 +16,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/NaejEL/opnview/internal/store/sqldb"
-	"github.com/NaejEL/opnview/internal/testtiming"
 )
 
 // Databases for the tests (P9 of specs/SPEC-backend-completion-plugins.md).
@@ -88,8 +87,8 @@ type TestDatabase struct {
 
 // newTestDatabase is a created database, its clone recorded for the suite's breakdown.
 func newTestDatabase(dsn, name, admin string, cloneStarted time.Time) *TestDatabase {
-	database := &TestDatabase{DSN: dsn, name: name, admin: admin, pkg: testtiming.Package(), created: time.Now()}
-	testtiming.RecordFor(database.pkg, testtiming.StepClone, database.created.Sub(cloneStarted))
+	database := &TestDatabase{DSN: dsn, name: name, admin: admin, pkg: timingPackage(), created: time.Now()}
+	recordTimingFor(database.pkg, TimingClone, database.created.Sub(cloneStarted))
 	return database
 }
 
@@ -119,28 +118,6 @@ func NewTestDatabase(ctx context.Context) (*TestDatabase, error) {
 	return newTestDatabase(dsn, name, admin, started), nil
 }
 
-// NewEmptyTestDatabase creates a database with nothing in it, not even the schema, for a test of
-// what Open does to an empty or an outdated database.
-func NewEmptyTestDatabase(ctx context.Context) (*TestDatabase, error) {
-	admin := os.Getenv(TestDatabaseVariable)
-	if admin == "" {
-		return nil, fmt.Errorf("store: %s is not set", TestDatabaseVariable)
-	}
-	name, err := uniqueName("opnview_test_")
-	if err != nil {
-		return nil, err
-	}
-	started := time.Now()
-	if err := createDatabase(ctx, admin, name, ""); err != nil {
-		return nil, err
-	}
-	dsn, err := withDatabase(admin, name)
-	if err != nil {
-		return nil, err
-	}
-	return newTestDatabase(dsn, name, admin, started), nil
-}
-
 // Name is the database's name.
 func (d *TestDatabase) Name() string { return d.name }
 
@@ -148,8 +125,8 @@ func (d *TestDatabase) Name() string { return d.name }
 func (d *TestDatabase) Drop(ctx context.Context) error {
 	started := time.Now()
 	if !d.created.IsZero() {
-		testtiming.RecordFor(d.pkg, testtiming.StepLifetime, started.Sub(d.created))
-		defer func() { testtiming.RecordFor(d.pkg, testtiming.StepDrop, time.Since(started)) }()
+		recordTimingFor(d.pkg, TimingLifetime, started.Sub(d.created))
+		defer func() { recordTimingFor(d.pkg, TimingDrop, time.Since(started)) }()
 	}
 	db, err := adminPool(d.admin)
 	if err != nil {

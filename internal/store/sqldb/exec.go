@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -107,13 +106,6 @@ func Optional(value *int64) any {
 func isParameterCharacter(character byte) bool {
 	return character == '_' || (character >= 'a' && character <= 'z') ||
 		(character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9')
-}
-
-// IsConstraintViolation reports whether an error is PostgreSQL's refusal of a row by a
-// constraint: SQLSTATE class 23 (integrity constraint violation), whichever constraint it was.
-func IsConstraintViolation(err error) bool {
-	var failure *pgconn.PgError
-	return errors.As(err, &failure) && strings.HasPrefix(failure.Code, "23")
 }
 
 // IsUniqueViolation reports whether an error is a unique constraint's refusal (23505).
