@@ -1,0 +1,14 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.interface_throughput.widget.interface_throughput.title": "Interface throughput",
+    "plugin.interface_throughput.widget.interface_throughput.question": "How much traffic is each interface carrying, and is anything saturated or erroring?",
+    "plugin.interface_throughput.widget.interface_throughput.direction.in": "in",
+    "plugin.interface_throughput.widget.interface_throughput.direction.out": "out",
+    "plugin.interface_throughput.widget.interface_throughput.fact.current": "Latest reading",
+    "plugin.interface_throughput.widget.interface_throughput.fact.resets": "Counter resets",
+    "plugin.interface_throughput.widget.interface_throughput.resets.one": "{count} counter reset",
+    "plugin.interface_throughput.widget.interface_throughput.resets.other": "{count} counter resets",
+    "plugin.interface_throughput.widget.interface_throughput.series_label": "{interface} · {direction}"
+  }
+}

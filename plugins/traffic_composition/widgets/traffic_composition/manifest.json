@@ -122,5 +122,8 @@
   "queries": [
     "traffic_composition.statements.sql"
   ],
-  "script": "traffic_composition.js"
+  "script": "traffic_composition.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

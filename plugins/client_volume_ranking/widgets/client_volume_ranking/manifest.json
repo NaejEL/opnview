@@ -72,5 +72,8 @@
     "interface"
   ],
   "queries": [],
-  "script": "client_volume_ranking.js"
+  "script": "client_volume_ranking.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

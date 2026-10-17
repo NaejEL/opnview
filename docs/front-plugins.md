@@ -108,8 +108,65 @@ shape:
 It is a pure function from the widget's answer, its parameters, its size, a string lookup, the
 formatters and the shape kit to a **view tree** of keyed nodes. It never writes markup as text, never
 sets an inline event handler, never writes a `style` attribute and never writes a colour: a colour is
-a class of the stylesheet, a token. The registration call and the shape kit are built with the
-canvases (Lot 2 of the step) and documented here then.
+a class of the stylesheet, a token.
+
+### The registration call
+
+```js
+(function (root) {
+  "use strict";
+  var opnview = root.opnview || (root.opnview = {});
+  opnview.widgets.register({
+    type: "example_widget",
+    render: function (input) {
+      var kit = input.kit, h = kit.h, t = input.t;
+      return h("div", {}, [
+        h("p", {}, t("plugin.example.widget.example_widget.heading")),
+        kit.value(input.data.figure, "bytes")
+      ]);
+    }
+  });
+})(this);
+```
+
+`input` holds:
+
+| Member | What it is |
+|---|---|
+| `answer`, `data` | the widget API's whole answer and its `data` member (`docs/widget-api.md`) |
+| `parameters` | the effective parameters, rendering-class ones included |
+| `row` | the widget's row of `GET /api/widgets`: its shape and its manifest's parameters |
+| `size` | the card body's `{width, height}` in CSS pixels |
+| `t`, `tp`, `tk`, `td` | the string lookup (`front/core/strings.js`): a literal key, a plural, a composed key, a key the data carries |
+| `format` | the formatters of the active language: `number`, `bytes`, `rate`, `percent`, `instant`, `duration`, `tick` |
+| `kit` | the shape kit, made for this one drawing (`front/core/kit.js`) |
+
+It answers a view tree built with `kit.h(tag, attributes, children)`. A renderer that throws, or answers
+anything else, is drawn as the renderer-failure panel; the card keeps its footprint and title.
+
+A renderer is drawn only when its answer has data to draw. The conditions with nothing to draw -- the
+four source conditions, no rows in the period, an unresolved reference, a missing parameter, a
+withheld answer, a failed read or script -- are panels the core draws, never the renderer's.
+
+### The shape kit
+
+| Function | What it draws |
+|---|---|
+| `kit.value(figure, unit, {field})` | one figure in its unit (`bytes`, `bits_per_second`, `share`, `seconds`), carrying its measure; a missing one is a dash, never 0 |
+| `kit.none(reason)`, `kit.add(a, b)` | the dash of a figure that does not exist; the sum of two figures of one measure, `null` across measures |
+| `kit.measure(m)`, `kit.measures(figures)` | the chip naming a measure |
+| `kit.table(columns, rows, {remainder, total})` | a table whose dropped rows are a row of their own |
+| `kit.bars(rows, {remainder, total})` | ranked bars, each `data-bar`/`data-value`, the remainder and the total rows |
+| `kit.chart(spec)` | a time series at the card's size: linear by default, `smooth` through every sample, every series element with `data-sample-count`, an area only when stacked, gaps labelled, `single` or `all_series` tooltips, an aggregation to fit the pixels stated |
+| `kit.spark(values, cls)` | a line of samples in a cell, one mark per sample |
+| `kit.donut(slices, options)`, `kit.map(points, {cluster})`, `kit.matrix(rows, columns, cell)`, `kit.sankey(spec)`, `kit.feed(columns, entries, {sources, remainder})`, `kit.chips(chips, remainder)` | the other shapes' drawings |
+| `kit.pick(subject)` | marks a node as opening a detail about a subject: `{kind, key, title, facts, related, reference, about}`; `reference` offers "scope this canvas to it", `about` "add a widget about it" |
+| `kit.tip(nodes)` | gives a node a tooltip |
+| `kit.join(items)`, `kit.expand(key, summary, content)`, `kit.legend(items)`, `kit.note(text)`, `kit.remainder(members, value)` | values side by side, a row the reader expands, a legend, a note, a remainder |
+
+Colours are the stylesheet's classes only: `s1`..`s6` strokes, `f1`..`f6` fills, `sw-1`..`sw-6`
+swatches, `fallowed`, `fblocked`, `fother`. A renderer that needs a word adds it to its own catalogue
+file (*Strings of a widget*) and asks for it by its literal key.
 
 A renderer runs in the signed-in reader's page, with that reader's privileges. The page's policy stops
 it reaching any other origin, but not calling a write route of this server: a front plugin is trusted

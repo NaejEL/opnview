@@ -65,7 +65,8 @@ func TestNoTwoEntriesCarryTheSameWordsUndecided(t *testing.T) {
 		trimmed := strings.TrimSpace(value)
 		byValue[trimmed] = append(byValue[trimmed], key)
 	}
-	for _, keys := range byValue {
+	for _, all := range byValue {
+		keys := undecidedWithinOneOwner(all)
 		if len(keys) < 2 {
 			continue
 		}
@@ -90,6 +91,67 @@ func TestNoTwoEntriesCarryTheSameWordsUndecided(t *testing.T) {
 			}
 		}
 	}
+}
+
+// undecidedWithinOneOwner narrows a group of entries sharing their words to the ones a decision is
+// owed for. A WIDGET PLUGIN'S WORDS ARE ITS OWN (CLAUDE.md: a widget is a directory a third party adds
+// without touching anything shipped): it cannot borrow another plugin's entry, which may not be
+// installed, so two plugins saying the same word is not a duplicate anybody can remove. What stays
+// owed is a duplicate one owner could remove: two entries of the core, two of one plugin, or a
+// plugin's entry repeating the core's, which the plugin should reuse. The plural forms of one entry
+// (.one, .other) saying the same words are one entry.
+func undecidedWithinOneOwner(keys []string) []string {
+	owner := func(key string) string {
+		if rest, found := strings.CutPrefix(key, "plugin."); found {
+			name, _, _ := strings.Cut(rest, ".")
+			return "plugin." + name
+		}
+		return "core"
+	}
+	entry := func(key string) string {
+		for _, form := range []string{".one", ".other"} {
+			if trimmed, found := strings.CutSuffix(key, form); found {
+				return trimmed
+			}
+		}
+		return key
+	}
+	byOwner := map[string]map[string]string{}
+	for _, key := range keys {
+		if byOwner[owner(key)] == nil {
+			byOwner[owner(key)] = map[string]string{}
+		}
+		byOwner[owner(key)][entry(key)] = key
+	}
+	var owed []string
+	for name, entries := range byOwner {
+		// Entries of one owner, or of one plugin beside the core's.
+		if len(entries) > 1 || (name != "core" && byOwner["core"] != nil) {
+			for _, key := range entries {
+				owed = append(owed, key)
+			}
+		}
+	}
+	if core := byOwner["core"]; core != nil && len(owed) > 0 {
+		for _, key := range core {
+			if !contains(owed, key) {
+				owed = append(owed, key)
+			}
+		}
+	}
+	if len(owed) < 2 {
+		return nil
+	}
+	return owed
+}
+
+func contains(list []string, value string) bool {
+	for _, item := range list {
+		if item == value {
+			return true
+		}
+	}
+	return false
 }
 
 // TestNoCatalogueEntryIsExplanatoryCopy is AC22's catalogue half.

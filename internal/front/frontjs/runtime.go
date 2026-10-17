@@ -68,8 +68,25 @@ var (
 )
 
 type source struct {
-	name string
-	text string
+	name    string
+	text    string
+	program *goja.Program
+}
+
+// compiled compiles every source once: a page runs the compiled programs, so a test that opens many
+// pages pays for the parsing once.
+func compiled(sources []source) error {
+	for index := range sources {
+		if sources[index].program != nil {
+			continue
+		}
+		program, err := goja.Compile(sources[index].name, sources[index].text, false)
+		if err != nil {
+			return fmt.Errorf("compiling %s: %w", sources[index].name, err)
+		}
+		sources[index].program = program
+	}
+	return nil
 }
 
 // ShellScripts returns the files the shell loads, in its order, below the front's root.
@@ -107,8 +124,94 @@ func frontSources() ([]source, error) {
 			}
 			sourcesList = append(sourcesList, source{name: name, text: string(text)})
 		}
+		sourcesErr = compiled(sourcesList)
 	})
 	return sourcesList, sourcesErr
+}
+
+// renderer sources: every shape renderer of the built-in front and every renderer a built-in
+// widget's manifest names, read once. Nothing lists them: the shapes are the files of front/shapes/,
+// the widgets' renderers the entries their manifests declare.
+var (
+	renderersOnce sync.Once
+	renderersList []source
+	renderersErr  error
+)
+
+// RendererSources returns the shape renderers and the built-in widgets' renderers, by path.
+func RendererSources() ([]struct{ Name, Text string }, error) {
+	renderersOnce.Do(func() {
+		front := opnview.BuiltinFront()
+		shapes, err := fs.ReadDir(front, "shapes")
+		if err != nil {
+			renderersErr = err
+			return
+		}
+		for _, entry := range shapes {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".js") {
+				continue
+			}
+			text, err := fs.ReadFile(front, "shapes/"+entry.Name())
+			if err != nil {
+				renderersErr = err
+				return
+			}
+			renderersList = append(renderersList, source{name: "front/shapes/" + entry.Name(), text: string(text)})
+		}
+		plugins := opnview.BuiltinPlugins()
+		manifests, err := fs.Glob(plugins, "*/widgets/*/manifest.json")
+		if err != nil {
+			renderersErr = err
+			return
+		}
+		sort.Strings(manifests)
+		for _, manifest := range manifests {
+			raw, err := fs.ReadFile(plugins, manifest)
+			if err != nil {
+				renderersErr = err
+				return
+			}
+			var declared struct {
+				Renderer *struct {
+					Entry string `json:"entry"`
+				} `json:"renderer"`
+			}
+			if err := json.Unmarshal(raw, &declared); err != nil {
+				renderersErr = fmt.Errorf("%s: %w", manifest, err)
+				return
+			}
+			if declared.Renderer == nil {
+				continue
+			}
+			name := strings.TrimSuffix(manifest, "manifest.json") + declared.Renderer.Entry
+			text, err := fs.ReadFile(plugins, name)
+			if err != nil {
+				renderersErr = err
+				return
+			}
+			renderersList = append(renderersList, source{name: "plugins/" + name, text: string(text)})
+		}
+		renderersErr = compiled(renderersList)
+	})
+	out := make([]struct{ Name, Text string }, 0, len(renderersList))
+	for _, file := range renderersList {
+		out = append(out, struct{ Name, Text string }{file.name, file.text})
+	}
+	return out, renderersErr
+}
+
+// LoadRenderers runs every shape renderer and every built-in widget's renderer in the page, as the
+// canvas loads them in a browser.
+func (r *Runtime) LoadRenderers() {
+	r.t.Helper()
+	if _, err := RendererSources(); err != nil {
+		r.t.Fatalf("frontjs: reading the renderers: %v", err)
+	}
+	for _, file := range renderersList {
+		if _, err := r.VM.RunProgram(file.program); err != nil {
+			r.t.Fatalf("frontjs: running %s: %v", file.name, err)
+		}
+	}
 }
 
 // New starts a page: the document, the fake browser, and every file the shell loads.
@@ -123,7 +226,7 @@ func New(t testing.TB, options Options) *Runtime {
 		t.Fatalf("frontjs: reading the front: %v", err)
 	}
 	for _, file := range sources {
-		if _, err := runtime.VM.RunScript(file.name, file.text); err != nil {
+		if _, err := runtime.VM.RunProgram(file.program); err != nil {
 			t.Fatalf("frontjs: running %s: %v", file.name, err)
 		}
 	}

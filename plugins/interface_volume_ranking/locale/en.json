@@ -1,0 +1,26 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.title": "Interface volume ranking",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.question": "Which VLAN or interface is generating the traffic?",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.clients": "{seen} of {known} clients seen",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.clients_seen": "Clients seen",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.of": "{seen} of {known}",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.east_west": "Between interfaces",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.north_south": "In and out of the network",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.this_firewall": "To the firewall itself",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.shares": "between interfaces {east_west} · in and out {north_south} · firewall {this_firewall}",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.left_out": "Interfaces left out by the parameters",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.unattributed": "Not attributed to an interface",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.untagged": "untagged",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.vlan": "VLAN {tag}",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.rules_not_logging.one": "{count} rule does not log",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.rules_not_logging.other": "{count} rules do not log",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.floating_rules_not_logging.one": "{count} floating rule does not log",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.floating_rules_not_logging.other": "{count} floating rules do not log",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.unresolved_rules_not_logging.one": "{count} unresolved rule does not log",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.unresolved_rules_not_logging.other": "{count} unresolved rules do not log",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.rules_logging_not_reported.one": "{count} logging rule not reported",
+    "plugin.interface_volume_ranking.widget.interface_volume_ranking.rules_logging_not_reported.other": "{count} logging rules not reported"
+  }
+}

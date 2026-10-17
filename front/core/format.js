@@ -16,6 +16,16 @@
   var opnview = root.opnview || (root.opnview = {});
 
   var hasIntl = typeof Intl !== "undefined" && typeof Intl.NumberFormat === "function";
+  /* Building an Intl formatter costs far more than using one: each is built once per language and
+   * options, and kept. */
+  var formatters = {};
+  function cached(kind, options) {
+    var key = kind + "|" + language() + "|" + JSON.stringify(options);
+    if (!formatters[key]) {
+      formatters[key] = kind === "date" ? new Intl.DateTimeFormat(language(), options) : new Intl.NumberFormat(language(), options);
+    }
+    return formatters[key];
+  }
   var recorded = null;
 
   function note(text) {
@@ -50,7 +60,7 @@
   function unitFormat(value, unit, fractionDigits) {
     if (hasIntl) {
       try {
-        return new Intl.NumberFormat(language(), { style: "unit", unit: unit, unitDisplay: "short",
+        return cached("number", { style: "unit", unit: unit, unitDisplay: "short",
           maximumFractionDigits: fractionDigits }).format(value);
       } catch (e) { /* an engine without unit formatting falls through */ }
     }
@@ -78,7 +88,7 @@
       if (value === null || value === undefined) { return ""; }
       var digits = fractionDigits === undefined ? 0 : fractionDigits;
       if (hasIntl) {
-        return note(new Intl.NumberFormat(language(), { maximumFractionDigits: digits }).format(value));
+        return note(cached("number", { maximumFractionDigits: digits }).format(value));
       }
       return note(plainNumber(value, digits));
     },
@@ -96,8 +106,7 @@
     percent: function (share, fractionDigits) {
       var digits = fractionDigits === undefined ? 1 : fractionDigits;
       if (hasIntl) {
-        return note(new Intl.NumberFormat(language(), { style: "percent", maximumFractionDigits: digits })
-          .format(share));
+        return note(cached("number", { style: "percent", maximumFractionDigits: digits }).format(share));
       }
       return note(plainNumber(share * 100, digits) + " " + opnview.strings.t("unit.symbol.percent"));
     },
@@ -106,14 +115,27 @@
       if (epochSeconds === null || epochSeconds === undefined) { return ""; }
       var date = new Date(epochSeconds * 1000);
       if (hasIntl && typeof Intl.DateTimeFormat === "function") {
-        return note(new Intl.DateTimeFormat(language(), { dateStyle: "medium", timeStyle: "medium" }).format(date));
+        return note(cached("date", { dateStyle: "medium", timeStyle: "medium" }).format(date));
       }
       return note(date.toISOString());
+    },
+    /* An instant on a chart's time axis, in the reader's own time zone: the time of day for a window
+     * of a day or less, the day and the time for a week, the day for anything longer. */
+    tick: function (epochSeconds, spanSeconds) {
+      if (epochSeconds === null || epochSeconds === undefined) { return ""; }
+      var date = new Date(epochSeconds * 1000);
+      if (hasIntl && typeof Intl.DateTimeFormat === "function") {
+        var options = spanSeconds <= 86400 ? { hour: "2-digit", minute: "2-digit" }
+          : spanSeconds <= 7 * 86400 ? { weekday: "short", hour: "2-digit" } : { month: "short", day: "numeric" };
+        return note(cached("date", options).format(date));
+      }
+      var iso = date.toISOString();
+      return note(spanSeconds <= 86400 ? iso.slice(11, 16) : spanSeconds <= 7 * 86400 ? iso.slice(5, 13) : iso.slice(5, 10));
     },
     /* A time of day of the reader's clock, for the live indicator. */
     clock: function (date) {
       if (hasIntl && typeof Intl.DateTimeFormat === "function") {
-        return note(new Intl.DateTimeFormat(language(), { timeStyle: "medium" }).format(date));
+        return note(cached("date", { timeStyle: "medium" }).format(date));
       }
       return note(date.toISOString().slice(11, 19));
     },

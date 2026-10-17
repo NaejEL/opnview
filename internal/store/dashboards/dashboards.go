@@ -212,6 +212,46 @@ func (s *DashboardStore) OrderDashboards(ctx context.Context, ids []int64) error
 	})
 }
 
+// SeedDefault stores the default dashboard once, with origin default (F7-28): the first call ever
+// claims the mark key and, when no dashboard is stored, creates document; every later call does
+// nothing, so deleting every dashboard never brings the default back. It answers whether it created
+// the dashboard.
+func (s *DashboardStore) SeedDefault(ctx context.Context, key, document string, now int64) (bool, error) {
+	created := false
+	err := s.inTransaction(ctx, "offering the default dashboard", func(tx *sql.Tx) error {
+		text, err := sqldb.Statement("dashboard_default_claim")
+		if err != nil {
+			return err
+		}
+		var claimed string
+		err = tx.QueryRowContext(ctx, text, sqldb.Named(text, map[string]any{"key": key, "now": now})...).Scan(&claimed)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("store: dashboard_default_claim: %w", err)
+		}
+		counted, err := sqldb.Statement("dashboard_count")
+		if err != nil {
+			return err
+		}
+		var stored int64
+		if err := tx.QueryRowContext(ctx, counted).Scan(&stored); err != nil {
+			return fmt.Errorf("store: dashboard_count: %w", err)
+		}
+		if stored > 0 {
+			return nil
+		}
+		if _, err := queryOne(ctx, tx, "dashboard_create", map[string]any{"document": document, "origin": OriginDefault,
+			"source_name": nil, "now": now}); err != nil {
+			return err
+		}
+		created = true
+		return nil
+	})
+	return created, err
+}
+
 // nullable is a name, or NULL.
 func nullable(name *string) any {
 	if name == nil {

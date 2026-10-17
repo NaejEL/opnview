@@ -69,5 +69,8 @@
     "interface"
   ],
   "queries": [],
-  "script": "interface_throughput.js"
+  "script": "interface_throughput.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

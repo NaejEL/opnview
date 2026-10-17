@@ -90,5 +90,8 @@
   "queries": [
     "owner_activity.statements.sql"
   ],
-  "script": "owner_activity.js"
+  "script": "owner_activity.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

@@ -126,3 +126,34 @@ func TestADurationIsSpelledWithItsFigures(t *testing.T) {
 		}
 	}
 }
+
+// TestARefreshLeavesASelectionAloneUntilItCollapses (F7-AC23): a MAC the reader selected in a table
+// stays selected -- its text node kept -- across a refresh, and is patched once the selection
+// collapses.
+func TestARefreshLeavesASelectionAloneUntilItCollapses(t *testing.T) {
+	t.Parallel()
+	page := reconcilerPage(t)
+	page.Run(`
+function table(mac, figure) {
+  return [h("table", { key: "t" }, h("tbody", {}, [
+    h("tr", { key: "r1" }, [h("td", { key: "mac", "class": "mac" }, mac), h("td", { key: "n", "class": "n" }, figure)]),
+    h("tr", { key: "r2" }, [h("td", { key: "other", "class": "other" }, figure)])
+  ]))];
+}
+opnview.view.render(host, table("02:00:5e:10:00:01", "1"));
+var macText = document.querySelector("td.mac").firstChild;
+__selection = { rangeCount: 1, isCollapsed: false, anchorNode: macText, focusNode: macText };
+opnview.view.render(host, table("02:00:5e:10:00:99", "2"), { refresh: true });`)
+	if !page.Run(`document.querySelector("td.mac").firstChild === macText`).ToBoolean() ||
+		page.Text("td.mac") != "02:00:5e:10:00:01" {
+		t.Errorf("a refresh patched the selected cell: %q", page.Text("td.mac"))
+	}
+	if page.Text("td.other") != "2" {
+		t.Errorf("the rest of the table was not refreshed: %q", page.Text("td.other"))
+	}
+	page.Run(`__selection = { rangeCount: 0, isCollapsed: true, anchorNode: null };
+opnview.view.render(host, table("02:00:5e:10:00:99", "2"), { refresh: true });`)
+	if page.Text("td.mac") != "02:00:5e:10:00:99" {
+		t.Errorf("the cell was not patched once the selection collapsed: %q", page.Text("td.mac"))
+	}
+}

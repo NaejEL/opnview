@@ -1,0 +1,18 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.destination_operators.widget.destination_operators.title": "Destination operators",
+    "plugin.destination_operators.widget.destination_operators.question": "Which operators and autonomous systems is this network's traffic actually reaching?",
+    "plugin.destination_operators.widget.destination_operators.unresolved.miss": "No geolocation answer",
+    "plugin.destination_operators.widget.destination_operators.unresolved.pending": "Not looked up yet",
+    "plugin.destination_operators.widget.destination_operators.unresolved.no_row": "Never looked up",
+    "plugin.destination_operators.widget.destination_operators.unresolved.no_coordinates": "No coordinates",
+    "plugin.destination_operators.widget.destination_operators.unresolved.east_west": "Between interfaces",
+    "plugin.destination_operators.widget.destination_operators.unresolved.this_firewall": "This firewall",
+    "plugin.destination_operators.widget.destination_operators.addresses": "Addresses",
+    "plugin.destination_operators.widget.destination_operators.address_count.one": "{count} address",
+    "plugin.destination_operators.widget.destination_operators.address_count.other": "{count} addresses",
+    "plugin.destination_operators.widget.destination_operators.asn": "AS{asn}",
+    "plugin.destination_operators.widget.destination_operators.operator_asn": "{operator} · AS{asn}"
+  }
+}

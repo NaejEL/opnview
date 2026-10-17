@@ -184,8 +184,8 @@
   function patchChildren(parent, vchildren, context, inSvg) {
     var document = parent.ownerDocument;
     var byKey = {};
-    var existing = [];
-    for (var child = parent.firstChild; child; child = child.nextSibling) { existing.push(child); }
+    /* The children as they stand, read once. */
+    var existing = Array.prototype.slice.call(parent.childNodes);
     existing.forEach(function (node) {
       if (node.__okey !== undefined && !Object.prototype.hasOwnProperty.call(byKey, node.__okey)) {
         byKey[node.__okey] = node;
@@ -205,8 +205,10 @@
       kept.push(node);
     });
     // Everything not kept goes: a key that disappeared, or a node the reconciler did not make.
+    var token = {};
+    kept.forEach(function (node) { node.__okept = token; });
     existing.forEach(function (node) {
-      if (kept.indexOf(node) < 0 && node.parentNode === parent) { parent.removeChild(node); }
+      if (node.__okept !== token && node.parentNode === parent) { parent.removeChild(node); }
     });
     kept.forEach(function (node, index) {
       var at = parent.childNodes[index];

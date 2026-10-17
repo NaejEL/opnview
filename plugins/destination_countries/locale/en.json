@@ -1,0 +1,16 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.destination_countries.widget.destination_countries.title": "Destination countries",
+    "plugin.destination_countries.widget.destination_countries.question": "Which countries, ranked, and how much of that was blocked?",
+    "plugin.destination_countries.widget.destination_countries.unresolved.miss": "No geolocation answer",
+    "plugin.destination_countries.widget.destination_countries.unresolved.pending": "Not looked up yet",
+    "plugin.destination_countries.widget.destination_countries.unresolved.no_row": "Never looked up",
+    "plugin.destination_countries.widget.destination_countries.unresolved.no_coordinates": "No coordinates",
+    "plugin.destination_countries.widget.destination_countries.unresolved.east_west": "Between interfaces",
+    "plugin.destination_countries.widget.destination_countries.unresolved.this_firewall": "This firewall",
+    "plugin.destination_countries.widget.destination_countries.addresses": "Addresses",
+    "plugin.destination_countries.widget.destination_countries.address_count.one": "{count} address",
+    "plugin.destination_countries.widget.destination_countries.address_count.other": "{count} addresses"
+  }
+}

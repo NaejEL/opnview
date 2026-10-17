@@ -1,0 +1,28 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.title": "Blocked-traffic world map",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.question": "Where in the world was the traffic that was stopped trying to go, or coming from?",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.addresses.one": "{count} address",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.addresses.other": "{count} addresses",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.below_minimum.one": "{count} destination under the minimum",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.below_minimum.other": "{count} destinations under the minimum",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.dns_blocked_lookups": "Refused lookups",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.engine": "Engine",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.engine.firewall_rule": "Firewall rule",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.engine.security_engine": "Detection engine",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.placed": "Placed on the map",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.unplaced_row": "Not placed",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.unplaced.one": "not placed: {count} address",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.unplaced.other": "not placed: {count} addresses",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.security_unplaced": "Security events not placed",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.total_refusals": "Every refusal",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.miss": "no geolocation answer",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.pending": "not looked up yet",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.no_row": "never looked up",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.no_coordinates": "no coordinates",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.east_west": "between interfaces",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.reason.other_endpoint": "the other end",
+    "plugin.blocked_traffic_world_map.widget.blocked_traffic_world_map.clustered": "Nearby marks are merged, each carrying its count"
+  }
+}

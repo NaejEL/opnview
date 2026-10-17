@@ -66,5 +66,8 @@
     "interface"
   ],
   "queries": [],
-  "script": "traffic_over_time_by_scope.js"
+  "script": "traffic_over_time_by_scope.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

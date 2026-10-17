@@ -16,6 +16,7 @@ func CoreKeys() []string {
 		KeyOPNsenseBaseURL, KeyOPNsenseAPIKey, KeyOPNsenseCertificateFingerprint,
 		KeyLiveInterestSeconds, KeyLiveSampleRetentionSeconds, KeyFlowRecordInterval, KeyNetflowJoinTolerance,
 		KeyFlowRecordRetention, KeyAppearancePalette, KeyAppearanceMode, KeyAppearanceLanguage,
+		KeyDashboardDefaultSeeded,
 	}
 }
 

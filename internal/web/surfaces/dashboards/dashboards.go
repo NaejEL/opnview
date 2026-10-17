@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"strconv"
 
+	opnview "github.com/NaejEL/opnview"
+	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/dashboard"
 	"github.com/NaejEL/opnview/internal/store/dashboards"
 	"github.com/NaejEL/opnview/internal/web"
@@ -44,6 +47,8 @@ const (
 	PathDashboardRestore = "/api/dashboards/restore"
 	// PathDashboardOrder gives the dashboards a new order.
 	PathDashboardOrder = "/api/dashboards/order"
+	// PathDashboardDefault offers the default dashboard, once ever.
+	PathDashboardDefault = "/api/dashboards/default"
 )
 
 // The conditions a request is refused with beside the document's own (internal/dashboard).
@@ -77,6 +82,7 @@ func (s *surface) routes() []web.Route {
 		route(http.MethodPost, PathDashboardDeletePattern, s.handleDelete),
 		route(http.MethodPost, PathDashboardRestore, s.handleRestore),
 		route(http.MethodPost, PathDashboardOrder, s.handleOrder),
+		route(http.MethodPost, PathDashboardDefault, s.handleSeed),
 	}
 }
 
@@ -264,6 +270,46 @@ func textMember(members map[string]json.RawMessage, key string) (*string, bool) 
 func validOrigin(origin string) bool {
 	return origin == dashboards.OriginCreated || origin == dashboards.OriginImported ||
 		origin == dashboards.OriginDefault
+}
+
+// DefaultDashboardFile is the default dashboard of the built-in front (F7-28): the step-3 mockup's
+// three canvases, restricted to portable references.
+const DefaultDashboardFile = "dashboards/default.json"
+
+// DefaultDashboard reads the default dashboard and checks it as any document is checked: a default
+// that breaks the format is a defect of the build.
+func DefaultDashboard() (string, error) {
+	raw, err := fs.ReadFile(opnview.BuiltinFront(), DefaultDashboardFile)
+	if err != nil {
+		return "", fmt.Errorf("web: reading the default dashboard: %w", err)
+	}
+	if refusal := dashboard.Validate(raw); refusal != nil {
+		return "", fmt.Errorf("web: the default dashboard is refused %s at %s", refusal.Condition, refusal.Path)
+	}
+	return string(raw), nil
+}
+
+// SeedAnswer is POST /api/dashboards/default's answer: whether this call stored the default.
+type SeedAnswer struct {
+	Created bool `json:"created"`
+}
+
+// handleSeed offers the default dashboard (F7-28). The front asks once a reader is signed in; the
+// first ask ever leaves a mark and, when no dashboard was created before it, stores the default with
+// origin default. Every later ask -- after every dashboard was deleted too -- stores nothing. A
+// write, so that a read never changes anything.
+func (s *surface) handleSeed(writer http.ResponseWriter, request *http.Request) {
+	document, err := DefaultDashboard()
+	if err != nil {
+		fail(writer, request, err)
+		return
+	}
+	created, err := s.store().SeedDefault(request.Context(), config.KeyDashboardDefaultSeeded, document, s.Now().UTC().Unix())
+	if err != nil {
+		fail(writer, request, err)
+		return
+	}
+	widget.WriteJSON(writer, http.StatusOK, SeedAnswer{Created: created})
 }
 
 func (s *surface) handleList(writer http.ResponseWriter, request *http.Request) {

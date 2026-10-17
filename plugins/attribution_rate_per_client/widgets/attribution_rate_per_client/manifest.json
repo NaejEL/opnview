@@ -61,5 +61,8 @@
     "interface"
   ],
   "queries": [],
-  "script": "attribution_rate_per_client.js"
+  "script": "attribution_rate_per_client.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

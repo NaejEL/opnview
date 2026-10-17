@@ -19,6 +19,10 @@ const (
 	KeyAppearanceMode = "appearance_mode"
 	// KeyAppearanceLanguage is the code of the language the interface is drawn in.
 	KeyAppearanceLanguage = "appearance_language"
+	// KeyDashboardDefaultSeeded marks that the default dashboard was offered once
+	// (specs/SPEC-step-7-frontend.md, F7-28): present, it is never offered again, even after every
+	// dashboard is deleted.
+	KeyDashboardDefaultSeeded = "dashboard_default_seeded"
 )
 
 // AppearanceModes are the values KeyAppearanceMode may hold, in the order a selector offers them:

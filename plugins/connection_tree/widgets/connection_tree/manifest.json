@@ -109,5 +109,8 @@
   "queries": [
     "connection_tree.statements.sql"
   ],
-  "script": "connection_tree.js"
+  "script": "connection_tree.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

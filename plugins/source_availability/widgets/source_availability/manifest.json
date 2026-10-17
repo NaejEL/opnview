@@ -66,5 +66,8 @@
   ],
   "references": [],
   "queries": [],
-  "script": "source_availability.js"
+  "script": "source_availability.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

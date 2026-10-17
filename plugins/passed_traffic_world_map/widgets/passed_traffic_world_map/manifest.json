@@ -74,5 +74,8 @@
     "interface"
   ],
   "queries": [],
-  "script": "passed_traffic_world_map.js"
+  "script": "passed_traffic_world_map.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

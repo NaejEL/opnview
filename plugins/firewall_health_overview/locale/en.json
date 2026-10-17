@@ -1,0 +1,24 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.firewall_health_overview.widget.firewall_health_overview.title": "Firewall health overview",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.question": "Is the firewall itself healthy right now?",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.absent": "No reading",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.fact.reading": "Reading",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.fact.samples": "Samples",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.fact.sampled_at": "Last sampled",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.sampled_at": "sampled {at}",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.metric.uptime": "Uptime",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.metric.cpu": "CPU",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.metric.memory": "Memory",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.metric.swap": "Swap",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.metric.disk": "Disk",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.metric.temperature": "Temperature",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.metric.gateway_latency": "Gateway latency",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.metric.gateway_loss": "Gateway loss",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.threshold.ok": "within threshold",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.threshold.warning": "warning",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.threshold.critical": "critical",
+    "plugin.firewall_health_overview.widget.firewall_health_overview.metric_subject": "{metric} · {subject}"
+  }
+}

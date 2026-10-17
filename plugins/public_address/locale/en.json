@@ -1,0 +1,25 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.public_address.widget.public_address.title": "Public address",
+    "plugin.public_address.widget.public_address.question": "What address does this installation present to the internet, on which gateway, and when did it last change?",
+    "plugin.public_address.widget.public_address.family.ipv4": "IPv4",
+    "plugin.public_address.widget.public_address.family.ipv6": "IPv6",
+    "plugin.public_address.widget.public_address.public": "public",
+    "plugin.public_address.widget.public_address.not_public": "not public",
+    "plugin.public_address.widget.public_address.only_one_address_seen": "Only one address seen, no change recorded",
+    "plugin.public_address.widget.public_address.column.family": "Family",
+    "plugin.public_address.widget.public_address.column.reach": "Reach",
+    "plugin.public_address.widget.public_address.column.first_seen": "First seen",
+    "plugin.public_address.widget.public_address.column.last_seen": "Last seen",
+    "plugin.public_address.widget.public_address.column.prefix": "Prefix length",
+    "plugin.public_address.widget.public_address.column.address": "Address",
+    "plugin.public_address.widget.public_address.column.changed": "Changed",
+    "plugin.public_address.widget.public_address.behind_nat": "behind upstream NAT",
+    "plugin.public_address.widget.public_address.gateways": "Gateways",
+    "plugin.public_address.widget.public_address.history": "Earlier addresses",
+    "plugin.public_address.widget.public_address.no_address": "No address",
+    "plugin.public_address.widget.public_address.no_upstream": "No upstream interface",
+    "plugin.public_address.widget.public_address.special_purpose_source": "{block} · {reference}"
+  }
+}

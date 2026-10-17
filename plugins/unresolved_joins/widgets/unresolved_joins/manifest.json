@@ -61,5 +61,8 @@
   "queries": [
     "unresolved_joins.statements.sql"
   ],
-  "script": "unresolved_joins.js"
+  "script": "unresolved_joins.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

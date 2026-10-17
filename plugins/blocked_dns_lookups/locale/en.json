@@ -1,0 +1,19 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.title": "Blocked DNS lookups",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.question": "Which domains did the resolver refuse, and which list did the refusing?",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.purpose.unassigned": "No purpose assigned",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.purpose.not_recorded": "List not recorded",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.purpose": "Purpose",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.list": "List",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.no_list": "No list recorded",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.lookups": "Refused lookups",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.unmatched": "Addresses with no client",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.unmatched_count.one": "{count} address with no client",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.unmatched_count.other": "{count} addresses with no client",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.column.domain": "Domain",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.below_min_count.one": "{count} domain under the minimum",
+    "plugin.blocked_dns_lookups.widget.blocked_dns_lookups.below_min_count.other": "{count} domains under the minimum"
+  }
+}

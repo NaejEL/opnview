@@ -1,0 +1,32 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.client_traffic_detail.widget.client_traffic_detail.title": "Client traffic detail",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.question": "Where did this one machine go, and what was allowed?",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.column.observed_at": "Time",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.column.destination": "Destination",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.column.port": "Port",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.column.protocol": "Protocol",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.column.scope": "Scope",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.column.method": "Method",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.column.correlation_delay": "Delay",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.action.pass": "allowed",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.action.block": "blocked",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.scope.north_south": "Outside",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.scope.east_west": "Between interfaces",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.scope.this_firewall": "This firewall",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.no_current_sample": "No current sample",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.rate_in": "in {rate}",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.rate_out": "out {rate}",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.out_not_measured": "Outbound rate not measured",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.stale_sample": "stale sample",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.forward": "→ {bytes}",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.reverse": "← {bytes}",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.no_site_name": "No site name inferred",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.lease_expires": "Lease expires {at}",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.total.one": "{count} connection",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.total.other": "{count} connections",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.no_column.one": "{count} connection, no column chosen",
+    "plugin.client_traffic_detail.widget.client_traffic_detail.no_column.other": "{count} connections, no column chosen"
+  }
+}

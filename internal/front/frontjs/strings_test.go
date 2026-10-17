@@ -33,7 +33,8 @@ var (
 	comment      = regexp.MustCompile(`(?s:/\*.*?\*/)|(?m:^\s*//[^\n]*)`)
 )
 
-// frontFiles are the text of every script the shell loads.
+// frontFiles are the text of every script the shell loads, of every shape renderer and of every
+// built-in widget's renderer.
 func frontFiles(t *testing.T) map[string]string {
 	t.Helper()
 	scripts, err := frontjs.ShellScripts()
@@ -47,6 +48,13 @@ func frontFiles(t *testing.T) map[string]string {
 			t.Fatal(err)
 		}
 		files[name] = comment.ReplaceAllString(string(raw), "")
+	}
+	renderers, err := frontjs.RendererSources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, file := range renderers {
+		files[file.Name] = comment.ReplaceAllString(file.Text, "")
 	}
 	return files
 }
@@ -87,9 +95,31 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 	if err := json.Unmarshal([]byte(page.Run(`JSON.stringify(opnview.format.symbolUnits())`).String()), &units); err != nil {
 		t.Fatal(err)
 	}
+	var measures, conditions []string
+	if err := json.Unmarshal([]byte(page.Run(`JSON.stringify(opnview.kit.create({}).MEASURES)`).String()), &measures); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal([]byte(page.Run(`JSON.stringify(opnview.canvasView.PANEL_CONDITIONS)`).String()), &conditions); err != nil {
+		t.Fatal(err)
+	}
+	scopeKinds := []string{"interface", "client", "owner"}
+	periods := []string{"1h", "24h", "7d", "30d"}
 	return map[string][]string{
-		"appearance.mode.":           config.AppearanceModes(),
-		"blocklists.purpose.":        owners.BlocklistPurposes,
+		"appearance.mode.":    config.AppearanceModes(),
+		"blocklists.purpose.": owners.BlocklistPurposes,
+		// The canvas (front/views/canvas.js, front/core/kit.js): a widget's condition, the provider
+		// conditions a state badge names, the named states, the measures, the methods, the periods and
+		// the scope kinds.
+		"condition.":                 append(conditions, "reachable"),
+		"named_state.":               namedStates,
+		"measure.":                   measures,
+		"method.":                    {"resolver_cache_answer", "lookup_timing", "not_recorded_beyond_flow_horizon"},
+		"period.":                    periods,
+		"period.short.":              periods,
+		"scope.all.":                 scopeKinds,
+		"scope.kind.":                scopeKinds,
+		"card.own_scope.":            scopeKinds,
+		"card.not_scoped.":           scopeKinds,
 		"collection.aggregate_mode.": {"full", "no_domains"},
 		// The collection's setting cards (internal/web/surfaces/collection, settingCardSpecs).
 		"collection.card.": {"pairing", "lease_backends", "attribution", "storage"},
@@ -110,7 +140,8 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 			"network_malformed", "network_link_local", "network_ipv4_mapped", "network_host_bits", "user_label_empty",
 			"unknown_interface", "display_name_empty", "display_name_taken", "unknown_client", "no_clients",
 			"duplicate_client", "invalid_owner_assigned_at", "unknown_owner", "purpose_not_in_vocabulary",
-			"unknown_blocklist", "palette_unknown", "mode_unknown", "language_unknown"},
+			"unknown_blocklist", "palette_unknown", "mode_unknown", "language_unknown",
+			"revision_conflict"},
 		"gap_reason.": unquote(schemaVocabulary(t, "collection_gap", "reason")),
 		"opnsense_page.": {"ids_administration", "kea_dhcpv4", "dnsmasq_dhcp_ranges", "unbound_general",
 			"unbound_reporting", "netflow"},
@@ -137,6 +168,15 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 	}
 }
 
+// namedStates are the named states of the widget API (docs/widget-api.md, "Named states"), and the
+// resolver window's, which a card names in its header.
+var namedStates = []string{"matrix_rules_beyond_flow_horizon", "records_beyond_flow_horizon", "rules_beyond_flow_horizon",
+	"tree_beyond_flow_horizon", "attribution_beyond_flow_horizon", "composition_beyond_flow_horizon",
+	"client_left_beyond_flow_horizon", "joins_beyond_flow_horizon", "site_methods_not_recorded_beyond_flow_horizon",
+	"series_read_from_hour_slots_beyond_flow_horizon", "registrable_domain_grouping_unavailable",
+	"unnamed_destinations_beyond_flow_horizon", "netflow_not_configured", "capture_configuration_unknown",
+	"netflow_not_covering_window", "netflow_not_served_by_type", "resolver_window_bounded"}
+
 // usedKeys scans the front's files for every key they ask for: literal, plural and composed, each
 // composed prefix expanded over the values the data can reach.
 func usedKeys(t *testing.T) map[string]string {
@@ -158,8 +198,22 @@ func usedKeys(t *testing.T) map[string]string {
 			prefixes[match[1]] = name
 		}
 	}
+	english := englishCatalogue(t)
 	for prefix, name := range prefixes {
 		values, known := enumerated[prefix]
+		if !known && strings.HasPrefix(prefix, "plugin.") {
+			// A widget's own composed keys live in its plugin's catalogue, beside the renderer that
+			// composes them: the prefix must name keys there. Its values are checked by drawing every
+			// renderer on every recorded answer, which reports a key the catalogue lacks.
+			held := false
+			for key := range english {
+				held = held || strings.HasPrefix(key, prefix)
+			}
+			if !held {
+				t.Errorf("%s composes keys under %q, and the catalogue holds none", name, prefix)
+			}
+			continue
+		}
 		if !known {
 			t.Errorf("%s composes keys under %q, and this test does not enumerate the values the data can reach",
 				name, prefix)
@@ -205,6 +259,8 @@ const pseudoWalk = `(function (allowed) {
     if (!trimmed) { return; }
     if (trimmed.indexOf("⟦") === 0 && trimmed.lastIndexOf("⟧") === trimmed.length - 1) { return; }
     if (allowed[trimmed]) { return; }
+    // A mark between two values -- a separator, a slash, an arrow -- is typography, not a word.
+    if (/^[\s·→←—–,;:\/()|+-]+$/.test(trimmed)) { return; }
     found.push(where + ": " + JSON.stringify(trimmed));
   }
   (function walk(node) {

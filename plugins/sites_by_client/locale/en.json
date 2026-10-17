@@ -1,0 +1,15 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.sites_by_client.widget.sites_by_client.title": "Sites by client",
+    "plugin.sites_by_client.widget.sites_by_client.question": "Which site was used, and by whom?",
+    "plugin.sites_by_client.widget.sites_by_client.below_min_flows.one": "{count} site under the minimum",
+    "plugin.sites_by_client.widget.sites_by_client.below_min_flows.other": "{count} sites under the minimum",
+    "plugin.sites_by_client.widget.sites_by_client.eligible_flows": "Flows that could be named",
+    "plugin.sites_by_client.widget.sites_by_client.named_flows": "Flows named",
+    "plugin.sites_by_client.widget.sites_by_client.named_share": "Named",
+    "plugin.sites_by_client.widget.sites_by_client.no_site_name_inferred": "no site name inferred",
+    "plugin.sites_by_client.widget.sites_by_client.sites": "Sites",
+    "plugin.sites_by_client.widget.sites_by_client.rate_undefined": "No flow to name"
+  }
+}

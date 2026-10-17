@@ -1,0 +1,13 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.interface_traffic_matrix.widget.interface_traffic_matrix.title": "Interface traffic matrix",
+    "plugin.interface_traffic_matrix.widget.interface_traffic_matrix.question": "Which interface talks to which, how much, and how much of it was blocked?",
+    "plugin.interface_traffic_matrix.widget.interface_traffic_matrix.corner": "From \\ to",
+    "plugin.interface_traffic_matrix.widget.interface_traffic_matrix.has_blocked": "Holds blocked traffic",
+    "plugin.interface_traffic_matrix.widget.interface_traffic_matrix.north_south": "Outside",
+    "plugin.interface_traffic_matrix.widget.interface_traffic_matrix.this_firewall": "Firewall",
+    "plugin.interface_traffic_matrix.widget.interface_traffic_matrix.rule_not_found": "rule {rid} no longer exists",
+    "plugin.interface_traffic_matrix.widget.interface_traffic_matrix.rules": "Rules matched"
+  }
+}

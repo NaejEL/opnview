@@ -87,5 +87,8 @@
   "queries": [
     "blocked_dns_lookups.statements.sql"
   ],
-  "script": "blocked_dns_lookups.js"
+  "script": "blocked_dns_lookups.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

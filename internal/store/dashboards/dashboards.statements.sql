@@ -19,6 +19,7 @@
 --   :source_name the imported file's name, or NULL
 --   :now         the instant of the write, a UTC epoch
 --   :created_at  :updated_at   the instants of a restored dashboard
+--   :key         the setting that marks the default dashboard as offered
 
 
 -- Every dashboard, in order.
@@ -81,3 +82,13 @@ UPDATE dashboard AS d
 SET position = ordered.ordinal - 1
 FROM jsonb_array_elements_text(CAST(:ids AS JSONB)) WITH ORDINALITY AS ordered (id, ordinal)
 WHERE d.id = CAST(ordered.id AS BIGINT);
+
+-- The default dashboard's mark, claimed once: a row answers only to the first claim, ever.
+-- statement: dashboard_default_claim
+INSERT INTO setting (key, value, updated_at) VALUES (:key, 'true', :now)
+ON CONFLICT (key) DO NOTHING
+RETURNING key;
+
+-- How many dashboards are stored.
+-- statement: dashboard_count
+SELECT count(*) FROM dashboard;

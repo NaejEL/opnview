@@ -42,5 +42,8 @@
   "queries": [
     "aggregate_freshness.statements.sql"
   ],
-  "script": "aggregate_freshness.js"
+  "script": "aggregate_freshness.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

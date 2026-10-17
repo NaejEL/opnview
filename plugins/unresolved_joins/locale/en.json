@@ -1,0 +1,16 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.unresolved_joins.widget.unresolved_joins.title": "Unresolved joins",
+    "plugin.unresolved_joins.widget.unresolved_joins.question": "How much of what I am looking at could not be joined to a name?",
+    "plugin.unresolved_joins.widget.unresolved_joins.counter.interface": "Interface not matched",
+    "plugin.unresolved_joins.widget.unresolved_joins.counter.rule": "Rule not matched",
+    "plugin.unresolved_joins.widget.unresolved_joins.counter.client_identity": "Client not identified",
+    "plugin.unresolved_joins.widget.unresolved_joins.counter.geo": "Not geolocated",
+    "plugin.unresolved_joins.widget.unresolved_joins.fact.unresolved": "Unresolved",
+    "plugin.unresolved_joins.widget.unresolved_joins.fact.of": "Of",
+    "plugin.unresolved_joins.widget.unresolved_joins.of": "of",
+    "plugin.unresolved_joins.widget.unresolved_joins.records.one": "{count} record",
+    "plugin.unresolved_joins.widget.unresolved_joins.records.other": "{count} records"
+  }
+}

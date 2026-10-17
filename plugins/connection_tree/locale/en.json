@@ -1,0 +1,20 @@
+{
+  "language": "en",
+  "strings": {
+    "plugin.connection_tree.widget.connection_tree.title": "Connection tree",
+    "plugin.connection_tree.widget.connection_tree.question": "Where does a chosen subject — an interface, a machine or a person — go preferentially?",
+    "plugin.connection_tree.widget.connection_tree.no_site_name": "no site name inferred",
+    "plugin.connection_tree.widget.connection_tree.outside": "Outside",
+    "plugin.connection_tree.widget.connection_tree.this_firewall": "The firewall itself",
+    "plugin.connection_tree.widget.connection_tree.remainder.one": "{count} more",
+    "plugin.connection_tree.widget.connection_tree.remainder.other": "{count} more",
+    "plugin.connection_tree.widget.connection_tree.root.client": "From each client",
+    "plugin.connection_tree.widget.connection_tree.root.interface": "From each interface",
+    "plugin.connection_tree.widget.connection_tree.root.owner": "From each person",
+    "plugin.connection_tree.widget.connection_tree.unassigned": "Nobody",
+    "plugin.connection_tree.widget.connection_tree.unplaced.miss": "not placed: no geolocation answer",
+    "plugin.connection_tree.widget.connection_tree.unplaced.pending": "not placed: not looked up yet",
+    "plugin.connection_tree.widget.connection_tree.unplaced.no_row": "not placed: never looked up",
+    "plugin.connection_tree.widget.connection_tree.unplaced.no_coordinates": "not placed: no coordinates"
+  }
+}

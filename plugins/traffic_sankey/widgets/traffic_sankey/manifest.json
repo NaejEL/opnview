@@ -100,5 +100,8 @@
   "queries": [
     "traffic_sankey.statements.sql"
   ],
-  "script": "traffic_sankey.js"
+  "script": "traffic_sankey.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

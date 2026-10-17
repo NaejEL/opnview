@@ -66,5 +66,8 @@
     "interface"
   ],
   "queries": [],
-  "script": "sites_by_client.js"
+  "script": "sites_by_client.js",
+  "renderer": {
+    "entry": "renderer.js"
+  }
 }

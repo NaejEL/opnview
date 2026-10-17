@@ -38,7 +38,8 @@
     lastAnswerAt: null,
     dashboards: [],
     container: null,
-    pollTimer: null
+    pollTimer: null,
+    defaultOffer: null
   };
 
   /* ---------------------------------------------------------------------------------------------
@@ -136,6 +137,8 @@
     if (resolved.redirect) { return go(resolved.redirect, { replace: true }); }
     var view = resolved.view;
     if (state.view !== view || JSON.stringify(state.params) !== JSON.stringify(resolved.params)) {
+      // A view left is told, so what it schedules stops with it.
+      if (state.view && state.view.leave) { state.view.leave(viewContext()); }
       state.viewState = {};
     }
     state.view = view;
@@ -189,6 +192,7 @@
 
   function afterSignOut() {
     stopPolling();
+    state.defaultOffer = null;
     state.session.signed_in = false;
     state.sources = null;
     state.dashboards = [];
@@ -218,8 +222,18 @@
     });
   }
 
+  /* The default dashboard is offered once a reader is signed in (F7-28): the server stores it on the
+   * first ask ever, when no dashboard was created before, and never again. Asked once a page. */
+  function offerDefault() {
+    if (!state.defaultOffer) {
+      state.defaultOffer = opnview.api.post("/api/dashboards/default", {}).then(function () { return null; },
+        function () { return null; });
+    }
+    return state.defaultOffer;
+  }
+
   function loadDashboards() {
-    return opnview.api.get("/api/dashboards").then(function (result) {
+    return offerDefault().then(function () { return opnview.api.get("/api/dashboards"); }).then(function (result) {
       state.dashboards = result.status === 200 && result.body && result.body.dashboards ? result.body.dashboards : [];
       render({ refresh: true });
       return state.dashboards;
@@ -426,6 +440,8 @@
     }
     opnview.view.render(state.container, layout(), options);
     syncHeaderHeight();
+    // A view that lays itself out once drawn -- the canvas's grid -- does it now.
+    if (state.view && state.view.rendered) { state.view.rendered(viewContext()); }
   }
 
   /* The header wraps onto more rows on a narrow window, and what stays under it -- the rail, the
@@ -483,13 +499,20 @@
           var location = root.location;
           enter(location.pathname, location.search);
         });
-        root.addEventListener("resize", syncHeaderHeight);
+        root.addEventListener("resize", function () {
+          syncHeaderHeight();
+          if (state.view && state.view.resized) { state.view.resized(viewContext()); }
+        });
       }
       if (root.document && root.document.addEventListener) {
         var settle = function () { if (opnview.view.takeDeferred()) { render({ refresh: true }); } };
         root.document.addEventListener("focusout", function () { root.setTimeout(settle, 0); });
         root.document.addEventListener("selectionchange", settle);
+        root.document.addEventListener("visibilitychange", function () {
+          if (!hidden() && state.view && state.view.visible) { state.view.visible(viewContext()); }
+        });
         root.document.addEventListener("keydown", function (event) {
+          if (state.view && state.view.keydown && state.view.keydown(viewContext(), event)) { return; }
           if (event.key === "Escape" && state.sheetOpen) { state.sheetOpen = false; render(); }
         });
       }
