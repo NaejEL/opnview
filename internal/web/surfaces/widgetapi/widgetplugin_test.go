@@ -21,7 +21,7 @@ import (
 // a percentile of each target's latencies. No file of opnview is edited and nothing is compiled.
 var exampleLatencyPlugin = map[string]string{
 	"plugin.json": `{
-		"api_version": 1, "name": "example_latency", "version": "0.1.0", "display_name": "Example latency",
+		"api_version": 2, "name": "example_latency", "version": "0.1.0", "display_name": "Example latency",
 		"tables": [{"name": "probe", "nature": "sample",
 			"columns": [{"name": "measured_at", "type": "integer", "role": "time"},
 				{"name": "target", "type": "text"},

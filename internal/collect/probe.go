@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 )
 
 // Availability probes and provider activation, written once for every kind.
@@ -14,7 +15,7 @@ import (
 // firewall's own configuration marks as serving clients are the candidates.
 //
 // What happens then depends on whether the kind admits several active providers, which is a
-// property of the schema and not of this file (see internal/store/vocab/kinds.go). For an EXCLUSIVE
+// property of the kind's declaration and not of this file (its kind file, internal/collect/provider/kinds). For an EXCLUSIVE
 // kind, exactly one candidate becomes active, and if two qualify NEITHER is activated and the
 // ambiguity is recorded on both rows: choosing would be opnview deciding which of two working
 // sources is the truth, which is not opnview's decision to make. For a CONCURRENT kind there is
@@ -25,14 +26,9 @@ import (
 // have two reachable implementations of one kind. The firewall the survey probed has exactly
 // that, twice over.
 
-// ProbeAll runs one probe round over every kind this cycle reads.
-//
-// Three kinds are not probed, each for its own recorded reason. geo_asn: the dataset is acquired
-// and its availability recorded by the maxmind plugin (plugins/maxmind), through an outbound call
-// this package never makes. flow_volume: its
-// destination is DERIVED from flow by step 5, so no implementation of it is registered.
-// reconciled_state: the kind gives the surveyed state-shaped sources a destination, and writing
-// a connector for one of them is not this cycle's work.
+// ProbeAll runs one probe round over every kind a probe reads. A service kind's provider records
+// its own state at each refresh (internal/collect/services), and a core-only kind -- flow_volume, DERIVED
+// from flow -- has no implementation to probe.
 func (c *Collector) ProbeAll(ctx context.Context) error {
 	var failures []error
 	// Every implementation announces itself with a provider.json, and a refusal met while it did
@@ -42,19 +38,18 @@ func (c *Collector) ProbeAll(ctx context.Context) error {
 	if err := c.EnsureProviders(ctx); err != nil {
 		failures = append(failures, err)
 	}
-	for _, probe := range []func(context.Context) error{
-		c.ProbeFirewallLog,
-		c.ProbeSecurityEvent,
-		c.ProbeMeasurement,
-		c.ProbeDHCPLease,
-		c.ProbeDNSLookup,
-		c.ProbeResolverCache,
-		c.ProbeResolverLocalData,
-		c.ProbeFlowRecord,
-		c.ProbeReconciledState,
-		c.ProbeDeclaredKinds,
-	} {
-		if err := probe(ctx); err != nil {
+	// Every kind whose implementations a probe round reads: each core kind a plugin may implement with a
+	// probe in its contract, and each kind a plugin declared -- never a service kind, whose provider
+	// reports its own state at its refresh, nor a core-only kind, which nothing implements.
+	for _, kind := range c.SourceSet.Kinds() {
+		if kindContract, isCore := provider.ContractOf(kind); isCore {
+			if _, probes := kindContract.FunctionOf("probe"); !probes {
+				continue
+			}
+		} else if _, declared := c.SourceSet.DeclaredKindOwner(kind); !declared {
+			continue
+		}
+		if err := c.ProbeKind(ctx, kind); err != nil {
 			failures = append(failures, err)
 		}
 	}
@@ -85,6 +80,6 @@ func (c *Collector) Reselect(ctx context.Context, kind string) error {
 	if len(failures) > 0 {
 		return fmt.Errorf("collect: applying the %s selection: %w", kind, core.JoinErrors(failures))
 	}
-	active, _ := core.DecideActive(kind, outcomes, selections)
+	active, _ := core.DecideActive(c.SourceSet.Concurrent(kind), outcomes, selections)
 	return c.Store.SetActiveProviders(ctx, kind, active...)
 }

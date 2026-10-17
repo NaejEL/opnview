@@ -13,7 +13,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/recorddump"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -37,16 +36,13 @@ import (
 // provider's last successful poll: the next successful poll's records are then covered
 // from the last poll that did succeed, which is what the coverage interval promises.
 
-// recordReader is one implementation's read of its records.
-type recordReader func(ctx context.Context, host provider.Session) (recorddump.Dump, provider.Result, error)
-
 // recordTally is what one read returned, counted.
 type recordTally struct {
 	// total is every record the endpoint returned. Rows its implementation recognised as
 	// not being records are not among them.
 	total int
 	// notRecords are those rows, counted and worded by the implementation that read them.
-	notRecords []recorddump.NotRecordCount
+	notRecords []provider.Answer
 	// byType counts every record by its `rrtype`, verbatim, stored or not.
 	byType map[string]int
 	// stored is how many records passed normalisation and were handed to the store.
@@ -122,7 +118,7 @@ func storedTypes(heldIn string) []string {
 
 // normaliseRecords turns what an endpoint returned into the records the store keeps, and
 // counts what it did not keep and why.
-func normaliseRecords(raw []recorddump.Record, heldIn string) ([]attribution.ResourceRecord, recordTally) {
+func normaliseRecords(raw []provider.Answer, heldIn string) ([]attribution.ResourceRecord, recordTally) {
 	tally := recordTally{byType: map[string]int{}, badValues: map[badValue]int{}}
 	kept := map[string]bool{}
 	for _, rrtype := range storedTypes(heldIn) {
@@ -131,12 +127,12 @@ func normaliseRecords(raw []recorddump.Record, heldIn string) ([]attribution.Res
 	records := make([]attribution.ResourceRecord, 0, len(raw))
 	for _, record := range raw {
 		tally.total++
-		rrtype := strings.TrimSpace(record.RRType)
+		rrtype := strings.TrimSpace(provider.Text(record, "rrtype"))
 		tally.byType[rrtype]++
 		if !kept[rrtype] {
 			continue
 		}
-		owner := attribution.DNSName(record.OwnerName)
+		owner := attribution.DNSName(provider.Text(record, "owner_name"))
 		if owner == "" {
 			tally.badName++
 			continue
@@ -156,7 +152,7 @@ func normaliseRecords(raw []recorddump.Record, heldIn string) ([]attribution.Res
 		}
 		switch rrtype {
 		case attribution.RRTypeA, attribution.RRTypeAAAA:
-			address, bad := addressValue(rrtype, record.Value)
+			address, bad := addressValue(rrtype, provider.Text(record, "value"))
 			if bad != "" {
 				tally.badValues[bad]++
 				continue
@@ -167,14 +163,14 @@ func normaliseRecords(raw []recorddump.Record, heldIn string) ([]attribution.Res
 				normalised.HostLabel = attribution.HostnameLabel(owner)
 			}
 		case attribution.RRTypeCNAME:
-			target := attribution.DNSName(record.Value)
+			target := attribution.DNSName(provider.Text(record, "value"))
 			if target == "" {
 				tally.badValues[badValueCNAMEEmpty]++
 				continue
 			}
 			normalised.Value = target
 		case attribution.RRTypePTR:
-			target := attribution.DNSName(record.Value)
+			target := attribution.DNSName(provider.Text(record, "value"))
 			address, ok := reverseNameAddress(owner)
 			if !ok {
 				tally.badValues[badValuePTRNoAddress]++
@@ -200,11 +196,12 @@ func normaliseRecords(raw []recorddump.Record, heldIn string) ([]attribution.Res
 
 // ttlSeconds reads a cache record's ttl: a JSON string of ASCII digits, surrounding white
 // space aside.
-func ttlSeconds(record recorddump.Record) (int64, bool) {
-	if record.TTLShape != decode.ShapeString {
+func ttlSeconds(record provider.Answer) (int64, bool) {
+	// The shape the ttl arrived in, as the implementation named it (absent, null, string, other).
+	if provider.Text(record, "ttl_shape") != "string" {
 		return 0, false
 	}
-	text := strings.TrimSpace(record.TTL)
+	text := strings.TrimSpace(provider.Text(record, "ttl"))
 	if text == "" {
 		return 0, false
 	}
@@ -305,8 +302,8 @@ func (t recordTally) detail(heldIn string, responseBytes int, elapsed time.Durat
 		"every other type is counted and not stored", t.stored,
 		strings.Join(storedTypes(heldIn), ", "), storage.Inserted, storage.Extended)
 	for _, rows := range t.notRecords {
-		if rows.Count > 0 {
-			detail += fmt.Sprintf("; skipped %d %s", rows.Count, rows.Wording)
+		if count := provider.Integer(rows, "count"); count > 0 {
+			detail += fmt.Sprintf("; skipped %d %s", count, provider.Text(rows, "wording"))
 		}
 	}
 	if t.badTTL > 0 {
@@ -348,8 +345,8 @@ type recordPass struct {
 // returns what the pass did and the derivation the stored records call for -- the flows
 // whose attribution they can change -- which the caller runs, holding the purge back
 // until it has (purge.go).
-func (c *ResolverRecordCoordinator) readResourceRecords(ctx context.Context, kind, heldIn string,
-	readerOf func(providerKey string) (recordReader, bool)) (recordPass, derive.Derivation, error) {
+func (c *ResolverRecordCoordinator) readResourceRecords(ctx context.Context, kind, function, heldIn string) (
+	recordPass, derive.Derivation, error) {
 	var (
 		pass    recordPass
 		request derive.Derivation
@@ -360,7 +357,7 @@ func (c *ResolverRecordCoordinator) readResourceRecords(ctx context.Context, kin
 	}
 	var failures []error
 	for _, active := range sources {
-		reader, registered := readerOf(active.ProviderKey)
+		source, registered := c.SourceSet.Lookup(kind, active.ProviderKey)
 		if !registered {
 			pass.failed = true
 			failures = append(failures, fmt.Errorf("collect: the active %s provider %q has no "+
@@ -369,7 +366,7 @@ func (c *ResolverRecordCoordinator) readResourceRecords(ctx context.Context, kin
 		}
 		polledAt := c.Now()
 		started := c.Clock.Now()
-		dump, result, readErr := reader(ctx, c)
+		dump, result, readErr := source.Implementation.Call(ctx, c, function)
 		elapsed := c.Clock.Now().Sub(started)
 		if errors.Is(readErr, provider.ErrUnsupportedRead) {
 			// Registered, probed, and not readable through the API: a state with its
@@ -400,8 +397,8 @@ func (c *ResolverRecordCoordinator) readResourceRecords(ctx context.Context, kin
 			continue
 		}
 
-		records, tally := normaliseRecords(dump.Records, heldIn)
-		tally.notRecords = dump.NotRecords
+		records, tally := normaliseRecords(provider.Records(dump, "records"), heldIn)
+		tally.notRecords = provider.Records(dump, "not_records")
 		storage, err := c.Store.StoreResourceRecords(ctx, attribution.ResourceRecordRead{
 			ProviderID: active.ProviderID, HeldIn: heldIn, PolledAt: polledAt, Records: records,
 		})
@@ -427,7 +424,7 @@ func (c *ResolverRecordCoordinator) readResourceRecords(ctx context.Context, kin
 		}
 		pass.read = true
 		pass.followsAPoll = pass.followsAPoll || storage.HadPrevious
-		detail := tally.detail(heldIn, dump.ResponseBytes, elapsed, storage)
+		detail := tally.detail(heldIn, int(provider.Integer(dump, "response_bytes")), elapsed, storage)
 		outcome := vocab.OutcomeHealthy
 		if tally.total == 0 {
 			outcome = vocab.OutcomeHealthyEmpty

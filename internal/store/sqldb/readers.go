@@ -71,6 +71,37 @@ func OpenReaders(ctx context.Context, s *Handle) (*ReadConnections, error) {
 	if err := s.grantReadRole(ctx, role, password); err != nil {
 		return nil, err
 	}
+	return s.connectReaders(ctx, role, password)
+}
+
+// OpenSharedReaders opens the pool of a read role that several databases share: the test databases
+// cloned from one template (internal/store/testdatabase.go, orchestrator decision 1 of Lot 2 of the
+// plugin-API amendment). The role and its grants were written once, when the template was built, and
+// a clone copies the grants with the rest of its catalogue, so a clone's open creates, alters and grants
+// nothing -- each of those statements writes the instance-wide role catalogue, which every concurrent
+// test would otherwise contend on. Only a role found missing is created, with its grants in this
+// database. The role logs in with no password: the test instances authenticate by trust (docker-compose.yml),
+// and the product never opens a shared role.
+func OpenSharedReaders(ctx context.Context, s *Handle, role string) (*ReadConnections, error) {
+	var exists bool
+	if err := s.SQL.QueryRowContext(ctx, "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)", role).
+		Scan(&exists); err != nil {
+		return nil, fmt.Errorf("store: looking up the shared read role: %w", err)
+	}
+	if !exists {
+		password, err := randomPassword()
+		if err != nil {
+			return nil, err
+		}
+		if err := s.grantReadRole(ctx, role, password); err != nil {
+			return nil, err
+		}
+	}
+	return s.connectReaders(ctx, role, "")
+}
+
+// connectReaders opens the read role's pool.
+func (s *Handle) connectReaders(ctx context.Context, role, password string) (*ReadConnections, error) {
 	config, err := pgx.ParseConfig(s.ConnectionString)
 	if err != nil {
 		return nil, fmt.Errorf("store: reading the database connection parameter: %w", err)
@@ -105,7 +136,11 @@ func (s *Handle) grantReadRole(ctx context.Context, role, password string) error
 	}
 	statements := []string{}
 	if !exists {
-		statements = append(statements, "CREATE ROLE "+quoted+" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT")
+		// Two processes may build the same test template at once and both find the shared role
+		// missing: the second creation is then the first's role, and the grants below apply to it.
+		statements = append(statements, "DO $create$ BEGIN CREATE ROLE "+quoted+
+			" LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT; "+
+			"EXCEPTION WHEN duplicate_object OR unique_violation THEN NULL; END $create$")
 	}
 	statements = append(statements,
 		"ALTER ROLE "+quoted+" WITH LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT PASSWORD "+

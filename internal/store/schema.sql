@@ -250,8 +250,8 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 -- (docs/plugins.md), and its provider row names that kind. What the CHECK keeps
 -- is the shape of a kind name, a snake_case word. The core kinds -- the seams
 -- listed below -- are defined once, with their record contracts, in
--- internal/collect/provider (contract.go), which docs/plugins.md is tested
--- against.
+-- internal/collect/provider/kinds, one file per kind, which docs/plugins.md is
+-- tested against.
 --
 -- Endpoints, one citation per kind, all in docs/opnsense-api-survey.md:
 --   firewall_log    /api/diagnostics/firewall/log            (data source 1)
@@ -331,8 +331,7 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 -- index this file used to carry. People run several intrusion-detection and
 -- filtering engines at once, and the how-to corpus is people stacking them
 -- (survey, "Four findings that bear on the collectors already written"), so
--- universal exclusivity was wrong. What replaces it is derived from this schema rather
--- than chosen kind by kind:
+-- universal exclusivity was wrong. What replaces it is a property of the kind:
 --
 --   A KIND ADMITS SEVERAL CONCURRENTLY ACTIVE PROVIDERS EXACTLY WHEN THE
 --   IDENTITY OF ITS DESTINATION ROWS INCLUDES THE PROVIDER.
@@ -342,66 +341,74 @@ CREATE TABLE IF NOT EXISTS encrypted_credential (
 -- two attributed rows and a screen can show them per provider or side by side.
 -- Where it does not, the second provider's rows are indistinguishable from the
 -- first's by origin, so it would either collide with them or silently double a
--- figure nobody could decompose. Kind by kind:
+-- figure nobody could decompose.
 --
---   kind                destination identity                        several?
---   firewall_log        flow.log_digest                             no
---   security_event      (provider_id, provider_event_key)           YES
---   flow_volume         (day_start_at, endpoints, port, protocol)   no
---   dhcp_lease          (address, generation_key, provider_id)      YES
---   dns_lookup          dns_resolution.lookup_key                   no
---   ip_geolocation      geo_asn.address                             no
---   measurement_sample  (subject, measure, sampled_at, provider)    YES
---   reconciled_state    (provider_id, set_key, captured_at)         YES
---   resolver_cache      (provider_id, owner_name, rrtype, value,    YES
---                        first_seen_at) of resource_record_observation
---   resolver_local_data the same, of the same table                  YES
---   registrable_domain  one list file on disk, no row                no
+-- THE ATTRIBUTE IS DATA, NOT A LIST IN THIS FILE (PA2 of the plugin-API amendment
+-- to specs/SPEC-backend-completion-plugins.md). Each core kind's declaration,
+-- internal/collect/provider/kinds/<kind>.json, says `concurrent`, with the
+-- destination identity that justifies it; a plugin's own kind says it in its
+-- manifest. The built-ins' declarations write one provider_kind row per kind
+-- when they load, and every provider row carries its kind's attribute through a
+-- foreign key, so the index below enforces the rule without naming a kind, and a
+-- kind added later -- a file, or a plugin's manifest -- is held to it with no
+-- edit here. dhcp_lease is concurrent, and the deployment is the ordinary one:
+-- one server issuing on one VLAN and another on a second; the client identity
+-- cascade keys on the DHCP client identifier and then the MAC, neither scoped to
+-- an interface, so one machine leased by both servers is ONE client holding TWO
+-- leases. ip_geolocation is exclusive because its row is one cache entry per
+-- address and a second provider would overwrite the first's answer rather than add
+-- to it.
 --
--- dhcp_lease IS CONCURRENT, AND THE DEPLOYMENT IS THE ORDINARY ONE: one server
--- issuing on one VLAN and another on a second, two scopes with no overlap. The
--- objection to it was that two lease providers would put one machine on the
--- screen twice under two names, and the client identity cascade is what answers
--- it -- the cascade keys on the DHCP client identifier first and on the MAC
--- second, neither of which is scoped to an interface, so a machine leased on two
--- VLANs by two servers resolves to ONE client holding TWO leases, which is the
--- truth. The duplication the objection feared needs two servers issuing on the
--- SAME scope, and that is a misconfiguration of the firewall rather than a shape
--- this model should contort itself to absorb.
---
--- Its identity therefore names the PROVIDER and not the backend. `backend` is a
--- normalised vocabulary of response shapes, not a provider key: two providers
--- could report the same backend -- a second implementation reading a Kea running
--- somewhere else would -- and the rule above is stated in terms of the provider,
--- so keying on the backend would have satisfied the letter of it and not the
--- substance. No `coalesce` wrapper is needed here, unlike measurement_sample: a
--- lease with no provider is not reachable, because a lease is issued by a server,
--- and the column is NOT NULL.
---
--- ip_geolocation is exclusive because its row is one cache entry per address and a
--- second provider would overwrite the first's answer rather than add to it.
+-- `provider_kind` is bounded: one row per kind the installation's declarations
+-- name. `concurrent` may change with a declaration, and ON UPDATE CASCADE carries
+-- it to the provider rows, where the index judges it again: a kind made exclusive
+-- while two of its providers are active is refused rather than silently halved.
 -- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS provider_kind (
+    kind       TEXT PRIMARY KEY
+               CHECK (length(kind) BETWEEN 1 AND 64
+                      AND translate(kind, 'abcdefghijklmnopqrstuvwxyz0123456789_', '') = ''),
+    concurrent BOOLEAN NOT NULL,
+    UNIQUE (kind, concurrent)
+);
+
 CREATE TABLE IF NOT EXISTS provider (
     id            BIGINT PRIMARY KEY,
-    kind          TEXT NOT NULL
-                  CHECK (length(kind) BETWEEN 1 AND 64
-                         AND translate(kind, 'abcdefghijklmnopqrstuvwxyz0123456789_', '') = ''),
+    kind          TEXT NOT NULL,
     provider_key  TEXT NOT NULL,
     display_name  TEXT NOT NULL,
+    concurrent    BOOLEAN NOT NULL,
     is_active     BOOLEAN NOT NULL DEFAULT false,
     registered_at BIGINT NOT NULL CHECK (registered_at >= 0 AND registered_at < 4102444800),
-    UNIQUE (kind, provider_key)
+    UNIQUE (kind, provider_key),
+    FOREIGN KEY (kind, concurrent) REFERENCES provider_kind (kind, concurrent) ON UPDATE CASCADE
 );
+
+-- A provider row takes its kind's attribute from provider_kind when the INSERT does not
+-- name it, so registering an implementation stays an INSERT of its kind, key and
+-- name. A kind no declaration registered leaves it NULL, and the row is refused.
+CREATE OR REPLACE FUNCTION provider_kind_attribute() RETURNS trigger
+LANGUAGE plpgsql
+AS $provider_kind_attribute$
+BEGIN
+    IF NEW.concurrent IS NULL THEN
+        SELECT k.concurrent INTO NEW.concurrent FROM provider_kind AS k WHERE k.kind = NEW.kind;
+    END IF;
+    RETURN NEW;
+END
+$provider_kind_attribute$;
+
+CREATE OR REPLACE TRIGGER provider_kind_attribute BEFORE INSERT ON provider
+    FOR EACH ROW EXECUTE FUNCTION provider_kind_attribute();
 
 
 -- At most one active provider per EXCLUSIVE kind, by the rule above. A partial
 -- index, so the many inactive rows of one kind do not collide with each other,
--- and so the four kinds whose rows carry their provider are left alone.
+-- and so the kinds whose rows carry their provider are left alone. It reads the
+-- kind's attribute from the row, never a kind's name.
 CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_active_per_exclusive_kind
     ON provider (kind)
-    WHERE is_active
-      AND kind NOT IN ('security_event', 'dhcp_lease', 'measurement_sample',
-                       'reconciled_state', 'resolver_cache', 'resolver_local_data');
+    WHERE is_active AND NOT concurrent;
 
 -- ---------------------------------------------------------------------------
 -- Interface — one interface as OPNsense defines it: a VLAN, a physical link or
@@ -4413,99 +4420,21 @@ INSERT INTO setting (key, value, updated_at) VALUES
     ('retention_flow_record_seconds', '0', CAST(extract(epoch FROM now()) AS BIGINT))
 ON CONFLICT (key) DO NOTHING;
 
--- The provider registry, seeded with the implementations that exist and have
--- been surveyed today — one row per IMPLEMENTATION, not one per kind. Unbound
--- and Dnsmasq are two providers of the dns_lookup kind; Kea, Dnsmasq and ISC
--- dhcpd are three of the dhcp_lease kind. Step-1 detection already tells them
--- apart, so "two providers of one kind" is exercised by real rows.
---
--- These names are DATA, not configuration. A firewall with no Suricata still
--- gets a Suricata row, in the 'unavailable' state: that is the modelled-state
--- design working, not a hardcoded assumption about the installation. Nothing
--- in the DDL, in a query or in an index tests any of these strings. ISC dhcpd
--- keeps its row although /api/dhcpv4/leases/searchLease answered 404 on the
--- firewall the survey probed: a 404 says the end-of-life plugin is not
--- installed THERE, which is the 'unavailable' state working, not a reason to
--- forget the implementation exists.
---
--- THIS SEED IS THE HISTORICAL SET AND NOT A LIST TO KEEP UP. Every row below is
--- now also declared by a built-in plugin (plugins/<name>/plugin.json), under the
--- same kind and key, so a store whose seed is ignored ends with the same rows. A
--- plugin added later -- a directory dropped into <data-dir>/plugins/ -- declares
--- its kind, key and display name in its manifest, and the collector registers its
--- row (and the availability row below) at the first probe round with
--- Store.EnsureProvider, so adding one edits nothing in this file, a new kind
--- included. The columns a collected row names its provider in --
--- dhcp_lease.backend and dns_resolution.resolver, which hold the provider key --
--- take any non-empty key, as provider.provider_key does, so a third-party lease
--- or lookup plugin's rows are stored like the built-in ones'
--- (internal/collect/thirdparty_test.go).
---
--- No provider is active. Activeness says which implementation opnview reads,
--- and it is decided by the probe round in internal/collect against a live
--- firewall; this file has no way to know and must not pretend to. Every
--- citation below is in docs/opnsense-api-survey.md, and docs/data-model.md
--- tabulates them.
-INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) VALUES
-    ('firewall_log',   'pf',                'pf filter log',        false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('security_event', 'suricata',          'Suricata',             false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('flow_volume',    'insight',           'NetFlow / Insight',    false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('dhcp_lease',     'kea',               'Kea DHCP',             false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('dhcp_lease',     'dnsmasq',           'Dnsmasq DHCP',         false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('dhcp_lease',     'isc',               'ISC dhcpd',            false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('dns_lookup',     'unbound',           'Unbound',              false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('dns_lookup',     'dnsmasq',           'Dnsmasq resolver',     false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('ip_geolocation', 'maxmind_geolite2',  'MaxMind GeoLite2',     false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    -- The measurement_sample kind's first implementation is the sampler 4A
-    -- already wrote: the live per-pair traffic snapshot and the firewall's own
-    -- gauges. It was registered under flow_volume because the kind did not exist,
-    -- and it moves here with the key it already has. The firewall's OWN gauges
-    -- still carry a null provider_id, because the machine reporting on itself
-    -- implements no external contract; what this row accounts for is the sampled
-    -- per-pair volume, which is a source's material.
-    ('measurement_sample', 'insight',       'NetFlow / Insight sampling',
-                                                                    false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    -- The Public Suffix List, downloaded from publicsuffix.org by the built-in
-    -- publicsuffix plugin: the registrable_domain kind's built-in provider.
-    ('registrable_domain', 'public_suffix_list', 'Public Suffix List', false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    -- The resolver's cache and its local data, one row per resolver for each: Unbound
-    -- answers both reads; Dnsmasq is registered so that its state -- it offers no
-    -- cache or local-data read through the API -- is probed and named rather than
-    -- absent.
-    ('resolver_cache', 'unbound',           'Unbound cache',        false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('resolver_cache', 'dnsmasq',           'Dnsmasq cache',        false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('resolver_local_data', 'unbound',      'Unbound local data',   false, CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('resolver_local_data', 'dnsmasq',      'Dnsmasq local data',   false, CAST(extract(epoch FROM now()) AS BIGINT))
-ON CONFLICT (kind, provider_key) DO NOTHING;
-
--- THE reconciled_state KIND HAS NO REGISTRY ROW, AND THAT IS NOT AN OMISSION.
--- Registering a provider means there is an implementation to probe: a row with
--- none would be probed by nothing, so its availability would read "not yet
--- probed" for ever and a screen would show a source nobody is looking at. The
--- kind exists so that the ten surveyed sources of that shape have a destination;
--- writing a connector for any of them is not this cycle's work, and inventing
--- rows for one of those products now would be exactly the speculative
--- registration this comment refuses. The kind is a contract; a row is a claim
--- that something implements it.
---
--- flow_volume keeps its row and has no implementation either, for the opposite
--- reason: pair_volume_observation is now DERIVED from flow (see its own section),
--- so nothing collects that kind. The row records that the implementation exists;
--- the netflow probe that used to answer for it did not disappear, it moved with
--- the sampler to the measurement_sample row above, which is the row whose
--- material it actually governs.
-
--- Availability is a modelled state, so exactly one row exists per registry row
--- from the first apply onwards. Until a probe has run, each provider is
--- 'unavailable' with the probe recorded as not yet run — never an absent row,
--- which a screen could not tell apart from a provider that is fine. The row
--- set is derived from the registry, so registering a provider and forgetting
--- its availability row is not possible here, and the NOT EXISTS guard is what
--- makes a second apply leave an already-probed row alone.
-INSERT INTO source_availability (provider_id, state, outcome, probe, detail, checked_at)
-SELECT p.id, 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0
-FROM provider AS p
-WHERE NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);
+-- THE DDL SEEDS NO PROVIDER AND NO KIND (PA2 of the plugin-API amendment to
+-- specs/SPEC-backend-completion-plugins.md). The registry rows are the built-ins'
+-- own declarations, written when they load: each kind file
+-- (internal/collect/provider/kinds) writes its provider_kind row and, for a
+-- core-only kind, the historical rows it lists; each built-in plugin's manifest
+-- writes its providers' rows (store.RegisterDeclarations). A plugin added later --
+-- a directory dropped into <data-dir>/plugins/ -- is registered the same way, so
+-- adding one edits nothing in this file, a new kind included. These names are
+-- DATA, not configuration: a firewall with no Suricata still gets a Suricata row,
+-- in the 'unavailable' state, which is the modelled-state design working. No
+-- provider is active: activeness is decided by the probe round against a live
+-- firewall, and this file has no way to know. Every registry row gets its
+-- availability row with it, 'unavailable' / 'not_yet_probed' until a probe has
+-- run -- never an absent row, which a screen could not tell apart from a provider
+-- that is fine.
 
 -- ---------------------------------------------------------------------------
 -- THE LEARNED MIRROR OF THE FIREWALL API (A9 and A10 of the broker amendment to

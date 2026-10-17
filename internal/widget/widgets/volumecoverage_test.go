@@ -171,7 +171,7 @@ func exampleTwinPlugin(twinParameters string, twinTemplate bool) map[string]stri
 		from = "volume_aggregate_@period@"
 	}
 	return map[string]string{
-		"plugin.json": `{"api_version": 1, "name": "example_twin", "version": "0.1.0",
+		"plugin.json": `{"api_version": 2, "name": "example_twin", "version": "0.1.0",
 			"display_name": "Example twin", "widgets": ["example_twin_total"]}`,
 		"widgets/example_twin_total/manifest.json": `{
 			"manifest_version": 1, "type": "example_twin_total", "shape": "figure", "windowed": true,

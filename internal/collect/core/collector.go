@@ -5,7 +5,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -22,7 +21,7 @@ type Collector struct {
 
 	// sources are the implementations this collector reads: the built-in plugins and the
 	// plugins of its data directory, as the plugin host loaded them (internal/collect/sources).
-	SourceSet *sources.Set
+	SourceSet *provider.Set
 
 	// Triggers routes the core notifications to the loops of the providers that named them
 	// (notifications.go).

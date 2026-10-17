@@ -1,0 +1,141 @@
+{
+  "kind" : "resolver_local_data",
+  "description" : "The records a resolver serves from its local data, host overrides among them.",
+  "concurrent" : true,
+  "push" : false,
+  "bindable" : true,
+  "functions" : [
+    {
+      "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
+      "name" : "probe",
+      "arguments" : "host",
+      "returns" : "probe_answer"
+    },
+    {
+      "description" : "Called at every local-data pass: every record of the local data now.",
+      "name" : "local_data",
+      "arguments" : "host",
+      "returns" : "dump_answer"
+    }
+  ],
+  "records" : [
+    {
+      "description" : "What `probe` returns.",
+      "name" : "probe_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Why the probe could not finish, when it could not.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `cache` and `local_data` return.",
+      "name" : "dump_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "The `resolver_record` records, of every type.",
+          "name" : "records",
+          "type" : "records",
+          "of" : "resolver_record"
+        },
+        {
+          "description" : "The size of the answer.",
+          "name" : "response_bytes",
+          "type" : "integer",
+          "unit" : "bytes"
+        },
+        {
+          "description" : "The `not_record_count` records: rows the implementation recognised as not being records at all.",
+          "name" : "not_records",
+          "type" : "records",
+          "of" : "not_record_count"
+        },
+        {
+          "description" : "Why the read failed, when it did.",
+          "name" : "error",
+          "type" : "text"
+        },
+        {
+          "description" : "Why this resolver's records can never be read, when that is so.",
+          "name" : "unsupported",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "One record as the endpoint returned it.",
+      "name" : "resolver_record",
+      "fields" : [
+        {
+          "description" : "The owner name.",
+          "name" : "owner_name",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The TTL as text.",
+          "name" : "ttl",
+          "type" : "text"
+        },
+        {
+          "description" : "The JSON shape the TTL arrived in.",
+          "name" : "ttl_shape",
+          "type" : "text",
+          "required" : true,
+          "values" : [
+            "absent",
+            "null",
+            "string",
+            "other"
+          ]
+        },
+        {
+          "description" : "The record type.",
+          "name" : "rrtype",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The record's value.",
+          "name" : "value",
+          "type" : "text",
+          "required" : true
+        }
+      ]
+    },
+    {
+      "description" : "A number of rows that are not records.",
+      "name" : "not_record_count",
+      "fields" : [
+        {
+          "description" : "How many.",
+          "name" : "count",
+          "type" : "integer",
+          "required" : true
+        },
+        {
+          "description" : "What they are, worded so that \"skipped <count> <wording>\" reads as a sentence.",
+          "name" : "wording",
+          "type" : "text",
+          "required" : true
+        }
+      ]
+    }
+  ]
+}

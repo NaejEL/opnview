@@ -280,17 +280,17 @@ func checkPushKind(plugin *Plugin, binding *pushBinding, providedKinds map[strin
 	name := plugin.Name
 	declaration := binding.declaration
 	provided, declared := providedKinds[declaration.Kind]
-	if !declared || !provider.IsCoreKind(declaration.Kind) {
+	kindContract, core := provider.ContractOf(declaration.Kind)
+	if !declared || !core {
 		return contract.Refuse(name, contract.RefusalPushDestinationInvalid, "%s delivers records of %q, which is not a core kind the "+
 			"plugin provides", entry, declaration.Kind)
 	}
-	table := declaration.Kind + "_record"
-	kindContract, _ := provider.ContractOf(declaration.Kind)
+	table := kindContract.PushRecord
 	record, hasTable := provider.LookupRecord(kindContract, table)
 	switch {
-	case !hasTable:
-		return contract.Refuse(name, contract.RefusalPushDestinationInvalid, "%s delivers records of %s, whose contract has no %s "+
-			"table a push entry could fill", entry, declaration.Kind, table)
+	case !kindContract.Push || !hasTable:
+		return contract.Refuse(name, contract.RefusalPushDestinationInvalid, "%s delivers records of %s, which no push entry may "+
+			"deliver: its kind file does not mark it push", entry, declaration.Kind)
 	case declaration.Parse == "" && len(declaration.Fields) == 0:
 		return contract.Refuse(name, contract.RefusalPushDeclarationInvalid, "%s delivers records of %s, which a parse function "+
 			"builds or a field mapping fills: the records are the kind's contract", entry, declaration.Kind)
@@ -315,10 +315,6 @@ func checkPushKind(plugin *Plugin, binding *pushBinding, providedKinds map[strin
 					entry, field.Name, table)
 			}
 		}
-	}
-	if _, adapted := pushKinds[declaration.Kind]; !adapted {
-		return contract.Refuse(name, contract.RefusalPushDestinationInvalid, "%s delivers records of %s, which no push path of the "+
-			"core receives yet", entry, declaration.Kind)
 	}
 	// PS9, as the NetFlow join amendment's PS17 amends it. The load check tells the two cases apart by
 	// the CONTRACT, never by the plugin: an entry delivers the record table <kind>_record, and the
@@ -407,7 +403,7 @@ func (b *pushBinding) columns() []string {
 		return columns
 	}
 	if kindContract, core := provider.ContractOf(b.declaration.Kind); core {
-		if record, found := provider.LookupRecord(kindContract, b.declaration.Kind+"_record"); found {
+		if record, found := provider.LookupRecord(kindContract, kindContract.PushRecord); found {
 			for _, field := range record.Fields {
 				columns = append(columns, field.Name)
 			}

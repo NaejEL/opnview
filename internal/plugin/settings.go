@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/NaejEL/opnview/internal/collect/pluginkind"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/plugin/scripthost"
@@ -357,7 +357,7 @@ func settingText(value any) (string, error) {
 
 // operatorSettings are what the operator may set on a plugin: the settings its manifest declares,
 // and, for each provider stating its own cadence, the override of that cadence -- an integer of
-// seconds, never below the provider's lower bound, stored under pluginkind.CadenceSettingKey and
+// seconds, never below the provider's lower bound, stored under provider.CadenceSettingKey and
 // read by the scheduler before every wait. It carries no label: no catalogue string names it yet,
 // and its key, cadence__<kind>__<provider key>, says what it is.
 func (p *Plugin) operatorSettings() []contract.SettingDeclaration {
@@ -371,7 +371,7 @@ func (p *Plugin) operatorSettings() []contract.SettingDeclaration {
 			key = p.Name
 		}
 		minimum := float64(max(declared.MinCadenceSeconds, 1))
-		settings = append(settings, contract.SettingDeclaration{Key: pluginkind.CadenceSettingName(declared.Kind, key),
+		settings = append(settings, contract.SettingDeclaration{Key: provider.CadenceSettingName(declared.Kind, key),
 			Type: SettingInteger, Default: float64(declared.CadenceSeconds), Min: &minimum})
 	}
 	return settings

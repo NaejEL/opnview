@@ -17,7 +17,7 @@ import (
 // renamed, the answer restructured, which its adapter undoes -- and maps a later range of versions
 // to a script file of its own.
 
-const versionedManifest = `{"api_version": 1, "name": "example_versions", "version": "0.1.0",
+const versionedManifest = `{"api_version": 2, "name": "example_versions", "version": "0.1.0",
 	"display_name": "Example versions", "script": "example_versions.js",
 	"script_versions": {"from": "26.1", "before": "27.1"},
 	"scripts": [{"versions": {"from": "27.1"}, "script": "example_versions_next.js"}],

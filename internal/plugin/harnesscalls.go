@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"strings"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/push"
-	"github.com/NaejEL/opnview/internal/store/plugindecl"
 )
 
 // What `opnview plugin test` runs a plugin through (internal/plugin/harness): one provider function
@@ -33,69 +33,71 @@ func (r *CallRefusal) Error() string { return r.Detail }
 // and reading only its live endpoints.
 func (p *Plugin) CallProvider(ctx context.Context, session provider.Session, kind, function string,
 	arguments []any) (map[string]any, error) {
-	base, found := p.adapters[kind]
+	serving, found := p.implementations[kind]
 	if !found {
 		return nil, &CallRefusal{Detail: fmt.Sprintf("the plugin provides no %s", kind)}
 	}
+	kindContract, core := provider.ContractOf(kind)
+	if !core {
+		kindContract = declaredContract(kind)
+	}
 	live := p.liveOf(kind, function)
-	if kind == "measurement_sample" && (function == "sample" || live != nil) && len(arguments) >= 1 {
-		if _, isView := arguments[0].(map[string]any); !isView {
-			arguments[0] = DiscoveryView(provider.Discovery{})
-		}
-	}
-	for index, argument := range arguments {
-		if number, isNumber := argument.(int64); isNumber && !(kind == "measurement_sample" && index == 1) {
-			arguments[index] = int(number)
-		}
-	}
-	table := ""
-	for _, declared := range base.contract.Functions {
-		if declared.Name == function {
-			table = declared.Returns
-		}
-	}
-	if !provider.IsServiceKind(kind) {
-		if _, core := provider.ContractOf(kind); !core {
-			table = map[string]string{"probe": "probe_answer", "collect": "collect_answer"}[function]
-		}
-	}
-	if live != nil {
-		table = liveKinds[kind]
-		base.invoker = liveInvoker{script: p.script, namespace: kind,
-			maxAge: time.Duration(live.fallback) * time.Second, only: live.only}
-	}
-	if table == "" {
+	declared, known := kindContract.FunctionOf(function)
+	if !known && live == nil {
 		return nil, &CallRefusal{Detail: fmt.Sprintf("the %s contract has no function %s", kind, function)}
 	}
-	switch {
-	case provider.IsServiceKind(kind):
-		checked, answerErr, failed := base.runService(ctx, session, function, table, arguments...)
-		if failed != nil {
-			return checked, failed
+	if live != nil {
+		// A live function is called with the arguments of the function returning its answer.
+		for _, candidate := range kindContract.Functions {
+			if candidate.Returns == kindContract.LiveAnswer {
+				declared = candidate
+			}
 		}
-		return checked, answerErr
-	case function == "collect":
-		state := map[string]string{}
-		if len(arguments) > 0 {
-			if given, isMap := arguments[0].(map[string]any); isMap {
+	}
+	// Each argument is converted as the kind calls the function: `discovery` is the discovery view, a
+	// test's own map kept; `state` is text by key; `now` stays an instant; any other whole number is
+	// passed as JavaScript reads a page number.
+	names := strings.Split(declared.Arguments, ", ")
+	for index, argument := range arguments {
+		name := ""
+		if index+1 < len(names) {
+			name = names[index+1]
+		}
+		switch {
+		case name == "discovery":
+			if _, isView := argument.(map[string]any); !isView {
+				arguments[index] = provider.DiscoveryView(provider.Discovery{})
+			}
+		case name == "state":
+			state := map[string]any{}
+			if given, isMap := argument.(map[string]any); isMap {
 				for key, value := range given {
 					state[key] = fmt.Sprint(value)
 				}
 			}
+			arguments[index] = state
+		case name != "now":
+			if number, isNumber := argument.(int64); isNumber {
+				arguments[index] = int(number)
+			}
 		}
-		declared := declaredKindAdapter{adapter: base, tables: map[string]plugindecl.PluginTable{}}
-		for _, table := range p.OwnTables {
-			declared.tables[table.Table] = table
-		}
-		pass, result, err := declared.Collect(ctx, session, state)
-		return map[string]any{"result": resultMap(result), "rows": pass.Rows, "state": pass.State}, err
-	default:
-		checked, result, err := base.run(ctx, session, function, table, arguments...)
-		if checked == nil {
-			checked = map[string]any{"result": resultMap(result)}
-		}
-		return checked, err
 	}
+	var (
+		checked provider.Answer
+		result  provider.Result
+		err     error
+	)
+	if livePass, isLive := serving.(provider.LiveImplementation); isLive && live != nil {
+		checked, result, err = livePass.CallLive(ctx, session, time.Duration(live.fallback)*time.Second, arguments...)
+	} else {
+		checked, result, err = serving.Call(ctx, session, function, arguments...)
+	}
+	if checked == nil {
+		checked = map[string]any{"result": resultMap(result)}
+	} else if !core && function == "collect" {
+		checked["result"] = resultMap(result)
+	}
+	return checked, err
 }
 
 // resultMap is a provider.Result as a test reads it.
@@ -106,7 +108,7 @@ func resultMap(result provider.Result) map[string]any {
 
 // Provides reports whether the plugin provides a kind.
 func (p *Plugin) Provides(kind string) bool {
-	_, found := p.adapters[kind]
+	_, found := p.implementations[kind]
 	return found
 }
 
@@ -157,7 +159,9 @@ func StoreAndRead(ctx context.Context, sink push.Sink, prepared push.Prepared) (
 			if err := sink.Store(ctx, prepared); err != nil {
 				return nil, err
 			}
-			rows = append(rows, pushKinds[kind.binding.declaration.Kind].view(payload.records)...)
+			for _, record := range payload.records {
+				rows = append(rows, contractView(kind.binding.declaration.Kind, record))
+			}
 		}
 	}
 	return rows, nil

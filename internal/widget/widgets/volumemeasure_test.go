@@ -493,7 +493,7 @@ func pluginService(t *testing.T, f *fixture, dataDir string) *widget.Service {
 // exampleVolumePlugin is a third party's widget: a total of the rolling window's volume, read through
 // the core and built through host.figures. It names no measure, and declares volumes in its manifest.
 var exampleVolumePlugin = map[string]string{
-	"plugin.json": `{"api_version": 1, "name": "example_volume", "version": "0.1.0",
+	"plugin.json": `{"api_version": 2, "name": "example_volume", "version": "0.1.0",
 		"display_name": "Example volume", "widgets": ["example_volume_total"]}`,
 	"widgets/example_volume_total/manifest.json": `{
 		"manifest_version": 1, "type": "example_volume_total", "shape": "figure", "windowed": true,
@@ -571,7 +571,7 @@ func TestAThirdPartyWidgetGetsTheMeasureFromItsManifestAlone(t *testing.T) {
 // exampleMixingPlugin is a third party's widget that adds the logged bytes its own statement reads to
 // the figures the core read: under netflow that would be a Volume built from two measures.
 var exampleMixingPlugin = map[string]string{
-	"plugin.json": `{"api_version": 1, "name": "example_mixing", "version": "0.1.0",
+	"plugin.json": `{"api_version": 2, "name": "example_mixing", "version": "0.1.0",
 		"display_name": "Example mixing", "widgets": ["example_mixing_total"]}`,
 	"widgets/example_mixing_total/manifest.json": `{
 		"manifest_version": 1, "type": "example_mixing_total", "shape": "figure", "windowed": true,

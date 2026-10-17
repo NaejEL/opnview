@@ -1,0 +1,189 @@
+{
+  "kind" : "firewall_log",
+  "description" : "Records of packets the firewall allowed or denied: data source 1. The kind keeps no server-side cursor; it reads the newest page and records a gap when the oldest record returned is newer than the newest stored.",
+  "concurrent" : false,
+  "push" : true,
+  "push_record" : "firewall_log_record",
+  "bindable" : true,
+  "functions" : [
+    {
+      "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
+      "name" : "probe",
+      "arguments" : "host",
+      "returns" : "probe_answer"
+    },
+    {
+      "description" : "Called at every filter-log pass: the newest page_size records, newest first.",
+      "name" : "records",
+      "arguments" : "host, page_size",
+      "returns" : "records_answer"
+    }
+  ],
+  "records" : [
+    {
+      "description" : "What `probe` returns.",
+      "name" : "probe_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Why the probe could not finish, when it could not.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `records` returns.",
+      "name" : "records_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "The `firewall_log_record` records read, absent when the read failed.",
+          "name" : "records",
+          "type" : "records",
+          "of" : "firewall_log_record"
+        },
+        {
+          "description" : "Why the read failed, when it did; the result then says what the firewall answered.",
+          "name" : "error",
+          "type" : "text"
+        },
+        {
+          "description" : "Why this implementation's material can never be read, when that is so: a state, recorded with its reason, and not a failure.",
+          "name" : "unsupported",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "One filter-log record, decoded and normalised.",
+      "name" : "firewall_log_record",
+      "fields" : [
+        {
+          "description" : "The record's identity; a record read twice is stored once.",
+          "name" : "digest",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "When the packet was logged.",
+          "name" : "observed_at",
+          "type" : "integer",
+          "required" : true,
+          "unit" : "UTC epoch seconds"
+        },
+        {
+          "description" : "The network device the record names; the kind resolves it to an interface.",
+          "name" : "device",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The source address.",
+          "name" : "src_address",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The destination address.",
+          "name" : "dst_address",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The source port, 0 to 65535.",
+          "name" : "src_port",
+          "type" : "integer",
+          "min" : 0,
+          "max" : 65535
+        },
+        {
+          "description" : "The destination port, 0 to 65535.",
+          "name" : "dst_port",
+          "type" : "integer",
+          "min" : 0,
+          "max" : 65535
+        },
+        {
+          "description" : "The protocol's name; empty when the record names none.",
+          "name" : "protocol",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "4 or 6.",
+          "name" : "ip_version",
+          "type" : "integer",
+          "required" : true,
+          "integer_values" : [
+            4,
+            6
+          ]
+        },
+        {
+          "description" : "The decision.",
+          "name" : "action",
+          "type" : "text",
+          "required" : true,
+          "values" : [
+            "pass",
+            "block",
+            "reject",
+            "unknown"
+          ]
+        },
+        {
+          "description" : "The direction the packet crossed the interface.",
+          "name" : "direction",
+          "type" : "text",
+          "required" : true,
+          "values" : [
+            "in",
+            "out",
+            "unknown"
+          ]
+        },
+        {
+          "description" : "The reason the record was logged.",
+          "name" : "log_reason",
+          "type" : "text"
+        },
+        {
+          "description" : "The logged packet length, 0 or more.",
+          "name" : "packet_bytes",
+          "type" : "integer",
+          "required" : true,
+          "min" : 0,
+          "unit" : "bytes"
+        },
+        {
+          "description" : "The rule's label, which the kind resolves to a rule.",
+          "name" : "rid",
+          "type" : "text"
+        },
+        {
+          "description" : "The IPv4 identification, which pairs the two records of one connection.",
+          "name" : "ip_id",
+          "type" : "integer"
+        },
+        {
+          "description" : "The TCP sequence number, the other pairing field.",
+          "name" : "tcp_seq",
+          "type" : "integer"
+        }
+      ]
+    }
+  ]
+}

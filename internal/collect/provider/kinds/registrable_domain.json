@@ -1,0 +1,110 @@
+{
+  "kind" : "registrable_domain",
+  "description" : "Groups site names by their registrable domain, at read time; no stored name is ever altered. One provider is active at a time; with none, no grouping is offered.",
+  "concurrent" : false,
+  "push" : false,
+  "bindable" : true,
+  "service" : true,
+  "functions" : [
+    {
+      "description" : "Called at start and after every refresh: whether a list is held.",
+      "name" : "status",
+      "arguments" : "host",
+      "returns" : "list_answer"
+    },
+    {
+      "description" : "Called at refresh_interval_public_suffix_list_seconds: acquire or update the list.",
+      "name" : "refresh",
+      "arguments" : "host",
+      "returns" : "list_answer"
+    },
+    {
+      "description" : "Called while a widget is served, with the site names to group.",
+      "name" : "group",
+      "arguments" : "host, names",
+      "returns" : "group_answer"
+    }
+  ],
+  "records" : [
+    {
+      "description" : "What `status` and `refresh` return.",
+      "name" : "list_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record; its probe is a word naming what the last refresh found.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Whether a list is held.",
+          "name" : "ready",
+          "type" : "boolean",
+          "required" : true
+        },
+        {
+          "description" : "The list's own version, when it carries one.",
+          "name" : "version",
+          "type" : "text"
+        },
+        {
+          "description" : "How many rules the list holds.",
+          "name" : "rules",
+          "type" : "integer"
+        },
+        {
+          "description" : "The last instant a refresh confirmed the list current.",
+          "name" : "confirmed_at",
+          "type" : "integer",
+          "unit" : "UTC epoch seconds"
+        },
+        {
+          "description" : "Whether this refresh failed, which the core records as a collection gap from confirmed_at.",
+          "name" : "failed",
+          "type" : "boolean"
+        },
+        {
+          "description" : "Why the refresh failed, when it did.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `group` returns.",
+      "name" : "group_answer",
+      "fields" : [
+        {
+          "description" : "One `grouping` record per name.",
+          "name" : "groups",
+          "type" : "records",
+          "required" : true,
+          "of" : "grouping"
+        },
+        {
+          "description" : "Why the grouping failed, when it did.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "One name's registrable domain.",
+      "name" : "grouping",
+      "fields" : [
+        {
+          "description" : "The site name, verbatim.",
+          "name" : "name",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "Its registrable domain; absent when the name has none, which groups it on its own.",
+          "name" : "registrable_domain",
+          "type" : "text"
+        }
+      ]
+    }
+  ]
+}

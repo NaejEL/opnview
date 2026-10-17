@@ -1,0 +1,14 @@
+{
+  "kind" : "flow_volume",
+  "description" : "Volumes between pairs of endpoints, derived by opnview from the filter log: data source 3. Nothing collects it, and no plugin implements it.",
+  "concurrent" : false,
+  "push" : false,
+  "bindable" : true,
+  "core_only" : "derived by opnview from the filter log; nothing collects it",
+  "registered" : [
+    {
+      "key" : "insight",
+      "display_name" : "NetFlow / Insight"
+    }
+  ]
+}

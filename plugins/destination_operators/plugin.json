@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "destination_operators",
   "version": "1.0.0",
   "display_name": "Destination operators",

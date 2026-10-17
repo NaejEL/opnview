@@ -18,9 +18,7 @@ import (
 
 	opnview "github.com/NaejEL/opnview"
 	"github.com/NaejEL/opnview/internal/broker"
-	"github.com/NaejEL/opnview/internal/collect/pluginkind"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/dataset"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
@@ -128,8 +126,8 @@ type Plugin struct {
 
 	Manifest contract.Manifest
 	script   *scripthost.Script
-	// adapters are the plugin's providers, by kind, as their tests call them (harnesscalls.go).
-	adapters  map[string]adapter
+	// implementations are the plugin's providers, by kind, as their tests call them (harnesscalls.go).
+	implementations map[string]provider.Implementation
 	Endpoints map[string]opnsense.Endpoint
 	// Routes are each endpoint's routes by OPNsense version (versions.go).
 	Routes    map[string][]scripthost.Route
@@ -170,7 +168,7 @@ type EndpointInfo struct {
 // Loaded is what one load produced: the source set every provider was added to, the plugins
 // loaded, and those refused.
 type Loaded struct {
-	Set     *sources.Set
+	Set     *provider.Set
 	Members []*Plugin
 	Refused []contract.Refusal
 	push    *pushHost
@@ -240,7 +238,7 @@ func BuiltinsLoaded() *Loaded {
 	builtinsOnce.Do(func() {
 		loaded, err := Load(context.Background(), Options{})
 		if err != nil {
-			loaded = &Loaded{Set: sources.New()}
+			loaded = &Loaded{Set: provider.NewSet()}
 			loaded.Set.NoteFailure(err)
 		}
 		builtinsLoaded = loaded
@@ -250,7 +248,7 @@ func BuiltinsLoaded() *Loaded {
 
 // Builtins returns the source set of the built-in plugins alone: what a collector built without a
 // data directory reads -- every test that does not drop a plugin of its own.
-func Builtins() *sources.Set { return BuiltinsLoaded().Set }
+func Builtins() *provider.Set { return BuiltinsLoaded().Set }
 
 // Call runs one function a plugin's script exports under a namespace -- a kind, or the
 // `helpers` a plugin exports for its own tests -- and returns its answer as Go values. session may
@@ -272,7 +270,10 @@ func (p *Plugin) Call(ctx context.Context, session provider.Session, namespace, 
 // cannot be listed at all; a plugin it refuses is reported in Refusals, and the set's failures
 // carry a refused built-in.
 func Load(ctx context.Context, options Options) (*Loaded, error) {
-	loaded := &Loaded{Set: sources.New(), push: &pushHost{}}
+	loaded := &Loaded{Set: provider.NewSet(), push: &pushHost{}}
+	if err := provider.KindsError(); err != nil {
+		loaded.Set.NoteFailure(fmt.Errorf("the core kind files: %w", err))
+	}
 	options.pushes = loaded.push
 	builtins := options.Builtins
 	if builtins == nil {
@@ -340,7 +341,7 @@ func Load(ctx context.Context, options Options) (*Loaded, error) {
 
 // LoadOne validates one plugin directory and, when it is accepted, adds its providers to the set,
 // admits its endpoints and creates its tables. Nothing of a refused plugin is added anywhere.
-func LoadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origin, location, onDisk string,
+func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, origin, location, onDisk string,
 	taken map[string]string, options Options) (*Plugin, *contract.Refusal) {
 	raw, err := fs.ReadFile(directory, contract.ManifestFile)
 	if err != nil {
@@ -460,7 +461,11 @@ func LoadOne(ctx context.Context, set *sources.Set, directory fs.FS, name, origi
 	}
 	plugin.Destinations = append([]string(nil), manifest.Destinations...)
 	// What the plugin declares of its endpoints reaches whichever broker reads this set.
-	set.AddDeclarer(plugin.DeclareTo)
+	set.AddDeclarer(func(gate provider.Gate) {
+		if brokered, isBroker := gate.(*broker.Broker); isBroker {
+			plugin.DeclareTo(brokered)
+		}
+	})
 	return plugin, nil
 }
 
@@ -586,11 +591,53 @@ func loadScript(plugin *Plugin, directory fs.FS, timeout time.Duration) *contrac
 // checkedProvider is one provider that passed every check, and how to add it.
 type checkedProvider struct {
 	info ProviderInfo
-	add  func(set *sources.Set) error
+	add  func(set *provider.Set) error
+}
+
+// ownKindAttributes are the attributes of a kind the plugin declares for itself: its manifest's `kinds`
+// entry, or the defaults.
+func ownKindAttributes(plugin *Plugin, kind string) provider.KindAttributes {
+	attributes := provider.KindAttributes{Kind: kind, Plugin: plugin.Name, Bindable: true}
+	for _, declared := range plugin.Manifest.Kinds {
+		if declared.Kind == kind {
+			attributes.Concurrent, attributes.Push = declared.Concurrent, declared.Push
+			if declared.Bindable != nil {
+				attributes.Bindable = *declared.Bindable
+			}
+		}
+	}
+	return attributes
+}
+
+// checkKinds checks the manifest's `kinds`: each a kind of the plugin's own that one of its providers
+// names, listed once.
+func checkKinds(plugin *Plugin) *contract.Refusal {
+	provided := map[string]bool{}
+	for _, declaration := range plugin.Manifest.Providers {
+		provided[declaration.Kind] = true
+	}
+	seen := map[string]bool{}
+	for _, declared := range plugin.Manifest.Kinds {
+		switch {
+		case provider.IsCoreKind(declared.Kind):
+			return contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "kinds names %q, a core kind, whose "+
+				"attributes are its kind file's", declared.Kind)
+		case !provided[declared.Kind]:
+			return contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "kinds names %q, which none of the "+
+				"plugin's providers implements", declared.Kind)
+		case seen[declared.Kind]:
+			return contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "kinds names %q twice", declared.Kind)
+		}
+		seen[declared.Kind] = true
+	}
+	return nil
 }
 
 // checkProviders checks every provider a manifest declares and returns how to add each.
-func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contract.Refusal) {
+func checkProviders(set *provider.Set, plugin *Plugin) ([]checkedProvider, *contract.Refusal) {
+	if refusal := checkKinds(plugin); refusal != nil {
+		return nil, refusal
+	}
 	var exports map[string]map[string]string
 	if plugin.script != nil {
 		var err error
@@ -612,23 +659,11 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 			return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "the %s provider has no display_name",
 				declaration.Kind)
 		}
-		switch declaration.Source {
-		case "":
-		case providerSourcePush:
-			if provider.IsCoreKind(declaration.Kind) || declaration.Probe != nil || declaration.Read != nil ||
-				declaration.Live != nil {
-				return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "the %s provider has the source push, which "+
-					"only a provider of a kind of the plugin's own with no probe, read or live pass may have",
-					declaration.Kind)
-			}
-		default:
-			return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "the %s provider has the source %q; the only "+
-				"source a provider names is push", declaration.Kind, declaration.Source)
-		}
 		if reason, coreOnly := provider.CoreOnly(declaration.Kind); coreOnly {
 			return nil, contract.Refuse(plugin.Name, contract.RefusalCoreOnlyKind, "the kind %q is %s", declaration.Kind, reason)
 		}
 		kindContract, core := provider.ContractOf(declaration.Kind)
+		var own provider.KindAttributes
 		if !core {
 			if !contract.NamePattern.MatchString(declaration.Kind) || len(plugin.OwnTables) == 0 {
 				return nil, contract.Refuse(plugin.Name, contract.RefusalUnknownKind, "the kind %q is not a core kind (%v), and a kind "+
@@ -639,6 +674,19 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 					declaration.Kind, owner)
 			}
 			kindContract = declaredContract(declaration.Kind)
+			own = ownKindAttributes(plugin, declaration.Kind)
+		}
+		switch declaration.Source {
+		case "":
+		case providerSourcePush:
+			if core || !own.Push || declaration.Probe != nil || declaration.Read != nil || declaration.Live != nil {
+				return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "the %s provider has the source push, which "+
+					"only a provider of a kind of the plugin's own declared with push, and with no probe, read or live pass, "+
+					"may have", declaration.Kind)
+			}
+		default:
+			return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "the %s provider has the source %q; the only "+
+				"source a provider names is push", declaration.Kind, declaration.Source)
 		}
 		identity := [2]string{declaration.Kind, key}
 		if seen[identity] || set.Taken(declaration.Kind, key) {
@@ -650,10 +698,11 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 			// Its pass reads the hub, never the firewall: it refreshes the availability row.
 			declaration.CadenceSeconds = pushProviderCadenceSeconds
 		}
-		if refusal := checkCadence(plugin.Name, declaration, core && declaration.Kind != "reconciled_state"); refusal != nil {
+		surveyed := core && !kindContract.OwnCadence
+		if refusal := checkCadence(plugin.Name, declaration, surveyed); refusal != nil {
 			return nil, refusal
 		}
-		if refusal := checkTriggers(plugin.Name, declaration, core && declaration.Kind != "reconciled_state"); refusal != nil {
+		if refusal := checkTriggers(plugin.Name, declaration, surveyed); refusal != nil {
 			return nil, refusal
 		}
 		switch declaration.ReadStrategy {
@@ -666,35 +715,33 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 			ReadStrategy: declaration.ReadStrategy, CadenceSeconds: declaration.CadenceSeconds,
 			MinCadenceSeconds: declaration.MinCadenceSeconds, TriggeredBy: declaration.TriggeredBy,
 			Endpoints: endpointInfos(plugin.Endpoints)}
-		base := adapter{plugin: plugin.Name, contract: kindContract, endpoints: plugin.Endpoints,
+		base := implementation{plugin: plugin.Name, contract: kindContract, endpoints: plugin.Endpoints,
 			scriptProbe: scriptEndpoint(plugin.Name, plugin.Manifest.Script)}
+		if !core {
+			base.tables = map[string]plugindecl.PluginTable{}
+			for _, table := range plugin.OwnTables {
+				base.tables[table.Table] = table
+			}
+		}
 		if (declaration.Probe != nil || declaration.Read != nil) && declaration.Live != nil {
 			_, refusal := checkLive(plugin, declaration, exports)
 			return nil, refusal
 		}
-		if declaration.Source == providerSourcePush {
+		var serving provider.Implementation
+		declarative := false
+		switch {
+		case declaration.Source == providerSourcePush:
 			info.Form = FormPush
-			manifest := provider.Manifest{Kind: declaration.Kind, Key: key, DisplayName: declaration.DisplayName}
-			declaration := declaration
-			checked = append(checked, checkedProvider{info: info, add: func(set *sources.Set) error {
-				if err := set.DeclareKind(manifest.Kind, plugin.Name); err != nil {
-					return err
-				}
-				return set.AddDeclared(manifest, pluginkind.Registration{Plugin: plugin.Name,
-					Cadence:    cadenceOf(declaration),
-					MinCadence: time.Duration(declaration.MinCadenceSeconds) * time.Second,
-					Source:     pushProviderAdapter{plugin: plugin, kind: manifest.Kind, key: manifest.Key}})
-			}})
-			continue
-		}
-		if declaration.Probe != nil || declaration.Read != nil {
+			serving = pushProviderImplementation{plugin: plugin, kind: declaration.Kind, key: key}
+		case declaration.Probe != nil || declaration.Read != nil:
 			info.Form = FormDeclarative
 			form, refusal := checkDeclarative(plugin, declaration, kindContract, core)
 			if refusal != nil {
 				return nil, refusal
 			}
 			base.invoker = form
-		} else {
+			serving, declarative = base, true
+		default:
 			info.Form = FormScript
 			if plugin.script == nil {
 				return nil, contract.Refuse(plugin.Name, contract.RefusalScriptMissing, "the %s provider declares no probe and no read, "+
@@ -707,29 +754,38 @@ func checkProviders(set *sources.Set, plugin *Plugin) ([]checkedProvider, *contr
 			if refusal != nil {
 				return nil, refusal
 			}
+			base.invoker = scriptInvoker{script: plugin.script, namespace: declaration.Kind}
+			serving = base
 			if live != nil {
 				if plugin.lives == nil {
 					plugin.lives = map[string]*liveBinding{}
 				}
 				plugin.lives[key] = live
 				info.Live = listedLive(declaration)
+				serving = liveImplementation{implementation: base, script: plugin.script, live: live}
 			}
-			base.invoker = scriptInvoker{script: plugin.script, namespace: declaration.Kind}
 		}
-		manifest := provider.Manifest{Kind: declaration.Kind, Key: key, DisplayName: declaration.DisplayName}
-		declaration := declaration
+		values, err := plugin.exportedValues(kindContract, declarative)
+		if err != nil {
+			return nil, contract.Refuse(plugin.Name, contract.RefusalScriptMissingFunction, "the %s provider's exported values: %v",
+				declaration.Kind, err)
+		}
+		registration := provider.Registration{Kind: declaration.Kind, Key: key, DisplayName: declaration.DisplayName,
+			Plugin: plugin.Name, Cadence: cadenceOf(declaration),
+			MinCadence: time.Duration(declaration.MinCadenceSeconds) * time.Second,
+			Triggers:   declaration.TriggeredBy, Values: values, Implementation: serving}
 		isCore := core
-		checked = append(checked, checkedProvider{info: info, add: func(set *sources.Set) error {
+		checked = append(checked, checkedProvider{info: info, add: func(set *provider.Set) error {
 			if !isCore {
-				if err := set.DeclareKind(manifest.Kind, plugin.Name); err != nil {
+				if err := set.DeclareKind(own); err != nil {
 					return err
 				}
 			}
-			if plugin.adapters == nil {
-				plugin.adapters = map[string]adapter{}
+			if plugin.implementations == nil {
+				plugin.implementations = map[string]provider.Implementation{}
 			}
-			plugin.adapters[manifest.Kind] = base
-			return addToSet(set, manifest, base, plugin, declaration)
+			plugin.implementations[registration.Kind] = registration.Implementation
+			return set.Add(registration)
 		}})
 	}
 	return checked, nil

@@ -34,6 +34,72 @@ func (s *FlowStore) ProviderID(ctx context.Context, kind, providerKey string) (i
 	return id, nil
 }
 
+// RegisterDeclarations writes what declarations say of the registry, in three statements whatever their
+// number (PA2 of the plugin-API amendment): each kind's attribute, its provider_kind row, inserted or
+// brought up to date; each provider's registry row, inserted when absent and otherwise left exactly as it
+// is, activeness included; and the availability row every registry row has. It is how the DDL can seed no
+// product row: the built-ins' declarations write theirs when they load, and a plugin added later writes
+// its own the same way.
+func (s *FlowStore) RegisterDeclarations(ctx context.Context, kinds []vocab.ProviderKind,
+	providers []vocab.ProviderDeclaration, now int64) error {
+	kindNames := make([]string, 0, len(kinds))
+	concurrent := make([]bool, 0, len(kinds))
+	for _, kind := range kinds {
+		kindNames = append(kindNames, kind.Kind)
+		concurrent = append(concurrent, kind.Concurrent)
+	}
+	keys := make([]string, 0, len(providers))
+	providerKinds := make([]string, 0, len(providers))
+	names := make([]string, 0, len(providers))
+	for _, declared := range providers {
+		providerKinds = append(providerKinds, declared.Kind)
+		keys = append(keys, declared.Key)
+		names = append(names, declared.DisplayName)
+	}
+	transaction, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: starting the registration of the declarations: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if _, err := transaction.ExecContext(ctx,
+		"INSERT INTO provider_kind (kind, concurrent) SELECT k, c FROM unnest(CAST($1 AS TEXT[]), CAST($2 AS BOOLEAN[])) AS d (k, c) "+
+			"ON CONFLICT (kind) DO UPDATE SET concurrent = EXCLUDED.concurrent "+
+			"WHERE provider_kind.concurrent IS DISTINCT FROM EXCLUDED.concurrent", kindNames, concurrent); err != nil {
+		return fmt.Errorf("store: registering the kinds: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx,
+		"INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) "+
+			"SELECT k, p, n, false, $4 FROM unnest(CAST($1 AS TEXT[]), CAST($2 AS TEXT[]), CAST($3 AS TEXT[])) AS d (k, p, n) "+
+			"ON CONFLICT (kind, provider_key) DO NOTHING", providerKinds, keys, names, now); err != nil {
+		return fmt.Errorf("store: registering the providers: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx,
+		"INSERT INTO source_availability (provider_id, state, outcome, probe, detail, checked_at) "+
+			"SELECT p.id, 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0 FROM provider AS p "+
+			"WHERE NOT EXISTS (SELECT 1 FROM source_availability AS a WHERE a.provider_id = p.id)"); err != nil {
+		return fmt.Errorf("store: giving the providers their availability rows: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("store: committing the registration of the declarations: %w", err)
+	}
+	return nil
+}
+
+// kindConcurrent reads whether a kind admits several active providers, from its provider_kind row: the
+// declaration's attribute, which the schema's index enforces. A kind no declaration registered is
+// exclusive.
+func (s *FlowStore) kindConcurrent(ctx context.Context, q sqldb.Querier, kind string) (bool, error) {
+	var concurrent bool
+	err := q.QueryRowContext(ctx, "SELECT concurrent FROM provider_kind WHERE kind = $1", kind).Scan(&concurrent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("store: reading the %s kind's attribute: %w", kind, err)
+	}
+	return concurrent, nil
+}
+
 // EnsureProvider returns the id of a registry row, creating it, and the availability row the
 // schema gives every registry row, when it does not exist yet. created reports whether it did
 // not.
@@ -62,6 +128,12 @@ func (s *FlowStore) EnsureProvider(ctx context.Context, kind, providerKey, displ
 		return 0, false, fmt.Errorf("store: starting the registration of %s/%s: %w", kind, providerKey, err)
 	}
 	defer func() { _ = transaction.Rollback() }()
+	// A kind no declaration registered yet takes the default of a plugin's own kind: one active provider
+	// at a time. A declaration registered later states its own (RegisterDeclarations).
+	if _, err := transaction.ExecContext(ctx,
+		"INSERT INTO provider_kind (kind, concurrent) VALUES ($1, false) ON CONFLICT (kind) DO NOTHING", kind); err != nil {
+		return 0, false, fmt.Errorf("store: registering the kind of %s/%s: %w", kind, providerKey, err)
+	}
 	result, err := transaction.ExecContext(ctx,
 		"INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) "+
 			"VALUES ($1, $2, $3, false, $4) ON CONFLICT (kind, provider_key) DO NOTHING",
@@ -109,13 +181,17 @@ func (s *FlowStore) ProviderKey(ctx context.Context, providerID int64) (string, 
 // the first row and letting a caller read one source where there are three. Such a
 // caller wants ActiveProviderIDs.
 func (s *FlowStore) ActiveProviderID(ctx context.Context, kind string) (int64, bool, error) {
-	if vocab.KindAdmitsSeveralActiveProviders(kind) {
+	concurrent, err := s.kindConcurrent(ctx, s.SQL, kind)
+	if err != nil {
+		return 0, false, err
+	}
+	if concurrent {
 		return 0, false, fmt.Errorf(
 			"store: the %s kind admits several active providers, so asking for THE active one "+
 				"would read one source where there may be several", kind)
 	}
 	var id int64
-	err := s.SQL.QueryRowContext(ctx,
+	err = s.SQL.QueryRowContext(ctx,
 		"SELECT id FROM provider WHERE kind = $1 AND is_active", kind).Scan(&id)
 	switch {
 	case errors.Is(err, sql.ErrNoRows):
@@ -163,7 +239,11 @@ func (s *FlowStore) ActiveProviderIDs(ctx context.Context, kind string) ([]int64
 // exclusive kind is refused here rather than left to the index, so the caller gets
 // a sentence instead of a constraint violation.
 func (s *FlowStore) SetActiveProviders(ctx context.Context, kind string, providerKeys ...string) error {
-	if len(providerKeys) > 1 && !vocab.KindAdmitsSeveralActiveProviders(kind) {
+	concurrent, err := s.kindConcurrent(ctx, s.SQL, kind)
+	if err != nil {
+		return err
+	}
+	if len(providerKeys) > 1 && !concurrent {
 		return fmt.Errorf("store: the %s kind admits one active provider and %d were given",
 			kind, len(providerKeys))
 	}

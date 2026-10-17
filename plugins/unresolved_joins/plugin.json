@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "unresolved_joins",
   "version": "1.0.0",
   "display_name": "Unresolved joins",

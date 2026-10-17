@@ -6,7 +6,6 @@ import (
 	"sort"
 
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -19,16 +18,20 @@ type Probeable struct {
 	Run         func(ctx context.Context, host provider.Session) (provider.Result, error)
 }
 
-// ProbeablesOf returns the implementations of one kind in the collector's source set, each
+// ProbeablesOf returns the implementations of one kind in the collector's provider set, each
 // reduced to its key and its probe.
-func ProbeablesOf[S any](registry *sources.Registry[S], probe func(S) func(context.Context,
-	provider.Session) (provider.Result, error)) []Probeable {
-	implementations := registry.Sources()
-	probeables := make([]Probeable, 0, len(implementations))
-	for key, source := range implementations {
-		probeables = append(probeables, Probeable{ProviderKey: key, Run: probe(source)})
+func (c *Collector) ProbeablesOf(kind string) []Probeable {
+	registrations := c.SourceSet.Of(kind)
+	probeables := make([]Probeable, 0, len(registrations))
+	for _, registration := range registrations {
+		probeables = append(probeables, Probeable{ProviderKey: registration.Key, Run: registration.Probe})
 	}
 	return SortedProbeables(probeables)
+}
+
+// ProbeKind probes every implementation of one kind and activates as ResolveKind decides.
+func (c *Collector) ProbeKind(ctx context.Context, kind string) error {
+	return c.ResolveKind(ctx, kind, c.ProbeablesOf(kind))
 }
 
 // SortedProbeables orders implementations by their registry key.
@@ -77,7 +80,7 @@ func (c *Collector) ResolveKind(ctx context.Context, kind string, probeables []P
 
 	selections, selectionFailures := c.LoadSelections(ctx, kind, outcomes)
 	failures = append(failures, selectionFailures...)
-	active, ambiguity := DecideActive(kind, outcomes, selections)
+	active, ambiguity := DecideActive(c.SourceSet.Concurrent(kind), outcomes, selections)
 
 	for _, entry := range outcomes {
 		detail := entry.result.Detail
@@ -165,7 +168,7 @@ func (c *Collector) LoadSelections(ctx context.Context, kind string,
 // DecideActive is the activation decision for one kind: the implementations opnview reads,
 // and the sentence recording an ambiguity, empty when there is none. It reads nothing, so a
 // probe round and Reselect cannot decide differently from the same facts.
-func DecideActive(kind string, outcomes []ProbedSource,
+func DecideActive(concurrent bool, outcomes []ProbedSource,
 	selections map[string]config.Selection) ([]string, string) {
 	separable := make([]string, 0, len(outcomes))
 	forced := make([]string, 0, len(outcomes))
@@ -191,7 +194,6 @@ func DecideActive(kind string, outcomes []ProbedSource,
 	//
 	// AN IMPLEMENTATION TURNED ON IS THE OPERATOR SAYING WHICH ONE: it is the separation the
 	// firewall's own configuration did not make, so it settles the ambiguity.
-	concurrent := vocab.KindAdmitsSeveralActiveProviders(kind)
 	ambiguity := ""
 	if len(forced) > 0 {
 		// A choice made by a person replaces the firewall's answer for the kind: the
@@ -248,7 +250,7 @@ func (c *Collector) ActiveSources(ctx context.Context, kind string) ([]ActiveSou
 // providers has no single answer, and asking for one here is a programming error rather than a
 // state to report, so it is refused.
 func (c *Collector) ActiveSourceKey(ctx context.Context, kind string) (string, int64, bool, error) {
-	if vocab.KindAdmitsSeveralActiveProviders(kind) {
+	if c.SourceSet.Concurrent(kind) {
 		return "", 0, false, fmt.Errorf(
 			"collect: the %s kind admits several active providers, so it has no single active "+
 				"source; the pass has to walk activeSources", kind)

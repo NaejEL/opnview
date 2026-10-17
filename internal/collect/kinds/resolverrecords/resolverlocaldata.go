@@ -4,8 +4,6 @@ import (
 	"context"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/resolverlocaldata"
 	"github.com/NaejEL/opnview/internal/store/attribution"
 )
 
@@ -17,8 +15,8 @@ import (
 // lease names, is resolved through the local data held at the lookup's instant (scope D of
 // specs/SPEC-resolver-cache-attribution.md). A lookup answered from Local-data also takes
 // the local data's A and AAAA records as exact evidence of its answer (decision 6). Which
-// resolver and which endpoint are in resolverlocaldata/unbound and
-// resolverlocaldata/dnsmasq.
+// resolver and which endpoint are in each resolver's plugin (plugins/unbound,
+// plugins/dnsmasq).
 
 // CollectResolverLocalData runs one pass of every active implementation of the
 // resolver_local_data kind.
@@ -26,14 +24,8 @@ func (c *ResolverRecordCoordinator) CollectResolverLocalData(ctx context.Context
 	// No retention purge runs between this pass storing its records and the end of its
 	// derivation (purge.go).
 	defer c.Storing()()
-	pass, request, passErr := c.readResourceRecords(ctx, core.KindResolverLocalData, attribution.HeldInLocalData,
-		func(providerKey string) (recordReader, bool) {
-			source, registered := c.SourceSet.ResolverLocalData.Lookup(providerKey)
-			if !registered {
-				return nil, false
-			}
-			return source.LocalData, true
-		})
+	pass, request, passErr := c.readResourceRecords(ctx, core.KindResolverLocalData, "local_data",
+		attribution.HeldInLocalData)
 
 	// The local data names hosts no lease names, so the lookups whose logged host name is
 	// still unresolved are examined again -- once every source of host names in use has
@@ -62,13 +54,3 @@ func nonNil(err error) []error {
 	return []error{err}
 }
 
-// ProbeResolverLocalData probes every implementation of the resolver_local_data kind. The probe round (collect.ProbeAll)
-// runs it with every other kind's.
-func (c *ResolverRecordCoordinator) ProbeResolverLocalData(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindResolverLocalData, core.ProbeablesOf(c.SourceSet.ResolverLocalData, localDataProbe))
-}
-
-// localDataProbe is the probe of one resolver_local_data implementation, as core.ProbeablesOf takes it.
-func localDataProbe(source resolverlocaldata.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
-}

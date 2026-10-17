@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "attribution_rate_per_client",
   "version": "1.0.0",
   "display_name": "Attribution rate per client",

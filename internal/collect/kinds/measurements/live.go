@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/measurement"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -70,15 +70,15 @@ func (c *MeasurementCoordinator) LiveTask(settings *config.Live) core.Task {
 // liveSource is one provider's live pass.
 type liveSource struct {
 	providerKey string
-	source      measurement.LiveSource
+	source      provider.LiveImplementation
 }
 
 // liveSources are the implementations declaring a live pass, by provider key.
 func (c *MeasurementCoordinator) liveSources() []liveSource {
 	var result []liveSource
-	for key, source := range c.SourceSet.Measurement.Sources() {
-		if declared, isLive := source.(measurement.LiveSource); isLive {
-			result = append(result, liveSource{providerKey: key, source: declared})
+	for _, registration := range c.SourceSet.Of(Kind) {
+		if declared, isLive := registration.Implementation.(provider.LiveImplementation); isLive {
+			result = append(result, liveSource{providerKey: registration.Key, source: declared})
 		}
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].providerKey < result[j].providerKey })
@@ -87,7 +87,7 @@ func (c *MeasurementCoordinator) liveSources() []liveSource {
 
 // liveCadence is one live source's cadence in force: its setting, never below its lower bound nor
 // its endpoints' freshness floor.
-func (c *MeasurementCoordinator) liveCadence(ctx context.Context, source measurement.LiveSource) time.Duration {
+func (c *MeasurementCoordinator) liveCadence(ctx context.Context, source provider.LiveImplementation) time.Duration {
 	key, fallback, minimum, floor := source.LiveCadence()
 	seconds := c.SettingSeconds(ctx, key, fallback)
 	if seconds < minimum {
@@ -121,7 +121,7 @@ func (c *MeasurementCoordinator) CollectLive(ctx context.Context) error {
 	if !interest.Held(now) {
 		return nil
 	}
-	declared := map[string]measurement.LiveSource{}
+	declared := map[string]provider.LiveImplementation{}
 	for _, entry := range c.liveSources() {
 		declared[entry.providerKey] = entry.source
 	}
@@ -174,9 +174,10 @@ func (c *MeasurementCoordinator) liveDue(providerID int64, now time.Time, cadenc
 // A healthy live pass leaves the availability row alone: the baseline pass writes it, with the
 // readings of the gauges a live pass does not read. A failed one records its outcome, so a live
 // figure that stopped answering is never mistaken for a quiet network.
-func (c *MeasurementCoordinator) collectLiveFrom(ctx context.Context, active core.ActiveSource, source measurement.LiveSource,
+func (c *MeasurementCoordinator) collectLiveFrom(ctx context.Context, active core.ActiveSource, source provider.LiveImplementation,
 	cadence time.Duration) error {
-	readings, _, result, err := source.Live(ctx, c, c.Discovery(), active.ProviderID, c.Now(), cadence)
+	answer, result, err := source.CallLive(ctx, c, cadence, provider.DiscoveryView(c.Discovery()), c.Now())
+	readings, _ := readingsOf(answer, active.ProviderID)
 	if err != nil {
 		if result.Outcome != "" {
 			if writeErr := c.WriteAvailability(ctx, active.ProviderID, vocab.StateUnavailable, result.Outcome,

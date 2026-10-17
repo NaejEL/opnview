@@ -1,0 +1,267 @@
+{
+  "kind" : "flow_record",
+  "description" : "Flow records an exporter sends, received by a push entry with no script, and the exporter's capture configuration, read by polling. One provider is active at a time. The core joins each record from its own interface indexes, and reads coverage from the configuration, never from the records.",
+  "concurrent" : false,
+  "push" : true,
+  "push_record" : "flow_record_record",
+  "bindable" : false,
+  "functions" : [
+    {
+      "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
+      "name" : "probe",
+      "arguments" : "host",
+      "returns" : "probe_answer"
+    },
+    {
+      "description" : "Called at every capture-configuration pass: the exporter's capture configuration now.",
+      "name" : "capture",
+      "arguments" : "host",
+      "returns" : "capture_answer"
+    }
+  ],
+  "records" : [
+    {
+      "description" : "What `probe` returns.",
+      "name" : "probe_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Why the probe could not finish, when it could not.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `capture` returns: the configuration, or the reason it could not be read.",
+      "name" : "capture_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record; when the configuration could not be read, its outcome is what the firewall answered.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "The configuration read, absent when the read failed.",
+          "name" : "capture",
+          "type" : "record",
+          "of" : "capture_configuration"
+        },
+        {
+          "description" : "Why the read failed, when it did: the configuration is then unreadable, and the core records it so.",
+          "name" : "error",
+          "type" : "text"
+        },
+        {
+          "description" : "Why this exporter's configuration can never be read, when that is so.",
+          "name" : "unsupported",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What the exporter captures and sends.",
+      "name" : "capture_configuration",
+      "fields" : [
+        {
+          "description" : "Whether the export runs at all.",
+          "name" : "enabled",
+          "type" : "boolean",
+          "required" : true
+        },
+        {
+          "description" : "The export protocol's version, as the exporter names it.",
+          "name" : "export_version",
+          "type" : "text"
+        },
+        {
+          "description" : "How long a flow that stays active is accounted before a record of it is exported.",
+          "name" : "active_timeout_seconds",
+          "min" : 1,
+          "type" : "integer",
+          "unit" : "seconds"
+        },
+        {
+          "description" : "How long a flow stays idle before a record of it is exported.",
+          "name" : "inactive_timeout_seconds",
+          "min" : 1,
+          "type" : "integer",
+          "unit" : "seconds"
+        },
+        {
+          "description" : "The `capture_interface` records: every interface the exporter captures on, and nothing else.",
+          "name" : "interfaces",
+          "type" : "records",
+          "required" : true,
+          "of" : "capture_interface"
+        }
+      ]
+    },
+    {
+      "description" : "One interface the exporter captures on.",
+      "name" : "capture_interface",
+      "fields" : [
+        {
+          "description" : "The interface's configuration identifier, as discovery names it.",
+          "name" : "identifier",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "Whether packets received on the interface are accounted.",
+          "name" : "ingress",
+          "type" : "boolean",
+          "required" : true
+        },
+        {
+          "description" : "Whether packets sent on the interface are accounted.",
+          "name" : "egress",
+          "type" : "boolean",
+          "required" : true
+        },
+        {
+          "description" : "Whether the exporter actually exports what is configured for the interface, for each captured direction: yes, no (with not_exported_reason), or unknown when it could not be established. Absent is unknown.",
+          "name" : "exported",
+          "type" : "text",
+          "values" : [
+            "yes",
+            "no",
+            "unknown"
+          ]
+        },
+        {
+          "description" : "Why the interface is not exported, exactly when exported is no: the provider's own closed name for it.",
+          "name" : "not_exported_reason",
+          "type" : "text"
+        },
+        {
+          "description" : "The identifiers of the interfaces whose received packets this interface's exporter also exports with this interface as the receiving interface. Absent is none.",
+          "name" : "parent_of",
+          "type" : "text_list"
+        }
+      ]
+    },
+    {
+      "description" : "One flow record as the exporter sent it, filled from the push entry's Information Element mapping. Its identity, and what its interface indexes name, are the core's.",
+      "name" : "flow_record_record",
+      "fields" : [
+        {
+          "description" : "The exporter's address.",
+          "name" : "exporter_address",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The observation domain (NetFlow v9's source ID).",
+          "name" : "observation_domain",
+          "type" : "integer",
+          "required" : true,
+          "min" : 0
+        },
+        {
+          "description" : "The exporter's index of the interface the packets were received on, raw.",
+          "name" : "ingress_interface",
+          "type" : "integer"
+        },
+        {
+          "description" : "The exporter's index of the interface the packets were routed to, raw.",
+          "name" : "egress_interface",
+          "type" : "integer"
+        },
+        {
+          "description" : "4 or 6; absent when the exporter sends no version element, the core then reading it from the two addresses, which must agree with it.",
+          "name" : "ip_version",
+          "type" : "integer",
+          "integer_values" : [
+            4,
+            6
+          ]
+        },
+        {
+          "description" : "The IANA protocol number.",
+          "name" : "protocol",
+          "type" : "integer",
+          "required" : true,
+          "min" : 0,
+          "max" : 255
+        },
+        {
+          "description" : "The source address.",
+          "name" : "src_address",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The destination address.",
+          "name" : "dst_address",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The source port, 0 to 65535; absent for a protocol without ports.",
+          "name" : "src_port",
+          "type" : "integer",
+          "min" : 0,
+          "max" : 65535
+        },
+        {
+          "description" : "The destination port, 0 to 65535; absent for a protocol without ports.",
+          "name" : "dst_port",
+          "type" : "integer",
+          "min" : 0,
+          "max" : 65535
+        },
+        {
+          "description" : "The TCP flags of every packet, ORed together.",
+          "name" : "tcp_flags",
+          "type" : "integer"
+        },
+        {
+          "description" : "The octets the record accounts, 0 or more.",
+          "name" : "octets",
+          "type" : "integer",
+          "required" : true,
+          "min" : 0,
+          "unit" : "bytes"
+        },
+        {
+          "description" : "The packets the record accounts, 0 or more.",
+          "name" : "packets",
+          "type" : "integer",
+          "required" : true,
+          "min" : 0
+        },
+        {
+          "description" : "The first packet's instant, with the fraction the exporter's precision carries.",
+          "name" : "start_at",
+          "type" : "number",
+          "required" : true,
+          "min" : 0,
+          "unit" : "UTC epoch seconds"
+        },
+        {
+          "description" : "The last packet's instant, with the fraction the exporter's precision carries.",
+          "name" : "end_at",
+          "type" : "number",
+          "required" : true,
+          "unit" : "UTC epoch seconds"
+        },
+        {
+          "description" : "When opnview received the record.",
+          "name" : "received_at",
+          "type" : "number",
+          "required" : true,
+          "unit" : "UTC epoch seconds"
+        }
+      ]
+    }
+  ]
+}

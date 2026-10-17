@@ -83,7 +83,7 @@ func documentedBlocks(t *testing.T) map[string]string {
 // TestTheDocumentedContractsAreTheContracts is A13.
 func TestTheDocumentedContractsAreTheContracts(t *testing.T) {
 	documented := documentedBlocks(t)
-	expected := map[string]string{"shared": strings.TrimSpace(renderRecord(resultRecord))}
+	expected := map[string]string{"shared": strings.TrimSpace(renderRecord(SharedRecords()[0]))}
 	for _, contract := range Contracts() {
 		expected[contract.Kind] = strings.TrimSpace(renderContract(contract))
 	}

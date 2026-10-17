@@ -4,14 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
 	"strconv"
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/pluginkind"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/reconciledstate"
+	"github.com/NaejEL/opnview/internal/store/plugintables"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -29,63 +27,26 @@ import (
 // (store.InsertStateSnapshot), the rows of the plugin's own tables and its durable state, in one
 // transaction, for a declared kind (store.WritePluginPass).
 
-// ProbeReconciledState probes every implementation of the reconciled_state kind.
-func (c *DeclaredKindCoordinator) ProbeReconciledState(ctx context.Context) error {
-	registered := c.SourceSet.ReconciledState.Sources()
-	probeables := make([]core.Probeable, 0, len(registered))
-	for key, registration := range registered {
-		probeables = append(probeables, core.Probeable{ProviderKey: key, Run: registration.Source.Probe})
-	}
-	if len(probeables) == 0 {
-		return nil
-	}
-	return c.ResolveKind(ctx, reconciledstate.Kind, core.SortedProbeables(probeables))
-}
-
-// ProbeDeclaredKinds probes every implementation of every kind a plugin declared.
-func (c *DeclaredKindCoordinator) ProbeDeclaredKinds(ctx context.Context) error {
-	byKind := map[string][]core.Probeable{}
-	for _, registration := range c.SourceSet.PluginKindRegistrations() {
-		byKind[registration.Kind] = append(byKind[registration.Kind],
-			core.Probeable{ProviderKey: registration.Key, Run: registration.Source.Probe})
-	}
-	kinds := make([]string, 0, len(byKind))
-	for kind := range byKind {
-		kinds = append(kinds, kind)
-	}
-	sort.Strings(kinds)
-	var failures []error
-	for _, kind := range kinds {
-		if err := c.ResolveKind(ctx, kind, core.SortedProbeables(byKind[kind])); err != nil {
-			failures = append(failures, err)
-		}
-	}
-	return core.JoinErrors(failures)
-}
-
 // DeclaredTasks are the loops of the implementations that state their own cadence: one per
 // implementation, named for it.
 func (c *DeclaredKindCoordinator) DeclaredTasks() []core.Task {
 	var tasks []core.Task
-	for _, key := range core.SortedKeys(c.SourceSet.ReconciledState.Sources()) {
-		registration, _ := c.SourceSet.ReconciledState.Lookup(key)
-		tasks = append(tasks, core.Task{
-			Name: fmt.Sprintf("%s %s", reconciledstate.Kind, key),
-			Interval: c.overriddenCadence(pluginkind.CadenceSettingKey(registration.Plugin, reconciledstate.Kind, key),
-				registration.Cadence, registration.MinCadence),
-			Run:        func(ctx context.Context) error { return c.CollectReconciledState(ctx, key) },
-			RunAtStart: true,
-			Wake:       c.Triggers.WakeOn(registration.Triggers),
-			MinGap:     registration.MinCadence,
-		})
-	}
-	for _, registration := range c.SourceSet.PluginKindRegistrations() {
+	for _, registration := range c.SourceSet.All() {
 		kind, key := registration.Kind, registration.Key
+		var run func(ctx context.Context) error
+		switch kindContract, isCore := provider.ContractOf(kind); {
+		case isCore && kindContract.OwnCadence:
+			run = func(ctx context.Context) error { return c.CollectReconciledState(ctx, kind, key) }
+		case !isCore:
+			run = func(ctx context.Context) error { return c.CollectDeclaredKind(ctx, kind, key) }
+		default:
+			continue
+		}
 		tasks = append(tasks, core.Task{
 			Name: fmt.Sprintf("%s %s", kind, key),
-			Interval: c.overriddenCadence(pluginkind.CadenceSettingKey(registration.Plugin, kind, key),
+			Interval: c.overriddenCadence(provider.CadenceSettingKey(registration.Plugin, kind, key),
 				registration.Cadence, registration.MinCadence),
-			Run:        func(ctx context.Context) error { return c.CollectDeclaredKind(ctx, kind, key) },
+			Run:        run,
 			RunAtStart: true,
 			Wake:       c.Triggers.WakeOn(registration.Triggers),
 			MinGap:     registration.MinCadence,
@@ -104,7 +65,7 @@ func cadenceOrDefault(cadence time.Duration) time.Duration {
 }
 
 // overriddenCadence is a provider's interval, asked before every wait: the operator's override
-// (pluginkind.CadenceSettingKey), never below the declared lower bound, or the declared cadence. A
+// (provider.CadenceSettingKey), never below the declared lower bound, or the declared cadence. A
 // value that cannot be read leaves the declared cadence in force.
 func (c *DeclaredKindCoordinator) overriddenCadence(settingKey string, declared, minimum time.Duration) func() time.Duration {
 	declared = cadenceOrDefault(declared)
@@ -144,18 +105,19 @@ func (c *DeclaredKindCoordinator) isActive(ctx context.Context, kind, key string
 	return 0, false, nil
 }
 
-// CollectReconciledState runs one pass of one reconciled_state implementation: every set it
-// reports, each written whole, at one instant.
-func (c *DeclaredKindCoordinator) CollectReconciledState(ctx context.Context, key string) error {
-	providerID, active, err := c.isActive(ctx, reconciledstate.Kind, key)
+// CollectReconciledState runs one pass of one implementation of a kind whose providers report complete
+// sets at their own cadence (reconciled_state): every set it reports, each written whole, at one instant.
+func (c *DeclaredKindCoordinator) CollectReconciledState(ctx context.Context, kind, key string) error {
+	providerID, active, err := c.isActive(ctx, kind, key)
 	if err != nil || !active {
 		return err
 	}
-	registration, found := c.SourceSet.ReconciledState.Lookup(key)
+	registration, found := c.SourceSet.Lookup(kind, key)
 	if !found {
-		return fmt.Errorf("collect: the active %s provider %q has no implementation", reconciledstate.Kind, key)
+		return fmt.Errorf("collect: the active %s provider %q has no implementation", kind, key)
 	}
-	sets, result, readErr := registration.Source.Snapshot(ctx, c)
+	snapshot, result, readErr := registration.Implementation.Call(ctx, c, "snapshot")
+	sets := provider.Records(snapshot, "sets")
 	if readErr != nil {
 		if errors.Is(readErr, provider.ErrUnsupportedRead) {
 			return c.WriteAvailability(ctx, providerID, result.State, result.Outcome, result.Probe, readErr.Error())
@@ -169,17 +131,22 @@ func (c *DeclaredKindCoordinator) CollectReconciledState(ctx context.Context, ke
 	now := c.Now()
 	items := 0
 	for _, set := range sets {
-		if err := c.Store.InsertStateSnapshot(ctx, vocab.StateSnapshot{ProviderID: providerID, SetKey: set.SetKey,
-			CapturedAt: now, Items: set.Items}); err != nil {
+		var members []vocab.StateItem
+		for _, item := range provider.Records(set, "items") {
+			members = append(members, vocab.StateItem{ItemKey: provider.Text(item, "item_key"),
+				Attributes: provider.TextPointer(item, "attributes"), ValidUntilAt: provider.IntegerPointer(item, "valid_until_at")})
+		}
+		if err := c.Store.InsertStateSnapshot(ctx, vocab.StateSnapshot{ProviderID: providerID,
+			SetKey: provider.Text(set, "set_key"), CapturedAt: now, Items: members}); err != nil {
 			if writeErr := c.WriteAvailability(ctx, providerID, vocab.StateReachable, vocab.OutcomeStoreFailure,
 				result.Probe, "the sets were read and could not be stored"); writeErr != nil {
 				return writeErr
 			}
 			return err
 		}
-		items += len(set.Items)
+		items += len(members)
 	}
-	if err := c.Store.NotifyCollectionPass(ctx, reconciledstate.Kind, key); err != nil {
+	if err := c.Store.NotifyCollectionPass(ctx, kind, key); err != nil {
 		return err
 	}
 	detail := result.Detail
@@ -203,7 +170,7 @@ func (c *DeclaredKindCoordinator) CollectDeclaredKind(ctx context.Context, kind,
 	if err != nil || !active {
 		return err
 	}
-	registration, found := c.SourceSet.PluginKind(kind, key)
+	registration, found := c.SourceSet.Lookup(kind, key)
 	if !found {
 		return fmt.Errorf("collect: the active %s provider %q has no implementation", kind, key)
 	}
@@ -211,7 +178,13 @@ func (c *DeclaredKindCoordinator) CollectDeclaredKind(ctx context.Context, kind,
 	if err != nil {
 		return err
 	}
-	pass, result, readErr := registration.Source.Collect(ctx, c, state)
+	stateArgument := map[string]any{}
+	for name, value := range state {
+		stateArgument[name] = value
+	}
+	pass, result, readErr := registration.Implementation.Call(ctx, c, "collect", stateArgument)
+	passRows, _ := pass["rows"].(plugintables.PluginRows)
+	passState, _ := pass["state"].(map[string]string)
 	if readErr != nil {
 		if errors.Is(readErr, provider.ErrUnsupportedRead) {
 			return c.WriteAvailability(ctx, providerID, result.State, result.Outcome, result.Probe, readErr.Error())
@@ -223,10 +196,10 @@ func (c *DeclaredKindCoordinator) CollectDeclaredKind(ctx context.Context, kind,
 		return readErr
 	}
 	rows := 0
-	for _, table := range pass.Rows {
+	for _, table := range passRows {
 		rows += len(table)
 	}
-	if err := c.Store.WritePluginPass(ctx, registration.Plugin, key, pass.Rows, pass.State, c.Now()); err != nil {
+	if err := c.Store.WritePluginPass(ctx, registration.Plugin, key, passRows, passState, c.Now()); err != nil {
 		if writeErr := c.WriteAvailability(ctx, providerID, vocab.StateReachable, vocab.OutcomeStoreFailure,
 			result.Probe, "the rows were read and could not be stored"); writeErr != nil {
 			return writeErr

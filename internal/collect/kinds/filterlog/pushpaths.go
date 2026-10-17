@@ -8,7 +8,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
-	"github.com/NaejEL/opnview/internal/collect/firewalllog"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/push"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -47,10 +47,6 @@ import (
 // in flight, as the connection died, is in neither path's period. TCP delivers in order, so only the
 // very end of a connection can lose such a line.
 
-// PushedDigestPrefix begins the identity of every record a push path delivered: no pulled digest
-// (32 hexadecimal digits) can carry it, so flow.log_digest UNIQUE holds across the two paths.
-const PushedDigestPrefix = "push:"
-
 // maxHeldPushed bounds the pushed records held during an overlap; past it the oldest are dropped
 // and recorded as a push_buffer_overflow gap.
 const maxHeldPushed = 50000
@@ -69,7 +65,7 @@ func (c *FilterLogCoordinator) loadPushPath(ctx context.Context, path *core.Push
 	path.Periods, path.Mode, path.Loaded = periods, core.ModePull, true
 	if len(periods) > 0 && periods[len(periods)-1].ToAt == nil && periods[len(periods)-1].Path == push.PathPush {
 		boundary := periods[len(periods)-1].FromAt
-		if newest, found, err := c.Store.NewestPushedFlowObservedAt(ctx, PushedDigestPrefix); err != nil {
+		if newest, found, err := c.Store.NewestPushedFlowObservedAt(ctx, provider.PushedDigestPrefix); err != nil {
 			return err
 		} else if found && newest > boundary {
 			boundary = newest
@@ -98,9 +94,9 @@ func (c *FilterLogCoordinator) openPeriod(ctx context.Context, path *core.PushPa
 	return nil
 }
 
-// PushLiveness is told when a push entry that replaces a polled endpoint becomes alive or stops
+// pushLiveness is told when a push entry that replaces a polled endpoint becomes alive or stops
 // being alive (PS10).
-func (c *FilterLogCoordinator) PushLiveness(ctx context.Context, kind, key string, alive bool, at int64) error {
+func (c *FilterLogCoordinator) pushLiveness(ctx context.Context, kind, key string, alive bool, at int64) error {
 	if kind != core.KindFirewallLog {
 		return nil
 	}
@@ -132,10 +128,14 @@ func (c *FilterLogCoordinator) PushLiveness(ctx context.Context, kind, key strin
 	return nil
 }
 
-// ReceivePushedFirewallLog takes the records a push entry delivered for a firewall_log provider. In
+// receivePushed takes the records a push entry delivered for a firewall_log provider. In
 // an overlap they are held; in a push period they are stored as a pull pass stores its own and
 // derived at once; otherwise they are superseded.
-func (c *FilterLogCoordinator) ReceivePushedFirewallLog(ctx context.Context, key string, records []firewalllog.Record) error {
+func (c *FilterLogCoordinator) receivePushed(ctx context.Context, key string, answers []provider.Answer) error {
+	records := make([]vocab.Flow, 0, len(answers))
+	for _, answer := range answers {
+		records = append(records, reportedFlow(answer))
+	}
 	providerID, err := c.Store.ProviderID(ctx, core.KindFirewallLog, key)
 	if err != nil {
 		return err
@@ -146,14 +146,14 @@ func (c *FilterLogCoordinator) ReceivePushedFirewallLog(ctx context.Context, key
 		path.Mutex.Unlock()
 		return err
 	}
-	var kept []firewalllog.Record
+	var kept []vocab.Flow
 	var overflowFrom, overflowTo int64
 	switch path.Mode {
 	case core.ModeOverlap:
 		path.Held = append(path.Held, records...)
 		if excess := len(path.Held) - maxHeldPushed; excess > 0 {
 			overflowFrom, overflowTo = path.Held[0].ObservedAt, path.Held[excess-1].ObservedAt
-			path.Held = append([]firewalllog.Record(nil), path.Held[excess:]...)
+			path.Held = append([]vocab.Flow(nil), path.Held[excess:]...)
 			path.Dropped += int64(excess)
 		}
 	case core.ModePush:
@@ -188,7 +188,7 @@ func (c *FilterLogCoordinator) ReceivePushedFirewallLog(ctx context.Context, key
 }
 
 // storePushed stores pushed records and derives from them, as a pull pass does.
-func (c *FilterLogCoordinator) storePushed(ctx context.Context, providerID int64, records []firewalllog.Record) error {
+func (c *FilterLogCoordinator) storePushed(ctx context.Context, providerID int64, records []vocab.Flow) error {
 	if len(records) == 0 {
 		return nil
 	}
@@ -213,25 +213,25 @@ func (c *FilterLogCoordinator) storePushed(ctx context.Context, providerID int64
 // storeRecords stores records that are not stored yet, recording what it wrote in stored. It costs two
 // statements whatever the number of records (PA17 of specs/SPEC-backend-completion-plugins.md): one
 // reads which digests are stored already, one writes the rest.
-func (c *FilterLogCoordinator) storeRecords(ctx context.Context, records []firewalllog.Record, snapshot core.Discovery, now int64,
+func (c *FilterLogCoordinator) storeRecords(ctx context.Context, records []vocab.Flow, snapshot core.Discovery, now int64,
 	stored *derive.Derivation) error {
 	digests := make([]string, 0, len(records))
 	for _, record := range records {
-		digests = append(digests, record.Digest)
+		digests = append(digests, record.LogDigest)
 	}
 	seen, err := c.Store.StoredFlowDigests(ctx, digests)
 	if err != nil {
 		return err
 	}
 	flows := make([]vocab.Flow, 0, len(records))
-	var kept []firewalllog.Record
+	var kept []vocab.Flow
 	for _, record := range records {
 		// The endpoint echoes back records already seen, and the schema's uniqueness would reject them
 		// anyway; a record repeated within the page is written once.
-		if seen[record.Digest] {
+		if seen[record.LogDigest] {
 			continue
 		}
-		seen[record.Digest] = true
+		seen[record.LogDigest] = true
 		flows = append(flows, buildFlow(record, snapshot, now))
 		kept = append(kept, record)
 	}
@@ -263,7 +263,7 @@ type pullPlan struct {
 	// skip is set while a push period is open: the pass reads nothing.
 	skip bool
 	// keep is the pulled records stored; superseded how many are not.
-	keep       []firewalllog.Record
+	keep       []vocab.Flow
 	superseded int64
 	// pushFloor is the end of the newest closed push period, which clips a gap the pull path detects.
 	pushFloor int64
@@ -272,7 +272,7 @@ type pullPlan struct {
 
 // planPull applies the periods to a pull pass of a firewall_log provider. A provider never fed by
 // two paths keeps every record.
-func (c *FilterLogCoordinator) planPull(ctx context.Context, key string, providerID int64, records []firewalllog.Record) (
+func (c *FilterLogCoordinator) planPull(ctx context.Context, key string, providerID int64, records []vocab.Flow) (
 	pullPlan, error) {
 	path, known := c.PushPaths.Known(core.KindFirewallLog, key)
 	if !known {
@@ -316,8 +316,8 @@ func (c *FilterLogCoordinator) planPull(ctx context.Context, key string, provide
 
 // handOver ends an overlap after a pull pass that read up to newest: the boundary is the second
 // before it, once the push path has been alive since before the boundary.
-func (c *FilterLogCoordinator) handOver(ctx context.Context, providerID int64, path *core.PushPath, records []firewalllog.Record) (
-	[]firewalllog.Record, error) {
+func (c *FilterLogCoordinator) handOver(ctx context.Context, providerID int64, path *core.PushPath, records []vocab.Flow) (
+	[]vocab.Flow, error) {
 	path.Mutex.Lock()
 	defer path.Mutex.Unlock()
 	if path.Mode != core.ModeOverlap || len(path.Held) == 0 || len(records) == 0 {
@@ -345,7 +345,7 @@ func (c *FilterLogCoordinator) handOver(ctx context.Context, providerID int64, p
 	if err := c.openPeriod(ctx, path, providerID, push.PathPush, boundary); err != nil {
 		return nil, err
 	}
-	var accepted []firewalllog.Record
+	var accepted []vocab.Flow
 	for _, record := range path.Held {
 		if record.ObservedAt > boundary {
 			accepted = append(accepted, record)

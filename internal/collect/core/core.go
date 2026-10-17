@@ -8,54 +8,45 @@ import (
 
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/broker/schedule"
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
-	"github.com/NaejEL/opnview/internal/collect/dnslookup"
-	"github.com/NaejEL/opnview/internal/collect/firewalllog"
-	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
-	"github.com/NaejEL/opnview/internal/collect/measurement"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
-	"github.com/NaejEL/opnview/internal/collect/resolvercache"
-	"github.com/NaejEL/opnview/internal/collect/resolverlocaldata"
-	"github.com/NaejEL/opnview/internal/collect/securityevent"
-	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
-// The provider kinds, which are the eleven the schema constrains `provider.kind` to. Those with a
-// collector-side implementation take their value from their kind package.
+// The core kinds the collector's parts name to one another. Each kind is declared by its file in
+// internal/collect/provider/kinds, which is what the registry, the attributes and the contract are read
+// from; these names are how one part of the collector asks for another's kind.
 const (
 	// KindRegistrableDomain is a list giving a site name its registrable domain. It is a service
 	// kind: internal/collect/services/services.go refreshes and consults its active provider, which
 	// acquires the list through the plugin host's fetch facility.
-	KindRegistrableDomain = registrabledomain.Kind
+	KindRegistrableDomain = "registrable_domain"
 	// KindFirewallLog is data source 1.
-	KindFirewallLog = firewalllog.Kind
+	KindFirewallLog = "firewall_log"
 	// KindSecurityEvent is data source 2. It admits several concurrently active
 	// providers: people run Suricata, CrowdSec and Zenarmor together.
-	KindSecurityEvent = securityevent.Kind
+	KindSecurityEvent = "security_event"
 	// KindFlowVolume is data source 3, and nothing collects it. Its destination,
 	// pair_volume_observation, is DERIVED from flow by step 5: the only per-pair
 	// endpoint carries neither a port nor a protocol and the filter log carries
 	// both. No implementation of it is registered here, deliberately.
 	KindFlowVolume = "flow_volume"
 	// KindDHCPLease is data source 4.
-	KindDHCPLease = dhcplease.Kind
+	KindDHCPLease = "dhcp_lease"
 	// KindDNSLookup is data source 5.
-	KindDNSLookup = dnslookup.Kind
+	KindDNSLookup = "dns_lookup"
 	// KindIPGeolocation is a dataset placing public addresses. It is a service kind:
 	// internal/collect/services/services.go refreshes its active provider and places addresses with
 	// it.
-	KindIPGeolocation = ipgeolocation.Kind
+	KindIPGeolocation = "ip_geolocation"
 	// KindMeasurementSample is the sampled reading: the firewall's own gauges and
 	// the live per-pair traffic snapshot, and the kind eight of the ten surveyed
 	// sources that fit an existing shape fit. It owns the sampler this package
 	// already had, which was registered under flow_volume only because the kind
 	// did not exist. It admits several concurrently active providers.
-	KindMeasurementSample = measurement.Kind
+	KindMeasurementSample = "measurement_sample"
 	// KindReconciledState is the complete set of things of one type as of one
 	// instant — the shape ten of the eleven sources that fit nothing else produce.
 	// No implementation is registered for it: the kind gives such a source a
@@ -65,12 +56,12 @@ const (
 	// addresses the query report does not carry. "Cache" is Unbound's own word
 	// (unbound-control(8), dump_cache). It admits several active providers, since
 	// every record it stores names the provider that read it.
-	KindResolverCache = resolvercache.Kind
+	KindResolverCache = "resolver_cache"
 	// KindResolverLocalData is the records a resolver serves from its local data,
 	// host overrides among them: Unbound's own words again (unbound.conf(5),
 	// local-data; unbound-control(8), list_local_data). Concurrent for the same
 	// reason.
-	KindResolverLocalData = resolverlocaldata.Kind
+	KindResolverLocalData = "resolver_local_data"
 )
 
 // Clock is the time the scheduler and the collectors read. It is an interface so
@@ -304,7 +295,7 @@ func JoinErrors(errs []error) error {
 }
 
 // Sources returns the implementations this collector reads.
-func (c *Collector) Sources() *sources.Set { return c.SourceSet }
+func (c *Collector) Sources() *provider.Set { return c.SourceSet }
 
 // DiscoverClock measures the firewall's offset from UTC from its own clock, survey
 // gap 7, and puts it in force for every timestamp read after it. A failure leaves

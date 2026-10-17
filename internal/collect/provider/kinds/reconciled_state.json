@@ -1,0 +1,109 @@
+{
+  "kind" : "reconciled_state",
+  "description" : "The complete set of things of one type as of one instant: a ban list, the peers of a tunnel. A thing present in one snapshot and absent from the next has left. Several providers may be active at once.",
+  "concurrent" : true,
+  "push" : false,
+  "bindable" : true,
+  "own_cadence" : true,
+  "functions" : [
+    {
+      "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
+      "name" : "probe",
+      "arguments" : "host",
+      "returns" : "probe_answer"
+    },
+    {
+      "description" : "Called at the plugin's cadence: every set the provider reports, each complete.",
+      "name" : "snapshot",
+      "arguments" : "host",
+      "returns" : "snapshot_answer"
+    }
+  ],
+  "records" : [
+    {
+      "description" : "What `probe` returns.",
+      "name" : "probe_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Why the probe could not finish, when it could not.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `snapshot` returns.",
+      "name" : "snapshot_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "The `state_set` records.",
+          "name" : "sets",
+          "type" : "records",
+          "of" : "state_set"
+        },
+        {
+          "description" : "Why the read failed, when it did.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "One complete set.",
+      "name" : "state_set",
+      "fields" : [
+        {
+          "description" : "Which set: a lower-case word with no space.",
+          "name" : "set_key",
+          "type" : "text",
+          "required" : true,
+          "term" : true
+        },
+        {
+          "description" : "The `state_item` records; an empty list is a set that is now empty.",
+          "name" : "items",
+          "type" : "records",
+          "required" : true,
+          "of" : "state_item"
+        }
+      ]
+    },
+    {
+      "description" : "One member of a set.",
+      "name" : "state_item",
+      "fields" : [
+        {
+          "description" : "Its identity within the set.",
+          "name" : "item_key",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The provider's own fields, displayed and never aggregated.",
+          "name" : "attributes",
+          "type" : "object"
+        },
+        {
+          "description" : "The end of its own validity, when the provider states one.",
+          "name" : "valid_until_at",
+          "type" : "integer",
+          "unit" : "UTC epoch seconds"
+        }
+      ]
+    }
+  ]
+}

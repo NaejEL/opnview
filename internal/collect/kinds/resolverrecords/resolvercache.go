@@ -4,8 +4,6 @@ import (
 	"context"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/resolvercache"
 	"github.com/NaejEL/opnview/internal/store/attribution"
 )
 
@@ -15,7 +13,7 @@ import (
 // records are read once per pass, the A, AAAA and CNAME records are stored as observations
 // whose coverage interval a later poll extends, every other type is counted, and the flows
 // whose attribution the new records can change are decided again. Which resolver, which
-// endpoint and which envelope are in resolvercache/unbound and resolvercache/dnsmasq.
+// endpoint and which envelope are in each resolver's plugin (plugins/unbound, plugins/dnsmasq).
 //
 // THE CACHE READ AND THE QUERY REPORT ARE TWO KINDS WITH TWO AVAILABILITY ROWS, and neither
 // ever writes the other's (scope B1 of specs/SPEC-resolver-cache-attribution.md). A
@@ -28,24 +26,7 @@ func (c *ResolverRecordCoordinator) CollectResolverCache(ctx context.Context) er
 	// No retention purge runs between this pass storing its records and the end of its
 	// derivation (purge.go).
 	defer c.Storing()()
-	_, request, passErr := c.readResourceRecords(ctx, core.KindResolverCache, attribution.HeldInCache,
-		func(providerKey string) (recordReader, bool) {
-			source, registered := c.SourceSet.ResolverCache.Lookup(providerKey)
-			if !registered {
-				return nil, false
-			}
-			return source.Cache, true
-		})
+	_, request, passErr := c.readResourceRecords(ctx, core.KindResolverCache, "cache", attribution.HeldInCache)
 	return c.deriveRecordPass(ctx, request, passErr)
 }
 
-// ProbeResolverCache probes every implementation of the resolver_cache kind. The probe round (collect.ProbeAll)
-// runs it with every other kind's.
-func (c *ResolverRecordCoordinator) ProbeResolverCache(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindResolverCache, core.ProbeablesOf(c.SourceSet.ResolverCache, cacheProbe))
-}
-
-// cacheProbe is the probe of one resolver_cache implementation, as core.ProbeablesOf takes it.
-func cacheProbe(source resolvercache.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
-}

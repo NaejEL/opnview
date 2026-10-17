@@ -7,9 +7,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/geo"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -34,6 +32,12 @@ import (
 //   - A refresh of the list that failed is a collection gap from the instant it was last confirmed.
 //   - The widgets group names through RegistrableDomains, which degrades to "no grouping" and never
 //     blocks a response.
+
+// The two service kinds this coordinator serves.
+const (
+	geolocationKind       = "ip_geolocation"
+	registrableDomainKind = "registrable_domain"
+)
 
 // maxLookupsPerPass bounds one placing pass, so a first pass over a large history does not hold the
 // database for minutes; the next pass carries on where it stopped.
@@ -63,7 +67,7 @@ func (c *ServiceCoordinator) Wake() {
 func (c *ServiceCoordinator) Ready() (int64, bool) {
 	c.Services.Mutex.RLock()
 	defer c.Services.Mutex.RUnlock()
-	return c.Services.Geo.Build, c.Services.Geo.Ready
+	return provider.Integer(c.Services.Geo, "build"), provider.Flag(c.Services.Geo, "ready", false)
 }
 
 // Held reports the registrable-domain list in use: its version, its rule count, and the last
@@ -72,7 +76,17 @@ func (c *ServiceCoordinator) Held() (version string, rules int, confirmedAt int6
 	c.Services.Mutex.RLock()
 	defer c.Services.Mutex.RUnlock()
 	list := c.Services.List
-	return list.Version, list.Rules, list.ConfirmedAt, list.Ready
+	return provider.Text(list, "version"), int(provider.Integer(list, "rules")), provider.Integer(list, "confirmed_at"),
+		provider.Flag(list, "ready", false)
+}
+
+// keysOf are the provider keys of a kind's implementations, sorted.
+func (c *ServiceCoordinator) keysOf(kind string) []string {
+	var keys []string
+	for _, registration := range c.SourceSet.Of(kind) {
+		keys = append(keys, registration.Key)
+	}
+	return keys
 }
 
 // chooseService picks the one provider of a service kind opnview reads: the provider turned on,
@@ -140,26 +154,27 @@ func (c *ServiceCoordinator) RefreshGeolocation(ctx context.Context) error {
 	if err := c.EnsureProviders(ctx); err != nil {
 		return err
 	}
-	key, err := c.chooseService(ctx, ipgeolocation.Kind, core.SortedKeys(c.SourceSet.IPGeolocation.Sources()))
+	key, err := c.chooseService(ctx, geolocationKind, c.keysOf(geolocationKind))
 	if err != nil || key == "" {
 		if err == nil {
-			err = c.Store.SetActiveProviders(ctx, ipgeolocation.Kind)
+			err = c.Store.SetActiveProviders(ctx, geolocationKind)
 		}
 		return err
 	}
-	source, _ := c.SourceSet.IPGeolocation.Lookup(key)
-	dataset, result, refreshErr := source.Refresh(ctx, c)
-	if err := c.recordService(ctx, ipgeolocation.Kind, key, dataset.Ready, result); err != nil {
+	source, _ := c.SourceSet.Lookup(geolocationKind, key)
+	dataset, result, refreshErr := source.Implementation.Call(ctx, c, "refresh")
+	ready := provider.Flag(dataset, "ready", false)
+	if err := c.recordService(ctx, geolocationKind, key, ready, result); err != nil {
 		return err
 	}
 	c.Services.Mutex.Lock()
 	c.Services.GeoKey, c.Services.Geo = key, dataset
 	c.Services.Mutex.Unlock()
-	if dataset.Ready {
-		if err := c.Store.SetActiveProviders(ctx, ipgeolocation.Kind, key); err != nil {
+	if ready {
+		if err := c.Store.SetActiveProviders(ctx, geolocationKind, key); err != nil {
 			return err
 		}
-	} else if err := c.Store.SetActiveProviders(ctx, ipgeolocation.Kind); err != nil {
+	} else if err := c.Store.SetActiveProviders(ctx, geolocationKind); err != nil {
 		return err
 	}
 	return refreshErr
@@ -170,11 +185,11 @@ func (c *ServiceCoordinator) RefreshGeolocation(ctx context.Context) error {
 // run downloaded are in use at once.
 func (c *ServiceCoordinator) LoadServices(ctx context.Context) error {
 	var failures []error
-	if key, err := c.chooseService(ctx, ipgeolocation.Kind, core.SortedKeys(c.SourceSet.IPGeolocation.Sources())); err != nil {
+	if key, err := c.chooseService(ctx, geolocationKind, c.keysOf(geolocationKind)); err != nil {
 		failures = append(failures, err)
 	} else if key != "" {
-		source, _ := c.SourceSet.IPGeolocation.Lookup(key)
-		dataset, _, err := source.Status(ctx, c)
+		source, _ := c.SourceSet.Lookup(geolocationKind, key)
+		dataset, _, err := source.Implementation.Call(ctx, c, "status")
 		if err != nil {
 			failures = append(failures, err)
 		}
@@ -182,12 +197,12 @@ func (c *ServiceCoordinator) LoadServices(ctx context.Context) error {
 		c.Services.GeoKey, c.Services.Geo = key, dataset
 		c.Services.Mutex.Unlock()
 	}
-	if key, err := c.chooseService(ctx, registrabledomain.Kind,
-		core.SortedKeys(c.SourceSet.RegistrableDomain.Sources())); err != nil {
+	if key, err := c.chooseService(ctx, registrableDomainKind,
+		c.keysOf(registrableDomainKind)); err != nil {
 		failures = append(failures, err)
 	} else if key != "" {
-		source, _ := c.SourceSet.RegistrableDomain.Lookup(key)
-		list, _, err := source.Status(ctx, c)
+		source, _ := c.SourceSet.Lookup(registrableDomainKind, key)
+		list, _, err := source.Implementation.Call(ctx, c, "status")
 		if err != nil {
 			failures = append(failures, err)
 		}
@@ -206,18 +221,18 @@ func (c *ServiceCoordinator) LocateAddresses(ctx context.Context) error {
 	c.Services.Mutex.RLock()
 	key, dataset := c.Services.GeoKey, c.Services.Geo
 	c.Services.Mutex.RUnlock()
-	if key == "" || !dataset.Ready {
+	if key == "" || !provider.Flag(dataset, "ready", false) {
 		return nil
 	}
-	source, found := c.SourceSet.IPGeolocation.Lookup(key)
+	source, found := c.SourceSet.Lookup(geolocationKind, key)
 	if !found {
 		return nil
 	}
-	providerID, err := c.Store.ProviderID(ctx, ipgeolocation.Kind, key)
+	providerID, err := c.Store.ProviderID(ctx, geolocationKind, key)
 	if err != nil {
 		return err
 	}
-	addresses, err := c.Store.AddressesToGeolocate(ctx, providerID, dataset.Build)
+	addresses, err := c.Store.AddressesToGeolocate(ctx, providerID, provider.Integer(dataset, "build"))
 	if err != nil {
 		return err
 	}
@@ -234,27 +249,35 @@ func (c *ServiceCoordinator) LocateAddresses(ctx context.Context) error {
 	}
 	for start := 0; start < len(public); start += lookupBatch {
 		end := min(start+lookupBatch, len(public))
-		build, answers, err := source.Lookup(ctx, c, public[start:end])
+		list := make([]any, 0, end-start)
+		for _, address := range public[start:end] {
+			list = append(list, address)
+		}
+		answer, _, err := source.Implementation.Call(ctx, c, "lookup", list)
 		if err != nil {
 			return err
 		}
+		build := provider.Integer(answer, "build")
 		asked := map[string]bool{}
 		for _, address := range public[start:end] {
 			asked[address] = true
 		}
 		now := c.Now()
-		for _, answer := range answers {
-			if !asked[answer.Address] {
+		for _, placed := range provider.Records(answer, "answers") {
+			address := provider.Text(placed, "address")
+			if !asked[address] {
 				continue
 			}
 			row := geo.GeoASN{
-				Address: answer.Address, ProviderID: providerID, LookupState: geo.GeoMiss,
-				CountryCode: answer.CountryCode, CountryName: answer.CountryName,
-				Latitude: answer.Latitude, Longitude: answer.Longitude,
-				ASN: answer.ASN, Operator: answer.Operator,
+				Address: address, ProviderID: providerID, LookupState: geo.GeoMiss,
+				CountryCode: provider.TextPointer(placed, "country_code"),
+				CountryName: provider.TextPointer(placed, "country_name"),
+				Latitude:    provider.NumberPointer(placed, "latitude"),
+				Longitude:   provider.NumberPointer(placed, "longitude"),
+				ASN: provider.IntegerPointer(placed, "asn"), Operator: provider.TextPointer(placed, "operator"),
 				DatasetBuildAt: build, LookedUpAt: now,
 			}
-			if answer.CountryCode != nil {
+			if row.CountryCode != nil {
 				row.LookupState = geo.GeoResolved
 			}
 			if err := c.Store.UpsertGeoASN(ctx, row); err != nil {
@@ -279,24 +302,25 @@ func (c *ServiceCoordinator) RefreshRegistrableDomains(ctx context.Context) erro
 	if err := c.EnsureProviders(ctx); err != nil {
 		return err
 	}
-	key, err := c.chooseService(ctx, registrabledomain.Kind, core.SortedKeys(c.SourceSet.RegistrableDomain.Sources()))
+	key, err := c.chooseService(ctx, registrableDomainKind, c.keysOf(registrableDomainKind))
 	if err != nil || key == "" {
 		if err == nil {
-			err = c.Store.SetActiveProviders(ctx, registrabledomain.Kind)
+			err = c.Store.SetActiveProviders(ctx, registrableDomainKind)
 		}
 		return err
 	}
-	source, _ := c.SourceSet.RegistrableDomain.Lookup(key)
-	list, result, refreshErr := source.Refresh(ctx, c)
+	source, _ := c.SourceSet.Lookup(registrableDomainKind, key)
+	list, result, refreshErr := source.Implementation.Call(ctx, c, "refresh")
 	now := c.Now()
-	if list.Failed {
-		providerID, err := c.Store.ProviderID(ctx, registrabledomain.Kind, key)
+	ready := provider.Flag(list, "ready", false)
+	if provider.Flag(list, "failed", false) {
+		providerID, err := c.Store.ProviderID(ctx, registrableDomainKind, key)
 		if err != nil {
 			return err
 		}
 		start := now
-		if list.ConfirmedAt > 0 && list.ConfirmedAt < now {
-			start = list.ConfirmedAt
+		if confirmed := provider.Integer(list, "confirmed_at"); confirmed > 0 && confirmed < now {
+			start = confirmed
 		}
 		var detail *string
 		if refreshErr != nil {
@@ -309,17 +333,17 @@ func (c *ServiceCoordinator) RefreshRegistrableDomains(ctx context.Context) erro
 			return err
 		}
 	}
-	if err := c.recordService(ctx, registrabledomain.Kind, key, list.Ready, result); err != nil {
+	if err := c.recordService(ctx, registrableDomainKind, key, ready, result); err != nil {
 		return err
 	}
 	c.Services.Mutex.Lock()
 	c.Services.ListKey, c.Services.List = key, list
 	c.Services.Mutex.Unlock()
-	if list.Ready {
-		if err := c.Store.SetActiveProviders(ctx, registrabledomain.Kind, key); err != nil {
+	if ready {
+		if err := c.Store.SetActiveProviders(ctx, registrableDomainKind, key); err != nil {
 			return err
 		}
-	} else if err := c.Store.SetActiveProviders(ctx, registrabledomain.Kind); err != nil {
+	} else if err := c.Store.SetActiveProviders(ctx, registrableDomainKind); err != nil {
 		return err
 	}
 	return refreshErr
@@ -332,18 +356,28 @@ func (c *ServiceCoordinator) RegistrableDomains(ctx context.Context, names []str
 	c.Services.Mutex.RLock()
 	key, list := c.Services.ListKey, c.Services.List
 	c.Services.Mutex.RUnlock()
-	if key == "" || !list.Ready {
+	if key == "" || !provider.Flag(list, "ready", false) {
 		return nil, false
 	}
-	source, found := c.SourceSet.RegistrableDomain.Lookup(key)
+	source, found := c.SourceSet.Lookup(registrableDomainKind, key)
 	if !found {
 		return nil, false
 	}
 	ctx, cancel := context.WithTimeout(ctx, registrableGroupingBound)
 	defer cancel()
-	domains, err := source.Group(ctx, c, names)
+	asked := make([]any, 0, len(names))
+	for _, name := range names {
+		asked = append(asked, name)
+	}
+	answer, _, err := source.Implementation.Call(ctx, c, "group", asked)
 	if err != nil {
 		return nil, false
+	}
+	domains := map[string]string{}
+	for _, grouping := range provider.Records(answer, "groups") {
+		if domain := provider.Text(grouping, "registrable_domain"); domain != "" {
+			domains[provider.Text(grouping, "name")] = domain
+		}
 	}
 	return domains, true
 }

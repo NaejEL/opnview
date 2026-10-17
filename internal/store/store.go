@@ -205,7 +205,7 @@ func OpenWith(ctx context.Context, options Options) (*Store, error) {
 		timed(StepSchemaRecorded, started)
 	}
 	started = time.Now()
-	reader, err := sqldb.OpenReaders(ctx, store.Handle)
+	reader, err := openReaders(ctx, store.Handle)
 	if err != nil {
 		_ = store.Close()
 		return nil, err

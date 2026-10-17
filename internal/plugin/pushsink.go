@@ -7,7 +7,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/collect/pluginkind"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/plugin/scripthost"
@@ -57,7 +56,7 @@ type PushEnvironment struct {
 	Session provider.Session
 	// Kinds receives the records of the entries that deliver a core kind (pushkind.go); nil refuses
 	// them.
-	Kinds KindReceiver
+	Kinds provider.PushReceiver
 	// Report is told what goes wrong outside any batch: a condition of a stream that could not be
 	// recorded. Nil reports nothing.
 	Report func(error)
@@ -320,26 +319,23 @@ func epochSeconds(at time.Time) float64 {
 	return float64(at.UnixNano()) / 1e9
 }
 
-// pushProviderAdapter is a provider of a kind of the plugin's own that its push entries feed: its
+// pushProviderImplementation is a provider of a kind of the plugin's own that its push entries feed: its
 // probe and its pass read the hub, never the firewall. Its availability is listener_not_configured
 // while no listener of its protocol is open, no_message_received while one is and nothing has arrived
 // within the liveness span, and healthy while a message has.
-type pushProviderAdapter struct {
+type pushProviderImplementation struct {
 	plugin *Plugin
 	kind   string
 	key    string
 }
 
-func (a pushProviderAdapter) Probe(context.Context, provider.Session) (provider.Result, error) {
-	return a.result(), nil
+// Call answers the probe and the pass alike: the hub's state, and no row.
+func (a pushProviderImplementation) Call(context.Context, provider.Session, string, ...any) (provider.Answer,
+	provider.Result, error) {
+	return provider.Answer{}, a.result(), nil
 }
 
-func (a pushProviderAdapter) Collect(context.Context, provider.Session, map[string]string) (
-	pluginkind.Pass, provider.Result, error) {
-	return pluginkind.Pass{}, a.result(), nil
-}
-
-func (a pushProviderAdapter) result() provider.Result {
+func (a pushProviderImplementation) result() provider.Result {
 	result := provider.Result{State: vocab.StateUnavailable, Outcome: vocab.OutcomeListenerNotConfigured,
 		Probe: scriptEndpoint(a.plugin.Name, contract.ManifestFile), Separable: true,
 		Detail: "no push listener of this provider's protocol is configured: start opnview with --push-listen"}

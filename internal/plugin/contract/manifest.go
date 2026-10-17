@@ -16,10 +16,12 @@ import (
 const ManifestFile = "plugin.json"
 
 // The plugin API versions this build reads (docs/plugins.md, "The plugin API version"). A manifest declaring a
-// version outside the range is refused, naming both, so a format change is never half understood.
+// version outside the range is refused, naming both, so a format change is never half understood. Version 2
+// (the plugin-API amendment of 17 October 2026: kinds as data, datasets, derivations, measures, pages)
+// is the only one: no version-1 plugin exists outside the repository, and none is read.
 const (
-	MinAPIVersion = 1
-	MaxAPIVersion = 1
+	MinAPIVersion = 2
+	MaxAPIVersion = 2
 )
 
 // Manifest is the content of one plugin.json: JSON, decoded strictly, so a misspelt key is a
@@ -48,6 +50,10 @@ type Manifest struct {
 	Endpoints []EndpointDeclaration `json:"endpoints,omitempty"`
 	// Providers are the kinds the plugin implements.
 	Providers []ProviderDeclaration `json:"providers,omitempty"`
+	// Kinds are the attributes of the kinds the plugin declares for itself -- a kind one of its providers
+	// names that is no core kind. A kind of its own listed nowhere here takes the defaults: one active
+	// provider at a time, no push entry, bindable by a widget.
+	Kinds []KindDeclaration `json:"kinds,omitempty"`
 	// Tables are the tables the plugin owns.
 	Tables []TableDeclaration `json:"tables,omitempty"`
 	// Widgets are the widget directories the plugin carries, relative to its widgets/ directory.
@@ -141,6 +147,20 @@ type ProviderDeclaration struct {
 	// it declares no probe, no read and no script function, and its availability is the push
 	// listener's and the declarations' liveness (push.go). Empty for every other provider.
 	Source string `json:"source,omitempty"`
+}
+
+// KindDeclaration is a kind of the plugin's own, as data (PA2 of the plugin-API amendment): the same
+// attributes a core kind's file carries.
+type KindDeclaration struct {
+	// Kind is the kind's name, which one of the plugin's providers implements.
+	Kind string `json:"kind"`
+	// Concurrent says several providers of the kind may be active at once: true only when every row of
+	// its tables says which provider reported it.
+	Concurrent bool `json:"concurrent,omitempty"`
+	// Push says the kind's provider may be fed by the plugin's push entries (`source: push`).
+	Push bool `json:"push,omitempty"`
+	// Bindable says a widget manifest may bind the kind; absent is true.
+	Bindable *bool `json:"bindable,omitempty"`
 }
 
 // ProbeDeclaration is a declarative probe.
@@ -278,6 +298,11 @@ func DecodeManifest(raw []byte) (Manifest, error) {
 // the directory, the kinds registered, the firewall's endpoints -- is consulted.
 func ValidateShape(manifest Manifest, directory string) *Refusal {
 	if manifest.APIVersion < MinAPIVersion || manifest.APIVersion > MaxAPIVersion {
+		if MinAPIVersion == MaxAPIVersion {
+			return Refuse(directory, RefusalUnsupportedAPIVersion,
+				"the plugin targets plugin API version %d and this build reads version %d only",
+				manifest.APIVersion, MaxAPIVersion)
+		}
 		return Refuse(directory, RefusalUnsupportedAPIVersion,
 			"the plugin targets plugin API version %d and this build reads versions %d to %d",
 			manifest.APIVersion, MinAPIVersion, MaxAPIVersion)

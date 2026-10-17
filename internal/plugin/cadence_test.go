@@ -24,7 +24,7 @@ func TestACadenceOverrideIsASettingNeverBelowItsBound(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, content := range map[string]string{
-		"plugin.json": `{"api_version": 1, "name": "example_inventory", "version": "0.1.0",
+		"plugin.json": `{"api_version": 2, "name": "example_inventory", "version": "0.1.0",
 			"display_name": "Example inventory", "script": "example_inventory.js",
 			"endpoints": [{"name": "peers", "path": "/api/exampleinventory/peers/get", "method": "GET"}],
 			"providers": [{"kind": "reconciled_state", "display_name": "Example inventory",

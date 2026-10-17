@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/measurement"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -25,7 +24,7 @@ import (
 //
 // What is true of any measurement source, and is therefore here: writing the readings, and
 // recording what did not answer. How the readings are obtained — which endpoint, which argument,
-// which field names — is in internal/collect/measurement/insight.
+// which field names — is in the plugin implementing the kind, plugins/insight among them.
 //
 // THE READINGS ARE A SAMPLE AND NOT A CACHE. No endpoint exposes a per-pair aggregate over a
 // past window: the per-pair data is a live snapshot, measured on a live firewall. So opnview's
@@ -62,7 +61,7 @@ func (c *MeasurementCoordinator) CollectMeasurement(ctx context.Context) error {
 // collectMeasurementFrom runs one pass of one implementation.
 func (c *MeasurementCoordinator) collectMeasurementFrom(ctx context.Context, active core.ActiveSource) error {
 	providerKey, providerID := active.ProviderKey, active.ProviderID
-	source, registered := c.SourceSet.Measurement.Lookup(providerKey)
+	source, registered := c.SourceSet.Lookup(Kind, providerKey)
 	if !registered {
 		return fmt.Errorf("collect: the active measurement_sample provider %q has no implementation",
 			providerKey)
@@ -71,10 +70,11 @@ func (c *MeasurementCoordinator) collectMeasurementFrom(ctx context.Context, act
 	now := c.Now()
 	snapshot := c.Discovery()
 
-	readings, missing, result, err := source.Sample(ctx, c, snapshot, providerID, now)
+	answer, result, err := source.Implementation.Call(ctx, c, "sample", provider.DiscoveryView(snapshot), now)
 	if err != nil {
 		return err
 	}
+	readings, missing := readingsOf(answer, providerID)
 	for _, reading := range readings {
 		if err := c.Store.InsertMeasurementSample(ctx, reading); err != nil {
 			return err
@@ -115,13 +115,24 @@ func (c *MeasurementCoordinator) collectMeasurementFrom(ctx context.Context, act
 	return c.WriteAvailability(ctx, providerID, state, outcome, result.Probe, detail)
 }
 
-// ProbeMeasurement probes every implementation of the measurement_sample kind. The probe round (collect.ProbeAll)
-// runs it with every other kind's.
-func (c *MeasurementCoordinator) ProbeMeasurement(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindMeasurementSample, core.ProbeablesOf(c.SourceSet.Measurement, measurementProbe))
-}
+// Kind is the kind this coordinator collects.
+const Kind = "measurement_sample"
 
-// measurementProbe is the probe of one measurement_sample implementation, as core.ProbeablesOf takes it.
-func measurementProbe(source measurement.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
+// readingsOf are a sample answer's readings as rows, each naming the provider unless it says it is the
+// firewall reporting on itself, and the readings that did not answer.
+func readingsOf(answer provider.Answer, providerID int64) ([]vocab.MeasurementSample, []string) {
+	var readings []vocab.MeasurementSample
+	for _, record := range provider.Records(answer, "readings") {
+		reading := vocab.MeasurementSample{
+			SubjectKind: vocab.SubjectKind(provider.Text(record, "subject_kind")), SubjectKey: provider.Text(record, "subject_key"),
+			Measure: vocab.Measure(provider.Text(record, "measure")), Unit: vocab.Unit(provider.Text(record, "unit")),
+			Value: provider.Number(record, "value"), SampledAt: provider.Integer(record, "sampled_at"),
+		}
+		if provider.Flag(record, "attributed", true) {
+			id := providerID
+			reading.ProviderID = &id
+		}
+		readings = append(readings, reading)
+	}
+	return readings, provider.Texts(answer, "missing")
 }

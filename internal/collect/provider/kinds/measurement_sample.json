@@ -1,0 +1,122 @@
+{
+  "kind" : "measurement_sample",
+  "description" : "A numeric reading of a subject at an instant: the firewall's gauges, sampled rates. Several providers may be active at once. A reading that did not answer is named in `missing`, never written as a zero.",
+  "concurrent" : true,
+  "push" : false,
+  "bindable" : true,
+  "live_answer" : "sample_answer",
+  "functions" : [
+    {
+      "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
+      "name" : "probe",
+      "arguments" : "host",
+      "returns" : "probe_answer"
+    },
+    {
+      "description" : "Called at every sampling pass. discovery holds the interfaces the firewall reported (identifiers, devices); now is the pass's instant.",
+      "name" : "sample",
+      "arguments" : "host, discovery, now",
+      "returns" : "sample_answer"
+    }
+  ],
+  "records" : [
+    {
+      "description" : "What `probe` returns.",
+      "name" : "probe_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Why the probe could not finish, when it could not.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `sample` returns.",
+      "name" : "sample_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "The `measurement_reading` records.",
+          "name" : "readings",
+          "type" : "records",
+          "of" : "measurement_reading"
+        },
+        {
+          "description" : "The readings that did not answer, each named in words for the availability detail.",
+          "name" : "missing",
+          "type" : "text_list"
+        },
+        {
+          "description" : "Why the pass failed, when it did.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "One reading.",
+      "name" : "measurement_reading",
+      "fields" : [
+        {
+          "description" : "What is measured: a lower-case word with no space (interface, interface_endpoint, gateway, firewall, or the plugin's own).",
+          "name" : "subject_kind",
+          "type" : "text",
+          "required" : true,
+          "term" : true
+        },
+        {
+          "description" : "Which one; may be empty.",
+          "name" : "subject_key",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "What figure: a lower-case word with no space.",
+          "name" : "measure",
+          "type" : "text",
+          "required" : true,
+          "term" : true
+        },
+        {
+          "description" : "Its unit: a lower-case word with no space.",
+          "name" : "unit",
+          "type" : "text",
+          "required" : true,
+          "term" : true
+        },
+        {
+          "description" : "The figure.",
+          "name" : "value",
+          "type" : "number",
+          "required" : true
+        },
+        {
+          "description" : "When it was read.",
+          "name" : "sampled_at",
+          "type" : "integer",
+          "required" : true,
+          "unit" : "UTC epoch seconds"
+        },
+        {
+          "description" : "Whether the reading names this provider; false for the firewall reporting on itself. True when absent.",
+          "name" : "attributed",
+          "type" : "boolean"
+        }
+      ]
+    }
+  ]
+}

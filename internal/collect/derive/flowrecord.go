@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/flowrecord"
 	"github.com/NaejEL/opnview/internal/store/netflow"
 )
 
@@ -32,7 +31,7 @@ import (
 // again -- is stored and named, and counted only under NJ5's sole-copy rule.
 
 // KindFlowRecord is the flow_record kind.
-const KindFlowRecord = flowrecord.Kind
+const KindFlowRecord = "flow_record"
 
 // pf's default state timeouts, in seconds (survey, Push sources, S12: pf.h's PFTM_*_VAL). The values
 // in force are not readable through any endpoint, so the join's continuity uses these.

@@ -1,0 +1,146 @@
+{
+  "kind" : "dhcp_lease",
+  "description" : "The lease table of a DHCP server: data source 4. Several providers may be active at once (one server per scope); the kind runs the client identity cascade on what they report.",
+  "concurrent" : true,
+  "push" : false,
+  "bindable" : true,
+  "functions" : [
+    {
+      "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
+      "name" : "probe",
+      "arguments" : "host",
+      "returns" : "probe_answer"
+    },
+    {
+      "description" : "Called at every lease pass: the server's current lease table.",
+      "name" : "leases",
+      "arguments" : "host, page_size",
+      "returns" : "leases_answer"
+    }
+  ],
+  "records" : [
+    {
+      "description" : "What `probe` returns.",
+      "name" : "probe_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Why the probe could not finish, when it could not.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `leases` returns.",
+      "name" : "leases_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "The `dhcp_lease_record` records read, absent when the read failed.",
+          "name" : "leases",
+          "type" : "records",
+          "of" : "dhcp_lease_record"
+        },
+        {
+          "description" : "Why the read failed, when it did; the result then says what the firewall answered.",
+          "name" : "error",
+          "type" : "text"
+        },
+        {
+          "description" : "Why this implementation's material can never be read, when that is so: a state, recorded with its reason, and not a failure.",
+          "name" : "unsupported",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "One lease generation, with the field-name differences between backends normalised away.",
+      "name" : "dhcp_lease_record",
+      "fields" : [
+        {
+          "description" : "The leased address.",
+          "name" : "address",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The hardware address; the host lower-cases it and stores a value that is not six colon-separated octets as absent.",
+          "name" : "mac",
+          "type" : "text"
+        },
+        {
+          "description" : "The host name the client sent.",
+          "name" : "hostname",
+          "type" : "text"
+        },
+        {
+          "description" : "The DHCP client identifier.",
+          "name" : "dhcp_client_id",
+          "type" : "text"
+        },
+        {
+          "description" : "The DHCPv6 DUID.",
+          "name" : "duid",
+          "type" : "text"
+        },
+        {
+          "description" : "The DHCPv6 IAID.",
+          "name" : "iaid",
+          "type" : "text"
+        },
+        {
+          "description" : "The vendor the server names for the address.",
+          "name" : "vendor_hint",
+          "type" : "text"
+        },
+        {
+          "description" : "The lease's state.",
+          "name" : "lease_state",
+          "type" : "text",
+          "required" : true,
+          "values" : [
+            "active",
+            "expired",
+            "reserved",
+            "unknown"
+          ]
+        },
+        {
+          "description" : "The interface's configuration key, when the server names it.",
+          "name" : "interface_identifier",
+          "type" : "text"
+        },
+        {
+          "description" : "The interface's network device, when the server names it.",
+          "name" : "interface_device",
+          "type" : "text"
+        },
+        {
+          "description" : "The validity start, only when the server reports one; never substituted.",
+          "name" : "starts_at",
+          "type" : "integer",
+          "unit" : "UTC epoch seconds"
+        },
+        {
+          "description" : "The expiry.",
+          "name" : "expires_at",
+          "type" : "integer",
+          "unit" : "UTC epoch seconds"
+        }
+      ]
+    }
+  ]
+}

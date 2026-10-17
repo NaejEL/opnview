@@ -18,7 +18,7 @@ import (
 
 // examplePeerRatesPlugin is a third party's widget plugin reading the per-peer rates.
 var examplePeerRatesPlugin = map[string]string{
-	"plugin.json": `{"api_version": 1, "name": "example_peer_rates", "version": "0.1.0",
+	"plugin.json": `{"api_version": 2, "name": "example_peer_rates", "version": "0.1.0",
 		"display_name": "Example peer rates", "widgets": ["example_peer_rates"]}`,
 	"widgets/example_peer_rates/manifest.json": `{"manifest_version": 1, "type": "example_peer_rates",
 		"shape": "table", "providers": ["measurement_sample"], "primary": "measurement_sample",

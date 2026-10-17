@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -395,7 +394,7 @@ func (f *declarativeForm) mapField(ctx context.Context, session provider.Session
 		}
 		return *port, true
 	case "mac":
-		mac := dhcplease.MACPointer(decode.RawString(container, key))
+		mac := decode.MACPointer(decode.RawString(container, key))
 		if mac == nil {
 			return nil, false
 		}

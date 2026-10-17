@@ -246,7 +246,7 @@ func TestTrafficCompositionKeepsTheNamedAbsenceWithoutPfStatesRows(t *testing.T)
 // of the product.
 var (
 	exampleMeterPlugin = map[string]string{
-		"plugin.json": `{"api_version": 1, "name": "example_meter", "version": "0.1.0",
+		"plugin.json": `{"api_version": 2, "name": "example_meter", "version": "0.1.0",
 			"display_name": "Example meter", "script": "meter.js",
 			"providers": [{"kind": "example_meter_reading", "display_name": "Example meter",
 				"read_strategy": "full_reread", "cadence_seconds": 60}],
@@ -263,7 +263,7 @@ var (
 `,
 	}
 	exampleGaugePlugin = map[string]string{
-		"plugin.json": `{"api_version": 1, "name": "example_gauge", "version": "0.1.0",
+		"plugin.json": `{"api_version": 2, "name": "example_gauge", "version": "0.1.0",
 			"display_name": "Example gauge", "widgets": ["example_gauge"]}`,
 		"widgets/example_gauge/manifest.json": `{"manifest_version": 1, "type": "example_gauge", "shape": "figure",
 			"parameters": [], "script": "gauge.js"}`,

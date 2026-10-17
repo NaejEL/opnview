@@ -20,8 +20,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/broker/answer"
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
-	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -935,20 +933,20 @@ func Helpers(vm *goja.Runtime) *goja.Object {
 
 	leases := vm.NewObject()
 	set(leases, "decodeLease", func(call goja.FunctionCall) goja.Value {
-		observation, ok := dhcplease.DecodeLease(objectArgument(call, 0))
+		record, ok := decodeLease(objectArgument(call, 0))
 		if !ok {
 			return goja.Null()
 		}
-		return vm.ToValue(leaseRecord(observation))
+		return vm.ToValue(record)
 	})
 	set(leases, "normaliseMAC", func(call goja.FunctionCall) goja.Value {
-		return pointer(dhcplease.MACPointer(call.Argument(0).String()))
+		return pointer(decode.MACPointer(call.Argument(0).String()))
 	})
 	_ = root.Set("dhcp_lease", leases)
 
 	lookups := vm.NewObject()
 	set(lookups, "normaliseAction", func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(dnslookup.NormaliseAction(call.Argument(0).String()))
+		return vm.ToValue(normaliseAction(call.Argument(0).String()))
 	})
 	_ = root.Set("dns_lookup", lookups)
 
@@ -963,30 +961,6 @@ func Helpers(vm *goja.Runtime) *goja.Object {
 	_ = samples.Set("sampleSeconds", vocab.SampleSeconds)
 	_ = root.Set("measurement_sample", samples)
 	return root
-}
-
-// leaseRecord is a decoded lease as a script reads it: the dhcp_lease_record fields.
-func leaseRecord(observation dhcplease.Observation) map[string]any {
-	text := func(value *string) any {
-		if value == nil {
-			return nil
-		}
-		return *value
-	}
-	number := func(value *int64) any {
-		if value == nil {
-			return nil
-		}
-		return *value
-	}
-	return map[string]any{
-		"address": observation.Address, "mac": text(observation.MAC), "hostname": text(observation.Hostname),
-		"dhcp_client_id": text(observation.DHCPClientID), "duid": text(observation.DUID),
-		"iaid": text(observation.IAID), "vendor_hint": text(observation.VendorHint),
-		"lease_state": observation.LeaseState, "interface_identifier": observation.InterfaceIdentifier,
-		"interface_device": observation.InterfaceDevice, "starts_at": number(observation.StartsAt),
-		"expires_at": number(observation.ExpiresAt),
-	}
 }
 
 // ShapeName is a field shape as a script reads it.

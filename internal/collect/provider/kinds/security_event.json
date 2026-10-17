@@ -1,0 +1,199 @@
+{
+  "kind" : "security_event",
+  "description" : "Intrusion-detection events: data source 2. Several providers may be active at once; every event names the provider that reported it, and the kind keeps a watermark per file.",
+  "concurrent" : true,
+  "push" : false,
+  "bindable" : true,
+  "functions" : [
+    {
+      "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
+      "name" : "probe",
+      "arguments" : "host",
+      "returns" : "probe_answer"
+    },
+    {
+      "description" : "Called before every read: which of the feed's files still exist, so a lost file is recorded as a permanent gap.",
+      "name" : "rotation",
+      "arguments" : "host",
+      "returns" : "rotation_answer"
+    },
+    {
+      "description" : "Called at every security-event pass: the newest page_size events, newest first.",
+      "name" : "alerts",
+      "arguments" : "host, page_size",
+      "returns" : "alerts_answer"
+    }
+  ],
+  "records" : [
+    {
+      "description" : "What `probe` returns.",
+      "name" : "probe_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Why the probe could not finish, when it could not.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `rotation` returns.",
+      "name" : "rotation_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Whether the files could be listed; false declares nothing lost.",
+          "name" : "known",
+          "type" : "boolean",
+          "required" : true
+        },
+        {
+          "description" : "The file identifiers the feed still carries.",
+          "name" : "present",
+          "type" : "text_list"
+        },
+        {
+          "description" : "The current file's sequence, when the feed reports one.",
+          "name" : "highest_sequence",
+          "type" : "integer"
+        },
+        {
+          "description" : "Why the listing failed, when it did.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `alerts` returns.",
+      "name" : "alerts_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "The `security_event_alert` records read, absent when the read failed.",
+          "name" : "alerts",
+          "type" : "records",
+          "of" : "security_event_alert"
+        },
+        {
+          "description" : "Why the read failed, when it did; the result then says what the firewall answered.",
+          "name" : "error",
+          "type" : "text"
+        },
+        {
+          "description" : "Why this implementation's material can never be read, when that is so: a state, recorded with its reason, and not a failure.",
+          "name" : "unsupported",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "One event, decoded and normalised.",
+      "name" : "security_event_alert",
+      "fields" : [
+        {
+          "description" : "The file the event was read from; with byte_offset, the coordinate the watermark keeps.",
+          "name" : "file_id",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "Where in the file.",
+          "name" : "byte_offset",
+          "type" : "integer",
+          "required" : true
+        },
+        {
+          "description" : "When the event happened.",
+          "name" : "occurred_at",
+          "type" : "integer",
+          "required" : true,
+          "unit" : "UTC epoch seconds"
+        },
+        {
+          "description" : "The rule or signature's identifier.",
+          "name" : "rule_identity",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The signature's text; empty when the event carries none.",
+          "name" : "signature",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "What the engine did.",
+          "name" : "event_action",
+          "type" : "text",
+          "required" : true,
+          "values" : [
+            "blocked",
+            "allowed",
+            "unknown"
+          ]
+        },
+        {
+          "description" : "The severity, when the event carries one.",
+          "name" : "normalised_severity",
+          "type" : "text"
+        },
+        {
+          "description" : "The source address.",
+          "name" : "src_address",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The destination address.",
+          "name" : "dst_address",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The source port, 0 to 65535.",
+          "name" : "src_port",
+          "type" : "integer",
+          "min" : 0,
+          "max" : 65535
+        },
+        {
+          "description" : "The destination port, 0 to 65535.",
+          "name" : "dst_port",
+          "type" : "integer",
+          "min" : 0,
+          "max" : 65535
+        },
+        {
+          "description" : "The protocol.",
+          "name" : "protocol",
+          "type" : "text"
+        },
+        {
+          "description" : "The device the event was seen on.",
+          "name" : "in_interface_device",
+          "type" : "text"
+        }
+      ]
+    }
+  ]
+}

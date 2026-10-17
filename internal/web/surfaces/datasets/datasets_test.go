@@ -43,7 +43,7 @@ const (
 )
 
 var meterFiles = map[string]string{
-	"plugin.json": `{"api_version": 1, "name": "example_meter", "version": "0.1.0",
+	"plugin.json": `{"api_version": 2, "name": "example_meter", "version": "0.1.0",
 		"display_name": "Example meter", "script": "example_meter.js",
 		"endpoints": [{"name": "status", "path": "/api/examplemeter/service/status", "method": "GET"}],
 		"providers": [{"kind": "example_reading", "display_name": "Example meter",

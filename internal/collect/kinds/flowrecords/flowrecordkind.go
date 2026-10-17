@@ -7,7 +7,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
-	"github.com/NaejEL/opnview/internal/collect/flowrecord"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -23,11 +22,11 @@ func (c *FlowRecordCoordinator) SetCaptureReadObserver(observe func(key string, 
 	c.Netflow.OnCaptureRead = observe
 }
 
-// ReceivePushedFlowRecords stores the flow records the push entry of a flow_record provider delivered,
+// receivePushed stores the flow records the push entry of a flow_record provider delivered,
 // each with what its two indexes name under the index map in force at reception (NJ3) and whether a loss
 // would have been detected over its start (NJ7). Records of a provider that is not the active one are
 // counted and not stored.
-func (c *FlowRecordCoordinator) ReceivePushedFlowRecords(ctx context.Context, key string, records []flowrecord.Record) error {
+func (c *FlowRecordCoordinator) receivePushed(ctx context.Context, key string, records []provider.Answer) error {
 	activeKey, providerID, active, err := c.ActiveSourceKey(ctx, derive.KindFlowRecord)
 	if err != nil {
 		return err
@@ -80,43 +79,50 @@ func (c *FlowRecordCoordinator) indexMap(ctx context.Context) derive.IndexMap {
 }
 
 // flowRecordRow builds a record's row, its core-written columns included.
-func flowRecordRow(providerID int64, record flowrecord.Record, history *core.CaptureHistory,
+func flowRecordRow(providerID int64, record provider.Answer, history *core.CaptureHistory,
 	indexes derive.IndexMap) (netflow.FlowRecordRow, bool) {
-	source, sourceErr := netip.ParseAddr(record.SrcAddress)
-	destination, destinationErr := netip.ParseAddr(record.DstAddress)
-	if sourceErr != nil || destinationErr != nil || record.StartMillis < 0 || record.EndMillis < record.StartMillis {
+	source, sourceErr := netip.ParseAddr(provider.Text(record, "src_address"))
+	destination, destinationErr := netip.ParseAddr(provider.Text(record, "dst_address"))
+	startMillis := provider.FlowRecordMillis(provider.Number(record, "start_at"))
+	endMillis := provider.FlowRecordMillis(provider.Number(record, "end_at"))
+	if sourceErr != nil || destinationErr != nil || startMillis < 0 || endMillis < startMillis {
 		return netflow.FlowRecordRow{}, false
 	}
 	source, destination = source.Unmap(), destination.Unmap()
-	start := record.StartMillis / 1000
-	return netflow.FlowRecordRow{ProviderID: providerID, Identity: record.Identity, StartAt: start,
-		StartMillisecond: record.StartMillis % 1000, EndAt: record.EndMillis / 1000,
-		EndMillisecond: record.EndMillis % 1000, ReceivedAt: record.ReceivedAt,
-		ExporterAddress: record.ExporterAddress, ObservationDomain: record.ObservationDomain,
-		IngressInterface: record.IngressInterface, EgressInterface: record.EgressInterface,
-		IPVersion: record.IPVersion, Protocol: record.Protocol, SrcAddress: source.String(),
-		DstAddress: destination.String(), SrcPort: record.SrcPort, DstPort: record.DstPort,
-		TCPFlags: record.TCPFlags, Octets: record.Octets, Packets: record.Packets,
-		Ingress: indexes.Map(record.IngressInterface), Egress: indexes.Map(record.EgressInterface),
+	start := startMillis / 1000
+	version, protocol := provider.Integer(record, "ip_version"), provider.Integer(record, "protocol")
+	srcPort, dstPort := provider.IntegerPointer(record, "src_port"), provider.IntegerPointer(record, "dst_port")
+	ingress, egress := provider.IntegerPointer(record, "ingress_interface"), provider.IntegerPointer(record, "egress_interface")
+	return netflow.FlowRecordRow{ProviderID: providerID, Identity: provider.Text(record, "identity"), StartAt: start,
+		StartMillisecond: startMillis % 1000, EndAt: endMillis / 1000,
+		EndMillisecond: endMillis % 1000, ReceivedAt: int64(provider.Number(record, "received_at")),
+		ExporterAddress: provider.Text(record, "exporter_address"),
+		ObservationDomain: provider.Integer(record, "observation_domain"),
+		IngressInterface: ingress, EgressInterface: egress,
+		IPVersion: version, Protocol: protocol, SrcAddress: source.String(),
+		DstAddress: destination.String(), SrcPort: srcPort, DstPort: dstPort,
+		TCPFlags: provider.IntegerPointer(record, "tcp_flags"), Octets: provider.Integer(record, "octets"),
+		Packets: provider.Integer(record, "packets"),
+		Ingress: indexes.Map(ingress), Egress: indexes.Map(egress),
 		LossDetectable: history.ConfigurationAt(start).LossDetectable(),
-		TupleKey:       derive.TupleKey(record.IPVersion, record.Protocol, source, destination, record.SrcPort, record.DstPort),
+		TupleKey:       derive.TupleKey(version, protocol, source, destination, srcPort, dstPort),
 	}, true
 }
 
-// ObserveFlowRecordCondition is told a condition the decoder detected on a provider's stream. Every
+// observeCondition is told a condition the decoder detected on a provider's stream. Every
 // condition it reports today says the exporter restarted, which can renumber interfaces: the index map
 // is read afresh before the next record is mapped (NJ3). Nothing is deduced from records.
-func (c *FlowRecordCoordinator) ObserveFlowRecordCondition(_ context.Context, _ string, _ flowrecord.Condition) error {
+func (c *FlowRecordCoordinator) observeCondition() error {
 	c.Netflow.Mutex.Lock()
 	defer c.Netflow.Mutex.Unlock()
 	c.Netflow.IndexMapStale = true
 	return nil
 }
 
-// FlowRecordSequenceAsserted says whether a loss the exporter's sequence numbers show over [from, to]
+// sequenceAsserted says whether a loss the exporter's sequence numbers show over [from, to]
 // is asserted: only when one readable configuration with the export enabled is in force over both ends,
 // and it bounds the exporter's sequence counters (NJ7).
-func (c *FlowRecordCoordinator) FlowRecordSequenceAsserted(ctx context.Context, key string, from, to int64) bool {
+func (c *FlowRecordCoordinator) sequenceAsserted(ctx context.Context, key string, from, to int64) bool {
 	providerID, err := c.Store.ProviderID(ctx, derive.KindFlowRecord, key)
 	if err != nil {
 		return false
@@ -137,12 +143,12 @@ func (c *FlowRecordCoordinator) CollectFlowRecordCapture(ctx context.Context) er
 	if err != nil || !active {
 		return err
 	}
-	source, registered := c.SourceSet.FlowRecord.Lookup(key)
+	source, registered := c.SourceSet.Lookup(derive.KindFlowRecord, key)
 	if !registered {
 		return fmt.Errorf("collect: the active flow_record provider %q has no implementation", key)
 	}
 	readAt := c.Now()
-	configuration, result, readErr := source.Capture(ctx, c)
+	configuration, result, readErr := captureOf(ctx, c, source)
 	if err := c.WriteAvailability(ctx, providerID, result.State, availabilityOutcome(result.Outcome),
 		result.Probe, result.Detail); err != nil {
 		return err
@@ -152,11 +158,7 @@ func (c *FlowRecordCoordinator) CollectFlowRecordCapture(ctx context.Context) er
 		read.Enabled, read.ExportVersion = configuration.Enabled, configuration.ExportVersion
 		read.ActiveTimeoutSeconds = configuration.ActiveTimeoutSeconds
 		read.InactiveTimeoutSeconds = configuration.InactiveTimeoutSeconds
-		for _, captured := range configuration.Interfaces {
-			read.Interfaces = append(read.Interfaces, netflow.CaptureInterface{Identifier: captured.Identifier,
-				Ingress: captured.Ingress, Egress: captured.Egress, Exported: captured.Exported,
-				NotExportedReason: captured.NotExportedReason, ParentOf: captured.ParentOf})
-		}
+		read.Interfaces = configuration.Interfaces
 	} else {
 		read.Outcome = availabilityOutcome(result.Outcome)
 		if read.Detail == "" {
@@ -205,10 +207,71 @@ func availabilityOutcome(outcome vocab.AvailabilityOutcome) vocab.AvailabilityOu
 	return outcome
 }
 
-// ProbeFlowRecord probes every implementation of the flow_record kind.
-func (c *FlowRecordCoordinator) ProbeFlowRecord(ctx context.Context) error {
-	return c.ResolveKind(ctx, derive.KindFlowRecord, core.ProbeablesOf(c.SourceSet.FlowRecord,
-		func(source flowrecord.Source) func(context.Context, provider.Session) (provider.Result, error) {
-			return source.Probe
-		}))
+// Kind is the kind this coordinator collects.
+const Kind = "flow_record"
+
+func init() {
+	core.RegisterPushHandler(Kind, core.PushHandler{
+		Receive: func(ctx context.Context, c *core.Collector, key string, records []provider.Answer) error {
+			return On(c).receivePushed(ctx, key, records)
+		},
+		SequenceAsserted: func(ctx context.Context, c *core.Collector, key string, from, to int64) bool {
+			return On(c).sequenceAsserted(ctx, key, from, to)
+		},
+		Observe: func(_ context.Context, c *core.Collector, _ string, _ provider.PushCondition) error {
+			return On(c).observeCondition()
+		},
+	})
+}
+
+// captureOf reads a provider's capture configuration: its capture answer, checked against the contract,
+// and what the contract's types cannot express -- each interface named once and never its own parent, a
+// not_exported_reason exactly when exported is no -- refused as records_invalid. An interface whose
+// export the provider did not establish is unknown.
+func captureOf(ctx context.Context, c *core.Collector, source provider.Registration) (netflow.CaptureConfiguration,
+	provider.Result, error) {
+	answer, result, err := source.Implementation.Call(ctx, c, "capture")
+	if err != nil {
+		return netflow.CaptureConfiguration{}, result, err
+	}
+	invalid := func(detail string) (netflow.CaptureConfiguration, provider.Result, error) {
+		failed := fmt.Errorf("collect: the %s provider %s: %s", Kind, source.Key, detail)
+		return netflow.CaptureConfiguration{}, provider.Result{State: vocab.StateUnavailable,
+			Outcome: vocab.OutcomeRecordsInvalid, Probe: result.Probe, Detail: failed.Error()}, failed
+	}
+	captured, present := answer["capture"].(map[string]any)
+	if !present {
+		return invalid("capture returned neither a capture nor an error")
+	}
+	configuration := netflow.CaptureConfiguration{Enabled: provider.Flag(captured, "enabled", false),
+		ExportVersion:          provider.Text(captured, "export_version"),
+		ActiveTimeoutSeconds:   provider.IntegerPointer(captured, "active_timeout_seconds"),
+		InactiveTimeoutSeconds: provider.IntegerPointer(captured, "inactive_timeout_seconds")}
+	seen := map[string]bool{}
+	for index, row := range provider.Records(captured, "interfaces") {
+		identifier := provider.Text(row, "identifier")
+		if identifier == "" || seen[identifier] {
+			return invalid(fmt.Sprintf("capture.interfaces[%d] names an empty or repeated identifier", index))
+		}
+		seen[identifier] = true
+		captureInterface := netflow.CaptureInterface{Identifier: identifier, Ingress: provider.Flag(row, "ingress", false),
+			Egress: provider.Flag(row, "egress", false), Exported: provider.Text(row, "exported"),
+			NotExportedReason: provider.Text(row, "not_exported_reason"), ParentOf: provider.Texts(row, "parent_of")}
+		if captureInterface.Exported == "" {
+			// A provider that does not say whether the interface is exported has not established it.
+			captureInterface.Exported = netflow.ExportedUnknown
+		}
+		if (captureInterface.Exported == netflow.ExportedNo) != (captureInterface.NotExportedReason != "") {
+			return invalid(fmt.Sprintf("capture.interfaces[%d] names a not_exported_reason exactly when exported "+
+				"is not \"no\"", index))
+		}
+		for _, of := range captureInterface.ParentOf {
+			if of == "" || of == identifier {
+				return invalid(fmt.Sprintf("capture.interfaces[%d] lists an empty identifier, or itself, in parent_of",
+					index))
+			}
+		}
+		configuration.Interfaces = append(configuration.Interfaces, captureInterface)
+	}
+	return configuration, result, nil
 }

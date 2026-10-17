@@ -1,0 +1,41 @@
+{
+  "records": [
+    {
+      "name": "result",
+      "description": "What a probe or a read concluded: the availability opnview records for the provider. Every function returns one, under the key `result`.",
+      "fields": [
+        {
+          "name": "state",
+          "type": "text",
+          "values": [
+            "reachable",
+            "present_but_disabled",
+            "unavailable"
+          ],
+          "description": "The availability state the firewall's answer implies; absent only beside an error raised before any answer was read."
+        },
+        {
+          "name": "outcome",
+          "type": "text",
+          "description": "Why, as one of the closed outcome codes of docs/data-model.md, `source_availability`; absent only beside an error, as state is."
+        },
+        {
+          "name": "probe",
+          "type": "text",
+          "required": true,
+          "description": "The name of the declared endpoint whose answer decided it."
+        },
+        {
+          "name": "detail",
+          "type": "text",
+          "description": "What happened, in words, for a person reading the availability."
+        },
+        {
+          "name": "separable",
+          "type": "boolean",
+          "description": "Whether the firewall's own configuration marks this implementation as the one serving clients; the probe round activates only a separable one."
+        }
+      ]
+    }
+  ]
+}

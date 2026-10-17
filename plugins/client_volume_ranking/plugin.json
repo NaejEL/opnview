@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "client_volume_ranking",
   "version": "1.0.0",
   "display_name": "Client volume ranking",

@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "blocked_by_firewall_rule",
   "version": "1.0.0",
   "display_name": "Blocked by firewall rule",

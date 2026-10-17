@@ -25,7 +25,7 @@ func TestPluginTestRunsAPluginsOwnTestsWithoutGo(t *testing.T) {
 
 	directory := filepath.Join(t.TempDir(), "example_reader")
 	for name, content := range map[string]string{
-		"plugin.json": `{"api_version": 1, "name": "example_reader", "version": "0.1.0",
+		"plugin.json": `{"api_version": 2, "name": "example_reader", "version": "0.1.0",
 			"display_name": "Example reader", "description": "A lease source probed for its presence.",
 			"script": "example_reader.js",
 			"endpoints": [{"name": "status", "path": "/api/examplereader/service/status", "method": "GET"}],

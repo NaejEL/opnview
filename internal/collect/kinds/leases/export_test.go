@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 )
 
 // What this package's external tests call that the package keeps unexported.
@@ -15,9 +15,9 @@ func (c *LeaseCoordinator) CollectLeases(ctx context.Context, seen *[]string) (b
 }
 
 // IngestLease stores one observation as a pass stores its observations.
-func (c *LeaseCoordinator) IngestLease(ctx context.Context, observation dhcplease.Observation,
+func (c *LeaseCoordinator) IngestLease(ctx context.Context, observation provider.Answer,
 	snapshot core.Discovery, providerID int64, backend string, now int64) error {
-	return c.storeLeases(ctx, []dhcplease.Observation{observation}, snapshot, providerID, backend, now)
+	return c.storeLeases(ctx, []provider.Answer{observation}, snapshot, providerID, backend, now)
 }
 
 // LeaseFailurePasses is how many lease passes in a row one backend has failed.

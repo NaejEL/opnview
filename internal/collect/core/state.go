@@ -5,10 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/collect/firewalllog"
-	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/registrabledomain"
 	"github.com/NaejEL/opnview/internal/live"
 	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/push"
@@ -106,7 +103,7 @@ type PushPath struct {
 	Loaded  bool
 	Mode    string
 	Periods []push.SourcePeriod
-	Held    []firewalllog.Record
+	Held    []vocab.Flow
 	// LastPushed is the newest instant the push path delivered in its current period.
 	LastPushed int64
 	Superseded int64
@@ -148,13 +145,15 @@ func (p *PushPath) PathAt(at int64) string {
 	return push.PathPull
 }
 
-// Services is what the collector last heard from each service kind's active provider.
+// Services is what the collector last heard from each service kind's active provider: the checked
+// answers of its last status or refresh (dataset_answer, list_answer), read with provider.Flag and its
+// siblings.
 type Services struct {
 	Mutex       sync.RWMutex
 	GeoKey      string
-	Geo         ipgeolocation.Dataset
+	Geo         provider.Answer
 	ListKey     string
-	List        registrabledomain.List
+	List        provider.Answer
 	GeoWake     chan struct{}
 	GeoWakeOnce sync.Once
 }

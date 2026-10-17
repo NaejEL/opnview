@@ -13,8 +13,7 @@ import (
 
 	"github.com/dop251/goja"
 
-	"github.com/NaejEL/opnview/internal/collect/firewalllog"
-	"github.com/NaejEL/opnview/internal/collect/flowrecord"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/plugin/scripthost"
@@ -159,20 +158,12 @@ func (w *testWorld) pushWorldOf() (*pushWorld, error) {
 // through t.pushed, and no coordinator runs.
 type discardKinds struct{}
 
-func (discardKinds) ReceivePushedFirewallLog(context.Context, string, []firewalllog.Record) error {
-	return nil
-}
+func (discardKinds) ReceivePushed(context.Context, string, string, []provider.Answer) error { return nil }
 
-func (discardKinds) ReceivePushedFlowRecords(context.Context, string, []flowrecord.Record) error {
-	return nil
-}
+func (discardKinds) PushSequenceAsserted(context.Context, string, string, int64, int64) bool { return true }
 
-func (discardKinds) ObserveFlowRecordCondition(context.Context, string, flowrecord.Condition) error {
+func (discardKinds) ObservePushCondition(context.Context, string, string, provider.PushCondition) error {
 	return nil
-}
-
-func (discardKinds) FlowRecordSequenceAsserted(context.Context, string, int64, int64) bool {
-	return true
 }
 
 // pushAPI adds the push functions to a test's API.

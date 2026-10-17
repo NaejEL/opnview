@@ -24,7 +24,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
@@ -148,7 +147,7 @@ type testWorld struct {
 	settings     plugin.SettingStore
 	box          *secret.Box
 	plugin       *plugin.Plugin
-	set          *sources.Set
+	set          *provider.Set
 	reference    time.Time
 
 	server *httptest.Server
@@ -232,7 +231,7 @@ func newTestWorld(ctx context.Context, directory string) (*testWorld, error) {
 	world.key, world.secret = randomCredential(), randomCredential()
 	world.client = opnsense.NewClient(opnsense.Credentials{BaseURL: world.server.URL, APIKey: world.key,
 		APISecret: world.secret}, nil, 10*time.Second)
-	world.set = sources.New()
+	world.set = provider.NewSet()
 	name := filepath.Base(directory)
 	plugin, refusal := plugin.LoadOne(ctx, world.set, os.DirFS(directory), name, plugin.OriginDataDirectory, directory, directory,
 		map[string]string{}, plugin.Options{DataDir: dataDir, Store: world.database, Settings: world.settings, Sealer: world.box,
@@ -680,7 +679,7 @@ func (w *testWorld) api(vm *goja.Runtime, result *TestResult) *goja.Object {
 		return vm.ToValue(answer)
 	})
 	set("discovery", func(call goja.FunctionCall) goja.Value {
-		return vm.ToValue(plugin.DiscoveryView(discoveryOf(call.Argument(0))))
+		return vm.ToValue(provider.DiscoveryView(discoveryOf(call.Argument(0))))
 	})
 	set("call", func(call goja.FunctionCall) goja.Value {
 		var arguments []any

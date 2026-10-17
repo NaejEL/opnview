@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "unified_blocked_feed",
   "version": "1.0.0",
   "display_name": "Unified blocked feed",

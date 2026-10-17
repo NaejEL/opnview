@@ -8,7 +8,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
-	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"github.com/NaejEL/opnview/internal/collect/identity"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -19,7 +18,7 @@ import (
 // What is true of any source of resolver lookups, and is therefore here: resolving the
 // querying machine, resolving the list that refused a lookup, walking the pages, and detecting
 // a gap. Which resolver, how its window behaves, and what can serve as a de-duplication key
-// are in internal/collect/dnslookup/<product>/, because all three are facts about a
+// are in each resolver's plugin directory, plugins/<product>/, because all three are facts about a
 // product.
 //
 // THE KIND NEVER PRESENTS WHAT IT READ AS COVERAGE OF A WINDOW. The one implementation that
@@ -40,7 +39,7 @@ func (c *LookupCoordinator) CollectDNSLookup(ctx context.Context) error {
 		// neither is an absence of lookups.
 		return nil
 	}
-	source, registered := c.SourceSet.DNSLookup.Lookup(providerKey)
+	source, registered := c.SourceSet.Lookup(Kind, providerKey)
 	if !registered {
 		return fmt.Errorf("collect: the active dns_lookup provider %q has no implementation",
 			providerKey)
@@ -59,7 +58,10 @@ func (c *LookupCoordinator) CollectDNSLookup(ctx context.Context) error {
 	// next resolves host names from past lookups not yet committed.
 	now, ingest := derive.On(c.Collector).BeginIngest()
 	defer derive.On(c.Collector).EndIngest(ingest)
-	span := source.RequestedSpanSeconds()
+	// The two values the implementation states (its contract's `values`): how many pages one pass may
+	// walk, and the window it asks for, which is never presented as coverage.
+	span := provider.Integer(source.Values, "requested_span_seconds")
+	pageBound := int(provider.Integer(source.Values, "page_bound"))
 	windowStart := now - span
 
 	var (
@@ -71,8 +73,12 @@ func (c *LookupCoordinator) CollectDNSLookup(ctx context.Context) error {
 		totalRows              int
 	)
 
-	for page := 1; page <= source.PageBound(); page++ {
-		records, result, readErr := source.Lookups(ctx, c, page)
+	for page := 1; page <= pageBound; page++ {
+		answer, result, readErr := source.Implementation.Call(ctx, c, "lookups", page)
+		records := make([]vocab.DNSResolution, 0, len(provider.Records(answer, "lookups")))
+		for _, record := range provider.Records(answer, "lookups") {
+			records = append(records, reportedLookup(record))
+		}
 		lastResult = result
 		if errors.Is(readErr, provider.ErrUnsupportedRead) {
 			// Registered, probed, and not readable. A state with its reason, not a failed pass.
@@ -195,7 +201,7 @@ func (c *LookupCoordinator) lookupStoreFailure(ctx context.Context, providerID i
 }
 
 // buildDNSResolution turns one record into a row, resolving the querying machine.
-func (c *LookupCoordinator) buildDNSResolution(ctx context.Context, record dnslookup.Record,
+func (c *LookupCoordinator) buildDNSResolution(ctx context.Context, record vocab.DNSResolution,
 	resolver string, now int64) (vocab.DNSResolution, error) {
 	// The resolver's query report gives, in place of the querying address, the name a
 	// reverse lookup of it returned whenever there was one (opnsense/core 26.7.3,
@@ -237,32 +243,23 @@ func (c *LookupCoordinator) buildDNSResolution(ctx context.Context, record dnslo
 		// seen behind.
 	}
 
+	lookup := record
+	lookup.ClientAddress, lookup.ClientHostname, lookup.ClientResolution = clientAddress, clientHostname, resolution
+	lookup.ClientID, lookup.Resolver, lookup.IngestedAt = clientID, resolver, now
+	return lookup, nil
+}
+
+// reportedLookup is a checked dns_lookup record as a row holding what the resolver reported;
+// buildDNSResolution adds what the core derives.
+func reportedLookup(record provider.Answer) vocab.DNSResolution {
 	return vocab.DNSResolution{
-		LookupKey:        record.DeduplicationKey,
-		ClientAddress:    clientAddress,
-		ClientHostname:   clientHostname,
-		ClientResolution: resolution,
-		ClientFamily:     record.ClientFamily,
-		ClientID:         clientID,
-		Domain:           record.Domain,
-		Resolver:         resolver,
-		Action:           record.Action,
-		AnswerSource:     record.AnswerSource,
-		Rcode:            record.Rcode,
-		DNSSECStatus:     record.DNSSECStatus,
-		BlocklistName:    record.BlocklistName,
-		LookedUpAt:       record.LookedUpAt,
-		IngestedAt:       now,
-	}, nil
+		LookupKey: provider.Text(record, "deduplication_key"), ClientAddress: provider.Text(record, "client_address"),
+		ClientFamily: provider.IntegerPointer(record, "client_family"), Domain: provider.Text(record, "domain"),
+		Action: provider.Text(record, "action"), AnswerSource: provider.TextPointer(record, "answer_source"),
+		Rcode: provider.TextPointer(record, "rcode"), DNSSECStatus: provider.TextPointer(record, "dnssec_status"),
+		BlocklistName: provider.Text(record, "blocklist_name"), LookedUpAt: provider.Integer(record, "looked_up_at"),
+	}
 }
 
-// ProbeDNSLookup probes every implementation of the dns_lookup kind. The probe round (collect.ProbeAll)
-// runs it with every other kind's.
-func (c *LookupCoordinator) ProbeDNSLookup(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindDNSLookup, core.ProbeablesOf(c.SourceSet.DNSLookup, lookupProbe))
-}
-
-// lookupProbe is the probe of one dns_lookup implementation, as core.ProbeablesOf takes it.
-func lookupProbe(source dnslookup.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
-}
+// Kind is the kind this coordinator collects.
+const Kind = "dns_lookup"

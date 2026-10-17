@@ -23,7 +23,7 @@ import (
 // withholds what carries a domain.
 var exampleDomainsPlugin = map[string]string{
 	"plugin.json": `{
-		"api_version": 1, "name": "example_domains", "version": "0.1.0", "display_name": "Example domains",
+		"api_version": 2, "name": "example_domains", "version": "0.1.0", "display_name": "Example domains",
 		"widgets": ["example_looked_up_names"]}`,
 	"widgets/example_looked_up_names/manifest.json": `{
 		"manifest_version": 1, "type": "example_looked_up_names", "shape": "table",

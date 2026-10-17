@@ -58,7 +58,7 @@ double underscore. A plugin directory holds no Go file; a test of the repository
 
 | Key | Required | What it is |
 |---|---|---|
-| `api_version` | yes | The plugin API version the plugin targets. This build reads version `1`. |
+| `api_version` | yes | The plugin API version the plugin targets. This build reads version `2` only. |
 | `name` | yes | The plugin's name, equal to its directory's name. |
 | `version` | yes | The plugin's own version, reported and never interpreted. |
 | `display_name` | yes | What the plugin is called, in English. |
@@ -585,7 +585,7 @@ their own:
 
 ```json
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "example_versions",
   "version": "0.1.0",
   "display_name": "Example versions",
@@ -1257,7 +1257,10 @@ every run.
 `api_version` is the version of everything this document describes: the manifest, the host, the
 contracts and the test API. A change a plugin written for the current version would not survive
 raises it, and a build reads a range of versions. A plugin targeting a version outside the range is
-refused, naming both, so a format change is never half understood.
+refused, naming both, so a format change is never half understood. This build reads version 2 alone:
+version 2 made kinds, datasets, derivations, measures and pages declarations, and removed the
+source-specific host helpers, so a version-1 plugin would not survive it, and no compatibility code
+reads one.
 
 ## Kinds
 
@@ -2176,7 +2179,7 @@ is active at a time: the records of one that is not are counted and not stored.
 
 ```json path=example_exporter/plugin.json
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "example_exporter",
   "version": "1.0.0",
   "display_name": "Example exporter",
@@ -2305,7 +2308,7 @@ A test never calls its parse function directly to prove ingestion: it delivers r
 
 ```json path=example_logins/plugin.json
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "example_logins",
   "version": "1.0.0",
   "display_name": "Example logins",
@@ -2362,7 +2365,7 @@ expresses.
 
 ```json path=example_pairs/plugin.json
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "example_pairs",
   "version": "1.0.0",
   "display_name": "Example pairs",
@@ -2443,7 +2446,7 @@ reaches the exporter at all.
 
 ```json path=example_flows/plugin.json
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "example_flows",
   "version": "1.0.0",
   "display_name": "Example flows",
@@ -2511,7 +2514,7 @@ of code.
 
 ```json path=example_leases/plugin.json
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "example_leases",
   "version": "1.0.0",
   "display_name": "Example leases",
@@ -2572,7 +2575,7 @@ one per line, keeping the copy in its data directory and asking for it again onl
 
 ```json path=example_domains/plugin.json
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "example_domains",
   "version": "1.0.0",
   "display_name": "Example suffixes",
@@ -2717,7 +2720,7 @@ tests arrange the rows themselves. Its golden file is the whole answer, written 
 
 ```json path=example_latency/plugin.json
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "example_latency",
   "version": "1.0.0",
   "display_name": "Example latency",

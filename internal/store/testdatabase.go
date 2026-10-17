@@ -27,8 +27,8 @@ import (
 // schema it holds, so a run whose schema is unchanged reuses the template a previous run left on
 // the test instance, and a run whose schema changed builds a new one; it is built under a
 // temporary name and renamed when complete, so a run interrupted half-way never leaves a template
-// another run would trust. Each clone, and its read role, is dropped by its exact name when the
-// test ends.
+// another run would trust. Each clone is dropped by its exact name when the test ends; its read
+// role is the template's, shared by every clone and kept with the template (sharedReadRoles below).
 //
 // The test instance is the one OPNVIEW_TEST_DATABASE names, a connection to its maintenance
 // database: docker-compose.yml supplies it to the everyday and the pre-deployment commands. This
@@ -65,7 +65,7 @@ func cloneStrategy() (string, error) {
 
 // testTemplateRevision is raised when what Open writes into a fresh database changes for a reason
 // the schema's digest does not see.
-const testTemplateRevision = "2"
+const testTemplateRevision = "4"
 
 var (
 	templateOnce sync.Once
@@ -111,6 +111,7 @@ func NewTestDatabase(ctx context.Context) (*TestDatabase, error) {
 	if err := createDatabase(ctx, admin, name, templateName); err != nil {
 		return nil, err
 	}
+	shareReadRole(name, sqldb.ReadRoleName(templateName))
 	dsn, err := withDatabase(admin, name)
 	if err != nil {
 		return nil, err
@@ -121,7 +122,8 @@ func NewTestDatabase(ctx context.Context) (*TestDatabase, error) {
 // Name is the database's name.
 func (d *TestDatabase) Name() string { return d.name }
 
-// Drop drops the database and its read role, by their exact names.
+// Drop drops the database by its exact name, and its read role when the role is its own: a role
+// shared with the template's other clones is the template's, kept with it.
 func (d *TestDatabase) Drop(ctx context.Context) error {
 	started := time.Now()
 	if !d.created.IsZero() {
@@ -136,6 +138,9 @@ func (d *TestDatabase) Drop(ctx context.Context) error {
 		" WITH (FORCE)"); err != nil {
 		return fmt.Errorf("store: dropping the test database %s: %w", d.name, err)
 	}
+	if _, shared := forgetSharedReadRole(d.name); shared {
+		return nil
+	}
 	if _, err := db.ExecContext(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{sqldb.ReadRoleName(d.name)}.Sanitize()); err != nil {
 		return fmt.Errorf("store: dropping the read role of %s: %w", d.name, err)
 	}
@@ -148,7 +153,12 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	digest := sha256.Sum256(append(schema, []byte(testTemplateRevision)...))
+	// The registry rows a template holds are the built-ins' declarations, so they are part of what it is.
+	declarations, err := builtinDeclarationsText()
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(append(append(schema, []byte(testTemplateRevision)...), declarations...))
 	name := "opnview_template_" + hex.EncodeToString(digest[:])[:16]
 	db, err := adminPool(admin)
 	if err != nil {
@@ -169,6 +179,9 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 	if err := createDatabase(ctx, admin, building, ""); err != nil {
 		return "", err
 	}
+	// The template's read role is named after the template, and every clone shares it.
+	shareReadRole(building, sqldb.ReadRoleName(name))
+	defer forgetSharedReadRole(building)
 	dsn, err := withDatabase(admin, building)
 	if err != nil {
 		return "", err
@@ -176,6 +189,11 @@ func ensureTemplate(ctx context.Context, admin string) (string, error) {
 	store, err := Open(ctx, dsn)
 	if err != nil {
 		return "", fmt.Errorf("store: building the test template: %w", err)
+	}
+	// The registry rows the built-ins write when they load: the DDL seeds none (schema.sql).
+	if err := store.RegisterBuiltinDeclarations(ctx); err != nil {
+		_ = store.Close()
+		return "", fmt.Errorf("store: registering the built-ins in the test template: %w", err)
 	}
 	if err := store.Close(); err != nil {
 		return "", err
@@ -342,9 +360,63 @@ func NewTestDatabaseFrom(ctx context.Context, template *TestDatabase) (*TestData
 	if err := createDatabase(ctx, template.admin, name, template.name); err != nil {
 		return nil, err
 	}
+	role, shared := sharedReadRole(template.name)
+	if !shared {
+		role = sqldb.ReadRoleName(template.name)
+	}
+	shareReadRole(name, role)
 	dsn, err := withDatabase(template.admin, name)
 	if err != nil {
 		return nil, err
 	}
 	return newTestDatabase(dsn, name, template.admin, started), nil
+}
+
+// THE TEST DATABASES OF ONE TEMPLATE SHARE ITS READ ROLE (orchestrator decision 1 of Lot 2 of the
+// plugin-API amendment). A role of its own cost each test database about 160 ms of database time --
+// creating it, altering it, granting it, dropping it, each a write to the instance-wide role catalogue
+// every concurrent test contends on. The template's role is created and granted once, when the template
+// is built; a clone copies the grants with its catalogue, so its open writes nothing to the role catalogue
+// and its drop leaves the role to the template. Each test still reads only its own database: a role
+// connects to one database at a time, and holds nothing in another the test did not create.
+var sharedReadRoles = struct {
+	mutex  sync.Mutex
+	byName map[string]string
+}{byName: map[string]string{}}
+
+// shareReadRole records that a test database's read connections log in as a template's role.
+func shareReadRole(database, role string) {
+	sharedReadRoles.mutex.Lock()
+	defer sharedReadRoles.mutex.Unlock()
+	sharedReadRoles.byName[database] = role
+}
+
+// sharedReadRole is the shared read role a test database logs in as, when it has one.
+func sharedReadRole(database string) (string, bool) {
+	sharedReadRoles.mutex.Lock()
+	defer sharedReadRoles.mutex.Unlock()
+	role, shared := sharedReadRoles.byName[database]
+	return role, shared
+}
+
+// forgetSharedReadRole removes a database's entry, reporting whether it had one.
+func forgetSharedReadRole(database string) (string, bool) {
+	sharedReadRoles.mutex.Lock()
+	defer sharedReadRoles.mutex.Unlock()
+	role, shared := sharedReadRoles.byName[database]
+	delete(sharedReadRoles.byName, database)
+	return role, shared
+}
+
+// openReaders opens a database's read connections: as its own read role, which the product always
+// uses, or as the shared role of the test template it was cloned from.
+func openReaders(ctx context.Context, handle *sqldb.Handle) (*sqldb.ReadConnections, error) {
+	var database string
+	if err := handle.SQL.QueryRowContext(ctx, "SELECT current_database()").Scan(&database); err != nil {
+		return nil, fmt.Errorf("store: reading the database name: %w", err)
+	}
+	if role, shared := sharedReadRole(database); shared {
+		return sqldb.OpenSharedReaders(ctx, handle, role)
+	}
+	return sqldb.OpenReaders(ctx, handle)
 }

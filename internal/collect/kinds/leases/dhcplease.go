@@ -7,7 +7,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/collect/identity"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
@@ -21,7 +20,7 @@ import (
 // What is true of any lease source, and is therefore here: the identity cascade, resolving
 // the interface the backend named, reading one page of the standard envelope, normalising the
 // field-name differences away, and writing one row per lease generation. Which backend, and
-// what each one's own facts are, is in internal/collect/dhcplease/<product>/ — one directory each,
+// what each one's own facts are, is in its plugin directory, plugins/<product>/ — one directory each,
 // which is what makes a fourth backend one more directory.
 //
 // THIS IS THE KIND THAT MAKES THE SEAM NECESSARY RATHER THAN NOTIONAL. All three are
@@ -222,14 +221,15 @@ func leaseFailureDetail(failed, limit int64) string {
 func (c *LeaseCoordinator) collectLeasesFrom(ctx context.Context, active core.ActiveSource, seen *[]string) (
 	leaseBackendOutcome, error) {
 	providerKey, providerID := active.ProviderKey, active.ProviderID
-	source, registered := c.SourceSet.DHCPLease.Lookup(providerKey)
+	source, registered := c.SourceSet.Lookup(Kind, providerKey)
 	if !registered {
 		failed, limit := c.noteLeaseFailure(providerID)
 		return failedOutcome(failed, limit), fmt.Errorf(
 			"collect: the active dhcp_lease provider %q has no implementation", providerKey)
 	}
 
-	observations, result, readErr := source.Leases(ctx, c, c.Pages().DHCPLease)
+	answer, result, readErr := source.Implementation.Call(ctx, c, "leases", c.Pages().DHCPLease)
+	observations := provider.Records(answer, "leases")
 	if errors.Is(readErr, provider.ErrUnsupportedRead) {
 		// The implementation is registered and its material cannot be read. That is a state,
 		// recorded with its reason, and not a failed pass: nothing was attempted.
@@ -271,7 +271,7 @@ func (c *LeaseCoordinator) collectLeasesFrom(ctx context.Context, active core.Ac
 		return failedOutcome(failed, limit), err
 	}
 	for _, observation := range observations {
-		*seen = append(*seen, observation.Address)
+		*seen = append(*seen, provider.Text(observation, "address"))
 	}
 	c.clearLeaseFailures(providerID)
 	if writeErr := c.WriteAvailability(ctx, providerID, result.State,
@@ -290,7 +290,7 @@ func (c *LeaseCoordinator) collectLeasesFrom(ctx context.Context, active core.Ac
 // implementation has one backend; the row keeps both so that a second
 // implementation reading the same shape somewhere else does not collapse into the
 // first.
-func (c *LeaseCoordinator) storeLeases(ctx context.Context, observations []dhcplease.Observation,
+func (c *LeaseCoordinator) storeLeases(ctx context.Context, observations []provider.Answer,
 	snapshot core.Discovery, providerID int64, backend string, now int64) error {
 	clients := make([]vocab.Client, len(observations))
 	leases := make([]vocab.DHCPLease, len(observations))
@@ -309,17 +309,25 @@ func (c *LeaseCoordinator) storeLeases(ctx context.Context, observations []dhcpl
 
 // leaseRows is the machine and the lease generation of one observation, the lease's client still to be
 // written.
-func leaseRows(observation dhcplease.Observation, snapshot core.Discovery, backend string,
+func leaseRows(observation provider.Answer, snapshot core.Discovery, backend string,
 	now int64) (vocab.Client, vocab.DHCPLease) {
+	lease := vocab.DHCPLease{
+		Backend: backend, Address: provider.Text(observation, "address"),
+		MAC: decode.MACPointer(provider.Text(observation, "mac")), Hostname: provider.TextPointer(observation, "hostname"),
+		DHCPClientID: provider.TextPointer(observation, "dhcp_client_id"), DUID: provider.TextPointer(observation, "duid"),
+		IAID: provider.TextPointer(observation, "iaid"), VendorHint: provider.TextPointer(observation, "vendor_hint"),
+		LeaseState: provider.Text(observation, "lease_state"), StartsAt: provider.IntegerPointer(observation, "starts_at"),
+		ExpiresAt: provider.IntegerPointer(observation, "expires_at"), ObservedAt: now,
+	}
 	// The lease endpoints report the interface under up to three names. Only two of them are
 	// join keys opnview already holds — the configuration key and the device — so both are
 	// tried against the maps discovery built, and never the description, which is a name.
 	var interfaceID *int64
-	if id, found := snapshot.InterfaceIDByIdentifier[observation.InterfaceIdentifier]; found {
+	if id, found := snapshot.InterfaceIDByIdentifier[provider.Text(observation, "interface_identifier")]; found {
 		interfaceID = &id
 	}
 	if interfaceID == nil {
-		if id, found := snapshot.InterfaceIDByDevice[observation.InterfaceDevice]; found {
+		if id, found := snapshot.InterfaceIDByDevice[provider.Text(observation, "interface_device")]; found {
 			interfaceID = &id
 		}
 	}
@@ -327,33 +335,19 @@ func leaseRows(observation dhcplease.Observation, snapshot core.Discovery, backe
 	// The generation key, and the start, which is stored only when the backend reported one.
 	// Composed by the store so that every backend composes it the same way: the idempotence of
 	// the lease table rests on that and on nothing else.
-	generationKey := vocab.GenerationKeyOf(observation.StartsAt, observation.ExpiresAt, identity.DayStart(now))
+	lease.GenerationKey = vocab.GenerationKeyOf(lease.StartsAt, lease.ExpiresAt, identity.DayStart(now))
+	lease.InterfaceID = interfaceID
 
-	identity := leaseIdentity(observation, interfaceID, now)
+	address := lease.Address
 	client := vocab.Client{
-		Identity:    identity,
+		Identity:    leaseIdentity(lease, interfaceID, now),
 		InterfaceID: interfaceID,
-		MAC:         observation.MAC,
-		Hostname:    observation.Hostname,
-		VendorHint:  observation.VendorHint,
-		LastAddress: &observation.Address,
+		MAC:         lease.MAC,
+		Hostname:    lease.Hostname,
+		VendorHint:  lease.VendorHint,
+		LastAddress: &address,
 	}
-	return client, vocab.DHCPLease{
-		Backend:       backend,
-		Address:       observation.Address,
-		MAC:           observation.MAC,
-		Hostname:      observation.Hostname,
-		DHCPClientID:  observation.DHCPClientID,
-		DUID:          observation.DUID,
-		IAID:          observation.IAID,
-		VendorHint:    observation.VendorHint,
-		LeaseState:    observation.LeaseState,
-		InterfaceID:   interfaceID,
-		StartsAt:      observation.StartsAt,
-		GenerationKey: generationKey,
-		ExpiresAt:     observation.ExpiresAt,
-		ObservedAt:    now,
-	}
+	return client, lease
 }
 
 // leaseIdentity picks the most stable level of the cascade the observation supports.
@@ -376,7 +370,7 @@ func leaseRows(observation dhcplease.Observation, snapshot core.Discovery, backe
 // the machine's own to send. It is reachable if a backend stops reporting a field the other
 // reports. Closing it would mean merging identities across cascade levels on a shared MAC, which
 // is a change to the cascade rather than to this kind, and it is not attempted here.
-func leaseIdentity(observation dhcplease.Observation, interfaceID *int64,
+func leaseIdentity(observation vocab.DHCPLease, interfaceID *int64,
 	now int64) vocab.ClientIdentity {
 	for _, candidate := range []*string{
 		observation.DHCPClientID, observation.DUID, observation.IAID,
@@ -434,7 +428,7 @@ func (c *LeaseCoordinator) collectNeighbours(ctx context.Context, seen *[]string
 // ingestNeighbour turns one ARP or NDP row into a machine at the MAC level.
 func (c *LeaseCoordinator) ingestNeighbour(ctx context.Context, row decode.Object,
 	snapshot core.Discovery, now int64) error {
-	mac := dhcplease.MACPointer(decode.RawString(row, "mac"))
+	mac := decode.MACPointer(decode.RawString(row, "mac"))
 	address, hasAddress := decode.String(row, "ip")
 	if mac == nil || !hasAddress {
 		// Without both there is nothing here the cascade can use: a MAC with no address names a
@@ -477,13 +471,5 @@ func (c *LeaseCoordinator) ingestNeighbour(ctx context.Context, row decode.Objec
 	return err
 }
 
-// ProbeDHCPLease probes every implementation of the dhcp_lease kind. The probe round (collect.ProbeAll)
-// runs it with every other kind's.
-func (c *LeaseCoordinator) ProbeDHCPLease(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindDHCPLease, core.ProbeablesOf(c.SourceSet.DHCPLease, leaseProbe))
-}
-
-// leaseProbe is the probe of one dhcp_lease implementation, as core.ProbeablesOf takes it.
-func leaseProbe(source dhcplease.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
-}
+// Kind is the kind this coordinator collects.
+const Kind = "dhcp_lease"

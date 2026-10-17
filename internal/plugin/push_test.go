@@ -24,7 +24,7 @@ import (
 // to break one way.
 func pushManifest() map[string]any {
 	return map[string]any{
-		"api_version": 1, "name": "example_push", "version": "1.0.0", "display_name": "Example push",
+		"api_version": 2, "name": "example_push", "version": "1.0.0", "display_name": "Example push",
 		"tables": []any{map[string]any{"name": "lines", "columns": []any{
 			map[string]any{"name": "logged_at", "type": "instant"},
 			map[string]any{"name": "word", "type": "text"},
@@ -224,11 +224,14 @@ func TestBuiltinPushDeclarationsRestOnVerifiedFacts(t *testing.T) {
 	}
 }
 
-// TestThePushedDigestPrefixIsTheCollectors: the plugin package writes the prefix the collector reads.
+// TestThePushedDigestPrefixIsTheCollectors: a pushed firewall_log record's identity carries the prefix the
+// collector reads the newest pushed record by, defined once in the provider package.
 func TestThePushedDigestPrefixIsTheCollectors(t *testing.T) {
 	t.Parallel()
-	if !strings.HasPrefix(pushedDigest(push.Record{Fields: map[string]any{"message": "x"}}), "push:") ||
-		pushedDigestPrefix != "push:" {
+	answer := map[string]any{}
+	provider.PushConversionOf("firewall_log").Identify(answer, provider.PushDelivery{Fields: map[string]any{"message": "x"}})
+	if digest, _ := answer["digest"].(string); !strings.HasPrefix(digest, provider.PushedDigestPrefix) ||
+		provider.PushedDigestPrefix != "push:" {
 		t.Error("the pushed digest prefix is not push:")
 	}
 }

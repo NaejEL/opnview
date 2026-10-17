@@ -73,7 +73,7 @@ func TestThePluginListingListsEveryBuiltinAndCarriesNoSecret(t *testing.T) {
 			continue
 		}
 		if entry.State != listing.StateLoaded || entry.Origin != plugin.OriginBuiltin || entry.Version == "" ||
-			entry.APIVersion != 1 || len(entry.Providers) == 0 {
+			entry.APIVersion != 2 || len(entry.Providers) == 0 {
 			t.Errorf("%s is listed as %+v", name, entry)
 		}
 	}
@@ -239,7 +239,7 @@ func TestAThirdPartyPluginIsListedAndARefusedOneSaysWhy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("example_reader/plugin.json", `{"api_version": 1, "name": "example_reader", "version": "0.1.0",
+	write("example_reader/plugin.json", `{"api_version": 2, "name": "example_reader", "version": "0.1.0",
 		"display_name": "Example reader", "description": "A lease source probed for its presence.",
 		"script": "example_reader.js",
 		"endpoints": [{"name": "status", "path": "/api/examplereader/service/status", "method": "GET"}],
@@ -249,7 +249,7 @@ func TestAThirdPartyPluginIsListedAndARefusedOneSaysWhy(t *testing.T) {
 			outcome: "plugin_not_installed" } }; },
 		leases: function () { return { result: { probe: "status", state: "unavailable",
 			outcome: "read_not_supported" }, unsupported: "an example reads nothing" }; } };`)
-	write("broken_example/plugin.json", `{"api_version": 1, "name": `)
+	write("broken_example/plugin.json", `{"api_version": 2, "name": `)
 
 	harness := webtest.NewAdjusted(t, dataDir, true, false, func(options *web.Options) {
 		loaded, err := plugin.Load(context.Background(), plugin.Options{DataDir: dataDir, Store: options.Store,

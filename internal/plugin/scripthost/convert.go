@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/NaejEL/opnview/internal/collect/provider"
@@ -58,6 +59,17 @@ func CheckRecord(contract provider.Contract, table string, value any, path strin
 	return checked, nil
 }
 
+// boundsOf refuses a number outside its field's bounds (provider.Field.Min and Max).
+func boundsOf(field provider.Field, value float64, path string) error {
+	if field.Min != nil && value < *field.Min {
+		return fmt.Errorf("%s is %v, below its least value %v", path, value, *field.Min)
+	}
+	if field.Max != nil && value > *field.Max {
+		return fmt.Errorf("%s is %v, above its greatest value %v", path, value, *field.Max)
+	}
+	return nil
+}
+
 // convertField converts one present, non-null value to its field's type.
 func convertField(contract provider.Contract, field provider.Field, raw any, path string) (any, error) {
 	switch field.Type {
@@ -69,19 +81,25 @@ func convertField(contract provider.Contract, field provider.Field, raw any, pat
 		if len(field.Values) > 0 && !contains(field.Values, text) {
 			return nil, fmt.Errorf("%s is %q, which is not one of %v", path, text, field.Values)
 		}
+		if field.Term && !provider.TermShapeValid(text) {
+			return nil, fmt.Errorf("%s is %q, which is not a lower-case word with no space", path, text)
+		}
 		return text, nil
 	case provider.FieldInteger:
 		number, ok := IntegerOf(raw)
 		if !ok {
 			return nil, fmt.Errorf("%s is %v, not an integer", path, raw)
 		}
-		return number, nil
+		if len(field.IntegerValues) > 0 && !slices.Contains(field.IntegerValues, number) {
+			return nil, fmt.Errorf("%s is %d, which is not one of %v", path, number, field.IntegerValues)
+		}
+		return number, boundsOf(field, float64(number), path)
 	case provider.FieldNumber:
 		number, ok := numberOf(raw)
 		if !ok {
 			return nil, fmt.Errorf("%s is %v, not a number", path, raw)
 		}
-		return number, nil
+		return number, boundsOf(field, number, path)
 	case provider.FieldBoolean:
 		flag, isFlag := raw.(bool)
 		if !isFlag {
@@ -178,56 +196,18 @@ func contains(values []string, value string) bool {
 	return false
 }
 
-// The typed readers of a checked record.
-
-func Text(record map[string]any, name string) string {
-	value, _ := record[name].(string)
-	return value
-}
-
-func TextPointer(record map[string]any, name string) *string {
-	value, present := record[name].(string)
-	if !present {
-		return nil
-	}
-	return &value
-}
-
-func Integer(record map[string]any, name string) int64 {
-	value, _ := record[name].(int64)
-	return value
-}
-
-func IntegerPointer(record map[string]any, name string) *int64 {
-	value, present := record[name].(int64)
-	if !present {
-		return nil
-	}
-	return &value
-}
-
-func Number(record map[string]any, name string) float64 {
-	value, _ := record[name].(float64)
-	return value
-}
-
-func Flag(record map[string]any, name string, absent bool) bool {
-	value, present := record[name].(bool)
-	if !present {
-		return absent
-	}
-	return value
-}
-
-func Records(record map[string]any, name string) []map[string]any {
-	value, _ := record[name].([]map[string]any)
-	return value
-}
-
-func Texts(record map[string]any, name string) []string {
-	value, _ := record[name].([]string)
-	return value
-}
+// The typed readers of a checked record are the provider package's (answer.go): a kind's coordinator
+// reads the answers the host checked with the same functions.
+var (
+	Text           = provider.Text
+	TextPointer    = provider.TextPointer
+	Integer        = provider.Integer
+	IntegerPointer = provider.IntegerPointer
+	Number         = provider.Number
+	Flag           = provider.Flag
+	Records        = provider.Records
+	Texts          = provider.Texts
+)
 
 // ResultOf converts a checked `result` record to a provider.Result. Its probe names one of the
 // plugin's declared endpoints; its outcome is one of the closed outcome codes.

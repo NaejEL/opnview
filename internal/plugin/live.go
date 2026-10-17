@@ -8,11 +8,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/NaejEL/opnview/internal/collect/measurement"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/plugin/scripthost"
-	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // The live pass (C3 of the backend-completion cycle, docs/plugins.md "Live pass").
@@ -25,18 +23,16 @@ import (
 // datum; the cadence is never served below an endpoint's freshness floor, which the broker applies.
 // Its records are the kind's own, stored marked as fine samples.
 //
-// Only a kind whose records a fine sample can be is accepted: measurement_sample, today's only
-// sampled kind. A live pass on any other kind is refused at load, with its reason.
-
-// liveKinds are the kinds a live pass may be declared on, each with the answer record its live
-// function returns: the answer of the kind's read function.
-var liveKinds = map[string]string{measurement.Kind: "sample_answer"}
+// Only a kind whose records a fine sample can be is accepted: a kind whose file names its live answer
+// (provider.Contract.LiveAnswer). A live pass on any other kind is refused at load, with its reason.
 
 // LiveKinds lists the kinds accepting a live pass, for the documentation's test.
 func LiveKinds() []string {
-	kinds := make([]string, 0, len(liveKinds))
-	for kind := range liveKinds {
-		kinds = append(kinds, kind)
+	var kinds []string
+	for _, kind := range provider.Kinds() {
+		if kind.LiveAnswer != "" {
+			kinds = append(kinds, kind.Kind)
+		}
 	}
 	sort.Strings(kinds)
 	return kinds
@@ -70,7 +66,7 @@ func checkLive(plugin *Plugin, declaration contract.ProviderDeclaration, exports
 	if live == nil {
 		return nil, nil
 	}
-	if _, accepted := liveKinds[declaration.Kind]; !accepted {
+	if kindContract, _ := provider.ContractOf(declaration.Kind); kindContract.LiveAnswer == "" {
 		return nil, contract.Refuse(plugin.Name, contract.RefusalLivePassInvalid, "the %s kind has no live pass: only %v accept one",
 			declaration.Kind, LiveKinds())
 	}
@@ -131,27 +127,6 @@ func listedLive(declaration contract.ProviderDeclaration) *ListedLive {
 	sort.Strings(endpoints)
 	return &ListedLive{Function: declaration.Live.Function, CadenceSetting: declaration.Live.CadenceSetting,
 		Endpoints: endpoints}
-}
-
-// liveMeasurementAdapter is a measurement_sample plugin declaring a live pass: a
-// measurement.LiveSource.
-type liveMeasurementAdapter struct {
-	measurementAdapter
-	script *scripthost.Script
-	live   *liveBinding
-}
-
-// LiveCadence names the cadence setting, its default, its lower bound and its endpoints' floor.
-func (a liveMeasurementAdapter) LiveCadence() (string, int64, int64, int64) {
-	return a.live.settingKey, a.live.fallback, a.live.minimum, a.live.floor
-}
-
-// Live runs the live pass, its requests accepting an answer at most cadence old.
-func (a liveMeasurementAdapter) Live(ctx context.Context, session provider.Session, snapshot provider.Discovery,
-	providerID, now int64, cadence time.Duration) ([]vocab.MeasurementSample, []string, provider.Result, error) {
-	live := a.measurementAdapter
-	live.invoker = liveInvoker{script: a.script, namespace: measurement.Kind, maxAge: cadence, only: a.live.only}
-	return live.sampleWith(ctx, session, a.live.function, snapshot, providerID, now)
 }
 
 // liveInvoker calls a live function: the script's, under the live pass's max age and endpoints.

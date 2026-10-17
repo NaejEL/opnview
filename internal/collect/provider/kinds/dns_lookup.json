@@ -1,0 +1,161 @@
+{
+  "kind" : "dns_lookup",
+  "description" : "The lookups a resolver answered, per querying client: data source 5, the sole source of site names. The kind never presents what it read as coverage of a window.",
+  "concurrent" : false,
+  "push" : false,
+  "bindable" : true,
+  "functions" : [
+    {
+      "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
+      "name" : "probe",
+      "arguments" : "host",
+      "returns" : "probe_answer"
+    },
+    {
+      "description" : "Called for pages 1 to page_bound at every lookup pass.",
+      "name" : "lookups",
+      "arguments" : "host, page",
+      "returns" : "lookups_answer"
+    }
+  ],
+  "records" : [
+    {
+      "description" : "What `probe` returns.",
+      "name" : "probe_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "Why the probe could not finish, when it could not.",
+          "name" : "error",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "What `lookups` returns.",
+      "name" : "lookups_answer",
+      "fields" : [
+        {
+          "description" : "The `result` record.",
+          "name" : "result",
+          "type" : "record",
+          "required" : true,
+          "of" : "result"
+        },
+        {
+          "description" : "The `dns_lookup_record` records read, absent when the read failed.",
+          "name" : "lookups",
+          "type" : "records",
+          "of" : "dns_lookup_record"
+        },
+        {
+          "description" : "Why the read failed, when it did; the result then says what the firewall answered.",
+          "name" : "error",
+          "type" : "text"
+        },
+        {
+          "description" : "Why this implementation's material can never be read, when that is so: a state, recorded with its reason, and not a failure.",
+          "name" : "unsupported",
+          "type" : "text"
+        }
+      ]
+    },
+    {
+      "description" : "One lookup, decoded and normalised.",
+      "name" : "dns_lookup_record",
+      "fields" : [
+        {
+          "description" : "The lookup's identity, composed by the implementation; a lookup read twice is stored once.",
+          "name" : "deduplication_key",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The querying client's address, or the host name the resolver logged for it.",
+          "name" : "client_address",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "4 or 6: the querying address's family.",
+          "name" : "client_family",
+          "type" : "integer",
+          "integer_values" : [
+            4,
+            6
+          ]
+        },
+        {
+          "description" : "The name looked up.",
+          "name" : "domain",
+          "type" : "text",
+          "required" : true
+        },
+        {
+          "description" : "The resolver's verdict.",
+          "name" : "action",
+          "type" : "text",
+          "required" : true,
+          "values" : [
+            "pass",
+            "block",
+            "drop",
+            "unknown"
+          ]
+        },
+        {
+          "description" : "Where the answer came from.",
+          "name" : "answer_source",
+          "type" : "text"
+        },
+        {
+          "description" : "The response code.",
+          "name" : "rcode",
+          "type" : "text"
+        },
+        {
+          "description" : "The DNSSEC status.",
+          "name" : "dnssec_status",
+          "type" : "text"
+        },
+        {
+          "description" : "The list that refused it, when one did and the resolver names it.",
+          "name" : "blocklist_name",
+          "type" : "text"
+        },
+        {
+          "description" : "When the lookup was made.",
+          "name" : "looked_up_at",
+          "type" : "integer",
+          "required" : true,
+          "unit" : "UTC epoch seconds"
+        }
+      ]
+    }
+  ],
+  "values" : [
+    {
+      "description" : "How many pages one pass may walk, 1 or more.",
+      "name" : "page_bound",
+      "type" : "integer",
+      "required" : true,
+      "min" : 1,
+      "default" : 1
+    },
+    {
+      "description" : "The window the implementation asks for, 0 or more; never presented as coverage.",
+      "name" : "requested_span_seconds",
+      "type" : "integer",
+      "required" : true,
+      "min" : 0,
+      "default" : 0,
+      "unit" : "seconds"
+    }
+  ]
+}

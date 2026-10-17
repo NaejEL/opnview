@@ -6,7 +6,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
-	"github.com/NaejEL/opnview/internal/collect/firewalllog"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -37,7 +36,7 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 		// Collecting anyway would be reading a source opnview has just said it cannot read.
 		return nil
 	}
-	source, registered := c.SourceSet.FirewallLog.Lookup(providerKey)
+	source, registered := c.SourceSet.Lookup(Kind, providerKey)
 	if !registered {
 		return fmt.Errorf("collect: the active firewall_log provider %q has no implementation",
 			providerKey)
@@ -58,7 +57,11 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 	// pass records: the filter log's read-through instant, which the NetFlow join waits for
 	// (internal/collect/derive/flowrecord.go).
 	readStarted := c.Now()
-	records, result, readErr := source.Records(ctx, c, c.Pages().FirewallLog)
+	answer, result, readErr := source.Implementation.Call(ctx, c, "records", c.Pages().FirewallLog)
+	records := make([]vocab.Flow, 0, len(provider.Records(answer, "records")))
+	for _, record := range provider.Records(answer, "records") {
+		records = append(records, reportedFlow(record))
+	}
 	if writeErr := c.WriteAvailability(ctx, providerID, result.State,
 		result.Outcome, result.Probe, result.Detail); writeErr != nil {
 		return writeErr
@@ -124,7 +127,7 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 //
 // THE SOURCE PERIODS DECIDE WHICH RECORDS ARE KEPT (plan, pushpaths.go): a record of an instant a
 // push path covers is superseded, and a gap is clipped by what the push path stored.
-func (c *FilterLogCoordinator) storeFirewallLog(ctx context.Context, records []firewalllog.Record, plan pullPlan,
+func (c *FilterLogCoordinator) storeFirewallLog(ctx context.Context, records []vocab.Flow, plan pullPlan,
 	snapshot core.Discovery, now, providerID, newestStored int64, hasStored bool, stored *derive.Derivation) error {
 	oldestReturned := int64(0)
 	for index, record := range records {
@@ -160,6 +163,21 @@ func (c *FilterLogCoordinator) storeFirewallLog(ctx context.Context, records []f
 	return nil
 }
 
+// reportedFlow is a checked firewall_log record as a row holding what the source reported; buildFlow
+// adds what the core derives.
+func reportedFlow(record provider.Answer) vocab.Flow {
+	return vocab.Flow{
+		LogDigest: provider.Text(record, "digest"), ObservedAt: provider.Integer(record, "observed_at"),
+		InterfaceDevice: provider.Text(record, "device"), SrcAddress: provider.Text(record, "src_address"),
+		DstAddress: provider.Text(record, "dst_address"), SrcPort: provider.IntegerPointer(record, "src_port"),
+		DstPort: provider.IntegerPointer(record, "dst_port"), Protocol: provider.Text(record, "protocol"),
+		IPVersion: provider.Integer(record, "ip_version"), Action: provider.Text(record, "action"),
+		Direction: provider.Text(record, "direction"), LogReason: provider.TextPointer(record, "log_reason"),
+		PacketBytes: provider.Integer(record, "packet_bytes"), Rid: provider.TextPointer(record, "rid"),
+		IPID: provider.IntegerPointer(record, "ip_id"), TCPSeq: provider.IntegerPointer(record, "tcp_seq"),
+	}
+}
+
 // buildFlow turns one record into a row, resolving the two join keys.
 //
 // Neither failure drops the row: a device name absent from the map is `not_found`, a rid
@@ -174,7 +192,7 @@ func (c *FilterLogCoordinator) storeFirewallLog(ctx context.Context, records []f
 // address used to become a client row on whatever interface happened to log it first. Until the
 // derivation runs the row is north-south with no interface on either end, which is what the
 // schema's CHECK requires of an unplaced row.
-func buildFlow(record firewalllog.Record, snapshot core.Discovery, now int64) vocab.Flow {
+func buildFlow(record vocab.Flow, snapshot core.Discovery, now int64) vocab.Flow {
 	interfaceState := vocab.LookupNotFound
 	switch {
 	case snapshot.RefreshedAt == 0:
@@ -182,7 +200,7 @@ func buildFlow(record firewalllog.Record, snapshot core.Discovery, now int64) vo
 		// and missed. The two are different facts.
 		interfaceState = vocab.LookupPending
 	default:
-		if _, present := snapshot.InterfaceIDByDevice[record.Device]; present {
+		if _, present := snapshot.InterfaceIDByDevice[record.InterfaceDevice]; present {
 			interfaceState = vocab.LookupResolved
 		}
 	}
@@ -203,37 +221,23 @@ func buildFlow(record firewalllog.Record, snapshot core.Discovery, now int64) vo
 		}
 	}
 
-	return vocab.Flow{
-		LogDigest:            record.Digest,
-		ObservedAt:           record.ObservedAt,
-		IngestedAt:           now,
-		InterfaceDevice:      record.Device,
-		InterfaceLookupState: interfaceState,
-		SrcAddress:           record.SrcAddress,
-		DstAddress:           record.DstAddress,
-		SrcPort:              record.SrcPort,
-		DstPort:              record.DstPort,
-		Protocol:             record.Protocol,
-		IPVersion:            record.IPVersion,
-		Action:               record.Action,
-		Direction:            record.Direction,
-		LogReason:            record.LogReason,
-		PacketBytes:          record.PacketBytes,
-		Rid:                  record.Rid,
-		RuleID:               ruleID,
-		RuleLookupState:      ruleState,
-		IPID:                 record.IPID,
-		TCPSeq:               record.TCPSeq,
-	}
+	flow := record
+	flow.IngestedAt = now
+	flow.InterfaceLookupState = interfaceState
+	flow.RuleID, flow.RuleLookupState = ruleID, ruleState
+	return flow
 }
 
-// ProbeFirewallLog probes every implementation of the firewall_log kind. The probe round (collect.ProbeAll)
-// runs it with every other kind's.
-func (c *FilterLogCoordinator) ProbeFirewallLog(ctx context.Context) error {
-	return c.ResolveKind(ctx, core.KindFirewallLog, core.ProbeablesOf(c.SourceSet.FirewallLog, firewallLogProbe))
-}
+// Kind is the kind this coordinator collects.
+const Kind = "firewall_log"
 
-// firewallLogProbe is the probe of one firewall_log implementation, as core.ProbeablesOf takes it.
-func firewallLogProbe(source firewalllog.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
+func init() {
+	core.RegisterPushHandler(Kind, core.PushHandler{
+		Receive: func(ctx context.Context, c *core.Collector, key string, records []provider.Answer) error {
+			return On(c).receivePushed(ctx, key, records)
+		},
+		Liveness: func(ctx context.Context, c *core.Collector, key string, alive bool, at int64) error {
+			return On(c).pushLiveness(ctx, Kind, key, alive, at)
+		},
+	})
 }

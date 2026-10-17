@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "example_peers",
   "version": "0.1.0",
   "display_name": "Example peers",

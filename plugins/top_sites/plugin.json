@@ -1,5 +1,5 @@
 {
-  "api_version": 1,
+  "api_version": 2,
   "name": "top_sites",
   "version": "1.0.0",
   "display_name": "Top sites",
