@@ -8,31 +8,31 @@
       "grid": { "columns": 12, "row_height": 40 },
       "period": "24h",
       "widgets": [
-        { "id": "live-composition", "type": "traffic_composition", "placement": { "x": 0, "y": 0, "w": 5, "h": 11 },
-          "parameters": { "group_by": "interface", "split_by": "direction", "scope": "all", "slices": 6, "window_seconds": 120, "line_interpolation": "linear" } },
-        { "id": "traffic-over-time", "type": "traffic_over_time_by_scope", "placement": { "x": 5, "y": 0, "w": 7, "h": 9 },
-          "parameters": { "scopes": ["outbound", "inbound", "inter_interface"], "measure": "bytes", "stacked": true } },
-        { "id": "volume-by-interface", "type": "interface_volume_ranking", "placement": { "x": 0, "y": 11, "w": 7, "h": 9 },
-          "parameters": { "measure": "bytes", "scope": "all", "limit": 10, "include_unlabelled": true } },
-        { "id": "public-address", "type": "public_address", "placement": { "x": 7, "y": 11, "w": 5, "h": 9 },
-          "parameters": { "families": ["ipv4", "ipv6"], "show_history": true } },
-        { "id": "people", "type": "owner_activity", "placement": { "x": 0, "y": 20, "w": 12, "h": 12 },
-          "parameters": { "clients_per_card": 4, "sort": "volume" } },
-        { "id": "where-it-went", "type": "passed_traffic_world_map", "placement": { "x": 0, "y": 32, "w": 7, "h": 8 },
-          "parameters": { "scope": "all", "size_by": "bytes", "min_bytes": 0, "show_unplaced": true, "cluster": false } },
-        { "id": "volume-by-client", "type": "client_volume_ranking", "placement": { "x": 7, "y": 32, "w": 5, "h": 10 },
-          "parameters": { "identity": "any", "measure": "bytes", "limit": 8, "include_unstable": true } },
-        { "id": "connections", "type": "connection_tree", "placement": { "x": 0, "y": 40, "w": 7, "h": 9 },
-          "parameters": { "depth": 3, "measure": "bytes", "limit_per_level": 4 } },
-        { "id": "interface-to-operator", "type": "traffic_sankey", "placement": { "x": 7, "y": 42, "w": 5, "h": 9 },
-          "parameters": { "left": "interface", "right": "operator", "scope": "all", "measure": "bytes", "max_nodes": 7, "min_share": 0.02, "show_blocked": true } },
-        { "id": "sites-ranked", "type": "top_sites", "placement": { "x": 0, "y": 49, "w": 7, "h": 10 },
-          "parameters": { "period": "7d", "limit": 10, "min_flows": 20, "group_by_registrable_domain": true } },
-        { "id": "interface-matrix", "type": "interface_traffic_matrix", "placement": { "x": 0, "y": 59, "w": 12, "h": 9 },
+        { "id": "interface-matrix", "type": "interface_traffic_matrix", "placement": { "x": 0, "y": 0, "w": 12, "h": 5 },
           "parameters": { "scope": "all", "measure": "bytes", "show_rules": true } },
-        { "id": "who-used-what", "type": "sites_by_client", "placement": { "x": 0, "y": 68, "w": 7, "h": 11 },
+        { "id": "live-composition", "type": "traffic_composition", "placement": { "x": 0, "y": 7, "w": 5, "h": 11 },
+          "parameters": { "group_by": "interface", "split_by": "direction", "scope": "all", "slices": 6, "window_seconds": 120, "line_interpolation": "linear" } },
+        { "id": "traffic-over-time", "type": "traffic_over_time_by_scope", "placement": { "x": 5, "y": 7, "w": 7, "h": 9 },
+          "parameters": { "scopes": ["outbound", "inbound", "inter_interface"], "measure": "bytes", "stacked": true } },
+        { "id": "volume-by-interface", "type": "interface_volume_ranking", "placement": { "x": 0, "y": 18, "w": 7, "h": 7 },
+          "parameters": { "measure": "bytes", "scope": "all", "limit": 10, "include_unlabelled": true } },
+        { "id": "public-address", "type": "public_address", "placement": { "x": 7, "y": 16, "w": 5, "h": 9 },
+          "parameters": { "families": ["ipv4", "ipv6"], "show_history": true } },
+        { "id": "people", "type": "owner_activity", "placement": { "x": 0, "y": 25, "w": 12, "h": 8 },
+          "parameters": { "clients_per_card": 4, "sort": "volume" } },
+        { "id": "where-it-went", "type": "passed_traffic_world_map", "placement": { "x": 0, "y": 33, "w": 7, "h": 8 },
+          "parameters": { "scope": "all", "size_by": "bytes", "min_bytes": 0, "show_unplaced": false, "cluster": false } },
+        { "id": "volume-by-client", "type": "client_volume_ranking", "placement": { "x": 7, "y": 33, "w": 5, "h": 10 },
+          "parameters": { "identity": "any", "measure": "bytes", "limit": 8, "include_unstable": true } },
+        { "id": "connections", "type": "connection_tree", "placement": { "x": 0, "y": 41, "w": 7, "h": 9 },
+          "parameters": { "depth": 2, "measure": "bytes", "limit_per_level": 4 } },
+        { "id": "interface-to-operator", "type": "traffic_sankey", "placement": { "x": 7, "y": 43, "w": 5, "h": 9 },
+          "parameters": { "left": "interface", "right": "operator", "scope": "all", "measure": "bytes", "max_nodes": 7, "min_share": 0.02, "show_blocked": true } },
+        { "id": "sites-ranked", "type": "top_sites", "placement": { "x": 0, "y": 50, "w": 7, "h": 8 },
+          "parameters": { "period": "7d", "limit": 10, "min_flows": 20, "group_by_registrable_domain": true } },
+        { "id": "who-used-what", "type": "sites_by_client", "placement": { "x": 0, "y": 58, "w": 7, "h": 11 },
           "parameters": { "sites_per_client": 3, "min_flows": 20, "show_attribution_rate": true } },
-        { "id": "how-much-is-named", "type": "attribution_rate_per_client", "placement": { "x": 7, "y": 68, "w": 5, "h": 12 },
+        { "id": "how-much-is-named", "type": "attribution_rate_per_client", "placement": { "x": 7, "y": 52, "w": 5, "h": 12 },
           "parameters": { "limit": 8, "sort": "worst_first" } }
       ]
     },
@@ -43,7 +43,7 @@
       "period": "24h",
       "widgets": [
         { "id": "blocked-map", "type": "blocked_traffic_world_map", "placement": { "x": 0, "y": 0, "w": 7, "h": 10 },
-          "parameters": { "engines": ["firewall_rule", "security_engine"], "endpoint": "destination", "size_by": "connections", "min_count": 1, "show_unplaced": true, "cluster": false } },
+          "parameters": { "engines": ["firewall_rule", "security_engine"], "endpoint": "destination", "size_by": "connections", "min_count": 1, "show_unplaced": false, "cluster": false } },
         { "id": "blocked-feed", "type": "unified_blocked_feed", "placement": { "x": 7, "y": 0, "w": 5, "h": 14 },
           "parameters": { "engines": ["firewall_rule", "dns_advertising_list", "dns_threat_list", "security_engine"], "group_by": "engine", "limit": 50 } },
         { "id": "which-rules-fire", "type": "blocked_by_firewall_rule", "placement": { "x": 0, "y": 10, "w": 6, "h": 9 },
@@ -60,19 +60,18 @@
       "grid": { "columns": 12, "row_height": 40 },
       "period": "24h",
       "widgets": [
-        { "id": "health", "type": "firewall_health_overview", "placement": { "x": 0, "y": 0, "w": 12, "h": 6 },
+        { "id": "health", "type": "firewall_health_overview", "placement": { "x": 0, "y": 0, "w": 12, "h": 4 },
           "parameters": { "metrics": ["uptime", "cpu", "memory", "swap", "disk", "temperature", "gateway_latency", "gateway_loss"], "layout": "tiles", "show_last_sampled": true } },
-        { "id": "load-against-throughput", "type": "custom_chart", "placement": { "x": 0, "y": 6, "w": 7, "h": 11 },
+        { "id": "load-against-throughput", "type": "custom_chart", "placement": { "x": 0, "y": 4, "w": 7, "h": 11 },
           "parameters": {
             "tooltip": "all_series", "legend": "table",
             "series": [
-              { "label": "CPU", "source": "firewall_metric", "metric": "cpu", "render": "line", "aggregation": "mean" },
               { "label": "Throughput", "source": "interface_throughput", "measure": "bits_per_second", "axis": "left", "render": "line", "aggregation": "mean" },
-              { "label": "Traffic volume", "source": "traffic", "measure": "bytes", "axis": "right", "render": "line", "aggregation": "sum" }
+              { "label": "CPU", "source": "firewall_metric", "metric": "cpu", "axis": "right", "render": "line", "aggregation": "mean" }
             ],
-            "axes": { "left": { "unit": "bits_per_second", "scale": "linear" }, "right": { "unit": "bytes", "scale": "linear" } }
+            "axes": { "left": { "unit": "bits_per_second", "scale": "linear" }, "right": { "unit": "ratio", "scale": "linear" } }
           } },
-        { "id": "per-interface", "type": "interface_throughput", "placement": { "x": 7, "y": 6, "w": 5, "h": 11 },
+        { "id": "per-interface", "type": "interface_throughput", "placement": { "x": 7, "y": 4, "w": 5, "h": 11 },
           "parameters": { "direction": "both", "measure": "bits_per_second", "stacked": false, "per_interface_axis": false } }
       ]
     }

@@ -360,10 +360,11 @@ func TestAMarkedOrDeeplyNestedFileIsReadOrRefusedByName(t *testing.T) {
 	depth := 2000
 	deepJSON := strings.Repeat(`{"a":`, depth) + "1" + strings.Repeat("}", depth)
 	var deepYAML strings.Builder
-	for level := 0; level < depth; level++ {
+	// Block YAML spends a line per level, so it is nested less deep, to stay within the size bound.
+	for level := 0; level < 600; level++ {
 		deepYAML.WriteString(strings.Repeat(" ", level) + "a:\n")
 	}
-	deepYAML.WriteString(strings.Repeat(" ", depth) + "b: 1\n")
+	deepYAML.WriteString(strings.Repeat(" ", 600) + "b: 1\n")
 	deepFlow := "format_version: 1\nx: " + strings.Repeat("[", depth) + strings.Repeat("]", depth) + "\n"
 	bound := int(page.Run(`opnview.document.MAX_PARSE_DEPTH`).ToInteger())
 	for _, deep := range []struct {
@@ -377,12 +378,12 @@ func TestAMarkedOrDeeplyNestedFileIsReadOrRefusedByName(t *testing.T) {
 		answer := documentCall(t, page, parse, deep.text, deep.syntax)
 		refused, _ := answer["error"].(map[string]any)
 		if refused == nil || refused["condition"] != "document_too_deep" || refused["line"] != deep.line {
-			t.Errorf("%s nested %d deep reads as %v, not document_too_deep on line %v", deep.name, depth, answer["error"],
+			t.Errorf("%s nested past %d reads as %v, not document_too_deep on line %v", deep.name, bound, answer["error"],
 				deep.line)
 		}
 		loaded := documentCall(t, page, `function (text) { return opnview.editing.read(text); }`, deep.text)
 		if refusal, _ := loaded["error"].(map[string]any); refusal == nil || refusal["condition"] != "document_too_deep" {
-			t.Errorf("the import of %s nested %d deep answers %v", deep.name, depth, loaded)
+			t.Errorf("the import of %s nested past %d answers %v", deep.name, bound, loaded)
 		}
 	}
 	// Nested to the bound and no deeper, a text is read.

@@ -19,15 +19,14 @@
       var field = data.measure === "connections" ? "connections" : "bytes";
       var unit = field === "bytes" ? "bytes" : null;
       function part(volume) { return volume ? volume[field] || 0 : 0; }
-      function share(volume, whole) {
-        return whole > 0 ? input.format.percent(part(volume) / whole, 0) : t("figure.dash");
-      }
       var listed = 0;
+      var whole = data.total ? part(data.total) : 0;
+      var firewallSeen = false;
       var bars = (data.bars || []).map(function (bar) {
         var volume = bar.volume || {};
         var iface = bar.interface || {};
         listed += bar.value || 0;
-        var whole = part(volume);
+        var own = part(volume);
         var facts = [
           [t("column.bytes"), kit.value(volume, "bytes", { field: "bytes" })],
           [t("column.connections"), kit.value(volume, null, { field: "connections" })],
@@ -37,26 +36,33 @@
           [t("plugin.interface_volume_ranking.widget.interface_volume_ranking.this_firewall"), kit.value(bar.this_firewall, unit, { field: field })],
           [t("plugin.interface_volume_ranking.widget.interface_volume_ranking.clients_seen"), t("plugin.interface_volume_ranking.widget.interface_volume_ranking.of", { seen: kit.text(bar.clients_seen), known: kit.text(bar.clients_known) })]
         ];
+        /* THE MOCKUP'S ROW: the name and its VLAN, the identifier and the device under them; the bar
+         * split by where the traffic went -- between interfaces, in and out of the network, and to
+         * the firewall itself where any did; under it the share of all interfaces, the clients seen
+         * and the blocked connections, a rule that does not log named first. */
         var sub = [
-          t("plugin.interface_volume_ranking.widget.interface_volume_ranking.shares", { east_west: share(bar.east_west, whole), north_south: share(bar.north_south, whole),
-            this_firewall: share(bar.this_firewall, whole) }),
+          bar.rules_not_logging ? [kit.badge(tp("plugin.interface_volume_ranking.widget.interface_volume_ranking.rules_not_logging", bar.rules_not_logging), "gap"), " "] : null,
+          t("plugin.interface_volume_ranking.widget.interface_volume_ranking.share_of_all", { share: whole > 0 ? input.format.percent(own / whole, 1) : t("figure.dash") }),
           " · ",
-          t("plugin.interface_volume_ranking.widget.interface_volume_ranking.clients", { seen: kit.text(bar.clients_seen), known: kit.text(bar.clients_known) })
+          t("plugin.interface_volume_ranking.widget.interface_volume_ranking.clients", { seen: kit.text(bar.clients_seen), known: kit.text(bar.clients_known) }),
+          " · ",
+          tp("plugin.interface_volume_ranking.widget.interface_volume_ranking.blocked_connections", volume.blocked_connections || 0)
         ];
-        if (bar.rules_not_logging) {
-          sub.push(" ");
-          sub.push(kit.badge(tp("plugin.interface_volume_ranking.widget.interface_volume_ranking.rules_not_logging", bar.rules_not_logging), "gap"));
-        }
+        if (part(bar.this_firewall) > 0) { firewallSeen = true; }
         return {
           key: String(iface.id),
-          label: [kit.interfaceLabel(iface), " ", h("span", { "class": "vlan-tag" },
-            iface.vlan_tag === null || iface.vlan_tag === undefined ? t("plugin.interface_volume_ranking.widget.interface_volume_ranking.untagged") : t("plugin.interface_volume_ranking.widget.interface_volume_ranking.vlan", { tag: kit.text(iface.vlan_tag) }))],
+          label: [
+            h("span", { key: "name", "class": "bar-name" }, kit.interfaceLabel(iface)), " ",
+            h("span", { key: "vlan", "class": "badge vlan-tag" },
+              iface.vlan_tag === null || iface.vlan_tag === undefined ? t("plugin.interface_volume_ranking.widget.interface_volume_ranking.untagged") : t("plugin.interface_volume_ranking.widget.interface_volume_ranking.vlan", { tag: kit.text(iface.vlan_tag) })),
+            h("span", { key: "ident", "class": "bar-cidr" }, [iface.identifier || "", iface.device ? [" · ", iface.device] : null])
+          ],
           sub: sub,
           value: bar.value,
           valueNode: kit.value(volume, unit, { field: field }),
-          parts: [{ value: volume["allowed_" + field] || 0, cls: "allowed" },
-            { value: volume["blocked_" + field] || 0, cls: "blocked" },
-            { value: volume["unknown_" + field] || 0, cls: "other" }],
+          parts: [{ value: part(bar.east_west), cls: "1" },
+            { value: part(bar.north_south), cls: "2" },
+            { value: part(bar.this_firewall), cls: "3" }],
           subject: kit.interfaceSubject(iface, facts)
         };
       });
@@ -94,12 +100,13 @@
         }),
         extra,
         total ? h("div", { key: "total", "class": "bar-row is-total", "data-total": String(part(total)) }, [
-          h("span", { "class": "bar-label" }, t("shape.total")),
+          h("span", { "class": "bar-label" }, t("plugin.interface_volume_ranking.widget.interface_volume_ranking.all_interfaces")),
           h("span", { "class": "bar-track-blank" }),
           h("span", { "class": "bar-value" }, kit.value(total, unit, { field: field }))
         ]) : null,
-        kit.legend([{ key: "allowed", cls: "allowed", label: t("column.allowed") },
-          { key: "blocked", cls: "blocked", label: t("column.blocked") }]),
+        kit.legend([{ key: "east-west", cls: "1", label: t("column.scope.east_west") },
+          { key: "north-south", cls: "2", label: t("plugin.interface_volume_ranking.widget.interface_volume_ranking.north_south") }]
+          .concat(firewallSeen ? [{ key: "firewall", cls: "3", label: t("plugin.interface_volume_ranking.widget.interface_volume_ranking.this_firewall") }] : [])),
         notes
       ]);
     }

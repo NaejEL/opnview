@@ -19,12 +19,19 @@ import (
 
 // The recorded answers every renderer is drawn on.
 //
-// PROVENANCE. They are the widget API's own answers, recorded from the real handlers by the widget
-// package's golden test over its synthesised fixture (internal/widget/widgets/fixture_test.go:
-// documentation-range addresses, RFC 2606 names, interface and client counts as parameters) and
-// committed as internal/widget/widgets/testdata/golden_responses.json.gz. That test re-records them
-// when it is run with its update flag and fails when an answer changes, so the answers drawn here are
-// the answers the API serves, never a copy that could drift from it.
+// PROVENANCE. They are the widget API's own answers as it serves them today, recorded from the real
+// handlers over the widget package's synthesised fixture (internal/widget/widgets/fixture_test.go:
+// documentation-range addresses, RFC 2606 names, interface and client counts as parameters) by its
+// explicitly invoked generator, and committed as testdata/widget_answers.json.gz beside this file:
+//
+//	docker compose run --rm -e OPNVIEW_RECORD_FRONT_ANSWERS=/workspace/internal/front/frontjs/testdata/widget_answers.json.gz \
+//	  dev go test -count=1 -run '^TestEveryBuiltinWidgetAnswersByteForByteAsBefore$' ./internal/widget/widgets/
+//
+// They cover every request of that package's golden record: every type at its defaults and periods
+// and every parameter combination its tests exercise. Unlike the golden record, which pins the answers
+// as they were before later cycles added members, nothing is taken out of them. The pre-deployment
+// command answers every type again on the 100 000-row seed and fails when a type's member paths
+// differ from the ones recorded here (ci/answerdrift).
 
 // recordedAnswer is one recorded answer: its type, the parameters it was asked with, and the answer.
 type recordedAnswer struct {
@@ -45,8 +52,7 @@ func recordedAnswers(t testing.TB) map[string][]recordedAnswer {
 	t.Helper()
 	recordedOnce.Do(func() {
 		_, here, _, _ := runtime.Caller(0)
-		file, err := os.Open(filepath.Join(filepath.Dir(here), "..", "..", "widget", "widgets", "testdata",
-			"golden_responses.json.gz"))
+		file, err := os.Open(filepath.Join(filepath.Dir(here), "testdata", "widget_answers.json.gz"))
 		if err != nil {
 			recordedErr = err
 			return

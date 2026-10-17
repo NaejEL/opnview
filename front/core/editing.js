@@ -154,6 +154,15 @@
     },
 
     canUndo: function () { return state.undo.length > 0; },
+    /* The labels an edit is recorded under, each with its words in the catalogue (undo.what.*), so
+     * the undo control can say what it will undo. */
+    UNDO_LABELS: ["add", "add_canvas", "apply", "create", "create_dashboard", "delete", "delete_dashboard", "edit", "form", "import", "move", "move_canvas", "order", "period", "placement", "remove", "remove_canvas", "rename_canvas", "rename_dashboard", "resize", "scope"],
+    /* What the undo control will undo, in words: its tooltip. */
+    undoTitle: function () {
+      var label = state.undo.length ? state.undo[state.undo.length - 1].label : null;
+      if (!label) { return opnview.strings.t("action.undo"); }
+      return opnview.strings.tk("undo.what.", editing.UNDO_LABELS.indexOf(label) >= 0 ? label : "edit");
+    },
     /* The label of the edit the next undo reverts. */
     undoLabel: function () { return state.undo.length ? state.undo[state.undo.length - 1].label : null; },
     /* Reverts the last edit of the session. */

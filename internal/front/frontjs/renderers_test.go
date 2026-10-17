@@ -161,12 +161,17 @@ func TestChartSeriesAreStraightAndStateTheirSamples(t *testing.T) {
 			setJSON(t, page, "__answer", string(answer.Raw))
 			report := page.Run(`(function () {
   __render(__row, __answer);
-  var out = { lines: [], dots: [], areas: 0 };
+  var out = { lines: [], dots: [], areas: 0, stacked: 0 };
   __host.querySelectorAll("path").forEach(function (path) {
     var cls = path.getAttribute("class") || "";
     if (cls.indexOf("series-line") >= 0) { out.lines.push([path.getAttribute("d"), path.getAttribute("data-sample-count")]); }
-    if (cls.split(" ").indexOf("area") >= 0) { out.areas++; }
+    if (cls.split(" ").indexOf("area") >= 0) {
+      var svg = path;
+      while (svg && svg.tagName !== "SVG") { svg = svg.parentNode; }
+      if (!svg || svg.getAttribute("data-stacked") !== "true") { out.areas++; }
+    }
   });
+  out.stacked = __host.querySelectorAll('svg[data-stacked="true"]').length;
   __host.querySelectorAll("g").forEach(function (g) {
     if ((g.getAttribute("class") || "").indexOf("sample-dots") >= 0) {
       out.dots.push([g.childNodes.length, g.getAttribute("data-sample-count")]);
@@ -175,9 +180,10 @@ func TestChartSeriesAreStraightAndStateTheirSamples(t *testing.T) {
   return JSON.stringify(out);
 })()`).String()
 			var found struct {
-				Lines [][2]*string `json:"lines"`
-				Dots  [][2]any     `json:"dots"`
-				Areas int          `json:"areas"`
+				Lines   [][2]*string `json:"lines"`
+				Dots    [][2]any     `json:"dots"`
+				Areas   int          `json:"areas"`
+				Stacked int          `json:"stacked"`
 			}
 			if err := json.Unmarshal([]byte(report), &found); err != nil {
 				t.Fatal(err)
@@ -209,8 +215,18 @@ func TestChartSeriesAreStraightAndStateTheirSamples(t *testing.T) {
 					t.Errorf("%s %s: a sample group draws %v marks and says %v", widget.Type, answer.Parameters, dots[0], dots[1])
 				}
 			}
-			if found.Areas > 0 && (parameters == nil || parameters["stacked"] != true) && widget.Type != "custom_chart" {
-				t.Errorf("%s %s: an area is drawn while nothing is stacked", widget.Type, answer.Parameters)
+			// An area separates stacked series and nothing else: none is drawn in a chart that stacks
+			// nothing, and a widget whose stacking is a parameter stacks only when it is asked to. (The
+			// recent strip of traffic_composition stacks its slices by design, as the mockup draws it.)
+			if found.Areas > 0 {
+				t.Errorf("%s %s: %d areas are drawn in a chart that stacks nothing", widget.Type, answer.Parameters, found.Areas)
+			}
+			declaresStacked := false
+			for _, parameter := range widget.Parameters {
+				declaresStacked = declaresStacked || parameter.Key == "stacked"
+			}
+			if declaresStacked && found.Stacked > 0 && (parameters == nil || parameters["stacked"] != true) {
+				t.Errorf("%s %s: a chart stacks while stacked is not asked for", widget.Type, answer.Parameters)
 			}
 		}
 	}
@@ -258,7 +274,7 @@ func TestRankedBarsAndTheirRemainderSumToTheTotal(t *testing.T) {
   __render(__row, __answer);
   var bars = 0, remainder = 0, total = null;
   __host.querySelectorAll("[data-bar]").forEach(function (el) { bars += Number(el.getAttribute("data-value") || 0); });
-  __host.querySelectorAll(".bar-row").forEach(function (el) {
+  __host.querySelectorAll("[data-remainder]").concat(__host.querySelectorAll("[data-excluded]"), __host.querySelectorAll("[data-total]")).forEach(function (el) {
     if (el.getAttribute("data-remainder") !== null || el.getAttribute("data-excluded") !== null) {
       remainder += Number(el.getAttribute("data-value") || 0);
     }
@@ -358,7 +374,7 @@ func TestTheConnectionTreeReconcilesOnBothSides(t *testing.T) {
 		report := page.Run(`(function () {
   __render(__row, __answer);
   var nodes = __host.querySelectorAll("[data-tree-node]").map(function (el) {
-    return { side: el.getAttribute("data-side"), level: Number(el.getAttribute("data-level")), key: el.getAttribute("data-node"),
+    return { side: el.getAttribute("data-side"), level: Number(el.getAttribute("data-level")), key: el.getAttribute("data-path"),
       parent: el.getAttribute("data-parent") || "", value: Number(el.getAttribute("data-value")) };
   });
   return JSON.stringify({ nodes: nodes, total: __answer.data.total.value });
@@ -709,30 +725,197 @@ func TestARendererRegistersOnlyWhatItsURLOwns(t *testing.T) {
 }
 
 // TestAFrontOnlyWidgetReadsOnlyTheFourReadRoutes (A2): the reads a front-only widget may have the
-// core perform are the four read routes as written, and a dot segment or an escape that a browser
+// core perform are the four read routes as written, and a dot component or an escape that a browser
 // would resolve to another route is refused.
 func TestAFrontOnlyWidgetReadsOnlyTheFourReadRoutes(t *testing.T) {
 	t.Parallel()
 	page := frontjs.New(t, frontjs.Options{})
 	for path, want := range map[string]bool{
-		"/api/widget/top_sites?parameters=%7B%7D":     true,
-		"/api/datasets":                              true,
-		"/api/datasets/dns/query?parameters=%7B%7D":  true,
-		"/api/datasets/example_peers.peer/query":     true,
-		"/api/live/strip":                            true,
-		"/api/datasets/../query":                     false,
-		"/api/datasets/./query":                      false,
-		"/api/datasets/dns/../../session/query":      false,
-		"/api/datasets/%2e%2e/query":                 false,
-		"/api/datasets/dns%2fquery/query":            false,
-		"/api/datasets/dns..x/query":                 false,
-		"/api/widget/../dashboards":                  false,
-		"/api/dashboards":                            false,
-		"/api/session/sign-out":                      false,
-		"https://example.com/api/datasets":           false,
+		"/api/widget/top_sites?parameters=%7B%7D": true,
+		"/api/datasets": true,
+		"/api/datasets/dns/query?parameters=%7B%7D": true,
+		"/api/datasets/example_peers.peer/query":    true,
+		"/api/live/strip":                           true,
+		"/api/datasets/../query":                    false,
+		"/api/datasets/./query":                     false,
+		"/api/datasets/dns/../../session/query":     false,
+		"/api/datasets/%2e%2e/query":                false,
+		"/api/datasets/dns%2fquery/query":           false,
+		"/api/datasets/dns..x/query":                false,
+		"/api/widget/../dashboards":                 false,
+		"/api/dashboards":                           false,
+		"/api/session/sign-out":                     false,
+		"https://example.com/api/datasets":          false,
 	} {
 		if got := page.Run(fmt.Sprintf(`opnview.widgets.allowedRead(%q)`, path)).ToBoolean(); got != want {
 			t.Errorf("allowedRead(%s) = %v, want %v", path, got, want)
 		}
+	}
+}
+
+// TestTheMatrixDrawsEachColumnOfItsAnswerOnce: the outside and the firewall itself are columns the
+// answer lists; each recorded answer of the matrix draws exactly one column header per column.
+func TestTheMatrixDrawsEachColumnOfItsAnswerOnce(t *testing.T) {
+	t.Parallel()
+	page := drawingPage(t)
+	for _, widget := range builtinWidgets(t) {
+		if widget.Type == "interface_traffic_matrix" {
+			setJSON(t, page, "__row", rowOf(t, widget))
+		}
+	}
+	for _, answer := range drawable(recordedAnswers(t)["interface_traffic_matrix"]) {
+		setJSON(t, page, "__answer", string(answer.Raw))
+		counts := page.Run(`(function () { __render(__row, __answer);
+  return __host.querySelectorAll("th.colhead").length + "|" + (__answer.data.columns || []).length; })()`).String()
+		drawn, listed, _ := strings.Cut(counts, "|")
+		if drawn != listed {
+			t.Errorf("%s: %s column headers for %s columns", answer.Parameters, drawn, listed)
+		}
+	}
+}
+
+// TestACustomChartGivesEachUnitItsAxisAndNamesWhatItDraws (the ergonomist's review of 17 October
+// 2026): a series of another unit than its axis's moves to the free axis, and one no axis can carry
+// is named under the chart; series and annotations are named by the catalogue, never by their codes;
+// the annotations are a titled strip with a legend whose bars are as wide as their buckets; no axis
+// repeats a tick label.
+func TestACustomChartGivesEachUnitItsAxisAndNamesWhatItDraws(t *testing.T) {
+	t.Parallel()
+	page := drawingPage(t)
+	for _, widget := range builtinWidgets(t) {
+		if widget.Type == "custom_chart" {
+			setJSON(t, page, "__row", rowOf(t, widget))
+		}
+	}
+	const hour = 3600
+	from := 1790000000 - 24*hour
+	buckets := func(values ...float64) []any {
+		out := []any{}
+		for index, value := range values {
+			out = append(out, map[string]any{"from": from + index*hour, "to": from + (index+1)*hour, "gap": false, "value": value})
+		}
+		return out
+	}
+	series := func(key, source, figure, unit, measure string, values ...float64) map[string]any {
+		figureKey := "measure"
+		if source == "firewall_metric" {
+			figureKey = "metric"
+		}
+		return map[string]any{"key": key, "condition": "reachable", "unit": unit, "measure": measure, "aggregation": "mean",
+			"parameters": map[string]any{"source": source, figureKey: figure}, "buckets": buckets(values...), "total": nil}
+	}
+	answer := map[string]any{"type": "custom_chart", "condition": "reachable",
+		"window":     map[string]any{"requested": map[string]any{"from": from, "to": from + 24*hour}},
+		"parameters": map[string]any{"legend": "table", "tooltip": "single"},
+		"data": map[string]any{
+			"series": []any{
+				series("s0", "traffic", "bytes", "bytes", "logged", 1000, 2000, 3000),
+				series("s1", "firewall_metric", "cpu", "ratio", "sampled_gauge", 0.2, 0.4, 0.3),
+				series("s2", "dns", "lookups", "lookups", "dns", 4, 5, 6),
+			},
+			"annotations": []any{map[string]any{"kind": "security_events", "buckets": []any{
+				map[string]any{"from": from, "to": from + hour, "gap": false, "value": 1},
+				map[string]any{"from": from + hour, "to": from + 2*hour, "gap": false, "value": 2}}}},
+		}}
+	encoded, _ := json.Marshal(answer)
+	setJSON(t, page, "__answer", string(encoded))
+	result := page.Run(`(function () {
+  __render(__row, __answer, __answer.parameters, { width: 800, height: 420 });
+  var out = {};
+  out.axes = __host.querySelectorAll("[data-axis]").map(function (n) { return n.getAttribute("data-axis") + "=" + n.textContent; });
+  out.unplaced = __host.querySelectorAll('[data-condition="no_axis"]').map(function (n) { return n.getAttribute("data-series"); });
+  out.text = __host.textContent;
+  out.title = __host.querySelectorAll("[data-annotations] h3").length;
+  out.legend = __host.querySelectorAll("[data-annotations] .legend").length;
+  var bars = __host.querySelectorAll("[data-annotations] .series-bars rect");
+  out.widest = Math.max.apply(null, bars.map(function (r) { return Number(r.getAttribute("width")); }));
+  var repeated = false;
+  __host.querySelectorAll("svg").forEach(function (svg) {
+    var seen = {};
+    svg.querySelectorAll("text.tick").forEach(function (tick) {
+      var side = tick.getAttribute("text-anchor") + "|" + tick.getAttribute("x");
+      var key = side + "|" + tick.textContent;
+      if (tick.getAttribute("text-anchor") !== "middle" && seen[key]) { repeated = true; }
+      seen[key] = true;
+    });
+  });
+  out.repeated = repeated;
+  return JSON.stringify(out);
+})()`).String()
+	var drawn struct {
+		Axes     []string
+		Unplaced []string
+		Text     string
+		Title    int
+		Legend   int
+		Widest   float64
+		Repeated bool
+	}
+	if err := json.Unmarshal([]byte(result), &drawn); err != nil {
+		t.Fatalf("%v: %s", err, result)
+	}
+	english := englishCatalogue(t)
+	prefix := "plugin.custom_chart.widget.custom_chart."
+	if len(drawn.Axes) != 2 || !strings.Contains(strings.Join(drawn.Axes, " "), english[prefix+"unit.ratio"]) {
+		t.Errorf("the axes are named %v: the CPU share does not have the right axis", drawn.Axes)
+	}
+	if strings.Join(drawn.Unplaced, " ") != "s2" {
+		t.Errorf("the series no axis carries are %v, not the third unit's", drawn.Unplaced)
+	}
+	cpu := strings.NewReplacer("{source}", english["series.source.firewall_metric"], "{measure}", english[prefix+"figure.cpu"]).
+		Replace(english[prefix+"series_label"])
+	if !strings.Contains(drawn.Text, cpu) || strings.Contains(drawn.Text, "firewall_metric") {
+		t.Errorf("the CPU series is not named %q by the catalogue: %s", cpu, drawn.Text)
+	}
+	if drawn.Title != 1 || drawn.Legend != 1 || !strings.Contains(drawn.Text, english["collection.kind.security_event"]) {
+		t.Errorf("the annotations have %d titles and %d legends", drawn.Title, drawn.Legend)
+	}
+	if drawn.Widest <= 0 || drawn.Widest > 800/12 {
+		t.Errorf("an annotation bar of one hour in a day is %v wide on an 800-pixel chart", drawn.Widest)
+	}
+	if drawn.Repeated {
+		t.Error("an axis repeats a tick label")
+	}
+}
+
+// TestASankeyRibbonTakesItsSourcesColourAndOpensItsPair (the ergonomist's review of 17 October 2026):
+// the ribbons leaving one node share its series colour, ribbons of different sources do not all share
+// one, and every ribbon opens a detail of its pair.
+func TestASankeyRibbonTakesItsSourcesColourAndOpensItsPair(t *testing.T) {
+	t.Parallel()
+	page := drawingPage(t)
+	for _, widget := range builtinWidgets(t) {
+		if widget.Type == "traffic_sankey" {
+			setJSON(t, page, "__row", rowOf(t, widget))
+		}
+	}
+	setJSON(t, page, "__answer", string(firstDrawable(t, "traffic_sankey").Raw))
+	result := page.Run(`(function () {
+  var drawn = __render(__row, __answer);
+  var byLeft = {}, classes = {}, picked = 0, ribbons = __host.querySelectorAll("path.sankey-ribbon");
+  ribbons.forEach(function (ribbon) {
+    var fill = (ribbon.getAttribute("class").match(/ f[1-6]/) || [""])[0];
+    var left = ribbon.getAttribute("data-left");
+    (byLeft[left] = byLeft[left] || {})[fill] = true;
+    classes[fill] = true;
+    var subject = ribbon.getAttribute("data-subject");
+    if (subject && drawn.subjects[subject] && drawn.subjects[subject].kind === "flow") { picked++; }
+  });
+  return JSON.stringify({ ribbons: ribbons.length, picked: picked, lefts: Object.keys(byLeft).length,
+    oneEach: Object.keys(byLeft).every(function (left) { return Object.keys(byLeft[left]).length === 1; }),
+    colours: Object.keys(classes).filter(Boolean).length });
+})()`).String()
+	var drawn struct {
+		Ribbons, Picked, Lefts, Colours int
+		OneEach                         bool
+	}
+	if err := json.Unmarshal([]byte(result), &drawn); err != nil {
+		t.Fatal(err)
+	}
+	if drawn.Ribbons == 0 || drawn.Picked != drawn.Ribbons {
+		t.Errorf("%d of %d ribbons open a detail of their pair", drawn.Picked, drawn.Ribbons)
+	}
+	if !drawn.OneEach || (drawn.Lefts > 1 && drawn.Colours < 2) {
+		t.Errorf("the ribbons of %d sources are drawn in %d colours (one per source: %v)", drawn.Lefts, drawn.Colours, drawn.OneEach)
 	}
 }

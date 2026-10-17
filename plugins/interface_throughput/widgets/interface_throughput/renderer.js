@@ -46,7 +46,7 @@
         return one.unit === "bits_per_second" ? "bits_per_second" : one.unit === "bytes" ? "bytes" : null;
       };
       var unit = series[0] ? unitOf(series[0]) : null;
-      var axis = function (value) { return kit.text(value, unit); };
+      var axis = kit.axis(unit);
 
       var byInterface = {}, order = [], silent = [], drawnCount = 0;
       series.forEach(function (one) {

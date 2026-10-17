@@ -1,7 +1,7 @@
 {
   "language": "en",
   "strings": {
-    "plugin.traffic_composition.widget.traffic_composition.title": "Traffic composition, now",
+    "plugin.traffic_composition.widget.traffic_composition.title": "Traffic composition",
     "plugin.traffic_composition.widget.traffic_composition.question": "What is the traffic made of right now, and in what proportion?",
     "plugin.traffic_composition.widget.traffic_composition.port_not_recorded": "Port not recorded",
     "plugin.traffic_composition.widget.traffic_composition.not_recorded": "Not recorded",
@@ -26,6 +26,7 @@
     "plugin.traffic_composition.widget.traffic_composition.decision.unknown": "Action not read",
     "plugin.traffic_composition.widget.traffic_composition.aside.dns_list": "Refused lookups",
     "plugin.traffic_composition.widget.traffic_composition.aside.security_engine": "Detections",
-    "plugin.traffic_composition.widget.traffic_composition.port_protocol": "{port}/{protocol}"
+    "plugin.traffic_composition.widget.traffic_composition.port_protocol": "{port}/{protocol}",
+    "plugin.traffic_composition.widget.traffic_composition.weight": "Relative weight of the directions"
   }
 }

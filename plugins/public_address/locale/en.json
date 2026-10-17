@@ -12,12 +12,16 @@
     "plugin.public_address.widget.public_address.column.reach": "Reach",
     "plugin.public_address.widget.public_address.column.prefix": "Prefix length",
     "plugin.public_address.widget.public_address.column.address": "Address",
-    "plugin.public_address.widget.public_address.column.changed": "Changed",
+    "plugin.public_address.widget.public_address.column.changed": "Last changed",
     "plugin.public_address.widget.public_address.behind_nat": "behind upstream NAT",
     "plugin.public_address.widget.public_address.gateways": "Gateways",
     "plugin.public_address.widget.public_address.history": "Earlier addresses",
     "plugin.public_address.widget.public_address.no_address": "No address",
     "plugin.public_address.widget.public_address.no_upstream": "No upstream interface",
-    "plugin.public_address.widget.public_address.special_purpose_source": "{block} · {reference}"
+    "plugin.public_address.widget.public_address.special_purpose_source": "{block} · {reference}",
+    "plugin.public_address.widget.public_address.carried_by": "Carried by",
+    "plugin.public_address.widget.public_address.gateway": "Gateway",
+    "plugin.public_address.widget.public_address.earlier_count.one": "{count} earlier address",
+    "plugin.public_address.widget.public_address.earlier_count.other": "{count} earlier addresses"
   }
 }

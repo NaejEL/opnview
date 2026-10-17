@@ -70,6 +70,25 @@
     return step * magnitude;
   }
 
+  /* A BYTE AXIS IS NICE IN THE BASE ITS LABELS ARE PRINTED IN (the mockup's niceCeil1024): its top is a
+   * step of the binary ladder whose quarter is itself round, so 0, 2, 4, 6, 8 GiB and never 4.66. */
+  var BINARY_STEPS = [1, 2, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32, 40, 48, 64, 80, 96, 128, 160, 192, 256, 320, 384, 512,
+    640, 768, 1024];
+  function niceCeil1024(value) {
+    if (!(value > 0)) { return 1; }
+    var divisor = 1;
+    while (value / divisor >= 1024) { divisor *= 1024; }
+    var fraction = value / divisor;
+    for (var i = 0; i < BINARY_STEPS.length; i++) {
+      if (fraction <= BINARY_STEPS[i]) { return BINARY_STEPS[i] * divisor; }
+    }
+    return 1024 * divisor;
+  }
+
+  /* The intervals a time axis is ticked at, in seconds: each tick on a round instant of the reader's
+   * clock, as the mockup's axes read 13:00, 17:00, 21:00. */
+  var TICK_STEPS = [60, 300, 600, 900, 1800, 3600, 7200, 10800, 14400, 21600, 43200, 86400, 172800, 604800];
+
   /* The base-ten logarithm, exact at a power of ten. */
   function log10(value) {
     var exact = Math.log(value) / Math.LN10;
@@ -242,6 +261,17 @@
         return h("span", { "class": "badge badge-" + kind, "data-condition": condition }, tk("condition.", condition));
       },
 
+      /* A coordinate written with two decimals at most, as every drawing of the kit writes one. */
+      fixed: fixed,
+
+      /* The formatter of a chart axis in a unit: a byte axis declares its binary base, so its ticks
+       * fall on round binary figures. */
+      axis: function (unit) {
+        var formatter = function (value) { return kit.text(value, unit); };
+        if (unit === "bytes") { formatter.axisBase = 1024; }
+        return formatter;
+      },
+
       legend: function (items) {
         return h("div", { "class": "legend" }, items.map(function (item, index) {
           return h("span", { key: item.key || String(index), "class": "legend-item" + (item.muted ? " muted" : "") }, [
@@ -288,8 +318,8 @@
 
       /* Marks a node as opening a detail about a subject. subject: {kind, key, title, facts:
        * [[label, value node]], related: [subject], reference: a reference object the canvas can be
-       * scoped to, about: {type, parameters} a widget about it}. Answers the attributes to merge into
-       * the node. */
+       * scoped to, and a widget added about it (the canvas picks which from the loaded manifests)}.
+       * Answers the attributes to merge into the node. */
       pick: function (subject, extra) {
         var id = subject.kind + ":" + subject.key;
         subjects[id] = subject;
@@ -373,8 +403,7 @@
             kit.fact(t("detail.fact.mac"), client.mac || kit.none()),
             kit.fact(t("detail.fact.identity"), client.identity_kind ? tk("people.identity.", client.identity_kind) : kit.none())
           ].concat(facts || []),
-          related: [], reference: reference,
-          about: reference ? { type: "client_traffic_detail", parameters: { client: reference } } : null
+          related: [], reference: reference
         };
         Object.keys(more || {}).forEach(function (name) { subject[name] = more[name]; });
         return subject;
@@ -391,8 +420,7 @@
             iface.vlan_tag !== null && iface.vlan_tag !== undefined
               ? kit.fact(t("detail.fact.vlan"), format.number(iface.vlan_tag)) : null
           ].filter(Boolean).concat(facts || []),
-          related: [], reference: reference,
-          about: reference ? { type: "client_volume_ranking", parameters: { interfaces: [reference] } } : null
+          related: [], reference: reference
         };
         Object.keys(more || {}).forEach(function (name) { subject[name] = more[name]; });
         return subject;
@@ -403,8 +431,7 @@
         var reference = kit.ownerRef(owner);
         var subject = {
           kind: "owner", key: String(owner.id), title: owner.display_name,
-          facts: facts || [], related: [], reference: reference,
-          about: reference ? { type: "owner_activity", parameters: { owners: [reference] } } : null
+          facts: facts || [], related: [], reference: reference
         };
         Object.keys(more || {}).forEach(function (name) { subject[name] = more[name]; });
         return subject;
@@ -413,7 +440,7 @@
       /* A plain subject: a site, an operator, a country, a rule, a cell, a mark. */
       subject: function (kind, key, title, facts, more) {
         var subject = { kind: kind, key: String(key), title: title, facts: facts || [], related: [],
-          reference: null, about: null };
+          reference: null };
         Object.keys(more || {}).forEach(function (name) { subject[name] = more[name]; });
         return subject;
       },
@@ -440,7 +467,7 @@
             scope: "col" }, column.label);
         })));
         var bodyRows = rows.map(function (row) {
-          var attrs = { key: "row-" + row.key, "class": row.className || null, "data-row": row.key };
+          var attrs = kit.attrs({ key: "row-" + row.key, "class": row.className || null, "data-row": row.key }, row.attrs || {});
           return h("tr", attrs, row.cells.map(function (cell, index) {
             var column = columns[index] || {};
             var cellAttrs = { key: column.key || String(index), "class": column.num ? "num" : (column.cellClass || null) };
@@ -453,15 +480,17 @@
             h("td", { colspan: String(columns.length) }, settings.empty)));
         }
         if (settings.remainder && settings.remainder.members) {
-          bodyRows.push(h("tr", { key: "remainder", "class": "is-remainder", "data-remainder": String(settings.remainder.members) },
-            [h("td", { key: "label" }, tp("shape.remainder", settings.remainder.members))]
+          bodyRows.push(h("tr", { key: "remainder", "class": "is-remainder", "data-remainder": String(settings.remainder.members),
+            "data-value": settings.remainder.value === undefined ? null : String(settings.remainder.value) },
+            [h("td", { key: "label" }, settings.remainder.label || tp("shape.remainder", settings.remainder.members))]
               .concat((settings.remainder.cells || []).map(function (cell, index) {
                 var column = columns[index + 1] || {};
                 return h("td", { key: "c" + index, "class": column.num ? "num" : null }, cell);
               }))));
         }
         if (settings.total) {
-          bodyRows.push(h("tr", { key: "total", "class": "is-total" },
+          bodyRows.push(h("tr", { key: "total", "class": "is-total",
+            "data-total": settings.total.value === undefined ? null : String(settings.total.value) },
             [h("td", { key: "label" }, settings.total.label)].concat((settings.total.cells || []).map(function (cell, index) {
               var column = columns[index + 1] || {};
               return h("td", { key: "c" + index, "class": column.num ? "num" : null }, cell);
@@ -630,6 +659,8 @@
        *                                  powers of ten its values span; nothing stacks on it, and a
        *                                  value at or below zero, which it cannot place, is not drawn
        *                                  and is counted in a note under the chart;
+       *   counts                         the values are whole counts: the axis steps by whole
+       *                                  numbers;
        *   width, height                  the drawing's size in CSS pixels.
        * }
        * Answers a node: the drawing, its stated aggregation and its labelled gaps. */
@@ -677,6 +708,7 @@
 
         /* Stacking: each axis's stackable series ride on the ones before them. */
         var stackAll = !!spec.stacked;
+        var stacksAny = false;
         var running = { left: {}, right: {} };
         drawn.forEach(function (one) {
           var logAxis = isLog(one.axis);
@@ -695,6 +727,7 @@
             if (stacks && value !== null) { running[one.axis || "left"][index] = base + value; }
           });
           one.stacked = stacks;
+          stacksAny = stacksAny || stacks;
         });
         /* Each axis's domain: from zero to a nice ceiling, or on a log axis the decades its positive
          * values span, whole powers of ten at both ends. */
@@ -708,7 +741,12 @@
               if (value > 0 && (least === null || value < least)) { least = value; }
             });
           });
-          if (!isLog(axis)) { return { log: false, top: niceCeil(most) }; }
+          if (!isLog(axis)) {
+            /* Whole counts step by whole numbers: the ceiling is a multiple of the four steps. */
+            if (spec.counts) { return { log: false, top: Math.max(4, Math.ceil(niceCeil(most) / 4) * 4) }; }
+            var formatter = axis === "right" ? rightFormat : leftFormat;
+            return { log: false, top: formatter && formatter.axisBase === 1024 ? niceCeil1024(most) : niceCeil(most) };
+          }
           var low = least === null ? 0 : Math.floor(log10(least));
           var high = least === null ? 1 : Math.ceil(log10(most));
           if (high <= low) { high = low + 1; }
@@ -737,25 +775,49 @@
         var mid = function (point) { return (point.from + point.to) / 2; };
 
         var children = [];
-        ticksOf("left").forEach(function (tick, step) {
+        /* A tick whose label reads as the one below it says nothing: a small range formatted to whole
+         * units would read 0, 1, 1, 2, 2. Only the first of equal labels is drawn. */
+        function labelled(ticks, formatter) {
+          var last = null;
+          return ticks.map(function (tick) {
+            var text = formatter(tick.value);
+            var shown = typeof text === "string" ? text : JSON.stringify(text, function (key, value) {
+              return typeof value === "function" ? undefined : value;
+            });
+            var repeated = shown === last;
+            last = shown;
+            return { at: tick.at, text: repeated ? null : text };
+          });
+        }
+        labelled(ticksOf("left"), leftFormat).forEach(function (tick, step) {
           var y = padT + innerH - innerH * tick.at;
           children.push(h("line", { key: "grid-" + step, "class": "grid-line", x1: padL, y1: fixed(y), x2: width - padR, y2: fixed(y) }));
-          children.push(h("text", { key: "tl-" + step, "class": "tick", x: padL - 4, y: fixed(y + 3), "text-anchor": "end" },
-            leftFormat(tick.value)));
+          if (tick.text !== null) {
+            children.push(h("text", { key: "tl-" + step, "class": "tick", x: padL - 4, y: fixed(y + 3), "text-anchor": "end" },
+              tick.text));
+          }
         });
         if (hasRight) {
-          ticksOf("right").forEach(function (tick, step) {
+          labelled(ticksOf("right"), rightFormat).forEach(function (tick, step) {
             var y = padT + innerH - innerH * tick.at;
+            if (tick.text === null) { return; }
             children.push(h("text", { key: "tr-" + step, "class": "tick", x: width - padR + 4, y: fixed(y + 3),
-              "text-anchor": "start" }, rightFormat(tick.value)));
+              "text-anchor": "start" }, tick.text));
           });
         }
         children.push(h("line", { key: "axis", "class": "axis-line", x1: padL, y1: padT + innerH, x2: width - padR, y2: padT + innerH }));
-        var tickCount = Math.max(2, Math.min(6, Math.floor(innerW / 90)));
-        for (var tick = 0; tick <= tickCount; tick++) {
-          var at = spec.from + span * tick / tickCount;
-          children.push(h("text", { key: "tx-" + tick, "class": "tick", x: fixed(xAt(at)), y: height - 6,
-            "text-anchor": tick === 0 ? "start" : tick === tickCount ? "end" : "middle" }, format.tick(at, span)));
+        /* The time axis is ticked on round instants of the reader's clock, at the smallest interval
+         * that leaves room for every label. */
+        var tickCount = Math.max(2, Math.min(7, Math.floor(innerW / 80)));
+        var interval = TICK_STEPS[TICK_STEPS.length - 1];
+        for (var s = 0; s < TICK_STEPS.length; s++) {
+          if (span / TICK_STEPS[s] <= tickCount) { interval = TICK_STEPS[s]; break; }
+        }
+        var offset = -new Date((spec.from || 0) * 1000).getTimezoneOffset() * 60;
+        var first = Math.ceil(((spec.from || 0) + offset) / interval) * interval - offset;
+        for (var tick = first, index = 0; tick <= spec.to; tick += interval, index++) {
+          children.push(h("text", { key: "tx-" + index, "class": "tick", x: fixed(xAt(tick)), y: height - 6,
+            "text-anchor": "middle" }, format.tick(tick, span)));
         }
 
         /* A GAP IS DRAWN AS A LABELLED GAP: the buckets nobody collected, as a hatched band across
@@ -810,10 +872,12 @@
                 "data-sample-count": String(segment.length) }));
             }
             if (one.render === "bars") {
-              var barWidth = Math.max(1, innerW / Math.max(1, one.points.length) - 1);
+              /* A bar is as wide as its own bucket, never a share of the plot: two buckets of an
+               * hour each are two narrow bars, not two halves of the window. */
               group.push(h("g", { key: "bars-" + segmentIndex, "class": "series-bars", "data-sample-count": String(segment.length) },
                 segment.map(function (p, at) {
-                  return h("rect", { key: String(at), "class": "f" + cls, x: fixed(p.x - barWidth / 2), y: fixed(p.y),
+                  var left = xAt(p.point.from), barWidth = Math.max(1, xAt(p.point.to) - left - 1);
+                  return h("rect", { key: String(at), "class": "f" + cls, x: fixed(left + 0.5), y: fixed(p.y),
                     width: fixed(barWidth), height: fixed(Math.max(0, p.low - p.y)) });
                 })));
             } else if (interpolation !== "points" && one.render !== "points" && segment.length > 1) {
@@ -872,7 +936,8 @@
         return h("div", { "class": "chart-wrap" }, [
           h("svg", { key: "svg", "class": "chart-svg", viewBox: "0 0 " + width + " " + height, width: String(width),
             height: String(height), role: "img", "aria-label": spec.label || t("chart.label"),
-            "data-scale-left": isLog("left") ? "log" : "linear", "data-scale-right": isLog("right") ? "log" : "linear" }, children),
+            "data-scale-left": isLog("left") ? "log" : "linear", "data-scale-right": isLog("right") ? "log" : "linear",
+            "data-stacked": stacksAny ? "true" : "false" }, children),
           notes
         ]);
       },
@@ -965,6 +1030,16 @@
         var land = basemap.countries.map(function (path, index) {
           return h("path", { key: "c" + index, "class": "map-country", d: path });
         });
+        /* The graticule of the mockup: every thirty degrees, under the land. */
+        var graticule = [];
+        for (var lon = -150; lon <= 150; lon += 30) {
+          graticule.push(h("line", { key: "lon" + lon, "class": "map-graticule", x1: fixed((lon + 180) * W / 360), y1: 0,
+            x2: fixed((lon + 180) * W / 360), y2: H }));
+        }
+        for (var lat = -60; lat <= 60; lat += 30) {
+          graticule.push(h("line", { key: "lat" + lat, "class": "map-graticule", x1: 0, y1: fixed((90 - lat) * H / 180),
+            x2: W, y2: fixed((90 - lat) * H / 180) }));
+        }
         var drawnMarks = marks.map(function (mark) {
           var radius = 2.5 + 9 * Math.sqrt(mark.size / largest);
           var attrs = { key: mark.key, "class": "map-mark map-mark-" + (mark.cls || "allowed"),
@@ -976,17 +1051,43 @@
             attrs = kit.attrs(attrs, kit.pick(kit.subject("cluster", mark.key, tp("map.cluster", mark.members.length),
               [], { related: mark.members.map(function (member) { return member.subject; }).filter(Boolean) })));
           }
+          /* A MARK IS PLACED, NOT SCALED (the mockup's view on the basemap): it sits at its point in
+           * a group the canvas translates with the view, drawn at the origin, so zooming separates
+           * marks instead of magnifying them. */
+          attrs.cx = "0";
+          attrs.cy = "0";
           var children = [h("circle", attrs)];
           if (mark.members.length > 1) {
-            children.push(h("text", { key: "n", "class": "map-count", x: fixed(mark.x), y: fixed(mark.y + 3),
+            children.push(h("text", { key: "n", "class": "map-count", x: "0", y: "3",
               "text-anchor": "middle" }, format.number(mark.members.length)));
           }
-          return h("g", { key: mark.key, "class": "map-mark-group" }, children);
+          return h("g", { key: mark.key, "class": "map-mark-group map-mark-at", "data-x": fixed(mark.x), "data-y": fixed(mark.y),
+            transform: "translate(" + fixed(mark.x) + " " + fixed(mark.y) + ")" }, children);
         });
-        return h("svg", { "class": "map-svg", viewBox: "0 0 " + W + " " + H, role: "group",
-          "aria-label": settings.label || t("map.label") }, [
-          h("g", { key: "land", "class": "map-land" }, land),
-          h("g", { key: "marks", "class": "map-marks" }, drawnMarks)
+        /* The view -- a scale and an offset -- is the canvas's, kept per card across refreshes and
+         * written onto the drawing after each render (front/views/canvas.js, "The map's view"): the
+         * wheel zooms about the pointer, a drag pans, and the stacked pair and the reset in the corner
+         * do the same from a click or the keyboard. */
+        return h("div", { "class": "map-zoomable" }, [
+          h("svg", { key: "svg", "class": "map-svg", viewBox: "0 0 " + W + " " + H, role: "group", tabindex: "0",
+            "data-map-svg": prefix, "aria-label": settings.label || t("map.label") }, [
+            h("g", { key: "pan", "class": "map-pan", "aria-hidden": "true", transform: "translate(0 0) scale(1)" }, [
+              h("g", { key: "graticule", "class": "map-graticules" }, graticule),
+              h("g", { key: "land", "class": "map-land" }, land)
+            ]),
+            h("g", { key: "marks", "class": "map-marks" }, drawnMarks)
+          ]),
+          h("div", { key: "controls", "class": "map-controls" }, [
+            h("button", { key: "in", type: "button", "data-map-zoom": "in", "data-map-for": prefix,
+              "aria-label": t("map.zoom_in"), title: t("map.zoom_in") }, t("map.zoom_in_face")),
+            h("button", { key: "out", type: "button", "data-map-zoom": "out", "data-map-for": prefix,
+              "aria-label": t("map.zoom_out"), title: t("map.zoom_out") }, t("map.zoom_out_face")),
+            h("button", { key: "reset", type: "button", "data-map-zoom": "reset", "data-map-for": prefix,
+              "aria-label": t("map.zoom_reset"), title: t("map.zoom_reset") },
+              h("svg", { viewBox: "0 0 12 12", width: "11", height: "11", "aria-hidden": "true", focusable: "false" },
+                h("path", { d: "M1.5 4V1.5H4M8 1.5h2.5V4M10.5 8v2.5H8M4 10.5H1.5V8", fill: "none", stroke: "currentColor",
+                  "stroke-width": "1.4" })))
+          ])
         ]);
       },
 
@@ -1065,9 +1166,16 @@
           if (ribbon.blockedShare !== undefined && ribbon.blockedShare !== null) {
             rows.push(h("div", { key: "blocked", "class": "tt-row" }, t("sankey.blocked_share", { share: format.percent(ribbon.blockedShare) })));
           }
-          return h("path", kit.attrs({ key: "r" + index, "class": "sankey-ribbon" + (ribbon.blockedShare > 0 ? " has-blocked" : "") +
+          /* A ribbon takes the series colour of the node it leaves, so the flows of one source read
+           * as one hue across the drawing; picking it opens the pair, with both ends to go on to. */
+          var ends = spec.subject ? [spec.subject(ribbon.left, "left"), spec.subject(ribbon.right, "right")].filter(Boolean) : [];
+          var pair = kit.subject("flow", ribbon.left + "|" + ribbon.right, label(ribbon.left, "left") + " → " + label(ribbon.right, "right"),
+            [[t("detail.fact.value"), kit.text(ribbon.value, spec.unit)]].concat(ribbon.blockedShare !== undefined && ribbon.blockedShare !== null
+              ? [[t("column.blocked"), format.percent(ribbon.blockedShare)]] : []), { related: ends });
+          return h("path", kit.attrs({ key: "r" + index, "class": "sankey-ribbon f" + kit.seriesClass(lefts.indexOf(ribbon.left)) +
+            (ribbon.blockedShare > 0 ? " has-blocked" : "") +
             (ribbon.other ? " sankey-ribbon-other" : ""), d: d, "data-left": ribbon.left, "data-right": ribbon.right,
-            "data-value": String(ribbon.value) }, kit.tip(rows, "ribbon-" + index)));
+            "data-value": String(ribbon.value) }, kit.tip(rows, "ribbon-" + index), kit.pick(pair)));
         });
         function side(keys, totals, positions, x, anchor, name) {
           keys.forEach(function (key) {

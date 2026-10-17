@@ -500,6 +500,46 @@ func TestOpeningADetailWritesNothingAndItsScopePivotIsUndoable(t *testing.T) {
 	if compact(t, fixture.document(1)) != compact(t, original) {
 		t.Errorf("undo does not restore the document, member for member")
 	}
+	// "Add a widget about it" adds the widget the manifests choose for a client -- the one widget
+	// whose one reference parameter is a single client -- with that client, and Undo removes it.
+	page.Run(`__picked[0].dispatchEvent(__makeEvent("click"));`)
+	for index := int64(0); index < page.Run(`__picked.length`).ToInteger() && page.Count(`button[data-pivot="add"]`) == 0; index++ {
+		page.Run(fmt.Sprintf(`__picked = document.querySelectorAll("[data-subject]").filter(function (el) {
+  return el.getAttribute("data-subject").indexOf("client:") === 0; }); __picked[%d].dispatchEvent(__makeEvent("click"));`, index))
+	}
+	if page.Count(`button[data-pivot="add"]`) != 1 {
+		t.Fatalf("a client that can be named offers no widget about it:\n%s", page.Outline())
+	}
+	page.Click(`button[data-pivot="add"]`)
+	page.Advance(0)
+	if added := fixture.document(1); !strings.Contains(added, `"type":"client_traffic_detail"`) ||
+		!strings.Contains(added, `"client":{"kind":"client"`) {
+		t.Errorf("adding a widget about the client wrote %s", added)
+	}
+	page.Click("#canvas-undo")
+	page.Advance(0)
+	if compact(t, fixture.document(1)) != compact(t, original) {
+		t.Errorf("undoing the added widget does not restore the document")
+	}
+	// A subject opened from the related list of a detail is not said to be missing from the answer.
+	page.Run(`__picked = document.querySelectorAll("[data-subject]"); __picked[0].dispatchEvent(__makeEvent("click"));`)
+	if page.Count(`button[data-pivot="open"]`) > 0 {
+		page.Click(`button[data-pivot="open"]`)
+		if page.Count("#detail-pop") != 1 || page.Count("#detail-pop .badge-gap") != 0 {
+			t.Errorf("a related subject opens as missing from the latest answer:\n%s", page.Outline())
+		}
+	}
+	// A client the format cannot name says why it offers no scope, where the pivot would be.
+	reason := page.Run(`(function () {
+  var host = document.createElement("div");
+  opnview.view.render(host, [opnview.detail.render({ subject: { kind: "client", key: "9", title: "192.0.2.9",
+    facts: [], related: [], reference: null }, canScope: false, canAdd: false, onClose: function () {} })]);
+  var note = host.querySelector("[data-pivot]");
+  return note ? note.getAttribute("data-pivot") + "|" + note.textContent : "";
+})()`).String()
+	if reason != "not_scopable|"+englishCatalogue(t)["detail.not_scopable.client"] {
+		t.Errorf("a client known by its address only gives the reason %q", reason)
+	}
 	// The detail survives a refresh.
 	page.Run(`__picked = document.querySelectorAll("[data-subject]"); __picked[0].dispatchEvent(__makeEvent("click"));`)
 	page.Advance(61000)
@@ -750,4 +790,83 @@ func compact(t *testing.T, text string) string {
 		t.Fatalf("%v: %s", err, text)
 	}
 	return out.String()
+}
+
+// TestFocusingACardOnAnInterfaceAsksItForThatInterfaceAndWritesNothing: picking an interface in the
+// connection tree and "only this, in this card" asks the tree again for that interface alone -- its
+// outside side is then where that interface goes -- names the focus on the card, and writes nothing;
+// "show all" asks for the whole answer again.
+func TestFocusingACardOnAnInterfaceAsksItForThatInterfaceAndWritesNothing(t *testing.T) {
+	t.Parallel()
+	fixture := newCanvasFixture(t, `{"format_version": 1, "canvases": [{"id": "main", "title": "Main", "widgets": [
+    {"id": "tree", "type": "connection_tree", "placement": {"x": 0, "y": 0, "w": 12, "h": 10}}
+  ]}]}`)
+	fixture.recordedFor(t, "connection_tree")
+	page := fixture.canvasPage(t, "/canvas/1/main")
+	original := fixture.document(1)
+	writes := len(page.Writes())
+	page.Run(`window.__picked = document.querySelectorAll("[data-subject]").filter(function (el) {
+  return el.getAttribute("data-subject").indexOf("interface:") === 0; });`)
+	if page.Run(`__picked.length`).ToInteger() == 0 {
+		t.Fatalf("the tree offers no interface to pick:\n%s", page.Outline())
+	}
+	page.Run(`__picked[0].dispatchEvent(__makeEvent("click"));`)
+	if page.Count(`button[data-pivot="focus"]`) != 1 {
+		t.Fatalf("an interface of the tree offers no focus:\n%s", page.Outline())
+	}
+	page.Click(`button[data-pivot="focus"]`)
+	page.Advance(0)
+	if asked := lastWidgetRequest(page, "connection_tree"); !strings.Contains(asked, `"interfaces":[{"kind":"interface"`) {
+		t.Errorf("the focused tree was asked %s", asked)
+	}
+	if page.Count(`section[data-widget-card="tree"] span[data-chip="focus"]`) != 1 {
+		t.Errorf("the focused card does not say what it is focused on")
+	}
+	if fixture.document(1) != original || len(page.Writes()) != writes {
+		t.Errorf("focusing a card wrote %v", page.Writes()[writes:])
+	}
+	page.Click(`button[data-focus-clear="tree"]`)
+	page.Advance(0)
+	if asked := lastWidgetRequest(page, "connection_tree"); strings.Contains(asked, `"interfaces":[{`) {
+		t.Errorf("after show all the tree was asked %s", asked)
+	}
+	if page.Count(`span[data-chip="focus"]`) != 0 {
+		t.Errorf("show all left the focus chip")
+	}
+}
+
+// TestAMapZoomsAndResetsAndKeepsItsViewAcrossARefresh (the maintainer's review of 17 October 2026: the
+// world map had no zoom): the zoom controls scale the basemap and move the marks without scaling them,
+// the view survives a refresh, and the reset returns to the whole world. Nothing is written.
+func TestAMapZoomsAndResetsAndKeepsItsViewAcrossARefresh(t *testing.T) {
+	t.Parallel()
+	fixture := newCanvasFixture(t, `{"format_version": 1, "canvases": [{"id": "main", "title": "Main", "widgets": [
+    {"id": "map", "type": "passed_traffic_world_map", "placement": {"x": 0, "y": 0, "w": 8, "h": 8}}
+  ]}]}`)
+	fixture.recordedFor(t, "passed_traffic_world_map")
+	page := fixture.canvasPage(t, "/canvas/1/main")
+	writes := len(page.Writes())
+	view := func() string { return page.Attribute(`[data-map-svg] .map-pan`, "transform") }
+	if view() != "translate(0.00 0.00) scale(1.0000)" {
+		t.Fatalf("the map starts at %q", view())
+	}
+	page.Click(`button[data-map-zoom="in"]`)
+	zoomed := view()
+	if !strings.Contains(zoomed, "scale(1.6000)") {
+		t.Errorf("zooming in gives %q", zoomed)
+	}
+	if page.Count(`[data-map-svg] .map-mark-at`) > 0 && page.Attribute(`[data-map-svg] .map-mark-at circle`, "r") == "" {
+		t.Error("a mark lost its radius")
+	}
+	page.Advance(61000)
+	if view() != zoomed {
+		t.Errorf("a refresh moved the view from %q to %q", zoomed, view())
+	}
+	page.Click(`button[data-map-zoom="reset"]`)
+	if !strings.Contains(view(), "scale(1.0000)") {
+		t.Errorf("the reset leaves %q", view())
+	}
+	if len(page.Writes()) != writes {
+		t.Errorf("zooming the map wrote %v", page.Writes()[writes:])
+	}
 }

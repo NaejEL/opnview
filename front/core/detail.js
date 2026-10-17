@@ -17,8 +17,17 @@
   var h = opnview.h;
   var t = opnview.strings.t;
 
-  /* The detail of one subject. options: {subject, stale, canScope, canAdd, onClose, onOpen(subject),
-   * onScope(subject), onAdd(subject)}. */
+  /* Why a subject of a kind a canvas can be scoped to offers no scope: it has no key the format can
+   * name -- a client known only by its address, an interface with no identifier, a person with no
+   * name. Said in a word or two, where the pivot would be. */
+  var NOT_SCOPABLE = {
+    client: function () { return t("detail.not_scopable.client"); },
+    interface: function () { return t("detail.not_scopable.interface"); },
+    owner: function () { return t("detail.not_scopable.owner"); }
+  };
+
+  /* The detail of one subject. options: {subject, stale, canScope, canAdd, canFocus, onClose,
+   * onOpen(subject), onScope(subject), onAdd(subject), onFocus(subject)}. */
   function render(options) {
     var subject = options.subject;
     var facts = (subject.facts || []).filter(Boolean);
@@ -32,6 +41,13 @@
     if (options.canScope) {
       pivots.push(h("button", { key: "scope", type: "button", "class": "btn btn-small pivot", "data-pivot": "scope",
         on: { click: function () { options.onScope(subject); } } }, t("detail.pivot.scope")));
+    } else if (!subject.reference && Object.prototype.hasOwnProperty.call(NOT_SCOPABLE, subject.kind)) {
+      pivots.push(h("span", { key: "not-scopable", "class": "pivot-note", "data-pivot": "not_scopable" },
+        NOT_SCOPABLE[subject.kind]()));
+    }
+    if (options.canFocus) {
+      pivots.push(h("button", { key: "focus", type: "button", "class": "btn btn-small pivot", "data-pivot": "focus",
+        on: { click: function () { options.onFocus(subject); } } }, t("detail.pivot.focus")));
     }
     if (options.canAdd) {
       pivots.push(h("button", { key: "add", type: "button", "class": "btn btn-small pivot", "data-pivot": "add",

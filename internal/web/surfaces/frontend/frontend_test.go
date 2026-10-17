@@ -48,6 +48,27 @@ func frontOnly(t *testing.T, dataDir, widgetType string, files map[string]string
 	}
 }
 
+// themeVariant is a built-in theme's file under another id, its modes changed by mutate.
+func themeVariant(t *testing.T, builtin []byte, id string, mutate func(map[string]map[string]any)) string {
+	t.Helper()
+	var file struct {
+		FormatVersion int                       `json:"format_version"`
+		ID            string                    `json:"id"`
+		Name          map[string]string         `json:"name"`
+		Modes         map[string]map[string]any `json:"modes"`
+	}
+	if err := json.Unmarshal(builtin, &file); err != nil {
+		t.Fatal(err)
+	}
+	file.ID = id
+	mutate(file.Modes)
+	raw, err := json.Marshal(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
 const classicRenderer = `(function (root) { "use strict"; root.opnview = root.opnview || {}; })(this);`
 
 func getJSON(t *testing.T, harness *webtest.Harness, target string, into any) int {
@@ -249,6 +270,20 @@ func TestPartsOfTheDataDirectoryAreInstalledAtStartAndEachRefusalIsListedWithIts
 		strings.Replace(string(industrial), `"id": "industrial"`, `"id": "example-sepia"`, 1))
 	write(t, filepath.Join(dataDir, "themes", "industrial.json"), string(industrial))
 	write(t, filepath.Join(dataDir, "themes", "example-broken.json"), `{"format_version": 1,`)
+	// Every other code of A2 for a theme and a language, each by its own file, through the server.
+	write(t, filepath.Join(dataDir, "themes", "example-missing.json"), themeVariant(t, industrial, "example-missing",
+		func(modes map[string]map[string]any) { delete(modes["light"], "accent") }))
+	write(t, filepath.Join(dataDir, "themes", "example-unknown.json"), themeVariant(t, industrial, "example-unknown",
+		func(modes map[string]map[string]any) { modes["dark"]["glow"] = "#000000" }))
+	write(t, filepath.Join(dataDir, "themes", "example-value.json"), themeVariant(t, industrial, "example-value",
+		func(modes map[string]map[string]any) { modes["light"]["accent"] = "url(https://cdn.example/x.png)" }))
+	write(t, filepath.Join(dataDir, "themes", "example-file.json"), themeVariant(t, industrial, "example-other-id",
+		func(map[string]map[string]any) {}))
+	write(t, filepath.Join(dataDir, "languages", "de.json"), `{"language": "de", "strings": {"language.name": 7}}`)
+	write(t, filepath.Join(dataDir, "languages", "it.json"),
+		`{"language": "es", "strings": {"language.name": "Español"}}`)
+	write(t, filepath.Join(dataDir, "languages", "nl.json"),
+		`{"language": "nl", "strings": {"settings.title": "Instellingen"}}`)
 	write(t, filepath.Join(dataDir, "languages", "fr.json"),
 		`{"language": "fr", "strings": {"language.name": "Français"}}`)
 	write(t, filepath.Join(dataDir, "languages", "en.json"),
@@ -286,6 +321,13 @@ func TestPartsOfTheDataDirectoryAreInstalledAtStartAndEachRefusalIsListedWithIts
 	}
 	want := map[string]string{
 		"example-broken":           "theme_malformed",
+		"example-missing":          "theme_token_missing",
+		"example-unknown":          "theme_token_unknown",
+		"example-value":            "theme_value_invalid",
+		"example-file":             "theme_id_mismatch",
+		"de":                       "language_malformed",
+		"it":                       "language_code_mismatch",
+		"nl":                       "language_name_missing",
 		"industrial":               "name_collision",
 		"en":                       "name_collision",
 		"example_missing_renderer": params.RefusalRendererMissing,

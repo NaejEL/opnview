@@ -37,7 +37,7 @@
     "state.availability.healthy": "Healthy",
     "state.availability.not_collecting": "Installed, not collecting",
     "state.availability.unavailable": "Unavailable",
-    "state.availability.not_yet_probed": "Not yet probed",
+    "state.availability.not_yet_probed": "Not checked yet",
     "state.availability.unknown": "State unknown",
 
     "state.yes": "Yes",

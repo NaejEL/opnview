@@ -69,6 +69,14 @@
         return kit.subject("slice", slice.key, label, facts);
       }
 
+      /* The current rate of a direction, under its ring, where a sample exists. */
+      function ringRate(key) {
+        var found = (rates.by_direction || []).filter(function (entry) { return entry.key === key; })[0];
+        if (!found || !found.rate || found.rate.state === "no_current_sample" || found.rate.out_bits_per_second === null ||
+            found.rate.out_bits_per_second === undefined) { return null; }
+        return h("span", { key: "rate", "class": "comp-ring-rate" }, rateText(found.rate, "out_bits_per_second"));
+      }
+
       /* One ring: its slices, its Other, its total. ringKey names it ("whole" or a direction). */
       /* A direction in the core's words, and the firewall's own two in this widget's. */
       function directionName(key) {
@@ -89,21 +97,54 @@
             [[t("detail.fact.value"), kit.value(other.volume, unit, { field: field })],
              [t("detail.fact.share"), total > 0 ? format.percent(otherValue / total) : kit.none()]]) } : null;
         var inRing = showOther && otherEntry ? slices.concat([otherEntry]) : slices;
-        var centre = kit.text(total, unit) || "";
+        /* The hole carries the figure and, under it, its unit, as the mockup's rings do. */
+        var written = connections ? { figure: format.number(total), unit: t("column.figure.connections") } : format.parts("bytes", total);
+        var centre = written.figure;
+        var centreUnit = written.unit;
         return { key: ringKey, total: total, slices: slices, other: otherEntry, part: part,
           node: h("div", { key: "ring-" + ringKey, "class": "comp-ring", "data-ring": ringKey, "data-total": String(total) }, [
             kit.donut(inRing, { total: showOther ? total : total - (otherEntry ? otherValue : 0), centreValue: centre,
-              centreLabel: ringLabel, label: ringLabel }),
-            h("span", { "class": "comp-ring-label" }, ringLabel)
+              centreLabel: centreUnit, label: ringLabel }),
+            h("span", { "class": "comp-ring-label" }, ringLabel),
+            ringRate(ringKey)
           ]) };
       }
 
       var groupLabel = tk("plugin.traffic_composition.widget.traffic_composition.group_by.", data.group_by);
       var whole = ring("whole", data, tk("plugin.traffic_composition.widget.traffic_composition.whole.", data.whole));
-      var rings = [whole];
-      (data.rings || []).forEach(function (part) {
-        rings.push(ring(part.direction, part, directionName(part.direction)));
+      /* Split by direction, the card draws one ring per direction that carried traffic, side by side,
+       * as the mockup does; their relative weight is one proportional bar under them, keyed by
+       * direction, every direction in its key with its share; the whole is the legend's total. */
+      var split = !!(data.rings && data.rings.length);
+      var rings = split ? [] : [whole];
+      var directions = (data.rings || []).map(function (part) {
+        return { key: part.direction, label: directionName(part.direction), total: kit.amount(part.total, field) || 0, part: part };
       });
+      directions.forEach(function (entry) {
+        if (entry.total > 0) { rings.push(ring(entry.key, entry.part, entry.label)); }
+      });
+      var weightTotal = directions.reduce(function (sum, entry) { return sum + entry.total; }, 0);
+      var weight = null;
+      if (split && weightTotal > 0) {
+        var shown = directions.filter(function (entry) { return entry.total > 0; });
+        var at = 0, gap = shown.length > 1 ? 4 : 0, span = 1000 - gap * (shown.length - 1);
+        weight = [
+          h("svg", { key: "weight", "class": "comp-weight", viewBox: "0 0 1000 12", preserveAspectRatio: "none", role: "img",
+            "aria-label": t("plugin.traffic_composition.widget.traffic_composition.weight") }, shown.map(function (entry) {
+            var width = span * entry.total / weightTotal;
+            var node = h("rect", { key: entry.key, "class": "comp-weight-seg comp-weight-" + entry.key, x: kit.fixed(at), y: 0,
+              width: kit.fixed(Math.max(2, width)), height: 12, rx: 2 });
+            at += width + gap;
+            return node;
+          })),
+          h("div", { key: "scale", "class": "legend comp-scale" }, directions.map(function (entry) {
+            return h("span", { key: entry.key, "class": "legend-item muted" }, [
+              h("span", { "class": "swatch comp-weight-" + entry.key }),
+              entry.label, " ", format.percent(entry.total / weightTotal, 0)
+            ]);
+          }))
+        ];
+      }
 
       var legendRows = whole.slices.map(function (entry) {
         var memberRateNode = memberRate[entry.slice.key] ? rateText(memberRate[entry.slice.key], "out_bits_per_second") : null;
@@ -124,12 +165,15 @@
           h("span", { "class": "cp" }, whole.total > 0 ? format.percent(whole.other.value / whole.total, 0) : kit.none())
         ]));
       }
-      legendRows.push(h("div", { key: "total", "class": "comp-row is-total", "data-total": String(whole.total) }, [
+      var totalRow = h("div", { key: "total", "class": "comp-row is-total", "data-total": String(whole.total) }, [
         h("span", {}),
         h("span", { "class": "cl" }, t("shape.total")),
         h("span", { "class": "cv" }, kit.value(data.total, unit, { field: field })),
-        h("span", { "class": "cp" }, "")
-      ]));
+        h("span", { "class": "cp" }, whole.total > 0 ? format.percent(1, 0) : "")
+      ]);
+      /* One ring: the total closes its legend. Several: the legend runs in two columns and the total
+       * is a row of its own under both, as the mockup sets it. */
+      if (!(data.rings && data.rings.length)) { legendRows.push(totalRow); }
 
       var directionRates = (rates.by_direction || []).map(function (entry) {
         var name = directionName(entry.key);
@@ -163,7 +207,7 @@
                   return { from: bucket.from, to: bucket.to, gap: !!bucket.gap, value: bucket.value };
                 }) };
             }),
-            format: { left: function (value) { return kit.text(value, unit); } }, width: input.size.width, height: 130,
+            format: { left: kit.axis(unit) }, width: input.size.width, height: 130,
             label: t("plugin.traffic_composition.widget.traffic_composition.recent") }),
           kit.note(t("plugin.traffic_composition.widget.traffic_composition.recent_window",
             { duration: format.duration(recent.seconds) }), "recent-window")
@@ -172,16 +216,16 @@
 
       return h("div", { "class": "traffic-composition", "data-group-by": data.group_by, "data-show-other": showOther ? "true" : "false",
         "data-line-interpolation": interpolation }, [
-        h("div", { key: "grouping", "class": "legend" }, [
-          h("span", { "class": "legend-item" }, t("plugin.traffic_composition.widget.traffic_composition.grouped_by", { group: groupLabel })),
-          kit.measure(data.total ? data.total.measure : null),
-          directionRates.length ? kit.measure("sampled") : null
+        h("div", { key: "grouping", "class": "legend comp-grouping" }, [
+          h("span", { "class": "legend-item muted" }, t("plugin.traffic_composition.widget.traffic_composition.grouped_by", { group: groupLabel }))
         ]),
-        directionRates.length ? kit.figures(directionRates) : null,
-        h("div", { key: "rings", "class": rings.length > 1 ? "comp-rings" : "comp" }, rings.length > 1
+        split ? null : (directionRates.length ? kit.figures(directionRates) : null),
+        h("div", { key: "rings", "class": split ? "comp-rings" : "comp", "data-rings": String(rings.length) }, split
           ? rings.map(function (entry) { return entry.node; })
           : [whole.node, h("div", { "class": "comp-legend" }, legendRows)]),
-        rings.length > 1 ? h("div", { key: "legend", "class": "comp-legend" }, legendRows) : null,
+        weight,
+        split ? h("div", { key: "legend", "class": "comp-legend comp-legend-split" }, legendRows) : null,
+        split ? h("div", { key: "total", "class": "comp-legend" }, totalRow) : null,
         aside.length ? h("div", { key: "aside", "class": "comp-legend" }, aside) : null,
         strip
       ]);

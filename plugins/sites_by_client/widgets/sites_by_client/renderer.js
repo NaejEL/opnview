@@ -42,6 +42,14 @@
             [t("column.operator"), site.operator || kit.none(t("figure.no_operator"))],
             [t("column.country"), site.country_code || kit.none(t("figure.no_country"))]
           ];
+          /* A destination no name was inferred for is its address, with why it has no place where its
+           * geolocation did not answer (docs/widget-api.md, "Destinations with no name"). */
+          if (site.kind === "address") {
+            return { key: "address:" + site.address, label: site.address,
+              value: [kit.value(site.flows), site.lookup_state && site.lookup_state !== "resolved"
+                ? kit.badge(tk("reason.", site.lookup_state), "gap") : null],
+              subject: kit.subject("address", site.address, site.address, facts) };
+          }
           return { key: site.name, label: site.name, value: [kit.value(site.flows), methodsNode(kit, tk, site.methods)],
             subject: kit.subject("site", site.name, site.name, facts) };
         });

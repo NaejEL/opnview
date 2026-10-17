@@ -37,8 +37,11 @@
         cells[cell.row + "\u0000" + cell.column] = cell;
         if (pseudo[cell.column] !== undefined) { pseudo[cell.column] = true; }
       });
-      if (pseudo.north_south) { labels.north_south = t("column.scope.north_south"); columns.push({ key: "north_south", label: labels.north_south }); }
-      if (pseudo.this_firewall) { labels.this_firewall = t("column.scope.this_firewall"); columns.push({ key: "this_firewall", label: labels.this_firewall }); }
+      /* The outside and the firewall are columns the answer may already list: each is drawn once. */
+      var listed = {};
+      columns.forEach(function (column) { listed[column.key] = true; });
+      if (pseudo.north_south && !listed.north_south) { labels.north_south = t("column.scope.north_south"); columns.push({ key: "north_south", label: labels.north_south }); }
+      if (pseudo.this_firewall && !listed.this_firewall) { labels.this_firewall = t("column.scope.this_firewall"); columns.push({ key: "this_firewall", label: labels.this_firewall }); }
       function ruleText(rule) {
         if (rule.state === "rule_not_found") { return t("plugin.interface_traffic_matrix.widget.interface_traffic_matrix.rule_not_found", { rid: String(rule.rid) }); }
         return rule.description || String(rule.rid);

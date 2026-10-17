@@ -44,23 +44,43 @@
       var below = part(data.below_minimum ? data.below_minimum.volume : null);
       var measure = data.total ? data.total.measure : "logged";
       function figure(value) { return kit.value({ measure: measure, lower_bound: true, value: value }, unit); }
+      /* THE MOCKUP'S SIDE: the unplaced counter leads -- its figure, what it is, how many connections
+       * and addresses it holds -- and the reconciliation is a box of its own under it. */
+      var unplacedConnections = unplacedRows.reduce(function (sum, row) { return sum + (row.volume ? row.volume.connections || 0 : 0); }, 0);
+      var placedConnections = (data.points || []).reduce(function (sum, point) {
+        return sum + (point.volume ? point.volume.connections || 0 : 0); }, 0);
       var counter = h("div", { "class": "counter", "data-unplaced": String(unplaced) }, [
         h("span", { "class": "counter-value" }, figure(unplaced)),
-        h("span", { "class": "counter-second" }, tp("column.map.not_placed_addresses", addresses)),
+        t(field === "bytes" ? "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.unplaced_volume" : "plugin.passed_traffic_world_map.widget.passed_traffic_world_map.unplaced_connections"),
+        h("span", { "class": "counter-second" }, [tp("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.connections_not_placed", unplacedConnections), " · ",
+          tp("column.address_count", addresses)]),
         parameters.show_unplaced === false ? null : h("ul", { "class": "counter-list" }, unplacedRows.map(function (row) {
           return h("li", { key: row.reason, "data-reason": row.reason }, [
-            h("span", {}, [(kit.placeReason(row.reason) || tk("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.", row.reason)), " · ", tp("column.address_count", row.addresses || 0)]),
-            kit.value(row.volume, unit, { field: field })
+            /* Why, then how many addresses where there are any, then the figure with what it counts. */
+            h("span", {}, [(kit.placeReason(row.reason) || tk("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.reason.", row.reason)),
+              row.addresses ? [" · ", tp("column.address_count", row.addresses)] : null]),
+            h("span", { "class": "counter-figure" }, [kit.value(row.volume, unit, { field: field }),
+              field === "connections" ? [" ", t("column.figure.connections")] : null])
           ]);
         }))
       ]);
-      var reconcile = h("div", { "class": "map-reconcile", "data-placed": String(placed), "data-unplaced": String(unplaced),
-        "data-below-minimum": String(below), "data-below": String(below), "data-total": String(data.total ? part(data.total) : 0) },
-        kit.table([{ key: "what", label: t("sankey.column.what") }, { key: "value", label: t("sankey.column.value"), num: true }], [
-          { key: "placed", cells: [t("column.map.placed"), figure(placed)] },
-          { key: "unplaced", cells: [t("column.map.not_placed"), figure(unplaced)] },
-          { key: "below", cells: [tp("column.below_minimum", data.below_minimum ? data.below_minimum.members : 0), figure(below)] }
-        ], { total: data.total ? { label: t("shape.total"), cells: [kit.value(data.total, unit, { field: field })] } : null, compact: true }));
+      function row(key, label, value) {
+        return [h("dt", { key: "t-" + key }, label), h("dd", { key: "d-" + key }, value)];
+      }
+      var connectionsWord = function (count) { return kit.text(count); };
+      var reconcile = h("div", { "class": "popup map-reconcile", "data-placed": String(placed), "data-unplaced": String(unplaced),
+        "data-below-minimum": String(below), "data-below": String(below), "data-total": String(data.total ? part(data.total) : 0) }, [
+        h("div", { key: "title", "class": "popup-title" }, t("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.allowed_traffic")),
+        h("dl", { key: "facts" }, [
+          row("placed", t("column.map.placed"), figure(placed)),
+          row("unplaced", t("column.map.not_placed"), figure(unplaced)),
+          below > 0 ? row("below", tp("column.below_minimum", data.below_minimum ? data.below_minimum.members : 0), figure(below)) : null,
+          row("total", t("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.total_allowed"), data.total ? kit.value(data.total, unit, { field: field }) : kit.none()),
+          row("connections-placed", t("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.connections_placed"), connectionsWord(placedConnections)),
+          row("connections-unplaced", t("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.connections_unplaced"), connectionsWord(unplacedConnections)),
+          row("connections-total", t("plugin.passed_traffic_world_map.widget.passed_traffic_world_map.connections_total"), connectionsWord(placedConnections + unplacedConnections))
+        ])
+      ]);
       return h("div", { "class": "map-layout" }, [
         h("div", { "class": "map-frame" }, [kit.map(points, { cluster: parameters.cluster !== false }),
           parameters.cluster !== false ? h("p", { "class": "table-foot", "data-cluster": "true" }, t("column.map.clustered")) : null]),

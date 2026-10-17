@@ -29,7 +29,7 @@
   var FRONT_ONLY_READS = [/^\/api\/widget\/[a-z0-9_]+(\?.*)?$/, /^\/api\/datasets(\?.*)?$/,
     /^\/api\/datasets\/[a-z0-9_]+(\.[a-z0-9_]+)*\/query(\?.*)?$/, /^\/api\/live\/strip(\?.*)?$/];
 
-  /* A path is matched as written, so a dot segment or an escape that a browser would resolve to
+  /* A path is matched as written, so a dot component or an escape that a browser would resolve to
    * another route is refused before any pattern is tried: a dataset's name is dot-separated words,
    * never "." or "..", and nothing in the four routes is escaped. */
   function allowedRead(path) {
@@ -102,7 +102,8 @@
         byShape[owner.shape] = definition;
         return true;
       }
-      if (definition.shape || definition.type !== owner.type) { refuse("not_its_own_type", definition); return false; }
+      if (definition.shape) { refuse("not_its_own_shape", definition); return false; }
+      if (definition.type !== owner.type) { refuse("not_its_own_type", definition); return false; }
       if (byType[owner.type]) { refuse("already_registered", definition); return false; }
       byType[owner.type] = definition;
       return true;

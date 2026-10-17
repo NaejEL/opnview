@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	opnview "github.com/NaejEL/opnview"
@@ -125,6 +126,7 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 		"dock.notice.":        reportConditions,
 		"report.condition.":   reportConditions,
 		"dock.tab.":           list("opnview.dock.TABS"),
+		"undo.what.":          list("opnview.editing.UNDO_LABELS"),
 		"dock.syntax.":        list("opnview.editing.SYNTAXES"),
 		"series.source.":      list("Object.keys(opnview.dock.SERIES_SOURCES)"),
 		"series.axis.":        list("opnview.dock.SERIES_AXES"),
@@ -311,7 +313,7 @@ func TestEveryKeyAFrontFileUsesIsInTheEnglishCatalogue(t *testing.T) {
 	// The scan itself is held to finding what the views plainly use, so a regular expression that
 	// stopped matching cannot pass this test by finding nothing.
 	for _, key := range []string{"settings.title", "people.people_count.other", "error.display_name_taken",
-		"outcome.no_message_received", "unit.symbol.megabyte"} {
+		"outcome.no_message_received", "unit.symbol.mebibyte"} {
 		if _, found := used[key]; !found {
 			t.Errorf("the scan of the front's files did not find %s", key)
 		}
@@ -491,4 +493,138 @@ func TestEveryCatalogueEntryOfTheCoreTheSurfacesAndTheFrontIsReached(t *testing.
 			}
 		}
 	}
+}
+
+// pseudoWalkOutsideCode is pseudoWalk over everything but the code pane and the document lines the
+// dock quotes beside a notice: those show the document's own text, which is data.
+const pseudoWalkOutsideCode = `(function (allowed) {
+  var found = [];
+  function visible(text, where) {
+    var trimmed = text.trim();
+    if (!trimmed) { return; }
+    if (trimmed.indexOf("⟦") === 0 && trimmed.lastIndexOf("⟧") === trimmed.length - 1) { return; }
+    if (allowed[trimmed]) { return; }
+    if (/^[\s·→←—–,;:\/()|+-]+$/.test(trimmed)) { return; }
+    found.push(where + ": " + JSON.stringify(trimmed));
+  }
+  (function walk(node) {
+    if (node.nodeType === 3) { visible(node.nodeValue, "text"); return; }
+    if (node.getAttribute("id") === "dock-ghost" || (node.getAttribute("class") || "").indexOf("code-notice-line") >= 0) {
+      return;
+    }
+    ["aria-label", "title", "placeholder"].forEach(function (name) {
+      var value = node.getAttribute(name);
+      if (value !== null) { visible(value, name); }
+    });
+    node.childNodes.forEach(walk);
+  })(document.body);
+  return JSON.stringify(found);
+})`
+
+// TestEveryEditingSurfaceDrawnInAPseudoLanguageShowsNoLiteral (F7-AC5 for the editing surfaces): in
+// the pseudo-language, the detail popover, the edit-mode chrome, the picker, each tab of the dock
+// and the import report show no string that is neither the catalogue's nor data.
+func TestEveryEditingSurfaceDrawnInAPseudoLanguageShowsNoLiteral(t *testing.T) {
+	t.Parallel()
+	f := newEditFixture(t, oneCanvas)
+	f.recordedFor(t, "top_sites")
+	f.recordedFor(t, "public_address")
+	data := map[string]bool{}
+	var mutex sync.Mutex
+	recording := func(request frontjsRequest) frontjsAnswer {
+		answer := f.handle(request)
+		raw, _ := json.Marshal(answer.Body)
+		var decoded any
+		_ = json.Unmarshal(raw, &decoded)
+		mutex.Lock()
+		keysAndLeaves(decoded, data)
+		mutex.Unlock()
+		return answer
+	}
+	page := frontjs.New(t, frontjs.Options{Handler: recording})
+	page.LoadRenderers()
+	page.Run(`opnview.format.record(true); opnview.strings.setPseudo(true);`)
+	page.Start("/canvas/1/main")
+	page.Advance(0)
+	setGridWidth(page, 1600)
+	imported := importedMockupDocument(t, page)
+	var decoded any
+	if err := json.Unmarshal([]byte(imported), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	keysAndLeaves(decoded, data)
+	check := func(surface string, present string) {
+		t.Helper()
+		if present != "" && page.Count(present) == 0 {
+			t.Errorf("%s: nothing matches %s:\n%s", surface, present, page.Outline())
+			return
+		}
+		var formatted []string
+		if err := json.Unmarshal([]byte(page.Run(`JSON.stringify(opnview.format.recorded())`).String()), &formatted); err != nil {
+			t.Fatal(err)
+		}
+		mutex.Lock()
+		for _, text := range formatted {
+			data[text] = true
+		}
+		allowed, _ := json.Marshal(data)
+		mutex.Unlock()
+		var found []string
+		if err := json.Unmarshal([]byte(page.Run(pseudoWalkOutsideCode+"("+string(allowed)+")").String()), &found); err != nil {
+			t.Fatal(err)
+		}
+		for _, literal := range found {
+			t.Errorf("%s shows a string that is neither the catalogue's nor data: %s", surface, literal)
+		}
+	}
+	page.Run(`document.querySelectorAll("[data-subject]")[0].dispatchEvent(__makeEvent("click"));`)
+	check("the detail popover", "#detail-pop")
+	page.Click(`button[data-detail-close="true"]`)
+	page.Click("#edit-toggle")
+	check("the edit-mode chrome", "[data-edit-bar]")
+	page.Click("#add-widget-slot")
+	check("the picker", "button[data-pick]")
+	page.Click("#picker-close")
+	page.Click(`button[data-configure="sites"]`)
+	for _, tab := range []string{"form", "widget", "document"} {
+		page.Click("#dock-tab-" + tab)
+		check("the dock's "+tab+" tab", "#dock-tab-"+tab)
+	}
+	page.Click("#dock-tab-document")
+	page.Input("#dock-code", "format_version: 1\ncanvases: [\n")
+	page.Click("#dock-apply")
+	check("the dock refusing a document", "#dock-error")
+	page.Go("/dashboards/import")
+	page.Advance(0)
+	check("the import view", "#import-text")
+	page.Input("#import-text", imported)
+	page.Click("#import-submit")
+	page.Advance(0)
+	setGridWidth(page, 1600)
+	check("the import report", "tr[data-report-path]")
+	if missing := page.Run(`JSON.stringify(opnview.strings.missing())`).String(); missing != "[]" {
+		t.Errorf("the editing surfaces asked for keys the catalogue does not hold: %s", missing)
+	}
+}
+
+// keysAndLeaves collects every member name of a decoded document as well as its strings and
+// numbers: the editing surfaces show a document's own keys -- a kept key, a parameter's name -- as
+// data.
+func keysAndLeaves(value any, into map[string]bool) {
+	leaves(value, into)
+	var walk func(any)
+	walk = func(value any) {
+		switch typed := value.(type) {
+		case []any:
+			for _, item := range typed {
+				walk(item)
+			}
+		case map[string]any:
+			for key, item := range typed {
+				into[key] = true
+				walk(item)
+			}
+		}
+	}
+	walk(value)
 }

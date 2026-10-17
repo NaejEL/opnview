@@ -69,22 +69,62 @@
           ] };
         });
       }
+      /* THE MOCKUP'S TILES: one per question -- the IPv4 address, the IPv6 address, the interface that
+       * carries them, the gateway, the last change -- each a label, a figure and a line under it; the
+       * earlier addresses as a table under the tiles when the history is asked for. */
+      function tile(key, label, value, sub, subject, mono) {
+        var attrs = { key: key, "class": "tile", "data-tile": key };
+        return h("div", subject ? kit.attrs(attrs, kit.pick(subject)) : attrs, [
+          h("span", { "class": "tile-label" }, label),
+          h("span", { "class": "tile-value" + (value === null ? " tile-value-empty" : "") + (mono ? " mono" : "") },
+            value === null ? kit.none() : value),
+          h("span", { "class": "tile-sub" }, sub)
+        ]);
+      }
+      function reachWords(address) {
+        if (address.public) { return t("plugin.public_address.widget.public_address.public"); }
+        if (address.special_purpose) { return address.special_purpose.name; }
+        return t("plugin.public_address.widget.public_address.not_public");
+      }
+      function written(address) {
+        return address.prefix_length !== null && address.prefix_length !== undefined
+          ? [address.address, "/", String(address.prefix_length)] : address.address;
+      }
+      var several = (data.upstreams || []).length > 1;
       var blocks = (data.upstreams || []).map(function (upstream, index) {
         var iface = upstream.interface;
         var label = iface ? kit.interfaceLabel(iface) : String(index);
         var history = upstream.history || [];
         var historyRemainder = upstream.history_remainder ? upstream.history_remainder.members : 0;
+        var current = [], seen = {};
+        (upstream.current || []).forEach(function (address) {
+          if (!seen[address.address]) { seen[address.address] = true; current.push(address); }
+        });
+        function family(name) {
+          var found = current.filter(function (address) { return address.family === name; })[0];
+          return tile(name, familyOf(name), found ? written(found) : null,
+            found ? reachWords(found) : t("plugin.public_address.widget.public_address.no_address"), found ? addressSubject(found, iface) : null, true);
+        }
+        var gateway = (upstream.gateways || [])[0] || null;
+        var changedAt = current.reduce(function (latest, address) {
+          return address.changed_at && address.changed_at > latest ? address.changed_at : latest;
+        }, 0);
+        var tiles = [
+          family("ipv4"),
+          family("ipv6"),
+          tile("carried-by", t("plugin.public_address.widget.public_address.carried_by"), label,
+            upstream.behind_upstream_nat ? t("plugin.public_address.widget.public_address.behind_nat") : (iface && iface.device ? iface.device : ""),
+            iface ? kit.interfaceSubject(iface) : null, false),
+          tile("gateway", t("plugin.public_address.widget.public_address.gateway"), gateway ? gateway.address : null,
+            gateway ? familyOf(gateway.family) : t("plugin.public_address.widget.public_address.no_address"), gateway ? addressSubject(gateway, iface) : null, true),
+          tile("changed", t("plugin.public_address.widget.public_address.column.changed"), changedAt ? format.instant(changedAt) : null,
+            history.length || historyRemainder ? input.tp("plugin.public_address.widget.public_address.earlier_count", history.length + historyRemainder)
+              : t("plugin.public_address.widget.public_address.only_one_address_seen"), null, false)
+        ];
         return h("div", { key: "upstream-" + (iface ? iface.id : index), "class": "public-upstream",
           "data-upstream": iface ? String(iface.id) : String(index) }, [
-          h("div", { "class": "owner-head" }, [
-            iface ? h("span", kit.attrs({ "class": "owner-name pickable" }, kit.pick(kit.interfaceSubject(iface))), label)
-              : h("span", { "class": "owner-name" }, label),
-            upstream.behind_upstream_nat ? kit.badge(t("plugin.public_address.widget.public_address.behind_nat"), "unavailable") : null
-          ]),
-          kit.table(columns, rowsOf(upstream.current, iface, "current-", true),
-            { caption: t("state.geoip.current"), empty: t("plugin.public_address.widget.public_address.no_address") }),
-          (upstream.gateways || []).length ? kit.table(columns, rowsOf(upstream.gateways, iface, "gateway-", false),
-            { caption: t("plugin.public_address.widget.public_address.gateways") }) : null,
+          several ? h("div", { key: "head", "class": "owner-head" }, h("span", { "class": "owner-name" }, label)) : null,
+          h("div", { key: "tiles", "class": "tiles" }, tiles),
           history.length || historyRemainder ? kit.table(columns, rowsOf(history, iface, "history-", false),
             { caption: t("plugin.public_address.widget.public_address.history"),
               remainder: historyRemainder ? { members: historyRemainder, cells: ["", "", "", ""] } : null }) : null

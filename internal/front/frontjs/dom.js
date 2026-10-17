@@ -146,6 +146,8 @@
   Element.prototype.querySelectorAll = function (selector) { return query(this, selector); };
   Element.prototype.querySelector = function (selector) { return queryFirst(this, selector); };
   Object.defineProperty(Element.prototype, "offsetHeight", { get: function () { return 0; } });
+  /* Nothing scrolls here: the element last brought into view is noted, for a test to read. */
+  Element.prototype.scrollIntoView = function () { root.__dom.revealed = this; };
 
   function makeEvent(type, options) {
     var settings = options || {};
