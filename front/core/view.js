@@ -32,30 +32,45 @@
   function h(tag, options, children) {
     var node = { tag: tag, key: undefined, attrs: {}, props: {}, on: {}, children: [] };
     var given = options || {};
-    Object.keys(given).forEach(function (name) {
+    var names = Object.keys(given);
+    for (var index = 0; index < names.length; index++) {
+      var name = names[index];
       var value = given[name];
-      if (name === "key") { node.key = value; return; }
-      if (name === "on") { node.on = value || {}; return; }
-      if (name === "props") { node.props = value || {}; return; }
-      if (/^on/i.test(name) || name.toLowerCase() === "style") {
+      if (name === "key") { node.key = value; continue; }
+      if (name === "on") { node.on = value || {}; continue; }
+      if (name === "props") { node.props = value || {}; continue; }
+      if (refusedAttribute(name)) {
         throw new Error("view: the attribute " + name + " is refused: a handler is attached by the reconciler " +
           "and a colour is a class");
       }
-      if (PROPERTIES[name]) { node.props[name] = value; return; }
+      if (PROPERTIES[name]) { node.props[name] = value; continue; }
       node.attrs[name] = value;
-    });
+    }
     node.children = flatten(children === undefined ? [] : children);
     return node;
   }
 
+  /* An attribute whose name begins with "on", in any case, or a style attribute. */
+  function refusedAttribute(name) {
+    var first = name.charCodeAt(0), second = name.charCodeAt(1);
+    if ((first === 111 || first === 79) && (second === 110 || second === 78)) { return true; }
+    return name.length === 5 && name.toLowerCase() === "style";
+  }
+
+  /* Children as one flat list: nested arrays flattened; null, undefined and false left out; a
+   * number written as its text. Loops rather than callbacks: every node of every view passes here. */
+  function flattenInto(item, flat) {
+    if (item === null || item === undefined || item === false) { return; }
+    if (Array.isArray(item)) {
+      for (var index = 0; index < item.length; index++) { flattenInto(item[index], flat); }
+      return;
+    }
+    flat.push(typeof item === "number" ? String(item) : item);
+  }
+
   function flatten(children) {
     var flat = [];
-    (function walk(item) {
-      if (item === null || item === undefined || item === false) { return; }
-      if (Array.isArray(item)) { item.forEach(walk); return; }
-      if (typeof item === "number") { flat.push(String(item)); return; }
-      flat.push(item);
-    })(children);
+    flattenInto(children, flat);
     return flat;
   }
 
@@ -70,6 +85,9 @@
   }
 
   var deferred = false;
+  /* How many protected subtrees were left waiting, ever: a subtree whose patch left none waiting
+   * matches its view node whole. */
+  var deferrals = 0;
 
   function isEditable(element) {
     if (!element || element.nodeType !== 1) { return false; }
@@ -114,52 +132,69 @@
     element.__oattrs = {};
     element.__oon = {};
     patchElement(element, vnode, { refresh: false }, svg);
+    element.__ovnode = vnode;
     return element;
   }
 
+  var owns = Object.prototype.hasOwnProperty;
+
+  /* The patch functions below are loops rather than callbacks: every element of every render
+   * passes through them. */
   function patchAttributes(element, attrs) {
     var previous = element.__oattrs || {};
-    Object.keys(previous).forEach(function (name) {
-      if (!Object.prototype.hasOwnProperty.call(attrs, name) || attrs[name] === null || attrs[name] === undefined ||
-          attrs[name] === false) {
+    var names = Object.keys(previous), index, name, value;
+    for (index = 0; index < names.length; index++) {
+      name = names[index];
+      value = attrs[name];
+      if (!owns.call(attrs, name) || value === null || value === undefined || value === false) {
         element.removeAttribute(name);
       }
-    });
+    }
     var current = {};
-    Object.keys(attrs).forEach(function (name) {
-      var value = attrs[name];
-      if (value === null || value === undefined || value === false) { return; }
+    names = Object.keys(attrs);
+    for (index = 0; index < names.length; index++) {
+      name = names[index];
+      value = attrs[name];
+      if (value === null || value === undefined || value === false) { continue; }
       var text = value === true ? "" : String(value);
       current[name] = text;
       if (previous[name] !== text || element.getAttribute(name) !== text) { element.setAttribute(name, text); }
-    });
+    }
     element.__oattrs = current;
+  }
+
+  /* One listener per event type, attached once, calling whatever handler the latest tree gave. */
+  function listener(element, type) {
+    return function (event) {
+      var handler = element.__oon[type];
+      if (handler) { handler(event); }
+    };
   }
 
   function patchEvents(element, handlers) {
     var registered = element.__oon || (element.__oon = {});
-    Object.keys(registered).forEach(function (type) {
-      if (!Object.prototype.hasOwnProperty.call(handlers, type)) { registered[type] = null; }
-    });
-    Object.keys(handlers).forEach(function (type) {
-      if (!Object.prototype.hasOwnProperty.call(registered, type)) {
-        element.addEventListener(type, function (event) {
-          var handler = element.__oon[type];
-          if (handler) { handler(event); }
-        });
-      }
+    var types = Object.keys(registered), index, type;
+    for (index = 0; index < types.length; index++) {
+      if (!owns.call(handlers, types[index])) { registered[types[index]] = null; }
+    }
+    types = Object.keys(handlers);
+    for (index = 0; index < types.length; index++) {
+      type = types[index];
+      if (!owns.call(registered, type)) { element.addEventListener(type, listener(element, type)); }
       registered[type] = handlers[type];
-    });
+    }
   }
 
   function patchProperties(element, props) {
     var document = element.ownerDocument;
-    Object.keys(props).forEach(function (name) {
+    var names = Object.keys(props);
+    for (var index = 0; index < names.length; index++) {
+      var name = names[index];
       var value = props[name];
       // The field the reader is typing in is theirs: its value is never written over.
-      if (name === "value" && document && document.activeElement === element) { return; }
+      if (name === "value" && document && document.activeElement === element) { continue; }
       if (element[name] !== value) { element[name] = value; }
-    });
+    }
   }
 
   function patchElement(element, vnode, context, inSvg) {
@@ -174,27 +209,34 @@
       if (node.nodeValue !== vnode) { node.nodeValue = vnode; }
       return;
     }
+    /* The very view node this element was last made to match, whole: nothing in it can differ, so
+     * nothing is walked. A drawing kept while its answer and its size stand is one such node, and
+     * it is most of a canvas. */
+    if (node.__ovnode === vnode) { return; }
     if (context.refresh && protectedElement(node)) {
       deferred = true;
+      deferrals += 1;
       return;
     }
+    var before = deferrals;
     patchElement(node, vnode, context, inSvg);
+    node.__ovnode = deferrals === before ? vnode : null;
   }
 
   function patchChildren(parent, vchildren, context, inSvg) {
     var document = parent.ownerDocument;
-    var byKey = {};
+    var byKey = {}, index, node;
     /* The children as they stand, read once. */
     var existing = Array.prototype.slice.call(parent.childNodes);
-    existing.forEach(function (node) {
-      if (node.__okey !== undefined && !Object.prototype.hasOwnProperty.call(byKey, node.__okey)) {
-        byKey[node.__okey] = node;
-      }
-    });
+    for (index = 0; index < existing.length; index++) {
+      node = existing[index];
+      if (node.__okey !== undefined && !owns.call(byKey, node.__okey)) { byKey[node.__okey] = node; }
+    }
     var kept = [];
-    vchildren.forEach(function (vnode, index) {
+    for (index = 0; index < vchildren.length; index++) {
+      var vnode = vchildren[index];
       var key = keyOf(vnode, index);
-      var node = Object.prototype.hasOwnProperty.call(byKey, key) ? byKey[key] : null;
+      node = owns.call(byKey, key) ? byKey[key] : null;
       if (node && compatible(node, vnode)) {
         delete byKey[key];
         patchNode(node, vnode, context, inSvg);
@@ -203,17 +245,18 @@
         node.__okey = key;
       }
       kept.push(node);
-    });
+    }
     // Everything not kept goes: a key that disappeared, or a node the reconciler did not make.
     var token = {};
-    kept.forEach(function (node) { node.__okept = token; });
-    existing.forEach(function (node) {
+    for (index = 0; index < kept.length; index++) { kept[index].__okept = token; }
+    for (index = 0; index < existing.length; index++) {
+      node = existing[index];
       if (node.__okept !== token && node.parentNode === parent) { parent.removeChild(node); }
-    });
-    kept.forEach(function (node, index) {
+    }
+    for (index = 0; index < kept.length; index++) {
       var at = parent.childNodes[index];
-      if (at !== node) { parent.insertBefore(node, at || null); }
-    });
+      if (at !== kept[index]) { parent.insertBefore(kept[index], at || null); }
+    }
   }
 
   var view = {

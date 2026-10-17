@@ -101,13 +101,13 @@ func treeDigest(t *testing.T, root string) string {
 
 // drawn runs a renderer file in a page and draws one answer with it, answering what the drawing
 // holds: the text of the rows of its table, the keys of its bars and the samples line of each bar.
-func drawn(t *testing.T, renderer string, catalogue map[string]string, row map[string]any, answer any,
+func drawn(t *testing.T, url, renderer string, catalogue map[string]string, row map[string]any, answer any,
 	parameters map[string]any) map[string][]string {
 	t.Helper()
 	page := frontjs.New(t, frontjs.Options{})
 	encodedStrings, _ := json.Marshal(catalogue)
 	page.Run(fmt.Sprintf(`opnview.strings.install("en", %s, %s);`, encodedStrings, encodedStrings))
-	page.Run(renderer)
+	page.RunAt(url, renderer)
 	encodedRow, _ := json.Marshal(row)
 	encodedAnswer, _ := json.Marshal(answer)
 	encodedParameters, _ := json.Marshal(parameters)
@@ -235,6 +235,7 @@ func TestTheFourWorkedExamplesOfTheFrontPluginDocumentAreInstalledFromFilesAlone
 	}
 	rows := map[string]map[string]any{}
 	renderers := map[string]string{}
+	urls := map[string]string{}
 	for _, row := range listed.Widgets {
 		if row.Type != "example_lookups_by_hour" && row.Type != "example_latency_targets" {
 			continue
@@ -249,6 +250,7 @@ func TestTheFourWorkedExamplesOfTheFrontPluginDocumentAreInstalledFromFilesAlone
 			t.Errorf("%s's renderer at %s answered %d", row.Type, *row.RendererURL, status)
 		}
 		renderers[row.Type] = body
+		urls[row.Type] = *row.RendererURL
 		switch row.Type {
 		case "example_lookups_by_hour":
 			if row.Backend {
@@ -267,7 +269,7 @@ func TestTheFourWorkedExamplesOfTheFrontPluginDocumentAreInstalledFromFilesAlone
 	// The front-only widget: its renderer names a read of the data catalogue, the core performs it on
 	// this server, and the renderer draws the answer -- one row per bucket of the period.
 	page := frontjs.New(t, frontjs.Options{})
-	page.Run(renderers["example_lookups_by_hour"])
+	page.RunAt(urls["example_lookups_by_hour"], renderers["example_lookups_by_hour"])
 	requested := page.Run(`JSON.stringify(opnview.widgets.renderer("example_lookups_by_hour", null)
 		.requests({ parameters: { period: "24h" } }))`).String()
 	var paths []string
@@ -303,7 +305,8 @@ func TestTheFourWorkedExamplesOfTheFrontPluginDocumentAreInstalledFromFilesAlone
 			}}},
 	}
 	reads := []any{map[string]any{"path": paths[0], "status": status, "body": dataset}}
-	frontOnly := drawn(t, renderers["example_lookups_by_hour"], english.Strings, rows["example_lookups_by_hour"],
+	frontOnly := drawn(t, urls["example_lookups_by_hour"], renderers["example_lookups_by_hour"], english.Strings,
+		rows["example_lookups_by_hour"],
 		map[string]any{"type": "example_lookups_by_hour", "condition": "reachable", "answers": reads, "data": reads},
 		map[string]any{"period": "24h"})
 	if got := frontOnly["rows"]; len(got) != 3 || !strings.HasSuffix(got[0], "412") ||
@@ -329,7 +332,8 @@ func TestTheFourWorkedExamplesOfTheFrontPluginDocumentAreInstalledFromFilesAlone
 		t.Fatalf("the plugin widget answered %d: %v", status, served)
 	}
 	for _, show := range []bool{true, false} {
-		bars := drawn(t, renderers["example_latency_targets"], english.Strings, rows["example_latency_targets"], served,
+		bars := drawn(t, urls["example_latency_targets"], renderers["example_latency_targets"], english.Strings,
+			rows["example_latency_targets"], served,
 			map[string]any{"period": "24h", "show_samples": show})
 		if strings.Join(bars["bars"], " ") != "alpha.example.net beta.example.org" {
 			t.Errorf("the plugin widget's renderer drew the bars %v", bars["bars"])

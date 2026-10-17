@@ -265,7 +265,14 @@
 
     /* Reads a file's text: a structural refusal ({error}), or the document to store. */
     read: function (text) {
-      return opnview.document.load(text, function (type) { return opnview.widgets.row(type); });
+      /* A file is never trusted input: whatever it makes the reader throw is a refusal of the file,
+         named, and never an error escaping into the view that asked. */
+      try {
+        return opnview.document.load(text, function (type) { return opnview.widgets.row(type); });
+      } catch (error) {
+        return { error: { condition: "document_unreadable", line: null, canvas_index: null, widget_index: null,
+          field: null, path: null } };
+      }
     },
 
     /* Stores a read document as an imported dashboard and collects its report. */

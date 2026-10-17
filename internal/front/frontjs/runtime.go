@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"path"
 	"sort"
 	"strings"
 	"sync"
@@ -71,6 +72,9 @@ type source struct {
 	name    string
 	text    string
 	program *goja.Program
+	// url is where the server publishes the file, for a renderer: what document.currentScript
+	// answers while it runs, which is what the core takes a registration's owner from.
+	url string
 }
 
 // compiled compiles every source once: a page runs the compiled programs, so a test that opens many
@@ -156,7 +160,8 @@ func RendererSources() ([]struct{ Name, Text string }, error) {
 				renderersErr = err
 				return
 			}
-			renderersList = append(renderersList, source{name: "front/shapes/" + entry.Name(), text: string(text)})
+			renderersList = append(renderersList, source{name: "front/shapes/" + entry.Name(), text: string(text),
+				url: "/front/shapes/" + entry.Name()})
 		}
 		plugins := opnview.BuiltinPlugins()
 		manifests, err := fs.Glob(plugins, "*/widgets/*/manifest.json")
@@ -189,7 +194,10 @@ func RendererSources() ([]struct{ Name, Text string }, error) {
 				renderersErr = err
 				return
 			}
-			renderersList = append(renderersList, source{name: "plugins/" + name, text: string(text)})
+			// <plugin>/widgets/<type>/manifest.json: the type is the manifest's directory.
+			widgetType := path.Base(path.Dir(manifest))
+			renderersList = append(renderersList, source{name: "plugins/" + name, text: string(text),
+				url: "/front/widgets/" + widgetType + "/" + declared.Renderer.Entry})
 		}
 		renderersErr = compiled(renderersList)
 	})
@@ -208,9 +216,35 @@ func (r *Runtime) LoadRenderers() {
 		r.t.Fatalf("frontjs: reading the renderers: %v", err)
 	}
 	for _, file := range renderersList {
-		if _, err := r.VM.RunProgram(file.program); err != nil {
-			r.t.Fatalf("frontjs: running %s: %v", file.name, err)
-		}
+		r.runAt(file.url, func() error {
+			_, err := r.VM.RunProgram(file.program)
+			return err
+		}, file.name)
+	}
+}
+
+// RunAt runs a script as the page runs one it loaded from a URL of its server: document.currentScript
+// is a script element of that src while it runs, and nothing once it has.
+func (r *Runtime) RunAt(url, script string) {
+	r.t.Helper()
+	r.runAt(url, func() error {
+		_, err := r.VM.RunString(script)
+		return err
+	}, url)
+}
+
+func (r *Runtime) runAt(url string, run func() error, name string) {
+	r.t.Helper()
+	if _, err := r.VM.RunString(fmt.Sprintf(`(function () { var script = document.createElement("script");
+  script.setAttribute("src", %q); document.currentScript = script; })();`, url)); err != nil {
+		r.t.Fatalf("frontjs: making the script element of %s: %v", url, err)
+	}
+	err := run()
+	if _, clearErr := r.VM.RunString(`document.currentScript = null;`); clearErr != nil {
+		r.t.Fatalf("frontjs: clearing the current script: %v", clearErr)
+	}
+	if err != nil {
+		r.t.Fatalf("frontjs: running %s: %v", name, err)
 	}
 }
 

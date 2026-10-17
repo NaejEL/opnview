@@ -555,7 +555,8 @@ func TestEveryConditionIsADesignedPanel(t *testing.T) {
 		return ok(body)
 	})
 	page := fixture.canvasPage(t, "/canvas/1/main")
-	page.Run(`opnview.widgets.register({ type: "failing_example", render: function () { throw new Error("broken on purpose"); } });`)
+	page.RunAt("/front/widgets/failing_example/renderer.js",
+		`opnview.widgets.register({ type: "failing_example", render: function () { throw new Error("broken on purpose"); } });`)
 	page.Go("/canvas/1/main")
 	page.Advance(0)
 	english := englishCatalogue(t)

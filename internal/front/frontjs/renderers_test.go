@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/NaejEL/opnview/internal/front/frontjs"
 )
 
 // The renderers, drawn on the recorded answers (F7-AC17, F7-AC18, F7-AC21, F7-AC22): every served
@@ -645,5 +647,92 @@ func TestALogAxisChangesTheDrawingAndCountsEveryPoint(t *testing.T) {
 	}
 	if !crossing.Note {
 		t.Errorf("the two values a log axis cannot place are not counted under the chart")
+	}
+}
+
+// TestARendererRegistersOnlyWhatItsURLOwns (A1's precedence, in the page): a script registers the
+// type or the shape the URL it was loaded from names, and nothing else. A renderer of the data
+// directory naming a built-in type or a shape, a second registration of a type already drawn, and a
+// registration made from no loaded script are each refused, and the built-in draws as before.
+func TestARendererRegistersOnlyWhatItsURLOwns(t *testing.T) {
+	t.Parallel()
+	page := drawingPage(t)
+	before := page.Run(`opnview.widgets.renderer("top_sites", "ranked_bars") === opnview.widgets.renderer("top_sites", null) &&
+  String(opnview.widgets.renderer("top_sites", null).render).length`).String()
+	hijack := `opnview.widgets.register({ %s, render: function () { return opnview.h("p", {}, "HIJACKED"); } });`
+	for _, attempt := range []struct{ name, url, definition, reason string }{
+		{"another widget's directory naming a built-in type", "/front/widgets/example_operator/renderer.js",
+			`type: "top_sites"`, "not_its_own_type"},
+		{"a widget's directory naming a shape", "/front/widgets/example_operator/renderer.js",
+			`shape: "ranked_bars"`, "not_its_own_shape"},
+		{"the built-in's own directory, a second time", "/front/widgets/top_sites/other.js",
+			`type: "top_sites"`, "already_registered"},
+		{"a shape's file, a second time", "/front/shapes/ranked_bars.js", `shape: "ranked_bars"`, "already_registered"},
+		{"a shape's file naming a type", "/front/shapes/ranked_bars.js", `type: "top_sites"`, "not_its_own_shape"},
+		{"a file outside the published renderers", "/front/core/extra.js", `type: "top_sites"`, "not_loaded_by_the_core"},
+	} {
+		refused := int(page.Run(`opnview.widgets.refusedRegistrations().length`).ToInteger())
+		page.RunAt(attempt.url, fmt.Sprintf(hijack, attempt.definition))
+		reasons := page.Run(`JSON.stringify(opnview.widgets.refusedRegistrations().map(function (r) { return r.reason; }))`).String()
+		var listed []string
+		if err := json.Unmarshal([]byte(reasons), &listed); err != nil {
+			t.Fatal(err)
+		}
+		if len(listed) != refused+1 || listed[refused] != attempt.reason {
+			t.Errorf("%s: the refusals are %v, not one more of %s", attempt.name, listed, attempt.reason)
+		}
+	}
+	page.Run(fmt.Sprintf(hijack, `type: "example_late"`))
+	if page.Run(`opnview.widgets.hasOwn("example_late")`).ToBoolean() {
+		t.Error("a registration made while no script was running was accepted")
+	}
+	page.RunAt("/front/widgets/example_operator/renderer.js", fmt.Sprintf(hijack, `type: "example_operator"`))
+	if !page.Run(`opnview.widgets.hasOwn("example_operator")`).ToBoolean() {
+		t.Error("a widget's renderer could not register its own type")
+	}
+	after := page.Run(`opnview.widgets.renderer("top_sites", "ranked_bars") === opnview.widgets.renderer("top_sites", null) &&
+  String(opnview.widgets.renderer("top_sites", null).render).length`).String()
+	if after != before {
+		t.Error("a refused registration replaced the built-in renderer")
+	}
+	widget := builtinWidget{}
+	for _, candidate := range builtinWidgets(t) {
+		if candidate.Type == "top_sites" {
+			widget = candidate
+		}
+	}
+	setJSON(t, page, "__row", rowOf(t, widget))
+	setJSON(t, page, "__answer", string(firstDrawable(t, "top_sites").Raw))
+	if strings.Contains(page.Run(`__plain(__draw(__row, __answer).tree)`).String(), "HIJACKED") {
+		t.Error("top_sites draws the hijacking renderer")
+	}
+}
+
+// TestAFrontOnlyWidgetReadsOnlyTheFourReadRoutes (A2): the reads a front-only widget may have the
+// core perform are the four read routes as written, and a dot segment or an escape that a browser
+// would resolve to another route is refused.
+func TestAFrontOnlyWidgetReadsOnlyTheFourReadRoutes(t *testing.T) {
+	t.Parallel()
+	page := frontjs.New(t, frontjs.Options{})
+	for path, want := range map[string]bool{
+		"/api/widget/top_sites?parameters=%7B%7D":     true,
+		"/api/datasets":                              true,
+		"/api/datasets/dns/query?parameters=%7B%7D":  true,
+		"/api/datasets/example_peers.peer/query":     true,
+		"/api/live/strip":                            true,
+		"/api/datasets/../query":                     false,
+		"/api/datasets/./query":                      false,
+		"/api/datasets/dns/../../session/query":      false,
+		"/api/datasets/%2e%2e/query":                 false,
+		"/api/datasets/dns%2fquery/query":            false,
+		"/api/datasets/dns..x/query":                 false,
+		"/api/widget/../dashboards":                  false,
+		"/api/dashboards":                            false,
+		"/api/session/sign-out":                      false,
+		"https://example.com/api/datasets":           false,
+	} {
+		if got := page.Run(fmt.Sprintf(`opnview.widgets.allowedRead(%q)`, path)).ToBoolean(); got != want {
+			t.Errorf("allowedRead(%s) = %v, want %v", path, got, want)
+		}
 	}
 }

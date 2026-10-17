@@ -601,6 +601,8 @@
     "document.refusal.yaml_non_string_key": "A key that is not a string",
     "document.refusal.yaml_duplicate_key": "A key written twice",
     "document.refusal.yaml_unterminated_string": "A quoted value that never ends",
+    "document.refusal.document_too_deep": "Nested too deeply to be read",
+    "document.refusal.document_unreadable": "The document could not be read",
     "document.refusal.value_not_coercible": "A value of the wrong type for its key",
     "document.refusal.revision_conflict": "Saved elsewhere meanwhile; reload to see it",
     "document.refusal.read_failed": "The server did not answer",

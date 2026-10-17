@@ -129,6 +129,16 @@ a class of the stylesheet, a token.
 })(this);
 ```
 
+**What a file may register is taken from the URL the core loaded it from, never from what it
+says.** The core publishes a widget's renderer at `/front/widgets/<type>/<entry>` and a shape's at
+`/front/shapes/<shape>.js`: a widget's renderer registers its own `type` and nothing else, and never a
+`shape`; a shape's renderer registers its own `shape` and nothing else. A registration naming anything
+else, one made after the file has run (from a timer, say), and a second registration of a type or a
+shape already drawn are refused, listed by `opnview.widgets.refusedRegistrations()` with their reason
+(`not_its_own_type`, `not_its_own_shape`, `already_registered`, `not_loaded_by_the_core`) and reported
+in the browser's console. The first registration wins, as the built-in wins every collision on the
+server.
+
 `input` holds:
 
 | Member | What it is |
@@ -187,7 +197,9 @@ renderer asks the core for what it draws, limited to `GET /api/widget/{type}`, `
 Its renderer registers a `requests` function beside `render`. `requests({parameters})` answers the
 list of paths to read, each one of the four routes above with its query string; the core reads
 them on this server, on the canvas's schedule, and calls `render` with `input.data` holding one
-`{path, status, body}` per path, in the order asked. A path outside the four routes, a `requests`
+`{path, status, body}` per path, in the order asked. A path is matched as written: a `.` or `..`
+segment, or any escape (`%`) in the route, is outside the four routes whatever it would resolve to,
+and a dataset's name is dot-separated words. A path outside the four routes, a `requests`
 that throws or answers something other than a list, and the card draws its failure panel without
 reading anything. The parameters are the widget's manifest parameters, the canvas's period and
 scope applied as for any widget.

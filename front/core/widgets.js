@@ -27,10 +27,16 @@
 
   /* The routes a front-only widget's requests may name: reads, of these four, and nothing else. */
   var FRONT_ONLY_READS = [/^\/api\/widget\/[a-z0-9_]+(\?.*)?$/, /^\/api\/datasets(\?.*)?$/,
-    /^\/api\/datasets\/[a-z0-9_.-]+\/query(\?.*)?$/, /^\/api\/live\/strip(\?.*)?$/];
+    /^\/api\/datasets\/[a-z0-9_]+(\.[a-z0-9_]+)*\/query(\?.*)?$/, /^\/api\/live\/strip(\?.*)?$/];
 
+  /* A path is matched as written, so a dot segment or an escape that a browser would resolve to
+   * another route is refused before any pattern is tried: a dataset's name is dot-separated words,
+   * never "." or "..", and nothing in the four routes is escaped. */
   function allowedRead(path) {
-    return typeof path === "string" && FRONT_ONLY_READS.some(function (pattern) { return pattern.test(path); });
+    if (typeof path !== "string") { return false; }
+    var route = path.split("?")[0];
+    if (route.indexOf("%") >= 0 || route.indexOf("\\") >= 0 || /(^|\/)\.\.?(\/|$)/.test(route)) { return false; }
+    return FRONT_ONLY_READS.some(function (pattern) { return pattern.test(path); });
   }
 
   /* Loads one script of this server by URL, once. In a page without a document that can load one --
@@ -53,15 +59,57 @@
     return promise;
   }
 
+  /* WHAT A SCRIPT MAY REGISTER IS TAKEN FROM THE URL IT WAS LOADED FROM, never from what it says it
+   * is: the index publishes a shape's renderer at /front/shapes/<shape>.js and a widget's at
+   * /front/widgets/<type>/<entry>, so a widget's renderer can register its own type and nothing
+   * else, a shape's renderer its own shape and nothing else, and a script loaded from anywhere
+   * else -- or registering after it ran, when no script is current -- registers nothing. A type or
+   * a shape already registered stays as it is: the first registration wins, as the built-in wins
+   * every collision on the server. */
+  var SHAPE_URL = /^\/front\/shapes\/([a-z0-9_]+)\.js$/;
+  var WIDGET_URL = /^\/front\/widgets\/([a-z0-9_]+)\/[^\/]+$/;
+
+  function ownerOf(script) {
+    var src = script && (script.getAttribute ? script.getAttribute("src") : script.src);
+    if (typeof src !== "string") { return null; }
+    var path = src.replace(/^[a-z]+:\/\/[^\/]*/i, "").replace(/[?#].*$/, "");
+    var found = SHAPE_URL.exec(path);
+    if (found) { return { shape: found[1] }; }
+    found = WIDGET_URL.exec(path);
+    return found ? { type: found[1] } : null;
+  }
+
+  function refuse(reason, definition) {
+    state.refusedRegistrations.push({ reason: reason, type: definition.type || null, shape: definition.shape || null });
+    if (root.console && root.console.warn) {
+      root.console.warn("widgets: a registration was refused (" + reason + ")");
+    }
+  }
+
+  state.refusedRegistrations = [];
+
   var widgets = {
     /* The registration call of a renderer file. */
     register: function (definition) {
       if (!definition || typeof definition.render !== "function") {
         throw new Error("widgets: a renderer registers a render function");
       }
-      if (definition.type) { byType[definition.type] = definition; }
-      if (definition.shape) { byShape[definition.shape] = definition; }
+      var owner = ownerOf(root.document && root.document.currentScript);
+      if (!owner) { refuse("not_loaded_by_the_core", definition); return false; }
+      if (owner.shape) {
+        if (definition.type || definition.shape !== owner.shape) { refuse("not_its_own_shape", definition); return false; }
+        if (byShape[owner.shape]) { refuse("already_registered", definition); return false; }
+        byShape[owner.shape] = definition;
+        return true;
+      }
+      if (definition.shape || definition.type !== owner.type) { refuse("not_its_own_type", definition); return false; }
+      if (byType[owner.type]) { refuse("already_registered", definition); return false; }
+      byType[owner.type] = definition;
+      return true;
     },
+
+    /* The registrations refused so far, with their reason: for the settings view and the tests. */
+    refusedRegistrations: function () { return state.refusedRegistrations.slice(); },
 
     /* The renderer that draws a type: its own, else its shape's; null when neither is loaded. */
     renderer: function (type, shape) {
