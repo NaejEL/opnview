@@ -164,6 +164,9 @@ type Broker struct {
 	flights  map[int64]*flight
 	datums   map[string]*mirror.Datum
 	firewall string
+	// startedAt is when this broker was made: a failed attempt recorded before it is a previous
+	// process's, and is never served as fresh.
+	startedAt int64
 	// version is the firewall's OPNsense version, read at discovery; empty until read.
 	version string
 	// lastRequests keeps each datum's last request, which its proactive refresh repeats.
@@ -210,6 +213,7 @@ func New(client *opnsense.Client, mirrored *mirror.Mirror, options Options) *Bro
 		}
 	}
 	broker := &Broker{client: client, mirror: mirrored, clock: options.Clock, options: options,
+		startedAt: options.Clock.Now().Unix(),
 		scheduler: schedule.New(options.Clock, options.Settings), declared: map[string]*declared{},
 		roles: map[int64]map[string]string{}, honoured: map[int64]map[string]*bool{},
 		flights: map[int64]*flight{}, datums: map[string]*mirror.Datum{}, lastRequests: map[int64]Request{},
@@ -651,8 +655,11 @@ func (b *Broker) fromMirror(ctx context.Context, shared *mirror.Datum, request R
 	// snapshot, never field by field while Store writes it.
 	datum := b.mirror.Snapshot(shared)
 	now := b.now()
-	if datum.AttemptedAt > datum.FetchedAt && float64(now-datum.AttemptedAt) <= maxAge.Seconds() {
-		// An unsuccessful outcome counts for freshness without replacing data.
+	if datum.AttemptedAt > datum.FetchedAt && datum.AttemptedAt >= b.startedAt &&
+		float64(now-datum.AttemptedAt) <= maxAge.Seconds() {
+		// An unsuccessful outcome counts for freshness without replacing data -- but only this
+		// process's: a restart made to recover from an outage asks the firewall again rather than
+		// serving the failure the previous process recorded (live validation of 17 October 2026, D6).
 		return &Answer{Response: opnsense.Response{Endpoint: request.Endpoint, Outcome: opnsense.Outcome(datum.Outcome),
 			StatusCode: datum.StatusCode, Detail: datum.Detail}, ServedFrom: ServedFromMirror,
 			FetchedAt: datum.AttemptedAt, AgeSeconds: float64(now - datum.AttemptedAt), Datum: datum.ID,

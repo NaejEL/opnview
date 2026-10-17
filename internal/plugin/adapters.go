@@ -569,7 +569,8 @@ func addToSet(set *sources.Set, manifest provider.Manifest, base adapter, plugin
 	case registrabledomain.Kind:
 		return set.AddRegistrableDomain(manifest, registrableDomainAdapter{base})
 	case flowrecord.Kind:
-		return set.AddFlowRecord(manifest, flowRecordAdapter{base})
+		return set.AddFlowRecord(manifest, flowRecordAdapter{adapter: base, plugin: plugin, kind: manifest.Kind,
+			key: manifest.Key})
 	case reconciledstate.Kind:
 		return set.AddReconciledState(manifest, reconciledstate.Registration{Plugin: plugin.Name, Cadence: cadence,
 			MinCadence: time.Duration(declaration.MinCadenceSeconds) * time.Second, Triggers: declaration.TriggeredBy,
@@ -623,14 +624,27 @@ func scriptEndpoint(plugin, file string) opnsense.Endpoint {
 }
 
 // flowRecordAdapter is a plugin as a flow_record source: what it reads by polling, the exporter's
-// capture configuration. Its records arrive through its push entry (pushkind.go), never here.
-type flowRecordAdapter struct{ adapter }
+// capture configuration. Its records arrive through its push entry (pushkind.go), never here, so its
+// availability is the configuration read's and its push entry's together (withPushAvailability): a
+// readable configuration with nothing received is not healthy.
+type flowRecordAdapter struct {
+	adapter
+	plugin    *Plugin
+	kind, key string
+}
 
 func (a flowRecordAdapter) Probe(ctx context.Context, session provider.Session) (provider.Result, error) {
-	return a.probe(ctx, session)
+	result, err := a.probe(ctx, session)
+	return a.plugin.withPushAvailability(a.kind, a.key, result), err
 }
 
 func (a flowRecordAdapter) Capture(ctx context.Context, session provider.Session) (
+	flowrecord.Configuration, provider.Result, error) {
+	configuration, result, err := a.capture(ctx, session)
+	return configuration, a.plugin.withPushAvailability(a.kind, a.key, result), err
+}
+
+func (a flowRecordAdapter) capture(ctx context.Context, session provider.Session) (
 	flowrecord.Configuration, provider.Result, error) {
 	checked, result, err := a.run(ctx, session, "capture", "capture_answer")
 	if err != nil {

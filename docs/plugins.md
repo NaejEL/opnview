@@ -2032,14 +2032,26 @@ restart. A datagram or a connection from any other address is refused before it 
 of it is stored, and each refusal is counted per address in the API catalogue -- so a container
 network that rewrites source addresses is visible at once. **This is a source-address check. It
 refuses every other sender; it does not authenticate the firewall, and a forged source address on the
-path passes it.**
+path passes it.** A provider whose entries are listening and silent names the refused senders in its
+availability detail, so the cause is visible without logging in.
+
+**Extra senders, the operator's.** `--push-extra-senders <address>[,<address>...]` (from the
+development toolchain, `OPNVIEW_PUSH_EXTRA_SENDERS`) adds addresses accepted beside the derived ones,
+kept apart so the minute's refresh never drops them. It is empty by default. It exists for a network
+that rewrites the source of a published port: Docker Desktop's port publishing hands every datagram and
+connection, UDP and TCP alike, the address of the compose network's gateway. **Naming that gateway
+accepts whatever reaches the published port, from any host**: the host running `opnview` then has to
+filter the port to the firewall's address. The catalogue counts them in `extra_accepted_addresses` and
+never lists them.
 
 ### Liveness and gaps
 
 An entry is **alive** while messages it accepts have arrived within its liveness span. It stops being
 alive only after the span and half of it again, so a sender close to its span does not flip at every
 message. The interval during which an entry was not alive is recorded as a gap of its provider
-(`push_not_alive`), so a bucket outside it is a gap and never a zero.
+(`push_not_alive`), so a bucket outside it is a gap and never a zero. An entry that has received
+nothing since its listener opened was never alive: once the same span and half of it have passed, its
+gap opens from the instant the listener opened, and grows until a message arrives.
 
 **Every queue is bounded, and every drop is a gap.** A drop is counted and recorded as a gap of the
 entry's provider, merged with the drops of the same reason less than ten seconds apart:

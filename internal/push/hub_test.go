@@ -612,3 +612,72 @@ func TestInterfaceIndexesAreMappedAtReceptionOrCounted(t *testing.T) {
 		t.Errorf("unmapped indexes counted %d", state.Counters[push.CounterInterfaceUnmapped])
 	}
 }
+
+// TestASourceSilentSinceItsListenerOpenedIsAnnouncedOnce is D1 of the second live validation: a
+// subscription that has received nothing since its listener opened was never alive, and its silence is
+// announced once, from the instant the listener opened, after the span and half of it again -- so the
+// service opens a push_not_alive gap from there instead of recording none.
+func TestASourceSilentSinceItsListenerOpenedIsAnnouncedOnce(t *testing.T) {
+	t.Parallel()
+	now := newClock()
+	type change struct {
+		alive bool
+		at    time.Time
+	}
+	var mutex sync.Mutex
+	var changes []change
+	hub := push.NewHub(push.Options{Now: now.Now, OnLiveness: func(_ string, alive bool, at time.Time) {
+		mutex.Lock()
+		changes = append(changes, change{alive, at})
+		mutex.Unlock()
+	}})
+	_ = hub.Subscribe(push.Subscription{ID: "s.lines", Protocol: testProtocol, Liveness: 10 * time.Second,
+		Selector: compile(t, testProtocol, json.RawMessage(`"k"`)), Sink: sink{&recordingSink{}}})
+	opened := now.Now()
+	_ = hub.AddLoopbackListener(testProtocol, push.TransportUDP)
+	hub.Senders().Set([]netip.Addr{firewall})
+	read := func() []change {
+		mutex.Lock()
+		defer mutex.Unlock()
+		return append([]change(nil), changes...)
+	}
+	now.advance(15 * time.Second)
+	hub.Tick(context.Background(), false)
+	if got := read(); len(got) != 0 {
+		t.Fatalf("announced before the span and its hysteresis: %+v", got)
+	}
+	now.advance(time.Second)
+	hub.Tick(context.Background(), false)
+	now.advance(time.Minute)
+	hub.Tick(context.Background(), false)
+	got := read()
+	if len(got) != 1 || got[0].alive || !got[0].at.Equal(opened) {
+		t.Fatalf("changes %+v, want one silence from the listener's opening %v", got, opened)
+	}
+	_ = hub.Deliver(context.Background(), testProtocol, push.TransportUDP, []byte("k"), firewall)
+	if got := read(); len(got) != 2 || !got[1].alive {
+		t.Errorf("changes %+v, want the silence ended by the first record", got)
+	}
+}
+
+// TestAnExtraSenderIsAcceptedAndOutlivesARefresh is open question 10 (b): the operator's extra senders
+// are accepted beside the firewall's, a refresh of the derived set keeps them, and the catalogue counts
+// them without listing them.
+func TestAnExtraSenderIsAcceptedAndOutlivesARefresh(t *testing.T) {
+	t.Parallel()
+	senders := push.NewSenders()
+	gateway := netip.MustParseAddr("198.51.100.1")
+	senders.Set([]netip.Addr{firewall})
+	if senders.Accepts(gateway) {
+		t.Fatal("an address the operator did not name was accepted")
+	}
+	senders.SetExtra([]netip.Addr{gateway})
+	senders.Set([]netip.Addr{firewall})
+	if !senders.Accepts(gateway) || !senders.Accepts(netip.AddrFrom16(gateway.As16())) || !senders.Accepts(firewall) {
+		t.Error("the extra sender, in either form, or the firewall was refused after a refresh")
+	}
+	state := senders.State()
+	if state.Accepted != 1 || state.Extra != 1 || len(state.Refused) != 1 || state.Refused[0].Count != 1 {
+		t.Errorf("the state is %+v", state)
+	}
+}

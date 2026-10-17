@@ -90,6 +90,13 @@ func run() (err error) {
 		"a push listener, as <protocol>/<transport>=<host:port> -- syslog/udp, syslog/tcp or netflow/udp -- "+
 			"repeatable. Optional and with no default, for the reason --listen has none: with none, no "+
 			"push socket is opened and the firewall's exports are not received (README, \"Push sources\")")
+	var extraSenders pushExtraSenders
+	flag.Var(&extraSenders, "push-extra-senders",
+		"IP addresses accepted as push senders beside the firewall's own, comma-separated, repeatable. "+
+			"Empty by default: only the configured firewall may send. For a container network that rewrites "+
+			"the source of a published port (Docker Desktop: the bridge network's gateway). Whatever reaches "+
+			"the port from such an address is then accepted, so the host must filter the port to the "+
+			"firewall's address (README, \"Push sources\")")
 	flag.Parse()
 
 	if *dataDir == "" {
@@ -297,15 +304,20 @@ func run() (err error) {
 
 	// THE PUSH RECEIVER: the declarations of the loaded plugins are routed whether or not a listener
 	// is open, so each reports its listener state; a socket is opened only for a --push-listen given.
-	pushReceiver, err := startPush(ctx, listens, database, collector, plugins, credentials, func(err error) {
-		fmt.Fprintf(os.Stderr, "%s: push: %v\n", buildinfo.AppName, err)
-	})
+	pushReceiver, err := startPush(ctx, listens, extraSenders, database, collector, plugins, credentials,
+		func(err error) {
+			fmt.Fprintf(os.Stderr, "%s: push: %v\n", buildinfo.AppName, err)
+		})
 	if err != nil {
 		return err
 	}
 	for _, listen := range listens {
 		fmt.Printf("%s: receiving %s over %s on %s\n", buildinfo.AppName, listen.protocol, listen.transport,
 			listen.address)
+	}
+	if len(extraSenders) > 0 {
+		fmt.Printf("%s: push senders accepted beside the firewall's own: %s\n", buildinfo.AppName,
+			extraSenders.String())
 	}
 
 	// The long-running things, stopped by the one cancellation above.

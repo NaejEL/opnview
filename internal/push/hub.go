@@ -383,6 +383,7 @@ func (h *Hub) Listen(ctx context.Context, protocolName, transport, address strin
 	h.mutex.Unlock()
 	h.recordListenerDown(ctx, l)
 	l.listening.Store(true)
+	h.noteListening(l)
 	h.wait.Add(3)
 	go func() {
 		defer h.wait.Done()
@@ -736,7 +737,17 @@ func (h *Hub) AddLoopbackListener(protocolName, transport string) error {
 	h.mutex.Lock()
 	h.listeners = append(h.listeners, l)
 	h.mutex.Unlock()
+	h.noteListening(l)
 	return nil
+}
+
+// noteListening tells every subscriber a listener feeds that it is listening from now on, so a
+// subscription that never receives anything has an instant its silence starts from.
+func (h *Hub) noteListening(l *listener) {
+	now := h.options.Now()
+	for _, s := range h.subscribersOf(l) {
+		s.listening(now)
+	}
 }
 
 func (l *listener) decodeLoop(ctx context.Context) {

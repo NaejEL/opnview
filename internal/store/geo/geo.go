@@ -91,7 +91,7 @@ func (s *GeoStore) AddressesToGeolocate(ctx context.Context, providerID, build i
 		   LEFT JOIN geo_asn AS g ON g.address = seen.address
 		  WHERE seen.address IS NOT NULL
 		    AND (g.address IS NULL OR g.dataset_build_at IS NULL OR g.dataset_build_at < ?
-		         OR g.provider_id IS NOT ?)
+		         OR g.provider_id IS DISTINCT FROM ?)
 		  ORDER BY seen.address`,
 		build, providerID)
 	if err != nil {

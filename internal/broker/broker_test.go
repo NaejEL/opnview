@@ -810,3 +810,45 @@ func TestTheMirrorTablesAreDatasetsWithInferredRoles(t *testing.T) {
 		t.Error("the mirror table is not a dataset")
 	}
 }
+
+// TestAFailureOfAPreviousProcessIsNotServedAsFresh is D6 of the live validation of 17 October 2026:
+// a failed attempt is persisted in the mirror, and a broker made after it -- a restart to recover from
+// an outage -- asks the firewall again rather than serving the previous process's failure for up to
+// the reader's max age.
+func TestAFailureOfAPreviousProcessIsNotServedAsFresh(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	failing := endpoint(t, http.MethodGet, "/api/example/restarted/get", opnsense.NoBody)
+	failed := true
+	var mutex sync.Mutex
+	w.fake.answer(func(*http.Request, string) (int, string, string) {
+		mutex.Lock()
+		defer mutex.Unlock()
+		if failed {
+			return http.StatusInternalServerError, "application/json", `{}`
+		}
+		return http.StatusOK, "application/json", `{"rows": [{"id": "1"}]}`
+	})
+	if served, _ := w.call("example_reader", failing, opnsense.RequestOptions{}, 5*time.Minute); served.Response.Outcome !=
+		opnsense.OutcomeServerError {
+		t.Fatalf("the first call was answered %s", served.Response.Outcome)
+	}
+	mutex.Lock()
+	failed = false
+	mutex.Unlock()
+	w.clock.advance(10 * time.Second)
+	client := opnsense.NewClient(opnsense.Credentials{BaseURL: w.baseURL, APIKey: w.key, APISecret: w.secret},
+		http.DefaultTransport, 5*time.Second)
+	restarted := broker.New(client, mirror.New(w.store, func() int64 { return w.clock.Now().Unix() }),
+		broker.Options{Clock: w.clock, Firewall: func() string { return w.baseURL }})
+	t.Cleanup(restarted.Close)
+	served, err := restarted.Call(context.Background(), broker.Request{Requester: broker.Requester{Name: "example_reader",
+		Version: "1"}, Endpoint: failing, MaxAge: 5 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if served.Response.Outcome != opnsense.OutcomeOK || w.fake.count(failing.Path) != 2 {
+		t.Errorf("after the restart the reader was answered %s from %s, after %d calls", served.Response.Outcome,
+			served.ServedFrom, w.fake.count(failing.Path))
+	}
+}

@@ -37,9 +37,12 @@ var PORTED = { tcp: true, udp: true, sctp: true };
 // SNAPSHOT is the key of the durable state holding the previous read.
 var SNAPSHOT = "snapshot";
 
-// COLLECT_MAX_AGE is the max age a pass asks the broker for: a pass needs a read of its own, newer
-// than the previous pass's, while a reader asking at the same moment shares the call.
-var COLLECT_MAX_AGE = 5;
+// A PASS STATES NO MAX AGE, so the broker holds it to the provider's cadence. Each call walks the
+// whole state table, so the table is read once a cadence: a rate needs two snapshots a cadence apart,
+// not a read seconds old at every pass. A shorter max age made the broker keep the datum that fresh
+// between passes too -- a call every five seconds against a 60-second cadence (live validation of
+// 17 October 2026, D3). When the broker serves the read the previous pass already used, the pass
+// says so and computes no rate; the next one does.
 
 // PROBE_MAX_AGE lets a probe round reuse the last pass's answer rather than walk the table again.
 var PROBE_MAX_AGE = 300;
@@ -52,10 +55,14 @@ function maxStates(host) {
 }
 
 // read asks for the state table: { result, rows, total, at } or { result, error }, notMade when the
-// request was never sent.
+// request was never sent. Without a maxAge the call states none, and the provider's cadence applies.
 function read(host, maxAge) {
   var result = { probe: "query_states", state: "unavailable", outcome: "request_not_made" };
-  var response = host.call("query_states", { form: host.pagination(1, maxStates(host)), max_age_seconds: maxAge });
+  var options = { form: host.pagination(1, maxStates(host)) };
+  if (maxAge !== undefined) {
+    options.max_age_seconds = maxAge;
+  }
+  var response = host.call("query_states", options);
   if (response.error) {
     return { result: result, error: response.error, notMade: true };
   }
@@ -228,7 +235,7 @@ exports.pf_state_rate = {
   // collect reads the state table, stores the rate since the previous read, and keeps this read's
   // counters for the next pass.
   collect: function (host, state) {
-    var answer = read(host, COLLECT_MAX_AGE);
+    var answer = read(host);
     if (answer.error) {
       return { result: answer.result, error: answer.error, rows: {}, state: state || {} };
     }

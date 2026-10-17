@@ -88,6 +88,9 @@ type datum struct {
 	key      string
 	endpoint string
 	demands  map[string]demand
+	// renewals is each requester's last renewal, kept after its demand lapsed, so the time between
+	// two renewals is known even when a demand lapses between them.
+	renewals map[string]time.Time
 	floor    time.Duration
 	refresh  Refresh
 
@@ -103,6 +106,8 @@ type datum struct {
 type demand struct {
 	maxAge  time.Duration
 	renewed time.Time
+	// every is the time between the requester's last two renewals, zero before a second one.
+	every time.Duration
 	// suspended says the demand does not refresh the datum now: a declared stream replaces it.
 	suspended bool
 }
@@ -219,7 +224,7 @@ func (s *Scheduler) signal() {
 func (s *Scheduler) entry(key, endpoint string) *datum {
 	entry, found := s.data[key]
 	if !found {
-		entry = &datum{key: key, endpoint: endpoint, demands: map[string]demand{}}
+		entry = &datum{key: key, endpoint: endpoint, demands: map[string]demand{}, renewals: map[string]time.Time{}}
 		s.data[key] = entry
 	}
 	return entry
@@ -239,7 +244,13 @@ func (s *Scheduler) Demand(key, endpoint, requester string, maxAge, floor time.D
 		maxAge = entry.floor
 	}
 	held := entry.demands[requester]
-	entry.demands[requester] = demand{maxAge: maxAge, renewed: s.clock.Now(), suspended: held.suspended}
+	now := s.clock.Now()
+	var every time.Duration
+	if last, renewed := entry.renewals[requester]; renewed && now.After(last) {
+		every = now.Sub(last)
+	}
+	entry.renewals[requester] = now
+	entry.demands[requester] = demand{maxAge: maxAge, renewed: now, every: every, suspended: held.suspended}
 	if refresh != nil {
 		entry.refresh = refresh
 	}
@@ -263,8 +274,16 @@ func (s *Scheduler) Suspend(key, requester string, suspended bool) {
 
 // lapse is how long a demand lives without renewal: twice its max age, and at least a minute,
 // so a reader whose pass runs at its max age keeps its demand from one pass to the next.
-func lapse(maxAge time.Duration) time.Duration {
-	if span := 2 * maxAge; span > time.Minute {
+//
+// THE MINUTE DOES NOT OUTLIVE ITS INTENT. A requester whose renewals come a minute or more apart,
+// and more than twice its max age apart, is a pass asking for a fresh answer at the moment it
+// runs, not a reader that wants the datum kept fresh between its passes: the call itself already
+// fetches when the held answer is too old. Its demand lapses at twice its max age. Without that, a
+// pass every minute with a five-second max age renewed a demand that never lapsed, and the datum
+// was refreshed every five seconds for good (live validation of 17 October 2026, D3).
+func lapse(held demand) time.Duration {
+	span := 2 * held.maxAge
+	if span > time.Minute || (held.every >= time.Minute && held.every > span) {
 		return span
 	}
 	return time.Minute
@@ -274,7 +293,7 @@ func lapse(maxAge time.Duration) time.Duration {
 func (s *Scheduler) liveMaxAge(entry *datum, now time.Time) (time.Duration, bool) {
 	shortest, found := time.Duration(0), false
 	for requester, held := range entry.demands {
-		if now.Sub(held.renewed) > lapse(held.maxAge) {
+		if now.Sub(held.renewed) > lapse(held) {
 			delete(entry.demands, requester)
 			continue
 		}

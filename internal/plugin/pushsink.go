@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -340,19 +341,26 @@ func (a pushProviderAdapter) Collect(context.Context, provider.Session, map[stri
 }
 
 func (a pushProviderAdapter) result() provider.Result {
+	return a.plugin.pushAvailability(a.kind, a.key)
+}
+
+// pushAvailability is the availability of the push entries feeding one provider of the plugin:
+// listener_not_configured while no listener of their protocol is open, no_message_received while one
+// is and nothing arrived within the liveness span, and healthy while a message has.
+func (p *Plugin) pushAvailability(kind, key string) provider.Result {
 	result := provider.Result{State: vocab.StateUnavailable, Outcome: vocab.OutcomeListenerNotConfigured,
-		Probe: scriptEndpoint(a.plugin.Name, contract.ManifestFile), Separable: true,
+		Probe: scriptEndpoint(p.Name, contract.ManifestFile), Separable: true,
 		Detail: "no push listener of this provider's protocol is configured: start opnview with --push-listen"}
 	var hub *push.Hub
-	if a.plugin.pushHost != nil {
-		hub = a.plugin.pushHost.hub.Load()
+	if p.pushHost != nil {
+		hub = p.pushHost.hub.Load()
 	}
 	if hub == nil {
 		return result
 	}
 	listening := false
-	for _, binding := range a.plugin.pushes {
-		if binding.providerKind != a.kind || binding.providerKey != a.key {
+	for _, binding := range p.pushes {
+		if binding.providerKind != kind || binding.providerKey != key {
 			continue
 		}
 		state, found := hub.SubscriptionState(binding.ID())
@@ -368,8 +376,66 @@ func (a pushProviderAdapter) result() provider.Result {
 	}
 	if listening {
 		result.Outcome = vocab.OutcomeNoMessageReceived
-		result.Detail = "the listener is open and no message of this provider arrived within its liveness span: " +
-			"the firewall's export is off, filtered, or sent elsewhere"
+		result.Detail = noMessageDetail(hub.Senders().State())
 	}
 	return result
+}
+
+// feedsByPush reports whether a push entry of the plugin feeds one of its providers.
+func (p *Plugin) feedsByPush(kind, key string) bool {
+	for _, binding := range p.pushes {
+		if binding.providerKind == kind && binding.providerKey == key {
+			return true
+		}
+	}
+	return false
+}
+
+// withPushAvailability is a polled provider's result once the push entries feeding the same provider
+// are taken into account: a read that succeeded is not the provider's whole availability when its
+// records arrive by push, so a healthy read of a provider whose entries are not receiving takes their
+// outcome and detail. A failed read keeps its own, which names the firewall's answer. The result stays
+// separable, so the probe round still activates the provider and its configuration is still read.
+func (p *Plugin) withPushAvailability(kind, key string, result provider.Result) provider.Result {
+	if result.Outcome != vocab.OutcomeHealthy || !p.feedsByPush(kind, key) {
+		return result
+	}
+	pushed := p.pushAvailability(kind, key)
+	if pushed.Outcome == vocab.OutcomeHealthy {
+		return result
+	}
+	result.State, result.Outcome = pushed.State, pushed.Outcome
+	if result.Detail == "" {
+		result.Detail = pushed.Detail
+	} else {
+		result.Detail = pushed.Detail + "; " + result.Detail
+	}
+	return result
+}
+
+// noMessageDetail says why a listening push provider has received nothing. When senders were refused,
+// that is the likeliest cause and it is named first, with the addresses and their counts: a network
+// that rewrites source addresses (Docker Desktop's port publishing) shows here, without logging in.
+func noMessageDetail(senders push.SendersState) string {
+	const silent = "the listener is open and no message of this provider arrived within its liveness span"
+	if len(senders.Refused) == 0 && senders.RefusedUnlisted == 0 {
+		return silent + ": the firewall's export is off, filtered, or sent elsewhere"
+	}
+	var refused strings.Builder
+	for i, sender := range senders.Refused {
+		if i > 0 {
+			refused.WriteString(", ")
+		}
+		fmt.Fprintf(&refused, "%s (%d)", sender.Address, sender.Count)
+	}
+	if senders.RefusedUnlisted > 0 {
+		if refused.Len() > 0 {
+			refused.WriteString(", ")
+		}
+		fmt.Fprintf(&refused, "%d more from unlisted addresses", senders.RefusedUnlisted)
+	}
+	return silent + "; messages were refused from senders that are not the firewall: " + refused.String() +
+		". A network that rewrites source addresses refuses everything the firewall sends: run opnview " +
+		"with host networking, or name the rewritten address with --push-extra-senders and filter the port " +
+		"to the firewall's address"
 }
