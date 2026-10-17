@@ -11,8 +11,6 @@ import (
 // vetted is a surface that passed every check, with what the server needs of it.
 type vetted struct {
 	surface Surface
-	// templates maps a page name to its template source.
-	templates map[string]string
 	// strings maps a language to the surface's keys in it.
 	strings map[string]map[string]string
 }
@@ -21,12 +19,10 @@ type vetted struct {
 // refusal of each other one, and the routes each accepted surface contributes. Nothing here
 // panics: a malformed surface is a refusal with a reason, and the server starts without it.
 //
-// THE CHECKS, IN ORDER, each with its own reason: a name, and a name not taken; for each page
-// a name, a title key, a page name not taken and a template that exists and compiles inside
-// the layout; a tab that names one of its pages; its catalogue files, which must be well
-// formed and must not define a key another file defines; and its routes, which must carry
-// a method, a path, an access level and a handler, must not repeat a row already in the
-// table, and must be accepted by the router.
+// THE CHECKS, IN ORDER, each with its own reason: a name, and a name not taken; its catalogue
+// files, which must be well formed and must not define a key another file defines; and its
+// routes, which must carry a method, a path, an access level and a handler, must not repeat a
+// row already in the table, and must be accepted by the router.
 func vetSurfaces(host Host, core []Route, candidates []Surface) ([]vetted, []SurfaceRefusal, map[string][]Route) {
 	ordered := append([]Surface(nil), candidates...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].Name < ordered[j].Name })
@@ -35,7 +31,6 @@ func vetSurfaces(host Host, core []Route, candidates []Surface) ([]vetted, []Sur
 	var refused []SurfaceRefusal
 	contributed := map[string][]Route{}
 	names := map[string]struct{}{}
-	pagesSeen := map[string]string{}
 	keysSeen := map[string]map[string]string{} // language -> key -> surface
 	table := map[string]string{}               // "METHOD pattern" -> owner
 	for _, route := range core {
@@ -52,7 +47,7 @@ func vetSurfaces(host Host, core []Route, candidates []Surface) ([]vetted, []Sur
 				Reason: fmt.Sprintf("the name %q is already taken by another surface", surface.Name)})
 			continue
 		}
-		candidate, routes, reason := vetOne(host, surface, pagesSeen, keysSeen, table)
+		candidate, routes, reason := vetOne(host, surface, keysSeen, table)
 		if reason != "" {
 			refused = append(refused, SurfaceRefusal{Surface: surface.Name, Reason: reason})
 			continue
@@ -60,9 +55,6 @@ func vetSurfaces(host Host, core []Route, candidates []Surface) ([]vetted, []Sur
 		accepted = append(accepted, candidate)
 		contributed[surface.Name] = routes
 		names[surface.Name] = struct{}{}
-		for _, page := range surface.Pages {
-			pagesSeen[page.Name] = surface.Name
-		}
 		for language, entries := range candidate.strings {
 			if keysSeen[language] == nil {
 				keysSeen[language] = map[string]string{}
@@ -80,45 +72,9 @@ func vetSurfaces(host Host, core []Route, candidates []Surface) ([]vetted, []Sur
 
 // vetOne checks one surface against what the accepted ones already hold. It returns the
 // reason it is refused, or an empty reason.
-func vetOne(host Host, surface Surface, pagesSeen map[string]string,
-	keysSeen map[string]map[string]string, table map[string]string) (vetted, []Route, string) {
-	candidate := vetted{surface: surface, templates: map[string]string{}}
-
-	for _, page := range surface.Pages {
-		switch {
-		case page.Name == "":
-			return candidate, nil, "a page declares no name"
-		case page.TitleKey == "":
-			return candidate, nil, fmt.Sprintf("the page %q declares no title key", page.Name)
-		case surface.Files == nil:
-			return candidate, nil, fmt.Sprintf("the page %q has no template: the surface holds no files", page.Name)
-		}
-		if owner, duplicate := pagesSeen[page.Name]; duplicate {
-			return candidate, nil, fmt.Sprintf("the page %q is already declared by the surface %q", page.Name, owner)
-		}
-		raw, err := fs.ReadFile(surface.Files, "template/"+page.Name+".gohtml")
-		if err != nil {
-			return candidate, nil, fmt.Sprintf("the page %q has no template: %v", page.Name, err)
-		}
-		if err := compilesInLayout(page.Name, string(raw)); err != nil {
-			return candidate, nil, fmt.Sprintf("the template of the page %q does not compile: %v", page.Name, err)
-		}
-		candidate.templates[page.Name] = string(raw)
-	}
-
-	if surface.Tab != nil {
-		known := false
-		for _, page := range surface.Pages {
-			known = known || page.Name == surface.Tab.Page
-		}
-		if !known {
-			return candidate, nil, fmt.Sprintf("its tab names the page %q, which the surface does not declare",
-				surface.Tab.Page)
-		}
-		if surface.Tab.Path == "" || surface.Tab.TitleKey == "" {
-			return candidate, nil, "its tab declares no path or no title key"
-		}
-	}
+func vetOne(host Host, surface Surface, keysSeen map[string]map[string]string,
+	table map[string]string) (vetted, []Route, string) {
+	candidate := vetted{surface: surface}
 
 	localised, err := surfaceStrings(surface.Files)
 	if err != nil {

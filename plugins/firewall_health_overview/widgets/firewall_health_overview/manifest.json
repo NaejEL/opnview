@@ -74,8 +74,5 @@
   "queries": [
     "firewall_health_overview.statements.sql"
   ],
-  "script": "firewall_health_overview.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "firewall_health_overview.js"
 }

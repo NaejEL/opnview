@@ -77,8 +77,5 @@
   "queries": [
     "custom_chart.statements.sql"
   ],
-  "script": "custom_chart.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "custom_chart.js"
 }

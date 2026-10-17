@@ -1,0 +1,14 @@
+{
+  "format_version": 1,
+  "canvases": [
+    {"id": "fine", "title": "Fine", "widgets": [
+      {"id": "a", "type": "top_sites", "placement": {"x": 0, "y": 0, "w": 6, "h": 4}}
+    ]},
+    {"id": "second", "title": "Second", "widgets": [
+      {"id": "a", "type": "top_sites", "placement": {"x": 0, "y": 0, "w": 6, "h": 4}},
+      {"id": "b", "type": "top_sites", "placement": {"x": 0, "y": "4", "w": 6, "h": 4},
+       "parameters": {"series": [{"interface": {"value": {"too": {"deep": 1}}}}]}}
+    ]},
+    {"title": "No id, but after the first defect"}
+  ]
+}

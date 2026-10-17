@@ -68,8 +68,5 @@
   "queries": [
     "blocked_by_firewall_rule.statements.sql"
   ],
-  "script": "blocked_by_firewall_rule.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "blocked_by_firewall_rule.js"
 }

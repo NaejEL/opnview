@@ -3,7 +3,6 @@ package account_test
 import (
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"os"
 	"testing"
 
@@ -15,8 +14,8 @@ import (
 	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
-// The account surface's JSON equivalents (C-AC9, C-AC4): each refuses what its page refuses, with
-// the page's own access level and CSRF rule, and makes the page's change.
+// The account surface's JSON routes (C-AC9, C-AC4): each refusal with its code, under the access
+// level and the CSRF rule of the route, and the change each makes.
 
 // sendAnonymous posts a JSON body with the given proof and answers its status and condition.
 func sendAnonymous(t *testing.T, h *webtest.Harness, path string, body map[string]any, token string) (int, map[string]any) {
@@ -30,8 +29,9 @@ func sendAnonymous(t *testing.T, h *webtest.Harness, path string, body map[strin
 	return answer.StatusCode, settingstest.DecodeJSON(t, webtest.ReadBody(t, answer))
 }
 
-// TestTheJSONSetupRefusesWhatThePageRefusesAndCreatesTheSameAccount is C-AC9 for POST /setup.
-func TestTheJSONSetupRefusesWhatThePageRefusesAndCreatesTheSameAccount(t *testing.T) {
+// TestTheJSONSetupRefusesItsInputsAndCreatesTheAccount is C-AC9 for the setup: each
+// refusal is answered with its code and creates nothing.
+func TestTheJSONSetupRefusesItsInputsAndCreatesTheAccount(t *testing.T) {
 	t.Parallel()
 	password := webtest.RandomHex(t, 12)
 	for _, refused := range []struct {
@@ -53,21 +53,13 @@ func TestTheJSONSetupRefusesWhatThePageRefusesAndCreatesTheSameAccount(t *testin
 	} {
 		t.Run(refused.what, func(t *testing.T) {
 			h := webtest.New(t)
-			form, body := url.Values{}, map[string]any{}
+			body := map[string]any{}
 			for key, value := range refused.fields {
-				form.Set(key, value)
 				body[key] = value
 			}
 			if _, set := refused.fields["setup_token"]; !set {
-				form.Set("setup_token", h.SetupToken.Token())
 				body["setup_token"] = h.SetupToken.Token()
 			}
-			page := h.Post(web.PathSetup, form)
-			webtest.Discard(t, page)
-			if page.StatusCode != refused.status {
-				t.Errorf("the page answered %d rather than %d", page.StatusCode, refused.status)
-			}
-			accounttest.AssertNoAccount(t, h)
 			status, answer := sendAnonymous(t, h, account.PathAPISetup, body, settingstest.APIToken(h))
 			if status != refused.status || answer["condition"] != refused.condition {
 				t.Errorf("the JSON setup answered %d %v rather than %d %s", status, answer, refused.status,
@@ -118,9 +110,9 @@ func TestTheJSONSetupRefusesWhatThePageRefusesAndCreatesTheSameAccount(t *testin
 	})
 }
 
-// TestTheJSONSignInAndSignOutAreThePages is C-AC9 for POST /sign-in and POST /sign-out: the same
+// TestTheJSONSignInAndSignOut is C-AC9 for the sign-in and the sign-out: the same
 // indistinguishable refusal, a session issued, and its row deleted on sign-out.
-func TestTheJSONSignInAndSignOutAreThePages(t *testing.T) {
+func TestTheJSONSignInAndSignOut(t *testing.T) {
 	t.Parallel()
 	h := webtest.New(t)
 	login, password := h.CompleteSetup()
@@ -133,12 +125,6 @@ func TestTheJSONSignInAndSignOutAreThePages(t *testing.T) {
 		status, answer := sendAnonymous(t, anonymous, account.PathAPISignIn, wrong, token)
 		if status != http.StatusUnauthorized || answer["condition"] != "sign_in_refused" {
 			t.Errorf("a wrong sign-in answered %d %v rather than 401 sign_in_refused", status, answer)
-		}
-		page := anonymous.Post(web.PathSignIn, url.Values{"login": {wrong["login"].(string)},
-			"password": {wrong["password"].(string)}})
-		webtest.Discard(t, page)
-		if page.StatusCode != http.StatusUnauthorized {
-			t.Errorf("the page answered %d to a wrong sign-in rather than 401", page.StatusCode)
 		}
 	}
 	status, answer := sendAnonymous(t, anonymous, account.PathAPISignIn,
@@ -168,7 +154,7 @@ func TestTheJSONSignInAndSignOutAreThePages(t *testing.T) {
 	}
 }
 
-// TestTheJSONResetIsAuthorisedByTheKeyFileAndByNothingElse is C-AC9 and C-AC4 for POST /recover.
+// TestTheJSONResetIsAuthorisedByTheKeyFileAndByNothingElse is C-AC9 and C-AC4 for the reset.
 func TestTheJSONResetIsAuthorisedByTheKeyFileAndByNothingElse(t *testing.T) {
 	t.Parallel()
 	h := webtest.New(t)

@@ -111,7 +111,9 @@ func loadOperatorWidgets(ctx context.Context, database *store.Store, dir string,
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
-		return nil, []params.Refusal{*params.Refuse(dir, params.RefusalNotADirectory, "the widgets directory cannot be read: %v", err)}
+		refusal := params.Refuse(dir, params.RefusalNotADirectory, "the widgets directory cannot be read: %v", err)
+		refusal.Path = dir
+		return nil, []params.Refusal{*refusal}
 	}
 	ctx, cancel := context.WithTimeout(ctx, loadTimeout)
 	defer cancel()
@@ -124,11 +126,14 @@ func loadOperatorWidgets(ctx context.Context, database *store.Store, dir string,
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		preset, refusal := loadOperatorWidget(ctx, database, filepath.Join(dir, entry.Name()), entry.Name(), existing, claimed)
+		directory := filepath.Join(dir, entry.Name())
+		preset, refusal := loadOperatorWidget(ctx, database, directory, entry.Name(), existing, claimed)
 		if refusal != nil {
+			refusal.Path = directory
 			refusals = append(refusals, *refusal)
 			continue
 		}
+		preset.Location = directory
 		claimed[preset.Type] = true
 		loaded = append(loaded, preset)
 	}
@@ -159,6 +164,10 @@ func loadOperatorWidget(ctx context.Context, database *store.Store, directory, n
 		return request.Preset{}, params.Refuse(name, params.RefusalTypeCollision,
 			"the type %q is already served; an operator widget never shadows another widget", manifest.Type)
 	}
+	files := os.DirFS(directory)
+	if manifest.FrontOnly() {
+		return frontOnlyPreset(files, directory, manifest, request.OriginOperator)
+	}
 	switch len(manifest.Queries) {
 	case 0:
 		return request.Preset{}, params.Refuse(name, params.RefusalQueryMissing, "a declarative widget declares its query file in `queries`")
@@ -179,7 +188,10 @@ func loadOperatorWidget(ctx context.Context, database *store.Store, directory, n
 	if refusal != nil {
 		return request.Preset{}, refusal
 	}
-	preset := presetFromManifest(manifest, request.OriginOperator)
+	preset, refusal := withRenderer(files, directory, manifest, presetFromManifest(manifest, request.OriginOperator))
+	if refusal != nil {
+		return request.Preset{}, refusal
+	}
 	// The registry is process-wide and a name is registered once, so each load of an operator
 	// widget gets a name of its own: two services over two data directories, as the tests build,
 	// never meet in it.

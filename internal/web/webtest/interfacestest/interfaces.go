@@ -3,11 +3,7 @@ package interfacestest
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"net/netip"
-	"net/url"
-	"strconv"
-	"strings"
 
 	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -74,15 +70,6 @@ func SeedBundleNetwork(h *webtest.Harness, insideCount int) BundleNetwork {
 	return network
 }
 
-// NetworkForm is what one control of the Interfaces surface submits.
-func NetworkForm(action string, id int64, network string) url.Values {
-	return url.Values{
-		webtest.FieldNetworkAction: {action},
-		webtest.FieldInterfaceID:   {strconv.FormatInt(id, 10)},
-		webtest.FieldNetwork:       {network},
-	}
-}
-
 // NetworkOf returns one stored network, failing when there is none.
 func NetworkOf(h *webtest.Harness, id int64, prefix netip.Prefix) flows.InterfaceNetwork {
 	h.T.Helper()
@@ -117,20 +104,4 @@ func NetworkRowCount(h *webtest.Harness) int {
 		h.T.Fatalf("counting the networks: %v", err)
 	}
 	return count
-}
-
-// SavedEdit posts one edit that must be saved, asserts that the answer sends the
-// browser back to the card the edit was made in -- a 303 to the surface naming that
-// card, at that card's anchor -- and returns the page the browser then loads.
-func SavedEdit(h *webtest.Harness, form url.Values, id int64) string {
-	h.T.Helper()
-	answer := h.Post(webtest.PathInterfaces, form)
-	status, _ := webtest.StatusAndBody(h.T, answer)
-	location := answer.Header.Get("Location")
-	anchor := "#interface_" + strconv.FormatInt(id, 10)
-	if status != http.StatusSeeOther || location != webtest.SavedLocation(id) || !strings.HasSuffix(location, anchor) {
-		h.T.Fatalf("a saved edit answered %d to %q, want a redirect to %s", status, location, anchor)
-	}
-	// A browser does not send the fragment; it scrolls to it.
-	return webtest.PageSource(h.T, h, strings.TrimSuffix(location, anchor))
 }

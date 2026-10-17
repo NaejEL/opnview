@@ -109,8 +109,5 @@
   "queries": [
     "connection_tree.statements.sql"
   ],
-  "script": "connection_tree.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "connection_tree.js"
 }

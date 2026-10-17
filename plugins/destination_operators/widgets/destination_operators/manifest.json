@@ -66,8 +66,5 @@
     "interface"
   ],
   "queries": [],
-  "script": "destination_operators.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "destination_operators.js"
 }

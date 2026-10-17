@@ -25,10 +25,6 @@
     "state.sizing.selection_on": "Turned on by the operator",
     "state.sizing.selection_off": "Declined by the operator",
 
-    "theme.system": "Follow the operating system",
-    "theme.light": "Industrial, light",
-    "theme.dark": "Industrial, dark",
-
     "notice.settings_saved": "Saved.",
 
     "error.setup_closed": "This installation already has an account.",

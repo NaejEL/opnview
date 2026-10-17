@@ -2,23 +2,41 @@ package account_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/auth"
 	"github.com/NaejEL/opnview/internal/web"
+	"github.com/NaejEL/opnview/internal/web/surfaces/account"
 	"github.com/NaejEL/opnview/internal/web/webtest"
 	"github.com/NaejEL/opnview/internal/web/webtest/accounttest"
+	"github.com/NaejEL/opnview/internal/web/webtest/settingstest"
 )
 
+// setupBody is a setup's JSON body.
+func setupBody(t *testing.T, fields map[string]string) string {
+	t.Helper()
+	encoded, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatalf("encoding a setup body: %v", err)
+	}
+	return string(encoded)
+}
+
+// postSetup issues a setup carrying this reader's own form token.
+func postSetup(t *testing.T, h *webtest.Harness, fields map[string]string) *http.Response {
+	t.Helper()
+	return h.PostWithToken(account.PathAPISetup, setupBody(t, fields))
+}
+
 // TestAFreshInstallationHasNoAccountAndRunsAnyway is AC3's half that belongs to this
-// package: the service comes up against a database with no account, and the setup
-// surface is the thing that is reachable.
+// package: the service comes up against a database with no account, and the setup is what is
+// open.
 func TestAFreshInstallationHasNoAccountAndRunsAnyway(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
@@ -39,21 +57,11 @@ func TestAFreshInstallationHasNoAccountAndRunsAnyway(t *testing.T) {
 		t.Fatal("the setup token was spent before setup ran")
 	}
 
-	answer := harness.Get(web.PathSetup)
-	defer func() { _ = answer.Body.Close() }()
-	if answer.StatusCode != http.StatusOK {
-		t.Fatalf("the setup surface answered %d on a fresh installation", answer.StatusCode)
-	}
-
-	// The root sends an unconfigured installation to setup rather than to sign-in.
-	root := harness.Get(web.PathRoot)
-	defer func() { _ = root.Body.Close() }()
-	if root.StatusCode != http.StatusSeeOther {
-		t.Fatalf("the root answered %d rather than a redirect", root.StatusCode)
-	}
-	if location := root.Header.Get("Location"); location != web.PathSetup {
-		t.Errorf("the root sent a fresh installation to %q rather than to the setup surface",
-			location)
+	// The session state sends an unconfigured installation's reader to the setup rather than to
+	// the sign-in: no account exists, and nobody is signed in.
+	if state := settingstest.GetJSON(harness, account.PathAPISession); state["account_exists"] != false ||
+		state["signed_in"] != false {
+		t.Errorf("a fresh installation's session state is %v", state)
 	}
 }
 
@@ -64,16 +72,16 @@ func TestTheSetupSurfaceDemandsTheTokenAndSpendsItOnce(t *testing.T) {
 	password := webtest.RandomHex(t, 12)
 
 	// Without a token: refused, and nothing created.
-	withoutToken := harness.Post(web.PathSetup, url.Values{
-		"login": {"first"}, "password": {password}, "password_again": {password},
+	withoutToken := postSetup(t, harness, map[string]string{
+		"login": "first", "password": password, "password_again": password,
 	})
 	accounttest.AssertStatus(t, withoutToken, http.StatusForbidden)
 	accounttest.AssertNoAccount(t, harness)
 
 	// With a wrong one: refused, and nothing created.
-	wrongToken := harness.Post(web.PathSetup, url.Values{
-		"setup_token": {webtest.RandomHex(t, 32)},
-		"login":       {"first"}, "password": {password}, "password_again": {password},
+	wrongToken := postSetup(t, harness, map[string]string{
+		"setup_token": webtest.RandomHex(t, 32),
+		"login":       "first", "password": password, "password_again": password,
 	})
 	accounttest.AssertStatus(t, wrongToken, http.StatusForbidden)
 	accounttest.AssertNoAccount(t, harness)
@@ -89,26 +97,22 @@ func TestTheSetupSurfaceDemandsTheTokenAndSpendsItOnce(t *testing.T) {
 		t.Fatal("setup reported success and created no account")
 	}
 
-	// A replay of the same token is refused. It is refused here because the account
-	// exists, which is the permanent closure; the token being spent is the second,
-	// independent refusal, and TestASpentTokenIsRefusedOnItsOwn asserts that one
-	// without the account in the way.
-	replay := harness.PostRaw(web.PathSetup, url.Values{
-		"csrf_token":  {harness.FormToken(web.PathSignIn)},
-		"setup_token": {harness.SetupToken.Token()},
-		"login":       {"second"}, "password": {password}, "password_again": {password},
+	// A replay of the same token is refused. It is refused here because the account exists,
+	// which is the permanent closure; the token being spent is the second, independent refusal,
+	// and TestASpentTokenIsRefusedOnItsOwn asserts that one without the account in the way.
+	replay := postSetup(t, webtest.FreshClient(t, harness), map[string]string{
+		"setup_token": harness.SetupToken.Token(),
+		"login":       "second", "password": password, "password_again": password,
 	})
 	accounttest.AssertStatus(t, replay, http.StatusForbidden)
 	accounttest.AssertAccountCount(t, harness, 1)
 
-	// And the token appears in no response body, ever.
-	for _, path := range []string{web.PathSetup, web.PathSignIn, web.PathRecover} {
-		answer := harness.Get(path)
-		body := webtest.ReadBody(t, answer)
-		_ = answer.Body.Close()
-		if strings.Contains(body, harness.SetupToken.Token()) {
-			t.Errorf("the setup token appears in the body of %s", path)
-		}
+	// And the token appears in no answer of the session routes, ever.
+	answer := harness.Get(account.PathAPISession)
+	body := webtest.ReadBody(t, answer)
+	_ = answer.Body.Close()
+	if strings.Contains(body, harness.SetupToken.Token()) {
+		t.Errorf("the setup token appears in the body of %s", account.PathAPISession)
 	}
 }
 
@@ -148,8 +152,8 @@ func TestTheSetupTokenIsNeverWrittenIntoTheDatabase(t *testing.T) {
 // TestTheSetupSurfaceClosesPermanently is AC7, the criterion this cycle names as the
 // one to get right before any other.
 //
-// IT IS ASSERTED THREE WAYS, because the hole has three shapes: a check only on the
-// GET, a token that is still valid, and a state that a restart resets.
+// IT IS ASSERTED THREE WAYS, because the hole has three shapes: a token that is still valid, a
+// reset of the first account through the setup, and a state that a restart resets.
 func TestTheSetupSurfaceClosesPermanently(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
@@ -157,24 +161,19 @@ func TestTheSetupSurfaceClosesPermanently(t *testing.T) {
 	password := webtest.RandomHex(t, 12)
 
 	t.Run("with a spent token", func(t *testing.T) {
-		answer := harness.PostRaw(web.PathSetup, url.Values{
-			"csrf_token":  {harness.FormToken(web.PathSignIn)},
-			"setup_token": {harness.SetupToken.Token()},
-			"login":       {"second-" + webtest.RandomHex(t, 4)},
-			"password":    {password}, "password_again": {password},
+		answer := postSetup(t, webtest.FreshClient(t, harness), map[string]string{
+			"setup_token": harness.SetupToken.Token(),
+			"login":       "second-" + webtest.RandomHex(t, 4),
+			"password":    password, "password_again": password,
 		})
 		accounttest.AssertStatus(t, answer, http.StatusForbidden)
 		accounttest.AssertAccountCount(t, harness, 1)
 	})
 
-	t.Run("the GET is closed too", func(t *testing.T) {
-		answer := harness.Get(web.PathSetup)
-		defer func() { _ = answer.Body.Close() }()
-		if answer.StatusCode != http.StatusSeeOther {
-			t.Fatalf("the setup surface answered %d after an account existed", answer.StatusCode)
-		}
-		if location := answer.Header.Get("Location"); location != web.PathSignIn {
-			t.Errorf("a closed setup surface sent the reader to %q", location)
+	t.Run("the session state says the setup is closed", func(t *testing.T) {
+		state := settingstest.GetJSON(webtest.FreshClient(t, harness), account.PathAPISession)
+		if state["account_exists"] != true {
+			t.Errorf("after the setup the session state is %v", state)
 		}
 	})
 
@@ -189,27 +188,27 @@ func TestTheSetupSurfaceClosesPermanently(t *testing.T) {
 		if restarted.SetupToken.Token() == harness.SetupToken.Token() {
 			t.Fatal("the restarted server reused the first token, so this proves nothing")
 		}
-		answer := restarted.PostRaw(web.PathSetup, url.Values{
-			"csrf_token":  {restarted.FormToken(web.PathSignIn)},
-			"setup_token": {restarted.SetupToken.Token()},
-			"login":       {"second-" + webtest.RandomHex(t, 4)},
-			"password":    {password}, "password_again": {password},
-		})
-		accounttest.AssertStatus(t, answer, http.StatusForbidden)
+		status, answer := sendAnonymous(t, restarted, account.PathAPISetup, map[string]any{
+			"setup_token": restarted.SetupToken.Token(),
+			"login":       "second-" + webtest.RandomHex(t, 4),
+			"password":    password, "password_again": password,
+		}, restarted.FormToken())
+		if status != http.StatusForbidden || answer["condition"] != web.ConditionSetupClosed {
+			t.Errorf("a setup after a restart answered %d %v rather than 403 setup_closed", status, answer)
+		}
 		accounttest.AssertAccountCount(t, restarted, 1)
 	})
 
 	t.Run("after a restart, setup cannot reset the first account either", func(t *testing.T) {
-		account, found, err := restarted.Store.AnyAccount(context.Background())
+		stored, found, err := restarted.Store.AnyAccount(context.Background())
 		if err != nil || !found {
 			t.Fatalf("reading the account after the restart: found=%v err=%v", found, err)
 		}
-		before := account.Password
-		answer := restarted.PostRaw(web.PathSetup, url.Values{
-			"csrf_token":  {restarted.FormToken(web.PathSignIn)},
-			"setup_token": {restarted.SetupToken.Token()},
-			"login":       {account.Login},
-			"password":    {password}, "password_again": {password},
+		before := stored.Password
+		answer := postSetup(t, restarted, map[string]string{
+			"setup_token": restarted.SetupToken.Token(),
+			"login":       stored.Login,
+			"password":    password, "password_again": password,
 		})
 		accounttest.AssertStatus(t, answer, http.StatusForbidden)
 
@@ -218,7 +217,7 @@ func TestTheSetupSurfaceClosesPermanently(t *testing.T) {
 			t.Fatalf("re-reading the account: %v", err)
 		}
 		if string(after.Password.Digest) != string(before.Digest) {
-			t.Error("a request to the closed setup surface changed the stored password")
+			t.Error("a request to the closed setup changed the stored password")
 		}
 	})
 }
@@ -237,13 +236,13 @@ func TestConcurrentSetupsCarryingOneTokenCreateOneAccount(t *testing.T) {
 	password := webtest.RandomHex(t, 12)
 	const racers = 8
 
-	// Each browser loads the setup surface first, so every request carries a form token
-	// of its own and the only thing they share is the one token printed on the console.
+	// Each browser reads its session state first, so every request carries a form token of
+	// its own and the only thing they share is the one token printed on the console.
 	clients := make([]*webtest.Harness, racers)
 	tokens := make([]string, racers)
 	for index := range racers {
 		clients[index] = webtest.FreshClient(t, installation)
-		tokens[index] = clients[index].FormToken(web.PathSetup)
+		tokens[index] = clients[index].FormToken()
 	}
 
 	statuses := make([]int, racers)
@@ -254,20 +253,20 @@ func TestConcurrentSetupsCarryingOneTokenCreateOneAccount(t *testing.T) {
 		racing.Add(1)
 		go func() {
 			defer racing.Done()
-			form := url.Values{
-				"csrf_token":     {tokens[index]},
-				"setup_token":    {installation.SetupToken.Token()},
-				"login":          {fmt.Sprintf("operator-%d", index)},
-				"password":       {password},
-				"password_again": {password},
-			}
-			request, err := http.NewRequest(http.MethodPost, installation.HTTP.URL+web.PathSetup,
-				strings.NewReader(form.Encode()))
+			body := setupBody(t, map[string]string{
+				"setup_token":    installation.SetupToken.Token(),
+				"login":          fmt.Sprintf("operator-%d", index),
+				"password":       password,
+				"password_again": password,
+			})
+			request, err := http.NewRequest(http.MethodPost, installation.HTTP.URL+account.PathAPISetup,
+				strings.NewReader(body))
 			if err != nil {
 				failures[index] = err
 				return
 			}
-			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set(web.HeaderCSRFToken, tokens[index])
 			<-start
 			answer, err := clients[index].Client.Do(request)
 			if err != nil {
@@ -288,7 +287,7 @@ func TestConcurrentSetupsCarryingOneTokenCreateOneAccount(t *testing.T) {
 			t.Fatalf("a concurrent setup could not be issued: %v", failures[index])
 		}
 		switch status {
-		case http.StatusSeeOther:
+		case http.StatusOK:
 			created++
 		case http.StatusForbidden:
 		default:
@@ -306,26 +305,20 @@ func TestConcurrentSetupsCarryingOneTokenCreateOneAccount(t *testing.T) {
 }
 
 // TestSetupRefusesAWeakOrMistypedPassword keeps the two new-credential rules from
-// drifting, and asserts that a refusal creates nothing.
+// drifting, and asserts that a refusal creates nothing and burns no token.
 func TestSetupRefusesAWeakOrMistypedPassword(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
 	long := webtest.RandomHex(t, 12)
 
-	for name, form := range map[string]url.Values{
-		"no login": {
-			"login": {""}, "password": {long}, "password_again": {long},
-		},
-		"too short": {
-			"login": {"operator"}, "password": {"short"}, "password_again": {"short"},
-		},
-		"mistyped": {
-			"login": {"operator"}, "password": {long}, "password_again": {long + "x"},
-		},
+	for name, fields := range map[string]map[string]string{
+		"no login":  {"login": "", "password": long, "password_again": long},
+		"too short": {"login": "operator", "password": "short", "password_again": "short"},
+		"mistyped":  {"login": "operator", "password": long, "password_again": long + "x"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			form.Set("setup_token", harness.SetupToken.Token())
-			answer := harness.Post(web.PathSetup, form)
+			fields["setup_token"] = harness.SetupToken.Token()
+			answer := postSetup(t, harness, fields)
 			accounttest.AssertStatus(t, answer, http.StatusBadRequest)
 			accounttest.AssertNoAccount(t, harness)
 			if harness.SetupToken.Spent() {

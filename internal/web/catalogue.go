@@ -16,24 +16,22 @@ import (
 //
 // NO USER-VISIBLE STRING IS A LITERAL, anywhere in this package or in a surface. ROADMAP.md,
 // step 7: every user-visible string comes from a catalogue, none is a literal in a
-// template, a handler or a script, and the only exemption is the step-3 mockup.
+// front file, a handler or a script, and the only exemption is the step-3 mockup.
 //
-// A LANGUAGE IS A FILE, which is the shape step 7 grows. locale/en.json is that
-// file: a language identifier and a flat map from key to string. Adding a second
-// language is adding a second file of the same shape and a row in whatever
-// selects between them; this cycle ships one, and the language picker is step 7.
+// A LANGUAGE IS A FILE. locale/en.json is that file: a language identifier and a flat map from
+// key to string; the front adds a language as a file of its own (internal/front).
 // English is the SOURCE language, so en.json is the one every other file is
 // translated from.
 //
-// THE CATALOGUE IS THE UNION OF FILES, ONE SET PER OWNER. The keys the layout and the
-// vocabulary shared by several surfaces use are the core's (locale/ here); every other key is
+// THE CATALOGUE IS THE UNION OF FILES, ONE SET PER OWNER. The vocabulary shared by several
+// surfaces is the core's (locale/ here); every other key is
 // in the locale/ directory of the one surface that uses it, so a surface carries its own
 // words. At start the core merges its file with those of every accepted surface for the
 // language; a key defined twice is refused (the surface that redefines it is left out, with
 // that reason), never silently overwritten.
 //
 // A HANDLER NEVER HOLDS A STRING EITHER. What a handler chooses is a KEY -- the MessageKey
-// type -- and the template resolves it. That is what makes "no handler emits a
+// type -- and a JSON answer carries its closed code, which the front resolves. That is what makes "no handler emits a
 // user-visible literal" a property a test can check rather than a habit.
 
 // locales holds the core's catalogue files.
@@ -46,8 +44,7 @@ const SourceLanguage = "en"
 
 // Catalogue is one language's strings.
 type Catalogue struct {
-	// Language is the language identifier, which is what a template puts in the
-	// document's lang attribute.
+	// Language is the language identifier.
 	Language string `json:"language"`
 	// Strings maps a key to the string a reader sees.
 	Strings map[string]string `json:"strings"`
@@ -129,12 +126,30 @@ func buildCatalogue(language string, accepted []vetted, plugins map[string]strin
 	return merged, nil
 }
 
-// Catalogue returns the catalogue this server draws its pages with: the core's strings, those
+// Catalogue returns this server's source-language catalogue: the core's strings, those
 // of every surface it mounts and those of every plugin it was given.
-func (s *Server) Catalogue() Catalogue { return s.renderer.catalogue }
+func (s *Server) Catalogue() Catalogue { return s.catalogue }
 
-// Keys returns the catalogue's keys, sorted. A test uses it to assert that every
-// entry is reachable and that every key a template or a handler reaches exists.
+// CatalogueStrings returns the core's strings, those of every surface this server mounts and
+// those of every plugin it was given, for one language: what the front's string catalogue is
+// merged from (internal/front). A language the core has no file for answers the plugins' strings
+// of that language alone. The map is the caller's own copy.
+func (s *Server) CatalogueStrings(language string) map[string]string {
+	if language == SourceLanguage {
+		copied := make(map[string]string, len(s.catalogue.Strings))
+		for key, value := range s.catalogue.Strings {
+			copied[key] = value
+		}
+		return copied
+	}
+	merged, err := buildCatalogue(language, s.surfaces, withDatasetStrings(language, s.plugins.Strings(language)))
+	if err != nil {
+		return withDatasetStrings(language, s.plugins.Strings(language))
+	}
+	return merged.Strings
+}
+
+// Keys returns the catalogue's keys, sorted. A test uses it to assert what the catalogue holds.
 func (c Catalogue) Keys() []string {
 	keys := make([]string, 0, len(c.Strings))
 	for key := range c.Strings {
@@ -144,13 +159,8 @@ func (c Catalogue) Keys() []string {
 	return keys
 }
 
-// errMissingString is what a template execution fails with when it reaches a key
-// the catalogue does not carry.
-//
-// IT FAILS RATHER THAN FALLING BACK to the key, to the empty string or to
-// English. A missing string that renders as its own key ships a debugging artefact
-// to a reader; a missing string that renders as nothing ships a blank label. Both
-// are worse than a page that does not render, because both pass unnoticed.
+// errMissingString is what a lookup fails with when it reaches a key the catalogue does not
+// carry: it fails rather than falling back to the key or to the empty string.
 type errMissingString struct{ key string }
 
 // Error names the missing key.
@@ -167,8 +177,7 @@ func (c Catalogue) translate(key string) (string, error) {
 	return value, nil
 }
 
-// Translate resolves one key, for a test that compares a rendered page against the
-// catalogue. A surface never builds a user-visible string with it.
+// Translate resolves one key, for a test that compares an answer against the catalogue. A surface never builds a user-visible string with it.
 func (c Catalogue) Translate(key MessageKey) (string, error) { return c.translate(string(key)) }
 
 // isMissing reports whether an error is a file that is not there.
@@ -176,7 +185,7 @@ func isMissing(err error) bool { return errors.Is(err, fs.ErrNotExist) }
 
 // ProductCatalogue returns the catalogue of every surface linked into this binary and of every
 // built-in plugin, together with the core's: what a server built with the registered surfaces
-// draws its pages with. A test uses it to name the string a reader sees without building a
+// serves. A test uses it to name the string a reader sees without building a
 // server.
 func ProductCatalogue(language string) (Catalogue, error) {
 	merged, err := LoadCatalogue(language)

@@ -122,8 +122,5 @@
   "queries": [
     "traffic_composition.statements.sql"
   ],
-  "script": "traffic_composition.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "traffic_composition.js"
 }

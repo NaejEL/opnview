@@ -1,0 +1,398 @@
+// Package frontjs runs the front's own files in the interpreter the server already embeds
+// (github.com/dop251/goja), over a minimal document (dom.js), so the front is tested without a
+// browser (specs/SPEC-step-7-frontend.md, A9).
+//
+// IT RUNS THE FILES THE SHELL LOADS, IN THE SHELL'S ORDER, read from the built-in front -- the
+// same bytes a browser is served -- so a test exercises the product and not a copy. The server is
+// a fake: every request the front makes is answered by the test's handler and recorded, so a test
+// asserts both what was drawn and what was asked. Time is a fake clock the test moves; nothing
+// sleeps.
+//
+// The interpreter runs a promise's reactions when the call that queued them returns, so a view's
+// load, its answers and its render have all happened by the time a call from Go comes back.
+package frontjs
+
+import (
+	_ "embed"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"sort"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/dop251/goja"
+
+	opnview "github.com/NaejEL/opnview"
+)
+
+//go:embed dom.js
+var domShim string
+
+// Request is one request the front made.
+type Request struct {
+	Method  string
+	Path    string
+	Body    string
+	Headers map[string]string
+}
+
+// Answer is the fake server's answer to one request: a status and a body, marshalled to JSON.
+type Answer struct {
+	Status int
+	Body   any
+}
+
+// Options set the browser the front runs in.
+type Options struct {
+	// Handler answers every request; nil answers 404.
+	Handler func(Request) Answer
+	// PrefersDark is the operating system's colour-scheme preference.
+	PrefersDark bool
+	// Languages are the browser's languages, most wanted first; nil is English.
+	Languages []string
+}
+
+// Runtime is one page of the front.
+type Runtime struct {
+	t        testing.TB
+	VM       *goja.Runtime
+	options  Options
+	mutex    sync.Mutex
+	requests []Request
+	now      int64
+	timers   []*timer
+	next     int64
+}
+
+type timer struct {
+	id   int64
+	due  int64
+	call goja.Callable
+}
+
+// sources caches the front's files, read once.
+var (
+	sourcesOnce sync.Once
+	sourcesList []source
+	sourcesErr  error
+)
+
+type source struct {
+	name string
+	text string
+}
+
+// ShellScripts returns the files the shell loads, in its order, below the front's root.
+func ShellScripts() ([]string, error) {
+	raw, err := fs.ReadFile(opnview.BuiltinFront(), "shell.html")
+	if err != nil {
+		return nil, err
+	}
+	var scripts []string
+	rest := string(raw)
+	for {
+		start := strings.Index(rest, `src="/front/`)
+		if start < 0 {
+			return scripts, nil
+		}
+		rest = rest[start+len(`src="/front/`):]
+		end := strings.Index(rest, `"`)
+		scripts = append(scripts, rest[:end])
+		rest = rest[end:]
+	}
+}
+
+func frontSources() ([]source, error) {
+	sourcesOnce.Do(func() {
+		scripts, err := ShellScripts()
+		if err != nil {
+			sourcesErr = err
+			return
+		}
+		for _, name := range scripts {
+			text, err := fs.ReadFile(opnview.BuiltinFront(), name)
+			if err != nil {
+				sourcesErr = err
+				return
+			}
+			sourcesList = append(sourcesList, source{name: name, text: string(text)})
+		}
+	})
+	return sourcesList, sourcesErr
+}
+
+// New starts a page: the document, the fake browser, and every file the shell loads.
+func New(t testing.TB, options Options) *Runtime {
+	t.Helper()
+	runtime := &Runtime{t: t, VM: goja.New(), options: options, next: 1}
+	if err := runtime.install(); err != nil {
+		t.Fatalf("frontjs: installing the browser: %v", err)
+	}
+	sources, err := frontSources()
+	if err != nil {
+		t.Fatalf("frontjs: reading the front: %v", err)
+	}
+	for _, file := range sources {
+		if _, err := runtime.VM.RunScript(file.name, file.text); err != nil {
+			t.Fatalf("frontjs: running %s: %v", file.name, err)
+		}
+	}
+	return runtime
+}
+
+// install defines the document and what the front reads of the window.
+func (r *Runtime) install() error {
+	vm := r.VM
+	if _, err := vm.RunScript("dom.js", domShim); err != nil {
+		return err
+	}
+	global := vm.GlobalObject()
+	_ = global.Set("window", global)
+	_ = global.Set("__fetch", func(call goja.FunctionCall) goja.Value {
+		answer := r.serve(call.Argument(0).String(), call.Argument(1).String(), call.Argument(2).String(),
+			call.Argument(3).String())
+		return vm.ToValue(answer)
+	})
+	_ = global.Set("setTimeout", func(call goja.FunctionCall) goja.Value {
+		callback, ok := goja.AssertFunction(call.Argument(0))
+		if !ok {
+			panic(vm.NewTypeError("setTimeout takes a function"))
+		}
+		r.mutex.Lock()
+		defer r.mutex.Unlock()
+		id := r.next
+		r.next++
+		r.timers = append(r.timers, &timer{id: id, due: r.now + call.Argument(1).ToInteger(), call: callback})
+		return vm.ToValue(id)
+	})
+	_ = global.Set("clearTimeout", func(call goja.FunctionCall) goja.Value {
+		id := call.Argument(0).ToInteger()
+		r.mutex.Lock()
+		defer r.mutex.Unlock()
+		for index, pending := range r.timers {
+			if pending.id == id {
+				r.timers = append(r.timers[:index], r.timers[index+1:]...)
+				break
+			}
+		}
+		return goja.Undefined()
+	})
+	languages, err := json.Marshal(r.options.Languages)
+	if err != nil {
+		return err
+	}
+	if r.options.Languages == nil {
+		languages = []byte(`["en"]`)
+	}
+	_, err = vm.RunScript("browser.js", fmt.Sprintf(`(function (root) {
+  "use strict";
+  var windowListeners = {};
+  root.addEventListener = function (type, handler) { (windowListeners[type] || (windowListeners[type] = [])).push(handler); };
+  root.__windowEvent = function (type) { (windowListeners[type] || []).forEach(function (handler) { handler({ type: type }); }); };
+  root.location = { pathname: "/", search: "", origin: "http://opnview.example" };
+  function setURL(url) {
+    var cut = url.indexOf("?");
+    root.location.pathname = cut < 0 ? url : url.slice(0, cut);
+    root.location.search = cut < 0 ? "" : url.slice(cut);
+  }
+  root.history = {
+    entries: [],
+    pushState: function (state, title, url) { this.entries.push(url); setURL(url); },
+    replaceState: function (state, title, url) { setURL(url); }
+  };
+  root.__setURL = setURL;
+  root.navigator = { languages: %s, language: %s[0] };
+  root.__prefersDark = %t;
+  root.matchMedia = function (query) {
+    return { matches: query.indexOf("dark") >= 0 ? root.__prefersDark : !root.__prefersDark,
+      addEventListener: function () {} };
+  };
+  root.fetch = function (path, init) {
+    var settings = init || {};
+    var answer = root.__fetch(settings.method || "GET", path, JSON.stringify(settings.headers || {}),
+      settings.body === undefined ? "" : settings.body);
+    return Promise.resolve({ status: answer.status, text: function () { return Promise.resolve(answer.body); } });
+  };
+})(this);`, languages, languages, r.options.PrefersDark))
+	return err
+}
+
+// serve answers one request through the test's handler, and records it.
+func (r *Runtime) serve(method, path, headers, body string) map[string]any {
+	request := Request{Method: method, Path: path, Body: body, Headers: map[string]string{}}
+	_ = json.Unmarshal([]byte(headers), &request.Headers)
+	r.mutex.Lock()
+	r.requests = append(r.requests, request)
+	r.mutex.Unlock()
+	answer := Answer{Status: 404, Body: map[string]string{"condition": "unknown_route"}}
+	if r.options.Handler != nil {
+		answer = r.options.Handler(request)
+	}
+	encoded := ""
+	if answer.Body != nil {
+		raw, err := json.Marshal(answer.Body)
+		if err != nil {
+			r.t.Errorf("frontjs: the fake answer to %s %s does not encode: %v", method, path, err)
+		}
+		encoded = string(raw)
+	}
+	return map[string]any{"status": answer.Status, "body": encoded}
+}
+
+// Run runs a script and returns its value, failing the test when it throws.
+func (r *Runtime) Run(script string) goja.Value {
+	r.t.Helper()
+	value, err := r.VM.RunString(script)
+	if err != nil {
+		r.t.Fatalf("frontjs: %v\nin: %s", err, script)
+	}
+	return value
+}
+
+// Requests returns every request made so far, in order.
+func (r *Runtime) Requests() []Request {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+	return append([]Request(nil), r.requests...)
+}
+
+// Writes returns every POST made so far, in order.
+func (r *Runtime) Writes() []Request {
+	var writes []Request
+	for _, request := range r.Requests() {
+		if request.Method == "POST" {
+			writes = append(writes, request)
+		}
+	}
+	return writes
+}
+
+// Advance moves the fake clock and runs every timer that falls due, in order.
+func (r *Runtime) Advance(milliseconds int64) {
+	r.t.Helper()
+	target := r.now + milliseconds
+	for {
+		r.mutex.Lock()
+		sort.SliceStable(r.timers, func(i, j int) bool { return r.timers[i].due < r.timers[j].due })
+		if len(r.timers) == 0 || r.timers[0].due > target {
+			r.now = target
+			r.mutex.Unlock()
+			return
+		}
+		due := r.timers[0]
+		r.timers = r.timers[1:]
+		r.now = due.due
+		r.mutex.Unlock()
+		if _, err := due.call(goja.Undefined()); err != nil {
+			r.t.Fatalf("frontjs: a timer threw: %v", err)
+		}
+	}
+}
+
+// Start opens the front at a path in a fresh container, as the shell does in a browser.
+func (r *Runtime) Start(path string) {
+	r.t.Helper()
+	r.Run(fmt.Sprintf(`(function () {
+  __setURL(%q);
+  var app = document.createElement("div");
+  app.setAttribute("id", "app");
+  document.body.appendChild(app);
+  opnview.shell.start(app);
+})();`, path))
+}
+
+// Go moves the front to a path, as following a link does.
+func (r *Runtime) Go(path string) {
+	r.t.Helper()
+	r.Run(fmt.Sprintf(`opnview.shell.go(%q);`, path))
+}
+
+// Path is the address bar's path.
+func (r *Runtime) Path() string {
+	return r.Run(`location.pathname + location.search`).String()
+}
+
+// Count returns how many elements match a selector.
+func (r *Runtime) Count(selector string) int {
+	r.t.Helper()
+	return int(r.Run(fmt.Sprintf(`document.querySelectorAll(%q).length`, selector)).ToInteger())
+}
+
+// Text returns the text of the first element matching a selector, failing when none does.
+func (r *Runtime) Text(selector string) string {
+	r.t.Helper()
+	r.must(selector)
+	return r.Run(fmt.Sprintf(`document.querySelector(%q).textContent`, selector)).String()
+}
+
+// Attribute returns an attribute of the first element matching a selector.
+func (r *Runtime) Attribute(selector, name string) string {
+	r.t.Helper()
+	r.must(selector)
+	value := r.Run(fmt.Sprintf(`document.querySelector(%q).getAttribute(%q)`, selector, name))
+	if goja.IsNull(value) || goja.IsUndefined(value) {
+		return ""
+	}
+	return value.String()
+}
+
+func (r *Runtime) must(selector string) {
+	r.t.Helper()
+	if r.Count(selector) == 0 {
+		r.t.Fatalf("frontjs: nothing matches %q in:\n%s", selector, r.Outline())
+	}
+}
+
+// Input types a value into a field and tells the page, as a reader typing does.
+func (r *Runtime) Input(selector, value string) {
+	r.t.Helper()
+	r.must(selector)
+	r.Run(fmt.Sprintf(`(function () {
+  var element = document.querySelector(%q);
+  element.focus();
+  element.value = %q;
+  element.dispatchEvent(__makeEvent("input"));
+})();`, selector, value))
+}
+
+// Choose selects an option of a select, or sets a box, and tells the page.
+func (r *Runtime) Choose(selector, value string) {
+	r.t.Helper()
+	r.must(selector)
+	r.Run(fmt.Sprintf(`(function () {
+  var element = document.querySelector(%q);
+  if (element.getAttribute("type") === "checkbox") { element.checked = %q === "true"; } else { element.value = %q; }
+  element.dispatchEvent(__makeEvent("change"));
+})();`, selector, value, value))
+}
+
+// Click clicks an element: a submit button submits its form.
+func (r *Runtime) Click(selector string) {
+	r.t.Helper()
+	r.must(selector)
+	r.Run(fmt.Sprintf(`(function () {
+  var element = document.querySelector(%q);
+  element.focus();
+  element.dispatchEvent(__makeEvent("click"));
+})();`, selector))
+}
+
+// Outline is the document as an indented outline of elements and text, for a failure message.
+func (r *Runtime) Outline() string {
+	value := r.Run(`(function () {
+  var lines = [];
+  (function walk(node, depth) {
+    var pad = new Array(depth + 1).join("  ");
+    if (node.nodeType === 3) { if (node.nodeValue.trim()) { lines.push(pad + JSON.stringify(node.nodeValue)); } return; }
+    var attributes = Object.keys(node.attributes).sort().map(function (name) {
+      return name + "=" + JSON.stringify(node.attributes[name]);
+    }).join(" ");
+    lines.push(pad + "<" + node.tagName.toLowerCase() + (attributes ? " " + attributes : "") + ">");
+    node.childNodes.forEach(function (child) { walk(child, depth + 1); });
+  })(document.body, 0);
+  return lines.join("\n");
+})()`)
+	return value.String()
+}

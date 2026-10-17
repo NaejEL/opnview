@@ -82,8 +82,5 @@
   "queries": [
     "unified_blocked_feed.statements.sql"
   ],
-  "script": "unified_blocked_feed.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "unified_blocked_feed.js"
 }

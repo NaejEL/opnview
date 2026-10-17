@@ -55,8 +55,7 @@ not a silently ignored one.
   "measure": "logged",
   "parameters": [ ... ],
   "references": ["interface"],
-  "queries": ["query.sql"],
-  "renderer": { "reserved": true }
+  "queries": ["query.sql"]
 }
 ```
 
@@ -76,7 +75,7 @@ not a silently ignored one.
 | `references` | array of strings | The reference kinds the widget accepts: `interface`, `client`, `rule`, `owner`, `provider`, `country`, `operator`, `site`. Validated against the reference parameters: each must be accepted by some parameter, and every reference parameter's kind must be listed. (A `series` parameter accepts every kind.) | `[]` |
 | `queries` | array of strings | The widget's query files, plain file names ending in `.sql`, in its own directory. A declarative widget lists exactly one. | `[]` |
 | `script` | string | The JavaScript file, in the widget's own directory, that answers the widget; its `queries` are then statement files of named statements. Only a widget a plugin carries has one; `docs/plugins.md`, *Widgets*, documents it. | none |
-| `renderer` | object | **Reserved for the interface work of step 7.** Declared and validated, not built. The only accepted value is `{"reserved": true}`, which is also what an absent field means. | `{"reserved": true}` |
+| `renderer` | object | The widget's own renderer: `{"entry": "<file>.js"}`, a classic script of the widget's own directory that the front runs to draw it (`docs/front-plugins.md`). Absent, the widget is drawn by its shape's renderer from the shape contract payload (*Shape contracts*, below). A widget with a `renderer` and neither `queries` nor a `script` is a **front-only widget**: nothing on the server answers it, `GET /api/widget/{type}` answers `404` `{"condition": "front_only_widget"}`, and its renderer asks the core for what it draws. | absent |
 
 ### Parameters
 
@@ -302,9 +301,10 @@ log; the reason is specific to the rule, and the other widgets still load.
 | `bad_default` | a default that its own parameter would reject |
 | `reserved_parameter_key` | a key the engine binds itself (`from`, `to`, `now`), or `volume_measure`, which the core gives a widget declaring `volumes` |
 | `references_mismatch` | `references` and the reference parameters disagree |
-| `renderer_invalid` | `renderer` is not the reserved slot |
+| `renderer_invalid` | `renderer` is not `{"entry": "<file>.js"}` naming a plain `.js` file other than the script, or the file does not compile as a classic script (an ES module's `import` or `export` among the reasons) |
+| `renderer_missing` | the renderer the manifest names is not in the widget's directory |
 | `type_mismatch_with_directory` | the manifest's type is not its directory's name |
-| `type_collision` | the type is already served by a built-in |
+| `name_collision` | the type is already served by a built-in or by another widget: the built-in wins every collision |
 | `query_missing` | no query declared, the file is absent, or it holds no statement |
 | `query_unreadable` | the query file cannot be read |
 | `too_many_queries` | more than one query declared |

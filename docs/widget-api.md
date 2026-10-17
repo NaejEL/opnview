@@ -880,7 +880,7 @@ carries a secret, a ciphertext or a session token; the form token travels in the
 | `GET /recover` | `GET /api/session` |
 | `POST /recover` | `POST /api/account/recover` |
 | `GET /settings` | `GET /api/settings` |
-| `POST /settings` | `POST /api/settings/firewall`, `POST /api/settings/firewall/certificate`, `POST /api/plugins/{name}/settings` (MaxMind, `name` `maxmind`), `POST /api/settings/public-suffix`, `POST /api/settings/theme` |
+| `POST /settings` | `POST /api/settings/firewall`, `POST /api/settings/firewall/certificate`, `POST /api/plugins/{name}/settings` (MaxMind, `name` `maxmind`), `POST /api/settings/public-suffix` |
 | `GET /collection` | `GET /api/collection` |
 | `POST /collection` | `POST /api/collection/kinds/{kind}` |
 | `POST /collection/settings` | `POST /api/collection/kinds/{kind}` (a polled kind), `POST /api/collection/settings/{card}` |
@@ -901,7 +901,7 @@ carries a secret, a ciphertext or a session token; the form token travels in the
   setup is, and `key_file_refused` (`400`) for a login that does not exist; it answers
   `{signed_in: false}`.
 
-**Settings.** `GET /api/settings` answers `{firewall, geolocation, public_suffix, theme}`:
+**Settings.** `GET /api/settings` answers `{firewall, geolocation, public_suffix}`:
 
 - `firewall`: `url`, `api_key`, `certificate_fingerprint` (each `null` when not set),
   `credential_state` (`absent`, `ready`, `undecryptable`) and `verification`;
@@ -910,7 +910,6 @@ carries a secret, a ciphertext or a session token; the form token travels in the
   refresh's outcome) and `build_at` (`null` with no database in use);
 - `public_suffix`: `state`, `in_use`, `version`, `version_stated`, `rules`, `confirmed_at`
   (`null` before a refresh confirmed a copy) and `refresh_interval_seconds`;
-- `theme`: `value` and `choices`.
 
 | Route | Body | Refusals |
 |---|---|---|
@@ -918,7 +917,6 @@ carries a secret, a ciphertext or a session token; the form token travels in the
 | `POST /api/settings/firewall/certificate` | `{url}`; stores nothing | `firewall_url_required`, `firewall_url_invalid`, `certificate_not_fetched`; answers `{presented_fingerprint}` |
 | `POST /api/plugins/maxmind/settings` | `{account_id, licence_key}`, the maxmind plugin's declared settings, stored under the keys the page stores (*Plugins*, below); `null` removes the account ID | the plugin settings' codes |
 | `POST /api/settings/public-suffix` | `{refresh_interval_seconds}`; absent changes nothing | `collection_value_invalid`, `collection_interval_too_large` |
-| `POST /api/settings/theme` | `{theme}` | `theme_unknown` |
 
 **Collection.** `GET /api/collection` answers `{kinds, polled_kinds, settings}`:
 
@@ -1069,7 +1067,7 @@ export, the field, and what is served without it.
 |---|---|---|---|
 | E1 | the dashboard's title in the header | **Canvases.** The dashboard document's `title` (`docs/dashboard-format.md`); canvases have their own spec | `none` |
 | E2 | the live indicator and its clock | **Served.** `GET /api/live/strip`: `live_interest_until`; every live figure's `sampled_at`. The clock itself is the browser's | `filter-log`, as row 8 |
-| E3 | palette and mode selectors | **Mode served**: `GET /api/settings` `theme` (`value`, `choices`: `system`, `light`, `dark`), `POST /api/settings/theme`. **The palette is the frontend's**: a theme is a file of step 7 (`docs/ui-references.md`), with no backend datum | `none` |
+| E3 | palette and mode selectors | **Served** by the front: `GET` and `POST /api/appearance` (`palette`, `mode`, `language`), a theme being a file (specs/SPEC-step-7-frontend.md, A5) | `none` |
 | E4 | canvas tabs, rail, range selector, layout editing, dashboard editor, import report, widget picker | **Canvases.** Their own spec and `docs/dashboard-format.md`. What they read here: the types, `GET /api/plugins` (`plugins[].widgets`); the parameters, *Parameters*; an import's unresolved references, each response's `unresolved_references` | `none` |
 | E5 | a card's header: condition, scope, own range, "kept, not understood" | **Served.** Envelope `condition`, `availability`; `parameters` (effective, `period` among them); `unknown_parameters`; `unresolved_references` (`path`, `kind`, `by`, `value`, `label`, `reason`). "Unapplied" and "cut off at this size" are the frontend's | `none` |
 | E6 | state panels: source unavailable, switched off, no data in the period, reference not found, not in the model | **Served.** Conditions `unavailable` and `not_yet_probed`, `present_but_disabled`, `reachable_no_rows`, `unresolved_reference`; "not in the model" is `unknown_widget_type` for a step-6 preset; the open gaps, G7, G8 and G12, are named in `docs/widget-catalogue.md`, *Gaps found* | `none` |

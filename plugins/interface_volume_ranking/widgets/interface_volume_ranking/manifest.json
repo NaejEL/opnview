@@ -61,8 +61,5 @@
   ],
   "references": [],
   "queries": [],
-  "script": "interface_volume_ranking.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "interface_volume_ranking.js"
 }

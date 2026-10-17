@@ -61,8 +61,5 @@
     "interface"
   ],
   "queries": [],
-  "script": "attribution_rate_per_client.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "attribution_rate_per_client.js"
 }

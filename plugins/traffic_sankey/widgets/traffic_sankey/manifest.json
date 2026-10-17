@@ -100,8 +100,5 @@
   "queries": [
     "traffic_sankey.statements.sql"
   ],
-  "script": "traffic_sankey.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "traffic_sankey.js"
 }

@@ -66,8 +66,5 @@
     "interface"
   ],
   "queries": [],
-  "script": "top_sites.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "top_sites.js"
 }

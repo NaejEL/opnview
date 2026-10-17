@@ -17,19 +17,28 @@ import (
 
 // The refusal codes.
 const (
-	RefusalManifestUnreadable          = "manifest_unreadable"
-	RefusalManifestInvalid             = "manifest_invalid"
-	RefusalUnsupportedManifestVersion  = "unsupported_manifest_version"
-	RefusalUnknownShape                = "unknown_shape"
-	RefusalUnknownProviderKind         = "unknown_provider_kind"
-	RefusalUnknownParameterKind        = "unknown_parameter_kind"
-	RefusalParameterVocabulary         = "parameter_vocabulary"
-	RefusalBadDefault                  = "bad_default"
-	RefusalReservedParameterKey        = "reserved_parameter_key"
-	RefusalReferencesMismatch          = "references_mismatch"
-	RefusalRendererInvalid             = "renderer_invalid"
-	RefusalTypeMismatchWithDirectory   = "type_mismatch_with_directory"
-	RefusalTypeCollision               = "type_collision"
+	RefusalManifestUnreadable         = "manifest_unreadable"
+	RefusalManifestInvalid            = "manifest_invalid"
+	RefusalUnsupportedManifestVersion = "unsupported_manifest_version"
+	RefusalUnknownShape               = "unknown_shape"
+	RefusalUnknownProviderKind        = "unknown_provider_kind"
+	RefusalUnknownParameterKind       = "unknown_parameter_kind"
+	RefusalParameterVocabulary        = "parameter_vocabulary"
+	RefusalBadDefault                 = "bad_default"
+	RefusalReservedParameterKey       = "reserved_parameter_key"
+	RefusalReferencesMismatch         = "references_mismatch"
+	// RefusalRendererInvalid is a renderer slot that is not {"entry": "<file>.js"}, or a renderer
+	// file that is not a classic script: it does not compile as one (an ES module's import or
+	// export among the reasons).
+	RefusalRendererInvalid = "renderer_invalid"
+	// RefusalRendererMissing is a renderer the manifest names that the directory does not hold.
+	RefusalRendererMissing           = "renderer_missing"
+	RefusalTypeMismatchWithDirectory = "type_mismatch_with_directory"
+	// RefusalTypeCollision is a widget whose type another widget already takes. It is the code
+	// every part of the front's registry is refused with on a collision -- a theme's id, a
+	// language's code, a widget's type -- so one rule reads the same everywhere
+	// (specs/SPEC-step-7-frontend.md, A1: the built-in wins every collision).
+	RefusalTypeCollision               = "name_collision"
 	RefusalQueryMissing                = "query_missing"
 	RefusalQueryUnreadable             = "query_unreadable"
 	RefusalQueryMultipleStatements     = "query_multiple_statements"
@@ -67,6 +76,9 @@ type Refusal struct {
 	Code string
 	// Detail says what, precisely, was wrong.
 	Detail string
+	// Path is where the widget's directory was read from, for the listing of refused parts
+	// (GET /api/widgets); empty when the loader had none to name.
+	Path string
 }
 
 // Error implements error.
@@ -144,10 +156,26 @@ func ValidateManifest(manifest Manifest) *Refusal {
 	if manifest.Measure != "" && !measurePattern.MatchString(manifest.Measure) {
 		return Refuse(name, RefusalManifestInvalid, "measure %q is not snake_case", manifest.Measure)
 	}
-	if !manifest.Renderer.Reserved {
-		return Refuse(name, RefusalRendererInvalid,
-			"renderer must be {\"reserved\": true}: the renderer slot is reserved for the interface work "+
-				"of step 7 and nothing else is accepted yet")
+	if renderer := manifest.Renderer; renderer != nil {
+		if renderer.Invalid() != "" {
+			return Refuse(name, RefusalRendererInvalid,
+				"renderer must be {\"entry\": \"<file>.js\"}, a file of the widget's own directory: %s",
+				renderer.Invalid())
+		}
+		if !scriptFilePattern.MatchString(renderer.Entry) {
+			return Refuse(name, RefusalRendererInvalid,
+				"renderer entry %q must be a plain file name ending in .js, in the widget's own directory",
+				renderer.Entry)
+		}
+		if renderer.Entry == manifest.Script {
+			return Refuse(name, RefusalRendererInvalid,
+				"renderer entry %q is the widget's script: the script answers on the server and the renderer "+
+					"draws in the browser, so they are two files", renderer.Entry)
+		}
+	}
+	if manifest.FrontOnly() && manifest.Volumes {
+		return Refuse(name, RefusalManifestInvalid,
+			"a front-only widget is answered by nothing on the server, so it serves no volume figure")
 	}
 	if refusal := validateParameters(manifest); refusal != nil {
 		return refusal

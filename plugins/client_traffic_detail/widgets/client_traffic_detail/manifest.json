@@ -106,8 +106,5 @@
   "queries": [
     "client_traffic_detail.statements.sql"
   ],
-  "script": "client_traffic_detail.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "client_traffic_detail.js"
 }

@@ -262,6 +262,7 @@ client_volume_aggregate_30d
 client_volume_aggregate_7d
 collection_gap
 connection_measured_volume
+dashboard
 dhcp_lease
 dns_resolution
 domain_attribution
@@ -422,6 +423,7 @@ blocklist
 capture_configuration
 capture_interface
 capture_interface_parent_of
+dashboard
 encrypted_credential
 eve_ingest_cursor
 interface
@@ -471,6 +473,7 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `source_availability` | exactly one row per `provider` row, for the life of the database |
 | `eve_ingest_cursor` | one watermark per rotated `eve.json` file; the firewall keeps the current file plus four archives |
 | `setting` | one row per configuration key |
+| `dashboard` | one row per dashboard the user keeps; a row is only ever created by hand, by an import or by the one default |
 | `account` | one row per opnview login, created by hand in the setup surface |
 | `session` | one row per session issued and not yet expired and collected; a browser holds one |
 | `encrypted_credential` | one row per named credential opnview has to send somewhere; two exist |
@@ -1128,6 +1131,33 @@ side of that gap, which is that document's to close.
 purging a client leaves its owner alone.
 
 **Indexes:** the primary key and the uniqueness constraint on `display_name`.
+
+### `dashboard` — a dashboard, as the file that describes it
+
+One dashboard the user composed, imported or was given as the default: a named
+set of canvases, each holding placed widgets, described by the file format of
+`docs/dashboard-format.md` (`specs/SPEC-step-7-frontend.md`, A7).
+
+**Source: none.** Like `owner`, it is user input and no endpoint feeds it. The
+term is `opnview`'s own: OPNsense's dashboard is one fixed page of widgets, and
+this is a document the user writes, exports and imports.
+
+**Identity:** `id`, numbered as every row id is. `position` orders the
+dashboards, lowest first; `revision` counts the saves from 1, and a save naming
+another revision than the stored one is refused, so two editors never overwrite
+each other silently. `origin` is `created`, `imported` or `default`, and
+`source_name` the imported file's name, null otherwise.
+
+**The document is `json`, not `jsonb`.** It is kept as the text it was sent,
+member order and unknown keys included, because a dashboard exported again
+without repair must come back unchanged; nothing queries inside it. Its structure
+is validated before it is written, fail-closed (`internal/dashboard`); its
+references are never checked on a save.
+
+**Retention:** never purged, and the read role holds no privilege on it: no
+widget query reads a user's dashboards.
+
+**Indexes:** the primary key. The table holds a handful of rows.
 
 ### `dhcp_lease` — one observed lease generation
 

@@ -43,8 +43,5 @@
   ],
   "references": [],
   "queries": [],
-  "script": "public_address.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "public_address.js"
 }

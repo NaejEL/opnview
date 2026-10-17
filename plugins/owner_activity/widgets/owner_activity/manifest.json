@@ -90,8 +90,5 @@
   "queries": [
     "owner_activity.statements.sql"
   ],
-  "script": "owner_activity.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "owner_activity.js"
 }

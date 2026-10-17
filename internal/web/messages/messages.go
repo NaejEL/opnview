@@ -48,14 +48,6 @@ const (
 	MsgCollectionValueInvalid Key = "error.collection_value_invalid"
 )
 
-// The theme names. The theme is one setting row for the installation, so these
-// are the three values that row may hold.
-const (
-	MsgThemeSystem Key = "theme.system"
-	MsgThemeLight  Key = "theme.light"
-	MsgThemeDark   Key = "theme.dark"
-)
-
 // CoreKeys is every key the core's Go code chooses, in one place, so a test can assert that
 // each exists in the catalogue and that no catalogue entry is unreachable. The registry's
 // vocabulary (messages_registry.go) is included.
@@ -66,6 +58,5 @@ func CoreKeys() []Key {
 		MsgSetupClosed, MsgSessionExpired, MsgFormTokenRefused, MsgKeyFileRefused, MsgInternal,
 		MsgUnitDay, MsgUnitDays, MsgUnitHour, MsgUnitHours, MsgUnitMinute, MsgUnitMinutes,
 		MsgUnitSecond, MsgUnitSeconds, MsgDurationUnitUnknown, MsgCollectionIntervalTooLarge, MsgCollectionValueInvalid,
-		MsgThemeSystem, MsgThemeLight, MsgThemeDark,
 	}, append(vocabularyKeys(), availabilityKeys()...)...)
 }

@@ -67,8 +67,5 @@
     "interface"
   ],
   "queries": [],
-  "script": "destination_countries.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "destination_countries.js"
 }

@@ -16,7 +16,7 @@ import (
 // current state began (coverage row 39), the outages the top bar's indicator counts, and the
 // collection gaps of the last day. It reads the local database and nothing else.
 
-// PathAPISources is every figure of the page and of the outage indicator.
+// PathAPISources is every provider, outage and recent gap, and the outage count.
 const PathAPISources = "/api/sources"
 
 // apiRoutes are the surface's JSON rows of the route table.
@@ -27,7 +27,7 @@ func (s *surface) apiRoutes() []web.Route {
 	}
 }
 
-// SourcesAnswer is every figure of the page.
+// SourcesAnswer is every provider, outage and recent gap, and the outage count.
 type SourcesAnswer struct {
 	Providers []ProviderState `json:"providers"`
 	// Outages are what the indicator counts, and OutageCount the indicator's figure.
@@ -43,7 +43,7 @@ type ProviderState struct {
 	Kind        string `json:"kind"`
 	ProviderKey string `json:"provider_key"`
 	DisplayName string `json:"display_name"`
-	// Availability is the condition as the page names it: healthy, not_collecting, unavailable,
+	// Availability is the condition as the preset names it: healthy, not_collecting, unavailable,
 	// not_yet_probed or unknown; Outcome is the closed outcome code of the last check, null without
 	// an availability row.
 	Availability string  `json:"availability"`
@@ -88,7 +88,7 @@ type GapState struct {
 	Diagnostic    *string `json:"detail"`
 }
 
-// sourcesAnswer reads every figure of the page through the reads the page draws from.
+// sourcesAnswer reads every provider, outage and recent gap.
 func (s *surface) sourcesAnswer(ctx context.Context) (SourcesAnswer, error) {
 	answer := SourcesAnswer{Providers: []ProviderState{}, Outages: []OutageState{}, RecentGaps: []GapState{},
 		RecentGapWindowSeconds: int64(recentGapWindow.Seconds())}

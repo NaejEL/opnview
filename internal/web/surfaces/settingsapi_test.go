@@ -15,11 +15,10 @@ import (
 )
 
 // The Settings API's coverage (C5 of the backend-completion cycle, C-AC9 and C-AC4): every route of
-// the five Go-rendered surfaces has its JSON equivalent in docs/widget-api.md, "Settings API", and
-// every JSON route of them is guarded as a write must be. Each surface's own tests hold each JSON
-// route to its page: the same change, the same refusals, the same figures.
+// the five surfaces that once drew pages is named in docs/widget-api.md, "Settings API", and every
+// JSON route of them is guarded as a write must be.
 
-// settingsAPISurfaces are the surfaces the step-7 application replaces.
+// settingsAPISurfaces are the surfaces whose pages the front replaced.
 var settingsAPISurfaces = []string{"account", "settings", "collection", "interfaces", "sources"}
 
 // surfaceRoutes are the routes the five surfaces contribute, read from the registered surfaces
@@ -93,10 +92,10 @@ func settingsAPITable(t *testing.T) map[string][]string {
 	return table
 }
 
-// TestEveryPageRouteHasItsJSONEquivalentInTheSettingsAPITable is C-AC9's enumeration: every page
-// route of the five surfaces is a row of the table, every JSON route a row names is served, and
-// every JSON route of the five surfaces is named by some row.
-func TestEveryPageRouteHasItsJSONEquivalentInTheSettingsAPITable(t *testing.T) {
+// TestEveryJSONRouteIsInTheSettingsAPITable is C-AC9's enumeration: every JSON route the Settings API
+// table names is served, every route of the five surfaces is a JSON route, and each is named by
+// some row.
+func TestEveryJSONRouteIsInTheSettingsAPITable(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
 	table := settingsAPITable(t)
@@ -113,22 +112,18 @@ func TestEveryPageRouteHasItsJSONEquivalentInTheSettingsAPITable(t *testing.T) {
 			}
 		}
 	}
-	pages := 0
-	for _, route := range surfaceRoutes(t, harness) {
-		name := route.Method + " " + route.Pattern
-		if route.JSON {
-			if !named[name] {
-				t.Errorf("%s is a JSON route of a page's surface the Settings API table does not name", name)
-			}
-			continue
-		}
-		pages++
-		if len(table[name]) == 0 {
-			t.Errorf("the page route %s has no JSON equivalent in the Settings API table", name)
-		}
+	routes := surfaceRoutes(t, harness)
+	if len(routes) == 0 {
+		t.Fatal("the five surfaces registered no route, so this assertion is vacuous")
 	}
-	if pages == 0 {
-		t.Fatal("the five surfaces registered no page route, so this assertion is vacuous")
+	for _, route := range routes {
+		name := route.Method + " " + route.Pattern
+		if !route.JSON {
+			t.Errorf("%s is not a JSON route: no surface draws a page", name)
+		}
+		if !named[name] {
+			t.Errorf("%s is a route of the five surfaces the Settings API table does not name", name)
+		}
 	}
 }
 
@@ -138,12 +133,12 @@ func concrete(pattern string) string {
 	return replacer.Replace(pattern)
 }
 
-// TestEveryJSONRouteOfThePagesIsGuardedAndARefusalChangesNothing is C-AC4 for the Settings API:
+// TestEveryJSONRouteIsGuardedAndARefusalChangesNothing is C-AC4 for the Settings API:
 // every JSON write of the five surfaces refuses a request with no session (401, a JSON
 // condition) unless it is public by decision, refuses a missing proof, a wrong one and a
 // cross-origin one (403, csrf_refused), and changes no row when it refuses; no JSON GET changes
 // a row.
-func TestEveryJSONRouteOfThePagesIsGuardedAndARefusalChangesNothing(t *testing.T) {
+func TestEveryJSONRouteIsGuardedAndARefusalChangesNothing(t *testing.T) {
 	t.Parallel()
 	harness := collectiontest.SignedInHarness(t)
 	token := settingstest.APIToken(harness)

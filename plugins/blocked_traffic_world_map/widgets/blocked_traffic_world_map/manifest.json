@@ -91,8 +91,5 @@
   "queries": [
     "blocked_traffic_world_map.statements.sql"
   ],
-  "script": "blocked_traffic_world_map.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "blocked_traffic_world_map.js"
 }

@@ -66,8 +66,5 @@
     "interface"
   ],
   "queries": [],
-  "script": "sites_by_client.js",
-  "renderer": {
-    "reserved": true
-  }
+  "script": "sites_by_client.js"
 }
