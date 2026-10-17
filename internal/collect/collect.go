@@ -20,7 +20,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/kinds/securityevents"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/collect/services"
-	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
@@ -65,7 +64,7 @@ func compose(state *core.Collector) *Collector {
 
 // NewWithSources returns a collector reading the implementations of one source set: the built-in
 // plugins and those of a data directory, as plugin.Load returns them.
-func NewWithSources(client *opnsense.Client, database *store.Store, clock core.Clock, set *sources.Set) *Collector {
+func NewWithSources(client *opnsense.Client, database *store.Store, clock core.Clock, set *provider.Set) *Collector {
 	if set == nil {
 		set = plugin.Builtins()
 	}
@@ -77,7 +76,6 @@ func NewWithSources(client *opnsense.Client, database *store.Store, clock core.C
 		Client:            client,
 		Store:             database,
 		Clock:             clock,
-		PageSizeSettings:  config.DefaultPageSizes(),
 		MaxDelaySeconds:   config.DefaultAttributionMaxDelaySeconds,
 		DiscoverySnapshot: core.NewDiscovery(),
 		Probed:            map[string][]core.ProbedSource{},

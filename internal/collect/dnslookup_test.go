@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -34,10 +33,10 @@ func arrangeResolverCollection(t *testing.T) *collecttest.ProbeHarness {
 	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
 	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
 	harness.Fake.AnswerFixture(collecttest.SearchQueries, "search_queries_page1.json")
-	if err := harness.Collector.ProbeDNSLookup(context.Background()); err != nil {
+	if err := harness.Collector.ProbeKind(context.Background(), "dns_lookup"); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, core.KindDNSLookup); key != collecttest.ProviderUnbound {
+	if key := harness.ActiveKeyOf(t, "dns_lookup"); key != collecttest.ProviderUnbound {
 		t.Fatalf("the resolver kind activated %q", key)
 	}
 	return harness
@@ -119,7 +118,7 @@ func TestTheCollectorNeverPresentsWhatItReadAsCoverageOfTheWindow(t *testing.T) 
 		t.Fatalf("collecting: %v", err)
 	}
 
-	detail := harness.DetailOf(t, core.KindDNSLookup, collecttest.ProviderUnbound)
+	detail := harness.DetailOf(t, "dns_lookup", collecttest.ProviderUnbound)
 	for _, phrase := range []string{
 		"most recent lookups",
 		"ignores timeStart and timeEnd",

@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -256,7 +255,7 @@ func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
 			// The provider is activated from a healthy probe first, so the collector is
 			// exercised rather than skipped.
 			harness.Fake.AnswerJSON(opnsense.FirewallLog, []any{})
-			if err := harness.Collector.ProbeFirewallLog(context.Background()); err != nil {
+			if err := harness.Collector.ProbeKind(context.Background(), "firewall_log"); err != nil {
 				t.Fatalf("probing: %v", err)
 			}
 
@@ -266,7 +265,7 @@ func TestEachFilterLogFailureShapeIsRecordedAndNoneIsNoData(t *testing.T) {
 				t.Fatalf("%s was collected without an error (%s)", testCase.name, testCase.because)
 			}
 
-			state, probe, checkedAt := harness.AvailabilityOf(t, core.KindFirewallLog, collecttest.ProviderPf)
+			state, probe, checkedAt := harness.AvailabilityOf(t, "firewall_log", collecttest.ProviderPf)
 			if state != testCase.wantState {
 				t.Errorf("the state is %q, want %q (%s)", state, testCase.wantState, testCase.because)
 			}

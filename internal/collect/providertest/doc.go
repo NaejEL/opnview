@@ -22,8 +22,8 @@
 //     leak.
 //
 // FIXTURES ARE OWNED BY AN IMPLEMENTATION DIRECTORY and found by file name: a fixture lives in the
-// testdata/ directory of the implementation whose answer it imitates (internal/collect/dhcplease/
-// kea/testdata/kea_leases.json), and FixtureBody resolves a name by walking every testdata/
+// testdata/ directory of the implementation whose answer it imitates (plugins/kea/testdata/
+// kea_leases.json), and FixtureBody resolves a name by walking every testdata/
 // directory below internal/collect. A coordinator test and an implementation test therefore share
 // one copy, and a name that exists twice is refused rather than guessed.
 package providertest

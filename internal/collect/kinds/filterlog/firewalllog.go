@@ -27,7 +27,7 @@ import (
 
 // CollectFirewallLog runs one pass of the active implementation of the firewall_log kind.
 func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
-	providerKey, providerID, active, err := c.ActiveSourceKey(ctx, core.KindFirewallLog)
+	providerKey, providerID, active, err := c.ActiveSourceKey(ctx, Kind)
 	if err != nil {
 		return err
 	}
@@ -57,7 +57,7 @@ func (c *FilterLogCoordinator) CollectFirewallLog(ctx context.Context) error {
 	// pass records: the filter log's read-through instant, which the NetFlow join waits for
 	// (internal/collect/derive/flowrecord.go).
 	readStarted := c.Now()
-	answer, result, readErr := source.Implementation.Call(ctx, c, "records", c.Pages().FirewallLog)
+	answer, result, readErr := source.Implementation.Call(ctx, c, "records", c.PageSize(Kind))
 	records := make([]vocab.Flow, 0, len(provider.Records(answer, "records")))
 	for _, record := range provider.Records(answer, "records") {
 		records = append(records, reportedFlow(record))

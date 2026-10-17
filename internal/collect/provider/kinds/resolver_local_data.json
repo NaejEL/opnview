@@ -4,6 +4,18 @@
   "concurrent" : true,
   "push" : false,
   "bindable" : true,
+  "names_hosts" : true,
+  "cadences" : [
+    {
+      "role" : "poll",
+      "setting" : "poll_interval_resolver_local_data_seconds",
+      "default_seconds" : 300,
+      "basis" : "Decision 4 of specs/SPEC-resolver-cache-attribution.md: local data is configuration -- host overrides, registered leases -- and changes on the scale of minutes to hours, like the leases it is read beside."
+    }
+  ],
+  "collection" : {
+    "after" : ["resolver_cache", "dns_lookup"]
+  },
   "functions" : [
     {
       "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",

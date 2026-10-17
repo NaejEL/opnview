@@ -15,12 +15,6 @@ const (
 	msgNoDetail                  messageKey = "state.source.no_detail"
 	msgOutageKind                messageKey = "state.outage.kind"
 	msgOutageProvider            messageKey = "state.outage.provider"
-	msgPageDnsmasqDHCPRanges     messageKey = "opnsense_page.dnsmasq_dhcp_ranges"
-	msgPageIDSAdministration     messageKey = "opnsense_page.ids_administration"
-	msgPageKeaDHCPv4             messageKey = "opnsense_page.kea_dhcpv4"
-	msgPageNetFlow               messageKey = "opnsense_page.netflow"
-	msgPageUnboundGeneral        messageKey = "opnsense_page.unbound_general"
-	msgPageUnboundReporting      messageKey = "opnsense_page.unbound_reporting"
 	// THE SELECTION IS NOT THE AVAILABILITY, and the two are reported as two rows
 	// because they are two facts: what the firewall says, and what the operator has
 	// decided. internal/config says so where the selection is defined, and a surface
@@ -33,7 +27,8 @@ const (
 )
 
 // keys is every key above, so a test can assert that each exists in the catalogue and that
-// no catalogue entry is unreachable.
+// no catalogue entry is unreachable. The OPNsense pages a provider links to are named in its plugin's
+// own catalogue.
 func keys() []messageKey {
 	return []messageKey{
 		msgAvailabilityHealthy,
@@ -46,12 +41,6 @@ func keys() []messageKey {
 		msgNoDetail,
 		msgOutageKind,
 		msgOutageProvider,
-		msgPageDnsmasqDHCPRanges,
-		msgPageIDSAdministration,
-		msgPageKeaDHCPv4,
-		msgPageNetFlow,
-		msgPageUnboundGeneral,
-		msgPageUnboundReporting,
 		msgSelectionAuto,
 		msgSelectionOff,
 		msgSelectionOn,

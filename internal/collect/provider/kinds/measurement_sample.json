@@ -4,6 +4,14 @@
   "concurrent" : true,
   "push" : false,
   "bindable" : true,
+  "cadences" : [
+    {
+      "role" : "poll",
+      "setting" : "poll_interval_measurement_seconds",
+      "default_seconds" : 300,
+      "basis" : "Survey, data source 3, \"Sustainable polling frequency\": 300 s is the finest resolution at which the firewall keeps per-source data and the retention of that resolution is one hour. The verified section turns that from a cache cadence into a sampling cadence -- /api/diagnostics/traffic/top is a live snapshot and nothing upstream answers for a past window, so this interval is the resolution of opnview's own per-pair history rather than a refresh rate. internal/store/samples reads the same row to bound a current rate."
+    }
+  ],
   "live_answer" : "sample_answer",
   "functions" : [
     {

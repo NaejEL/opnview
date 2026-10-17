@@ -4,6 +4,23 @@
   "concurrent" : false,
   "push" : false,
   "bindable" : true,
+  "cadences" : [
+    {
+      "role" : "poll",
+      "setting" : "poll_interval_dns_lookup_seconds",
+      "default_seconds" : 60,
+      "basis" : "Survey, data source 5, \"Sustainable polling frequency\": DNS lookups must be correlated with flows that follow within seconds, so the window has to be short. The verified section removes the windowing but not the urgency: the endpoint is a ring buffer of the last 1000 lookups, so a slow poll loses the oldest of them outright."
+    }
+  ],
+  "sizing" : {
+    "order" : 4,
+    "table" : "dns_resolution",
+    "source_column" : "looked_up_at",
+    "ingested_column" : "ingested_at",
+    "page_ceiling" : 1000,
+    "survey_heading" : "Data source 5 — Resolver DNS lookups",
+    "basis" : "The resolver's ring buffer: the endpoint holds the last 1000 lookups and nothing older, whatever is asked. The page is not a setting for this read at all; only the interval keeps the buffer from wrapping between two polls, so a suggestion for this kind carries an interval and no page."
+  },
   "functions" : [
     {
       "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",

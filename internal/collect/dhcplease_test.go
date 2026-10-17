@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -120,7 +119,7 @@ func TestTheKeaBackendValidityStartIsTheRealFigureAndTheOtherBackendsStoreNone(t
 	// The neighbour tables are read on every lease pass, whichever backend is active.
 	keaHarness.Fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
 	keaHarness.Fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
-	if err := keaHarness.Collector.ProbeDHCPLease(ctx); err != nil {
+	if err := keaHarness.Collector.ProbeKind(ctx, "dhcp_lease"); err != nil {
 		t.Fatalf("probing: %v", err)
 	}
 	if err := keaHarness.Collector.CollectDHCPLease(ctx); err != nil {
@@ -187,10 +186,10 @@ func TestTheNeighbourTablesAreReadWhetherOrNotDHCPIs(t *testing.T) {
 	harness.Fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
 	// No lease backend is arranged, so every lease probe answers 404 and no provider of the
 	// kind is active.
-	if err := harness.Collector.ProbeDHCPLease(context.Background()); err != nil {
+	if err := harness.Collector.ProbeKind(context.Background(), "dhcp_lease"); err != nil {
 		t.Logf("the lease probe reported: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, core.KindDHCPLease); key != "" {
+	if key := harness.ActiveKeyOf(t, "dhcp_lease"); key != "" {
 		t.Fatalf("a lease backend was activated against a firewall with none: %q", key)
 	}
 
@@ -258,18 +257,18 @@ func TestTwoDHCPServersBothServingAreBothActivated(t *testing.T) {
 	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
 	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
 
-	if err := harness.Collector.ProbeDHCPLease(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "dhcp_lease"); err != nil {
 		t.Logf("the lease probe reported: %v", err)
 	}
 
-	keys := harness.ActiveKeysOf(t, core.KindDHCPLease)
+	keys := harness.ActiveKeysOf(t, "dhcp_lease")
 	if len(keys) != 2 {
 		t.Fatalf("a firewall running two DHCP servers activated %d of them: %v", len(keys), keys)
 	}
 	// And neither row carries the ambiguity detail, because there is no ambiguity to record:
 	// that sentence belongs to a kind where opnview would have to choose.
 	for _, key := range keys {
-		if detail := harness.DetailOf(t, core.KindDHCPLease, key); strings.Contains(detail, "reads neither") {
+		if detail := harness.DetailOf(t, "dhcp_lease", key); strings.Contains(detail, "reads neither") {
 			t.Errorf("%s records an ambiguity that no longer applies: %q", key, detail)
 		}
 	}

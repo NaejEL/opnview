@@ -2,6 +2,7 @@ package derive
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/netip"
 	"sort"
@@ -33,17 +34,43 @@ import (
 // KindFlowRecord is the flow_record kind.
 const KindFlowRecord = "flow_record"
 
-// pf's default state timeouts, in seconds (survey, Push sources, S12: pf.h's PFTM_*_VAL). The values
-// in force are not readable through any endpoint, so the join's continuity uses these.
-const (
-	pfTCPFirst       = 120
-	pfTCPEstablished = 86400
-	pfTCPClosing     = 900
-	pfTCPClosed      = 90
-	pfUDPMultiple    = 60
-	pfICMPFirst      = 20
-	pfOtherMultiple  = 60
-)
+// pf's state timeouts, in seconds, as the active firewall_log provider exports them: values of the
+// firewall_log contract (internal/collect/provider/kinds/firewall_log.json; PA6 of the plugin-API
+// amendment), which the pf plugin exports and cites from pf.h's PFTM_*_VAL (survey, S12). No Go file holds
+// them: they are pf's facts, recorded once by the plugin that reads pf. The values in force are not
+// readable through any endpoint, so the defaults are what the join's continuity and the measured
+// volume's idle bound read.
+//
+// WITHOUT THEM NOTHING IS DECIDED. When no active provider exports all seven -- no firewall_log provider is
+// active, or the active one exports none -- the join and the measured volume decide nothing and write
+// nothing: a record stays pending and a connection keeps its figure, until a pass reads them. No default
+// stands in for a fact a source did not state.
+type stateTimeouts struct {
+	tcpFirst, tcpEstablished, tcpClosing, tcpClosed, udpMultiple, icmpFirst, otherMultiple int64
+}
+
+// stateTimeoutNames are the contract's names of the seven values, in the order of stateTimeouts' fields.
+var stateTimeoutNames = []string{"state_timeout_tcp_first_seconds", "state_timeout_tcp_established_seconds",
+	"state_timeout_tcp_closing_seconds", "state_timeout_tcp_closed_seconds", "state_timeout_udp_multiple_seconds",
+	"state_timeout_icmp_first_seconds", "state_timeout_other_multiple_seconds"}
+
+// readStateTimeouts reads the seven values the active providers export, and whether all seven were there.
+func (c *Deriver) readStateTimeouts(ctx context.Context) (stateTimeouts, bool, error) {
+	values, err := c.Store.ActiveProviderValues(ctx, stateTimeoutNames)
+	if err != nil {
+		return stateTimeouts{}, false, err
+	}
+	var timeouts stateTimeouts
+	fields := []*int64{&timeouts.tcpFirst, &timeouts.tcpEstablished, &timeouts.tcpClosing, &timeouts.tcpClosed,
+		&timeouts.udpMultiple, &timeouts.icmpFirst, &timeouts.otherMultiple}
+	for index, name := range stateTimeoutNames {
+		raw, found := values[name]
+		if !found || json.Unmarshal(raw, fields[index]) != nil || *fields[index] <= 0 {
+			return stateTimeouts{}, false, nil
+		}
+	}
+	return timeouts, true, nil
+}
 
 // The IANA protocol numbers the join treats on their own: TCP and UDP carry ports, ICMP and ICMPv6
 // do not (RFC 792, RFC 4443).
@@ -83,14 +110,15 @@ func (c *Deriver) FilterLogReadThrough() int64 {
 	return c.Netflow.ReadThrough
 }
 
-// joinTolerance is netflow_join_tolerance_seconds in force.
-func (c *Deriver) joinTolerance() int64 {
-	c.Netflow.Mutex.Lock()
-	defer c.Netflow.Mutex.Unlock()
-	if c.Netflow.ToleranceSeconds <= 0 {
-		return netflow.DefaultNetflowJoinToleranceSeconds
+// joinTolerance is netflow_join_tolerance_seconds in force: the netflow plugin's join_tolerance_seconds
+// setting (plugins/netflow/plugin.json), stored under that key, read at every pass so a saved value
+// reaches the next one; with no row, or a row that is not a positive whole number, the manifest's
+// default, which a test holds equal to netflow.DefaultNetflowJoinToleranceSeconds.
+func (c *Deriver) joinTolerance(ctx context.Context) int64 {
+	if seconds := c.SettingSeconds(ctx, netflow.NetflowJoinToleranceKey, 0); seconds > 0 {
+		return seconds
 	}
-	return c.Netflow.ToleranceSeconds
+	return netflow.DefaultNetflowJoinToleranceSeconds
 }
 
 // MarkDirty asks the next derivation to compute again the connections of a window.
@@ -183,36 +211,36 @@ func TupleKey(addressFamily, protocol int64, source, destination netip.Addr, sou
 	return fmt.Sprintf("%d|%d|%s|%s", addressFamily, protocol, low, high)
 }
 
-// stateTimeout is pf's default timeout bounding the idle time of a connection of a protocol, given the
-// TCP flags its records carried so far (survey, S12).
-func stateTimeout(protocol, flags int64) int64 {
+// idle is pf's timeout bounding the idle time of a connection of a protocol, given the TCP flags its
+// records carried so far (survey, S12).
+func (t stateTimeouts) idle(protocol, flags int64) int64 {
 	switch protocol {
 	case protocolTCP:
 		switch {
 		case flags&tcpRST != 0:
-			return pfTCPClosed
+			return t.tcpClosed
 		case flags&tcpFIN != 0:
-			return pfTCPClosing
+			return t.tcpClosing
 		case flags&tcpACK == 0:
 			// No packet acknowledged anything: the state never left its first packet.
-			return pfTCPFirst
+			return t.tcpFirst
 		}
-		return pfTCPEstablished
+		return t.tcpEstablished
 	case protocolUDP:
-		return pfUDPMultiple
+		return t.udpMultiple
 	case protocolICMP, protocolICMPv6:
-		return pfICMPFirst
+		return t.icmpFirst
 	}
-	return pfOtherMultiple
+	return t.otherMultiple
 }
 
-// longestStateTimeout is the longest a connection of a protocol can stay idle and keep its pf state:
-// an established TCP connection's, for TCP.
-func longestStateTimeout(protocol int64) int64 {
+// longest is the longest a connection of a protocol can stay idle and keep its pf state: an established
+// TCP connection's, for TCP.
+func (t stateTimeouts) longest(protocol int64) int64 {
 	if protocol == protocolTCP {
-		return pfTCPEstablished
+		return t.tcpEstablished
 	}
-	return stateTimeout(protocol, tcpACK)
+	return t.idle(protocol, tcpACK)
 }
 
 // joinFlowRecords decides the records of the active provider the filter log has been read past, a
@@ -223,10 +251,15 @@ func (c *Deriver) joinFlowRecords(ctx context.Context) (int64, error) {
 	if err != nil || !active {
 		return 0, err
 	}
-	input := joinInput{readThrough: c.FilterLogReadThrough(), tolerance: c.joinTolerance(), now: c.Now()}
+	input := joinInput{readThrough: c.FilterLogReadThrough(), tolerance: c.joinTolerance(ctx), now: c.Now()}
 	if input.readThrough == 0 {
 		return 0, nil
 	}
+	timeouts, known, err := c.readStateTimeouts(ctx)
+	if err != nil || !known {
+		return 0, err
+	}
+	input.timeouts = timeouts
 	if input.purgedBefore, input.purged, err = c.Store.PurgedBefore(ctx); err != nil {
 		return 0, err
 	}
@@ -329,6 +362,8 @@ type joinInput struct {
 	firewall []firewallAddress
 	// devices maps an interface identifier to its device.
 	devices map[string]string
+	// timeouts are pf's state timeouts, as the active firewall_log provider exports them.
+	timeouts stateTimeouts
 }
 
 // firewallAddress is one address of the firewall and the span it held it over.
@@ -400,5 +435,5 @@ func (input joinInput) exportBoundAt(at int64) int64 {
 			return *configuration.ActiveTimeoutSeconds + input.tolerance
 		}
 	}
-	return pfTCPEstablished + input.tolerance
+	return input.timeouts.tcpEstablished + input.tolerance
 }

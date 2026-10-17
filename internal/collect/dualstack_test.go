@@ -38,7 +38,7 @@ func TestALoggedHostNameWithAnAAndAnAAAAIsResolvedByTheReportedFamily(t *testing
 			t.Parallel()
 			harness := collecttest.ArrangeRecordCollection(t)
 			ctx := context.Background()
-			if err := harness.Collector.ProbeDNSLookup(ctx); err != nil {
+			if err := harness.Collector.ProbeKind(ctx, "dns_lookup"); err != nil {
 				t.Fatalf("probing the resolver: %v", err)
 			}
 			// The local data is read after the lookup, so the lookup waits for it, across a

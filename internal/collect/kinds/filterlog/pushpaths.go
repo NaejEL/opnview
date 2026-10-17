@@ -97,7 +97,7 @@ func (c *FilterLogCoordinator) openPeriod(ctx context.Context, path *core.PushPa
 // pushLiveness is told when a push entry that replaces a polled endpoint becomes alive or stops
 // being alive (PS10).
 func (c *FilterLogCoordinator) pushLiveness(ctx context.Context, kind, key string, alive bool, at int64) error {
-	if kind != core.KindFirewallLog {
+	if kind != Kind {
 		return nil
 	}
 	providerID, err := c.Store.ProviderID(ctx, kind, key)
@@ -136,11 +136,11 @@ func (c *FilterLogCoordinator) receivePushed(ctx context.Context, key string, an
 	for _, answer := range answers {
 		records = append(records, reportedFlow(answer))
 	}
-	providerID, err := c.Store.ProviderID(ctx, core.KindFirewallLog, key)
+	providerID, err := c.Store.ProviderID(ctx, Kind, key)
 	if err != nil {
 		return err
 	}
-	path := c.PushPaths.Of(core.KindFirewallLog, key)
+	path := c.PushPaths.Of(Kind, key)
 	path.Mutex.Lock()
 	if err := c.loadPushPath(ctx, path, providerID); err != nil {
 		path.Mutex.Unlock()
@@ -274,7 +274,7 @@ type pullPlan struct {
 // two paths keeps every record.
 func (c *FilterLogCoordinator) planPull(ctx context.Context, key string, providerID int64, records []vocab.Flow) (
 	pullPlan, error) {
-	path, known := c.PushPaths.Known(core.KindFirewallLog, key)
+	path, known := c.PushPaths.Known(Kind, key)
 	if !known {
 		return pullPlan{keep: records}, nil
 	}

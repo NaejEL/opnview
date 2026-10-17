@@ -85,6 +85,9 @@
       "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources"
     }
   ],
+  "kinds": [
+    { "kind": "unbound_query_log", "push": true }
+  ],
   "providers": [
     {
       "kind": "unbound_query_log",
@@ -94,16 +97,46 @@
     {
       "kind": "dns_lookup",
       "display_name": "Unbound",
+      "enable_pages": [
+        {
+          "path": "/ui/unbound/general",
+          "label": "plugin.unbound.opnsense_page.unbound_general",
+          "menu_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/Menu/Menu.xml",
+          "note": "Services > Unbound DNS > General, which holds unbound.general.enabled (controllers/OPNsense/Unbound/forms/general.xml)."
+        },
+        {
+          "path": "/ui/unbound/overview",
+          "label": "plugin.unbound.opnsense_page.unbound_reporting",
+          "menu_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Core/Menu/Menu.xml",
+          "note": "Reporting > Unbound DNS, whose page draws the dnsreporting form holding unbound.general.stats -- the flag /api/unbound/overview/is_enabled reports (controllers/OPNsense/Unbound/OverviewController.php, forms/dnsreporting.xml). The lookups are off for one of two settings, on two pages, and the availability row does not say which without its detail, which is never parsed: both pages are given."
+        }
+      ],
       "read_strategy": "full_reread"
     },
     {
       "kind": "resolver_cache",
       "display_name": "Unbound cache",
+      "enable_pages": [
+        {
+          "path": "/ui/unbound/general",
+          "label": "plugin.unbound.opnsense_page.unbound_general",
+          "menu_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/Menu/Menu.xml",
+          "note": "Services > Unbound DNS > General, which holds unbound.general.enabled (controllers/OPNsense/Unbound/forms/general.xml)."
+        }
+      ],
       "read_strategy": "full_reread"
     },
     {
       "kind": "resolver_local_data",
       "display_name": "Unbound local data",
+      "enable_pages": [
+        {
+          "path": "/ui/unbound/general",
+          "label": "plugin.unbound.opnsense_page.unbound_general",
+          "menu_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Unbound/Menu/Menu.xml",
+          "note": "Services > Unbound DNS > General, which holds unbound.general.enabled (controllers/OPNsense/Unbound/forms/general.xml)."
+        }
+      ],
       "read_strategy": "full_reread"
     }
   ]

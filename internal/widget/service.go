@@ -100,7 +100,16 @@ func New(database *store.Store, options Options) (*Service, error) {
 		}
 	}
 	if options.OperatorDir != "" {
-		loaded, refusals := loadOperatorWidgets(context.Background(), database, options.OperatorDir, service.presets)
+		// An operator widget binds what the plugins loaded with it make bindable, as theirs do.
+		bindable := params.CoreBindableKinds()
+		for _, source := range sources {
+			if len(source.BindableKinds) > 0 {
+				bindable = source.BindableKinds
+				break
+			}
+		}
+		loaded, refusals := loadOperatorWidgets(context.Background(), database, options.OperatorDir, service.presets,
+			bindable)
 		service.refusals = append(service.refusals, refusals...)
 		for _, preset := range loaded {
 			service.presets[preset.Type] = preset

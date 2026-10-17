@@ -10,7 +10,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/reconciledstate"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/plugin"
 )
@@ -39,15 +38,17 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 	wanted := map[string]time.Duration{
 		"runtime discovery":   settings.DiscoveryInterval,
 		"availability probes": settings.DiscoveryInterval,
-		"filter log":          settings.FirewallLogInterval,
-		"security events":     settings.SecurityEventInterval,
-		"sampled measurement": settings.MeasurementInterval,
-		"DHCP leases":         settings.DHCPLeaseInterval,
-		"resolver lookups":    settings.DNSLookupInterval,
-		"retention purge":     settings.PurgeInterval,
+		// One loop per core kind whose file declares a poll cadence and whose coordinator registered a
+		// pass, named after the kind, at the default its kind file declares.
+		"firewall_log":       10 * time.Second,
+		"security_event":     60 * time.Second,
+		"measurement_sample": 300 * time.Second,
+		"dhcp_lease":         300 * time.Second,
+		"dns_lookup":         60 * time.Second,
+		"retention purge":    settings.PurgeInterval,
 		// The two reads of the resolver-cache cycle, at decision 4's 60 s and 300 s.
-		"resolver cache":      settings.ResolverCacheInterval,
-		"resolver local data": settings.ResolverLocalDataInterval,
+		"resolver_cache":      60 * time.Second,
+		"resolver_local_data": 300 * time.Second,
 		// The broker's own loop: its scheduler and its subscriptions, which returns only when the
 		// run stops (A12 of the broker amendment).
 		"firewall broker": time.Minute,
@@ -57,19 +58,13 @@ func TestEveryLoopRunsAtItsConfiguredCadence(t *testing.T) {
 		"live sampling": 10 * time.Second,
 		// The active flow_record provider's capture configuration, every minute by default: the longest a
 		// changed configuration goes unseen (PS18 of the NetFlow join amendment).
-		"NetFlow capture configuration": settings.FlowRecordInterval,
+		"flow_record": 60 * time.Second,
 	}
 	// The plugin loops are not listed by hand: one per provider of the loaded built-ins that states a
 	// cadence, named "<kind> <provider key>", at the cadence its manifest declares. A built-in plugin
 	// added as a directory gets its loop checked here without an edit to this file.
 	pluginLoops := 0
-	for key, registration := range plugin.Builtins().ReconciledState.Sources() {
-		if registration.Cadence > 0 {
-			wanted[reconciledstate.Kind+" "+key] = registration.Cadence
-			pluginLoops++
-		}
-	}
-	for _, registration := range plugin.Builtins().PluginKindRegistrations() {
+	for _, registration := range plugin.Builtins().All() {
 		if registration.Cadence > 0 {
 			wanted[registration.Kind+" "+registration.Key] = registration.Cadence
 			pluginLoops++

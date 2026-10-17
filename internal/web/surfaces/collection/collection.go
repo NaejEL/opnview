@@ -16,6 +16,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/settingfields"
 
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/sizing"
 )
@@ -313,14 +314,7 @@ func (s *surface) collectionView(writer http.ResponseWriter, request *http.Reque
 }
 
 // kindNamed returns the registry entry of the kind a form names.
-func kindNamed(name string) (sizing.Kind, bool) {
-	for _, kind := range sizing.Kinds() {
-		if kind.Kind == name {
-			return kind, true
-		}
-	}
-	return sizing.Kind{}, false
-}
+func kindNamed(name string) (sizing.Kind, bool) { return sizing.Named(name) }
 
 // isSizedKind says whether a card id is a sized kind's.
 func isSizedKind(card string) bool {
@@ -396,22 +390,10 @@ func (s *surface) measureKind(ctx context.Context, kind sizing.Kind) (attributio
 	return measured, suggestion, state, nil
 }
 
-// pairInForce is the pair one kind is polled at under a configuration.
+// pairInForce is the pair one kind is polled at under a configuration: the page its file names, none for
+// a read whose page is not a setting, and its poll interval.
 func pairInForce(kind sizing.Kind, settings config.Config) sizing.Pair {
-	switch kind.Kind {
-	case "firewall_log":
-		return sizing.Pair{PageSize: settings.FirewallLogPageSize,
-			Interval: settings.FirewallLogInterval}
-	case "security_event":
-		return sizing.Pair{PageSize: settings.SecurityEventPageSize,
-			Interval: settings.SecurityEventInterval}
-	case "dhcp_lease":
-		return sizing.Pair{PageSize: settings.DHCPLeasePageSize,
-			Interval: settings.DHCPLeaseInterval}
-	case "dns_lookup":
-		return sizing.Pair{Interval: settings.DNSLookupInterval}
-	}
-	return sizing.Pair{}
+	return sizing.Pair{PageSize: settings.PageSize(kind.Kind), Interval: settings.Interval(kind.Kind, provider.CadencePoll)}
 }
 
 // kindState is what the collection surface says about one kind's source, beside

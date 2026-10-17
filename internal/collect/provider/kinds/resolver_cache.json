@@ -4,6 +4,17 @@
   "concurrent" : true,
   "push" : false,
   "bindable" : true,
+  "cadences" : [
+    {
+      "role" : "poll",
+      "setting" : "poll_interval_resolver_cache_seconds",
+      "default_seconds" : 60,
+      "basis" : "Decision 4 of specs/SPEC-resolver-cache-attribution.md: the cache read pairs with the lookup read, and a record inserted and expired between two polls is never seen, so the cadence is the lookups'. The dump's cost grows with the cache, which is why the read's availability detail records its size and its time."
+    }
+  ],
+  "collection" : {
+    "after" : ["dns_lookup"]
+  },
   "functions" : [
     {
       "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",

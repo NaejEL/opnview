@@ -8,8 +8,9 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/NaejEL/opnview/internal/collect/ipgeolocation"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/plugin"
+	"github.com/NaejEL/opnview/internal/plugin/contract"
 	"github.com/NaejEL/opnview/internal/plugin/listing"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/widget"
@@ -34,7 +35,7 @@ func init() {
 const (
 	// PathPlugins is the listing.
 	PathPlugins = "/api/plugins"
-	// PathPluginSettingsPattern is the settings write of one plugin.
+	// PathPluginSettingsPattern is the settings of one plugin: read with GET, written with POST.
 	PathPluginSettingsPattern = "/api/plugins/{name}/settings"
 )
 
@@ -60,6 +61,7 @@ type surface struct {
 func (s *surface) routes() []web.Route {
 	return []web.Route{
 		web.JSONRoute(http.MethodGet, PathPlugins, s.handleListing),
+		web.JSONRoute(http.MethodGet, PathPluginSettingsPattern, s.handleSettingsRead),
 		web.JSONRoute(http.MethodPost, PathPluginSettingsPattern, s.handleSettings),
 	}
 }
@@ -72,10 +74,12 @@ type Listing struct {
 	FirewallVersion *string `json:"firewall_version"`
 }
 
-// SettingsAnswer is a settings write's answer: the plugin's settings as they now stand.
+// SettingsAnswer is a plugin's settings as they now stand, and the pages its manifest groups them in
+// (contract.PageDeclaration): the answer of a settings read and of a settings write.
 type SettingsAnswer struct {
-	Plugin   string                `json:"plugin"`
-	Settings []plugin.SettingValue `json:"settings"`
+	Plugin   string                     `json:"plugin"`
+	Settings []plugin.SettingValue      `json:"settings"`
+	Pages    []contract.PageDeclaration `json:"pages,omitempty"`
 }
 
 // SettingsRefusal is a settings write refused, naming the key when one key is the reason.
@@ -121,10 +125,11 @@ func (s *surface) handleSettings(writer http.ResponseWriter, request *http.Reque
 		widget.WriteJSON(writer, http.StatusInternalServerError, SettingsRefusal{Condition: ConditionInternal})
 		return
 	}
-	// A plugin placing addresses is asked to refresh now rather than at its next daily check.
+	// A plugin providing a service kind -- a dataset it acquires -- is asked to refresh now rather than at its
+	// next daily check: its credentials may be what the settings just changed.
 	if s.GeoIP() != nil {
 		for _, provided := range loaded.Providers {
-			if provided.Kind == ipgeolocation.Kind {
+			if provider.IsServiceKind(provided.Kind) {
 				s.GeoIP().Wake()
 				break
 			}
@@ -135,7 +140,25 @@ func (s *surface) handleSettings(writer http.ResponseWriter, request *http.Reque
 		widget.WriteJSON(writer, http.StatusInternalServerError, SettingsRefusal{Condition: ConditionInternal})
 		return
 	}
-	widget.WriteJSON(writer, http.StatusOK, SettingsAnswer{Plugin: loaded.Name, Settings: settings})
+	widget.WriteJSON(writer, http.StatusOK, SettingsAnswer{Plugin: loaded.Name, Settings: settings,
+		Pages: loaded.Manifest.Pages})
+}
+
+// handleSettingsRead answers a plugin's settings and the pages its manifest groups them in, for the step-7
+// application to draw them as the plugin declares.
+func (s *surface) handleSettingsRead(writer http.ResponseWriter, request *http.Request) {
+	loaded, found := s.Plugins().Plugin(request.PathValue("name"))
+	if !found {
+		widget.WriteJSON(writer, http.StatusNotFound, SettingsRefusal{Condition: ConditionUnknownPlugin})
+		return
+	}
+	settings, err := loaded.SettingValues(request.Context(), s.Store())
+	if err != nil {
+		widget.WriteJSON(writer, http.StatusInternalServerError, SettingsRefusal{Condition: ConditionInternal})
+		return
+	}
+	widget.WriteJSON(writer, http.StatusOK, SettingsAnswer{Plugin: loaded.Name, Settings: settings,
+		Pages: loaded.Manifest.Pages})
 }
 
 // decodeObject reads a body that is exactly one JSON object, its numbers kept as written.

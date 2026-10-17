@@ -37,6 +37,14 @@
     {
       "kind": "dhcp_lease",
       "display_name": "Kea DHCP",
+      "enable_pages": [
+        {
+          "path": "/ui/kea/dhcp/v4",
+          "label": "plugin.kea.opnsense_page.kea_dhcpv4",
+          "menu_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Kea/Menu/Menu.xml",
+          "note": "Services > Kea DHCP > Kea DHCPv4, which holds dhcpv4.general.enabled (controllers/OPNsense/Kea/forms/generalSettings4.xml, drawn by DhcpController::v4Action)."
+        }
+      ],
       "read_strategy": "full_reread"
     }
   ]

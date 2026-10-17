@@ -102,3 +102,33 @@ func PluginDeclarations(plugins fs.FS) ([]KindAttributes, []Manifest, error) {
 	})
 	return kinds, providers, nil
 }
+
+// ExportedValue is one value an implementation exports beside its functions: a value its kind's contract
+// names under `values`, as its script exported it (PA6 of the plugin-API amendment).
+type ExportedValue struct {
+	Kind  string
+	Key   string
+	Name  string
+	Value any
+}
+
+// SetValues are the values every implementation of a set exports, and the kind and key of every
+// implementation, exporting or not: the registration replaces an implementation's values whole, so a
+// value it no longer exports is removed.
+func SetValues(set *Set) ([]ExportedValue, []Manifest) {
+	var values []ExportedValue
+	var implementations []Manifest
+	for _, registration := range set.All() {
+		implementations = append(implementations, registration.Manifest())
+		names := make([]string, 0, len(registration.Values))
+		for name := range registration.Values {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			values = append(values, ExportedValue{Kind: registration.Kind, Key: registration.Key, Name: name,
+				Value: registration.Values[name]})
+		}
+	}
+	return values, implementations
+}

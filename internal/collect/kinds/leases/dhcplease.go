@@ -91,7 +91,7 @@ func (c *LeaseCoordinator) CollectDHCPLease(ctx context.Context) error {
 	// (internal/collect/core/hostnamesources.go).
 	request := derive.Derivation{Addresses: seen}
 	if complete {
-		before, examine, err := c.NoteLeaseRead(ctx, leasesReadAt)
+		before, examine, err := c.NoteHostNameSourceRead(ctx, Kind, leasesReadAt)
 		if err != nil {
 			failures = append(failures, err)
 		} else if examine {
@@ -135,7 +135,7 @@ func (c *LeaseCoordinator) CollectDHCPLease(ctx context.Context) error {
 // servers behind separate endpoints, and letting the first failure end the pass
 // would turn one unreadable server into two.
 func (c *LeaseCoordinator) collectLeases(ctx context.Context, seen *[]string) (bool, error) {
-	sources, err := c.ActiveSources(ctx, core.KindDHCPLease)
+	sources, err := c.ActiveSources(ctx, Kind)
 	if err != nil {
 		return false, err
 	}
@@ -228,7 +228,7 @@ func (c *LeaseCoordinator) collectLeasesFrom(ctx context.Context, active core.Ac
 			"collect: the active dhcp_lease provider %q has no implementation", providerKey)
 	}
 
-	answer, result, readErr := source.Implementation.Call(ctx, c, "leases", c.Pages().DHCPLease)
+	answer, result, readErr := source.Implementation.Call(ctx, c, "leases", c.PageSize(Kind))
 	observations := provider.Records(answer, "leases")
 	if errors.Is(readErr, provider.ErrUnsupportedRead) {
 		// The implementation is registered and its material cannot be read. That is a state,
@@ -395,7 +395,7 @@ func (c *LeaseCoordinator) collectNeighbours(ctx context.Context, seen *[]string
 	var failures []error
 
 	for _, endpoint := range []opnsense.Endpoint{opnsense.ARPTable, opnsense.NDPTable} {
-		response, err := c.Read(ctx, "dhcp_lease", endpoint, opnsense.RequestOptions{}, c.LeaseMaxAge())
+		response, err := c.Read(ctx, Kind, endpoint, opnsense.RequestOptions{}, c.KindMaxAge(Kind, ""))
 		if err != nil && response.Outcome == "" {
 			failures = append(failures, err)
 			continue

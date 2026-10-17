@@ -154,7 +154,7 @@ func TestTheCoreJoinReadsContractFieldsOnly(t *testing.T) {
 	files := []string{filepath.Join("derive", "flowrecord.go"), filepath.Join("derive", "measuredvolume.go"),
 		filepath.Join("derive", "join.go"),
 		filepath.Join("kinds", "flowrecords", "flowrecordkind.go"), filepath.Join("core", "state.go"),
-		filepath.Join("flowrecord", "flowrecord.go"),
+		filepath.Join("provider", "pushed_flow_record.go"),
 		filepath.Join("..", "store", "netflow", "flowrecord.go"), filepath.Join("..", "store", "netflow", "capture.go"),
 		filepath.Join("..", "store", "netflow", "measuredvolume.go"),
 		filepath.Join("..", "store", "netflow", "flowrecord.statements.sql")}

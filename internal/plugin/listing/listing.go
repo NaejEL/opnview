@@ -29,21 +29,24 @@ const (
 
 // ListedPlugin is one plugin as the listing reports it.
 type ListedPlugin struct {
-	Name         string                          `json:"name"`
-	Version      string                          `json:"version,omitempty"`
-	APIVersion   int                             `json:"api_version,omitempty"`
-	DisplayName  string                          `json:"display_name,omitempty"`
-	Description  string                          `json:"description,omitempty"`
-	Origin       string                          `json:"origin"`
-	State        string                          `json:"state"`
-	Reason       *ListedRefusal                  `json:"reason,omitempty"`
-	Providers    []plugin.ProviderInfo           `json:"providers"`
-	Destinations []string                        `json:"destinations"`
-	Tables       []ListedTable                   `json:"tables"`
-	AsideTables  []plugintables.AsideTable       `json:"aside_tables"`
-	Widgets      []string                        `json:"widgets"`
-	Settings     []plugin.SettingValue           `json:"settings"`
-	Events       []plugintables.PluginTableEvent `json:"events"`
+	Name         string                    `json:"name"`
+	Version      string                    `json:"version,omitempty"`
+	APIVersion   int                       `json:"api_version,omitempty"`
+	DisplayName  string                    `json:"display_name,omitempty"`
+	Description  string                    `json:"description,omitempty"`
+	Origin       string                    `json:"origin"`
+	State        string                    `json:"state"`
+	Reason       *ListedRefusal            `json:"reason,omitempty"`
+	Providers    []plugin.ProviderInfo     `json:"providers"`
+	Destinations []string                  `json:"destinations"`
+	Tables       []ListedTable             `json:"tables"`
+	AsideTables  []plugintables.AsideTable `json:"aside_tables"`
+	Widgets      []string                  `json:"widgets"`
+	Settings     []plugin.SettingValue     `json:"settings"`
+	// Pages are the sections its manifest groups its settings in, each with its settings in display order:
+	// what the step-7 application draws a plugin's settings from. Absent for a plugin that declares none.
+	Pages  []contract.PageDeclaration      `json:"pages,omitempty"`
+	Events []plugintables.PluginTableEvent `json:"events"`
 	// Endpoints are the endpoints it reads, with what its manifest tells the broker of each and the
 	// OPNsense versions each route serves; CorrectionConflicts are those whose mirror corrections lost
 	// to another plugin's (mirror_correction_conflict), the plugin loading all the same.
@@ -127,6 +130,7 @@ func Listing(l *plugin.Loaded, ctx context.Context, database ListingStore) ([]Li
 			return nil, err
 		}
 		entry.Settings = settings
+		entry.Pages = member.Manifest.Pages
 		listed = append(listed, entry)
 	}
 	refusals := append([]contract.Refusal(nil), l.Refused...)

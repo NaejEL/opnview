@@ -31,7 +31,16 @@
     {
       "kind": "firewall_log",
       "display_name": "pf filter log",
-      "read_strategy": "full_reread"
+      "read_strategy": "full_reread",
+      "value_sources": {
+        "state_timeout_tcp_first_seconds": {"source": "PFTM_TCP_FIRST_PACKET_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
+        "state_timeout_tcp_established_seconds": {"source": "PFTM_TCP_ESTABLISHED_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
+        "state_timeout_tcp_closing_seconds": {"source": "PFTM_TCP_CLOSING_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
+        "state_timeout_tcp_closed_seconds": {"source": "PFTM_TCP_CLOSED_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
+        "state_timeout_udp_multiple_seconds": {"source": "PFTM_UDP_MULTIPLE_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
+        "state_timeout_icmp_first_seconds": {"source": "PFTM_ICMP_FIRST_PACKET_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"},
+        "state_timeout_other_multiple_seconds": {"source": "PFTM_OTHER_MULTIPLE_VAL", "survey_section": "S12. pf's state timeouts", "upstream_url": "https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h"}
+      }
     }
   ]
 }

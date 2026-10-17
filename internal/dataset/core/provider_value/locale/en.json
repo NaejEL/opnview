@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "dataset.provider_value": "The values the active providers export beside their functions, such as pf's state timeouts"
+  }
+}

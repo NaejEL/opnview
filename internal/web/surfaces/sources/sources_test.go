@@ -13,6 +13,7 @@ import (
 	"github.com/NaejEL/opnview/internal/web/messages"
 
 	"github.com/NaejEL/opnview/internal/config"
+	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/web/settingfields"
@@ -596,16 +597,24 @@ func TestAnInstalledSourceNotCollectingLinksToTheOPNsensePageThatTurnsItOn(t *te
 		}
 	}
 
-	// Every page cited is an OPNsense interface path, and no path names a host.
-	for _, kind := range []string{"security_event", "dhcp_lease", "dns_lookup", "resolver_cache",
-		"resolver_local_data", "flow_volume", "measurement_sample"} {
-		for _, key := range []string{"suricata", "kea", "dnsmasq", "isc", "unbound", "insight"} {
-			for _, page := range sources.OpnsensePagesFor(kind, key) {
-				if !strings.HasPrefix(page.Path, "/ui/") {
-					t.Errorf("%s/%s cites %q, which is not an OPNsense interface path", kind, key, page.Path)
+	// Every page a built-in declares, or a core kind's registered row, is an OPNsense interface path cited
+	// from the menu definition at the pinned version, and no path names a host.
+	loaded := plugin.BuiltinsLoaded()
+	declared := 0
+	for _, member := range loaded.Plugins() {
+		for _, info := range member.Providers {
+			for _, page := range loaded.EnablePages(info.Kind, info.Key) {
+				declared++
+				if !strings.HasPrefix(page.Path, "/ui/") ||
+					!strings.HasPrefix(page.MenuURL, "https://github.com/opnsense/core/blob/26.7.3/") {
+					t.Errorf("%s/%s cites %q from %q, not an OPNsense interface path cited at 26.7.3", info.Kind,
+						info.Key, page.Path, page.MenuURL)
 				}
 			}
 		}
+	}
+	if declared != 8 || len(loaded.EnablePages("flow_volume", "insight")) != 0 {
+		t.Errorf("the built-ins declare %d enable pages, want the eight of today (Unbound general on three rows), and none for flow_volume/insight, which nothing probes", declared)
 	}
 }
 

@@ -104,9 +104,15 @@ var (
 	StatementNamePattern = regexp.MustCompile(`^widget_[a-z0-9]+(_[a-z0-9]+)*$`)
 )
 
-// ValidateManifest checks a manifest against every rule that needs nothing but the manifest.
-// Rules that need the world -- the directory, the script, the query -- are the loader's.
+// ValidateManifest checks a manifest against every rule that needs nothing but the manifest, binding the
+// core's bindable kinds. Rules that need the world -- the directory, the script, the query -- are the loader's.
 func ValidateManifest(manifest Manifest) *Refusal {
+	return ValidateManifestWith(manifest, CoreBindableKinds())
+}
+
+// ValidateManifestWith is ValidateManifest binding the kinds an installation's loaded plugins make
+// bindable: the core's and the plugins' own.
+func ValidateManifestWith(manifest Manifest, bindable []string) *Refusal {
 	name := manifest.Type
 	if name == "" {
 		name = "(no type)"
@@ -124,8 +130,8 @@ func ValidateManifest(manifest Manifest) *Refusal {
 	}
 	seenKind := map[string]bool{}
 	for _, kind := range manifest.Providers {
-		if !Contains(ProviderKinds, kind) {
-			return Refuse(name, RefusalUnknownProviderKind, "provider kind %q is not one of %v", kind, ProviderKinds)
+		if !Contains(bindable, kind) {
+			return Refuse(name, RefusalUnknownProviderKind, "provider kind %q is not one of %v", kind, bindable)
 		}
 		if seenKind[kind] {
 			return Refuse(name, RefusalManifestInvalid, "provider kind %q is listed twice", kind)

@@ -103,8 +103,53 @@ SELECT
               to_hex((slot * 29) % 65536), to_hex(slot % 65536))
 FROM every_slot;
 
+-- registry:begin
 -- ---------------------------------------------------------------------------
--- The provider registry already holds one row per surveyed implementation, with
+-- The registry this pretend-installation's built-ins write when they load. The
+-- schema seeds no kind and no provider (PA2 of the plugin-API amendment): the
+-- built-ins' declarations write them -- the kind files of
+-- internal/collect/provider/kinds and the built-in plugins' manifests
+-- (store.RegisterBuiltinDeclarations). This seed applies schema.sql alone, so it
+-- writes here what loading them would for the core kinds: each core kind's
+-- attribute, then the providers the core kinds have always been read through,
+-- each with its availability row -- the installation the checks below were
+-- written against, whose documented kinds are the core ones. A plugin's own
+-- kind, and the flow_record exporter (registered below as this installation's
+-- own), are left out of it, as they were.
+-- ---------------------------------------------------------------------------
+INSERT INTO provider_kind (kind, concurrent) VALUES
+    ('dhcp_lease', true), ('dns_lookup', false), ('firewall_log', false), ('flow_record', false),
+    ('flow_volume', false), ('ip_geolocation', false), ('measurement_sample', true),
+    ('reconciled_state', true), ('registrable_domain', false), ('resolver_cache', true),
+    ('resolver_local_data', true), ('security_event', true)
+ON CONFLICT (kind) DO NOTHING;
+
+INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at) VALUES
+    ('dhcp_lease', 'dnsmasq', 'Dnsmasq DHCP', false, :now),
+    ('dhcp_lease', 'isc', 'ISC dhcpd', false, :now),
+    ('dhcp_lease', 'kea', 'Kea DHCP', false, :now),
+    ('dns_lookup', 'dnsmasq', 'Dnsmasq resolver', false, :now),
+    ('dns_lookup', 'unbound', 'Unbound', false, :now),
+    ('firewall_log', 'pf', 'pf filter log', false, :now),
+    ('flow_volume', 'insight', 'NetFlow / Insight', false, :now),
+    ('ip_geolocation', 'maxmind_geolite2', 'MaxMind GeoLite2', false, :now),
+    ('measurement_sample', 'insight', 'NetFlow / Insight sampling', false, :now),
+    ('registrable_domain', 'public_suffix_list', 'Public Suffix List', false, :now),
+    ('resolver_cache', 'dnsmasq', 'Dnsmasq cache', false, :now),
+    ('resolver_cache', 'unbound', 'Unbound cache', false, :now),
+    ('resolver_local_data', 'dnsmasq', 'Dnsmasq local data', false, :now),
+    ('resolver_local_data', 'unbound', 'Unbound local data', false, :now),
+    ('security_event', 'suricata', 'Suricata', false, :now)
+ON CONFLICT (kind, provider_key) DO NOTHING;
+
+INSERT INTO source_availability (provider_id, state, outcome, probe, detail, checked_at)
+SELECT p.id, 'unavailable', 'not_yet_probed', 'not_yet_probed', NULL, 0
+FROM provider AS p
+WHERE NOT EXISTS (SELECT 1 FROM source_availability a WHERE a.provider_id = p.id);
+-- registry:end
+
+-- ---------------------------------------------------------------------------
+-- The provider registry now holds one row per declared implementation, with
 -- none active. A probe round has now run, so the seed marks the providers this
 -- pretend-installation reads.
 --

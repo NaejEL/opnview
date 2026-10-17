@@ -4,6 +4,29 @@
   "concurrent" : true,
   "push" : false,
   "bindable" : true,
+  "names_hosts" : true,
+  "cadences" : [
+    {
+      "role" : "poll",
+      "setting" : "poll_interval_dhcp_lease_seconds",
+      "default_seconds" : 300,
+      "basis" : "Survey, data source 4, \"Sustainable polling frequency\": leases change on the scale of minutes to hours, the table is small, and the Kea path costs a control-agent round trip."
+    }
+  ],
+  "page_size" : {
+    "setting" : "page_size_dhcp_lease",
+    "default" : 500,
+    "basis" : "500 is the figure the collectors carried as a constant before the page became a setting, and nothing more: a documented starting point, not a measurement and not a survey figure. What an installation needs depends on how fast its sources write, which only that installation can measure: the collection surface measures it and suggests a pair. The default is within what the firewall serves for this read, so a database with no row never asks for a page the firewall would cut short."
+  },
+  "sizing" : {
+    "order" : 3,
+    "table" : "dhcp_lease",
+    "source_column" : "observed_at",
+    "ingested_column" : "",
+    "page_ceiling" : 0,
+    "survey_heading" : "Authentication and conventions",
+    "basis" : "The lease searches are grid searches, whose `rowCount` is the page size and `-1` means all rows (\"Pagination envelope\"): nothing on the firewall's side caps the page. A lease row records when opnview saw it and no other instant of its own, so the lease table is measured on one clock."
+  },
   "functions" : [
     {
       "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",

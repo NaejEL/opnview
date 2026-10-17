@@ -65,5 +65,33 @@
       "kind": "flow_record",
       "display_name": "NetFlow export"
     }
+  ],
+  "settings": [
+    {
+      "key": "join_tolerance_seconds",
+      "type": "integer",
+      "default": 3,
+      "min": 1,
+      "max": 60,
+      "label": "plugin.netflow.setting.join_tolerance_seconds",
+      "note": "How far after a leg was logged, in seconds, a flow record may start and still join it (PS19 rule 3 of the NetFlow join amendment). 3 is opnview's own default, the sum of the three one-second resolutions the join compares across: the filter log's timestamp is whole seconds (survey, data source 1); OPNsense's NetFlow start instant is whole seconds, the header's unix_secs and the uptime fields each truncated to a second (survey, Push sources, S10); and the normaliser reads a zone-less filter-log timestamp with the firewall's offset, measured to the second. LV-NJ measures the distribution of record start minus leg instant and confirms or replaces it. At most 60: a larger tolerance would let a record join a leg logged a minute before it began, which no resolution explains."
+    },
+    {
+      "key": "retention_flow_record_seconds",
+      "type": "integer",
+      "default": 0,
+      "min": 0,
+      "max": 9223372036,
+      "label": "plugin.netflow.setting.retention_flow_record_seconds",
+      "note": "How long a flow record is kept, in seconds (PS17 of the NetFlow join amendment). 0, the default, follows retention_seconds: the flow records are kept as long as the filter log's flows they join. The largest value is the longest interval a duration represents."
+    }
+  ],
+  "pages": [
+    {
+      "key": "join",
+      "label": "plugin.netflow.page.join",
+      "help": "plugin.netflow.page.join_help",
+      "settings": ["join_tolerance_seconds", "retention_flow_record_seconds"]
+    }
   ]
 }

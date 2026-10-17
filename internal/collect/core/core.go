@@ -15,55 +15,6 @@ import (
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
-// The core kinds the collector's parts name to one another. Each kind is declared by its file in
-// internal/collect/provider/kinds, which is what the registry, the attributes and the contract are read
-// from; these names are how one part of the collector asks for another's kind.
-const (
-	// KindRegistrableDomain is a list giving a site name its registrable domain. It is a service
-	// kind: internal/collect/services/services.go refreshes and consults its active provider, which
-	// acquires the list through the plugin host's fetch facility.
-	KindRegistrableDomain = "registrable_domain"
-	// KindFirewallLog is data source 1.
-	KindFirewallLog = "firewall_log"
-	// KindSecurityEvent is data source 2. It admits several concurrently active
-	// providers: people run Suricata, CrowdSec and Zenarmor together.
-	KindSecurityEvent = "security_event"
-	// KindFlowVolume is data source 3, and nothing collects it. Its destination,
-	// pair_volume_observation, is DERIVED from flow by step 5: the only per-pair
-	// endpoint carries neither a port nor a protocol and the filter log carries
-	// both. No implementation of it is registered here, deliberately.
-	KindFlowVolume = "flow_volume"
-	// KindDHCPLease is data source 4.
-	KindDHCPLease = "dhcp_lease"
-	// KindDNSLookup is data source 5.
-	KindDNSLookup = "dns_lookup"
-	// KindIPGeolocation is a dataset placing public addresses. It is a service kind:
-	// internal/collect/services/services.go refreshes its active provider and places addresses with
-	// it.
-	KindIPGeolocation = "ip_geolocation"
-	// KindMeasurementSample is the sampled reading: the firewall's own gauges and
-	// the live per-pair traffic snapshot, and the kind eight of the ten surveyed
-	// sources that fit an existing shape fit. It owns the sampler this package
-	// already had, which was registered under flow_volume only because the kind
-	// did not exist. It admits several concurrently active providers.
-	KindMeasurementSample = "measurement_sample"
-	// KindReconciledState is the complete set of things of one type as of one
-	// instant — the shape ten of the eleven sources that fit nothing else produce.
-	// No implementation is registered for it: the kind gives such a source a
-	// destination, and writing a connector for one is not this cycle's work.
-	KindReconciledState = "reconciled_state"
-	// KindResolverCache is the records a resolver holds in its cache: the answer
-	// addresses the query report does not carry. "Cache" is Unbound's own word
-	// (unbound-control(8), dump_cache). It admits several active providers, since
-	// every record it stores names the provider that read it.
-	KindResolverCache = "resolver_cache"
-	// KindResolverLocalData is the records a resolver serves from its local data,
-	// host overrides among them: Unbound's own words again (unbound.conf(5),
-	// local-data; unbound-control(8), list_local_data). Concurrent for the same
-	// reason.
-	KindResolverLocalData = "resolver_local_data"
-)
-
 // Clock is the time the scheduler and the collectors read. It is an interface so
 // that a test drives every loop deterministically instead of sleeping.
 type Clock interface {
@@ -119,11 +70,6 @@ func (c *Collector) Configure(settings config.Config) {
 	c.Mutex.Lock()
 	defer c.Mutex.Unlock()
 	c.Cadences = settings
-	c.PageSizeSettings = config.PageSizes{
-		FirewallLog:   settings.FirewallLogPageSize,
-		SecurityEvent: settings.SecurityEventPageSize,
-		DHCPLease:     settings.DHCPLeasePageSize,
-	}
 	if settings.AttributionMaxDelaySeconds > 0 {
 		c.MaxDelaySeconds = settings.AttributionMaxDelaySeconds
 	}
@@ -135,11 +81,6 @@ func (c *Collector) Configure(settings config.Config) {
 	}
 	if settings.LeaseBackendFailurePassLimit > 0 {
 		c.LeaseFailureLimit = settings.LeaseBackendFailurePassLimit
-	}
-	if settings.NetflowJoinToleranceSeconds > 0 {
-		c.Netflow.Mutex.Lock()
-		c.Netflow.ToleranceSeconds = settings.NetflowJoinToleranceSeconds
-		c.Netflow.Mutex.Unlock()
 	}
 }
 
@@ -195,19 +136,10 @@ func (c *Collector) sampleAbsence(providerID int64) string {
 	return c.SampleAbsences[providerID]
 }
 
-// PageSizes returns the page sizes the collectors use now.
-//
-// It exists for a test to assert that a saved setting reached a running
-// collector. Nothing should use it as a second source of truth: the setting rows
-// are the truth, and this is what the collectors were last told.
-func (c *Collector) PageSizes() config.PageSizes { return c.Pages() }
-
-// Pages returns the page sizes in force.
-func (c *Collector) Pages() config.PageSizes {
-	c.Mutex.RLock()
-	defer c.Mutex.RUnlock()
-	return c.PageSizeSettings
-}
+// PageSize returns the page a core kind's paged read asks for now: the setting its kind file names, as
+// the collection surface last saved it, or the file's default. The setting rows are the truth; this is
+// what the collectors were last told.
+func (c *Collector) PageSize(kind string) int { return c.intervals().PageSize(kind) }
 
 // Discovery returns the current snapshot.
 func (c *Collector) Discovery() Discovery {

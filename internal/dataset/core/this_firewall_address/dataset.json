@@ -1,0 +1,11 @@
+{
+  "nature": "sample",
+  "freshness": {"kind": "discovery"},
+  "columns": [
+    {"name": "address", "type": "text"},
+    {"name": "interface", "type": "text"},
+    {"name": "first_seen_at", "type": "integer"},
+    {"name": "last_seen_at", "type": "integer"},
+    {"name": "is_current", "type": "integer"}
+  ]
+}

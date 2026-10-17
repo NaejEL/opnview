@@ -13,7 +13,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/provider"
-	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -197,7 +196,7 @@ func normaliseRecords(raw []provider.Answer, heldIn string) ([]attribution.Resou
 // ttlSeconds reads a cache record's ttl: a JSON string of ASCII digits, surrounding white
 // space aside.
 func ttlSeconds(record provider.Answer) (int64, bool) {
-	// The shape the ttl arrived in, as the implementation named it (absent, null, string, other).
+	// The JSON shape the ttl arrived in, as the implementation named it: only a string carries seconds.
 	if provider.Text(record, "ttl_shape") != "string" {
 		return 0, false
 	}

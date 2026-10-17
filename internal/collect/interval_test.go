@@ -70,15 +70,14 @@ func (c *recordingClock) releaseOne() {
 // value that is not positive leaves the last good one in force rather than spinning.
 func TestASavedIntervalChangesTheNextScheduledPassWithoutARestart(t *testing.T) {
 	t.Parallel()
-	settings := config.Defaults()
-	settings.FirewallLogInterval = 10 * time.Second
+	settings := config.Defaults().WithInterval("firewall_log", "poll", 10*time.Second)
 	live := config.NewLive(settings)
 
 	clock := &recordingClock{}
 	passes := make(chan struct{}, 8)
 	task := core.Task{
 		Name:     "filter log",
-		Interval: live.Interval(func(c config.Config) time.Duration { return c.FirewallLogInterval }),
+		Interval: live.Interval(func(c config.Config) time.Duration { return c.Interval("firewall_log", "poll") }),
 		Run:      func(context.Context) error { passes <- struct{}{}; return nil },
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -90,7 +89,7 @@ func TestASavedIntervalChangesTheNextScheduledPassWithoutARestart(t *testing.T) 
 	}
 
 	// Saved while the loop waits: the wait under way is not cut short, the next one is new.
-	settings.FirewallLogInterval = 30 * time.Second
+	settings = settings.WithInterval("firewall_log", "poll", 30*time.Second)
 	live.Set(settings)
 	clock.releaseOne()
 	<-passes
@@ -99,7 +98,7 @@ func TestASavedIntervalChangesTheNextScheduledPassWithoutARestart(t *testing.T) 
 	}
 
 	// A value that is not positive keeps the last good one.
-	settings.FirewallLogInterval = 0
+	settings = settings.WithInterval("firewall_log", "poll", 0)
 	live.Set(settings)
 	clock.releaseOne()
 	<-passes
@@ -121,23 +120,24 @@ func TestASavedPageSizeReachesARunningCollector(t *testing.T) {
 	ctx := context.Background()
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	harness.Fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
-	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "firewall_log"); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
 
-	if got := harness.Collector.PageSizes(); got != config.DefaultPageSizes() {
-		t.Fatalf("a new collector uses the pages %+v, want the defaults", got)
+	for _, kind := range []string{"firewall_log", "security_event", "dhcp_lease"} {
+		if got := harness.Collector.PageSize(kind); got != config.Defaults().PageSize(kind) || got != 500 {
+			t.Fatalf("a new collector asks for %d %s records a page, want the default 500", got, kind)
+		}
 	}
 
-	settings := config.Defaults()
-	settings.FirewallLogPageSize = 250
-	settings.SecurityEventPageSize = 125
-	settings.DHCPLeasePageSize = 2000
+	settings := config.Defaults().WithPageSize("firewall_log", 250).WithPageSize("security_event", 125).
+		WithPageSize("dhcp_lease", 2000)
 	harness.Collector.Configure(settings)
 
-	want := config.PageSizes{FirewallLog: 250, SecurityEvent: 125, DHCPLease: 2000}
-	if got := harness.Collector.PageSizes(); got != want {
-		t.Fatalf("after Configure the collector uses %+v, want %+v", got, want)
+	for kind, want := range map[string]int{"firewall_log": 250, "security_event": 125, "dhcp_lease": 2000} {
+		if got := harness.Collector.PageSize(kind); got != want {
+			t.Fatalf("after Configure the collector asks for %d %s records a page, want %d", got, kind, want)
+		}
 	}
 
 	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {

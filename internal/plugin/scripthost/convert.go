@@ -17,7 +17,7 @@ import (
 
 // What a plugin answers, checked against its kind's contract before anything is handed on.
 //
-// THE CONTRACT IS THE ONE OF internal/collect/provider, contract.go, and nothing here restates
+// THE CONTRACT IS THE ONE OF internal/collect/provider, its kind files, and nothing here restates
 // it: a field is read only if the contract's table holds it, with the type the contract gives,
 // and a required field that is missing or null refuses the whole answer. A refused answer is
 // records_invalid and stores nothing -- not the valid records beside the invalid one, because a

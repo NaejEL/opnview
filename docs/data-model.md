@@ -135,6 +135,8 @@ vocabulary read off an endpoint:
 | `blocklist.purpose` | the endpoint reports what a list is **called** and nothing about what it is **for**; OPNsense publishes no classification of a subscribed list | the column answers "advertising or threat", which is the maintainer's question, and it is assigned by the user for the same reason `owner` is: `hagezi-pro` and `oisd-small` tell a machine nothing |
 | `collection_gap` | no product `opnview` reads has a notion of the data it failed to deliver: every source returns what it has and says nothing about what it did not (survey, gap 11) | the word is taken from the question the row answers — what is missing from this history — and the row exists because a gap is read by a screen rather than by a log reader |
 | `measurement_sample` | OPNsense answers for processor, memory, temperature, disk, uptime and per-interface counters and publishes no collective noun for them; nor does it have a word for a per-pair volume `opnview` has to sample because no aggregate of it exists upstream | the two turned out to be the same five facts — a subject, a measure, a unit, a value and an instant — so one term names one table, and `subject_kind`, `measure` and `unit` are vocabularies of `opnview`'s own because the survey establishes those endpoints and **not their field names**. Whether their value sets are open or closed is a property of the schema and is stated there, beside the `CHECK`s that do or do not enumerate them |
+| `provider_value`, the dataset of the same name, and a contract's **values** | nothing upstream: a value is a fact one implementation states beside its functions -- pf's state timeouts, from `pf.h`'s `PFTM_*_VAL` (survey, S12), which no endpoint exposes | the word is the contract's own (`values` in a kind file, the exported values of `docs/plugins.md`), and the table is named for whose value it is, the provider's. The dataset of the same name publishes the active providers' values so another plugin reads them rather than restating them (PA6 of the plugin-API amendment) |
+| the core dataset `leg` | the same as *leg* above | one row per filter-log record, named after the term for one record of a connection, so a dataset of every record, both legs of a pair included, says so; `traffic` already names the one that leaves the second leg out |
 | `dns_resolution.lookup_key` | the resolver returns a `uuid` field and it is null on every row, so the endpoint supplies no identity for a lookup at all | the column holds an identity `opnview` composes from the row's own content, so it is named for what it **is** — a key — rather than for the uuid it is not, and not `digest` either, because a provider that does supply a stable identifier stores that here unchanged |
 | `reconciled_state`, and with it `state_snapshot`, `state_item` and their `set_key` / `item_key` / `captured_at` | the shape is real and unnamed: ten of the eleven surveyed sources that fit no other kind report **the complete current set of things of one type**, and each of them names only its own contents — decisions, peers, neighbours, routes, circuits. None of them, and no OPNsense endpoint, has a word for the shape itself | the word is taken from what those ten have in common: the set is **reconciled** against the previous one rather than appended to. `captured_at` is named for the claim it makes — the set was complete at that instant — because that claim is the only thing that makes a departure detectable; `set_key` and `item_key` follow the `provider_key` / `subject_key` pattern already in the schema |
 | `state_item_departure` | no source reports a departure. Every one of them reports only what it currently holds, and says nothing at all about what it used to hold (the same finding as survey gap 11, arriving from a different direction) | the view is named for the question it answers — what has left this set — and it is a view rather than a column because a departure is a fact about two snapshots, and a stored copy could disagree with them |
@@ -305,8 +307,10 @@ plugin_aside_table
 plugin_state
 plugin_table
 provider
+provider_kind
 provider_rule_info
 provider_source_period
+provider_value
 purged_flow_hour
 push_listener
 resource_record_observation
@@ -442,7 +446,9 @@ plugin_aside_table
 plugin_state
 plugin_table
 provider
+provider_kind
 provider_rule_info
+provider_value
 push_listener
 resource_record_read
 retention_purge
@@ -467,7 +473,9 @@ Why each bounded table is bounded, and may therefore be scanned:
 | `interface_network` | one row per network an interface has carried, detected by discovery or set by the operator; a firewall has a few per interface |
 | `rule` | one row per rule in the running ruleset |
 | `provider` | one row per implementation the project knows of; fifteen today, and a new one is an `INSERT`, not a stream |
+| `provider_kind` | one row per kind a declaration names -- the core kinds' files and the plugins' own kinds -- written at load |
 | `provider_rule_info` | one row per (provider, rule identity) seen at least once; a rule set holds tens of thousands at most, and the table only ever holds the ones actually observed |
+| `provider_value` | one row per value a provider exports beside its functions (its kind's contract names them; seven for `firewall_log`), rewritten at load and at each probe round |
 | `source_availability` | exactly one row per `provider` row, for the life of the database |
 | `eve_ingest_cursor` | one watermark per rotated `eve.json` file; the firewall keeps the current file plus four archives |
 | `setting` | one row per configuration key |
@@ -533,7 +541,7 @@ foreign key, which a hypertable cannot be.
 | `geo_asn`, `address_classification`, `interface_address` | no | keyed on the address, mutable | row `DELETE` | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
 | `collection_gap`, `opnview_downtime` | no | `id` is unique without the interval | row `DELETE` | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
 | `state_snapshot`, `state_item` | no | `state_item` references its snapshot | row `DELETE` of whole snapshots | `TestThePurgeRemovesRowsOlderThanTheHorizonAndNothingNewer` |
-| `flow_record` | **yes**, chunked by day on `start_at` | -- its one unique key, `(identity, start_at)`, holds the time column, and nothing references it | `drop_chunks` of the whole chunks past its own horizon (`retention_flow_record_seconds`, 0 following `retention_seconds`), then row `DELETE` to the exact second | `TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention` |
+| `flow_record` | **yes**, chunked by day on `start_at` | -- its one unique key, `(identity, start_at)`, holds the time column, and nothing references it | `drop_chunks` of the whole chunks past its own horizon (the netflow plugin's `retention_flow_record_seconds` setting, stored as `netflow_retention_flow_record_seconds`, 0 following `retention_seconds`), then row `DELETE` to the exact second | `TestFlowRecordsArePurgedByChunkThenByRowAtTheirOwnRetention` |
 | `connection_measured_volume` | no | keyed on the connection's first leg and the direction, not on time; rewritten in place as a figure grows | row `DELETE` with its connection, at the flows' horizon | `TestTheJoinWithEveryInterfaceCaptured` (NJ-AC12) |
 | `provider_source_period` | no | keyed on the provider and the period's start, a period spanning any length of time | row `DELETE` of closed periods ended before the flows' horizon; the open period kept | `sql/schema-checks.sh`, E21 and E22 |
 | `unmatched_record_aggregate_*` | no | keyed on the slot and the record's ingress and egress interfaces or roles, protocol, version and reason; accumulated by the join, not recomputed | row `DELETE` of slots ended before the flows' horizon | `TestAnUnmatchedRecordIsCountedInNoFigure` |
@@ -580,7 +588,7 @@ Two facts every verdict below shares:
 | Candidate | Verdict | Reason, verified at 2.30.2 |
 |---|---|---|
 | The 24 family tables (`volume`, `owner`, `client`, `peer`, `domain`, `rule` × `1h`, `24h`, `7d`, `30d`) | no | A continuous aggregate must query a hypertable: a plain table is refused, "table ... is not a hypertable" ([common.c](https://github.com/timescale/timescaledb/blob/2.30.2/tsl/src/continuous_aggs/common.c#L1209-L1214)); and `flow` cannot become one, its `id` and `log_digest` being unique without `observed_at` while a hypertable's every unique key must hold its time column ([indexing.c](https://github.com/timescale/timescaledb/blob/2.30.2/src/indexing.c#L84-L108)). The reasons of the table above stand besides: the families are keyed on joined, mutable attributes, and the week and month are rolled up from days. |
-| `unmatched_record_aggregate_*` | no | Its source, `flow_record`, is a hypertable, but the family is **accumulated from the join's decisions**, which are no column a query could re-read, and it **outlives the purge of its records** (`flow_record` purged at `retention_flow_record_seconds`, the family at the flows' horizon): the first refresh over a purged range would recompute its slots from the records left, or delete them. |
+| `unmatched_record_aggregate_*` | no | Its source, `flow_record`, is a hypertable, but the family is **accumulated from the join's decisions**, which are no column a query could re-read, and it **outlives the purge of its records** (`flow_record` purged at `netflow_retention_flow_record_seconds`, the family at the flows' horizon): the first refresh over a purged range would recompute its slots from the records left, or delete them. |
 | The broker's `#minute` and `#hour` stream aggregates | no | Five reasons, each enough: (1) `last` is the value of the event received last, in insertion order, at one-second resolution (`internal/broker/recording.go`), while TimescaleDB's `last(value, time)` keeps the row with the greatest time and resolves a tie by whichever row the scan fed first -- no insertion order exists ([agg_bookend.c](https://github.com/timescale/timescaledb/blob/2.30.2/src/agg_bookend.c#L366-L370)); (2) columns are added at run time, one per numeric field a reader starts reading, and a continuous aggregate takes only an added aggregate `GENERATED ALWAYS AS (...) STORED` column, left NULL until a forced refresh recomputes it from the raw rows ([add_column.c](https://github.com/timescale/timescaledb/blob/2.30.2/tsl/src/continuous_aggs/add_column.c#L76-L92), [CHANGELOG](https://github.com/timescale/timescaledb/blob/2.30.2/CHANGELOG.md#L233)), which no longer exist past the detail's retention; (3) the aggregates are kept for `retention_seconds`, the detail for `mirror_stream_detail_retention_seconds`, and a refresh over the dropped detail loses them (above); (4) each event is visible in the aggregates at once, where a continuous aggregate is materialised only by a refresh, real-time aggregation being off by default ([create_materialized_view_with_clause.c](https://github.com/timescale/timescaledb/blob/2.30.2/src/with_clause/create_materialized_view_with_clause.c#L32-L36), [CHANGELOG 2.13.0](https://github.com/timescale/timescaledb/blob/2.30.2/CHANGELOG.md#L1837)); (5) a refresh cannot run inside a transaction block, `PreventInTransactionBlock(nonatomic, "refresh_continuous_aggregate()")` ([refresh.c](https://github.com/timescale/timescaledb/blob/2.30.2/tsl/src/continuous_aggs/refresh.c#L1137-L1144)), so the aggregate could not move with the event that changes it. |
 
 Since nothing qualified, no equivalence test was written: a continuous aggregate that does not exist
@@ -616,18 +624,19 @@ implementation of it, and the registry holds one row per implementation, not
 one per kind.
 
 Registering a provider is an `INSERT` into `provider` plus an `INSERT` into
-`source_availability`. Nothing in the DDL enumerates provider names: the only
-`CHECK` on the registry constrains `kind`, because a kind is code `opnview`
-ships and not data a deployment supplies.
+`source_availability`. Nothing in the DDL enumerates provider names or kinds,
+and the DDL seeds no row (PA2 of the plugin-API amendment): a kind is a
+declaration -- a core kind's file, `internal/collect/provider/kinds/<kind>.json`,
+or a plugin's manifest -- which writes its `provider_kind` row, and each
+built-in's manifest writes its providers' rows, when the built-ins load.
 
-The fifteen rows the schema registers, with the survey section that established
-each one. **Each is one IMPLEMENTATION of a kind, and the kind is the seam:**
+The rows the built-ins' declarations register for the core kinds, with the
+survey section that established each one. **Each is one IMPLEMENTATION of a kind, and the kind is the seam:**
 `dhcp_lease` has three and `dns_lookup`, `resolver_cache` and
 `resolver_local_data` have two each, and on the firewall the survey
 probed Dnsmasq serves DHCP with Kea disabled while Unbound and Dnsmasq are both
-running as resolvers. `internal/collect` carries one interface per kind and one
-file per implementation, each registering itself against the `provider_key`
-below, so adding a backend is one file plus one row here.
+running as resolvers. Each implementation is a plugin directory declaring its
+kind and `provider_key`, so adding a backend is adding a directory.
 
 | Kind | `provider_key` | Endpoint | Survey |
 |---|---|---|---|
@@ -746,9 +755,12 @@ replaced it — *a kind admits several concurrently active providers exactly whe
 the identity of its destination rows includes the provider* — is stated, kind by
 kind, in `docs/architecture.md` under *Activeness, and what is still exclusive*,
 and it is enforced by the partial unique index
-`uq_provider_active_per_exclusive_kind` over `kind` where `is_active = 1` and the
-kind is not one of the six the rule exempts — the four it exempted before, and the
-two resolver-record kinds, whose rows name the provider that read them. Marking a second provider of an
+`uq_provider_active_per_exclusive_kind` over `kind` where `is_active` and not
+`concurrent`. The attribute is data: each kind's declaration says `concurrent`,
+`provider_kind` holds it, and every provider row carries it through a foreign key,
+so the index names no kind -- six core kinds are concurrent today, the four the
+rule exempted first and the two resolver-record kinds, whose rows name the provider
+that read them. Marking a second provider of an
 **exclusive** kind active fails; marking a second provider of a concurrent kind
 active succeeds, and both are read.
 
@@ -2722,8 +2734,8 @@ polled, and `page_size_firewall_log`, `page_size_security_event` and
 `page_size_dhcp_lease` override how many records one request asks for. An
 interval alone does not size a paged read: a poll every ten seconds asking for
 500 records keeps up with a source producing fewer than fifty a second and
-drops the rest. A missing row means the default `internal/config` documents
-beside each key. The per-pair sampler and the resolver take no page size, the
+drops the rest. A missing row means the default the kind's file
+(`internal/collect/provider/kinds/<kind>.json`) declares beside each key, with its basis. The per-pair sampler and the resolver take no page size, the
 first because its endpoint is not paged and the second because the firewall
 fixes the size of its answer. An interval is a positive whole number of seconds
 no larger than a Go duration holds; a page size is a positive whole number, and
@@ -3081,7 +3093,7 @@ counters (below).
 **The join** (`internal/collect/derive`, `join.go`), decided from stored rows only, a group -- one
 unordered tuple -- at a time, oldest record first, so the order of arrival changes nothing and a second
 derivation writes nothing. A record is decided only once the filter log has been read past its start
-plus `netflow_join_tolerance_seconds` (3 by default); until then it is `pending`. Its candidates
+plus the netflow plugin's `join_tolerance_seconds` (stored as `netflow_join_tolerance_seconds`, 3 by default); until then it is `pending`. Its candidates
 (rules 1 and 2) are legs of its version and protocol (by IANA number, survey S4a) whose addresses -- as
 values -- and ports are the record's (**forward**) or swapped (**reverse**), ICMP, ICMPv6 and ports 0
 comparing the addresses alone, and **never a second leg**:
@@ -3160,7 +3172,7 @@ number, or opens one. A `netflow_sequence_gap` is asserted only when more counte
 configuration in force reports exporting interfaces; with that number unknown, no loss is asserted and
 `loss_detectable` is 0.
 
-**Retention:** `flow_record` at `retention_flow_record_seconds` (0 follows `retention_seconds`), by
+**Retention:** `flow_record` at `netflow_retention_flow_record_seconds` (0 follows `retention_seconds`), by
 chunk then row; every configuration run but the newest with it; the measured volume with its
 connection; the unmatched family's slots at the flows' horizon. **Indexes:** the pending records by
 provider, the records of a group (`tuple_key`, `start_at`), the records joined to a leg, the copies of

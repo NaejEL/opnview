@@ -121,6 +121,10 @@ type Contract struct {
 	// OwnCadence says each provider of the kind states its own cadence in its manifest, since no
 	// surveyed cadence exists for its sources.
 	OwnCadence bool `json:"own_cadence,omitempty"`
+	// NamesHosts says the kind's records can name a host the resolver's query report logged as a client,
+	// so the unresolved host-name lookups wait for a read of it when it is in use
+	// (internal/collect/core/hostnamesources.go).
+	NamesHosts bool `json:"names_hosts,omitempty"`
 	// PushRecord names the record table a push entry delivering the kind fills, exactly when Push is set.
 	PushRecord string `json:"push_record,omitempty"`
 	// LiveAnswer names the answer table a live pass of the kind returns, when the kind accepts a live pass
@@ -129,6 +133,17 @@ type Contract struct {
 	// Registered are registry rows the kind's declaration writes itself, for an implementation no
 	// plugin declares: a core-only kind's historical provider.
 	Registered []RegisteredProvider `json:"registered,omitempty"`
+	// Cadences are the intervals the core runs the kind's passes at, each a setting an installation
+	// may override, with the default and the reason for it (cadences.go). A kind whose providers state
+	// their own cadence, or that nothing collects, has none.
+	Cadences []Cadence `json:"cadences,omitempty"`
+	// PageSize is the setting sizing the kind's paged read, when its page is the operator's to set.
+	PageSize *PageSize `json:"page_size,omitempty"`
+	// Sizing says how the collection surface measures the kind's read, when it sizes it.
+	Sizing *Sizing `json:"sizing,omitempty"`
+	// Collection places a kind polled and not sized on the collection surface: after the first of
+	// After whose card is drawn.
+	Collection *CollectionPlacement `json:"collection,omitempty"`
 	// Functions are what an implementation's script exports under the kind's name.
 	Functions []Function `json:"functions,omitempty"`
 	// Values are the plain values the script may export beside the functions, as fields.
@@ -141,6 +156,21 @@ type Contract struct {
 type RegisteredProvider struct {
 	Key         string `json:"key"`
 	DisplayName string `json:"display_name"`
+}
+
+// EnablePage is an OPNsense page that turns a provider on: what the Sources surface links beside a
+// provider found installed but not collecting, with the statement that opnview never makes the change. A
+// plugin's provider declares its own in its manifest (internal/plugin/contract).
+type EnablePage struct {
+	// Path is the page's path on the firewall, as the menu definition gives it; the link is the firewall
+	// base URL the operator entered followed by it. The host is never written here.
+	Path string `json:"path"`
+	// Label is the catalogue key naming the page by its OPNsense menu entry.
+	Label string `json:"label"`
+	// MenuURL is the menu definition at the OPNsense version the survey pins that establishes the path.
+	MenuURL string `json:"menu_url"`
+	// Note says which setting of the page turns the provider on.
+	Note string `json:"note,omitempty"`
 }
 
 // Record returns one of the contract's record tables by name.

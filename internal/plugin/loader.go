@@ -94,6 +94,8 @@ type Options struct {
 
 	// pushes is what the load's push entries share, set by Load.
 	pushes *pushHost
+	// catalogue is the data catalogue the load's scripts read, set by Load.
+	catalogue *catalogueHolder
 }
 
 // Plugin is one loaded plugin, as the listing reports it.
@@ -128,7 +130,7 @@ type Plugin struct {
 	script   *scripthost.Script
 	// implementations are the plugin's providers, by kind, as their tests call them (harnesscalls.go).
 	implementations map[string]provider.Implementation
-	Endpoints map[string]opnsense.Endpoint
+	Endpoints       map[string]opnsense.Endpoint
 	// Routes are each endpoint's routes by OPNsense version (versions.go).
 	Routes    map[string][]scripthost.Route
 	OwnTables []plugindecl.PluginTable
@@ -141,6 +143,8 @@ type Plugin struct {
 	// pushes are its push entries (push.go), and pushHost the hub they are routed by once one runs.
 	pushes   []*pushBinding
 	pushHost *pushHost
+	// declaredDatasets are the datasets its scripts may read (datasetaccess.go).
+	declaredDatasets DeclaredDatasets
 }
 
 // ProviderInfo is one provider a plugin declares.
@@ -270,11 +274,31 @@ func (p *Plugin) Call(ctx context.Context, session provider.Session, namespace, 
 // cannot be listed at all; a plugin it refuses is reported in Refusals, and the set's failures
 // carry a refused built-in.
 func Load(ctx context.Context, options Options) (*Loaded, error) {
+	loaded, err := load(ctx, options)
+	if err != nil || options.Store == nil {
+		return loaded, err
+	}
+	// THE DECLARATIONS WRITE THE REGISTRY (PA2 of the plugin-API amendment): the DDL seeds no kind and no
+	// provider, so loading for a store writes every kind's attribute and every provider's row.
+	kinds, providers := provider.SetDeclarations(loaded.Set)
+	if err := options.Store.RegisterProviderDeclarations(ctx, kinds, providers, time.Now().Unix()); err != nil {
+		return nil, fmt.Errorf("plugin: registering the declarations: %w", err)
+	}
+	values, implementations := provider.SetValues(loaded.Set)
+	if err := options.Store.RecordProviderValues(ctx, values, implementations, time.Now().Unix()); err != nil {
+		return nil, fmt.Errorf("plugin: recording the providers' values: %w", err)
+	}
+	return loaded, nil
+}
+
+// load reads the plugins and builds the set, writing nothing of the registry.
+func load(ctx context.Context, options Options) (*Loaded, error) {
 	loaded := &Loaded{Set: provider.NewSet(), push: &pushHost{}}
 	if err := provider.KindsError(); err != nil {
 		loaded.Set.NoteFailure(fmt.Errorf("the core kind files: %w", err))
 	}
 	options.pushes = loaded.push
+	options.catalogue = &catalogueHolder{loaded: loaded}
 	builtins := options.Builtins
 	if builtins == nil {
 		builtins = opnview.BuiltinPlugins()
@@ -377,6 +401,12 @@ func LoadOne(ctx context.Context, set *provider.Set, directory fs.FS, name, orig
 		return nil, refusal
 	}
 	if refusal := checkDestinations(manifest); refusal != nil {
+		return nil, refusal
+	}
+	if refusal := checkEnablePages(manifest); refusal != nil {
+		return nil, refusal
+	}
+	if plugin.declaredDatasets, refusal = checkDatasets(manifest, directory); refusal != nil {
 		return nil, refusal
 	}
 	if refusal := loadScript(plugin, directory, options.CallTimeout); refusal != nil {
@@ -770,6 +800,12 @@ func checkProviders(set *provider.Set, plugin *Plugin) ([]checkedProvider, *cont
 			return nil, contract.Refuse(plugin.Name, contract.RefusalScriptMissingFunction, "the %s provider's exported values: %v",
 				declaration.Kind, err)
 		}
+		for name, source := range declaration.ValueSources {
+			if _, exported := values[name]; !exported || strings.TrimSpace(source.Source) == "" {
+				return nil, contract.Refuse(plugin.Name, contract.RefusalManifestInvalid, "the %s provider cites the value %q, "+
+					"which it does not export, or cites it with no source", declaration.Kind, name)
+			}
+		}
 		registration := provider.Registration{Kind: declaration.Kind, Key: key, DisplayName: declaration.DisplayName,
 			Plugin: plugin.Name, Cadence: cadenceOf(declaration),
 			MinCadence: time.Duration(declaration.MinCadenceSeconds) * time.Second,
@@ -835,7 +871,9 @@ func checkExports(plugin string, exports map[string]map[string]string, kind stri
 		}
 	}
 	for _, value := range kindContract.Values {
-		if members[value.Name] != "value" {
+		// An optional value -- pf's state timeouts on the firewall_log contract -- may be left out: the core then
+		// publishes none for the provider, and what reads it says what it does without one.
+		if value.Required && members[value.Name] != "value" {
 			return contract.Refuse(plugin, contract.RefusalScriptMissingFunction, "the script does not export the value %s.%s",
 				kind, value.Name)
 		}
@@ -872,7 +910,7 @@ func loadWidgets(plugin *Plugin, directory fs.FS, location, onDisk, origin strin
 		}
 		plugin.WidgetDirectories = append(plugin.WidgetDirectories, where)
 		plugin.Widgets = append(plugin.Widgets, widget.Source{Plugin: plugin.Name, Type: name,
-			Builtin: origin == OriginBuiltin, Location: where, Files: files})
+			Builtin: origin == OriginBuiltin, Location: where, Files: files, Datasets: plugin.Manifest.Datasets})
 	}
 	return nil
 }
@@ -881,8 +919,12 @@ func loadWidgets(plugin *Plugin, directory fs.FS, location, onDisk, origin strin
 // built-ins' first, each plugin's in its manifest's order.
 func (l *Loaded) WidgetSources() []widget.Source {
 	sources := []widget.Source{}
+	bindable := l.Set.BindableKinds()
 	for _, plugin := range l.Members {
-		sources = append(sources, plugin.Widgets...)
+		for _, source := range plugin.Widgets {
+			source.BindableKinds = bindable
+			sources = append(sources, source)
+		}
 	}
 	return sources
 }
@@ -967,6 +1009,7 @@ func checkDestinations(manifest contract.Manifest) *contract.Refusal {
 // loaded with.
 func (p *Plugin) extensions(options Options) *scripthost.Extensions {
 	extra := &scripthost.Extensions{}
+	extra.Datasets = p.datasetAccess(options)
 	settingStore := options.Settings
 	if settingStore == nil && options.Store != nil {
 		settingStore = options.Store

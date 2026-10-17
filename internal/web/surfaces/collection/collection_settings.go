@@ -2,6 +2,8 @@ package collection
 
 import (
 	"context"
+	_ "embed"
+	"encoding/json"
 	"math"
 	"net/http"
 	"strconv"
@@ -12,6 +14,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/web/settingfields"
 
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 )
 
@@ -120,21 +123,21 @@ type settingCardSpec struct {
 // settingCardSpecs are the settings cards, in the order their anchors are tried.
 func settingCardSpecs() []settingCardSpec {
 	return []settingCardSpec{
-		{ID: "pairing", LabelKey: msgCardPairing, After: []string{"firewall_log"},
+		{ID: "pairing", LabelKey: msgCardPairing, After: settingCardAfter["pairing"],
 			Settings: []settingSpec{{
 				Key: config.KeyLegPairingWindow, LabelKey: msgLabelPairingWindow,
 				Rule: ruleNonNegative, Duration: true, RangeRefusal: true,
 				RefusalKey: msgValueOutOfRange,
 				inForce:    func(c config.Config) int64 { return c.LegPairingWindowSeconds },
 			}}},
-		{ID: "lease_backends", LabelKey: msgCardLeaseBackends, After: []string{"dhcp_lease"},
+		{ID: "lease_backends", LabelKey: msgCardLeaseBackends, After: settingCardAfter["lease_backends"],
 			Settings: []settingSpec{{
 				Key: config.KeyLeaseBackendFailurePassLimit, LabelKey: msgLabelLeaseFailureLimit,
 				Rule: rulePositive, RefusalKey: msgCollectionValueInvalid,
 				inForce: func(c config.Config) int64 { return c.LeaseBackendFailurePassLimit },
 			}}},
 		{ID: "attribution", LabelKey: msgCardAttribution,
-			After: []string{"resolver_local_data", "resolver_cache", "dns_lookup"},
+			After: settingCardAfter["attribution"],
 			Settings: []settingSpec{
 				{Key: config.KeyAttributionMaxDelay, LabelKey: msgLabelAttributionDelay,
 					Rule: rulePositive, Duration: true, RefusalKey: msgCollectionValueInvalid,
@@ -161,24 +164,43 @@ type polledKind struct {
 	Kind string
 	// IntervalKey is the setting row holding its interval.
 	IntervalKey string
-	// interval reads the interval in force.
-	interval func(config.Config) time.Duration
 	// After are the cards it follows.
 	After []string
 }
 
-// polledKinds are the kinds polled and not sized. A kind is drawn only when the
-// provider table holds it, and its implementations are read from that table.
-func polledKinds() []polledKind {
-	return []polledKind{
-		{Kind: "resolver_cache", IntervalKey: config.KeyResolverCacheInterval,
-			interval: func(c config.Config) time.Duration { return c.ResolverCacheInterval },
-			After:    []string{"dns_lookup"}},
-		{Kind: "resolver_local_data", IntervalKey: config.KeyResolverLocalDataInterval,
-			interval: func(c config.Config) time.Duration { return c.ResolverLocalDataInterval },
-			After:    []string{"resolver_cache", "dns_lookup"}},
-	}
+// interval reads the kind's interval in force.
+func (k polledKind) interval(settings config.Config) time.Duration {
+	return settings.Interval(k.Kind, provider.CadencePoll)
 }
+
+// polledKinds are the kinds polled and not sized: every core kind whose file places its card after
+// another (internal/collect/provider/kinds). A kind is drawn only when the provider table holds it, and
+// its implementations are read from that table.
+func polledKinds() []polledKind {
+	var polled []polledKind
+	for _, contract := range provider.PolledKinds() {
+		cadence, _ := contract.CadenceOf(provider.CadencePoll)
+		polled = append(polled, polledKind{Kind: contract.Kind, IntervalKey: cadence.Setting,
+			After: append([]string(nil), contract.Collection.After...)})
+	}
+	return polled
+}
+
+// placement is where each settings card sits (placement.json).
+//
+//go:embed placement.json
+var placementFile []byte
+
+// settingCardAfter are the cards each settings card follows, read from placement.json once.
+var settingCardAfter = func() map[string][]string {
+	var placement struct {
+		Comment string              `json:"comment"`
+		After   map[string][]string `json:"after"`
+	}
+	// A file that does not decode places every card last; TestEverySettingsCardIsPlacedByData fails on it.
+	_ = json.Unmarshal(placementFile, &placement)
+	return placement.After
+}()
 
 // settingsCard is a card on the collection surface that is not a sized kind's: a
 // polled kind's, or a group of settings.

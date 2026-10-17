@@ -1,0 +1,17 @@
+{
+  "nature": "sample",
+  "freshness": {"kind": "discovery"},
+  "columns": [
+    {"name": "identifier", "type": "text"},
+    {"name": "device", "type": "text"},
+    {"name": "description", "type": "text"},
+    {"name": "link_type", "type": "text"},
+    {"name": "link_kind", "type": "text"},
+    {"name": "vlan_tag", "type": "integer", "nullable": true},
+    {"name": "is_upstream", "type": "integer"},
+    {"name": "status", "type": "text", "nullable": true},
+    {"name": "enabled", "type": "text", "nullable": true},
+    {"name": "first_seen_at", "type": "integer"},
+    {"name": "last_seen_at", "type": "integer"}
+  ]
+}

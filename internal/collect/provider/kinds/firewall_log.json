@@ -5,6 +5,28 @@
   "push" : true,
   "push_record" : "firewall_log_record",
   "bindable" : true,
+  "cadences" : [
+    {
+      "role" : "poll",
+      "setting" : "poll_interval_firewall_log_seconds",
+      "default_seconds" : 10,
+      "basis" : "Survey, data source 1, \"Sustainable polling frequency\": each poll is bounded by `limit`, so its cost is small, and the risk runs the other way -- a busy ruleset can produce more than `limit` lines between two polls and the API offers no way to recover a gap. The verified section adds the measurement that makes it safe: the log runs at a few lines per second on an ordinary home network, so 10 s at a generous limit leaves an order of magnitude of headroom, and it must be measured per installation rather than assumed."
+    }
+  ],
+  "page_size" : {
+    "setting" : "page_size_firewall_log",
+    "default" : 500,
+    "basis" : "500 is the figure the collectors carried as a constant before the page became a setting, and nothing more: a documented starting point, not a measurement and not a survey figure. What an installation needs depends on how fast its sources write, which only that installation can measure: the collection surface measures it and suggests a pair. The default is within what the firewall serves for this read, so a database with no row never asks for a page the firewall would cut short."
+  },
+  "sizing" : {
+    "order" : 1,
+    "table" : "flow",
+    "source_column" : "observed_at",
+    "ingested_column" : "ingested_at",
+    "page_ceiling" : 1000,
+    "survey_heading" : "Data source 1 — Filter logs",
+    "basis" : "The filter log's `limit`: the default is 1000, and `limit=0` is silently coerced back to 1000. A request for more is not refused; it is answered with 1000 lines, so a page size above the ceiling is accepted by the setting and reported on the collection surface, and never suggested."
+  },
   "functions" : [
     {
       "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",
@@ -184,6 +206,57 @@
           "type" : "integer"
         }
       ]
+    }
+  ],
+  "values" : [
+    {
+      "description" : "pf's timeout of a TCP state after its first packet (pf.conf `tcp.first`): how long a connection that never left its first packet stays idle and keeps its state.",
+      "name" : "state_timeout_tcp_first_seconds",
+      "type" : "integer",
+      "min" : 1,
+      "unit" : "seconds"
+    },
+    {
+      "description" : "pf's timeout of an established TCP state (pf.conf `tcp.established`).",
+      "name" : "state_timeout_tcp_established_seconds",
+      "type" : "integer",
+      "min" : 1,
+      "unit" : "seconds"
+    },
+    {
+      "description" : "pf's timeout of a TCP state once a FIN was sent (pf.conf `tcp.closing`).",
+      "name" : "state_timeout_tcp_closing_seconds",
+      "type" : "integer",
+      "min" : 1,
+      "unit" : "seconds"
+    },
+    {
+      "description" : "pf's timeout of a TCP state once an RST was sent (pf.conf `tcp.closed`).",
+      "name" : "state_timeout_tcp_closed_seconds",
+      "type" : "integer",
+      "min" : 1,
+      "unit" : "seconds"
+    },
+    {
+      "description" : "pf's timeout of a UDP state with packets both ways (pf.conf `udp.multiple`).",
+      "name" : "state_timeout_udp_multiple_seconds",
+      "type" : "integer",
+      "min" : 1,
+      "unit" : "seconds"
+    },
+    {
+      "description" : "pf's timeout of an ICMP state after its first packet (pf.conf `icmp.first`).",
+      "name" : "state_timeout_icmp_first_seconds",
+      "type" : "integer",
+      "min" : 1,
+      "unit" : "seconds"
+    },
+    {
+      "description" : "pf's timeout of a state of any other protocol with packets both ways (pf.conf `other.multiple`).",
+      "name" : "state_timeout_other_multiple_seconds",
+      "type" : "integer",
+      "min" : 1,
+      "unit" : "seconds"
     }
   ]
 }

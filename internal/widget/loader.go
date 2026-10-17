@@ -104,7 +104,8 @@ func checkDeclarative(ctx context.Context, database *store.Store, manifest param
 
 // loadOperatorWidgets reads <dir>/<type>/ for every directory. existing holds the types
 // already served, which an operator widget may not shadow.
-func loadOperatorWidgets(ctx context.Context, database *store.Store, dir string, existing map[string]request.Preset) (
+func loadOperatorWidgets(ctx context.Context, database *store.Store, dir string, existing map[string]request.Preset,
+	bindable []string) (
 	[]request.Preset, []params.Refusal) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -124,7 +125,8 @@ func loadOperatorWidgets(ctx context.Context, database *store.Store, dir string,
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
-		preset, refusal := loadOperatorWidget(ctx, database, filepath.Join(dir, entry.Name()), entry.Name(), existing, claimed)
+		preset, refusal := loadOperatorWidget(ctx, database, filepath.Join(dir, entry.Name()), entry.Name(), existing, claimed,
+			bindable)
 		if refusal != nil {
 			refusals = append(refusals, *refusal)
 			continue
@@ -138,7 +140,7 @@ func loadOperatorWidgets(ctx context.Context, database *store.Store, dir string,
 
 // loadOperatorWidget validates one operator directory and registers its query.
 func loadOperatorWidget(ctx context.Context, database *store.Store, directory, name string,
-	existing map[string]request.Preset, claimed map[string]bool) (request.Preset, *params.Refusal) {
+	existing map[string]request.Preset, claimed map[string]bool, bindable []string) (request.Preset, *params.Refusal) {
 	raw, err := os.ReadFile(filepath.Join(directory, manifestFile))
 	if err != nil {
 		return request.Preset{}, params.Refuse(name, params.RefusalManifestUnreadable, "%s cannot be read: %v", manifestFile, err)
@@ -147,7 +149,7 @@ func loadOperatorWidget(ctx context.Context, database *store.Store, directory, n
 	if err != nil {
 		return request.Preset{}, params.Refuse(name, params.RefusalManifestInvalid, "%s is not a valid manifest: %v", manifestFile, err)
 	}
-	if refusal := params.ValidateManifest(manifest); refusal != nil {
+	if refusal := params.ValidateManifestWith(manifest, bindable); refusal != nil {
 		refusal.Type = name
 		return request.Preset{}, refusal
 	}

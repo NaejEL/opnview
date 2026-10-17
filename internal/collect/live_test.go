@@ -211,7 +211,7 @@ func TestLiveEndpointsVerifiedAFailedLivePassYieldsAClosedOutcome(t *testing.T) 
 	harness.Fake.Answer(collecttest.TrafficTop, http.StatusInternalServerError, []byte(`{}`))
 	interest.Renew(harness.Clock.Now())
 	_ = harness.Collector.CollectLive(ctx)
-	state, _, _ := harness.AvailabilityOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
+	state, _, _ := harness.AvailabilityOf(t, "measurement_sample", collecttest.ProviderInsight)
 	if state != vocab.StateUnavailable {
 		t.Errorf("a live pass the firewall did not answer left the provider %q", state)
 	}

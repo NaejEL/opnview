@@ -76,6 +76,9 @@ func ReadKinds(fsys fs.FS) ([]Contract, []Record, error) {
 		contracts = append(contracts, contract)
 	}
 	sort.Slice(contracts, func(i, j int) bool { return contracts[i].Kind < contracts[j].Kind })
+	if problem := checkSettingsAcross(contracts); problem != "" {
+		return nil, nil, fmt.Errorf("provider: the kind files: %s", problem)
+	}
 	return contracts, sharedFile.Records, nil
 }
 
@@ -90,6 +93,9 @@ func decodeStrictly(raw []byte, target any) error {
 func checkContract(contract Contract, sharedRecords []Record) string {
 	if !TermShapeValid(contract.Kind) || strings.TrimSpace(contract.Description) == "" {
 		return "the kind needs a lower-case name and a description"
+	}
+	if problem := checkSettings(contract); problem != "" {
+		return problem
 	}
 	if contract.CoreOnly != "" {
 		if len(contract.Functions) > 0 || len(contract.Records) > 0 || contract.Push {

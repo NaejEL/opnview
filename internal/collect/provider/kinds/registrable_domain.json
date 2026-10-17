@@ -4,6 +4,14 @@
   "concurrent" : false,
   "push" : false,
   "bindable" : true,
+  "cadences" : [
+    {
+      "role" : "refresh",
+      "setting" : "refresh_interval_public_suffix_list_seconds",
+      "default_seconds" : 86400,
+      "basis" : "publicsuffix.org asks that an application download the list \"no more than once per day\" (publicsuffix.org/list/), and a check that finds the list unchanged costs a conditional request answered 304 with no body."
+    }
+  ],
   "service" : true,
   "functions" : [
     {

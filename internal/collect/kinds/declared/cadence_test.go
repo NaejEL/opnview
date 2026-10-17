@@ -9,7 +9,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/pluginkind"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 )
 
 // TestADeclaredCadenceIsOverriddenNeverBelowItsBound is A3's scheduling rule for a provider
@@ -20,7 +20,7 @@ import (
 func TestADeclaredCadenceIsOverriddenNeverBelowItsBound(t *testing.T) {
 	database := collecttest.NewTestStore(t)
 	collector := collect.NewWithSources(nil, database, core.SystemClock{}, nil)
-	key := pluginkind.CadenceSettingKey("example_inventory", "example_inventory", "example_inventory")
+	key := provider.CadenceSettingKey("example_inventory", "example_inventory", "example_inventory")
 	interval := collector.OverriddenCadence(key, 10*time.Minute, 2*time.Minute)
 	ctx := context.Background()
 	for _, step := range []struct {

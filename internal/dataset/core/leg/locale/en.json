@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "dataset.leg": "Logged connection legs: every filter-log record, the second leg of a paired connection included, with its pair outcome, pf's direction, its interface and the tuple pf logged"
+  }
+}

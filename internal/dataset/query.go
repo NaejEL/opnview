@@ -189,6 +189,9 @@ type Query struct {
 	alignment     string
 	// values are the filters' values as bound, by filter.
 	values [][]any
+	// maxFilterValues bounds an in or not_in filter's list: MaxFilterValues for a catalogue query, MaxScriptValues
+	// for a script's read (ParseScriptFilters); zero is MaxFilterValues.
+	maxFilterValues int
 }
 
 // Effective is the query as it was applied, for the response's parameters.
@@ -534,7 +537,11 @@ func (q *Query) parseFilters(raw json.RawMessage, declaration Declaration) *Refu
 			if !present || json.Unmarshal(value, &list) != nil || len(list) == 0 {
 				return refuse(RefusalValueTypeMismatch, path+".value")
 			}
-			if len(list) > MaxFilterValues {
+			limit := MaxFilterValues
+			if q.maxFilterValues > 0 {
+				limit = q.maxFilterValues
+			}
+			if len(list) > limit {
 				return refuse(RefusalTooManyRows, path+".value")
 			}
 			for _, member := range list {

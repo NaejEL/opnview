@@ -14,7 +14,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -103,7 +102,7 @@ func TestADumpOfEveryRRTypeStoresOnlyAAAAAAndCNAME(t *testing.T) {
 				WHERE owner_name LIKE '%text.example.com'`); text != 0 {
 				t.Error("a TXT record whose class field read A was stored: `type` was read as the record type")
 			}
-			detail := harness.DetailOf(t, core.KindResolverCache, collecttest.ProviderUnbound)
+			detail := harness.DetailOf(t, "resolver_cache", collecttest.ProviderUnbound)
 			references := 0
 			for _, row := range template {
 				if row["ttl"] == nil {
@@ -121,7 +120,7 @@ func TestADumpOfEveryRRTypeStoresOnlyAAAAAAndCNAME(t *testing.T) {
 					t.Errorf("the detail %q does not say %q", detail, want)
 				}
 			}
-			if state, _, _ := harness.AvailabilityOf(t, core.KindResolverCache, collecttest.ProviderUnbound); state != vocab.StateReachable {
+			if state, _, _ := harness.AvailabilityOf(t, "resolver_cache", collecttest.ProviderUnbound); state != vocab.StateReachable {
 				t.Errorf("a cache read that answered is %q", state)
 			}
 		})
@@ -176,7 +175,7 @@ func TestMessageCacheReferencesAreNamedForWhatTheyAreAndNotCountedAsABadTTL(t *t
 				WHERE rrtype IN ('A', 'AAAA') AND covered_until_at = last_seen_at`); zero != 2 {
 				t.Errorf("%d address records were stored with their ttl of 0, not 2", zero)
 			}
-			detail := harness.DetailOf(t, core.KindResolverCache, collecttest.ProviderUnbound)
+			detail := harness.DetailOf(t, "resolver_cache", collecttest.ProviderUnbound)
 			for _, want := range []string{
 				"read 12 records",
 				fmt.Sprintf("skipped %d message-cache references: lines of the dump's message-cache section",
@@ -219,8 +218,8 @@ func TestEachRecordReadAbsenceHasItsOwnWordingAndStoresNothing(t *testing.T) {
 		kind     string
 		collect  func(*collect.Collector, context.Context) error
 	}{
-		{collecttest.UnboundDumpCache, core.KindResolverCache, (*collect.Collector).CollectResolverCache},
-		{collecttest.UnboundListLocalData, core.KindResolverLocalData, (*collect.Collector).CollectResolverLocalData},
+		{collecttest.UnboundDumpCache, "resolver_cache", (*collect.Collector).CollectResolverCache},
+		{collecttest.UnboundListLocalData, "resolver_local_data", (*collect.Collector).CollectResolverLocalData},
 	} {
 		t.Run(endpoint.kind, func(t *testing.T) {
 			t.Parallel()
@@ -282,8 +281,8 @@ func TestDnsmasqReportsItsNamedNoReadStates(t *testing.T) {
 		kind, want string
 		collect    func(context.Context) error
 	}{
-		{core.KindResolverCache, "this resolver offers no cache read through the API", harness.Collector.CollectResolverCache},
-		{core.KindResolverLocalData, "this resolver offers no local-data read through the API", harness.Collector.CollectResolverLocalData},
+		{"resolver_cache", "this resolver offers no cache read through the API", harness.Collector.CollectResolverCache},
+		{"resolver_local_data", "this resolver offers no local-data read through the API", harness.Collector.CollectResolverLocalData},
 	} {
 		if detail := harness.DetailOf(t, kind.kind, collecttest.ProviderDnsmasq); !strings.Contains(detail, kind.want) {
 			t.Errorf("after the probe round the %s Dnsmasq detail is %q", kind.kind, detail)
@@ -310,7 +309,7 @@ func TestTheCacheAndTheQueryReportKeepTheirOwnAvailability(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.ArrangeRecordCollection(t)
 	ctx := context.Background()
-	if err := harness.Collector.ProbeDNSLookup(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "dns_lookup"); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
 	answerLookups(harness.Fake, lookupRow("198.51.100.10", "example-site.example.invalid", collecttest.ReferenceEpoch()-30))
@@ -319,10 +318,10 @@ func TestTheCacheAndTheQueryReportKeepTheirOwnAvailability(t *testing.T) {
 	}
 	harness.Fake.Answer(collecttest.UnboundDumpCache, http.StatusForbidden, []byte(`{}`))
 	_ = harness.Collector.CollectResolverCache(ctx)
-	if state, _, _ := harness.AvailabilityOf(t, core.KindDNSLookup, collecttest.ProviderUnbound); state != vocab.StateReachable {
+	if state, _, _ := harness.AvailabilityOf(t, "dns_lookup", collecttest.ProviderUnbound); state != vocab.StateReachable {
 		t.Errorf("a refused cache read moved the query report to %q", state)
 	}
-	if state, _, _ := harness.AvailabilityOf(t, core.KindResolverCache, collecttest.ProviderUnbound); state != vocab.StateUnavailable {
+	if state, _, _ := harness.AvailabilityOf(t, "resolver_cache", collecttest.ProviderUnbound); state != vocab.StateUnavailable {
 		t.Errorf("the refused cache read is %q", state)
 	}
 
@@ -332,10 +331,10 @@ func TestTheCacheAndTheQueryReportKeepTheirOwnAvailability(t *testing.T) {
 	}
 	harness.Fake.Answer(collecttest.SearchQueries, http.StatusInternalServerError, []byte(`{}`))
 	_ = harness.Collector.CollectDNSLookup(ctx)
-	if state, _, _ := harness.AvailabilityOf(t, core.KindResolverCache, collecttest.ProviderUnbound); state != vocab.StateReachable {
+	if state, _, _ := harness.AvailabilityOf(t, "resolver_cache", collecttest.ProviderUnbound); state != vocab.StateReachable {
 		t.Errorf("a failed query report moved the cache to %q", state)
 	}
-	if state, _, _ := harness.AvailabilityOf(t, core.KindDNSLookup, collecttest.ProviderUnbound); state != vocab.StateUnavailable {
+	if state, _, _ := harness.AvailabilityOf(t, "dns_lookup", collecttest.ProviderUnbound); state != vocab.StateUnavailable {
 		t.Errorf("the failed query report is %q", state)
 	}
 }
@@ -347,11 +346,11 @@ func TestACacheReadNamesAFlowThatThreeLookupsCouldNot(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.ArrangeRecordCollection(t)
 	ctx := context.Background()
-	if err := harness.Collector.ProbeDNSLookup(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "dns_lookup"); err != nil {
 		t.Fatalf("probing the resolver: %v", err)
 	}
 	harness.Fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
-	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "firewall_log"); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
 	answerLookups(harness.Fake)
@@ -470,7 +469,7 @@ func TestAnUnknownHostNameIsResolvedByLocalDataThatArrivesLater(t *testing.T) {
 			t.Parallel()
 			harness := collecttest.ArrangeRecordCollection(t)
 			ctx := context.Background()
-			if err := harness.Collector.ProbeDNSLookup(ctx); err != nil {
+			if err := harness.Collector.ProbeKind(ctx, "dns_lookup"); err != nil {
 				t.Fatalf("probing the resolver: %v", err)
 			}
 			hostname := "example-host.example.test"
@@ -523,7 +522,7 @@ func TestALeasePassWaitsForTheLocalDataBeforeExaminingALookup(t *testing.T) {
 	ctx := context.Background()
 	harness.Fake.AnswerFixture(collecttest.UnboundStatus, "unbound_status_running.json")
 	harness.Fake.AnswerFixture(collecttest.UnboundSettings, "unbound_settings.json")
-	if err := harness.Collector.ProbeResolverLocalData(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "resolver_local_data"); err != nil {
 		t.Fatalf("probing the local data: %v", err)
 	}
 	// The local data's first poll ever, before the lookup: it vouches for no instant
@@ -665,7 +664,7 @@ func TestEachProcessorAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 			if got := processorReadings(t, harness.Store); len(got) != 0 {
 				t.Errorf("an absence wrote the readings %v", got)
 			}
-			detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
+			detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight)
 			if !strings.Contains(detail, testCase.want) {
 				t.Errorf("the detail %q does not say %q", detail, testCase.want)
 			}
@@ -773,7 +772,7 @@ func TestLocalDataPTRRecordsMapTheirReverseNameToAnAddressAndTheirTargetToAHost(
 		WHERE value LIKE 'malformed-%' OR owner_name = 'host-b.example.test'`); bad != 0 {
 		t.Errorf("%d PTR records whose owner encodes no address were stored", bad)
 	}
-	detail := harness.DetailOf(t, core.KindResolverLocalData, collecttest.ProviderUnbound)
+	detail := harness.DetailOf(t, "resolver_local_data", collecttest.ProviderUnbound)
 	for _, wantDetail := range []string{
 		fmt.Sprintf("read %d records of the local data", len(rows)),
 		fmt.Sprintf("PTR %d", 2+len(malformed)), "TXT 1", "A 1", "AAAA 1",

@@ -10,9 +10,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/firewalllog"
-	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/push"
 )
@@ -43,12 +41,12 @@ func (l line) pulledRow(offset int) map[string]any {
 }
 
 // pushedRecord is the same line as the push path delivers it, under its namespaced identity.
-func (l line) pushedRecord() firewalllog.Record {
+func (l line) pushedRecord() provider.Answer {
 	sum := sha256.Sum256([]byte(fmt.Sprintf("pushed %d", l.port())))
-	source, destination := l.port(), int64(443)
-	return firewalllog.Record{Digest: filterlog.PushedDigestPrefix + hex.EncodeToString(sum[:]), ObservedAt: lineSecond(l.second),
-		Device: "exdev0", SrcAddress: "198.51.100.10", DstAddress: "203.0.113.20", SrcPort: &source,
-		DstPort: &destination, Protocol: "tcp", IPVersion: 4, Action: "pass", Direction: "in", PacketBytes: 100}
+	return provider.Answer{"digest": provider.PushedDigestPrefix + hex.EncodeToString(sum[:]),
+		"observed_at": lineSecond(l.second), "device": "exdev0", "src_address": "198.51.100.10",
+		"dst_address": "203.0.113.20", "src_port": l.port(), "dst_port": int64(443), "protocol": "tcp",
+		"ip_version": int64(4), "action": "pass", "direction": "in", "packet_bytes": int64(100)}
 }
 
 func lines(from, to int) []line {
@@ -73,11 +71,11 @@ func answerPage(h *collecttest.ProbeHarness, from, to int) {
 
 func deliverPushed(t *testing.T, h *collecttest.ProbeHarness, series []line) {
 	t.Helper()
-	var records []firewalllog.Record
+	var records []provider.Answer
 	for _, l := range series {
 		records = append(records, l.pushedRecord())
 	}
-	if err := h.Collector.ReceivePushedFirewallLog(context.Background(), collecttest.ProviderPf, records); err != nil {
+	if err := h.Collector.ReceivePushed(context.Background(), "firewall_log", collecttest.ProviderPf, records); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -103,7 +101,7 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 	collectPage(t, h)
 
 	// The push source becomes alive; its lines from second 15 overlap what polling read.
-	if err := h.Collector.PushLiveness(ctx, core.KindFirewallLog, collecttest.ProviderPf, true, lineSecond(15)); err != nil {
+	if err := h.Collector.PushLiveness(ctx, "firewall_log", collecttest.ProviderPf, true, lineSecond(15)); err != nil {
 		t.Fatal(err)
 	}
 	deliverPushed(t, h, lines(15, 30))
@@ -122,7 +120,7 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 	deliverPushed(t, h, []line{{10, 0}})
 
 	// The push source stops; polling resumes and reads back over the boundary, second 40.
-	if err := h.Collector.PushLiveness(ctx, core.KindFirewallLog, collecttest.ProviderPf, false, lineSecond(40)); err != nil {
+	if err := h.Collector.PushLiveness(ctx, "firewall_log", collecttest.ProviderPf, false, lineSecond(40)); err != nil {
 		t.Fatal(err)
 	}
 	answerPage(h, 30, 50)
@@ -148,7 +146,7 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 		t.Errorf("%d flows stored for 102 lines", total)
 	}
 	// The periods never overlap and cover the series with no hole.
-	providerID, err := h.Store.ProviderID(ctx, core.KindFirewallLog, collecttest.ProviderPf)
+	providerID, err := h.Store.ProviderID(ctx, "firewall_log", collecttest.ProviderPf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +159,7 @@ func TestNothingIsCountedTwiceAcrossAHandover(t *testing.T) {
 		periods[2].Path != push.PathPull || periods[2].FromAt != lineSecond(41) || periods[2].ToAt != nil {
 		t.Errorf("periods %+v", periods)
 	}
-	state, _ := h.Collector.PushPathOf(core.KindFirewallLog, collecttest.ProviderPf)
+	state, _ := h.Collector.PushPathOf("firewall_log", collecttest.ProviderPf)
 	// Superseded: pushed 15-24 (20) and the late pushed line (1); pulled 30-40 after the handover
 	// back (22).
 	if state.Superseded != 43 {
@@ -187,19 +185,19 @@ func TestAPullGapIsClippedByThePushPeriod(t *testing.T) {
 	}
 	answerPage(h, 0, 10)
 	collectPage(t, h)
-	if err := h.Collector.PushLiveness(ctx, core.KindFirewallLog, collecttest.ProviderPf, true, lineSecond(5)); err != nil {
+	if err := h.Collector.PushLiveness(ctx, "firewall_log", collecttest.ProviderPf, true, lineSecond(5)); err != nil {
 		t.Fatal(err)
 	}
 	deliverPushed(t, h, lines(5, 20))
 	answerPage(h, 0, 12)
 	collectPage(t, h)
-	if err := h.Collector.PushLiveness(ctx, core.KindFirewallLog, collecttest.ProviderPf, false, lineSecond(20)); err != nil {
+	if err := h.Collector.PushLiveness(ctx, "firewall_log", collecttest.ProviderPf, false, lineSecond(20)); err != nil {
 		t.Fatal(err)
 	}
 	// The page now begins at second 30: seconds 21 to 29 were read by neither path.
 	answerPage(h, 30, 35)
 	collectPage(t, h)
-	providerID, _ := h.Store.ProviderID(ctx, core.KindFirewallLog, collecttest.ProviderPf)
+	providerID, _ := h.Store.ProviderID(ctx, "firewall_log", collecttest.ProviderPf)
 	var from, to int64
 	if err := h.Store.DB().QueryRowContext(ctx,
 		"SELECT interval_start_at, interval_end_at FROM collection_gap WHERE provider_id = $1", providerID).

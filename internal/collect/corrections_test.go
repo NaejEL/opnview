@@ -45,7 +45,7 @@ func TestAFilterLogPassThatFailsPartWayStillPlacesWhatItStored(t *testing.T) {
 	}
 	harness.Fake.AnswerJSON(opnsense.FirewallLog, page)
 	ctx := context.Background()
-	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "firewall_log"); err != nil {
 		t.Fatalf("probing: %v", err)
 	}
 	if err := harness.Collector.CollectFirewallLog(ctx); err == nil {

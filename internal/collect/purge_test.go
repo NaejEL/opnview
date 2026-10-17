@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -297,7 +296,7 @@ func arrangeProbeRecord(t *testing.T) (*collecttest.ProbeHarness, int64) {
 	// The page is the probe and nothing else, which a fixture would say nothing more about.
 	harness.Fake.AnswerJSON(opnsense.FirewallLog, []any{probe.body()})
 	ctx := context.Background()
-	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "firewall_log"); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
 	if err := harness.Store.SetSetting(ctx, "retention_seconds", "600", collecttest.ReferenceEpoch()); err != nil {
@@ -499,14 +498,13 @@ func arrangeEveryStoringSource(t *testing.T) *collecttest.ProbeHarness {
 		harness.Fake.AnswerFixture(endpoint, fixture)
 	}
 	ctx := context.Background()
-	for _, probe := range []func(context.Context) error{harness.Collector.ProbeFirewallLog,
-		harness.Collector.ProbeDHCPLease, harness.Collector.ProbeDNSLookup} {
-		if err := probe(ctx); err != nil {
+	for _, kind := range []string{"firewall_log", "dhcp_lease", "dns_lookup"} {
+		if err := harness.Collector.ProbeKind(ctx, kind); err != nil {
 			t.Fatalf("probing: %v", err)
 		}
 	}
-	for kind, want := range map[string]string{core.KindFirewallLog: collecttest.ProviderPf, core.KindDHCPLease: collecttest.ProviderDnsmasq,
-		core.KindDNSLookup: collecttest.ProviderUnbound} {
+	for kind, want := range map[string]string{"firewall_log": collecttest.ProviderPf, "dhcp_lease": collecttest.ProviderDnsmasq,
+		"dns_lookup": collecttest.ProviderUnbound} {
 		if key := harness.ActiveKeyOf(t, kind); key != want {
 			t.Fatalf("the %s kind activated %q, not %q", kind, key, want)
 		}

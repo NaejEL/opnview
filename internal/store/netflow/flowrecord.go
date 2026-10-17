@@ -59,16 +59,18 @@ const (
 	OrientationReverse = "reverse"
 )
 
-// The NetFlow settings the store reads or writes defaults for (schema.sql).
+// The netflow plugin's two settings the Go join and the purge read (plugins/netflow/plugin.json, which
+// declares them, their bounds and their defaults): each stored as <plugin>_<key>. A test holds these
+// to the manifest.
 const (
 	// NetflowJoinToleranceKey is how far after a leg was logged a flow record may start and still
-	// join it, in seconds.
+	// join it, in seconds: the setting join_tolerance_seconds.
 	NetflowJoinToleranceKey = "netflow_join_tolerance_seconds"
-	// DefaultNetflowJoinToleranceSeconds is its default, which internal/config justifies.
+	// DefaultNetflowJoinToleranceSeconds is its default, the manifest's, which the manifest justifies.
 	DefaultNetflowJoinToleranceSeconds int64 = 3
-	// FlowRecordRetentionKey is how long a flow record is kept, in seconds; 0 follows
-	// retention_seconds.
-	FlowRecordRetentionKey = "retention_flow_record_seconds"
+	// FlowRecordRetentionKey is how long a flow record is kept, in seconds; 0, the default, follows
+	// retention_seconds: the setting retention_flow_record_seconds.
+	FlowRecordRetentionKey = "netflow_retention_flow_record_seconds"
 )
 
 // MappedIndex is one of a record's two indexes as the index map in force at reception named it.

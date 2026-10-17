@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/derive"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 )
 
@@ -37,9 +37,9 @@ import (
 // collectors, the two reads of the resolver's records, runtime discovery, the probe
 // round and the retention purge.
 //
-// The collector cadences are the intervals internal/config carries, each of
-// which names the survey section that justifies it beside its constant. They are
-// not restated here, so the justification cannot drift from the number. Each task
+// The collector cadences are the intervals the core kinds' files declare, each
+// with the survey section that justifies it beside its default. They are not
+// restated here, so the justification cannot drift from the number. Each task
 // reads its own field of settings before every wait, through config.Live, so a
 // saved interval reaches the loop without a restart.
 //
@@ -51,9 +51,10 @@ func (c *Collector) Tasks(settings *config.Live) []core.Task {
 	return append(tasks, c.listenTask()...)
 }
 
-// coreTasks are the loops of the core kinds, discovery, the probe round and the purge.
+// coreTasks are the loops of discovery, the probe round, every core kind with a poll cadence and a
+// registered pass, the broker and the purge.
 func (c *Collector) coreTasks(settings *config.Live) []core.Task {
-	return []core.Task{
+	tasks := []core.Task{
 		{
 			Name:       "runtime discovery",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DiscoveryInterval }),
@@ -69,61 +70,28 @@ func (c *Collector) coreTasks(settings *config.Live) []core.Task {
 			Run:        c.ProbeAll,
 			RunAtStart: true,
 		},
-		{
-			Name:       "filter log",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.FirewallLogInterval }),
-			Run:        c.afterPass(core.KindFirewallLog, c.CollectFirewallLog),
+	}
+	// ONE LOOP PER CORE KIND, FROM ITS DECLARATION: every kind whose file declares a poll cadence and
+	// whose coordinator registered a pass (core.RegisterPass), named after the kind, at the interval its
+	// file names -- the setting, or the file's default -- read before every wait.
+	for _, cadence := range provider.Cadences() {
+		if cadence.Role != provider.CadencePoll {
+			continue
+		}
+		pass, registered := c.PassOf(cadence.Kind)
+		if !registered {
+			continue
+		}
+		kind := cadence.Kind
+		tasks = append(tasks, core.Task{
+			Name:       kind,
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.Interval(kind, provider.CadencePoll) }),
+			Run:        c.afterPass(kind, pass),
 			RunAtStart: true,
-		},
-		{
-			Name:       "security events",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.SecurityEventInterval }),
-			Run:        c.afterPass(core.KindSecurityEvent, c.CollectSecurityEvent),
-			RunAtStart: true,
-		},
-		{
-			Name:       "sampled measurement",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.MeasurementInterval }),
-			Run:        c.afterPass(core.KindMeasurementSample, c.CollectMeasurement),
-			RunAtStart: true,
-		},
-		{
-			Name:       "DHCP leases",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DHCPLeaseInterval }),
-			Run:        c.afterPass(core.KindDHCPLease, c.CollectDHCPLease),
-			RunAtStart: true,
-		},
-		{
-			Name:       "resolver lookups",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.DNSLookupInterval }),
-			Run:        c.afterPass(core.KindDNSLookup, c.CollectDNSLookup),
-			RunAtStart: true,
-		},
-		{
-			// The resolver's cache, every minute by default: decision 4 of
-			// specs/SPEC-resolver-cache-attribution.md, the cadence of the lookups it
-			// gives answer addresses to.
-			Name:       "resolver cache",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.ResolverCacheInterval }),
-			Run:        c.afterPass(core.KindResolverCache, c.CollectResolverCache),
-			RunAtStart: true,
-		},
-		{
-			// The resolver's local data, every five minutes by default: decision 4 again.
-			Name:       "resolver local data",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.ResolverLocalDataInterval }),
-			Run:        c.afterPass(core.KindResolverLocalData, c.CollectResolverLocalData),
-			RunAtStart: true,
-		},
-		{
-			// The capture configuration of the active flow_record provider, every minute by default
-			// (internal/config, netflow.go): the longest a changed configuration goes unseen.
-			Name:       "NetFlow capture configuration",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.FlowRecordInterval }),
-			Run:        c.afterPass(derive.KindFlowRecord, c.CollectFlowRecordCapture),
-			RunAtStart: true,
-		},
-		{
+		})
+	}
+	return append(tasks,
+		core.Task{
 			// The broker: its scheduler and its stream subscriptions. Its pass returns only when
 			// the run stops.
 			Name:       "firewall broker",
@@ -131,11 +99,10 @@ func (c *Collector) coreTasks(settings *config.Live) []core.Task {
 			Run:        func(ctx context.Context) error { c.APIBroker.Run(ctx); return nil },
 			RunAtStart: true,
 		},
-		{
+		core.Task{
 			Name:       "retention purge",
 			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.PurgeInterval }),
 			Run:        c.Purge,
 			RunAtStart: false,
-		},
-	}
+		})
 }

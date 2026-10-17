@@ -257,7 +257,7 @@ func CollectionPages(t *testing.T) []webtest.RenderedPage {
 	add("the collection surface with an unknown kind",
 		h.Post(webtest.PathCollection, PairForm("no_such_kind", "1", "1")))
 	add("the collection surface with a page above the ceiling", h.Post(webtest.PathCollection,
-		PairForm("security_event", strconv.Itoa(sizing.PageCeilingSecurityEvent+1), "60")))
+		PairForm("security_event", strconv.Itoa(sizingCeiling("security_event")+1), "60")))
 
 	// An unlimited retention reaches the surface through the next save, which loads
 	// the configuration again.
@@ -289,4 +289,10 @@ func SelectedIn(t *testing.T, card, id string) string {
 		return ""
 	}
 	return webtest.AttributeAfter(body[strings.LastIndex(body[:marker], "<option"):], `value="`)
+}
+
+// sizingCeiling is the page ceiling a sized kind's file declares.
+func sizingCeiling(kind string) int {
+	sized, _ := sizing.Named(kind)
+	return sized.PageCeiling
 }

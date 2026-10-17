@@ -7,6 +7,7 @@ import (
 
 	"github.com/NaejEL/opnview/internal/broker"
 	"github.com/NaejEL/opnview/internal/broker/infer"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -37,34 +38,15 @@ func (c *Collector) intervals() config.Config {
 // DiscoveryMaxAge is discovery's and the probe round's max age: the discovery interval.
 func (c *Collector) DiscoveryMaxAge() time.Duration { return c.intervals().DiscoveryInterval }
 
-// LeaseMaxAge is the lease kind's readers' max age.
-func (c *Collector) LeaseMaxAge() time.Duration { return c.intervals().DHCPLeaseInterval }
-
-// KindMaxAge is a core kind's readers' max age: its interval setting. The probe round reads at the
-// discovery interval. A kind with no interval of its own answers zero, and its caller supplies the
-// cadence.
+// KindMaxAge is a core kind's readers' max age: its poll cadence, as its kind file declares it. The
+// probe round reads at the discovery interval. A kind with no poll cadence of its own answers zero, and
+// its caller supplies the cadence.
 func (c *Collector) KindMaxAge(kind, function string) time.Duration {
 	settings := c.intervals()
 	if function == "probe" {
 		return settings.DiscoveryInterval
 	}
-	switch kind {
-	case KindFirewallLog:
-		return settings.FirewallLogInterval
-	case KindSecurityEvent:
-		return settings.SecurityEventInterval
-	case KindMeasurementSample:
-		return settings.MeasurementInterval
-	case KindDHCPLease:
-		return settings.DHCPLeaseInterval
-	case KindDNSLookup:
-		return settings.DNSLookupInterval
-	case KindResolverCache:
-		return settings.ResolverCacheInterval
-	case KindResolverLocalData:
-		return settings.ResolverLocalDataInterval
-	}
-	return 0
+	return settings.Interval(kind, provider.CadencePoll)
 }
 
 // DeclareCoreEndpoints tells the broker what the core knows of the endpoints it reads itself: an

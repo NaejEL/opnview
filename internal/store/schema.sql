@@ -411,6 +411,31 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_provider_active_per_exclusive_kind
     WHERE is_active AND NOT concurrent;
 
 -- ---------------------------------------------------------------------------
+-- provider_value -- the values a provider exports beside its functions (PA6 of the
+-- plugin-API amendment to specs/SPEC-backend-completion-plugins.md): what its
+-- kind's contract names under `values` (internal/collect/provider/kinds/*.json),
+-- as its script exported them -- the firewall_log contract's pf state timeouts,
+-- dns_lookup's page bound. One row per provider and value, written by the
+-- registration at load and at every probe round, which first removes the
+-- provider's rows, so a value a new build no longer exports is gone. value is
+-- the JSON the script exported, checked against its contract field.
+--
+-- The core publishes the ACTIVE providers' values as the read-only dataset
+-- provider_value (internal/dataset/core/provider_value), which another plugin
+-- reads under its manifest's `datasets`: a fact of one plugin's source is read
+-- there, never restated by another. Bounded: one row per exported value.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS provider_value (
+    provider_id BIGINT NOT NULL REFERENCES provider (id) ON DELETE CASCADE,
+    name        TEXT NOT NULL
+                CHECK (length(name) BETWEEN 1 AND 64
+                       AND translate(name, 'abcdefghijklmnopqrstuvwxyz0123456789_', '') = ''),
+    value       JSONB NOT NULL,
+    recorded_at BIGINT NOT NULL CHECK (recorded_at >= 0 AND recorded_at < 4102444800),
+    PRIMARY KEY (provider_id, name)
+);
+
+-- ---------------------------------------------------------------------------
 -- Interface — one interface as OPNsense defines it: a VLAN, a physical link or
 -- a tunnel the firewall terminates, carrying rules and counters of its own.
 -- The word is OPNsense's, not opnview's: the endpoint is named
@@ -1978,6 +2003,13 @@ CREATE TABLE IF NOT EXISTS source_availability (
     CHECK ((state_since_after_at IS NULL) = (state_since_by_at IS NULL)),
     CHECK (state_since_after_at IS NULL OR state_since_after_at <= state_since_by_at)
 );
+
+-- The outcome column, named once more: a database an earlier build created holds the table without it,
+-- and the schema cannot absorb that in place, so this statement is what refuses such a database with an
+-- undefined column and the rebuild named (store.ErrSchemaOutdated). The registry rows that used to reach
+-- the column first are no longer seeded here.
+COMMENT ON COLUMN source_availability.outcome IS
+    'Why the provider is in its state: one of the closed outcome codes (docs/data-model.md, source_availability).';
 
 -- ---------------------------------------------------------------------------
 -- plugin_state — a plugin's durable values: a watermark, a cursor, the last
@@ -3998,7 +4030,8 @@ CREATE TABLE IF NOT EXISTS capture_interface_parent_of (
 --                      interface_index_unmapped or reverse_unconfirmed
 -- joined_flow_id and copy_flow_id carry no foreign key, as flow.paired_flow_id
 -- does not: the retention purge can remove the leg and keep the record.
--- Purged by start_at, at retention_flow_record_seconds (0 follows
+-- Purged by start_at, at the netflow plugin's retention_flow_record_seconds
+-- setting, stored as netflow_retention_flow_record_seconds (0 follows
 -- retention_seconds).
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS flow_record (
@@ -4344,15 +4377,10 @@ $connection_netflow$;
 -- whole number of seconds within the bounds written there, and internal/config
 -- refuses anything else, naming the key.
 --
--- netflow_join_tolerance_seconds: how far after a leg was logged a flow record may
--- start and still join it (PS19 rule 3 of the NetFlow join amendment). 3 is
--- opnview's default, justified in internal/config/netflow.go from the three
--- one-second resolutions involved; a positive whole number, and internal/config
--- refuses anything else. LV-NJ confirms it.
---
--- retention_flow_record_seconds: how long a flow record is kept (PS17). 0, the
--- default, follows retention_seconds: the flow records are kept as long as the
--- filter log's flows they join.
+-- The netflow plugin's two settings, netflow_join_tolerance_seconds and
+-- netflow_retention_flow_record_seconds, are no rows here: the plugin declares them,
+-- their bounds and their defaults in its manifest (plugins/netflow/plugin.json), and a
+-- plugin setting with no row takes its declared default.
 -- The row-id triggers, one per table numbered by id (see install_assign_id).
 SELECT install_assign_id(t::regclass) FROM unnest(ARRAY[
     'account',
@@ -4415,9 +4443,7 @@ INSERT INTO setting (key, value, updated_at) VALUES
     ('heartbeat_interval_seconds', '60', CAST(extract(epoch FROM now()) AS BIGINT)),
     ('downtime_threshold_seconds', '300', CAST(extract(epoch FROM now()) AS BIGINT)),
     ('live_interest_seconds', '30', CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('live_sample_retention_seconds', '3600', CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('netflow_join_tolerance_seconds', '3', CAST(extract(epoch FROM now()) AS BIGINT)),
-    ('retention_flow_record_seconds', '0', CAST(extract(epoch FROM now()) AS BIGINT))
+    ('live_sample_retention_seconds', '3600', CAST(extract(epoch FROM now()) AS BIGINT))
 ON CONFLICT (key) DO NOTHING;
 
 -- THE DDL SEEDS NO PROVIDER AND NO KIND (PA2 of the plugin-API amendment to

@@ -130,15 +130,15 @@ func (c *compiler) where(window Window) string {
 		case OperatorIsNotNull:
 			conditions = append(conditions, column+" IS NOT NULL")
 		case OperatorIn, OperatorNotIn:
-			parameters := make([]string, 0, len(values))
-			for position := range values {
-				parameters = append(parameters, parameter(position))
-			}
-			list := "(" + strings.Join(parameters, ", ") + ")"
+			// ONE ARRAY PARAMETER WHATEVER THE LIST'S LENGTH, so a list of a thousand keys is one statement
+			// with one bound value and one text, which the read connections prepare once (PA3 of the
+			// plugin-API amendment).
+			array, cast := typedArray(values)
+			list := "CAST(" + c.bind(fmt.Sprintf("filter_%d", index), array) + " AS " + cast + ")"
 			if filter.Operator == OperatorIn {
-				conditions = append(conditions, column+" IN "+list)
+				conditions = append(conditions, column+" = ANY("+list+")")
 			} else {
-				conditions = append(conditions, "("+column+" IS NULL OR "+column+" NOT IN "+list+")")
+				conditions = append(conditions, "("+column+" IS NULL OR "+column+" <> ALL("+list+"))")
 			}
 		}
 	}

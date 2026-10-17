@@ -1,70 +1,78 @@
 package core
 
-import "context"
+import (
+	"context"
+	"sort"
+
+	"github.com/NaejEL/opnview/internal/collect/provider"
+)
 
 // When the unresolved host-name lookups are examined again.
 //
 // A lookup whose `client` the query report gave as a host name, and which no single
 // address answered for when it was read, is examined ONCE more, and marked: the mark is
 // what keeps the retry bounded and what lets it survive a restart (cause H6 of the step-5A
-// live corrections). Since the resolver-cache cycle two sources can name such a host --
-// the DHCP leases, and the resolver's local data -- so the one examination waits until
-// every source IN USE has been read after the lookup was ingested. Spending it on a pass
-// that had read one source and not the other would leave the lookup unresolved for good
-// whenever the other source was the one that named it.
+// live corrections). Several kinds can name such a host -- the DHCP leases, and the
+// resolver's local data -- each marked `names_hosts` in its kind file, so the one
+// examination waits until every such kind IN USE has been read after the lookup was
+// ingested. Spending it on a pass that had read one source and not the other would leave
+// the lookup unresolved for good whenever the other source was the one that named it.
 //
-// A source is in use when the probe round, or the operator, activated a provider of its kind. The
-// lease side keeps its own rule for a backend that keeps failing (lease_backend_failure_pass_limit,
-// in internal/collect/kinds/leases/dhcplease.go); a local-data read that failed does not hold the
-// lookups back, and its failure is in its own availability row. The instants are this run's and are
-// kept in memory: after a restart the examination waits until both sources have been read once,
-// which costs at most one interval of the slower and loses nothing, because the mark is stored.
+// A kind is in use when the probe round, or the operator, activated a provider of it. A read
+// that failed does not hold the lookups back once its pass says so (NoteHostNameSourceFailed),
+// and its failure is in its own availability row; the lease side never says so, keeping its
+// own rule for a backend that keeps failing (lease_backend_failure_pass_limit, in
+// internal/collect/kinds/leases/dhcplease.go). The instants are this run's and are kept in
+// memory: after a restart the examination waits until every source has been read once, which
+// costs at most one interval of the slowest and loses nothing, because the mark is stored.
 
-// NoteLeaseRead records a complete lease pass whose read began at readAt, and returns the
-// instant before which the unresolved lookups may now be examined, and whether they may
-// be.
-func (c *Collector) NoteLeaseRead(ctx context.Context, readAt int64) (int64, bool, error) {
-	localInUse, err := c.kindInUse(ctx, KindResolverLocalData)
-	if err != nil {
-		return 0, false, err
+// NoteHostNameSourceRead records a pass of a host-naming kind whose read began at readAt, and returns
+// the instant before which the unresolved lookups may now be examined, and whether they may be.
+func (c *Collector) NoteHostNameSourceRead(ctx context.Context, kind string, readAt int64) (int64, bool, error) {
+	var inUse []string
+	for _, contract := range provider.Kinds() {
+		if !contract.NamesHosts || contract.Kind == kind {
+			continue
+		}
+		used, err := c.kindInUse(ctx, contract.Kind)
+		if err != nil {
+			return 0, false, err
+		}
+		if used {
+			inUse = append(inUse, contract.Kind)
+		}
 	}
+	sort.Strings(inUse)
 	c.Mutex.Lock()
 	defer c.Mutex.Unlock()
-	c.LeaseReadAt = readAt
-	switch {
-	case !localInUse || c.LocalDataFailed:
-		return readAt, true, nil
-	case c.LocalDataReadAt == 0:
-		return 0, false, nil
+	if c.HostNameReads == nil {
+		c.HostNameReads = map[string]int64{}
 	}
-	return min(readAt, c.LocalDataReadAt), true, nil
+	c.HostNameReads[kind] = readAt
+	delete(c.HostNameFailed, kind)
+	before := readAt
+	for _, other := range inUse {
+		if c.HostNameFailed[other] {
+			continue
+		}
+		at := c.HostNameReads[other]
+		if at == 0 {
+			return 0, false, nil
+		}
+		before = min(before, at)
+	}
+	return before, true, nil
 }
 
-// NoteLocalDataRead records a successful local-data pass whose read began at readAt, and
-// returns the instant before which the unresolved lookups may now be examined, and
-// whether they may be.
-func (c *Collector) NoteLocalDataRead(ctx context.Context, readAt int64) (int64, bool, error) {
-	leasesInUse, err := c.kindInUse(ctx, KindDHCPLease)
-	if err != nil {
-		return 0, false, err
-	}
+// NoteHostNameSourceFailed records a pass of a host-naming kind that read no source: it holds the
+// lookups back no longer, until its next successful read.
+func (c *Collector) NoteHostNameSourceFailed(kind string) {
 	c.Mutex.Lock()
 	defer c.Mutex.Unlock()
-	c.LocalDataReadAt, c.LocalDataFailed = readAt, false
-	switch {
-	case !leasesInUse:
-		return readAt, true, nil
-	case c.LeaseReadAt == 0:
-		return 0, false, nil
+	if c.HostNameFailed == nil {
+		c.HostNameFailed = map[string]bool{}
 	}
-	return min(readAt, c.LeaseReadAt), true, nil
-}
-
-// NoteLocalDataFailed records a local-data pass that read no source.
-func (c *Collector) NoteLocalDataFailed() {
-	c.Mutex.Lock()
-	defer c.Mutex.Unlock()
-	c.LocalDataFailed = true
+	c.HostNameFailed[kind] = true
 }
 
 // kindInUse reports whether any provider of a kind is active.

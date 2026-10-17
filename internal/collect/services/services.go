@@ -274,7 +274,7 @@ func (c *ServiceCoordinator) LocateAddresses(ctx context.Context) error {
 				CountryName: provider.TextPointer(placed, "country_name"),
 				Latitude:    provider.NumberPointer(placed, "latitude"),
 				Longitude:   provider.NumberPointer(placed, "longitude"),
-				ASN: provider.IntegerPointer(placed, "asn"), Operator: provider.TextPointer(placed, "operator"),
+				ASN:         provider.IntegerPointer(placed, "asn"), Operator: provider.TextPointer(placed, "operator"),
 				DatasetBuildAt: build, LookedUpAt: now,
 			}
 			if row.CountryCode != nil {
@@ -391,21 +391,21 @@ func (c *ServiceCoordinator) ServiceTasks(settings *config.Live) []core.Task {
 	return []core.Task{
 		{
 			Name:       "IP geolocation refresh",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.GeoIPRefreshInterval }),
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.Interval(geolocationKind, provider.CadenceRefresh) }),
 			Run:        c.RefreshGeolocation,
 			RunAtStart: true,
 			Wake:       c.geoWakeChannel(),
 		},
 		{
 			Name:       "geolocation lookups",
-			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.GeoLookupInterval }),
+			Interval:   settings.Interval(func(s config.Config) time.Duration { return s.Interval(geolocationKind, provider.CadenceLookup) }),
 			Run:        c.LocateAddresses,
 			RunAtStart: true,
 		},
 		{
 			Name: "registrable domain list refresh",
 			Interval: settings.Interval(func(s config.Config) time.Duration {
-				return s.PublicSuffixRefreshInterval
+				return s.Interval(registrableDomainKind, provider.CadenceRefresh)
 			}),
 			Run:        c.RefreshRegistrableDomains,
 			RunAtStart: true,

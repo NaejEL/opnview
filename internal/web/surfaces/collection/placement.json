@@ -1,0 +1,8 @@
+{
+  "comment": "Where each settings card of the collection surface sits: after the first card of `after` that is drawn -- a kind's card, by its kind, or another settings card -- and last when none is. The reasons are in collection_settings.go; the kind names are data so no Go list names a kind.",
+  "after": {
+    "pairing": ["firewall_log"],
+    "lease_backends": ["dhcp_lease"],
+    "attribution": ["resolver_local_data", "resolver_cache", "dns_lookup"]
+  }
+}

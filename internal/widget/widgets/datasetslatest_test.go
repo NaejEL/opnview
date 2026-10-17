@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -264,7 +265,8 @@ var (
 	}
 	exampleGaugePlugin = map[string]string{
 		"plugin.json": `{"api_version": 2, "name": "example_gauge", "version": "0.1.0",
-			"display_name": "Example gauge", "widgets": ["example_gauge"]}`,
+			"display_name": "Example gauge", "widgets": ["example_gauge"],
+			"datasets": ["example_meter.reading", "example_absent.reading"]}`,
 		"widgets/example_gauge/manifest.json": `{"manifest_version": 1, "type": "example_gauge", "shape": "figure",
 			"parameters": [], "script": "gauge.js"}`,
 		"widgets/example_gauge/gauge.js": `
@@ -280,8 +282,15 @@ exports.widget = {
       refused = e instanceof TypeError ? "TypeError" : "other";
     }
     var bySite = host.datasets.latest("example_meter.reading", [{ column: "site", op: "eq", value: "example.org" }]);
+    var keyed = host.datasets.rows("example_meter.reading", { keys: { columns: ["meter"], values: ["a", "c"] } });
+    var undeclared = "";
+    try {
+      host.datasets.rows(["example_", "secret.reading"].join(""));
+    } catch (e) {
+      undeclared = e instanceof TypeError ? String(e.message) : "other";
+    }
     return { data: { meters: meters, everything: everything, missing: missing, refused: refused,
-      by_site: bySite }, has_rows: meters.rows.length > 0 };
+      by_site: bySite, keyed: keyed, undeclared: undeclared }, has_rows: meters.rows.length > 0 };
   }
 };
 `,
@@ -330,6 +339,14 @@ func TestAThirdPartyWidgetReadsAThirdPartyPluginsDatasetByName(t *testing.T) {
 	}
 	if answer["refused"] != "TypeError" {
 		t.Errorf("a filter on a column the dataset does not declare raised %v", answer["refused"])
+	}
+	// PA3: a set read keeps the rows of the keys, and a dataset the manifest does not declare is a TypeError
+	// carrying dataset_not_declared.
+	if keyed := answer["keyed"].(map[string]any); keyed["state"] != datasets.LatestCurrent || len(keyed["rows"].([]any)) != 3 {
+		t.Errorf("the rows of meters a and c are %v, not their three readings", keyed)
+	}
+	if undeclared, _ := answer["undeclared"].(string); !strings.Contains(undeclared, "dataset_not_declared") {
+		t.Errorf("a read of an undeclared dataset raised %q, not a TypeError carrying dataset_not_declared", undeclared)
 	}
 
 	f.exec(t, "UPDATE setting SET value = 'no_domains' WHERE key = 'aggregate_mode'")

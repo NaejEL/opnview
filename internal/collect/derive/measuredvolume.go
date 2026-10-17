@@ -50,6 +50,12 @@ func (c *Deriver) deriveMeasuredVolumes(ctx context.Context, request Derivation)
 	if err != nil || !active {
 		return nil, err
 	}
+	timeouts, known, err := c.readStateTimeouts(ctx)
+	if err != nil || !known {
+		// No state timeouts, no figure: nothing is decided, and nothing marked is forgotten, until a pass
+		// reads them (flowrecord.go).
+		return nil, err
+	}
 	history, err := c.History(ctx, providerID)
 	if err != nil {
 		return nil, err
@@ -100,13 +106,14 @@ func (c *Deriver) deriveMeasuredVolumes(ctx context.Context, request Derivation)
 	if err != nil {
 		return nil, err
 	}
-	return c.writeMeasuredVolumes(ctx, providerID, history, identifiers, connections)
+	return c.writeMeasuredVolumes(ctx, providerID, history, identifiers, connections, timeouts)
 }
 
 // writeMeasuredVolumes computes and writes the measured volume of some connections.
 func (c *Deriver) writeMeasuredVolumes(ctx context.Context, providerID int64, history *core.CaptureHistory,
-	identifiers map[string]string, connections []netflow.ConnectionLegs) ([]int64, error) {
-	measure := volumeInput{readThrough: c.FilterLogReadThrough(), tolerance: c.joinTolerance(), now: c.Now()}
+	identifiers map[string]string, connections []netflow.ConnectionLegs, timeouts stateTimeouts) ([]int64, error) {
+	measure := volumeInput{readThrough: c.FilterLogReadThrough(), tolerance: c.joinTolerance(ctx), now: c.Now(),
+		timeouts: timeouts}
 	var firstIDs, secondIDs []int64
 	low, high := int64(-1), int64(0)
 	for _, connection := range connections {
@@ -127,7 +134,7 @@ func (c *Deriver) writeMeasuredVolumes(ctx context.Context, providerID int64, hi
 		return nil, err
 	}
 	// A direction's span reaches at most its last record, or the export bound after its leg.
-	reach := high + pfTCPEstablished
+	reach := high + measure.timeouts.tcpEstablished
 	for _, records := range []map[int64][]netflow.CountedRecord{measure.joined, measure.copies} {
 		for _, list := range records {
 			for _, record := range list {
@@ -242,9 +249,11 @@ type volumeInput struct {
 	readThrough int64
 	tolerance   int64
 	now         int64
-	joined      map[int64][]netflow.CountedRecord
-	copies      map[int64][]netflow.CountedRecord
-	gaps        []netflow.ProviderGap
+	// timeouts are pf's state timeouts, as the active firewall_log provider exports them (flowrecord.go).
+	timeouts stateTimeouts
+	joined   map[int64][]netflow.CountedRecord
+	copies   map[int64][]netflow.CountedRecord
+	gaps     []netflow.ProviderGap
 }
 
 // direction is one direction of one connection (NJ5).
@@ -407,7 +416,7 @@ func (m volumeInput) measured(volume netflow.MeasuredVolume, configuration *netf
 			flags |= *record.TCPFlags
 		}
 	}
-	bound := pfTCPEstablished + m.tolerance
+	bound := m.timeouts.tcpEstablished + m.tolerance
 	if configuration.ActiveTimeoutSeconds != nil {
 		bound = *configuration.ActiveTimeoutSeconds + m.tolerance
 	}
@@ -433,7 +442,7 @@ func (m volumeInput) measured(volume netflow.MeasuredVolume, configuration *netf
 		}
 	}
 	if volume.Records > 0 {
-		timeout := stateTimeout(protocol, flags)
+		timeout := m.timeouts.idle(protocol, flags)
 		if m.readThrough-lastEnd > timeout {
 			return settle(netflow.VolumeMeasured, lastEnd+timeout+finalityMarginSeconds+1)
 		}

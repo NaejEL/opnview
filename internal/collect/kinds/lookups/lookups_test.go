@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/dnslookup"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -22,8 +21,8 @@ func TestALeasePassResolvesOnlyTheHostNameLookupsSinceThePreviousOne(t *testing.
 	answer := "Recursion"
 	ingest := func(key, logged string, at int64) {
 		t.Helper()
-		lookup, err := harness.Collector.BuildDNSResolution(ctx, dnslookup.Record{
-			DeduplicationKey: key, ClientAddress: logged, Domain: "example-site.example.invalid",
+		lookup, err := harness.Collector.BuildDNSResolution(ctx, vocab.DNSResolution{
+			LookupKey: key, ClientAddress: logged, Domain: "example-site.example.invalid",
 			Action: "pass", AnswerSource: &answer, LookedUpAt: at,
 		}, "unbound", harness.Clock.Now().Unix())
 		if err != nil {
@@ -114,7 +113,7 @@ func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.
 	answer := "Recursion"
 	decide := func(logged string) (vocab.DNSResolution, int64) {
 		t.Helper()
-		record := dnslookup.Record{DeduplicationKey: "example-key-" + logged, ClientAddress: logged,
+		record := vocab.DNSResolution{LookupKey: "example-key-" + logged, ClientAddress: logged,
 			Domain: "example-site.example.invalid", Action: "pass", AnswerSource: &answer,
 			LookedUpAt: observedAt - 2}
 		lookup, err := harness.Collector.BuildDNSResolution(ctx, record, "unbound", collecttest.ReferenceEpoch())
@@ -132,7 +131,7 @@ func TestAHostNameLoggedAsTheClientAttributesOnlyWhenOneLeaseNamesIt(t *testing.
 		}
 		attributed := collecttest.ScalarCount(t, harness.Store, "SELECT count(*) FROM domain_attribution WHERE flow_id = $1", flowID)
 		if _, err := harness.Store.DB().Exec("DELETE FROM dns_resolution WHERE lookup_key = $1",
-			record.DeduplicationKey); err != nil {
+			record.LookupKey); err != nil {
 			t.Fatalf("clearing the lookup: %v", err)
 		}
 		return lookup, int64(attributed)
@@ -184,8 +183,8 @@ func TestAHostNameLookupReadBeforeItsLeaseIsResolvedByTheLeasePass(t *testing.T)
 	ctx := context.Background()
 	answer := "Recursion"
 	logged := "example-host-three.example.invalid"
-	lookup, err := harness.Collector.BuildDNSResolution(ctx, dnslookup.Record{
-		DeduplicationKey: "example-key-early", ClientAddress: logged,
+	lookup, err := harness.Collector.BuildDNSResolution(ctx, vocab.DNSResolution{
+		LookupKey: "example-key-early", ClientAddress: logged,
 		Domain: "example-site.example.invalid", Action: "pass", AnswerSource: &answer,
 		LookedUpAt: collecttest.ReferenceEpoch() - 60,
 	}, "unbound", collecttest.ReferenceEpoch())

@@ -2,6 +2,7 @@ package scripthost
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/dop251/goja"
@@ -22,7 +23,23 @@ type Extensions struct {
 	Query func(ctx context.Context, text string, parameters map[string]any) ([]map[string]any, error)
 	// Facility is the fetch facility and the data directory.
 	Facility *fetch.Facility
+	// Datasets reads the data-catalogue datasets the plugin declares (PA3 of the plugin-API amendment).
+	Datasets *DatasetAccess
 }
+
+// DatasetAccess is how a plugin's script reads datasets: Admits says which names its manifest declares, and
+// Latest and Rows read one (host.datasets.latest and host.datasets.rows, docs/plugins.md). Each read answers
+// its value, or the refusal of what the script passed as "code at path", or an error of the store. now is
+// the call's instant, the host's clock.
+type DatasetAccess struct {
+	Admits func(name string) bool
+	Latest func(ctx context.Context, now int64, name string, filter json.RawMessage) (any, string, error)
+	Rows   func(ctx context.Context, now int64, name string, options json.RawMessage) (any, string, error)
+}
+
+// DatasetNotDeclared is the closed code a read of a dataset the manifest does not declare is refused with
+// (contract.RefusalDatasetNotDeclared).
+const DatasetNotDeclared = "dataset_not_declared"
 
 // queryTimeout bounds one query a script runs against its own tables.
 const queryTimeout = 10 * time.Second
@@ -57,6 +74,9 @@ func (h *hostCalls) extend(vm *goja.Runtime, host *goja.Object, extra *Extension
 	}
 	if extra.Facility != nil {
 		h.extendFetch(vm, host, extra.Facility)
+	}
+	if extra.Datasets != nil {
+		h.extendDatasets(vm, host, extra.Datasets)
 	}
 }
 
@@ -224,4 +244,55 @@ func (h *hostCalls) extendFetch(vm *goja.Runtime, host *goja.Object, facility *f
 		return result
 	})
 	_ = host.Set("files", files)
+}
+
+// extendDatasets adds host.datasets: latest and rows of the datasets the plugin declares. A name it does
+// not declare is a TypeError carrying dataset_not_declared; a filter or an option the catalogue refuses is a
+// TypeError naming the refusal's code and path. A dataset the installation lacks is no error: the read
+// answers the named state unknown_dataset.
+func (h *hostCalls) extendDatasets(vm *goja.Runtime, host *goja.Object, access *DatasetAccess) {
+	now := func() int64 {
+		if h.session != nil {
+			return h.session.Now()
+		}
+		return time.Now().Unix()
+	}
+	read := func(function string, run func(ctx context.Context, now int64, name string, raw json.RawMessage) (any, string,
+		error)) func(goja.FunctionCall) goja.Value {
+		return func(call goja.FunctionCall) goja.Value {
+			name := call.Argument(0).String()
+			if !access.Admits(name) {
+				Throw(vm, "host.datasets.%s(%q): %s: the plugin's manifest does not name the dataset under datasets",
+					function, name, DatasetNotDeclared)
+			}
+			var raw json.RawMessage
+			if argument := call.Argument(1); !goja.IsUndefined(argument) && !goja.IsNull(argument) {
+				encoded, err := json.Marshal(argument.Export())
+				if err != nil {
+					Throw(vm, "host.datasets.%s(%q): the argument cannot be read: %v", function, name, err)
+				}
+				raw = encoded
+			}
+			ctx, cancel := context.WithTimeout(h.ctx, queryTimeout)
+			defer cancel()
+			value, refusal, err := run(ctx, now(), name, raw)
+			if refusal != "" {
+				Throw(vm, "host.datasets.%s(%q): refused: %s", function, name, refusal)
+			}
+			if err != nil {
+				Throw(vm, "host.datasets.%s(%q) failed: %v", function, name, err)
+			}
+			encoded, err := json.Marshal(value)
+			if err != nil {
+				Throw(vm, "host.datasets.%s(%q): %v", function, name, err)
+			}
+			var tree any
+			_ = json.Unmarshal(encoded, &tree)
+			return vm.ToValue(tree)
+		}
+	}
+	area := vm.NewObject()
+	_ = area.Set("latest", read("latest", access.Latest))
+	_ = area.Set("rows", read("rows", access.Rows))
+	_ = host.Set("datasets", area)
 }

@@ -92,3 +92,60 @@ func repositoryPlugins(t *testing.T) string {
 	}
 	return root
 }
+
+// TestEveryValueABuiltinExportsIsCited is PA-AC10's citation part: every value a built-in provider exports
+// beside its functions -- pf's state timeouts among them -- is cited in its manifest's value_sources with the
+// source it is taken from, a section the survey holds and the upstream file that section cites.
+func TestEveryValueABuiltinExportsIsCited(t *testing.T) {
+	t.Parallel()
+	root := repositoryPlugins(t)
+	survey, err := os.ReadFile(filepath.Join(root, "..", "docs", "opnsense-api-survey.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded := BuiltinsLoaded()
+	timeouts := 0
+	for _, registration := range loaded.Set.All() {
+		if len(registration.Values) == 0 {
+			continue
+		}
+		member, found := loaded.Plugin(registration.Plugin)
+		if !found {
+			t.Fatalf("no built-in %s", registration.Plugin)
+		}
+		var sources map[string]contract.ValueSource
+		for _, declaration := range member.Manifest.Providers {
+			if declaration.Kind == registration.Kind {
+				sources = declaration.ValueSources
+			}
+		}
+		for name := range registration.Values {
+			if strings.HasPrefix(name, "state_timeout_") {
+				timeouts++
+			}
+			source, cited := sources[name]
+			if !cited {
+				// A value a contract requires of every implementation -- dns_lookup's page bound -- is the
+				// implementation's own setting of the read, not a fact taken from a source.
+				continue
+			}
+			if source.Source == "" || source.SurveySection == "" || !strings.Contains(string(survey), source.SurveySection) ||
+				!strings.HasPrefix(source.UpstreamURL, "https://github.com/opnsense/") ||
+				!strings.Contains(string(survey), source.UpstreamURL) {
+				t.Errorf("%s/%s cites %s as %+v: a source, a survey section and the upstream file it cites are needed",
+					registration.Kind, registration.Key, name, source)
+			}
+		}
+		for name := range sources {
+			if _, exported := registration.Values[name]; !exported {
+				t.Errorf("%s/%s cites %s, which it does not export", registration.Kind, registration.Key, name)
+			}
+		}
+		if registration.Plugin == "pf" && len(sources) != 7 {
+			t.Errorf("pf cites %d of its seven state timeouts", len(sources))
+		}
+	}
+	if timeouts != 7 {
+		t.Errorf("the built-ins export %d state timeouts, not pf's seven", timeouts)
+	}
+}

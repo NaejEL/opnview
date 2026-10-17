@@ -274,20 +274,19 @@ func joinWithComma(names []string) string {
 	return joined
 }
 
-// EnsureProviders creates the registry row of every implementation that declared itself and has
-// none yet, with the availability row the schema gives every registry row.
+// EnsureProviders writes what the collector's declarations say of the registry: every kind it knows with
+// its attribute, and the registry row of every implementation that declared itself and has none yet, with
+// the availability row the schema gives every registry row (store.RegisterDeclarations).
 //
-// THIS IS WHAT MAKES ADDING AN IMPLEMENTATION A DIRECTORY AND NOTHING ELSE. The schema seeds the
-// rows of the implementations that shipped first, and that seed is historical: an implementation
-// added later declares itself in its provider.json and gets its row here, at the first probe
-// round, so no schema file is edited. A row that exists is left exactly as it is.
+// THIS IS WHAT MAKES ADDING AN IMPLEMENTATION A DIRECTORY AND NOTHING ELSE, A NEW KIND INCLUDED. The schema
+// seeds no row: an implementation declares itself in its plugin's manifest and gets its row here, at the
+// first probe round, so no schema file is edited. A row that exists is left exactly as it is.
 func (c *Collector) EnsureProviders(ctx context.Context) error {
-	var failures []error
-	for _, manifest := range c.SourceSet.Declared() {
-		if _, _, err := c.Store.EnsureProvider(ctx, manifest.Kind, manifest.Key, manifest.DisplayName,
-			c.Now()); err != nil {
-			failures = append(failures, err)
-		}
+	kinds, providers := provider.SetDeclarations(c.SourceSet)
+	if err := c.Store.RegisterProviderDeclarations(ctx, kinds, providers, c.Now()); err != nil {
+		return err
 	}
-	return JoinErrors(failures)
+	// The values each implementation exports (PA6): the active ones are the provider_value dataset.
+	values, implementations := provider.SetValues(c.SourceSet)
+	return c.Store.RecordProviderValues(ctx, values, implementations, c.Now())
 }

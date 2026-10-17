@@ -209,6 +209,24 @@ exports.push = {
 };
 
 exports.firewall_log = {
+  // pf's default state timeouts, in seconds, exported as values of the firewall_log contract (PA6 of the
+  // plugin-API amendment): the core publishes them as the provider_value dataset, and a plugin that needs how
+  // long pf keeps a state reads them there rather than restating them. They are pf's own defaults, the
+  // PFTM_*_VAL constants of pf.h at the version the survey pins
+  // (https://github.com/opnsense/src/blob/stable/26.7/sys/netpfil/pf/pf.h; docs/opnsense-api-survey.md,
+  // "S12. pf's state timeouts"): TCP first packet 120 s, established 86 400 s, closing 900 s, closed 90 s;
+  // UDP multiple 60 s; ICMP first 20 s; other multiple 60 s. The values IN FORCE are not readable: no
+  // read-only endpoint exposes them (S12, UNVERIFIED), OPNsense's `conservative` optimisation raises the UDP
+  // ones, and a rule can override tcp.established and the UDP ones per state. These are the defaults, and
+  // nothing more.
+  state_timeout_tcp_first_seconds: 120,
+  state_timeout_tcp_established_seconds: 86400,
+  state_timeout_tcp_closing_seconds: 900,
+  state_timeout_tcp_closed_seconds: 90,
+  state_timeout_udp_multiple_seconds: 60,
+  state_timeout_icmp_first_seconds: 20,
+  state_timeout_other_multiple_seconds: 60,
+
   // probe asks whether the log can be read. An empty or non-array body, or 401/403, is
   // unavailable; an empty array with a healthy body is reachable but silent -- a warning state,
   // not an absence of traffic -- which is why the body's SHAPE is checked and not its length.

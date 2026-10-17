@@ -2879,7 +2879,7 @@ unmatched_record_aggregate_30d:period_end_at:installation provider_source_period
 e22_horizon() {
     if [ "$1" = 'flow_record' ]; then
         q "$PURGE_DB" "SELECT $NOW - coalesce(
-            (SELECT CAST(value AS BIGINT) FROM setting WHERE key = 'retention_flow_record_seconds'
+            (SELECT CAST(value AS BIGINT) FROM setting WHERE key = 'netflow_retention_flow_record_seconds'
                  AND CAST(value AS BIGINT) > 0),
             (SELECT CAST(value AS BIGINT) FROM setting WHERE key = 'retention_seconds'));"
     else
@@ -3239,8 +3239,16 @@ section 'PN-AC9, PN-AC10, PN-AC12 — a freshly migrated, unseeded database'
 # ===========================================================================
 create_database "$FRESH_DB"
 apply_schema "$FRESH_DB" "$WORK/apply_fresh.err" || fail 'PN-AC10 the fresh database failed to take the schema'
+# Restated by PA2 of the plugin-API amendment (PA-AC4): the DDL seeds no kind and no provider -- the
+# built-ins' declarations write them when they load -- so a freshly migrated database holds none. The
+# registry the declarations write is then applied as the seed applies it (its registry block), and the
+# availability rules below are checked against it.
+check 'PA-AC4 a freshly migrated database holds no provider and no kind' '0|0' \
+    "$(q "$FRESH_DB" 'SELECT count(*) FROM provider;')|$(q "$FRESH_DB" 'SELECT count(*) FROM provider_kind;')"
+expect_sql_success 'PA-AC4 the declarations register the core providers' "$FRESH_DB" \
+    "$(sed -n '/^-- registry:begin$/,/^-- registry:end$/p' "$REPO_ROOT/sql/seed.sql" | sed "s/:now/$NOW/g")"
 FRESH_PROVIDERS="$(q "$FRESH_DB" 'SELECT count(*) FROM provider;')"
-check_ge 'PN-AC10 the fresh database registers every provider surveyed today' 9 "$FRESH_PROVIDERS"
+check_ge 'PN-AC10 the declarations register every provider surveyed today' 9 "$FRESH_PROVIDERS"
 check 'PN-AC10 every registry row has exactly one availability row' "$FRESH_PROVIDERS" \
     "$(q "$FRESH_DB" 'SELECT count(*) FROM source_availability;')"
 check 'PN-AC10 no availability row references a registry row that does not exist' '0' \
@@ -3329,8 +3337,9 @@ KIND_COUNT="$(q "$MAIN_DB" 'SELECT count(DISTINCT kind) FROM provider;')"
 # this installation really runs two of: the seed used to activate exactly one
 # provider per kind and now activates two dhcp_lease providers, so the active set
 # is asserted by name below rather than as a count.
-EXCLUSIVE_PREDICATE="p.kind NOT IN ('security_event', 'dhcp_lease', 'measurement_sample',
-                                    'reconciled_state', 'resolver_cache', 'resolver_local_data')"
+# Restated by PA2 of the plugin-API amendment: the attribute is data -- each kind file's `concurrent`,
+# which provider_kind holds and every provider row carries -- so the predicate reads it from the row.
+EXCLUSIVE_PREDICATE="NOT p.concurrent"
 check 'PN-AC12 the registry holds a provider of every one of the twelve kinds' '12' "$KIND_COUNT"
 # The active set is asserted as a SET rather than as a count derived from the kind
 # count, and that is the restatement: the seed used to activate exactly one provider
@@ -3368,24 +3377,23 @@ expect_sql_failure 'PN-AC12 marking a second provider of an EXCLUSIVE kind activ
      WHERE id = (SELECT p.id FROM provider p
                  JOIN provider q ON q.kind = p.kind AND q.is_active
                  WHERE NOT p.is_active AND $EXCLUSIVE_PREDICATE LIMIT 1);"
-# And the index that enforces it says which kinds it exempts, in its own
-# definition, so the rule cannot be documented one way and enforced another.
+# And the index that enforces it reads the attribute, never a kind's name (PA-AC2), so the rule cannot
+# be documented one way and enforced another: the kinds a declaration makes concurrent are the exempt ones.
 check 'PN-AC12 the exclusivity index exists under its new name' '1' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM pg_indexes
         WHERE schemaname = 'opnview' AND indexname = 'uq_provider_active_per_exclusive_kind';")"
 check 'PN-AC12 the index that admitted one provider per kind is gone' '0' \
     "$(q "$MAIN_DB" "SELECT count(*) FROM pg_indexes
         WHERE schemaname = 'opnview' AND indexname = 'uq_provider_active_per_kind';")"
-for exempt in security_event dhcp_lease measurement_sample reconciled_state \
-              resolver_cache resolver_local_data; do
-    if q "$MAIN_DB" "SELECT indexdef FROM pg_indexes
-            WHERE schemaname = 'opnview' AND indexname = 'uq_provider_active_per_exclusive_kind';" |
-            grep -qF "'$exempt'"; then
-        pass "PN-AC12 the index exempts the $exempt kind, whose rows carry their provider"
-    else
-        fail "PN-AC12 the index does not exempt the $exempt kind, so its second active provider would be rejected"
-    fi
-done
+if q "$MAIN_DB" "SELECT indexdef FROM pg_indexes
+        WHERE schemaname = 'opnview' AND indexname = 'uq_provider_active_per_exclusive_kind';" | grep -qF "'"; then
+    fail "PA-AC2 the exclusivity index names a literal, where it reads the kind's attribute"
+else
+    pass 'PA-AC2 the exclusivity index names no kind'
+fi
+check 'PN-AC12 the kinds the declarations make concurrent are the ones whose rows carry their provider' \
+    'dhcp_lease,measurement_sample,reconciled_state,resolver_cache,resolver_local_data,security_event' \
+    "$(q "$MAIN_DB" "SELECT string_agg(kind, ',' ORDER BY kind) FROM provider_kind WHERE concurrent;")"
 
 DIAG_AVAIL="$WORK/diag/03_Source_availability.sql"
 run_query "$MAIN_DB" "$DIAG_AVAIL" > "$WORK/availability.txt"

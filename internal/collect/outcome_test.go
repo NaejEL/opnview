@@ -13,7 +13,6 @@ import (
 	"github.com/NaejEL/opnview/internal/collect"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -56,8 +55,8 @@ func TestEveryRecordReadOutcomeWritesItsOwnCode(t *testing.T) {
 		kind     string
 		collect  func(*collect.Collector, context.Context) error
 	}{
-		{collecttest.UnboundDumpCache, core.KindResolverCache, (*collect.Collector).CollectResolverCache},
-		{collecttest.UnboundListLocalData, core.KindResolverLocalData, (*collect.Collector).CollectResolverLocalData},
+		{collecttest.UnboundDumpCache, "resolver_cache", (*collect.Collector).CollectResolverCache},
+		{collecttest.UnboundListLocalData, "resolver_local_data", (*collect.Collector).CollectResolverLocalData},
 	} {
 		t.Run(read.kind, func(t *testing.T) {
 			t.Parallel()
@@ -98,21 +97,21 @@ func TestEachNamedAbsenceHasItsOwnCode(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.ArrangeRecordCollection(t)
 	ctx := context.Background()
-	if err := harness.Collector.ProbeDNSLookup(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "dns_lookup"); err != nil {
 		t.Logf("the lookup probe round reported %v, which is acceptable: every state was recorded", err)
 	}
-	if err := harness.Collector.ProbeDHCPLease(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "dhcp_lease"); err != nil {
 		t.Logf("the lease probe round reported %v, which is acceptable: every state was recorded", err)
 	}
 	for _, want := range []struct {
 		kind, key string
 		outcome   vocab.AvailabilityOutcome
 	}{
-		{core.KindResolverCache, collecttest.ProviderDnsmasq, vocab.OutcomeNoCacheRead},
-		{core.KindResolverLocalData, collecttest.ProviderDnsmasq, vocab.OutcomeNoLocalDataRead},
-		{core.KindDNSLookup, collecttest.ProviderDnsmasq, vocab.OutcomeLogGrammarNotRecorded},
-		{core.KindDHCPLease, collecttest.ProviderISC, vocab.OutcomePluginNotInstalled},
-		{core.KindResolverCache, collecttest.ProviderUnbound, vocab.OutcomeHealthy},
+		{"resolver_cache", collecttest.ProviderDnsmasq, vocab.OutcomeNoCacheRead},
+		{"resolver_local_data", collecttest.ProviderDnsmasq, vocab.OutcomeNoLocalDataRead},
+		{"dns_lookup", collecttest.ProviderDnsmasq, vocab.OutcomeLogGrammarNotRecorded},
+		{"dhcp_lease", collecttest.ProviderISC, vocab.OutcomePluginNotInstalled},
+		{"resolver_cache", collecttest.ProviderUnbound, vocab.OutcomeHealthy},
 	} {
 		if got := harness.OutcomeOf(t, want.kind, want.key); got != want.outcome {
 			t.Errorf("%s/%s: the outcome is %q, not %q", want.kind, want.key, got, want.outcome)
@@ -121,10 +120,10 @@ func TestEachNamedAbsenceHasItsOwnCode(t *testing.T) {
 
 	// The plugin answers: present, and not read, which is not the same as absent.
 	harness.Fake.AnswerJSON(collecttest.ISCStatus, map[string]any{"status": "running"})
-	if err := harness.Collector.ProbeDHCPLease(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "dhcp_lease"); err != nil {
 		t.Logf("the lease probe round reported %v", err)
 	}
-	if got := harness.OutcomeOf(t, core.KindDHCPLease, collecttest.ProviderISC); got != vocab.OutcomeReadNotSupported {
+	if got := harness.OutcomeOf(t, "dhcp_lease", collecttest.ProviderISC); got != vocab.OutcomeReadNotSupported {
 		t.Errorf("the plugin answering: the outcome is %q, not %q", got, vocab.OutcomeReadNotSupported)
 	}
 }
@@ -145,10 +144,10 @@ func TestTheProbeRoundsOutcomesFollowWhatTheFirewallAnswered(t *testing.T) {
 		kind, key string
 		outcome   vocab.AvailabilityOutcome
 	}{
-		{core.KindSecurityEvent, collecttest.ProviderSuricata, vocab.OutcomeServiceNotRunning},
-		{core.KindMeasurementSample, collecttest.ProviderInsight, vocab.OutcomePresentButDisabled},
-		{core.KindFirewallLog, collecttest.ProviderPf, vocab.OutcomeUndecodable},
-		{core.KindDHCPLease, collecttest.ProviderKea, vocab.OutcomeNotFound},
+		{"security_event", collecttest.ProviderSuricata, vocab.OutcomeServiceNotRunning},
+		{"measurement_sample", collecttest.ProviderInsight, vocab.OutcomePresentButDisabled},
+		{"firewall_log", collecttest.ProviderPf, vocab.OutcomeUndecodable},
+		{"dhcp_lease", collecttest.ProviderKea, vocab.OutcomeNotFound},
 	} {
 		if got := stopped.OutcomeOf(t, want.kind, want.key); got != want.outcome {
 			t.Errorf("%s/%s: the outcome is %q, not %q", want.kind, want.key, got, want.outcome)
@@ -158,7 +157,7 @@ func TestTheProbeRoundsOutcomesFollowWhatTheFirewallAnswered(t *testing.T) {
 	silent := collecttest.NewProbeHarness(t)
 	silent.Fake.Answer(opnsense.FirewallLog, http.StatusOK, []byte(`[]`))
 	_ = silent.Collector.ProbeAll(ctx)
-	if got := silent.OutcomeOf(t, core.KindFirewallLog, collecttest.ProviderPf); got != vocab.OutcomeHealthyEmpty {
+	if got := silent.OutcomeOf(t, "firewall_log", collecttest.ProviderPf); got != vocab.OutcomeHealthyEmpty {
 		t.Errorf("a filter log answering an empty array: the outcome is %q, not %q", got,
 			vocab.OutcomeHealthyEmpty)
 	}
@@ -167,10 +166,10 @@ func TestTheProbeRoundsOutcomesFollowWhatTheFirewallAnswered(t *testing.T) {
 	refused.Fake.Answer(opnsense.FirewallLog, http.StatusUnauthorized, []byte(`{}`))
 	refused.Fake.Answer(collecttest.IDSStatus, http.StatusForbidden, []byte(`{}`))
 	_ = refused.Collector.ProbeAll(ctx)
-	if got := refused.OutcomeOf(t, core.KindFirewallLog, collecttest.ProviderPf); got != vocab.OutcomeAuthenticationFailed {
+	if got := refused.OutcomeOf(t, "firewall_log", collecttest.ProviderPf); got != vocab.OutcomeAuthenticationFailed {
 		t.Errorf("a 401: the outcome is %q", got)
 	}
-	if got := refused.OutcomeOf(t, core.KindSecurityEvent, collecttest.ProviderSuricata); got != vocab.OutcomeDenied {
+	if got := refused.OutcomeOf(t, "security_event", collecttest.ProviderSuricata); got != vocab.OutcomeDenied {
 		t.Errorf("a 403: the outcome is %q", got)
 	}
 }
@@ -183,7 +182,7 @@ func TestEveryWrittenAvailabilityCarriesACodeInTheClosedSet(t *testing.T) {
 	harness := collecttest.NewProbeHarness(t)
 	_ = harness.Collector.ProbeAll(context.Background())
 	for _, provider := range everyProvider(t, harness.Store) {
-		if provider.kind == core.KindIPGeolocation || provider.kind == core.KindRegistrableDomain || provider.kind == core.KindFlowVolume {
+		if provider.kind == "ip_geolocation" || provider.kind == "registrable_domain" || provider.kind == "flow_volume" {
 			// Recorded by the maxmind and publicsuffix plugins, or (flow_volume) by nothing,
 			// none of which this round runs.
 			continue
@@ -269,7 +268,7 @@ func TestMovingTheMessageCacheRuleLeavesTheDumpDetailByteIdentical(t *testing.T)
 		t.Fatalf("reading the cache: %v", err)
 	}
 	want := a1e2707DumpDetail + " (A whose value is an IPv6 address: 1)"
-	if detail := harness.DetailOf(t, core.KindResolverCache, collecttest.ProviderUnbound); detail != want {
+	if detail := harness.DetailOf(t, "resolver_cache", collecttest.ProviderUnbound); detail != want {
 		t.Errorf("the dump fixture's detail changed:\n got %q\nwant %q", detail, want)
 	}
 
@@ -319,7 +318,7 @@ func TestARecordWhoseValueIsNotValidIsCountedUnderItsNamedCategory(t *testing.T)
 			t.Fatalf("reading the local data: %v", err)
 		}
 		n := func(count int) string { return strconv.Itoa(count * copies) }
-		cacheDetail := harness.DetailOf(t, core.KindResolverCache, collecttest.ProviderUnbound)
+		cacheDetail := harness.DetailOf(t, "resolver_cache", collecttest.ProviderUnbound)
 		wantCache := "; skipped " + n(5) + " whose value is not valid for their type (" +
 			"A whose value is not an address: " + n(1) + ", A whose value is an IPv6 address: " + n(1) +
 			", AAAA whose value is not an address: " + n(1) + ", AAAA whose value is an IPv4 address: " +
@@ -327,7 +326,7 @@ func TestARecordWhoseValueIsNotValidIsCountedUnderItsNamedCategory(t *testing.T)
 		if !strings.HasSuffix(cacheDetail, wantCache) {
 			t.Errorf("%d copies: the cache detail %q does not end %q", copies, cacheDetail, wantCache)
 		}
-		localDetail := harness.DetailOf(t, core.KindResolverLocalData, collecttest.ProviderUnbound)
+		localDetail := harness.DetailOf(t, "resolver_local_data", collecttest.ProviderUnbound)
 		wantLocal := "; skipped " + n(3) + " whose value is not valid for their type (" +
 			"PTR with an empty target: " + n(1) + ", PTR whose owner name encodes no address: " + n(1) +
 			", local data whose host name has an empty first label: " + n(1) + ")"
@@ -356,10 +355,10 @@ func TestAStoreFailureInTheLeasePassIsRecordedAndCountsAsAFailedPass(t *testing.
 	harness := collecttest.LeaseRetryHarness(t, "example-key-store-failure", "example-host-store-failure")
 	ctx := context.Background()
 	harness.Fake.AnswerFixture(collecttest.KeaLeases, "kea_leases.json")
-	if err := harness.Store.SetActiveProviders(ctx, core.KindDHCPLease, collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
+	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
-	kea, err := harness.Store.ProviderID(ctx, core.KindDHCPLease, collecttest.ProviderKea)
+	kea, err := harness.Store.ProviderID(ctx, "dhcp_lease", collecttest.ProviderKea)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,14 +367,14 @@ func TestAStoreFailureInTheLeasePassIsRecordedAndCountsAsAFailedPass(t *testing.
 	if err := harness.Collector.CollectDHCPLease(ctx); err == nil {
 		t.Fatal("a lease pass whose leases could not be stored reported no failure")
 	}
-	state, _, _ := harness.AvailabilityOf(t, core.KindDHCPLease, collecttest.ProviderKea)
+	state, _, _ := harness.AvailabilityOf(t, "dhcp_lease", collecttest.ProviderKea)
 	if state != vocab.StateUnavailable {
 		t.Errorf("the backend whose leases could not be stored reads %q", state)
 	}
-	if got := harness.OutcomeOf(t, core.KindDHCPLease, collecttest.ProviderKea); got != vocab.OutcomeStoreFailure {
+	if got := harness.OutcomeOf(t, "dhcp_lease", collecttest.ProviderKea); got != vocab.OutcomeStoreFailure {
 		t.Errorf("the outcome is %q, not %q", got, vocab.OutcomeStoreFailure)
 	}
-	if detail := harness.DetailOf(t, core.KindDHCPLease, collecttest.ProviderKea); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, "dhcp_lease", collecttest.ProviderKea); !strings.Contains(detail,
 		"could not be stored") || !strings.Contains(detail, "lease passes in a row") {
 		t.Errorf("the detail %q does not name the store failure and the retry count", detail)
 	}
@@ -397,14 +396,14 @@ func TestAStoreFailureInTheLookupPassIsRecorded(t *testing.T) {
 	if err := harness.Collector.CollectDNSLookup(ctx); err == nil {
 		t.Fatal("a lookup pass whose lookups could not be stored reported no failure")
 	}
-	state, _, _ := harness.AvailabilityOf(t, core.KindDNSLookup, collecttest.ProviderUnbound)
+	state, _, _ := harness.AvailabilityOf(t, "dns_lookup", collecttest.ProviderUnbound)
 	if state != vocab.StateUnavailable {
 		t.Errorf("the resolver whose lookups could not be stored reads %q", state)
 	}
-	if got := harness.OutcomeOf(t, core.KindDNSLookup, collecttest.ProviderUnbound); got != vocab.OutcomeStoreFailure {
+	if got := harness.OutcomeOf(t, "dns_lookup", collecttest.ProviderUnbound); got != vocab.OutcomeStoreFailure {
 		t.Errorf("the outcome is %q, not %q", got, vocab.OutcomeStoreFailure)
 	}
-	if detail := harness.DetailOf(t, core.KindDNSLookup, collecttest.ProviderUnbound); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, "dns_lookup", collecttest.ProviderUnbound); !strings.Contains(detail,
 		"could not be stored") || !strings.Contains(detail, "planted store failure") {
 		t.Errorf("the detail %q does not name the store failure", detail)
 	}

@@ -1,9 +1,11 @@
 package derive
 
 import (
+	"encoding/json"
 	"net/netip"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/plugin"
 	"github.com/NaejEL/opnview/internal/store/netflow"
 )
 
@@ -16,6 +18,26 @@ import (
 func text(value string) *string { return &value }
 
 func port(value int64) *int64 { return &value }
+
+// builtinTimeouts are pf's state timeouts as the built-in pf plugin exports them: the values the join reads
+// from the active firewall_log provider in production (flowrecord.go), never restated in Go.
+func builtinTimeouts(t *testing.T) stateTimeouts {
+	t.Helper()
+	registration, found := plugin.Builtins().Lookup("firewall_log", "pf")
+	if !found {
+		t.Fatal("the built-in pf plugin provides no firewall_log")
+	}
+	var timeouts stateTimeouts
+	fields := []*int64{&timeouts.tcpFirst, &timeouts.tcpEstablished, &timeouts.tcpClosing, &timeouts.tcpClosed,
+		&timeouts.udpMultiple, &timeouts.icmpFirst, &timeouts.otherMultiple}
+	for index, name := range stateTimeoutNames {
+		encoded, _ := json.Marshal(registration.Values[name])
+		if err := json.Unmarshal(encoded, fields[index]); err != nil || *fields[index] <= 0 {
+			t.Fatalf("the pf plugin exports %s as %v", name, registration.Values[name])
+		}
+	}
+	return timeouts
+}
 
 // translatedShape is the post-translation copy of F2 and the legs a group of it reads.
 func translatedShape() (netflow.GroupRecord, []netflow.JoinLeg) {
@@ -49,7 +71,7 @@ func decideOne(t *testing.T, record netflow.GroupRecord, legs []netflow.JoinLeg,
 func TestATranslatedCopyIsClassifiedByEachSignalAlone(t *testing.T) {
 	t.Parallel()
 	record, legs := translatedShape()
-	input := joinInput{readThrough: 5000, tolerance: 3, now: 5000}
+	input := joinInput{readThrough: 5000, tolerance: 3, now: 5000, timeouts: builtinTimeouts(t)}
 
 	// The second leg's logged tuple alone: no address of the copy is the firewall's.
 	byLeg := decideOne(t, record, legs, input)

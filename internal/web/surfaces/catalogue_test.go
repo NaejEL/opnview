@@ -117,6 +117,17 @@ func TestNoUserVisibleStringIsALiteral(t *testing.T) {
 				unrenderable[key] = "a plugin setting label, served by GET /api/plugins"
 			}
 		}
+		// So are a plugin's settings pages (PA8 of the plugin-API amendment): their headings and help are
+		// served in JSON by the plugin listing and GET /api/plugins/{name}/settings.
+		for _, loaded := range plugin.BuiltinsLoaded().Plugins() {
+			for _, page := range loaded.Manifest.Pages {
+				for _, key := range []string{page.Label, page.Help} {
+					if value, present := catalogue.Strings[key]; present && !shown[strings.TrimSpace(value)] {
+						unrenderable[key] = "a plugin settings page's heading or help, served by GET /api/plugins"
+					}
+				}
+			}
+		}
 		// A dataset's label is served in JSON by the data catalogue and drawn by the step-7
 		// application; no Go-rendered page draws it.
 		for key, value := range catalogue.Strings {

@@ -1,0 +1,24 @@
+{
+  "nature": "event",
+  "freshness": {"kind": "firewall_log"},
+  "retention": {"column": "observed_at"},
+  "columns": [
+    {"name": "observed_at", "type": "integer", "role": "time"},
+    {"name": "flow_id", "type": "integer"},
+    {"name": "device", "type": "text"},
+    {"name": "interface", "type": "text", "nullable": true},
+    {"name": "direction", "type": "text"},
+    {"name": "action", "type": "text"},
+    {"name": "pair_outcome", "type": "text", "nullable": true},
+    {"name": "paired_flow_id", "type": "integer", "nullable": true},
+    {"name": "src_address", "type": "text"},
+    {"name": "dst_address", "type": "text"},
+    {"name": "src_port", "type": "integer", "nullable": true},
+    {"name": "dst_port", "type": "integer", "nullable": true},
+    {"name": "protocol", "type": "text"},
+    {"name": "ip_version", "type": "integer"},
+    {"name": "src_is_this_firewall", "type": "integer"},
+    {"name": "dst_is_this_firewall", "type": "integer"},
+    {"name": "packet_bytes", "type": "integer", "role": "measure", "unit": "byte"}
+  ]
+}

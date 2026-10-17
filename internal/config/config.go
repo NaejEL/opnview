@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store/attribution"
 	"github.com/NaejEL/opnview/internal/store/flows"
-	"github.com/NaejEL/opnview/internal/store/samples"
 )
 
 // MaxIntervalSeconds is the longest interval, in seconds, that a time.Duration
@@ -23,45 +23,21 @@ import (
 // evening; the comments in this file are rewritten.
 const MaxIntervalSeconds int64 = math.MaxInt64 / int64(time.Second)
 
-// The setting keys this package reads. Each poll interval is overridable by an
-// optional row: the default is the cadence the survey justifies, and a busy or
-// a quiet installation is entitled to a different one.
+// The setting keys this package reads of its own. A core kind's intervals and page size are not here:
+// each kind's file in internal/collect/provider/kinds declares them, with their keys, defaults and the
+// reasons for them, and Config reads them generically (Interval, PageSize).
 const (
 	// KeyRetentionSeconds is the purge horizon in seconds. 0 means unlimited.
 	KeyRetentionSeconds = "retention_seconds"
 	// KeyAggregateMode is `full` or `no_domains`.
 	KeyAggregateMode = "aggregate_mode"
 
-	// KeyFirewallLogInterval overrides the filter-log poll interval.
-	KeyFirewallLogInterval = "poll_interval_firewall_log_seconds"
-	// KeySecurityEventInterval overrides the eve.json alert poll interval.
-	KeySecurityEventInterval = "poll_interval_security_event_seconds"
-	// KeyMeasurementInterval overrides the sampled-measurement interval.
-	KeyMeasurementInterval = samples.MeasurementIntervalKey
-	// KeyDHCPLeaseInterval overrides the lease poll interval.
-	KeyDHCPLeaseInterval = "poll_interval_dhcp_lease_seconds"
-	// KeyDNSLookupInterval overrides the resolver poll interval.
-	KeyDNSLookupInterval = "poll_interval_dns_lookup_seconds"
-	// KeyResolverCacheInterval overrides how often the resolver's cache is read.
-	KeyResolverCacheInterval = "poll_interval_resolver_cache_seconds"
-	// KeyResolverLocalDataInterval overrides how often the resolver's local data is
-	// read.
-	KeyResolverLocalDataInterval = "poll_interval_resolver_local_data_seconds"
 	// KeyDiscoveryInterval overrides the runtime-discovery refresh interval. The
 	// store reads the same row as the margin of "held at an instant" for this
 	// firewall's own addresses, so the key lives there.
 	KeyDiscoveryInterval = flows.DiscoveryIntervalKey
 	// KeyPurgeInterval overrides the retention-purge interval.
 	KeyPurgeInterval = "purge_interval_seconds"
-	// KeyGeoIPRefreshInterval overrides how often the MaxMind databases are
-	// checked for a newer build.
-	KeyGeoIPRefreshInterval = "refresh_interval_geoip_seconds"
-	// KeyGeoLookupInterval overrides how often stored addresses are looked up in
-	// the MaxMind databases.
-	KeyGeoLookupInterval = "poll_interval_geo_lookup_seconds"
-	// KeyPublicSuffixRefreshInterval overrides how often the Public Suffix List is
-	// checked for a newer copy.
-	KeyPublicSuffixRefreshInterval = "refresh_interval_public_suffix_list_seconds"
 	// KeyAttributionMaxDelay is how long before a flow, in seconds, a resolver lookup
 	// may have been made and still name it. The schema writes its default row.
 	KeyAttributionMaxDelay = "attribution_max_delay_seconds"
@@ -88,87 +64,9 @@ const (
 	KeyDowntimeThreshold = "downtime_threshold_seconds"
 )
 
-// The setting keys of the page sizes: how many records one request asks the
-// firewall for, on the three paged reads.
-//
-// AN INTERVAL ALONE DOES NOT SIZE A PAGED READ. What a poll can lose is decided
-// by the pair: a poll every ten seconds that asks for 500 records keeps up with a
-// source producing fewer than fifty a second and silently drops the rest. The
-// interval was configurable and the page was a constant, so half of the pair was
-// out of the operator's reach; these rows put it back.
-//
-// The per-pair sampler and the resolver's query report take no page size, for
-// reasons of the API rather than of opnview: the per-pair sampler reads a snapshot
-// with no paging at all, and the resolver endpoint answers with its whole ring buffer up to a limit the
-// firewall fixes.
-//
-// A page size above what the firewall serves is accepted here and reported on
-// the collection surface; refusing it would hide the measurement that shows why
-// it was typed.
+// The default intervals of the core's own loops. A kind's cadence is its kind file's, with the survey
+// section that justifies it named beside it.
 const (
-	// KeyFirewallLogPageSize overrides the filter-log page size.
-	KeyFirewallLogPageSize = "page_size_firewall_log"
-	// KeySecurityEventPageSize overrides the eve.json alert page size.
-	KeySecurityEventPageSize = "page_size_security_event"
-	// KeyDHCPLeasePageSize overrides the lease page size.
-	KeyDHCPLeasePageSize = "page_size_dhcp_lease"
-)
-
-// The default poll intervals. Each one is the cadence the survey justifies, and
-// the survey section that justifies it is named beside it — not paraphrased,
-// because the reasoning is what makes the number defensible.
-const (
-	// DefaultFirewallLogInterval is 10 s. Survey, data source 1, "Sustainable
-	// polling frequency": each poll is bounded by `limit`, so its cost is small,
-	// and the risk runs the other way — a busy ruleset can produce more than
-	// `limit` lines between two polls and the API offers no way to recover a
-	// gap. The verified section adds the measurement that makes it safe: the log
-	// runs at a few lines per second on an ordinary home network, so 10 s at a
-	// generous limit leaves an order of magnitude of headroom, and it must be
-	// measured per installation rather than assumed.
-	DefaultFirewallLogInterval = 10 * time.Second
-
-	// DefaultSecurityEventInterval is 60 s. Survey, data source 2, "Sustainable
-	// polling frequency": alerts are low-volume and the backend re-reads the
-	// file backwards from the end on every call, so polling more often costs
-	// without benefit.
-	DefaultSecurityEventInterval = 60 * time.Second
-
-	// DefaultMeasurementInterval is 300 s. Survey, data source 3, "Sustainable
-	// polling frequency": 300 s is the finest resolution at which the firewall
-	// keeps per-source data and the retention of that resolution is one hour.
-	// The verified section turns that from a cache cadence into a sampling
-	// cadence — /api/diagnostics/traffic/top is a live snapshot and nothing
-	// upstream answers for a past window, so this interval is the resolution of
-	// opnview's own per-pair history rather than a refresh rate. The figure lives in
-	// internal/store, which reads the same row to bound a current rate.
-	DefaultMeasurementInterval = samples.DefaultMeasurementIntervalSeconds * time.Second
-
-	// DefaultDHCPLeaseInterval is 300 s. Survey, data source 4, "Sustainable
-	// polling frequency": leases change on the scale of minutes to hours, the
-	// table is small, and the Kea path costs a control-agent round trip.
-	DefaultDHCPLeaseInterval = 300 * time.Second
-
-	// DefaultDNSLookupInterval is 60 s. Survey, data source 5, "Sustainable
-	// polling frequency": DNS lookups must be correlated with flows that follow
-	// within seconds, so the window has to be short. The verified section
-	// removes the windowing but not the urgency: the endpoint is a ring buffer
-	// of the last 1000 lookups, so a slow poll loses the oldest of them
-	// outright.
-	DefaultDNSLookupInterval = 60 * time.Second
-
-	// DefaultResolverCacheInterval is 60 s, the maintainer's decision 4 of
-	// specs/SPEC-resolver-cache-attribution.md: the cache read pairs with the lookup read,
-	// and a record inserted and expired between two polls is never seen, so the cadence
-	// is the lookups'. The dump's cost grows with the cache, which is why the read's
-	// availability detail records its size and its time.
-	DefaultResolverCacheInterval = 60 * time.Second
-
-	// DefaultResolverLocalDataInterval is 300 s, decision 4 again: local data is
-	// configuration -- host overrides, registered leases -- and changes on the scale of
-	// minutes to hours, like the leases it is read beside.
-	DefaultResolverLocalDataInterval = 300 * time.Second
-
 	// DefaultDiscoveryInterval is 300 s. Survey, "Runtime discovery":
 	// "Everything here is read at startup and refreshed periodically." The
 	// survey gives no figure, so this one is opnview's own and is stated as
@@ -181,67 +79,7 @@ const (
 	// bounded within an hour of a retention change without the delete
 	// competing with ingestion every minute.
 	DefaultPurgeInterval = 3600 * time.Second
-
-	// DefaultGeoIPRefreshInterval is 86 400 s. Not a survey figure: MaxMind
-	// publishes no GeoLite2 release schedule on the pages read for step 4C, and a
-	// HEAD request, which is all a check costs when nothing changed, does not count
-	// against the 30 downloads a day a GeoLite account is allowed. Once a day keeps
-	// a new build well inside the 30 days the GeoLite EULA allows an old one to be
-	// used. See specs/SPEC-maxmind-geolite2.md.
-	DefaultGeoIPRefreshInterval = 86400 * time.Second
-
-	// DefaultGeoLookupInterval is 300 s. opnview's own: a lookup reads a local
-	// file and contacts nothing, so the figure only bounds how long a new
-	// destination stays unplaced, and it matches the discovery cadence.
-	DefaultGeoLookupInterval = 300 * time.Second
-
-	// DefaultPublicSuffixRefreshInterval is 86 400 s. publicsuffix.org asks that an
-	// application download the list "no more than once per day" (publicsuffix.org/list/),
-	// and a check that finds the list unchanged costs a conditional request answered
-	// 304 with no body.
-	DefaultPublicSuffixRefreshInterval = 86400 * time.Second
 )
-
-// The default page sizes. 500 is the figure the collectors carried as a
-// constant before the page became a setting, and nothing more: it is a
-// documented starting point, not a measurement and not a survey figure. What
-// a given installation needs depends on how fast its sources write, which only
-// that installation can measure — the collection surface measures it and
-// suggests a pair.
-//
-// Each default is within what the firewall serves for that read, so a database
-// with no row never asks for a page the firewall would cut short.
-const (
-	// DefaultFirewallLogPageSize is the filter-log page size with no row.
-	DefaultFirewallLogPageSize = 500
-
-	// DefaultSecurityEventPageSize is the eve.json alert page size with no
-	// row. The alert feed is low-volume, so a page this size is far more than a
-	// poll at the default interval returns.
-	DefaultSecurityEventPageSize = 500
-
-	// DefaultDHCPLeasePageSize is the lease page size with no row.
-	DefaultDHCPLeasePageSize = 500
-)
-
-// PageSizes is the page-size half of the configuration, on its own, for the
-// collectors: they size their reads and need nothing else from Config, and a
-// test that builds a collector should not have to invent seven intervals to
-// say how many records a page holds.
-type PageSizes struct {
-	FirewallLog   int
-	SecurityEvent int
-	DHCPLease     int
-}
-
-// DefaultPageSizes returns the page sizes of a database with no page-size row.
-func DefaultPageSizes() PageSizes {
-	return PageSizes{
-		FirewallLog:   DefaultFirewallLogPageSize,
-		SecurityEvent: DefaultSecurityEventPageSize,
-		DHCPLease:     DefaultDHCPLeasePageSize,
-	}
-}
 
 // DefaultRetentionSeconds is 90 days, the documented default. It is written in
 // the schema and read from the database; the constant here exists only so a
@@ -309,30 +147,14 @@ type Config struct {
 	// AggregateMode is `full` or `no_domains`.
 	AggregateMode string
 
-	// FirewallLogInterval and the intervals below it are the loop cadences.
-	FirewallLogInterval   time.Duration
-	SecurityEventInterval time.Duration
-	MeasurementInterval   time.Duration
-	DHCPLeaseInterval     time.Duration
-	DNSLookupInterval     time.Duration
-	// ResolverCacheInterval and ResolverLocalDataInterval are the two resolver-record
-	// reads.
-	ResolverCacheInterval     time.Duration
-	ResolverLocalDataInterval time.Duration
-	DiscoveryInterval         time.Duration
-	PurgeInterval             time.Duration
-	// GeoIPRefreshInterval and GeoLookupInterval are the two MaxMind cadences.
-	GeoIPRefreshInterval time.Duration
-	GeoLookupInterval    time.Duration
+	// DiscoveryInterval and PurgeInterval are the cadences of the core's own loops.
+	DiscoveryInterval time.Duration
+	PurgeInterval     time.Duration
+	// Intervals are the core kinds' cadences in force and PageSizes their page sizes, each by the
+	// setting key its kind file declares (Interval, PageSize).
+	Intervals map[string]time.Duration
+	PageSizes map[string]int
 
-	// FirewallLogPageSize and the two below are the page sizes.
-	FirewallLogPageSize   int
-	SecurityEventPageSize int
-	DHCPLeasePageSize     int
-
-	// PublicSuffixRefreshInterval is how often the Public Suffix List is checked
-	// for a newer copy.
-	PublicSuffixRefreshInterval time.Duration
 	// AttributionMaxDelaySeconds is how long before a flow a resolver lookup may
 	// have been made and still name it.
 	AttributionMaxDelaySeconds int64
@@ -354,13 +176,6 @@ type Config struct {
 	// LiveSampleRetentionSeconds how long a fine sample is kept (liverate.go).
 	LiveInterestSeconds        int64
 	LiveSampleRetentionSeconds int64
-	// FlowRecordInterval is how often a flow_record provider's capture configuration is read,
-	// NetflowJoinToleranceSeconds how far after a leg a flow record may start and still join it, and
-	// FlowRecordRetentionSeconds how long a flow record is kept, 0 following RetentionSeconds
-	// (netflow.go).
-	FlowRecordInterval          time.Duration
-	NetflowJoinToleranceSeconds int64
-	FlowRecordRetentionSeconds  int64
 }
 
 // Defaults returns the configuration of a database that carries no setting row
@@ -370,19 +185,11 @@ func Defaults() Config {
 	return Config{
 		RetentionSeconds:             DefaultRetentionSeconds,
 		AggregateMode:                "full",
-		FirewallLogInterval:          DefaultFirewallLogInterval,
-		SecurityEventInterval:        DefaultSecurityEventInterval,
-		MeasurementInterval:          DefaultMeasurementInterval,
-		DHCPLeaseInterval:            DefaultDHCPLeaseInterval,
-		DNSLookupInterval:            DefaultDNSLookupInterval,
-		ResolverCacheInterval:        DefaultResolverCacheInterval,
-		ResolverLocalDataInterval:    DefaultResolverLocalDataInterval,
 		CacheAnswerDelaySeconds:      DefaultCacheAnswerDelaySeconds,
 		DiscoveryInterval:            DefaultDiscoveryInterval,
 		PurgeInterval:                DefaultPurgeInterval,
-		GeoIPRefreshInterval:         DefaultGeoIPRefreshInterval,
-		GeoLookupInterval:            DefaultGeoLookupInterval,
-		PublicSuffixRefreshInterval:  DefaultPublicSuffixRefreshInterval,
+		Intervals:                    kindIntervalDefaults(),
+		PageSizes:                    kindPageDefaults(),
 		AttributionMaxDelaySeconds:   DefaultAttributionMaxDelaySeconds,
 		LegPairingWindowSeconds:      DefaultLegPairingWindowSeconds,
 		LeaseBackendFailurePassLimit: DefaultLeaseBackendFailurePassLimit,
@@ -390,12 +197,6 @@ func Defaults() Config {
 		DowntimeThresholdSeconds:     DefaultDowntimeThresholdSeconds,
 		LiveInterestSeconds:          DefaultLiveInterestSeconds,
 		LiveSampleRetentionSeconds:   DefaultLiveSampleRetentionSeconds,
-		FlowRecordInterval:           DefaultFlowRecordInterval,
-		NetflowJoinToleranceSeconds:  DefaultNetflowJoinToleranceSeconds,
-		// The page sizes are defaults a row overrides, like the intervals.
-		FirewallLogPageSize:   DefaultFirewallLogPageSize,
-		SecurityEventPageSize: DefaultSecurityEventPageSize,
-		DHCPLeasePageSize:     DefaultDHCPLeasePageSize,
 	}
 }
 
@@ -436,22 +237,22 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		loaded.AggregateMode = value
 	}
 
+	// The core's own loops and every core kind's cadences are read the same way: a kind's under the key
+	// its kind file declares (internal/collect/provider/kinds), its default the file's.
 	intervals := []struct {
 		key    string
 		target *time.Duration
 	}{
-		{KeyFirewallLogInterval, &loaded.FirewallLogInterval},
-		{KeySecurityEventInterval, &loaded.SecurityEventInterval},
-		{KeyMeasurementInterval, &loaded.MeasurementInterval},
-		{KeyDHCPLeaseInterval, &loaded.DHCPLeaseInterval},
-		{KeyDNSLookupInterval, &loaded.DNSLookupInterval},
-		{KeyResolverCacheInterval, &loaded.ResolverCacheInterval},
-		{KeyResolverLocalDataInterval, &loaded.ResolverLocalDataInterval},
 		{KeyDiscoveryInterval, &loaded.DiscoveryInterval},
 		{KeyPurgeInterval, &loaded.PurgeInterval},
-		{KeyGeoIPRefreshInterval, &loaded.GeoIPRefreshInterval},
-		{KeyGeoLookupInterval, &loaded.GeoLookupInterval},
-		{KeyPublicSuffixRefreshInterval, &loaded.PublicSuffixRefreshInterval},
+	}
+	for _, cadence := range provider.Cadences() {
+		target := new(time.Duration)
+		*target = cadence.Default()
+		intervals = append(intervals, struct {
+			key    string
+			target *time.Duration
+		}{cadence.Setting, target})
 	}
 	for _, interval := range intervals {
 		value, present, err := reader.Setting(ctx, interval.key)
@@ -474,20 +275,15 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		}
 		*interval.target = time.Duration(seconds) * time.Second
 	}
-
-	// The page sizes are read the same way. A page size that is not a positive
-	// count is refused; one above what the firewall serves is not, see the
-	// comment on the page-size keys.
-	pageSizes := []struct {
-		key    string
-		target *int
-	}{
-		{KeyFirewallLogPageSize, &loaded.FirewallLogPageSize},
-		{KeySecurityEventPageSize, &loaded.SecurityEventPageSize},
-		{KeyDHCPLeasePageSize, &loaded.DHCPLeasePageSize},
+	for _, interval := range intervals[2:] {
+		loaded.Intervals[interval.key] = *interval.target
 	}
-	for _, pageSize := range pageSizes {
-		value, present, err := reader.Setting(ctx, pageSize.key)
+
+	// The page sizes are read the same way. A page size that is not a positive count is refused; one
+	// above what the firewall serves is not: it is stored and reported as above the ceiling on the
+	// collection surface, where the operator can see that the firewall will not honour it.
+	for _, pageSize := range provider.PageSizes() {
+		value, present, err := reader.Setting(ctx, pageSize.Setting)
 		if err != nil {
 			return loaded, err
 		}
@@ -496,12 +292,12 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 		}
 		count, err := strconv.Atoi(value)
 		if err != nil {
-			return loaded, fmt.Errorf("config: %s is not an integer: %w", pageSize.key, err)
+			return loaded, fmt.Errorf("config: %s is not an integer: %w", pageSize.Setting, err)
 		}
 		if count <= 0 {
-			return loaded, fmt.Errorf("config: %s must be a positive number of records, got %d", pageSize.key, count)
+			return loaded, fmt.Errorf("config: %s must be a positive number of records, got %d", pageSize.Setting, count)
 		}
-		*pageSize.target = count
+		loaded.PageSizes[pageSize.Setting] = count
 	}
 
 	if value, present, err := reader.Setting(ctx, KeyAttributionMaxDelay); err != nil {
@@ -603,9 +399,6 @@ func Load(ctx context.Context, reader SettingReader) (Config, error) {
 	if err := loadLive(ctx, reader, &loaded); err != nil {
 		return loaded, err
 	}
-	if err := loadNetflow(ctx, reader, &loaded); err != nil {
-		return loaded, err
-	}
 
 	return loaded, nil
 }
@@ -701,4 +494,92 @@ func LoadSourceSelection(ctx context.Context, reader SettingReader, kind, provid
 		return SelectionAuto, fmt.Errorf("config: %s: %w", key, err)
 	}
 	return selection, nil
+}
+
+// kindIntervalDefaults are the core kinds' cadences with no setting row, by setting key.
+func kindIntervalDefaults() map[string]time.Duration {
+	defaults := map[string]time.Duration{}
+	for _, cadence := range provider.Cadences() {
+		defaults[cadence.Setting] = cadence.Default()
+	}
+	return defaults
+}
+
+// kindPageDefaults are the core kinds' page sizes with no setting row, by setting key.
+func kindPageDefaults() map[string]int {
+	defaults := map[string]int{}
+	for _, page := range provider.PageSizes() {
+		defaults[page.Setting] = page.Default
+	}
+	return defaults
+}
+
+// Interval is a core kind's cadence of a role in force: the setting row its kind file names, or the
+// file's default. A kind with no such cadence answers zero, and its caller supplies its own.
+func (c Config) Interval(kind, role string) time.Duration {
+	cadence, found := provider.CadenceOfKind(kind, role)
+	if !found {
+		return 0
+	}
+	if interval, set := c.Intervals[cadence.Setting]; set {
+		return interval
+	}
+	return cadence.Default()
+}
+
+// PageSize is a core kind's page size in force: the setting row its kind file names, or the file's
+// default. A kind whose page is not a setting answers zero.
+func (c Config) PageSize(kind string) int {
+	contract, found := provider.KindOf(kind)
+	if !found || contract.PageSize == nil {
+		return 0
+	}
+	if size, set := c.PageSizes[contract.PageSize.Setting]; set {
+		return size
+	}
+	return contract.PageSize.Default
+}
+
+// KindSettingKeys are the setting keys the core kinds' files declare: every cadence's and every page
+// size's, by kind.
+func KindSettingKeys() []string {
+	var keys []string
+	for _, cadence := range provider.Cadences() {
+		keys = append(keys, cadence.Setting)
+	}
+	for _, page := range provider.PageSizes() {
+		keys = append(keys, page.Setting)
+	}
+	return keys
+}
+
+// WithInterval is the configuration with one core kind's cadence of a role set, the receiver untouched:
+// its maps are copied, so a Config handed to Live.Set is never changed by a later edit of another.
+func (c Config) WithInterval(kind, role string, interval time.Duration) Config {
+	cadence, found := provider.CadenceOfKind(kind, role)
+	if !found {
+		return c
+	}
+	intervals := make(map[string]time.Duration, len(c.Intervals)+1)
+	for key, value := range c.Intervals {
+		intervals[key] = value
+	}
+	intervals[cadence.Setting] = interval
+	c.Intervals = intervals
+	return c
+}
+
+// WithPageSize is the configuration with one core kind's page size set, the receiver untouched.
+func (c Config) WithPageSize(kind string, size int) Config {
+	contract, found := provider.KindOf(kind)
+	if !found || contract.PageSize == nil {
+		return c
+	}
+	sizes := make(map[string]int, len(c.PageSizes)+1)
+	for key, value := range c.PageSizes {
+		sizes[key] = value
+	}
+	sizes[contract.PageSize.Setting] = size
+	c.PageSizes = sizes
+	return c
 }

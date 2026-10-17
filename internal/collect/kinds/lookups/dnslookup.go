@@ -29,7 +29,7 @@ import (
 
 // CollectDNSLookup runs one pass of the active implementation of the dns_lookup kind.
 func (c *LookupCoordinator) CollectDNSLookup(ctx context.Context) error {
-	providerKey, providerID, active, err := c.ActiveSourceKey(ctx, core.KindDNSLookup)
+	providerKey, providerID, active, err := c.ActiveSourceKey(ctx, Kind)
 	if err != nil {
 		return err
 	}

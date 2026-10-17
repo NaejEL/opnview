@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// The contract tables of docs/plugins.md are the contracts of contract.go, rendered. A13 of the
+// The contract tables of docs/plugins.md are the contracts of the kind files (kinds/<kind>.json), rendered. A13 of the
 // backend-completion cycle: the document a third party writes a plugin from cannot drift from the
 // code that reads the plugin. Each kind's tables sit between <!-- contract:<kind> --> and
 // <!-- /contract:<kind> -->, and the shared result between <!-- contract:shared --> and
@@ -95,13 +95,13 @@ func TestTheDocumentedContractsAreTheContracts(t *testing.T) {
 			continue
 		}
 		if got != want {
-			t.Errorf("docs/plugins.md's block for %s differs from contract.go; it is:\n<!-- contract:%s -->\n%s\n"+
+			t.Errorf("docs/plugins.md's block for %s differs from its kind file; it is:\n<!-- contract:%s -->\n%s\n"+
 				"<!-- /contract:%s -->", name, name, want, name)
 		}
 	}
 	for name := range documented {
 		if _, known := expected[name]; !known {
-			t.Errorf("docs/plugins.md documents %s, which contract.go does not define", name)
+			t.Errorf("docs/plugins.md documents %s, which no kind file defines", name)
 		}
 	}
 }

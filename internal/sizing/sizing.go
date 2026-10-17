@@ -4,6 +4,7 @@ import (
 	"math"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store/attribution"
 )
 
@@ -43,40 +44,10 @@ const ShortestSuggestibleInterval = 10 * time.Second
 // suggestion is made.
 const MinimumRecordsForASuggestion int64 = 2
 
-// The page ceilings: the largest page the firewall serves for each paged read.
-// A ceiling is a property of the API, not a preference. Each kind in Kinds
-// names the survey section recording its own, and a test holds that citation
-// to docs/opnsense-api-survey.md.
-const (
-	// PageCeilingUnbounded means the read has no page limit the survey
-	// records. The lease searches are grid searches, whose `rowCount` is the
-	// page size and `-1` means all rows: "Authentication and conventions",
-	// under "Pagination envelope". Nothing on the firewall's side caps it.
-	PageCeilingUnbounded = 0
-
-	// PageCeilingFirewallLog is the filter log's `limit`. Survey, "Data source 1
-	// — Filter logs": the default is 1000, and `limit=0` is silently coerced back
-	// to 1000. A request for more is not refused; it is answered with 1000
-	// lines. A page size above the ceiling is therefore accepted by the setting
-	// and reported on the collection surface, where the operator can see that
-	// the firewall will not honour it, and never suggested here.
-	//
-	// The same holds for the two ceilings below.
-	PageCeilingFirewallLog = 1000
-
-	// PageCeilingSecurityEvent is the alert query's `rowCount` default. Survey,
-	// "Data source 2 — Suricata `eve.json`": `rowCount` defaults to 9999.
-	// A page this size is far beyond what an alert feed produces per poll.
-	PageCeilingSecurityEvent = 9999
-
-	// PageCeilingDNSLookup is the resolver's ring buffer. Survey, "Data source
-	// 5 — Resolver DNS lookups": the endpoint holds the last 1000 lookups and
-	// nothing older, whatever is asked. The page is not a setting for this read
-	// at all; only the interval keeps the buffer from wrapping between two
-	// polls, which is what the suggestion for this kind is about.
-	// A suggestion for this kind therefore carries an interval and no page.
-	PageCeilingDNSLookup = 1000
-)
+// PageCeilingUnbounded means the read has no page limit the survey records: a kind file's sizing whose
+// page_ceiling is 0. Each sized kind's ceiling, and the survey section recording it, is its kind file's
+// (internal/collect/provider/kinds); a test holds that citation to docs/opnsense-api-survey.md.
+const PageCeilingUnbounded = 0
 
 // Kind is one paged read as this package sizes it.
 type Kind struct {
@@ -106,71 +77,35 @@ func (k Kind) PageIsAdjustable() bool { return k.PageSizeKey != "" }
 // HasPageCeiling reports whether the firewall caps the read's page.
 func (k Kind) HasPageCeiling() bool { return k.PageCeiling != PageCeilingUnbounded }
 
-// Kinds is the registry of the paged reads this package sizes, in the order the
-// collection surface shows them.
+// Kinds is the paged reads this package sizes, in the order the collection surface shows them: every
+// core kind whose file declares a sizing (internal/collect/provider/kinds), by its order. No list here
+// names a kind, so sizing another read is a kind file's sizing and nothing else.
 //
-// The tables and columns named here are spliced into the measurement SQL, which
-// is why they live in code and never come from input. A test holds every kind
-// to the provider registry of the schema, and every ceiling to a heading of the
-// survey.
-//
-// The per-pair sampler is not here: it reads a snapshot with no paging and no
-// record of its own to measure. A new slice is returned on every call, so a
-// caller may reorder or filter it without changing what the next caller sees.
+// The tables and columns a kind file names are spliced into the measurement SQL, which is why they come
+// from the kind files embedded in the binary and never from input, and the file reader holds each to a
+// snake_case name. The per-pair sampler is not here: it reads a snapshot with no paging and no record of
+// its own to measure. A new slice is returned on every call, so a caller may reorder or filter it without
+// changing what the next caller sees.
 func Kinds() []Kind {
-	return []Kind{
-		{
-			Kind: "firewall_log",
-			Spec: attribution.RecordRateSpec{
-				Kind: "firewall_log", Table: "flow",
-				SourceColumn: "observed_at", IngestedColumn: "ingested_at",
-			},
-			PageSizeKey:   "page_size_firewall_log",
-			IntervalKey:   "poll_interval_firewall_log_seconds",
-			PageCeiling:   PageCeilingFirewallLog,
-			SurveyHeading: "Data source 1 — Filter logs",
-			LabelKey:      "collection.kind.firewall_log",
-		},
-		{
-			Kind: "security_event",
-			Spec: attribution.RecordRateSpec{
-				Kind: "security_event", Table: "security_event",
-				SourceColumn: "occurred_at", IngestedColumn: "ingested_at",
-			},
-			PageSizeKey:   "page_size_security_event",
-			IntervalKey:   "poll_interval_security_event_seconds",
-			PageCeiling:   PageCeilingSecurityEvent,
-			SurveyHeading: "Data source 2 — Suricata `eve.json`",
-			LabelKey:      "collection.kind.security_event",
-		},
-		{
-			// A lease row records when opnview saw it and no other instant of its
-			// own, so the lease table is measured on one clock.
-			Kind: "dhcp_lease",
-			Spec: attribution.RecordRateSpec{
-				Kind: "dhcp_lease", Table: "dhcp_lease",
-				SourceColumn: "observed_at", IngestedColumn: "",
-			},
-			PageSizeKey:   "page_size_dhcp_lease",
-			IntervalKey:   "poll_interval_dhcp_lease_seconds",
-			PageCeiling:   PageCeilingUnbounded,
-			SurveyHeading: "Authentication and conventions",
-			LabelKey:      "collection.kind.dhcp_lease",
-		},
-		{
-			// The resolver's page is its ring buffer, not a setting, so this
-			// kind has no PageSizeKey and only its interval is suggested.
-			Kind: "dns_lookup",
-			Spec: attribution.RecordRateSpec{
-				Kind: "dns_lookup", Table: "dns_resolution",
-				SourceColumn: "looked_up_at", IngestedColumn: "ingested_at",
-			},
-			IntervalKey:   "poll_interval_dns_lookup_seconds",
-			PageCeiling:   PageCeilingDNSLookup,
-			SurveyHeading: "Data source 5 — Resolver DNS lookups",
-			LabelKey:      "collection.kind.dns_lookup",
-		},
+	var kinds []Kind
+	for _, contract := range provider.SizedKinds() {
+		sized := Kind{
+			Kind: contract.Kind,
+			Spec: attribution.RecordRateSpec{Kind: contract.Kind, Table: contract.Sizing.Table,
+				SourceColumn: contract.Sizing.SourceColumn, IngestedColumn: contract.Sizing.IngestedColumn},
+			PageCeiling:   contract.Sizing.PageCeiling,
+			SurveyHeading: contract.Sizing.SurveyHeading,
+			LabelKey:      "collection.kind." + contract.Kind,
+		}
+		if poll, found := contract.CadenceOf(provider.CadencePoll); found {
+			sized.IntervalKey = poll.Setting
+		}
+		if contract.PageSize != nil {
+			sized.PageSizeKey = contract.PageSize.Setting
+		}
+		kinds = append(kinds, sized)
 	}
+	return kinds
 }
 
 // Window is the span a suggestion is measured over: NominalWindowSeconds up to
@@ -452,4 +387,14 @@ func longestIntervalThatFits(pageSize int, measured attribution.RecordRateMeasur
 		seconds--
 	}
 	return 0, false
+}
+
+// Named returns the sized read of a kind, when its file declares a sizing.
+func Named(kind string) (Kind, bool) {
+	for _, sized := range Kinds() {
+		if sized.Kind == kind {
+			return sized, true
+		}
+	}
+	return Kind{}, false
 }

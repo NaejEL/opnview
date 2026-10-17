@@ -4,6 +4,28 @@
   "concurrent" : true,
   "push" : false,
   "bindable" : true,
+  "cadences" : [
+    {
+      "role" : "poll",
+      "setting" : "poll_interval_security_event_seconds",
+      "default_seconds" : 60,
+      "basis" : "Survey, data source 2, \"Sustainable polling frequency\": alerts are low-volume and the backend re-reads the file backwards from the end on every call, so polling more often costs without benefit."
+    }
+  ],
+  "page_size" : {
+    "setting" : "page_size_security_event",
+    "default" : 500,
+    "basis" : "500 is the figure the collectors carried as a constant before the page became a setting, and nothing more: a documented starting point, not a measurement and not a survey figure. What an installation needs depends on how fast its sources write, which only that installation can measure: the collection surface measures it and suggests a pair. The default is within what the firewall serves for this read, so a database with no row never asks for a page the firewall would cut short."
+  },
+  "sizing" : {
+    "order" : 2,
+    "table" : "security_event",
+    "source_column" : "occurred_at",
+    "ingested_column" : "ingested_at",
+    "page_ceiling" : 9999,
+    "survey_heading" : "Data source 2 — Suricata `eve.json`",
+    "basis" : "The alert query's `rowCount` defaults to 9999: a page this size is far beyond what an alert feed produces per poll."
+  },
   "functions" : [
     {
       "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",

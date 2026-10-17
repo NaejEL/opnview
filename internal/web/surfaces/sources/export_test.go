@@ -16,9 +16,6 @@ const RecentGapWindow = recentGapWindow
 // PathParts cuts a probe after each slash.
 var PathParts = pathParts
 
-// OpnsensePagesFor names the OPNsense pages that turn a provider on.
-var OpnsensePagesFor = opnsensePagesFor
-
 // CountOutages is the indicator's own count, read through the surface's own rule.
 func CountOutages(ctx context.Context, host web.Host) (int, error) {
 	statuses, err := newSurface(host).readSourceStatuses(ctx)
@@ -41,7 +38,7 @@ func PageFigures(ctx context.Context, host web.Host) ([]string, error) {
 			row.KindKey, row.ProviderKey, row.Availability, row.ActiveKey, row.SelectionKey, row.OutageKey,
 			row.Checked, row.CheckedState, strings.Join(row.ProbeParts, ""), row.Detail, row.DetailState)
 		for _, page := range row.Pages {
-			line += fmt.Sprintf(" page %s %s", page.URL, page.LabelKey)
+			line += fmt.Sprintf(" page %s %s", page.URL, web.ConditionOf(page.LabelKey))
 		}
 		lines = append(lines, line)
 	}

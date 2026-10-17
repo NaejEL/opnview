@@ -42,7 +42,7 @@ import (
 // endpoints, and letting the first failure end the pass would turn one unreadable source into
 // several.
 func (c *MeasurementCoordinator) CollectMeasurement(ctx context.Context) error {
-	sources, err := c.ActiveSources(ctx, core.KindMeasurementSample)
+	sources, err := c.ActiveSources(ctx, Kind)
 	if err != nil {
 		return err
 	}

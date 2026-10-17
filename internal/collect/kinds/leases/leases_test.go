@@ -8,8 +8,7 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -32,16 +31,16 @@ func TestAnImplementationThatCannotBeReadReportsWhyRatherThanFailingThePass(t *t
 		key  string
 		call func(context.Context) error
 	}{
-		{core.KindDHCPLease, collecttest.ProviderISC, func(ctx context.Context) error {
-			if err := harness.Store.SetActiveProviders(ctx, core.KindDHCPLease, collecttest.ProviderISC); err != nil {
+		{"dhcp_lease", collecttest.ProviderISC, func(ctx context.Context) error {
+			if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", collecttest.ProviderISC); err != nil {
 				return err
 			}
 			var seen []string
 			_, err := harness.Collector.CollectLeases(ctx, &seen)
 			return err
 		}},
-		{core.KindDNSLookup, collecttest.ProviderDnsmasq, func(ctx context.Context) error {
-			if err := harness.Store.SetActiveProviders(ctx, core.KindDNSLookup, collecttest.ProviderDnsmasq); err != nil {
+		{"dns_lookup", collecttest.ProviderDnsmasq, func(ctx context.Context) error {
+			if err := harness.Store.SetActiveProviders(ctx, "dns_lookup", collecttest.ProviderDnsmasq); err != nil {
 				return err
 			}
 			return harness.Collector.CollectDNSLookup(ctx)
@@ -70,7 +69,7 @@ func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testi
 	if _, err := harness.Store.DB().ExecContext(ctx,
 		`INSERT INTO provider (kind, provider_key, display_name, is_active, registered_at)
 		 VALUES ($1, $2, $3, false, $4)`,
-		core.KindDHCPLease, "an-unimplemented-backend", "An unimplemented backend",
+		"dhcp_lease", "an-unimplemented-backend", "An unimplemented backend",
 		collecttest.ReferenceEpoch()); err != nil {
 		t.Fatalf("registering a provider with no implementation: %v", err)
 	}
@@ -80,7 +79,7 @@ func TestAnActiveProviderWithNoImplementationIsAnErrorRatherThanSilence(t *testi
 		string(vocab.StateUnavailable), "an-unimplemented-backend"); err != nil {
 		t.Fatalf("giving it an availability row: %v", err)
 	}
-	if err := harness.Store.SetActiveProviders(ctx, core.KindDHCPLease, "an-unimplemented-backend"); err != nil {
+	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", "an-unimplemented-backend"); err != nil {
 		t.Fatalf("activating it: %v", err)
 	}
 
@@ -120,11 +119,11 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 			harness := collecttest.NewProbeHarness(t)
 			collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 
-			first, err := harness.Store.ProviderID(ctx, core.KindDHCPLease, collecttest.ProviderKea)
+			first, err := harness.Store.ProviderID(ctx, "dhcp_lease", collecttest.ProviderKea)
 			if err != nil {
 				t.Fatalf("looking up the first server: %v", err)
 			}
-			second, err := harness.Store.ProviderID(ctx, core.KindDHCPLease, collecttest.ProviderDnsmasq)
+			second, err := harness.Store.ProviderID(ctx, "dhcp_lease", collecttest.ProviderDnsmasq)
 			if err != nil {
 				t.Fatalf("looking up the second server: %v", err)
 			}
@@ -144,7 +143,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 
 			mac := "0a:11:22:33:44:aa"
 			expiry := collecttest.ReferenceEpoch() + 3600
-			for index, lease := range []dhcplease.Observation{
+			for index, lease := range []observation{
 				{
 					Address: "example-address-on-the-first-vlan", MAC: &mac,
 					DHCPClientID: shape.clientID, LeaseState: "active",
@@ -160,7 +159,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 				if index == 1 {
 					providerID, backend = second, "dnsmasq"
 				}
-				if err := harness.Collector.IngestLease(ctx, lease, snapshot,
+				if err := harness.Collector.IngestLease(ctx, lease.answer(), snapshot,
 					providerID, backend, collecttest.ReferenceEpoch()); err != nil {
 					t.Fatalf("ingesting the lease from server %d: %v", providerID, err)
 				}
@@ -193,7 +192,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 			// Re-polling both servers changes nothing: the generation key still carries the
 			// idempotence, per server.
 			for pass := 0; pass < 2; pass++ {
-				for index, lease := range []dhcplease.Observation{
+				for index, lease := range []observation{
 					{
 						Address: "example-address-on-the-first-vlan", MAC: &mac,
 						DHCPClientID: shape.clientID, LeaseState: "active",
@@ -209,7 +208,7 @@ func TestOneMachineLeasedByTwoServersIsOneClientWithTwoLeases(t *testing.T) {
 					if index == 1 {
 						providerID, backend = second, "dnsmasq"
 					}
-					if err := harness.Collector.IngestLease(ctx, lease, snapshot,
+					if err := harness.Collector.IngestLease(ctx, lease.answer(), snapshot,
 						providerID, backend, collecttest.ReferenceEpoch()); err != nil {
 						t.Fatalf("re-polling: %v", err)
 					}
@@ -252,11 +251,11 @@ func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 	harness := collecttest.NewProbeHarness(t)
 	collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 
-	first, err := harness.Store.ProviderID(ctx, core.KindDHCPLease, collecttest.ProviderKea)
+	first, err := harness.Store.ProviderID(ctx, "dhcp_lease", collecttest.ProviderKea)
 	if err != nil {
 		t.Fatalf("looking up the first server: %v", err)
 	}
-	second, err := harness.Store.ProviderID(ctx, core.KindDHCPLease, collecttest.ProviderDnsmasq)
+	second, err := harness.Store.ProviderID(ctx, "dhcp_lease", collecttest.ProviderDnsmasq)
 	if err != nil {
 		t.Fatalf("looking up the second server: %v", err)
 	}
@@ -276,23 +275,23 @@ func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 	// The asymmetry: the same machine, reported WITH its DHCP client identifier by one server
 	// and WITHOUT it by the other.
 	leases := []struct {
-		observation dhcplease.Observation
+		observation observation
 		providerID  int64
 		backend     string
 	}{
-		{dhcplease.Observation{
+		{observation{
 			Address: "example-address-from-the-reporting-server", MAC: &mac,
 			DHCPClientID: &identifier, LeaseState: "active",
 			InterfaceIdentifier: identifiers[0], ExpiresAt: &expiry,
 		}, first, "kea"},
-		{dhcplease.Observation{
+		{observation{
 			Address: "example-address-from-the-silent-server", MAC: &mac,
 			DHCPClientID: nil, LeaseState: "active",
 			InterfaceIdentifier: identifiers[1], ExpiresAt: &expiry,
 		}, second, "dnsmasq"},
 	}
 	for _, lease := range leases {
-		if err := harness.Collector.IngestLease(ctx, lease.observation, snapshot,
+		if err := harness.Collector.IngestLease(ctx, lease.observation.answer(), snapshot,
 			lease.providerID, lease.backend, collecttest.ReferenceEpoch()); err != nil {
 			t.Fatalf("ingesting the lease from %s: %v", lease.backend, err)
 		}
@@ -334,7 +333,7 @@ func TestAnAsymmetricReportOfOneMachineStillSplitsItInTwoClients(t *testing.T) {
 	// produced a fresh client per pass would be a much worse defect hiding behind the same count.
 	for pass := 0; pass < 2; pass++ {
 		for _, lease := range leases {
-			if err := harness.Collector.IngestLease(ctx, lease.observation, snapshot,
+			if err := harness.Collector.IngestLease(ctx, lease.observation.answer(), snapshot,
 				lease.providerID, lease.backend, collecttest.ReferenceEpoch()); err != nil {
 				t.Fatalf("re-polling %s: %v", lease.backend, err)
 			}
@@ -357,7 +356,7 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 	t.Parallel()
 	harness := collecttest.LeaseRetryHarness(t, "example-key-failing", "example-host-failing")
 	ctx := context.Background()
-	if err := harness.Store.SetActiveProviders(ctx, core.KindDHCPLease, collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
+	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
 	harness.Fake.Answer(collecttest.KeaLeases, http.StatusInternalServerError, []byte(`{}`))
@@ -381,12 +380,12 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 			t.Fatalf("pass %d, the limit: the lookup is examined %t, %s; the failing backend "+
 				"still holds it back", pass, done, resolution)
 		}
-		detail := harness.DetailOf(t, core.KindDHCPLease, collecttest.ProviderKea)
+		detail := harness.DetailOf(t, "dhcp_lease", collecttest.ProviderKea)
 		if !strings.Contains(detail, "lease passes in a row") {
 			t.Errorf("pass %d: the failing backend's detail %q does not state the limit", pass, detail)
 		}
 	}
-	if detail := harness.DetailOf(t, core.KindDHCPLease, collecttest.ProviderKea); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, "dhcp_lease", collecttest.ProviderKea); !strings.Contains(detail,
 		"re-examined without this backend") {
 		t.Errorf("at the limit the detail %q does not say the retry goes on without the backend", detail)
 	}
@@ -401,4 +400,32 @@ func TestABackendFailingOnEveryPassHoldsTheRetryForTheLimitAndNoLonger(t *testin
 	if failures := harness.Collector.LeaseFailurePasses(collecttest.MustProviderID(t, harness, collecttest.ProviderKea)); failures != 0 {
 		t.Errorf("a backend read again still counts %d failed passes", failures)
 	}
+}
+
+// observation is one lease as a test writes it: the dhcp_lease_record fields these tests vary.
+type observation struct {
+	Address             string
+	MAC                 *string
+	DHCPClientID        *string
+	LeaseState          string
+	InterfaceIdentifier string
+	ExpiresAt           *int64
+}
+
+// answer is the observation as a checked dhcp_lease_record, absent fields absent.
+func (o observation) answer() provider.Answer {
+	record := provider.Answer{"address": o.Address, "lease_state": o.LeaseState}
+	if o.MAC != nil {
+		record["mac"] = *o.MAC
+	}
+	if o.DHCPClientID != nil {
+		record["dhcp_client_id"] = *o.DHCPClientID
+	}
+	if o.InterfaceIdentifier != "" {
+		record["interface_identifier"] = o.InterfaceIdentifier
+	}
+	if o.ExpiresAt != nil {
+		record["expires_at"] = *o.ExpiresAt
+	}
+	return record
 }

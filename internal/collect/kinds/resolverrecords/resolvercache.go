@@ -3,7 +3,6 @@ package resolverrecords
 import (
 	"context"
 
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/store/attribution"
 )
 
@@ -26,7 +25,6 @@ func (c *ResolverRecordCoordinator) CollectResolverCache(ctx context.Context) er
 	// No retention purge runs between this pass storing its records and the end of its
 	// derivation (purge.go).
 	defer c.Storing()()
-	_, request, passErr := c.readResourceRecords(ctx, core.KindResolverCache, "cache", attribution.HeldInCache)
+	_, request, passErr := c.readResourceRecords(ctx, KindCache, "cache", attribution.HeldInCache)
 	return c.deriveRecordPass(ctx, request, passErr)
 }
-

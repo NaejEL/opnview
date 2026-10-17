@@ -37,6 +37,14 @@
     {
       "kind": "security_event",
       "display_name": "Suricata",
+      "enable_pages": [
+        {
+          "path": "/ui/ids",
+          "label": "plugin.suricata.opnsense_page.ids_administration",
+          "menu_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/IDS/Menu/Menu.xml",
+          "note": "Services > Intrusion Detection > Administration, which holds ids.general.enabled (controllers/OPNsense/IDS/forms/generalSettings.xml)."
+        }
+      ],
       "read_strategy": "watermark"
     }
   ]

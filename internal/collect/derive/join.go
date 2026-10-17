@@ -259,7 +259,7 @@ func unjoinedDecision(record groupRecord, legs []*joinLeg, input joinInput,
 		record.Ingress.Role != netflow.RoleLocalDelivery && record.Egress.Role == netflow.RoleUnmapped:
 		// The index this record needed names no interface the map holds.
 		return unmatched(decision, netflow.UnmatchedIndexUnmapped)
-	case input.purged && record.StartAt-longestStateTimeout(record.Protocol) < input.purgedBefore:
+	case input.purged && record.StartAt-input.timeouts.longest(record.Protocol) < input.purgedBefore:
 		// Its leg may have been logged before the horizon and purged: never claimed absent.
 		return unmatched(decision, netflow.UnmatchedBeyondFlowHorizon)
 	}
@@ -307,7 +307,7 @@ func joinOne(record groupRecord, legs []*joinLeg, chains map[int64]*legChain, in
 		}
 		flags = chain.flags
 	}
-	if record.StartAt-base > stateTimeout(record.Protocol, flags) {
+	if record.StartAt-base > input.timeouts.idle(record.Protocol, flags) {
 		return joinOutcome{reason: netflow.UnmatchedNoLoggedLeg}
 	}
 	return joinOutcome{chosen: &latest}

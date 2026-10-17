@@ -5,6 +5,14 @@
   "push" : true,
   "push_record" : "flow_record_record",
   "bindable" : false,
+  "cadences" : [
+    {
+      "role" : "poll",
+      "setting" : "poll_interval_flow_record_seconds",
+      "default_seconds" : 60,
+      "basis" : "Not a survey cadence: the read is one model's settings, which the firewall answers from its configuration, so its cost is a request a minute. The interval is the longest a changed capture configuration can go unseen, and so the longest a capture_configuration_unknown interval lasts after a change (Risk 60 of the NetFlow join amendment)."
+    }
+  ],
   "functions" : [
     {
       "description" : "Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients.",

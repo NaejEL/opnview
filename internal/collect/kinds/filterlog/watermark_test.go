@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
 )
@@ -27,12 +26,13 @@ func TestAPurgeCommittingDuringAFilterLogPassDoesNotCountTwice(t *testing.T) {
 	}
 
 	// The pass reads its page, as CollectFirewallLog does...
-	_, providerID, _, err := harness.Collector.ActiveSourceKey(ctx, core.KindFirewallLog)
+	_, providerID, _, err := harness.Collector.ActiveSourceKey(ctx, filterlog.Kind)
 	if err != nil {
 		t.Fatalf("reading the active source: %v", err)
 	}
-	records, _, err := collecttest.MustFirewallLogSource(t, collecttest.ProviderPf).Records(ctx, harness.Collector,
-		harness.Collector.Pages().FirewallLog)
+	answer, _, err := collecttest.MustFirewallLogSource(t, collecttest.ProviderPf).Implementation.Call(ctx,
+		harness.Collector, "records", harness.Collector.PageSize(filterlog.Kind))
+	records := filterlog.ReportedFlows(answer)
 	if err != nil {
 		t.Fatalf("reading the page: %v", err)
 	}

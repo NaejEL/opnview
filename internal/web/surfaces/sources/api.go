@@ -134,7 +134,7 @@ func (s *surface) sourcesAnswer(ctx context.Context) (SourcesAnswer, error) {
 		}
 		drawn.Diagnostic = verbatimDetail(row)
 		if availability == msgAvailabilityNotCollecting {
-			for _, link := range opnsenseLinks(baseURL, row.Kind, row.ProviderKey) {
+			for _, link := range s.opnsenseLinks(baseURL, row.Kind, row.ProviderKey) {
 				drawn.OPNsensePages = append(drawn.OPNsensePages,
 					OPNsensePage{URL: link.URL, Page: web.ConditionOf(link.LabelKey)})
 			}

@@ -69,7 +69,7 @@ func TestTheSourcesJSONCarriesEveryFigureOfThePage(t *testing.T) {
 			settingstest.Path(raw, "availability"), yesNo(settingstest.Path(raw, "active")), settingstest.Path(raw, "selection"),
 			yesNo(settingstest.Path(raw, "in_outage")), checked, settingstest.Path(raw, "probe"), detailText)
 		for _, page := range settingstest.Path(raw, "opnsense_pages").([]any) {
-			line += fmt.Sprintf(" page %s opnsense_page.%s", settingstest.Path(page, "url"), settingstest.Path(page, "page"))
+			line += fmt.Sprintf(" page %s %s", settingstest.Path(page, "url"), settingstest.Path(page, "page"))
 		}
 		expected = append(expected, line)
 	}

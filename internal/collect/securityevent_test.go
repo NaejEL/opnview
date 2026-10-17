@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -27,7 +26,7 @@ func arrangeAlertCollection(t *testing.T) *collecttest.ProbeHarness {
 	harness.Fake.AnswerFixture(collecttest.IDSStatus, "ids_status_running.json")
 	harness.Fake.AnswerFixture(collecttest.AlertLogs, "get_alert_logs.json")
 	harness.Fake.AnswerFixture(collecttest.QueryAlerts, "query_alerts.json")
-	if err := harness.Collector.ProbeSecurityEvent(context.Background()); err != nil {
+	if err := harness.Collector.ProbeKind(context.Background(), "security_event"); err != nil {
 		t.Fatalf("probing the alert feed: %v", err)
 	}
 	return harness
@@ -252,11 +251,11 @@ func TestAnEmptyAlertFeedFromARunningEngineStaysReachable(t *testing.T) {
 	if err := harness.Collector.CollectSecurityEvent(context.Background()); err != nil {
 		t.Fatalf("collecting: %v", err)
 	}
-	state, _, _ := harness.AvailabilityOf(t, core.KindSecurityEvent, collecttest.ProviderSuricata)
+	state, _, _ := harness.AvailabilityOf(t, "security_event", collecttest.ProviderSuricata)
 	if state != vocab.StateReachable {
 		t.Fatalf("a running engine with nothing to report reads %q", state)
 	}
-	detail := harness.DetailOf(t, core.KindSecurityEvent, collecttest.ProviderSuricata)
+	detail := harness.DetailOf(t, "security_event", collecttest.ProviderSuricata)
 	if !strings.Contains(detail, "not a fault") {
 		t.Errorf("the detail is %q, which does not record that silence here is a true reading",
 			detail)

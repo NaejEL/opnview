@@ -104,6 +104,14 @@
     {
       "kind": "measurement_sample",
       "display_name": "NetFlow / Insight sampling",
+      "enable_pages": [
+        {
+          "path": "/ui/diagnostics/netflow",
+          "label": "plugin.insight.opnsense_page.netflow",
+          "menu_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Diagnostics/Menu/Menu.xml",
+          "note": "Reporting > NetFlow, which holds netflow.collect.enable, the local flag /api/diagnostics/netflow/is_enabled reports (controllers/OPNsense/Diagnostics/forms/netflow_capture.xml)."
+        }
+      ],
       "read_strategy": "full_reread",
       "live": {
         "function": "live",

@@ -20,7 +20,7 @@ type Collector struct {
 	*provider.Host
 
 	// sources are the implementations this collector reads: the built-in plugins and the
-	// plugins of its data directory, as the plugin host loaded them (internal/collect/sources).
+	// plugins of its data directory, as the plugin host loaded them (provider.Set).
 	SourceSet *provider.Set
 
 	// Triggers routes the core notifications to the loops of the providers that named them
@@ -31,7 +31,10 @@ type Collector struct {
 	// broker is the one path to the firewall API: the collector's host, discovery and the probe
 	// round ask it.
 	APIBroker *broker.Broker
-	// Cadences are the intervals in force, each a core kind's readers' max age.
+	// Cadences is the configuration in force: each core kind's interval, which is its readers' max age,
+	// and its page size, which is how many records its paged read asks for. It is the operator's setting,
+	// held here rather than read from the database on every pass, and replaced by Configure when the
+	// collection surface saves a new one; the mutex guards it. A collector reads it once per pass.
 	Cadences config.Config
 	Store    *store.Store
 	Clock    Clock
@@ -43,13 +46,6 @@ type Collector struct {
 	OffsetSeconds int
 	// OffsetMeasured says whether it has been measured at least once.
 	OffsetMeasured bool
-
-	// pageSizes is how many records each paged read asks for. It is the operator's
-	// setting, held here rather than read from the database on every pass, and
-	// replaced by Configure when the collection surface saves a new one; the mutex
-	// below guards it with the discovery snapshot. A collector reads it once per
-	// pass, through pages.
-	PageSizeSettings config.PageSizes
 
 	// PushPaths are the source periods of the providers fed by two paths (pushpaths.go).
 	PushPaths PushPaths
@@ -75,14 +71,12 @@ type Collector struct {
 	ReadDetails map[int64]string
 	// ReadOutcomes holds the outcome code of the same reads, beside their words.
 	ReadOutcomes map[int64]vocab.AvailabilityOutcome
-	// LeaseReadAt and localDataReadAt are the instants the last complete lease pass and
-	// the last successful local-data pass of this run began, zero before either; and
-	// localDataFailed whether the last local-data pass failed. The unresolved host-name
-	// lookups are examined only once every source in use has been read after they were
-	// ingested; see hostnameBound. The mutex guards all three.
-	LeaseReadAt     int64
-	LocalDataReadAt int64
-	LocalDataFailed bool
+	// HostNameReads are the instants the last complete pass of each host-naming kind of this run began,
+	// absent before one, and HostNameFailed the kinds whose last pass failed. The unresolved host-name
+	// lookups are examined only once every source in use has been read after they were ingested; see
+	// hostnamesources.go. The mutex guards both.
+	HostNameReads  map[string]int64
+	HostNameFailed map[string]bool
 	// LastRefreshAt is the instant of the last successful aggregate refresh, and
 	// onLinkFingerprint what classification read of the interfaces themselves --
 	// which are upstream, their link-local rule, the networks that count -- at the

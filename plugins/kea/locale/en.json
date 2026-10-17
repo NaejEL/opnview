@@ -1,6 +1,7 @@
 {
   "language": "en",
   "strings": {
-    "provider.dhcp_lease.kea": "Kea DHCP"
+    "provider.dhcp_lease.kea": "Kea DHCP",
+    "plugin.kea.opnsense_page.kea_dhcpv4": "Services: Kea DHCP: Kea DHCPv4"
   }
 }

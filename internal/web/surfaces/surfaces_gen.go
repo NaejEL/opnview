@@ -15,7 +15,6 @@ import (
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/interfaces"
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/labels"
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/live"
-	_ "github.com/NaejEL/opnview/internal/web/surfaces/netflow"
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/people"
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/plugins"
 	_ "github.com/NaejEL/opnview/internal/web/surfaces/settings"

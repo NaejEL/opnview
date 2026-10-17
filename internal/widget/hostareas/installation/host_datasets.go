@@ -17,6 +17,12 @@ import (
 //
 //	host.datasets.latest(name, filter)  the dataset's latest rows: {dataset, state, at, condition,
 //	                                    rows, truncated, withheld}
+//	host.datasets.rows(name, options)    the rows options keep: {dataset, state, condition, rows, truncated,
+//	                                    withheld}; options {filters, keys, from, to, columns}, set-based
+//	                                    (internal/widget/datasets/rows.go)
+//
+// ONLY A DATASET THE PLUGIN DECLARES IS READ (PA3 of the plugin-API amendment): its manifest's datasets, and its
+// own tables. Any other is a TypeError carrying dataset_not_declared.
 //
 // "LATEST" is the rows of the most recent instant: among the rows filter keeps, within the
 // dataset's retention horizon, those whose time column holds the greatest instant, every one of
@@ -46,8 +52,17 @@ import (
 
 func init() {
 	script.RegisterHostArea("datasets", func(call *script.ScriptCall, area *goja.Object) {
+		// declared refuses a dataset the widget's plugin does not declare (PA3): a TypeError carrying the closed
+		// code, which the script may catch.
+		declared := func(function, name string) {
+			if !call.Widget.AdmitsDataset(name) {
+				call.Throw("host.datasets.%s(%q): %s: the plugin's manifest does not name the dataset under datasets",
+					function, name, script.DatasetNotDeclared)
+			}
+		}
 		call.Function(area, "latest", func(arguments goja.FunctionCall) goja.Value {
 			name := call.TextOf(arguments.Argument(0), "the dataset name")
+			declared("latest", name)
 			var filter json.RawMessage
 			if !script.Absent(arguments.Argument(1)) {
 				encoded, err := call.Encode(arguments.Argument(1))
@@ -64,6 +79,26 @@ func init() {
 				return call.Fail(err)
 			}
 			return call.Value(latest)
+		})
+		call.Function(area, "rows", func(arguments goja.FunctionCall) goja.Value {
+			name := call.TextOf(arguments.Argument(0), "the dataset name")
+			declared("rows", name)
+			var options json.RawMessage
+			if !script.Absent(arguments.Argument(1)) {
+				encoded, err := call.Encode(arguments.Argument(1))
+				if err != nil {
+					call.Throw("the options cannot be read: %v", err)
+				}
+				options = encoded
+			}
+			read, refusal, err := datasets.ReadRows(call.Request, name, options, true)
+			if refusal != nil {
+				call.Throw("host.datasets.rows(%q): the options are refused: %s at %s", name, refusal.Code, refusal.Path)
+			}
+			if err != nil {
+				return call.Fail(err)
+			}
+			return call.Value(read)
 		})
 	})
 }

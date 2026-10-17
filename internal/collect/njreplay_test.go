@@ -131,11 +131,7 @@ func TestReplayACapture(t *testing.T) {
 	}
 	h.RecordGaps()
 	// Every leg in one pass: the page holds the whole capture.
-	settings := config.Defaults()
-	settings.DiscoveryInterval, settings.FirewallLogInterval, settings.SecurityEventInterval = 0, 0, 0
-	settings.MeasurementInterval, settings.DHCPLeaseInterval, settings.DNSLookupInterval = 0, 0, 0
-	settings.ResolverCacheInterval, settings.ResolverLocalDataInterval, settings.FlowRecordInterval = 0, 0, 0
-	settings.FirewallLogPageSize = len(legs) + 1
+	settings := collecttest.ZeroMaxAges(config.Defaults()).WithPageSize("firewall_log", len(legs)+1)
 	h.Collector.Configure(settings)
 	started := time.Now()
 	h.LoggedAt(t, last+4000, legs...)

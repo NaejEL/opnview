@@ -34,7 +34,7 @@ import (
 // the same intrusion are two attributed rows rather than one doubled count, and a screen can
 // show them per provider. One failing source does not stop the others.
 func (c *SecurityEventCoordinator) CollectSecurityEvent(ctx context.Context) error {
-	sources, err := c.ActiveSources(ctx, core.KindSecurityEvent)
+	sources, err := c.ActiveSources(ctx, Kind)
 	if err != nil {
 		return err
 	}
@@ -93,7 +93,7 @@ func (c *SecurityEventCoordinator) collectSecurityEventFrom(ctx context.Context,
 		}
 	}
 
-	alerts, result, readErr := source.Implementation.Call(ctx, c, "alerts", c.Pages().SecurityEvent)
+	alerts, result, readErr := source.Implementation.Call(ctx, c, "alerts", c.PageSize(Kind))
 	if writeErr := c.WriteAvailability(ctx, providerID, result.State,
 		result.Outcome, result.Probe, result.Detail); writeErr != nil {
 		return writeErr

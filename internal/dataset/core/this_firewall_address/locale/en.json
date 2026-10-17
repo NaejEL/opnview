@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "dataset.this_firewall_address": "This firewall's own addresses as discovery holds them, each with its interface and when it was seen held"
+  }
+}

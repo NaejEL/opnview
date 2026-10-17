@@ -46,11 +46,11 @@ func TestDefaultsCarryNoFirewallURLKeyOrSecret(t *testing.T) {
 	// Every interval has a value, so a database with no setting row still runs at the
 	// surveyed cadences rather than at zero seconds.
 	for name, interval := range map[string]time.Duration{
-		"filter log":          defaults.FirewallLogInterval,
-		"security events":     defaults.SecurityEventInterval,
-		"sampled measurement": defaults.MeasurementInterval,
-		"DHCP leases":         defaults.DHCPLeaseInterval,
-		"resolver lookups":    defaults.DNSLookupInterval,
+		"filter log":          defaults.Interval("firewall_log", "poll"),
+		"security events":     defaults.Interval("security_event", "poll"),
+		"sampled measurement": defaults.Interval("measurement_sample", "poll"),
+		"DHCP leases":         defaults.Interval("dhcp_lease", "poll"),
+		"resolver lookups":    defaults.Interval("dns_lookup", "poll"),
 		"runtime discovery":   defaults.DiscoveryInterval,
 		"retention purge":     defaults.PurgeInterval,
 	} {
@@ -70,19 +70,19 @@ func TestTheFivePollIntervalsDefaultToTheSurveyedCadences(t *testing.T) {
 		want time.Duration
 		why  string
 	}{
-		{"filter log", defaults.FirewallLogInterval, 10 * time.Second,
+		{"filter log", defaults.Interval("firewall_log", "poll"), 10 * time.Second,
 			"data source 1: each poll is bounded by limit, and a short interval is what keeps a " +
 				"busy ruleset from producing more lines than one page can carry"},
-		{"security events", defaults.SecurityEventInterval, 60 * time.Second,
+		{"security events", defaults.Interval("security_event", "poll"), 60 * time.Second,
 			"data source 2: alerts are low-volume and the backend re-reads the file backwards on " +
 				"every call"},
-		{"sampled measurement", defaults.MeasurementInterval, 300 * time.Second,
+		{"sampled measurement", defaults.Interval("measurement_sample", "poll"), 300 * time.Second,
 			"data source 3: 300 s is the finest resolution the firewall keeps, and since the " +
 				"per-pair endpoint is a live snapshot it is now the resolution of opnview's own history"},
-		{"DHCP leases", defaults.DHCPLeaseInterval, 300 * time.Second,
+		{"DHCP leases", defaults.Interval("dhcp_lease", "poll"), 300 * time.Second,
 			"data source 4: leases change on the scale of minutes to hours and the Kea path costs " +
 				"a control-agent round trip"},
-		{"resolver lookups", defaults.DNSLookupInterval, 60 * time.Second,
+		{"resolver lookups", defaults.Interval("dns_lookup", "poll"), 60 * time.Second,
 			"data source 5: lookups must be correlated with flows that follow within seconds, and " +
 				"the endpoint is a ring buffer that loses its oldest rows outright"},
 	}
@@ -99,17 +99,17 @@ func TestTheFivePollIntervalsDefaultToTheSurveyedCadences(t *testing.T) {
 // figure without a rebuild.
 func TestASettingRowOverridesEveryPollInterval(t *testing.T) {
 	table := settingTable{rows: map[string]string{
-		KeyRetentionSeconds:      "3600",
-		KeyAggregateMode:         "no_domains",
-		KeyFirewallLogInterval:   "5",
-		KeySecurityEventInterval: "30",
-		KeyMeasurementInterval:   "120",
-		KeyDHCPLeaseInterval:     "600",
-		KeyDNSLookupInterval:     "15",
-		KeyDiscoveryInterval:     "900",
-		KeyPurgeInterval:         "1800",
-		KeyGeoIPRefreshInterval:  "43200",
-		KeyGeoLookupInterval:     "60",
+		KeyRetentionSeconds:                    "3600",
+		KeyAggregateMode:                       "no_domains",
+		"poll_interval_firewall_log_seconds":   "5",
+		"poll_interval_security_event_seconds": "30",
+		"poll_interval_measurement_seconds":    "120",
+		"poll_interval_dhcp_lease_seconds":     "600",
+		"poll_interval_dns_lookup_seconds":     "15",
+		KeyDiscoveryInterval:                   "900",
+		KeyPurgeInterval:                       "1800",
+		"refresh_interval_geoip_seconds":       "43200",
+		"poll_interval_geo_lookup_seconds":     "60",
 	}}
 	loaded, err := Load(context.Background(), table)
 	if err != nil {
@@ -122,15 +122,15 @@ func TestASettingRowOverridesEveryPollInterval(t *testing.T) {
 		t.Errorf("the aggregate mode is %q, want no_domains", loaded.AggregateMode)
 	}
 	for name, pair := range map[string][2]time.Duration{
-		"filter log":          {loaded.FirewallLogInterval, 5 * time.Second},
-		"security events":     {loaded.SecurityEventInterval, 30 * time.Second},
-		"sampled measurement": {loaded.MeasurementInterval, 120 * time.Second},
-		"DHCP leases":         {loaded.DHCPLeaseInterval, 600 * time.Second},
-		"resolver lookups":    {loaded.DNSLookupInterval, 15 * time.Second},
+		"filter log":          {loaded.Interval("firewall_log", "poll"), 5 * time.Second},
+		"security events":     {loaded.Interval("security_event", "poll"), 30 * time.Second},
+		"sampled measurement": {loaded.Interval("measurement_sample", "poll"), 120 * time.Second},
+		"DHCP leases":         {loaded.Interval("dhcp_lease", "poll"), 600 * time.Second},
+		"resolver lookups":    {loaded.Interval("dns_lookup", "poll"), 15 * time.Second},
 		"runtime discovery":   {loaded.DiscoveryInterval, 900 * time.Second},
 		"retention purge":     {loaded.PurgeInterval, 1800 * time.Second},
-		"MaxMind refresh":     {loaded.GeoIPRefreshInterval, 43200 * time.Second},
-		"geolocation lookups": {loaded.GeoLookupInterval, 60 * time.Second},
+		"MaxMind refresh":     {loaded.Interval("ip_geolocation", "refresh"), 43200 * time.Second},
+		"geolocation lookups": {loaded.Interval("ip_geolocation", "lookup"), 60 * time.Second},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("the %s interval is %v, want %v", name, pair[0], pair[1])
@@ -167,8 +167,8 @@ func TestASettingThatCannotBeReadIsAnErrorRatherThanASilentFallback(t *testing.T
 		{"an aggregate mode outside the two", map[string]string{KeyAggregateMode: "everything"},
 			KeyAggregateMode},
 		{"an interval that is not a number",
-			map[string]string{KeyFirewallLogInterval: "ten seconds"}, KeyFirewallLogInterval},
-		{"an interval of zero", map[string]string{KeyDNSLookupInterval: "0"}, KeyDNSLookupInterval},
+			map[string]string{"poll_interval_firewall_log_seconds": "ten seconds"}, "poll_interval_firewall_log_seconds"},
+		{"an interval of zero", map[string]string{"poll_interval_dns_lookup_seconds": "0"}, "poll_interval_dns_lookup_seconds"},
 		{"a negative interval", map[string]string{KeyPurgeInterval: "-60"}, KeyPurgeInterval},
 		{"an interval no duration represents",
 			map[string]string{KeyDiscoveryInterval: "9223372037"}, KeyDiscoveryInterval},
@@ -215,58 +215,50 @@ func TestTheDataDirectoryHasNoDefault(t *testing.T) {
 // out of the operator's reach.
 func TestASettingRowOverridesEveryPageSize(t *testing.T) {
 	loaded, err := Load(context.Background(), settingTable{rows: map[string]string{
-		KeyFirewallLogPageSize:   "1000",
-		KeySecurityEventPageSize: "250",
-		KeyDHCPLeasePageSize:     "2000",
+		"page_size_firewall_log":   "1000",
+		"page_size_security_event": "250",
+		"page_size_dhcp_lease":     "2000",
 	}})
 	if err != nil {
 		t.Fatalf("loading the configuration: %v", err)
 	}
 	for name, pair := range map[string][2]int{
-		"filter log":      {loaded.FirewallLogPageSize, 1000},
-		"security events": {loaded.SecurityEventPageSize, 250},
-		"DHCP leases":     {loaded.DHCPLeasePageSize, 2000},
+		"filter log":      {loaded.PageSize("firewall_log"), 1000},
+		"security events": {loaded.PageSize("security_event"), 250},
+		"DHCP leases":     {loaded.PageSize("dhcp_lease"), 2000},
 	} {
 		if pair[0] != pair[1] {
 			t.Errorf("the %s page size is %d, want %d", name, pair[0], pair[1])
 		}
 	}
 	// A page-size row changes nothing else.
-	if loaded.FirewallLogInterval != DefaultFirewallLogInterval {
-		t.Errorf("a page-size row moved the filter-log interval to %v", loaded.FirewallLogInterval)
+	if loaded.Interval("firewall_log", "poll") != 10*time.Second {
+		t.Errorf("a page-size row moved the filter-log interval to %v", loaded.Interval("firewall_log", "poll"))
 	}
 }
 
 // TestThePageSizesDefaultToTheirDocumentedStartingPoints pins the three figures a
-// database with no row runs at, and the agreement between the two places that say
-// them: Defaults, which Load starts from, and DefaultPageSizes, which a collector
-// built without a configuration starts from. Two figures for one page would make
-// a collector's first pass and its later passes ask for different pages.
+// database with no row runs at. They are written once, in each kind's file
+// (internal/collect/provider/kinds), which Defaults, Load and a collector built
+// without a configuration all read.
 func TestThePageSizesDefaultToTheirDocumentedStartingPoints(t *testing.T) {
 	defaults := Defaults()
-	sizes := DefaultPageSizes()
-	for name, figures := range map[string][3]int{
-		"filter log":      {defaults.FirewallLogPageSize, sizes.FirewallLog, DefaultFirewallLogPageSize},
-		"security events": {defaults.SecurityEventPageSize, sizes.SecurityEvent, DefaultSecurityEventPageSize},
-		"DHCP leases":     {defaults.DHCPLeasePageSize, sizes.DHCPLease, DefaultDHCPLeasePageSize},
-	} {
-		if figures[2] != 500 {
-			t.Errorf("the %s page size defaults to %d, want the documented 500", name, figures[2])
+	for _, kind := range []string{"firewall_log", "security_event", "dhcp_lease"} {
+		if got := defaults.PageSize(kind); got != 500 {
+			t.Errorf("the %s page size defaults to %d, want the documented 500", kind, got)
 		}
-		if figures[0] != figures[2] || figures[1] != figures[2] {
-			t.Errorf("the %s page size is %d in Defaults and %d in DefaultPageSizes, want %d in both",
-				name, figures[0], figures[1], figures[2])
-		}
+	}
+	if got := defaults.PageSize("dns_lookup"); got != 0 {
+		t.Errorf("the resolver's page is not a setting, and defaults to %d", got)
 	}
 	loaded, err := Load(context.Background(), settingTable{rows: map[string]string{}})
 	if err != nil {
 		t.Fatalf("loading an empty configuration: %v", err)
 	}
-	if loaded.FirewallLogPageSize != DefaultFirewallLogPageSize ||
-		loaded.SecurityEventPageSize != DefaultSecurityEventPageSize ||
-		loaded.DHCPLeasePageSize != DefaultDHCPLeasePageSize {
+	if loaded.PageSize("firewall_log") != 500 || loaded.PageSize("security_event") != 500 ||
+		loaded.PageSize("dhcp_lease") != 500 {
 		t.Errorf("a database with no row loads the page sizes %d, %d and %d",
-			loaded.FirewallLogPageSize, loaded.SecurityEventPageSize, loaded.DHCPLeasePageSize)
+			loaded.PageSize("firewall_log"), loaded.PageSize("security_event"), loaded.PageSize("dhcp_lease"))
 	}
 }
 
@@ -280,10 +272,10 @@ func TestAPageSizeThatIsNotAPositiveCountIsRefused(t *testing.T) {
 		key  string
 		row  string
 	}{
-		{"a page of zero records", KeyFirewallLogPageSize, "0"},
-		{"a negative page", KeySecurityEventPageSize, "-500"},
-		{"a page that is not a number", KeyDHCPLeasePageSize, "five hundred"},
-		{"a page that is not a whole number", KeyFirewallLogPageSize, "12.5"},
+		{"a page of zero records", "page_size_firewall_log", "0"},
+		{"a negative page", "page_size_security_event", "-500"},
+		{"a page that is not a number", "page_size_dhcp_lease", "five hundred"},
+		{"a page that is not a whole number", "page_size_firewall_log", "12.5"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -370,13 +362,13 @@ func TestTheLegPairingWindowAboveSixtySecondsIsRefusedNamingTheSetting(t *testin
 // TestThePublicSuffixListIsCheckedOnceADayByDefault is the refresh interval of the third
 // outbound call: publicsuffix.org asks for no more than one download a day.
 func TestThePublicSuffixListIsCheckedOnceADayByDefault(t *testing.T) {
-	if Defaults().PublicSuffixRefreshInterval != 24*time.Hour {
-		t.Errorf("the list is checked every %s", Defaults().PublicSuffixRefreshInterval)
+	if Defaults().Interval("registrable_domain", "refresh") != 24*time.Hour {
+		t.Errorf("the list is checked every %s", Defaults().Interval("registrable_domain", "refresh"))
 	}
 	loaded, err := Load(context.Background(), settingTable{rows: map[string]string{
-		KeyPublicSuffixRefreshInterval: "172800"}})
-	if err != nil || loaded.PublicSuffixRefreshInterval != 48*time.Hour {
-		t.Errorf("a row of two days gave %s (%v)", loaded.PublicSuffixRefreshInterval, err)
+		"refresh_interval_public_suffix_list_seconds": "172800"}})
+	if err != nil || loaded.Interval("registrable_domain", "refresh") != 48*time.Hour {
+		t.Errorf("a row of two days gave %s (%v)", loaded.Interval("registrable_domain", "refresh"), err)
 	}
 }
 
@@ -421,10 +413,10 @@ func TestTheLeaseBackendFailureLimitIsAValidatedSettingWhoseDefaultIsThree(t *te
 func TestTheResolverCacheSettingsAreValidated(t *testing.T) {
 	ctx := context.Background()
 	loaded, err := Load(ctx, settingTable{rows: map[string]string{}})
-	if err != nil || loaded.CacheAnswerDelaySeconds != 3600 || loaded.ResolverCacheInterval != time.Minute ||
-		loaded.ResolverLocalDataInterval != 5*time.Minute {
+	if err != nil || loaded.CacheAnswerDelaySeconds != 3600 || loaded.Interval("resolver_cache", "poll") != time.Minute ||
+		loaded.Interval("resolver_local_data", "poll") != 5*time.Minute {
 		t.Errorf("with no row the settings are %d, %v and %v (%v)", loaded.CacheAnswerDelaySeconds,
-			loaded.ResolverCacheInterval, loaded.ResolverLocalDataInterval, err)
+			loaded.Interval("resolver_cache", "poll"), loaded.Interval("resolver_local_data", "poll"), err)
 	}
 	database, err := store.Open(ctx, storetest.Database(t))
 	if err != nil {
@@ -435,13 +427,13 @@ func TestTheResolverCacheSettingsAreValidated(t *testing.T) {
 		t.Errorf("the schema's row is %q (present %t, %v), not 3600", value, present, err)
 	}
 	loaded, err = Load(ctx, settingTable{rows: map[string]string{KeyCacheAnswerDelay: "600",
-		KeyResolverCacheInterval: "30", KeyResolverLocalDataInterval: "900"}})
-	if err != nil || loaded.CacheAnswerDelaySeconds != 600 || loaded.ResolverCacheInterval != 30*time.Second ||
-		loaded.ResolverLocalDataInterval != 15*time.Minute {
+		"poll_interval_resolver_cache_seconds": "30", "poll_interval_resolver_local_data_seconds": "900"}})
+	if err != nil || loaded.CacheAnswerDelaySeconds != 600 || loaded.Interval("resolver_cache", "poll") != 30*time.Second ||
+		loaded.Interval("resolver_local_data", "poll") != 15*time.Minute {
 		t.Errorf("the rows gave %d, %v and %v (%v)", loaded.CacheAnswerDelaySeconds,
-			loaded.ResolverCacheInterval, loaded.ResolverLocalDataInterval, err)
+			loaded.Interval("resolver_cache", "poll"), loaded.Interval("resolver_local_data", "poll"), err)
 	}
-	for _, key := range []string{KeyCacheAnswerDelay, KeyResolverCacheInterval, KeyResolverLocalDataInterval} {
+	for _, key := range []string{KeyCacheAnswerDelay, "poll_interval_resolver_cache_seconds", "poll_interval_resolver_local_data_seconds"} {
 		for _, value := range []string{"0", "-60", "1.5", "an hour", ""} {
 			if _, err := Load(ctx, settingTable{rows: map[string]string{key: value}}); err == nil ||
 				!strings.Contains(err.Error(), key) {

@@ -8,7 +8,6 @@ import (
 
 	"github.com/NaejEL/opnview/internal/collect"
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
@@ -24,8 +23,8 @@ func TestAStoreFailureInTheRecordPassIsRecorded(t *testing.T) {
 		kind     string
 		collect  func(*collect.Collector, context.Context) error
 	}{
-		{collecttest.UnboundDumpCache, core.KindResolverCache, (*collect.Collector).CollectResolverCache},
-		{collecttest.UnboundListLocalData, core.KindResolverLocalData, (*collect.Collector).CollectResolverLocalData},
+		{collecttest.UnboundDumpCache, "resolver_cache", (*collect.Collector).CollectResolverCache},
+		{collecttest.UnboundListLocalData, "resolver_local_data", (*collect.Collector).CollectResolverLocalData},
 	} {
 		harness := collecttest.ArrangeRecordCollection(t)
 		ctx := context.Background()

@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/plugin"
@@ -62,16 +61,16 @@ func TestAThirdPartyLeaseAndLookupPluginStoreTheirRecords(t *testing.T) {
 	if err := collector.EnsureProviders(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := collector.ProbeDHCPLease(ctx); err != nil {
+	if err := collector.ProbeKind(ctx, "dhcp_lease"); err != nil {
 		t.Fatalf("probing the lease kind: %v", err)
 	}
-	if err := collector.ProbeDNSLookup(ctx); err != nil {
+	if err := collector.ProbeKind(ctx, "dns_lookup"); err != nil {
 		t.Fatalf("probing the lookup kind: %v", err)
 	}
-	if active := harness.ActiveKeysOf(t, core.KindDHCPLease); len(active) != 1 || active[0] != "example_leases" {
+	if active := harness.ActiveKeysOf(t, "dhcp_lease"); len(active) != 1 || active[0] != "example_leases" {
 		t.Fatalf("the lease kind activated %v, want the third-party plugin alone", active)
 	}
-	if active := harness.ActiveKeyOf(t, core.KindDNSLookup); active != "example_lookups" {
+	if active := harness.ActiveKeyOf(t, "dns_lookup"); active != "example_lookups" {
 		t.Fatalf("the lookup kind activated %q, want the third-party plugin", active)
 	}
 

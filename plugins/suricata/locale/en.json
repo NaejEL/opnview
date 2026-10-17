@@ -1,6 +1,7 @@
 {
   "language": "en",
   "strings": {
-    "provider.security_event.suricata": "Suricata"
+    "provider.security_event.suricata": "Suricata",
+    "plugin.suricata.opnsense_page.ids_administration": "Services: Intrusion Detection: Administration"
   }
 }

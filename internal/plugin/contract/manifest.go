@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/NaejEL/opnview/internal/broker/infer"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 )
 
 // ManifestFile is the manifest's file name in every plugin directory.
@@ -60,12 +61,18 @@ type Manifest struct {
 	Widgets []string `json:"widgets,omitempty"`
 	// Settings are the settings the plugin declares.
 	Settings []SettingDeclaration `json:"settings,omitempty"`
+	// Pages are the sections of its settings, each with its settings in display order (PageDeclaration).
+	Pages []PageDeclaration `json:"pages,omitempty"`
 	// Destinations are the hosts beyond the firewall the plugin contacts, each a scheme and a host
 	// (such as https://publicsuffix.org). The fetch facility refuses any other.
 	Destinations []string `json:"destinations,omitempty"`
 	// Push are the push sources the plugin receives: data the firewall sends to opnview over syslog
 	// or NetFlow, which the user configures on the firewall (push.go, docs/plugins.md "Push sources").
 	Push []PushDeclaration `json:"push,omitempty"`
+	// Datasets are the data-catalogue names its scripts read through host.datasets -- core datasets and other
+	// plugins' (PA3 of the plugin-API amendment). Its own tables' datasets need no entry. A read of a
+	// dataset not named here is refused: at load when a script names it by a literal, at the call otherwise.
+	Datasets []string `json:"datasets,omitempty"`
 }
 
 // EndpointDeclaration is one firewall endpoint a plugin reads, in the fields an
@@ -120,6 +127,10 @@ type ProviderDeclaration struct {
 	Key string `json:"key,omitempty"`
 	// DisplayName is the provider's name in the registry row.
 	DisplayName string `json:"display_name"`
+	// EnablePages are the OPNsense pages that turn the provider on when the firewall reports it installed
+	// but not collecting, each cited from its menu definition. None is a provider no OPNsense setting
+	// makes collect, which is declared by giving none.
+	EnablePages []EnablePage `json:"enable_pages,omitempty"`
 	// CadenceSeconds is how often a pass runs, for a kind whose cadence is the plugin's to state
 	// (reconciled_state and a kind of the plugin's own); MinCadenceSeconds is the lowest value it
 	// may take. A core kind with a surveyed cadence runs at the interval the collection surface
@@ -147,6 +158,10 @@ type ProviderDeclaration struct {
 	// it declares no probe, no read and no script function, and its availability is the push
 	// listener's and the declarations' liveness (push.go). Empty for every other provider.
 	Source string `json:"source,omitempty"`
+	// ValueSources cite, for each value the provider exports beside its functions (the contract's `values`),
+	// what establishes it: the source it is taken from, the survey section and the upstream URL that
+	// section cites. A built-in cites every value it exports (PA6 of the plugin-API amendment).
+	ValueSources map[string]ValueSource `json:"value_sources,omitempty"`
 }
 
 // KindDeclaration is a kind of the plugin's own, as data (PA2 of the plugin-API amendment): the same
@@ -553,7 +568,28 @@ type SettingDeclaration struct {
 	Values []string `json:"values,omitempty"`
 	// Label is the catalogue key naming the setting, which the plugin's own locale/ carries.
 	Label string `json:"label,omitempty"`
+	// Note says what the setting governs and why its default is what it is, for whoever reads the
+	// manifest: the place the justification of a default sits beside the number.
+	Note string `json:"note,omitempty"`
 }
+
+// PageDeclaration is one page of a plugin's settings: a section the step-7 application draws, with
+// its settings in display order (PA8 of the plugin-API amendment).
+type PageDeclaration struct {
+	// Key names the page, a snake_case word unique in the manifest.
+	Key string `json:"key"`
+	// Label is the catalogue key of its heading, and Help the key of the text that explains it; the
+	// plugin's own locale/ carries both.
+	Label string `json:"label"`
+	Help  string `json:"help"`
+	// Settings are the keys of the plugin's settings the page holds, in the order it shows them. A
+	// setting is on one page at most.
+	Settings []string `json:"settings"`
+}
+
+// EnablePage is an OPNsense page that turns a provider on (provider.EnablePage): what the Sources surface
+// links beside a provider found installed but not collecting.
+type EnablePage = provider.EnablePage
 
 // LiveDeclaration is a provider's live pass.
 type LiveDeclaration struct {
@@ -566,3 +602,17 @@ type LiveDeclaration struct {
 	// Endpoints are the only endpoints the live pass may read, by their manifest names.
 	Endpoints []string `json:"endpoints"`
 }
+
+// ValueSource is what establishes one value a provider exports.
+type ValueSource struct {
+	// Source names where the value is taken from, in the source's own terms: a constant of a header file.
+	Source string `json:"source"`
+	// SurveySection is the section of docs/opnsense-api-survey.md recording it.
+	SurveySection string `json:"survey_section,omitempty"`
+	// UpstreamURL is the file the section cites.
+	UpstreamURL string `json:"upstream_url,omitempty"`
+}
+
+// DatasetNamePattern is what a name of the manifest's `datasets` matches: a core dataset's name, or a
+// plugin's <plugin>.<table>, as the data catalogue names them.
+var DatasetNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)?$`)

@@ -113,6 +113,10 @@ const (
 	RefusalPushColumnUnfilled = "push_column_unfilled"
 	// RefusalPushParseMissing is a parse function the script does not export under push.
 	RefusalPushParseMissing = "push_parse_missing"
+	// RefusalDatasetNotDeclared is a script reading, through host.datasets, a dataset its plugin's manifest does
+	// not name under `datasets` (PA3 of the plugin-API amendment): refused at load when the script names it by a
+	// literal, and at the call -- a TypeError carrying this code -- when the name is computed.
+	RefusalDatasetNotDeclared = "dataset_not_declared"
 )
 
 // Refusal is one plugin the loader would not load, with its closed code.

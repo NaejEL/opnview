@@ -66,11 +66,14 @@ double underscore. A plugin directory holds no Go file; a test of the repository
 | `script` | no | The JavaScript file holding the code the manifest cannot express. |
 | `endpoints` | no | The firewall endpoints the plugin reads, each by a name. |
 | `providers` | yes, unless the plugin carries widgets | The kinds the plugin implements. |
+| `kinds` | no | The attributes of the kinds the plugin declares for itself (*Kinds of the plugin's own*). |
 | `settings` | no | The settings the operator may set. |
+| `pages` | no | The sections the plugin's settings are drawn in, each with its settings in display order (*Settings*). |
 | `destinations` | no | The hosts beyond the firewall the plugin contacts, each a scheme and a host. |
 | `tables` | no | Tables the plugin owns. |
 | `widgets` | no | The widgets the plugin carries, each a directory `widgets/<type>/` (see *Widgets*). |
 | `push` | no | The push sources the plugin receives: syslog lines and NetFlow records the firewall sends (see *Push sources*). |
+| `datasets` | no | The data-catalogue names its scripts read through `host.datasets` -- core datasets and other plugins' `<plugin>.<table>` (*Datasets a plugin reads*). Its own tables need no entry. |
 
 ### Endpoints
 
@@ -114,6 +117,8 @@ at every call, any path the plugins and the core have not declared.
 | `probe`, `read` | The declarative form, below. A provider declaring neither is served by the script. |
 | `live` | A live pass, for a `measurement_sample` provider served by a script: *Live pass*, below. |
 | `source` | `push` for a provider of a kind of the plugin's own that its push entries feed: no probe, no read, no script function, and no cadence to declare (its pass, every minute, reads the push receiver and never the firewall). See *Push sources*. |
+| `enable_pages` | The OPNsense pages that turn the provider on when the firewall reports it installed and not collecting, each `{path, label, menu_url, note}`: a `/ui/` path of the firewall's web interface, the catalogue key naming the page by its OPNsense menu entry (`plugin.<name>.*`), and the menu definition at `https://github.com/opnsense/core/blob/26.7.3/` establishing the path. The Sources surface links the firewall URL the operator entered followed by the path, under the statement that opnview never makes the change. None is declared for a provider no OPNsense setting makes collect. |
+| `value_sources` | For each value the provider exports beside its functions (its kind's `values`), `{source, survey_section, upstream_url}`: what establishes it -- the source's own name for it, the survey section recording it, and the file that section cites. A built-in cites every value taken from a source (*Values another plugin reads*). |
 
 **A provider is served by the script, or declared.** A script exports, under the kind's name, the
 functions the kind's contract lists. A provider whose source is one endpoint answering rows can
@@ -240,6 +245,27 @@ by the plugin's provider of its own kind. A chart can then read it -- a `custom_
 `source` is its name -- with no file of `opnview` changed. A table the catalogue could not serve --
 a measure of type text, a unit on a dimension, an aggregation its role cannot admit -- is refused
 (`table_invalid`).
+
+### Kinds of the plugin's own
+
+A kind is data, whoever declares it. A core kind's attributes are in its file,
+`internal/collect/provider/kinds/<kind>.json`; a kind the plugin declares for itself -- a kind one of its
+providers names that is no core kind -- takes its attributes from the manifest's `kinds`, one entry per
+kind, and the defaults when it has none:
+
+| Key | Default | What it says |
+|---|---|---|
+| `kind` | | The kind, which one of the plugin's providers implements. |
+| `concurrent` | `false` | Several providers of the kind may be active at once. Declare it only when every row of the kind's tables says which provider reported it: the database then lets them all be active, and refuses a second active provider otherwise. |
+| `push` | `false` | The kind's provider may be fed by the plugin's push entries (`"source": "push"`, *Push sources*). |
+| `bindable` | `true` | A widget manifest may bind the kind in `providers` and `primary`. |
+
+```json
+"kinds": [{"kind": "example_meter", "concurrent": true}]
+```
+
+The registry rows are the declarations': loading the plugins writes each kind's attribute and each
+provider's row, and nothing in the database's schema names a kind or a provider.
 
 ### A kind of the plugin's own, polled
 
@@ -391,6 +417,51 @@ reads a firewall field exactly as the core would: `opnview.decode.string(row, ke
 
 Each is recorded as the provider's availability, with what failed, and nothing else changes.
 
+## Datasets a plugin reads
+
+A plugin's scripts -- its source script, its live pass and push parse functions, its derivations and its
+widgets -- read the data catalogue through `host.datasets` (`latest` and `rows`, described under *The widget
+host*, `host.datasets`; the same two functions are on a source script's host). Its manifest names every
+dataset they read under `datasets`: a core dataset by its own name, another plugin's as
+`<plugin>.<table>`. Its own tables need no entry. A read of a dataset the manifest does not name is refused
+with `dataset_not_declared`: at load when a script names it by a literal, at the call -- a `TypeError`
+carrying the code -- when the name is computed. A declared dataset an installation lacks is no refusal: the
+read answers `unknown_dataset`. Nothing in `account`, `session`, `encrypted_credential` or `setting` is a
+dataset, and `host.query` reads only the plugin's own tables.
+
+A source script's and a derivation's reads withhold nothing under `aggregate_mode` `no_domains`, because
+what they write is stored, and the aggregate mode changes what is shown, never what is stored; a widget's
+reads withhold as every widget answer does.
+
+The core datasets a derivation joining another source to the logged connections reads:
+
+| Dataset | Rows |
+|---|---|
+| `leg` | Every logged connection leg -- each filter-log record, the second leg of a paired connection included -- by `flow_id`, with its `pair_outcome` and `paired_flow_id`, pf's `direction`, its `device` and `interface`, its `action`, the tuple pf logged, and whether either end is *This Firewall*. Timed by `observed_at`. |
+| `interface` | The firewall's interfaces as discovery holds them: `identifier`, `device`, `description`, `link_type`, `link_kind`, `vlan_tag`, `is_upstream`. |
+| `this_firewall_address` | This firewall's own addresses as discovery holds them, each with its `interface`, `first_seen_at`, `last_seen_at` and `is_current` (held at `t` when `first_seen_at - margin <= t` and `is_current = 1` or `t <= last_seen_at + margin`, the margin the discovery interval). |
+| `provider_value` | The values the active providers export (*Values another plugin reads*). |
+
+Discovery is no provider of a kind: the condition of `interface`, `this_firewall_address` and
+`provider_value` reads `state_unknown`.
+
+### Values another plugin reads
+
+A kind's contract may name **values** its implementations export beside their functions -- the
+`firewall_log` contract's pf state timeouts, `dns_lookup`'s page bound. The core publishes the **active**
+providers' values as the core dataset `provider_value` (`kind`, `provider_key`, `name`, and the value in
+`integer_value`, `number_value` or `text_value` by its type), rewritten at load and at every probe round, so
+a plugin needing a fact another plugin's source states reads it there and never restates it. The pf plugin
+exports pf's default state timeouts and cites each in its manifest's `value_sources`, from `pf.h`'s
+`PFTM_*_VAL` (survey, *S12*); the values in force are not readable, so they are the defaults.
+
+```js
+// pf's established TCP timeout, from whichever firewall_log provider is active.
+var values = host.datasets.rows("provider_value", {
+  filters: [{ column: "name", op: "eq", value: "state_timeout_tcp_established_seconds" }] });
+var established = values.rows.length > 0 ? values.rows[0].integer_value : null; // null: no timeout stated
+```
+
 ## Settings
 
 A plugin may declare settings the operator sets:
@@ -403,14 +474,22 @@ A plugin may declare settings the operator sets:
 | `min`, `max` | Bounds of an `integer` or a `number`. |
 | `values` | An `enum`'s vocabulary. |
 | `label` | The catalogue key naming the setting, in the plugin's `locale/`. |
+| `note` | What the setting governs and why its default is what it is, for whoever reads the manifest. |
+
+**Pages.** `pages` groups the settings into the sections the step-7 application draws, each
+`{key, label, help, settings}`: a snake_case key of its own, the catalogue keys of its heading and of
+the text explaining it (`plugin.<name>.*`), and the keys of the settings it holds, in display order. A
+setting the manifest does not declare, or one on two pages, is refused at load (`manifest_invalid`). The
+pages are served with the listing and by `GET /api/plugins/<name>/settings`. The netflow plugin's
+`join_tolerance_seconds` and `retention_flow_record_seconds`, on its page `join`, are an example.
 
 **A provider stating its own cadence offers the operator an override** among its plugin's settings:
 `cadence__<kind>__<provider key>`, an integer of seconds whose default is the declared cadence and
 which is refused below `min_cadence_seconds`. The scheduler reads it before every wait, so a saved
 override reaches the running loop.
 
-Settings are written through `POST /api/plugins/<name>/settings` and listed by
-`GET /api/plugins` (`docs/widget-api.md`). A value outside its declaration is refused with a closed
+Settings are read through `GET /api/plugins/<name>/settings`, written through
+`POST /api/plugins/<name>/settings` and listed by `GET /api/plugins` (`docs/widget-api.md`). A value outside its declaration is refused with a closed
 condition naming the key (`unknown_setting`, `invalid_setting_value`, `setting_out_of_range`), and
 nothing is written. A `null` value removes a setting that is not a secret, as emptying its field on
 the settings page does, and its declared default is in force again. **A secret is stored encrypted with the key file beside the database, and no
@@ -541,6 +620,7 @@ a recorded answer in `testdata/`, `{"__provenance__": {...}, "body": ...}`; `fil
 | `push_provider_missing` | A push entry writes a table of the plugin's own, and the plugin declares not exactly one provider with `source` push. |
 | `push_column_unfilled` | A NOT NULL column of a push entry's table, or a required field of the kind record its field mapping fills, is filled by nothing. |
 | `push_parse_missing` | A push entry names a parse function the script does not export under `push`. |
+| `dataset_not_declared` | A script reads, through `host.datasets`, a dataset the manifest does not name under `datasets`. Refused at load when the script names it by a literal; a name computed at run time is refused at the call, a `TypeError` carrying the code. |
 
 ## OPNsense versions
 
@@ -1035,12 +1115,14 @@ for either. The firewall's own traffic has an `out` state only and is therefore 
 Another plugin's dataset, read by its data-catalogue name (`<plugin>.<table>`, or a core dataset's
 own name; `docs/widget-api.md`, *Data catalogue*), without SQL. The read goes through the catalogue's
 own filter grammar and compiler -- the same as `GET /api/datasets/<name>/query` -- so it names nothing a
-catalogue query could not name and binds every value. A widget's manifest declares nothing for it:
-the dataset is found when the widget asks, and an installation without it answers a named absence.
+catalogue query could not name and binds every value. The plugin's manifest names every dataset its
+scripts read under `datasets` (*Datasets a plugin reads*); an installation without one answers a named
+absence.
 
 | Function | What it answers |
 |---|---|
 | `latest(name, filter)` | The dataset's **latest rows**: `{dataset, state, at, condition, rows, truncated, withheld}`. Among the rows `filter` keeps, within the dataset's retention horizon, the rows whose time column holds the greatest instant -- every row of the most recent instant, and nothing older; a sample dataset written by a pass answers that pass's rows whole. A dataset with no time column has no instant: every row `filter` keeps, `at` `null`. `filter` is a list of `{column, op, value}`, exactly the catalogue's `filters` (the same operators and type rules); `null` or absent keeps every row. `rows` are objects keyed by column name, values as the catalogue reads them (an instant as epoch seconds, a boolean, an address and a MAC address as text), at most 1 000, `truncated` true when more matched. `condition` is the condition of the dataset's provider kind, `null` for an absent dataset. |
+| `rows(name, options)` | The rows `options` keep: `{dataset, state, condition, rows, truncated, withheld}`, `state` as `latest`'s. `options` is `{filters, keys, from, to, columns}`, every member optional: `filters` the catalogue's, an `in` list up to 10 000 values; `keys` a set of tuples, `{columns: [...], values: [[...], ...]}` (bare values for one column), up to 10 000; `from` and `to` bound the time column, within the retention horizon; `columns` the columns to answer, every one by default. **One statement whatever the number of keys**: each list is bound as one array, so a derivation reads what a batch needs in a bounded number of reads. At most 10 000 rows, `truncated` true when more matched. |
 
 `state` is a named state, never an error that breaks the widget:
 
@@ -1403,6 +1485,22 @@ Records of packets the firewall allowed or denied: data source 1. The kind keeps
 | `probe` | `host` | `probe_answer` | Called at every probe round: asks the firewall whether this implementation can be read and whether its configuration serves clients. |
 | `records` | `host, page_size` | `records_answer` | Called at every filter-log pass: the newest page_size records, newest first. |
 
+Values the script exports beside the functions:
+
+#### `values`
+
+The exported values.
+
+| Field | Type | Required | Unit or values | Description |
+|---|---|---|---|---|
+| `state_timeout_tcp_first_seconds` | integer | no | seconds | pf's timeout of a TCP state after its first packet (pf.conf `tcp.first`): how long a connection that never left its first packet stays idle and keeps its state. |
+| `state_timeout_tcp_established_seconds` | integer | no | seconds | pf's timeout of an established TCP state (pf.conf `tcp.established`). |
+| `state_timeout_tcp_closing_seconds` | integer | no | seconds | pf's timeout of a TCP state once a FIN was sent (pf.conf `tcp.closing`). |
+| `state_timeout_tcp_closed_seconds` | integer | no | seconds | pf's timeout of a TCP state once an RST was sent (pf.conf `tcp.closed`). |
+| `state_timeout_udp_multiple_seconds` | integer | no | seconds | pf's timeout of a UDP state with packets both ways (pf.conf `udp.multiple`). |
+| `state_timeout_icmp_first_seconds` | integer | no | seconds | pf's timeout of an ICMP state after its first packet (pf.conf `icmp.first`). |
+| `state_timeout_other_multiple_seconds` | integer | no | seconds | pf's timeout of a state of any other protocol with packets both ways (pf.conf `other.multiple`). |
+
 #### `probe_answer`
 
 What `probe` returns.
@@ -1446,6 +1544,11 @@ One filter-log record, decoded and normalised.
 | `ip_id` | integer | no |  | The IPv4 identification, which pairs the two records of one connection. |
 | `tcp_seq` | integer | no |  | The TCP sequence number, the other pairing field. |
 <!-- /contract:firewall_log -->
+
+A `firewall_log` implementation that knows its firewall's state timeouts exports them as the values above;
+the core publishes the active provider's as the `provider_value` dataset (*Values another plugin reads*).
+One that does not leaves them out: a reader then has no timeout, and decides nothing rather than assuming
+one.
 
 <!-- contract:flow_record -->
 ### `flow_record`
@@ -1945,12 +2048,13 @@ and its `fields`, or by its parse function; the table's time column, when nothin
 filled with the record's own instant. Every NOT NULL column must be filled by one of these, or the
 declaration is refused (`push_column_unfilled`).
 
-**An `output_table` entry belongs to a provider.** The plugin declares one provider of a kind of its
-own with `"source": "push"`: it has no probe, no read and no script function, its availability is the
+**An `output_table` entry belongs to a provider.** The plugin declares a kind of its own with `push`
+(*Kinds of the plugin's own*) and one provider of it with `"source": "push"`: it has no probe, no read and no script function, its availability is the
 entries' -- `listener_not_configured`, `no_message_received` within the liveness span, or healthy --
 and its gaps are the entries'. The table's dataset is dated by it.
 
 ```json
+"kinds": [{"kind": "example_logins", "push": true}],
 "providers": [{"kind": "example_logins", "display_name": "Example logins", "source": "push"}]
 ```
 
@@ -2325,6 +2429,7 @@ A test never calls its parse function directly to prove ingestion: it delivers r
       "retention": { "column": "logged_at" }
     }
   ],
+  "kinds": [ { "kind": "example_logins", "push": true } ],
   "providers": [ { "kind": "example_logins", "display_name": "Example logins", "source": "push" } ],
   "push": [
     {
@@ -2382,6 +2487,7 @@ expresses.
       "retention": { "column": "logged_at" }
     }
   ],
+  "kinds": [ { "kind": "example_pairs", "push": true } ],
   "providers": [ { "kind": "example_pairs", "display_name": "Example pairs", "source": "push" } ],
   "push": [
     {
@@ -2465,6 +2571,7 @@ reaches the exporter at all.
       "retention": { "column": "started_at" }
     }
   ],
+  "kinds": [ { "kind": "example_flows", "push": true } ],
   "providers": [ { "kind": "example_flows", "display_name": "Example flows", "source": "push" } ],
   "push": [
     {

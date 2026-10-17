@@ -149,10 +149,10 @@ func TestTheCollectionSurfaceReportsEveryFigureItMeasures(t *testing.T) {
 			t.Errorf("the card does not show %s", row)
 		}
 	}
-	if !collectiontest.FigureShown(t, card, msgLabelPageSizeInForce, strconv.Itoa(config.DefaultFirewallLogPageSize)) ||
+	if !collectiontest.FigureShown(t, card, msgLabelPageSizeInForce, strconv.Itoa(config.Defaults().PageSize("firewall_log"))) ||
 		!strings.Contains(card, "<dt>"+collectiontest.CatalogueText(t, msgLabelIntervalInForce)+"</dt>\n<dd>"+
-			collectiontest.DurationText(t, int64(config.DefaultFirewallLogInterval/time.Second))+"</dd>") ||
-		!collectiontest.FigureShown(t, card, msgLabelPageCeiling, strconv.Itoa(sizing.PageCeilingFirewallLog)) ||
+			collectiontest.DurationText(t, int64(config.Defaults().Interval("firewall_log", "poll")/time.Second))+"</dd>") ||
+		!collectiontest.FigureShown(t, card, msgLabelPageCeiling, strconv.Itoa(ceilingOf("firewall_log"))) ||
 		!collectiontest.StateShown(t, card, msgLabelPageState, msgPageWithinCeiling) {
 		t.Error("the card does not show the pair in force, the ceiling and the page state")
 	}
@@ -321,15 +321,15 @@ func TestASavedPairReachesTheRunningServiceWithoutARestart(t *testing.T) {
 	webtest.Discard(t, h.Post(webtest.PathCollection, collectiontest.PairForm("security_event", "1200", "45")))
 
 	live := h.Live.Get()
-	if live.SecurityEventPageSize != 1200 || live.SecurityEventInterval != 45*time.Second {
+	if live.PageSize("security_event") != 1200 || live.Interval("security_event", "poll") != 45*time.Second {
 		t.Errorf("the live configuration holds %d records every %s after the save",
-			live.SecurityEventPageSize, live.SecurityEventInterval)
+			live.PageSize("security_event"), live.Interval("security_event", "poll"))
 	}
 	received := h.Collector.Received()
 	if len(received) != 1 {
 		t.Fatalf("the running collector was configured %d times, want once", len(received))
 	}
-	if received[0].SecurityEventPageSize != 1200 || received[0].SecurityEventInterval != 45*time.Second {
+	if received[0].PageSize("security_event") != 1200 || received[0].Interval("security_event", "poll") != 45*time.Second {
 		t.Error("the running collector was handed a configuration without the saved pair")
 	}
 
@@ -433,7 +433,7 @@ func TestAnIntervalNoDurationRepresentsIsRefused(t *testing.T) {
 func TestAPageSizeAboveTheCeilingIsStoredAndReported(t *testing.T) {
 	t.Parallel()
 	h := collectiontest.SignedInHarness(t)
-	above := strconv.Itoa(sizing.PageCeilingSecurityEvent + 1)
+	above := strconv.Itoa(ceilingOf("security_event") + 1)
 	status, page := webtest.Followed(t, h, h.Post(webtest.PathCollection, collectiontest.PairForm("security_event", above, "60")))
 	if status != http.StatusSeeOther {
 		t.Fatalf("a page above the ceiling answered %d", status)
@@ -605,4 +605,10 @@ func TestASelectionThatIsNotOneOfTheThreeIsRefusedAgainstItsField(t *testing.T) 
 	if len(h.Collector.ReselectedKinds()) != 0 || len(h.Collector.Received()) != 0 {
 		t.Error("a refused submission reached the running collector")
 	}
+}
+
+// ceilingOf is the page ceiling a sized kind's file declares.
+func ceilingOf(kind string) int {
+	sized, _ := sizing.Named(kind)
+	return sized.PageCeiling
 }

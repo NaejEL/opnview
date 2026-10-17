@@ -15,15 +15,13 @@ import (
 //	host.settings.get(key)   the setting's stored value as a string, or null when it is not set
 //	host.settings.keys       the keys a widget may read
 
-// widgetSettingKeys are the settings a widget script may read.
-var widgetSettingKeys = []string{
+// widgetSettingKeys are the settings a widget script may read: the core's own, then every core kind's
+// cadences and page size, under the keys its kind file declares.
+var widgetSettingKeys = append([]string{
 	config.KeyAggregateMode, config.KeyRetentionSeconds, config.KeyAttributionMaxDelay, config.KeyCacheAnswerDelay,
-	config.KeyLegPairingWindow, config.KeyFirewallLogInterval, config.KeySecurityEventInterval,
-	config.KeyMeasurementInterval, config.KeyDHCPLeaseInterval, config.KeyDNSLookupInterval,
-	config.KeyResolverCacheInterval, config.KeyResolverLocalDataInterval, config.KeyDiscoveryInterval,
-	config.KeyPurgeInterval, config.KeyHeartbeatInterval, config.KeyDowntimeThreshold,
-	config.KeyFirewallLogPageSize, config.KeySecurityEventPageSize, config.KeyDHCPLeasePageSize,
-}
+	config.KeyLegPairingWindow, config.KeyDiscoveryInterval, config.KeyPurgeInterval, config.KeyHeartbeatInterval,
+	config.KeyDowntimeThreshold,
+}, config.KindSettingKeys()...)
 
 func init() {
 	script.RegisterHostArea("settings", func(call *script.ScriptCall, area *goja.Object) {

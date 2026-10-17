@@ -10,6 +10,7 @@ import (
 	"github.com/NaejEL/opnview/internal/store/netflow"
 	"github.com/NaejEL/opnview/internal/store/push"
 	"github.com/NaejEL/opnview/internal/store/sqldb"
+	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
 // LiveSampling is the collector's live state.
@@ -29,8 +30,6 @@ type NetflowState struct {
 	// has been stored, or recorded as a gap. A flow record is decided only once it has passed the
 	// record's start plus the tolerance (PS19 rule 8).
 	ReadThrough int64
-	// ToleranceSeconds is netflow_join_tolerance_seconds.
-	ToleranceSeconds int64
 	// Histories caches each provider's capture configurations.
 	Histories map[int64]*CaptureHistory
 	// Dirty is the connection window and legs whose measured volume must be computed again.

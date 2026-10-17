@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	opnview "github.com/NaejEL/opnview"
@@ -52,4 +53,77 @@ func builtinDeclarationsText() ([]byte, error) {
 		Kinds     []provider.KindAttributes
 		Providers []provider.Manifest
 	}{append(kinds, pluginKinds...), append(providers, pluginProviders...)})
+}
+
+// RecordProviderValues replaces the exported values of the given implementations with those given (PA6
+// of the plugin-API amendment): two statements whatever their number. An implementation with no registry
+// row yet records nothing; the registration writes its row first.
+func (s *Store) RecordProviderValues(ctx context.Context, values []provider.ExportedValue,
+	implementations []provider.Manifest, now int64) error {
+	kinds := make([]string, 0, len(implementations))
+	keys := make([]string, 0, len(implementations))
+	for _, implementation := range implementations {
+		kinds = append(kinds, implementation.Kind)
+		keys = append(keys, implementation.Key)
+	}
+	valueKinds := make([]string, 0, len(values))
+	valueKeys := make([]string, 0, len(values))
+	names := make([]string, 0, len(values))
+	encoded := make([]string, 0, len(values))
+	for _, value := range values {
+		text, err := json.Marshal(value.Value)
+		if err != nil {
+			return fmt.Errorf("store: encoding the value %s of %s/%s: %w", value.Name, value.Kind, value.Key, err)
+		}
+		valueKinds = append(valueKinds, value.Kind)
+		valueKeys = append(valueKeys, value.Key)
+		names = append(names, value.Name)
+		encoded = append(encoded, string(text))
+	}
+	transaction, err := s.SQL.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("store: starting the providers' values: %w", err)
+	}
+	defer func() { _ = transaction.Rollback() }()
+	if _, err := transaction.ExecContext(ctx,
+		"DELETE FROM provider_value AS v USING provider AS p, unnest(CAST($1 AS TEXT[]), CAST($2 AS TEXT[])) AS d (k, pk) "+
+			"WHERE v.provider_id = p.id AND p.kind = d.k AND p.provider_key = d.pk", kinds, keys); err != nil {
+		return fmt.Errorf("store: removing the providers' values: %w", err)
+	}
+	if _, err := transaction.ExecContext(ctx,
+		"INSERT INTO provider_value (provider_id, name, value, recorded_at) "+
+			"SELECT p.id, d.n, CAST(d.v AS JSONB), $5 "+
+			"FROM unnest(CAST($1 AS TEXT[]), CAST($2 AS TEXT[]), CAST($3 AS TEXT[]), CAST($4 AS TEXT[])) AS d (k, pk, n, v) "+
+			"JOIN provider AS p ON p.kind = d.k AND p.provider_key = d.pk",
+		valueKinds, valueKeys, names, encoded, now); err != nil {
+		return fmt.Errorf("store: recording the providers' values: %w", err)
+	}
+	if err := transaction.Commit(); err != nil {
+		return fmt.Errorf("store: committing the providers' values: %w", err)
+	}
+	return nil
+}
+
+// ActiveProviderValues reads the named values the active providers export, by name: what a core
+// derivation reads of another source's facts (the Go NetFlow join reads pf's state timeouts so). A name
+// no active provider exports is absent from the answer; two active providers exporting one name answer the
+// lowest-numbered provider's.
+func (s *Store) ActiveProviderValues(ctx context.Context, names []string) (map[string]json.RawMessage, error) {
+	rows, err := s.SQL.QueryContext(ctx,
+		"SELECT DISTINCT ON (v.name) v.name, v.value FROM provider_value AS v JOIN provider AS p ON p.id = v.provider_id "+
+			"WHERE p.is_active AND v.name = ANY(CAST($1 AS TEXT[])) ORDER BY v.name, p.id", names)
+	if err != nil {
+		return nil, fmt.Errorf("store: reading the active providers' values: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	values := map[string]json.RawMessage{}
+	for rows.Next() {
+		var name string
+		var value []byte
+		if err := rows.Scan(&name, &value); err != nil {
+			return nil, fmt.Errorf("store: reading the active providers' values: %w", err)
+		}
+		values[name] = json.RawMessage(value)
+	}
+	return values, rows.Err()
 }

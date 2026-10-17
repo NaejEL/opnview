@@ -24,7 +24,7 @@ func (c *ResolverRecordCoordinator) CollectResolverLocalData(ctx context.Context
 	// No retention purge runs between this pass storing its records and the end of its
 	// derivation (purge.go).
 	defer c.Storing()()
-	pass, request, passErr := c.readResourceRecords(ctx, core.KindResolverLocalData, "local_data",
+	pass, request, passErr := c.readResourceRecords(ctx, KindLocalData, "local_data",
 		attribution.HeldInLocalData)
 
 	// The local data names hosts no lease names, so the lookups whose logged host name is
@@ -34,14 +34,14 @@ func (c *ResolverRecordCoordinator) CollectResolverLocalData(ctx context.Context
 	// be resolved against: the examination waits for the poll after it.
 	switch {
 	case pass.read && pass.followsAPoll:
-		before, examine, err := c.NoteLocalDataRead(ctx, pass.readAt)
+		before, examine, err := c.NoteHostNameSourceRead(ctx, KindLocalData, pass.readAt)
 		if err != nil {
 			passErr = core.JoinErrors(append(nonNil(passErr), err))
 		} else if examine {
 			request.Hostnames, request.HostnamesBefore = true, before
 		}
 	case pass.failed:
-		c.NoteLocalDataFailed()
+		c.NoteHostNameSourceFailed(KindLocalData)
 	}
 	return c.deriveRecordPass(ctx, request, passErr)
 }
@@ -53,4 +53,3 @@ func nonNil(err error) []error {
 	}
 	return []error{err}
 }
-

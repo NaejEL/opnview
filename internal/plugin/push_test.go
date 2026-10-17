@@ -30,6 +30,7 @@ func pushManifest() map[string]any {
 			map[string]any{"name": "word", "type": "text"},
 			map[string]any{"name": "count", "type": "integer", "nullable": true, "role": "measure"},
 		}, "retention": map[string]any{"column": "logged_at"}}},
+		"kinds": []any{map[string]any{"kind": "example_push_lines", "push": true}},
 		"providers": []any{map[string]any{"kind": "example_push_lines", "display_name": "Example lines",
 			"source": "push"}},
 		"push": []any{map[string]any{"name": "lines", "protocol": "syslog",
@@ -354,6 +355,9 @@ func netflowManifest(t *testing.T) (map[string]any, string) {
 	if err := json.Unmarshal(raw, &manifest); err != nil {
 		t.Fatal(err)
 	}
+	// Its settings and their page are the netflow plugin's own, named in its catalogue: not this test's subject.
+	delete(manifest, "settings")
+	delete(manifest, "pages")
 	manifest["name"] = "example_push"
 	manifest["script"] = "example.js"
 	script, err := os.ReadFile(filepath.Join("..", "..", "plugins", "netflow", "netflow.js"))

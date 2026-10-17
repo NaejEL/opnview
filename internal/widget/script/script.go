@@ -74,6 +74,9 @@ type ScriptWidget struct {
 	// aggregate_mode = no_domains, field by field, and its tests prove it; any other widget is held to
 	// the core's rule instead (errWithheldUnderNoDomains).
 	Builtin bool
+	// Datasets are the dataset names the widget's plugin declares (DatasetsAdmitted): host.datasets refuses any
+	// other with dataset_not_declared.
+	Datasets map[string]bool
 }
 
 // CompileWidgetScript compiles a widget's script and runs it once, in a runtime of its own, to see
@@ -213,4 +216,29 @@ type WidgetStatement struct {
 	Domain bool
 	// Parameters are the names it binds, without the colon.
 	Parameters []string
+}
+
+// DatasetNotDeclared is the closed code a read of an undeclared dataset is refused with (the plugin
+// contract's dataset_not_declared, docs/plugins.md "Refusals").
+const DatasetNotDeclared = "dataset_not_declared"
+
+// DatasetsAdmitted is the set of datasets a plugin's widget may read: those its manifest declares, and
+// its own plugin's tables, which the prefix <plugin>. marks.
+func DatasetsAdmitted(plugin string, declared []string) map[string]bool {
+	admitted := map[string]bool{plugin + ".": true}
+	for _, name := range declared {
+		admitted[name] = true
+	}
+	return admitted
+}
+
+// AdmitsDataset reports whether the widget's script may read a dataset.
+func (w *ScriptWidget) AdmitsDataset(name string) bool {
+	if w.Datasets[name] {
+		return true
+	}
+	if prefix, _, found := strings.Cut(name, "."); found {
+		return w.Datasets[prefix+"."]
+	}
+	return false
 }

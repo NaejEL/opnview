@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store/vocab"
@@ -30,7 +29,7 @@ func TestABackendThatCannotBeReadByDesignDoesNotHoldTheHostNameRetry(t *testing.
 	t.Parallel()
 	harness := collecttest.LeaseRetryHarness(t, "example-key-unsupported", "example-host-unsupported")
 	ctx := context.Background()
-	if err := harness.Store.SetActiveProviders(ctx, core.KindDHCPLease, collecttest.ProviderDnsmasq, collecttest.ProviderISC); err != nil {
+	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", collecttest.ProviderDnsmasq, collecttest.ProviderISC); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
 
@@ -43,7 +42,7 @@ func TestABackendThatCannotBeReadByDesignDoesNotHoldTheHostNameRetry(t *testing.
 			done, resolution)
 	}
 	// The backend that cannot be read keeps its own reason, as before.
-	if detail := harness.DetailOf(t, core.KindDHCPLease, collecttest.ProviderISC); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, "dhcp_lease", collecttest.ProviderISC); !strings.Contains(detail,
 		"field contract is unverified") {
 		t.Errorf("the unreadable backend's detail is %q, which has lost its reason", detail)
 	}
@@ -56,7 +55,7 @@ func TestTheLimitIsAValidatedSettingOfTheLeasePass(t *testing.T) {
 	t.Parallel()
 	harness := collecttest.LeaseRetryHarness(t, "example-key-configured", "example-host-configured")
 	ctx := context.Background()
-	if err := harness.Store.SetActiveProviders(ctx, core.KindDHCPLease, collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
+	if err := harness.Store.SetActiveProviders(ctx, "dhcp_lease", collecttest.ProviderDnsmasq, collecttest.ProviderKea); err != nil {
 		t.Fatalf("activating both backends: %v", err)
 	}
 	harness.Fake.Answer(collecttest.KeaLeases, http.StatusInternalServerError, []byte(`{}`))

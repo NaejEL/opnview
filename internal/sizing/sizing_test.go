@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/store"
 	"github.com/NaejEL/opnview/internal/store/attribution"
@@ -62,7 +63,8 @@ func repositoryFile(t *testing.T, relative string) string {
 // collection surface; a pair of zeros, or a pair derived from one record, would
 // read as a suggestion and be applied as one.
 func TestADegenerateMeasurementIsNeverRenderedAsAPair(t *testing.T) {
-	inForce := Pair{PageSize: config.DefaultFirewallLogPageSize, Interval: config.DefaultFirewallLogInterval}
+	inForce := Pair{PageSize: config.Defaults().PageSize("firewall_log"),
+		Interval: config.Defaults().Interval("firewall_log", provider.CadencePoll)}
 	single := measuredPeak(1)
 	single.RecordCount, single.CoveredToAt = 1, single.CoveredFromAt
 	short := measuredPeak(5)
@@ -291,10 +293,10 @@ func TestTheRegistryAgreesWithTheSchema(t *testing.T) {
 		t.Fatalf("listing the registered kinds: %v", err)
 	}
 	keys := map[string][2]string{
-		"firewall_log":   {config.KeyFirewallLogPageSize, config.KeyFirewallLogInterval},
-		"security_event": {config.KeySecurityEventPageSize, config.KeySecurityEventInterval},
-		"dhcp_lease":     {config.KeyDHCPLeasePageSize, config.KeyDHCPLeaseInterval},
-		"dns_lookup":     {"", config.KeyDNSLookupInterval},
+		"firewall_log":   {"page_size_firewall_log", "poll_interval_firewall_log_seconds"},
+		"security_event": {"page_size_security_event", "poll_interval_security_event_seconds"},
+		"dhcp_lease":     {"page_size_dhcp_lease", "poll_interval_dhcp_lease_seconds"},
+		"dns_lookup":     {"", "poll_interval_dns_lookup_seconds"},
 	}
 	seen := map[string]bool{}
 	for _, kind := range Kinds() {
@@ -322,6 +324,14 @@ func TestTheRegistryAgreesWithTheSchema(t *testing.T) {
 	}
 	if len(seen) != len(keys) {
 		t.Errorf("the registry holds %d kinds, this test expects %d", len(seen), len(keys))
+	}
+	// The order the collection surface draws them in is the kind files' sizing order, and it is today's.
+	var order []string
+	for _, kind := range Kinds() {
+		order = append(order, kind.Kind)
+	}
+	if strings.Join(order, ",") != "firewall_log,security_event,dhcp_lease,dns_lookup" {
+		t.Errorf("the sized kinds are drawn in the order %v", order)
 	}
 }
 

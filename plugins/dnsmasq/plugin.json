@@ -37,6 +37,14 @@
     {
       "kind": "dhcp_lease",
       "display_name": "Dnsmasq DHCP",
+      "enable_pages": [
+        {
+          "path": "/ui/dnsmasq/settings#dhcpranges",
+          "label": "plugin.dnsmasq.opnsense_page.dnsmasq_dhcp_ranges",
+          "menu_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/models/OPNsense/Dnsmasq/Menu/Menu.xml",
+          "note": "Services > Dnsmasq DNS & DHCP > DHCP ranges, where dnsmasq.dhcp_ranges is filled."
+        }
+      ],
       "read_strategy": "full_reread"
     },
     {

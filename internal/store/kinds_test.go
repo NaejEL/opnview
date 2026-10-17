@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
@@ -14,8 +15,9 @@ import (
 //
 // The rule: A KIND ADMITS SEVERAL CONCURRENTLY ACTIVE PROVIDERS EXACTLY WHEN THE IDENTITY OF ITS
 // DESTINATION ROWS INCLUDES THE PROVIDER. It is written out beside the index that enforces it in
-// schema.sql and mirrored in internal/store/vocab/kinds.go, and these tests are what keep the two
-// together and what make both directions of the rule fail loudly when broken.
+// schema.sql and stated per kind as data -- each kind file's `concurrent` (internal/collect/provider/kinds), which
+// the declarations write into provider_kind -- and these tests make both directions of the rule fail
+// loudly when broken.
 
 // TestTwoSecurityEventProvidersCanBothBeActive is the case that made the old index wrong.
 //
@@ -94,10 +96,13 @@ func TestAskingForTheSingleActiveProviderOfAConcurrentKindIsRefused(t *testing.T
 	database, _ := openTestStore(t)
 	ctx := context.Background()
 
-	for _, kind := range vocab.ConcurrentKinds() {
-		if _, _, err := database.ActiveProviderID(ctx, kind); err == nil {
+	for _, kind := range provider.Kinds() {
+		if !kind.Concurrent {
+			continue
+		}
+		if _, _, err := database.ActiveProviderID(ctx, kind.Kind); err == nil {
 			t.Errorf("asking for the single active provider of %s succeeded, and that kind "+
-				"admits several", kind)
+				"admits several", kind.Kind)
 		}
 	}
 	// And an exclusive kind answers, because it has a single answer to give.
@@ -132,36 +137,53 @@ func TestActivatingSeveralProvidersOfAnExclusiveKindIsRefused(t *testing.T) {
 	}
 }
 
-// TestTheConcurrentKindsInCodeAreTheOnesTheSchemaExempts keeps the rule from having two truths.
-//
-// internal/store/vocab/kinds.go exists so the probe round can activate every qualifying provider of
-// a concurrent kind instead of discovering the constraint by failing. The database is the
-// authority, so the set in code is read back out of the index's own definition and compared.
-func TestTheConcurrentKindsInCodeAreTheOnesTheSchemaExempts(t *testing.T) {
+// TestTheExclusivityConstraintNamesNoKindAndReadsTheKindFiles is PA-AC2's database half: the index that
+// rejects a second active provider of an exclusive kind names no kind -- it reads the attribute every
+// provider row carries from provider_kind -- and provider_kind holds exactly what the kind files declare.
+func TestTheExclusivityConstraintNamesNoKindAndReadsTheKindFiles(t *testing.T) {
 	t.Parallel()
 	database, _ := openTestStore(t)
-
+	ctx := context.Background()
 	var definition string
-	if err := database.DB().QueryRowContext(context.Background(),
-		`SELECT pg_get_indexdef('uq_provider_active_per_exclusive_kind'::regclass)`).
-		Scan(&definition); err != nil {
+	if err := database.DB().QueryRowContext(ctx,
+		`SELECT pg_get_indexdef('uq_provider_active_per_exclusive_kind'::regclass)`).Scan(&definition); err != nil {
 		t.Fatalf("reading the exclusivity index out of the schema: %v", err)
 	}
-
-	for _, kind := range vocab.ConcurrentKinds() {
-		if !strings.Contains(definition, "'"+kind+"'") {
-			t.Errorf("code says the %s kind admits several active providers and the index does "+
-				"not exempt it, so the database would reject the second one", kind)
+	if regexp.MustCompile(`'[a-z_]+'`).MatchString(definition) {
+		t.Errorf("the exclusivity index names a literal: %s", definition)
+	}
+	for _, kind := range provider.Kinds() {
+		if strings.Contains(definition, kind.Kind) {
+			t.Errorf("the exclusivity index names the kind %s: %s", kind.Kind, definition)
+		}
+		var concurrent bool
+		if err := database.DB().QueryRowContext(ctx, "SELECT concurrent FROM provider_kind WHERE kind = $1",
+			kind.Kind).Scan(&concurrent); err != nil {
+			t.Errorf("the kind %s has no provider_kind row: %v", kind.Kind, err)
+			continue
+		}
+		if concurrent != kind.Concurrent {
+			t.Errorf("provider_kind says %s is concurrent=%v and its kind file says %v", kind.Kind, concurrent,
+				kind.Concurrent)
 		}
 	}
-
-	// And the other direction: every kind the index exempts is one the code says admits several
-	// active providers. The exempt kinds are read out of the index's own definition rather than
-	// from a list here.
-	for _, quoted := range regexp.MustCompile(`'([a-z_]+)'`).FindAllStringSubmatch(definition, -1) {
-		if !vocab.KindAdmitsSeveralActiveProviders(quoted[1]) {
-			t.Errorf("the index exempts %s and the code says it admits one active provider", quoted[1])
+	// And the attribute is the data: a kind made exclusive is held to it with no change to the index.
+	if _, err := database.DB().ExecContext(ctx, "INSERT INTO provider_kind (kind, concurrent) VALUES ('example_meter', false)"); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"one", "two"} {
+		if _, _, err := database.EnsureProvider(ctx, "example_meter", key, key, 1750000000); err != nil {
+			t.Fatal(err)
 		}
+	}
+	if _, err := database.DB().ExecContext(ctx, "UPDATE provider SET is_active = true WHERE kind = 'example_meter'"); err == nil {
+		t.Error("two providers of an exclusive kind were both activated")
+	}
+	if _, err := database.DB().ExecContext(ctx, "UPDATE provider_kind SET concurrent = true WHERE kind = 'example_meter'"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.DB().ExecContext(ctx, "UPDATE provider SET is_active = true WHERE kind = 'example_meter'"); err != nil {
+		t.Errorf("two providers of a kind its declaration makes concurrent were refused: %v", err)
 	}
 }
 

@@ -108,10 +108,7 @@ func TestTheIndexMapInForceAtReceptionMapsARecord(t *testing.T) {
 	h := collecttest.NewNetflowHarness(t)
 	// The index map is read through the broker at discovery's max age: an hour here, so a read the mirror
 	// can serve is served from it, and only a restart asks the firewall again.
-	settings := config.Defaults()
-	settings.FirewallLogInterval, settings.SecurityEventInterval, settings.MeasurementInterval = 0, 0, 0
-	settings.DHCPLeaseInterval, settings.DNSLookupInterval, settings.ResolverCacheInterval = 0, 0, 0
-	settings.ResolverLocalDataInterval, settings.FlowRecordInterval = 0, 0
+	settings := collecttest.ZeroMaxAges(config.Defaults())
 	settings.DiscoveryInterval = time.Hour
 	h.Collector.Configure(settings)
 	h.Capture(t, collecttest.CaptureStartAt, collecttest.Captured{Identifier: collecttest.InsideIdentifier})

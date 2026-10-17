@@ -27,6 +27,12 @@ type Source struct {
 	Location string
 	// Files is the widget directory: manifest.json, the statement files and the script.
 	Files fs.FS
+	// BindableKinds are the provider kinds its manifest may bind: the core's and those of the plugins loaded
+	// with it. Empty is the core's alone.
+	BindableKinds []string
+	// Datasets are the data-catalogue names its plugin's manifest declares under `datasets`: what its script may
+	// read through host.datasets, beside its own plugin's tables (PA3 of the plugin-API amendment).
+	Datasets []string
 }
 
 var builtinSources = struct {

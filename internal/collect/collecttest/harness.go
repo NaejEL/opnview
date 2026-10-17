@@ -19,9 +19,11 @@ import (
 	"github.com/NaejEL/opnview/internal/broker/schedule"
 	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
-	"github.com/NaejEL/opnview/internal/collect/firewalllog"
+	"github.com/NaejEL/opnview/internal/collect/kinds/filterlog"
+	"github.com/NaejEL/opnview/internal/collect/kinds/leases"
+	"github.com/NaejEL/opnview/internal/collect/kinds/resolverrecords"
+	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
-	"github.com/NaejEL/opnview/internal/collect/sources"
 	"github.com/NaejEL/opnview/internal/config"
 	"github.com/NaejEL/opnview/internal/opnsense"
 	"github.com/NaejEL/opnview/internal/store"
@@ -178,11 +180,7 @@ func NewTestCollector(t *testing.T, client *opnsense.Client, database *store.Sto
 	// find the answer it read an instant before fresh in the mirror: its readers' max ages are zero,
 	// so every pass asks the firewall, as each test arranges it. The broker's serving from its mirror
 	// is internal/broker's tests' subject.
-	settings := config.Defaults()
-	settings.DiscoveryInterval, settings.FirewallLogInterval, settings.SecurityEventInterval = 0, 0, 0
-	settings.MeasurementInterval, settings.DHCPLeaseInterval, settings.DNSLookupInterval = 0, 0, 0
-	settings.ResolverCacheInterval, settings.ResolverLocalDataInterval = 0, 0
-	collector.Configure(settings)
+	collector.Configure(ZeroMaxAges(config.Defaults()))
 	t.Cleanup(collector.Broker().Close)
 	return collector
 }
@@ -199,10 +197,10 @@ func ArrangeLeaseCollection(t *testing.T) *ProbeHarness {
 	harness.Fake.AnswerFixture(DnsmasqLeases, "dnsmasq_leases.json")
 	harness.Fake.AnswerFixture(opnsense.ARPTable, "get_arp.json")
 	harness.Fake.AnswerFixture(opnsense.NDPTable, "get_ndp.json")
-	if err := harness.Collector.ProbeDHCPLease(context.Background()); err != nil {
+	if err := harness.Collector.ProbeKind(context.Background(), leases.Kind); err != nil {
 		t.Fatalf("probing the lease backends: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, core.KindDHCPLease); key != ProviderDnsmasq {
+	if key := harness.ActiveKeyOf(t, leases.Kind); key != ProviderDnsmasq {
 		t.Fatalf("the lease kind activated %q", key)
 	}
 	return harness
@@ -218,10 +216,10 @@ func ArrangeFilterLogCollection(t *testing.T) *ProbeHarness {
 	harness := NewProbeHarness(t)
 	ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 	harness.Fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
-	if err := harness.Collector.ProbeFirewallLog(context.Background()); err != nil {
+	if err := harness.Collector.ProbeKind(context.Background(), filterlog.Kind); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, core.KindFirewallLog); key != ProviderPf {
+	if key := harness.ActiveKeyOf(t, filterlog.Kind); key != ProviderPf {
 		t.Fatalf("the filter-log kind activated %q", key)
 	}
 	return harness
@@ -406,14 +404,14 @@ func newNetflowHarness(t *testing.T, loaded *plugin.Loaded, key string, arrange 
 	if err := collector.EnsureProviders(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err := collector.ProbeFlowRecord(ctx); err != nil {
+	if err := collector.ProbeKind(ctx, derive.KindFlowRecord); err != nil {
 		t.Fatalf("probing the flow_record kind: %v", err)
 	}
 	if active := h.ActiveKeyOf(t, derive.KindFlowRecord); active != key {
 		t.Fatalf("the flow_record kind activated %q, want %q", active, key)
 	}
 	fake.AnswerJSON(opnsense.FirewallLog, []any{})
-	if err := collector.ProbeFirewallLog(ctx); err != nil {
+	if err := collector.ProbeKind(ctx, filterlog.Kind); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
 
@@ -451,17 +449,13 @@ func newNetflowHarness(t *testing.T, loaded *plugin.Loaded, key string, arrange 
 
 // NewTestCollectorWithSources is newTestCollector over a source set of the test's.
 func NewTestCollectorWithSources(t *testing.T, client *opnsense.Client, database *store.Store, clock core.Clock,
-	set *sources.Set) *collect.Collector {
+	set *provider.Set) *collect.Collector {
 	t.Helper()
 	collector := collect.NewWithSources(client, database, clock, set)
 	// As newTestCollector: ceilings past anything a test reaches, every reader's max age zero, and the
 	// broker closed when the test ends.
 	collector.Broker().Scheduler().SetSettings(schedule.Settings{MaxInFlight: 64, MaxPerSecond: 1e6})
-	settings := config.Defaults()
-	settings.DiscoveryInterval, settings.FirewallLogInterval, settings.SecurityEventInterval = 0, 0, 0
-	settings.MeasurementInterval, settings.DHCPLeaseInterval, settings.DNSLookupInterval = 0, 0, 0
-	settings.ResolverCacheInterval, settings.ResolverLocalDataInterval, settings.FlowRecordInterval = 0, 0, 0
-	collector.Configure(settings)
+	collector.Configure(ZeroMaxAges(config.Defaults()))
 	t.Cleanup(collector.Broker().Close)
 	return collector
 }
@@ -842,7 +836,7 @@ func LeaseRetryHarness(t *testing.T, key, hostname string) *ProbeHarness {
 	ctx := context.Background()
 	UnresolvedLookup(t, harness.Store, key, hostname+".example.invalid",
 		ReferenceEpoch()-120, ReferenceEpoch()-100)
-	provider, err := harness.Store.ProviderID(ctx, core.KindDHCPLease, ProviderDnsmasq)
+	provider, err := harness.Store.ProviderID(ctx, leases.Kind, ProviderDnsmasq)
 	if err != nil {
 		t.Fatalf("looking up the readable backend: %v", err)
 	}
@@ -859,7 +853,7 @@ func LeaseRetryHarness(t *testing.T, key, hostname string) *ProbeHarness {
 // MustProviderID looks one lease provider's registry id up.
 func MustProviderID(t *testing.T, harness *ProbeHarness, key string) int64 {
 	t.Helper()
-	id, err := harness.Store.ProviderID(context.Background(), core.KindDHCPLease, key)
+	id, err := harness.Store.ProviderID(context.Background(), leases.Kind, key)
 	if err != nil {
 		t.Fatalf("looking up %s: %v", key, err)
 	}
@@ -1105,9 +1099,9 @@ const (
 )
 
 // MustFirewallLogSource returns a registered firewall_log implementation.
-func MustFirewallLogSource(t *testing.T, key string) firewalllog.Source {
+func MustFirewallLogSource(t *testing.T, key string) provider.Registration {
 	t.Helper()
-	source, found := plugin.Builtins().FirewallLog.Lookup(key)
+	source, found := plugin.Builtins().Lookup(filterlog.Kind, key)
 	if !found {
 		t.Fatalf("the firewall_log implementation %q is not registered", key)
 	}
@@ -1126,13 +1120,13 @@ func ArrangeRecordCollection(t *testing.T) *ProbeHarness {
 	harness.Fake.AnswerFixture(DnsmasqStatus, "dnsmasq_status_running.json")
 	harness.Fake.AnswerFixture(DnsmasqSettings, "dnsmasq_settings.json")
 	ctx := context.Background()
-	if err := harness.Collector.ProbeResolverCache(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, resolverrecords.KindCache); err != nil {
 		t.Fatalf("probing the cache: %v", err)
 	}
-	if err := harness.Collector.ProbeResolverLocalData(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, resolverrecords.KindLocalData); err != nil {
 		t.Fatalf("probing the local data: %v", err)
 	}
-	for _, kind := range []string{core.KindResolverCache, core.KindResolverLocalData} {
+	for _, kind := range []string{resolverrecords.KindCache, resolverrecords.KindLocalData} {
 		if keys := harness.ActiveKeysOf(t, kind); len(keys) != 1 || keys[0] != ProviderUnbound {
 			t.Fatalf("the %s kind activated %v, not Unbound alone", kind, keys)
 		}
@@ -1145,4 +1139,21 @@ func SetClock(harness *ProbeHarness, at time.Time) {
 	harness.Clock.Mutex.Lock()
 	defer harness.Clock.Mutex.Unlock()
 	harness.Clock.Instant = at
+}
+
+// ZeroMaxAges is a configuration whose readers' max ages are all zero: discovery's and every core kind's
+// poll cadence, as the kind files declare them, so every pass of a test asks the firewall.
+func ZeroMaxAges(settings config.Config) config.Config {
+	settings.DiscoveryInterval = 0
+	intervals := make(map[string]time.Duration, len(settings.Intervals))
+	for key, interval := range settings.Intervals {
+		intervals[key] = interval
+	}
+	for _, cadence := range provider.Cadences() {
+		if cadence.Role == provider.CadencePoll {
+			intervals[cadence.Setting] = 0
+		}
+	}
+	settings.Intervals = intervals
+	return settings
 }

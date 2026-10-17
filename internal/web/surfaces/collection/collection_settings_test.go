@@ -101,18 +101,18 @@ func TestASavedResolverIntervalReachesTheRunningServiceAndRefusalsStoreNothing(t
 	if status != http.StatusSeeOther {
 		t.Fatalf("saving an interval answered %d", status)
 	}
-	if got := collectiontest.Setting(h, config.KeyResolverLocalDataInterval); got != "420" {
+	if got := collectiontest.Setting(h, "poll_interval_resolver_local_data_seconds"); got != "420" {
 		t.Errorf("the stored interval is %q", got)
 	}
 	loaded, err := config.Load(context.Background(), h.Store)
-	if err != nil || loaded.ResolverLocalDataInterval != 420*time.Second {
-		t.Errorf("config.Load returns %s (%v)", loaded.ResolverLocalDataInterval, err)
+	if err != nil || loaded.Interval("resolver_local_data", "poll") != 420*time.Second {
+		t.Errorf("config.Load returns %s (%v)", loaded.Interval("resolver_local_data", "poll"), err)
 	}
-	if h.Live.Generation() != generation+1 || h.Live.Get().ResolverLocalDataInterval != 420*time.Second {
+	if h.Live.Generation() != generation+1 || h.Live.Get().Interval("resolver_local_data", "poll") != 420*time.Second {
 		t.Error("the live holder was not handed the saved interval")
 	}
 	received := h.Collector.Received()
-	if len(received) != 1 || received[0].ResolverLocalDataInterval != 420*time.Second {
+	if len(received) != 1 || received[0].Interval("resolver_local_data", "poll") != 420*time.Second {
 		t.Error("the running collector was not configured with the saved interval")
 	}
 	card := collectiontest.CardOf(t, page, "resolver_local_data")
@@ -125,14 +125,14 @@ func TestASavedResolverIntervalReachesTheRunningServiceAndRefusalsStoreNothing(t
 	status, _ = webtest.StatusAndBody(t, h.Post(webtest.PathCollectionSettings, url.Values{
 		webtest.FieldCard: {"resolver_local_data"}, webtest.CardFieldName("resolver_local_data", webtest.FieldInterval): {"2"},
 		settingfields.UnitFieldName(webtest.CardFieldName("resolver_local_data", webtest.FieldInterval)): {settingfields.UnitHours}}))
-	if status != http.StatusSeeOther || collectiontest.Setting(h, config.KeyResolverLocalDataInterval) != "7200" {
+	if status != http.StatusSeeOther || collectiontest.Setting(h, "poll_interval_resolver_local_data_seconds") != "7200" {
 		t.Errorf("2 hours answered %d and stored %q, want 7200", status,
-			collectiontest.Setting(h, config.KeyResolverLocalDataInterval))
+			collectiontest.Setting(h, "poll_interval_resolver_local_data_seconds"))
 	}
 	status, page = webtest.StatusAndBody(t, h.Post(webtest.PathCollectionSettings, url.Values{
 		webtest.FieldCard: {"resolver_local_data"}, webtest.CardFieldName("resolver_local_data", webtest.FieldInterval): {"2"},
 		settingfields.UnitFieldName(webtest.CardFieldName("resolver_local_data", webtest.FieldInterval)): {"fortnights"}}))
-	if status != http.StatusBadRequest || collectiontest.Setting(h, config.KeyResolverLocalDataInterval) != "7200" ||
+	if status != http.StatusBadRequest || collectiontest.Setting(h, "poll_interval_resolver_local_data_seconds") != "7200" ||
 		!strings.Contains(collectiontest.CardOf(t, page, "resolver_local_data"), collectiontest.CatalogueText(t, msgDurationUnitUnknown)) {
 		t.Errorf("an unknown unit answered %d and was not refused against its field", status)
 	}
@@ -146,7 +146,7 @@ func TestASavedResolverIntervalReachesTheRunningServiceAndRefusalsStoreNothing(t
 		if status != http.StatusBadRequest {
 			t.Errorf("the interval %q answered %d", typed, status)
 		}
-		if _, present, err := h.Store.Setting(context.Background(), config.KeyResolverCacheInterval); err != nil || present {
+		if _, present, err := h.Store.Setting(context.Background(), "poll_interval_resolver_cache_seconds"); err != nil || present {
 			t.Errorf("the refused interval %q was stored", typed)
 		}
 		card := collectiontest.CardOf(t, page, "resolver_cache")
@@ -218,9 +218,9 @@ func TestEverySettingAcceptsExactlyWhatConfigLoadAccepts(t *testing.T) {
 		{key: config.KeyCacheAnswerDelay, card: "attribution"}:                {"-1", "0", "1", "3600", "x"},
 		{key: config.KeyRetentionSeconds, card: "storage", confirm: true}:     {"-1", "0", "1", "86400", "x"},
 		{key: config.KeyAggregateMode, card: "storage"}:                       {"full", "no_domains", "domains", ""},
-		{key: config.KeyResolverCacheInterval, card: "resolver_cache"}: {"-1", "0", "1", maxInterval,
+		{key: "poll_interval_resolver_cache_seconds", card: "resolver_cache"}: {"-1", "0", "1", maxInterval,
 			overInterval},
-		{key: config.KeyResolverLocalDataInterval, card: "resolver_local_data"}: {"0", "1", maxInterval,
+		{key: "poll_interval_resolver_local_data_seconds", card: "resolver_local_data"}: {"0", "1", maxInterval,
 			overInterval},
 	}
 	for setting, values := range cases {

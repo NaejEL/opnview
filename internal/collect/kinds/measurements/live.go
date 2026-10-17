@@ -58,7 +58,7 @@ func (c *MeasurementCoordinator) LiveTask(settings *config.Live) core.Task {
 				return finest
 			}
 			// No provider declares a live pass: the loop idles at the baseline's cadence.
-			return settings.Get().MeasurementInterval
+			return settings.Get().Interval(Kind, provider.CadencePoll)
 		},
 		Run: c.CollectLive,
 		// At start no lease holds, so the first tick does nothing; it runs at start like every loop
@@ -128,7 +128,7 @@ func (c *MeasurementCoordinator) CollectLive(ctx context.Context) error {
 	if len(declared) == 0 {
 		return nil
 	}
-	active, err := c.ActiveSources(ctx, core.KindMeasurementSample)
+	active, err := c.ActiveSources(ctx, Kind)
 	if err != nil {
 		return err
 	}

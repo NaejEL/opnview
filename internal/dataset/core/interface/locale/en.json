@@ -1,0 +1,6 @@
+{
+  "language": "en",
+  "strings": {
+    "dataset.interface": "The firewall's interfaces as discovery holds them: each one's identifier, network device, description, link type and whether it is upstream"
+  }
+}

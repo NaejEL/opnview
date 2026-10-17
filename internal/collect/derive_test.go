@@ -13,7 +13,6 @@ import (
 	"github.com/NaejEL/opnview/internal/store/vocab"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/decode"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -181,7 +180,7 @@ func TestTheClassificationDoesNotDependOnTheOrderRecordsArrive(t *testing.T) {
 		harness := collecttest.NewProbeHarness(t)
 		collecttest.ArrangeDiscoverableFirewall(t, harness.Fake, harness.Collector)
 		harness.Fake.AnswerJSON(opnsense.FirewallLog, page)
-		if err := harness.Collector.ProbeFirewallLog(context.Background()); err != nil {
+		if err := harness.Collector.ProbeKind(context.Background(), "firewall_log"); err != nil {
 			t.Fatalf("probing: %v", err)
 		}
 		if err := harness.Collector.CollectFirewallLog(context.Background()); err != nil {
@@ -376,7 +375,7 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
+	detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight)
 	if !strings.Contains(detail, "gateway latency and loss (not found, HTTP 404") {
 		t.Errorf("the availability detail is %q, which does not record the gateway endpoint", detail)
 	}
@@ -389,7 +388,7 @@ func TestAnUnavailableGatewayEndpointIsRecordedInTheAvailability(t *testing.T) {
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	if detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight); !strings.Contains(detail,
 		"gateway latency and loss (the endpoint answered \"status\": \"failed\"") {
 		t.Errorf("an answer reporting a failure left the detail %q", detail)
 	}
@@ -407,7 +406,7 @@ func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
+	detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight)
 	if !strings.Contains(detail, "swap (the endpoint did not answer)") {
 		t.Errorf("the availability detail is %q, which does not record the swap endpoint", detail)
 	}
@@ -422,7 +421,7 @@ func TestAnUnavailableSwapEndpointIsRecordedInTheAvailability(t *testing.T) {
 	if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	if detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight); !strings.Contains(detail,
 		"swap (this firewall reports no swap device)") {
 		t.Errorf("an answer with no swap device left the detail %q", detail)
 	}

@@ -1,0 +1,12 @@
+{
+  "nature": "sample",
+  "freshness": {"kind": "discovery"},
+  "columns": [
+    {"name": "kind", "type": "text"},
+    {"name": "provider_key", "type": "text"},
+    {"name": "name", "type": "text"},
+    {"name": "integer_value", "type": "integer", "nullable": true},
+    {"name": "number_value", "type": "real", "nullable": true},
+    {"name": "text_value", "type": "text", "nullable": true}
+  ]
+}

@@ -207,11 +207,16 @@ func (p *Plugin) exportedValues(kindContract provider.Contract, declarative bool
 	raw := map[string]any{}
 	for _, field := range kindContract.Values {
 		if declarative || p.script == nil {
-			raw[field.Name] = field.Default
+			if field.Default != nil {
+				raw[field.Name] = field.Default
+			}
 			continue
 		}
 		value, err := p.script.ExportedValue(kindContract.Kind, field.Name)
 		if err != nil {
+			if !field.Required {
+				continue
+			}
 			return nil, err
 		}
 		raw[field.Name] = value

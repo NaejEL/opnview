@@ -6,8 +6,6 @@ import (
 	"testing"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
-	"github.com/NaejEL/opnview/internal/collect/dhcplease"
 	"github.com/NaejEL/opnview/internal/collect/provider"
 	"github.com/NaejEL/opnview/internal/plugin"
 )
@@ -63,7 +61,7 @@ func TestEveryRegistryRowOfACollectedKindHasAnImplementation(t *testing.T) {
 	registered := registeredKeysByKind()
 
 	for _, provider := range everyProvider(t, database) {
-		if provider.kind == core.KindIPGeolocation || provider.kind == core.KindFlowVolume || provider.kind == core.KindRegistrableDomain {
+		if provider.kind == "ip_geolocation" || provider.kind == "flow_volume" || provider.kind == "registrable_domain" {
 			continue
 		}
 		found := false
@@ -87,15 +85,15 @@ func TestTheKindsWithSeveralImplementationsReallyHaveSeveral(t *testing.T) {
 	t.Parallel()
 	registered := registeredKeysByKind()
 	for kind, minimum := range map[string]int{
-		core.KindDHCPLease: 3,
-		core.KindDNSLookup: 2,
+		"dhcp_lease": 3,
+		"dns_lookup": 2,
 	} {
 		if got := len(registered[kind]); got < minimum {
 			t.Errorf("the %s kind has %d implementations, want at least %d", kind, got, minimum)
 		}
 	}
 	// And the kinds with one are not pretending otherwise.
-	for _, kind := range []string{core.KindFirewallLog, core.KindSecurityEvent, core.KindMeasurementSample} {
+	for _, kind := range []string{"firewall_log", "security_event", "measurement_sample"} {
 		if got := len(registered[kind]); got != 1 {
 			t.Errorf("the %s kind has %d implementations, want exactly the one that exists",
 				kind, got)
@@ -120,17 +118,17 @@ func TestAnImplementationTheFirewallDoesNotSeparateIsNeverActivatedWhateverItsPo
 	harness.Fake.AnswerFixture(collecttest.DnsmasqStatus, "dnsmasq_status_running.json")
 	harness.Fake.AnswerFixture(collecttest.DnsmasqSettings, "dnsmasq_settings.json")
 
-	if err := harness.Collector.ProbeDHCPLease(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "dhcp_lease"); err != nil {
 		t.Logf("the lease probe reported: %v", err)
 	}
-	if key := harness.ActiveKeyOf(t, core.KindDHCPLease); key != collecttest.ProviderDnsmasq {
+	if key := harness.ActiveKeyOf(t, "dhcp_lease"); key != collecttest.ProviderDnsmasq {
 		t.Fatalf("the active backend is %q; activation followed something other than the "+
 			"firewall's own configuration", key)
 	}
 
 	// The probe order is the sorted one, which is what makes a request sequence comparable.
-	keys := make([]string, 0, len(core.ProbeablesOf(plugin.Builtins().DHCPLease, sourceProbe)))
-	for _, candidate := range core.ProbeablesOf(plugin.Builtins().DHCPLease, sourceProbe) {
+	var keys []string
+	for _, candidate := range harness.Collector.ProbeablesOf("dhcp_lease") {
 		keys = append(keys, candidate.ProviderKey)
 	}
 	for index := 1; index < len(keys); index++ {
@@ -148,44 +146,23 @@ func TestTheUnreadableImplementationsReturnTheUnsupportedSentinel(t *testing.T) 
 	harness := collecttest.NewProbeHarness(t)
 	ctx := context.Background()
 
-	if _, _, err := mustLeaseSource(t, collecttest.ProviderISC).Leases(ctx, harness.Collector, 1); !errors.Is(
+	if _, _, err := mustSource(t, "dhcp_lease", collecttest.ProviderISC).Implementation.Call(ctx, harness.Collector,
+		"leases", 1); !errors.Is(
 		err, provider.ErrUnsupportedRead) {
 		t.Errorf("the ISC lease read returned %v, not the unsupported sentinel", err)
 	}
-	if _, _, err := mustLookupSource(t, collecttest.ProviderDnsmasq).Lookups(ctx, harness.Collector, 1); !errors.Is(
+	if _, _, err := mustSource(t, "dns_lookup", collecttest.ProviderDnsmasq).Implementation.Call(ctx,
+		harness.Collector, "lookups", 1); !errors.Is(
 		err, provider.ErrUnsupportedRead) {
 		t.Errorf("the Dnsmasq lookup read returned %v, not the unsupported sentinel", err)
 	}
 }
 
-// registeredKeysByKind lists what each kind's registry in this package holds.
+// registeredKeysByKind lists what the built-ins register, by kind.
 func registeredKeysByKind() map[string][]string {
 	registered := map[string][]string{}
-	for key := range plugin.Builtins().FirewallLog.Sources() {
-		registered[core.KindFirewallLog] = append(registered[core.KindFirewallLog], key)
-	}
-	for key := range plugin.Builtins().SecurityEvent.Sources() {
-		registered[core.KindSecurityEvent] = append(registered[core.KindSecurityEvent], key)
-	}
-	for key := range plugin.Builtins().Measurement.Sources() {
-		registered[core.KindMeasurementSample] = append(registered[core.KindMeasurementSample], key)
-	}
-	for key := range plugin.Builtins().DHCPLease.Sources() {
-		registered[core.KindDHCPLease] = append(registered[core.KindDHCPLease], key)
-	}
-	for key := range plugin.Builtins().DNSLookup.Sources() {
-		registered[core.KindDNSLookup] = append(registered[core.KindDNSLookup], key)
-	}
-	for key := range plugin.Builtins().ResolverCache.Sources() {
-		registered[core.KindResolverCache] = append(registered[core.KindResolverCache], key)
-	}
-	for key := range plugin.Builtins().ResolverLocalData.Sources() {
-		registered[core.KindResolverLocalData] = append(registered[core.KindResolverLocalData], key)
+	for _, registration := range plugin.Builtins().All() {
+		registered[registration.Kind] = append(registered[registration.Kind], registration.Key)
 	}
 	return registered
-}
-
-// sourceProbe is the probe of one dhcp_lease implementation, as core.ProbeablesOf takes it.
-func sourceProbe(source dhcplease.Source) func(context.Context, provider.Session) (provider.Result, error) {
-	return source.Probe
 }

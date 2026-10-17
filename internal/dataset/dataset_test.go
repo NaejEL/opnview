@@ -107,18 +107,19 @@ func TestACompiledStatementNamesOnlyDeclaredIdentifiersAndBindsEveryValue(t *tes
 	if strings.Contains(statement.Text, "DROP") || strings.Contains(statement.Text, "flow") {
 		t.Errorf("a value reached the text: %s", statement.Text)
 	}
-	// Every value is bound, in the numbering of the text: the window first ($1, $2), then each value
-	// in the order the statement names it.
-	want := []any{int64(100), int64(200), "a'); DROP TABLE flow; --", "b", int64(7)}
+	// Every value is bound, in the numbering of the text: the window first ($1, $2), then each value in the
+	// order the statement names it -- an `in` list as one array (PA3 of the plugin-API amendment: one text
+	// whatever the list's length).
+	want := []any{int64(100), int64(200), []string{"a'); DROP TABLE flow; --", "b"}, int64(7)}
 	if !reflect.DeepEqual(statement.Args, want) {
 		t.Errorf("the arguments are %#v, want %#v", statement.Args, want)
 	}
-	for _, parameter := range []string{"$1", "$2", "$3", "$4", "$5"} {
+	for _, parameter := range []string{"$1", "$2", "$3", "$4"} {
 		if !strings.Contains(statement.Text, parameter) {
 			t.Errorf("the text does not bind %s: %s", parameter, statement.Text)
 		}
 	}
-	if strings.Contains(statement.Text, "$6") {
+	if strings.Contains(statement.Text, "$5") {
 		t.Errorf("the text binds more parameters than it was handed arguments: %s", statement.Text)
 	}
 	for _, identifier := range []string{`d."meter"`, `d."value"`, `d."sampled_at"`, `"plugin_example"."readings"`} {

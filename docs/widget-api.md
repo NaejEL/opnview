@@ -319,7 +319,8 @@ on the read connections in a read-only transaction.
 The listing never carries a set-aside table, `account`, `session`, `encrypted_credential`, a
 credential or secret setting, or `plugin_state`.
 
-**The core's datasets** are the five sources of `custom_chart` and the two NetFlow datasets, each
+**The core's datasets** are the five sources of `custom_chart`, the two NetFlow datasets and the four a
+plugin joining another source reads (`docs/plugins.md`, *Datasets a plugin reads*), each
 declared as data in its own directory under `internal/dataset/core/` (its declaration, the `SELECT` it
 reads and its label), so adding one is adding a directory:
 
@@ -332,6 +333,10 @@ reads and its label), so adding one is adding a directory:
 | `security_event` | event | `occurred_at` | `events`, `blocked` (event) | `security_event` |
 | `flow_record` | event | `start_at` | `octets` (byte), `packets` (packet), `records` (record) | `flow_record` |
 | `unmatched_record` | event | `period_start_at` | `bytes` (byte), `packets` (packet), `records` (record) | `flow_record` |
+| `leg` | event | `observed_at` | `packet_bytes` (byte) | `firewall_log` |
+| `interface` | sample | none | none | none: discovery |
+| `this_firewall_address` | sample | none | none | none: discovery |
+| `provider_value` | sample | none | none | none: the active providers' exported values |
 
 `flow_record` serves every flow record stored, whatever the capture configuration was, with what
 its two indexes named at reception (`ingress_role`, `ingress_identifier`, `egress_role`,
@@ -504,12 +509,12 @@ range is `400` `{"condition", "key"}` -- `unknown_setting`, `invalid_setting_val
 floor. Fine samples are purged after `live_sample_retention_seconds`; baseline samples follow
 `retention_seconds`.
 
-**NetFlow settings.** `GET /api/netflow/settings` answers `{settings}`, each `{key, value, default,
-minimum, maximum, set}`: `netflow_join_tolerance_seconds` (default 3, 1 to 60), how far after a leg was
-logged a flow record may start and still join it, and `retention_flow_record_seconds` (default 0,
-which follows `retention_seconds`), how long a flow record is kept. `POST /api/netflow/settings`, a
-write, takes an object of the two keys and refuses as the live settings do, writing nothing (PS17 and
-PS19 of the NetFlow join amendment to `specs/SPEC-backend-completion-plugins.md`).
+**NetFlow settings.** The netflow plugin declares them, with their bounds and defaults, in its manifest:
+`join_tolerance_seconds` (default 3, 1 to 60), how far after a leg was logged a flow record may start
+and still join it, and `retention_flow_record_seconds` (default 0, which follows `retention_seconds`), how
+long a flow record is kept. They are read and written as every plugin's settings are, through
+`GET` and `POST /api/plugins/netflow/settings`, which also carry the page the manifest groups them in
+(PS17 and PS19 of the NetFlow join amendment, as PA8 of the plugin-API amendment moves them).
 
 **Rate by port and protocol: the pf state table.** `traffic/top` runs iftop without `-P`, so its
 samples carry no port and no protocol (`scripts/interfaces/traffic_top.py`). The built-in `pf_states`

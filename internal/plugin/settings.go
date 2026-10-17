@@ -110,6 +110,40 @@ func checkSettings(manifest contract.Manifest, takenKeys map[string]string) *con
 			}
 		}
 	}
+	return checkPages(manifest, seen)
+}
+
+// checkPages validates a manifest's pages: each a snake_case key of its own, a heading and a help text
+// the plugin's catalogue carries, and settings the manifest declares, each on one page at most.
+func checkPages(manifest contract.Manifest, declared map[string]bool) *contract.Refusal {
+	pages := map[string]bool{}
+	placed := map[string]string{}
+	namespace := "plugin." + manifest.Name + "."
+	for _, page := range manifest.Pages {
+		if !contract.NamePattern.MatchString(page.Key) || pages[page.Key] {
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the page key %q is not a snake_case word "+
+				"of its own", page.Key)
+		}
+		pages[page.Key] = true
+		if !strings.HasPrefix(page.Label, namespace) || !strings.HasPrefix(page.Help, namespace) {
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the page %q names its label and its help "+
+				"by keys of the plugin's own catalogue, %s*", page.Key, namespace)
+		}
+		if len(page.Settings) == 0 {
+			return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the page %q holds no setting", page.Key)
+		}
+		for _, key := range page.Settings {
+			if !declared[key] {
+				return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the page %q holds %q, which the manifest "+
+					"declares no setting of", page.Key, key)
+			}
+			if owner, taken := placed[key]; taken {
+				return contract.Refuse(manifest.Name, contract.RefusalManifestInvalid, "the setting %q is on the pages %q and %q: "+
+					"a setting is on one page at most", key, owner, page.Key)
+			}
+			placed[key] = page.Key
+		}
+	}
 	return nil
 }
 

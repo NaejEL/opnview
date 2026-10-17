@@ -291,7 +291,7 @@ func (s *surface) fillSources(ctx context.Context, built *view) error {
 			drawn.CheckedState = msgNeverChecked
 		}
 		if availability == msgAvailabilityNotCollecting {
-			drawn.Pages = opnsenseLinks(baseURL, row.Kind, row.ProviderKey)
+			drawn.Pages = s.opnsenseLinks(baseURL, row.Kind, row.ProviderKey)
 		}
 		if row.HasDetail {
 			drawn.Detail = row.Detail

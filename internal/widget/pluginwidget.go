@@ -77,7 +77,11 @@ func loadPluginWidget(ctx context.Context, database *store.Store, source Source,
 	if err != nil {
 		return request.Preset{}, params.Refuse(name, params.RefusalManifestInvalid, "%s is not a valid manifest: %v", manifestFile, err)
 	}
-	if refusal := params.ValidateManifest(manifest); refusal != nil {
+	bindable := source.BindableKinds
+	if len(bindable) == 0 {
+		bindable = params.CoreBindableKinds()
+	}
+	if refusal := params.ValidateManifestWith(manifest, bindable); refusal != nil {
 		refusal.Type = name
 		return request.Preset{}, refusal
 	}
@@ -111,7 +115,7 @@ func loadPluginWidget(ctx context.Context, database *store.Store, source Source,
 	}
 	preset := presetFromManifest(manifest, origin)
 	script := &script.ScriptWidget{Plugin: source.Plugin, File: manifest.Script, Program: program, Statements: statements,
-		Builtin: source.Builtin}
+		Builtin: source.Builtin, Datasets: script.DatasetsAdmitted(source.Plugin, source.Datasets)}
 	preset.Serve = script.Serve
 	return preset, nil
 }

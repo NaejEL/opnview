@@ -96,9 +96,9 @@ func flowRecordRow(providerID int64, record provider.Answer, history *core.Captu
 	return netflow.FlowRecordRow{ProviderID: providerID, Identity: provider.Text(record, "identity"), StartAt: start,
 		StartMillisecond: startMillis % 1000, EndAt: endMillis / 1000,
 		EndMillisecond: endMillis % 1000, ReceivedAt: int64(provider.Number(record, "received_at")),
-		ExporterAddress: provider.Text(record, "exporter_address"),
+		ExporterAddress:   provider.Text(record, "exporter_address"),
 		ObservationDomain: provider.Integer(record, "observation_domain"),
-		IngressInterface: ingress, EgressInterface: egress,
+		IngressInterface:  ingress, EgressInterface: egress,
 		IPVersion: version, Protocol: protocol, SrcAddress: source.String(),
 		DstAddress: destination.String(), SrcPort: srcPort, DstPort: dstPort,
 		TCPFlags: provider.IntegerPointer(record, "tcp_flags"), Octets: provider.Integer(record, "octets"),
@@ -148,7 +148,7 @@ func (c *FlowRecordCoordinator) CollectFlowRecordCapture(ctx context.Context) er
 		return fmt.Errorf("collect: the active flow_record provider %q has no implementation", key)
 	}
 	readAt := c.Now()
-	configuration, result, readErr := captureOf(ctx, c, source)
+	configuration, result, readErr := captureOf(ctx, c.Collector, source)
 	if err := c.WriteAvailability(ctx, providerID, result.State, availabilityOutcome(result.Outcome),
 		result.Probe, result.Detail); err != nil {
 		return err
@@ -251,7 +251,7 @@ func captureOf(ctx context.Context, c *core.Collector, source provider.Registrat
 	for index, row := range provider.Records(captured, "interfaces") {
 		identifier := provider.Text(row, "identifier")
 		if identifier == "" || seen[identifier] {
-			return invalid(fmt.Sprintf("capture.interfaces[%d] names an empty or repeated identifier", index))
+			return invalid(fmt.Sprintf("interface %d of the capture names an empty or repeated identifier", index))
 		}
 		seen[identifier] = true
 		captureInterface := netflow.CaptureInterface{Identifier: identifier, Ingress: provider.Flag(row, "ingress", false),
@@ -262,12 +262,12 @@ func captureOf(ctx context.Context, c *core.Collector, source provider.Registrat
 			captureInterface.Exported = netflow.ExportedUnknown
 		}
 		if (captureInterface.Exported == netflow.ExportedNo) != (captureInterface.NotExportedReason != "") {
-			return invalid(fmt.Sprintf("capture.interfaces[%d] names a not_exported_reason exactly when exported "+
+			return invalid(fmt.Sprintf("interface %d of the capture names a not_exported_reason exactly when exported "+
 				"is not \"no\"", index))
 		}
 		for _, of := range captureInterface.ParentOf {
 			if of == "" || of == identifier {
-				return invalid(fmt.Sprintf("capture.interfaces[%d] lists an empty identifier, or itself, in parent_of",
+				return invalid(fmt.Sprintf("interface %d of the capture lists an empty identifier, or itself, in parent_of",
 					index))
 			}
 		}

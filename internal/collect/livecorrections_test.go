@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/NaejEL/opnview/internal/collect/collecttest"
-	"github.com/NaejEL/opnview/internal/collect/core"
 	"github.com/NaejEL/opnview/internal/collect/derive"
 	"github.com/NaejEL/opnview/internal/collect/providertest"
 	"github.com/NaejEL/opnview/internal/opnsense"
@@ -70,7 +69,7 @@ func TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading(t *testing.T) {
 				if err := harness.Collector.CollectMeasurement(context.Background()); err != nil {
 					t.Fatalf("sampling: %v", err)
 				}
-				detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight)
+				detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight)
 				if !strings.Contains(detail, one.wording) {
 					t.Errorf("the detail is %q, which does not name the absence as %q", detail, one.wording)
 				}
@@ -110,7 +109,7 @@ func TestTheGatewayMeasuresOfTheLiveShapeAreStoredPerGatewayWithFigures(t *testi
 	if _, zeroes := gatewayReadings(t, harness.Store); zeroes != 0 {
 		t.Errorf("%d gateway readings are 0", zeroes)
 	}
-	if detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight); !strings.Contains(detail,
 		"1 of 2 gateways listed with no figure") {
 		t.Errorf("the detail %q does not name the gateway listed with no figure", detail)
 	}
@@ -128,10 +127,10 @@ func TestTheProbeRoundKeepsWhatTheLastSamplingPassCouldNotRead(t *testing.T) {
 	if err := harness.Collector.CollectMeasurement(ctx); err != nil {
 		t.Fatalf("sampling: %v", err)
 	}
-	if err := harness.Collector.ProbeMeasurement(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "measurement_sample"); err != nil {
 		t.Fatalf("probing: %v", err)
 	}
-	if detail := harness.DetailOf(t, core.KindMeasurementSample, collecttest.ProviderInsight); !strings.Contains(detail,
+	if detail := harness.DetailOf(t, "measurement_sample", collecttest.ProviderInsight); !strings.Contains(detail,
 		"gateways listed with no figure") {
 		t.Errorf("after the probe round the detail is %q, which has lost the gateways with no figure", detail)
 	}
@@ -161,7 +160,7 @@ func TestALateLookupAttributesAFlowWithNoFurtherFlowPass(t *testing.T) {
 	harness := arrangeResolverCollection(t)
 	harness.Fake.AnswerFixture(opnsense.FirewallLog, "firewall_log.json")
 	ctx := context.Background()
-	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "firewall_log"); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
 	answerLookups(harness.Fake)
@@ -299,7 +298,7 @@ func TestTheFilterLogStoresTheTwoPairingFieldsAndPairsTheTwoLegs(t *testing.T) {
 	}
 	harness.Fake.AnswerJSON(opnsense.FirewallLog, rows)
 	ctx := context.Background()
-	if err := harness.Collector.ProbeFirewallLog(ctx); err != nil {
+	if err := harness.Collector.ProbeKind(ctx, "firewall_log"); err != nil {
 		t.Fatalf("probing the filter log: %v", err)
 	}
 	if err := harness.Collector.CollectFirewallLog(ctx); err != nil {
