@@ -1,0 +1,31 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q2 (INPUT_SNMP 0 on firewall-originated records; local delivery as the loopback's index) and Q3 (the parent re-exports VLAN ingress, here the reply received on the VLAN).",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "Nothing beyond the shape.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F4",
+  "legs": [
+    {"digest": "f04out", "at": 0, "device": "exvlan7", "dir": "out", "action": "pass", "src": "198.51.100.129",
+     "dst": "198.51.100.133", "src_port": 40004, "dst_port": 22, "protocol": "tcp", "protocol_number": 6}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "198.51.100.129", "dst": "198.51.100.133", "src_port": 40004, "dst_port": 22, "protocol": 6, "flags": 27,
+     "in": 0, "out": 23, "packets": 6, "octets": 600, "start": 0, "end": 4, "side": "forward",
+     "expect": {"join_state": "joined", "leg": "f04out", "orientation": "forward"},
+     "counts": {"connection": "f04out", "direction": "forward"}},
+    {"src": "198.51.100.133", "dst": "198.51.100.129", "src_port": 22, "dst_port": 40004, "protocol": 6, "flags": 27,
+     "in": 23, "out": 27, "packets": 7, "octets": 1400, "start": 0, "end": 4, "side": "reverse",
+     "expect": {"join_state": "joined", "leg": "f04out", "orientation": "reverse"},
+     "counts": {"connection": "f04out", "direction": "reverse"}},
+    {"src": "198.51.100.133", "dst": "198.51.100.129", "src_port": 22, "dst_port": 40004, "protocol": 6, "flags": 27,
+     "in": 22, "out": 27, "packets": 7, "octets": 1400, "start": 0, "end": 4, "side": "reverse",
+     "expect": {"join_state": "copy", "copy_kind": "parent_copy"}}
+  ],
+  "volumes": [
+    {"connection": "f04out", "direction": "forward", "state": "measured"},
+    {"connection": "f04out", "direction": "reverse", "state": "measured"}
+  ]
+}

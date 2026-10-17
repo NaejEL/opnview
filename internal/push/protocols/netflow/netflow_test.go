@@ -282,8 +282,8 @@ func TestIPFIXWithdrawalRedefinitionVariableLengthEnterprise(t *testing.T) {
 	}
 }
 
-// TestSequenceJumpsAreGapsWithTheirInterval is PS-AC6: a v9 sequence jump, confirmed by the next
-// packet, is a netflow_sequence_gap between the export times on either side of it.
+// TestSequenceJumpsAreGapsWithTheirInterval is PS-AC6: a v9 sequence jump of an exporter running one
+// counter, the decoder's default, is a netflow_sequence_gap between the export times on either side of it.
 func TestSequenceJumpsAreGapsWithTheirInterval(t *testing.T) {
 	t.Parallel()
 	d := newDecoder(limits())
@@ -291,8 +291,8 @@ func TestSequenceJumpsAreGapsWithTheirInterval(t *testing.T) {
 	decoded := decodeAll(t, d,
 		v9(1000, 1_790_467_200, 10, 0, template),
 		v9(2000, 1_790_467_201, 11, 0),
-		v9(3000, 1_790_467_210, 15, 0),
-		v9(4000, 1_790_467_211, 16, 0))
+		v9(11000, 1_790_467_210, 15, 0),
+		v9(12000, 1_790_467_211, 16, 0))
 	var gaps []push.Problem
 	for _, problem := range decoded.Problems {
 		if problem.Reason == ReasonSequenceGap {
@@ -305,23 +305,112 @@ func TestSequenceJumpsAreGapsWithTheirInterval(t *testing.T) {
 	}
 }
 
-// TestInterleavedCountersAssertNoGap: several counters sharing one domain -- OPNsense's per-interface
-// nodes behind one forwarder (survey S11) -- go backwards, and no gap is asserted from them.
+// TestInterleavedCountersAssertNoGap is NJ7: several counters sharing one domain, as many as the exporter
+// is told to run, go back and forth and assert no gap; and under a bound not known, nothing is asserted.
 func TestInterleavedCountersAssertNoGap(t *testing.T) {
+	t.Parallel()
+	for _, counters := range []int{2, 0} {
+		d := newDecoder(limits())
+		d.SetSequenceCounters(counters)
+		decoded := decodeAll(t, d,
+			v9(1000, 1_790_467_200, 100, 0),
+			v9(1000, 1_790_467_200, 5, 0),
+			v9(2000, 1_790_467_201, 101, 0),
+			v9(2000, 1_790_467_201, 6, 0),
+			v9(3000, 1_790_467_202, 140, 0))
+		for _, problem := range decoded.Problems {
+			if problem.Reason == ReasonSequenceGap && counters != 0 {
+				if problem.Count != 38 {
+					t.Errorf("bound %d: a gap of %d, want the 38 datagrams the first counter skipped", counters, problem.Count)
+				}
+				continue
+			}
+			if problem.Reason == ReasonSequenceGap {
+				t.Errorf("under a bound not known a gap was asserted: %+v", problem)
+			}
+		}
+	}
+	d := newDecoder(limits())
+	d.SetSequenceCounters(2)
+	for _, problem := range decodeAll(t, d,
+		v9(1000, 1_790_467_200, 100, 0),
+		v9(1000, 1_790_467_200, 5, 0),
+		v9(2000, 1_790_467_201, 101, 0),
+		v9(2000, 1_790_467_201, 6, 0)).Problems {
+		if problem.Reason == ReasonSequenceGap {
+			t.Errorf("two interleaved counters under a bound of two asserted a gap: %+v", problem)
+		}
+	}
+}
+
+// TestFiveCountersAndOneDroppedDatagramAssertOneGap is NJ-AC15 at the decoder: five counters, as many as
+// the exporter runs, interleave with no gap; the datagram one of them drops is one gap of one, the
+// counter nearest behind it being the one that jumped.
+func TestFiveCountersAndOneDroppedDatagramAssertOneGap(t *testing.T) {
+	t.Parallel()
+	d := newDecoder(limits())
+	d.SetSequenceCounters(5)
+	var packets [][]byte
+	export := uint32(1_790_467_200)
+	for round := uint32(0); round < 4; round++ {
+		for counter := uint32(0); counter < 5; counter++ {
+			export++
+			if counter == 2 && round == 2 {
+				continue
+			}
+			packets = append(packets, v9((export-1_790_467_000)*1000, export, 1000*(counter+1)+round, 0))
+		}
+	}
+	var gaps []push.Problem
+	for _, problem := range decodeAll(t, d, packets...).Problems {
+		if problem.Reason == ReasonSequenceGap {
+			gaps = append(gaps, problem)
+		}
+	}
+	if len(gaps) != 1 || gaps[0].Count != 1 || !gaps[0].Sequence {
+		t.Errorf("gaps %+v, want one of one datagram", gaps)
+	}
+}
+
+// TestARestartIsAConditionAndEveryCounterIsFollowedAfresh is NJ3's restart: an exporter whose uptime goes
+// backwards is told to the subscribers as a condition of its scope, once, at the export time of the
+// packet that showed it, and its counters are followed afresh; a gap the numbers show afterwards is
+// marked as derived from them.
+func TestARestartIsAConditionAndEveryCounterIsFollowedAfresh(t *testing.T) {
 	t.Parallel()
 	d := newDecoder(limits())
 	decoded := decodeAll(t, d,
-		v9(1000, 1_790_467_200, 100, 0),
-		v9(1000, 1_790_467_200, 5, 0),
-		v9(1000, 1_790_467_201, 101, 0),
-		v9(1000, 1_790_467_201, 6, 0))
+		v9(100_000, 1_790_467_200, 100, 0),
+		v9(101_000, 1_790_467_201, 101, 0),
+		v9(2000, 1_790_467_202, 5, 0))
+	var conditions []push.Problem
 	for _, problem := range decoded.Problems {
+		if problem.Condition {
+			conditions = append(conditions, problem)
+		}
 		if problem.Reason == ReasonSequenceGap {
-			t.Errorf("an interleaved stream asserted a gap: %+v", problem)
+			t.Errorf("a restart was taken for a loss: %+v", problem)
 		}
 	}
-	if flags := d.State().Flags; len(flags) != 1 || flags[0] != FlagSequenceInterleaved {
-		t.Errorf("flags %v", flags)
+	if len(conditions) != 1 || conditions[0].Reason != ReasonExporterRestarted ||
+		conditions[0].Scope != exporter.String()+"/0" || !conditions[0].From.Equal(time.Unix(1_790_467_202, 0)) {
+		t.Errorf("conditions %+v", conditions)
+	}
+	after := decodeAll(t, d,
+		v9(3000, 1_790_467_203, 6, 0),
+		v9(8000, 1_790_467_208, 11, 0))
+	var gaps []push.Problem
+	for _, problem := range after.Problems {
+		if problem.Reason == ReasonSequenceGap {
+			gaps = append(gaps, problem)
+		}
+	}
+	if len(gaps) != 1 || gaps[0].Count != 4 || !gaps[0].Sequence || gaps[0].Scope != exporter.String()+"/0" {
+		t.Errorf("after the restart the gaps are %+v", gaps)
+	}
+	d.ResetSequences()
+	if again := decodeAll(t, d, v9(9000, 1_790_467_209, 40, 0)).Problems; len(again) != 0 {
+		t.Errorf("after a reset the first datagram is %+v, want a new counter and nothing else", again)
 	}
 }
 
@@ -459,45 +548,5 @@ func TestARecordCarriesItsDeliveryAndPosition(t *testing.T) {
 	other := v9(2000, 1_790_467_200, 2, 0, set(0, templateSet(257, ngTemplate)), set(257, record))
 	if newDecoder(limits()).Decode(other, meta()).Records[0].Delivery == first.Records[0].Delivery {
 		t.Error("two datagrams differing in their sequence number share a delivery")
-	}
-}
-
-// TestAnInterleavingStreamIsAConditionAndIsFollowedAfreshAfterAReset: a sequence going backwards is told
-// to the subscribers as a condition of its scope, once, at the export time of the packet that showed it;
-// a gap the numbers show is marked as derived from them; and after ResetSequences the stream is followed
-// afresh, the interleaving no longer flagged.
-func TestAnInterleavingStreamIsAConditionAndIsFollowedAfreshAfterAReset(t *testing.T) {
-	t.Parallel()
-	d := newDecoder(limits())
-	decoded := decodeAll(t, d,
-		v9(1000, 1_790_467_200, 100, 0),
-		v9(1000, 1_790_467_201, 5, 0),
-		v9(1000, 1_790_467_202, 101, 0))
-	var conditions []push.Problem
-	for _, problem := range decoded.Problems {
-		if problem.Condition {
-			conditions = append(conditions, problem)
-		}
-	}
-	if len(conditions) != 1 || conditions[0].Reason != FlagSequenceInterleaved || !conditions[0].Sequence ||
-		conditions[0].Scope != exporter.String()+"/0" || !conditions[0].From.Equal(time.Unix(1_790_467_201, 0)) {
-		t.Errorf("conditions %+v", conditions)
-	}
-	d.ResetSequences()
-	if flags := d.State().Flags; len(flags) != 0 {
-		t.Errorf("after the reset the flags are %v", flags)
-	}
-	after := decodeAll(t, d,
-		v9(1000, 1_790_467_210, 200, 0),
-		v9(1000, 1_790_467_211, 205, 0),
-		v9(1000, 1_790_467_212, 206, 0))
-	var gaps []push.Problem
-	for _, problem := range after.Problems {
-		if problem.Reason == ReasonSequenceGap {
-			gaps = append(gaps, problem)
-		}
-	}
-	if len(gaps) != 1 || !gaps[0].Sequence || gaps[0].Scope != exporter.String()+"/0" {
-		t.Errorf("after the reset the gaps are %+v", gaps)
 	}
 }

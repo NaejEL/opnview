@@ -109,9 +109,10 @@ type Sink interface {
 }
 
 // SequenceJudge is a sink that decides whether a loss its sender's sequence numbers show is asserted
-// at all: a core kind whose provider knows, from the configuration it read, whether one sequence
-// stream is one counter (PS18 of the NetFlow join amendment). A gap of a Sequence problem the judge
-// refuses is counted (CounterSequenceNotAsserted) and not recorded.
+// at all: a core kind whose provider knows, from the configuration it read, whether the sender's
+// sequence counters are bounded (NJ7 of the amendment "the NetFlow join with every interface
+// captured"). A gap of a Sequence problem the judge refuses is counted (CounterSequenceNotAsserted) and
+// not recorded.
 type SequenceJudge interface {
 	SequenceAsserted(ctx context.Context, problem Problem) bool
 }
@@ -518,10 +519,28 @@ func (h *Hub) route(ctx context.Context, l *listener, decoded Decoded) {
 	}
 }
 
+// SetSequenceCounters gives every decoder of a protocol that follows several sequence counters the
+// number of counters its senders run, read from their configuration: a loss is asserted only once more
+// are open (NJ7 of the amendment "the NetFlow join with every interface captured"). A protocol whose
+// decoders follow no sequence is left alone.
+func (h *Hub) SetSequenceCounters(protocolName string, counters int) {
+	h.mutex.RLock()
+	listeners := append([]*listener(nil), h.listeners...)
+	h.mutex.RUnlock()
+	for _, l := range listeners {
+		if l.protocol.Name() != protocolName {
+			continue
+		}
+		if bounder, bounds := l.decoder.(SequenceBounder); bounds {
+			bounder.SetSequenceCounters(counters)
+		}
+	}
+}
+
 // ResetSequences tells every decoder of a protocol that follows sequence numbers to follow them
-// afresh: what it concluded of a stream -- that several counters interleave in it -- no longer holds
-// once whoever reads the sender's configuration has seen it change. A protocol whose decoders follow
-// no sequence is left alone.
+// afresh: what it concluded of a stream no longer holds once whoever reads the sender's configuration
+// has seen it change, its counters recreated. A protocol whose decoders follow no sequence is left
+// alone.
 func (h *Hub) ResetSequences(protocolName string) {
 	h.mutex.RLock()
 	listeners := append([]*listener(nil), h.listeners...)

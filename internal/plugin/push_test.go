@@ -287,19 +287,19 @@ func TestAParseFunctionIsTakenFromTheScriptOfTheFirewallsVersion(t *testing.T) {
 	}
 }
 
-// netflowFactsVerified is PS-AC28 of the NetFlow join amendment: a built-in NetFlow entry, and the core
-// join it feeds, rest on no UNVERIFIED: fact. The rows S5, S6, S9 and S10 read verified; the sub-facts
-// PS18 and PS19 rule 1 asked for -- S5a, S5b, S6a and S9a -- exist, each citing its 26.7.3 or
-// stable/26.7 source and none UNVERIFIED; and S11's one UNVERIFIED: sub-fact, the form pflog writes
-// for a translated packet, is exempted by name, the maintainer's answer (a) to the amendment's open
-// question 1 being recorded beside it.
+// netflowFactsVerified is PS-AC28 of the NetFlow join amendment, as NJ-AC1 of its amendment "the NetFlow join
+// with every interface captured" amends it: a built-in NetFlow entry, and the core join it feeds, rest on
+// no UNVERIFIED: fact. The rows S5, S6, S9, S10 and S11 read verified; the sub-facts the joins asked for
+// -- S5a, S5b, S5c, S6a, S6b, S6c and S9a -- exist, each citing its 26.7.3 or stable/26.7 source and none
+// UNVERIFIED; and S11 holds no UNVERIFIED: fact at all: its pflog sub-fact is settled, and nothing is
+// exempted by name.
 func netflowFactsVerified(t *testing.T, survey, entry string) {
 	t.Helper()
 	section := survey[strings.Index(survey, "## Push sources"):]
 	if next := strings.Index(section[3:], "\n## "); next >= 0 {
 		section = section[:next+3]
 	}
-	for _, row := range []string{"| S5 |", "| S6 |", "| S9 |", "| S10 |"} {
+	for _, row := range []string{"| S5 |", "| S6 |", "| S9 |", "| S10 |", "| S11 |"} {
 		index := strings.Index(section, row)
 		if index < 0 {
 			t.Errorf("%s: the survey has no row %s", entry, row)
@@ -311,7 +311,7 @@ func netflowFactsVerified(t *testing.T, survey, entry string) {
 			t.Errorf("%s rests on an unverified fact: %s", entry, line)
 		}
 	}
-	for _, subFact := range []string{"**S5a.", "**S5b.", "**S6a.", "**S9a."} {
+	for _, subFact := range []string{"**S5a.", "**S5b.", "**S5c.", "**S6a.", "**S6b.", "**S6c.", "**S9a."} {
 		index := strings.Index(section, subFact)
 		if index < 0 {
 			t.Errorf("%s: the survey records no sub-fact %s", entry, subFact)
@@ -334,12 +334,9 @@ func netflowFactsVerified(t *testing.T, survey, entry string) {
 	s11 := section[strings.Index(section, "### S11."):]
 	s11 = s11[:strings.Index(s11[4:], "\n### ")+4]
 	for _, line := range strings.Split(s11, "\n") {
-		if strings.Contains(line, "UNVERIFIED:") && !strings.Contains(line, "UNVERIFIED:` which form") {
-			t.Errorf("%s: S11 holds an UNVERIFIED: fact other than the exempted pflog form: %s", entry, line)
+		if strings.Contains(line, "UNVERIFIED:") {
+			t.Errorf("%s: S11 holds an UNVERIFIED: fact: %s", entry, line)
 		}
-	}
-	if !strings.Contains(s11, "open\n  question 1 of the NetFlow join amendment, answer (a)") {
-		t.Errorf("%s: S11 does not record the maintainer's answer that exempts the pflog form", entry)
 	}
 }
 

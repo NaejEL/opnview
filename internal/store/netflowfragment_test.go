@@ -97,7 +97,7 @@ func TestNoStatementCopiesThePerLegCounting(t *testing.T) {
 	}
 }
 
-// TestNetflowPartsIsTheCompositeTypeOfTheSchema is the one order of the thirty-six figures: the fields
+// TestNetflowPartsIsTheCompositeTypeOfTheSchema is the one order of the fifty-four figures: the fields
 // of the composite type netflow_parts in schema.sql, the columns (netflow_sum(...)).* reads back, are
 // NetflowPartsColumns, which every scan and every script member follows.
 func TestNetflowPartsIsTheCompositeTypeOfTheSchema(t *testing.T) {

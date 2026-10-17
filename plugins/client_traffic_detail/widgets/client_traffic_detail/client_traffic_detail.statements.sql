@@ -82,8 +82,9 @@ ORDER BY max(l.observed_at) DESC, l.address;
 -- as an action column (allowed_connections, blocked_connections, unknown_connections, 1 for its own
 -- action), the columns of netflow_parts -- its connection's packets, coverage class and direction
 -- states, in the part of its action -- and, per direction -- forward and reverse, as its first leg logged them -- the
--- bytes, the packets, the state and the leg the figure was measured at. A connection that started
--- under no single Observation Point has no direction row: its directions are null.
+-- bytes, the packets, the state and whether it was counted from translated copies (counted_copy). A
+-- connection that started under no readable, enabled capture configuration has no direction row: its
+-- directions are null.
 -- ---------------------------------------------------------------------------
 
 -- statement: widget_client_traffic_detail_records_netflow
@@ -113,11 +114,11 @@ SELECT f.id AS flow_id,
        fw.bytes AS forward_bytes,
        fw.packets AS forward_packets,
        fw.state AS forward_state,
-       fw.measured_at_leg AS forward_measured_at_leg,
+       fw.counted_copy AS forward_counted_copy,
        rv.bytes AS reverse_bytes,
        rv.packets AS reverse_packets,
        rv.state AS reverse_state,
-       rv.measured_at_leg AS reverse_measured_at_leg
+       rv.counted_copy AS reverse_counted_copy
 FROM flow AS f
 LEFT JOIN interface_map AS m ON m.device = f.interface_device
 LEFT JOIN geo_asn AS g ON g.address = f.dst_address

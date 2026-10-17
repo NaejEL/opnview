@@ -47,7 +47,22 @@ type Interface struct {
 	// Ingress and Egress say which of its directions are accounted.
 	Ingress bool
 	Egress  bool
+	// Exported says whether the exporter actually exports what is configured for the interface, for
+	// each captured direction: ExportedYes, ExportedNo with NotExportedReason naming why, or
+	// ExportedUnknown when the provider could not establish it (NJ2).
+	Exported          string
+	NotExportedReason string
+	// ParentOf are the identifiers of the interfaces whose received packets this interface's exporter
+	// also exports with this interface as ingress_interface (NJ2).
+	ParentOf []string
 }
+
+// The values of Interface.Exported.
+const (
+	ExportedYes     = "yes"
+	ExportedNo      = "no"
+	ExportedUnknown = "unknown"
+)
 
 // Configuration is an exporter's capture configuration, as one read found it.
 type Configuration struct {
@@ -63,8 +78,7 @@ type Configuration struct {
 	Interfaces []Interface
 }
 
-// Captured returns the interfaces with at least one direction captured: the captured-interface
-// count of PS18 is its length.
+// Captured returns the interfaces with at least one direction captured.
 func (c Configuration) Captured() []Interface {
 	var captured []Interface
 	for _, captureInterface := range c.Interfaces {
@@ -86,10 +100,10 @@ type Source interface {
 	Capture(ctx context.Context, host provider.Session) (Configuration, provider.Result, error)
 }
 
-// Condition is a fact the receiving decoder detected on an exporter's stream: today, that its
-// sequence numbers interleave, which shows several counters behind one observation domain. The core
-// holds it against the capture configuration in force (PS18's configuration contradicting the
-// stream).
+// Condition is a fact the receiving decoder detected on an exporter's stream: today, that the exporter
+// restarted -- its uptime went backwards -- after which the core reads the index map afresh before it maps
+// the next record, because a restart can renumber interfaces (NJ3 of the amendment "the NetFlow join
+// with every interface captured").
 type Condition struct {
 	// Reason is the decoder's name for it.
 	Reason string

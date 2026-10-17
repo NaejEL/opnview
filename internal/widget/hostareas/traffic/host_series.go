@@ -29,8 +29,8 @@ import (
 //	                                         Whole-hour buckets the flows no longer hold are read from the
 //	                                         1 h slots where only interfaces restrict the series, and say so
 //	                                         by a named state
-//	host.series.netflowState()               null when NetFlow can answer the window (one Observation
-//	                                         Point established throughout it, internal/widget/request/measure.go); otherwise the
+//	host.series.netflowState()               null when NetFlow can answer the window (a readable,
+//	                                         enabled capture configuration throughout it, internal/widget/request/measure.go); otherwise the
 //	                                         named state, which the answer then carries: a series of the
 //	                                         netflow measure carries no figure
 //	host.series.providers()                  every registered provider with its availability and condition

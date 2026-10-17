@@ -1,0 +1,31 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q2 and Q7 (the tunnel has no node: its traffic is seen only at the other interface's node) and Q5 (the reverse-join check rejects parent copies: 4 of the 8 parent-copy pairs).",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "Nothing beyond the shape.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F6",
+  "legs": [
+    {"digest": "f06in", "at": 0, "device": "extun0", "dir": "in", "action": "pass", "src": "192.0.2.130",
+     "dst": "198.51.100.134", "src_port": 51006, "dst_port": 8080, "protocol": "tcp", "protocol_number": 6}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "192.0.2.130", "dst": "198.51.100.134", "src_port": 51006, "dst_port": 8080, "protocol": 6, "flags": 27,
+     "in": 26, "out": 23, "packets": 4, "octets": 400, "start": 0, "end": 2, "side": "forward",
+     "expect": {"join_state": "joined", "leg": "f06in", "orientation": "forward"},
+     "counts": {"connection": "f06in", "direction": "forward"}},
+    {"src": "198.51.100.134", "dst": "192.0.2.130", "src_port": 8080, "dst_port": 51006, "protocol": 6, "flags": 27,
+     "in": 23, "out": 26, "packets": 5, "octets": 2500, "start": 0, "end": 2, "side": "reverse",
+     "expect": {"join_state": "joined", "leg": "f06in", "orientation": "reverse"},
+     "counts": {"connection": "f06in", "direction": "reverse"}},
+    {"src": "198.51.100.134", "dst": "192.0.2.130", "src_port": 8080, "dst_port": 51006, "protocol": 6, "flags": 27,
+     "in": 22, "out": 26, "packets": 5, "octets": 2500, "start": 0, "end": 2, "side": "reverse",
+     "expect": {"join_state": "copy", "copy_kind": "parent_copy"}}
+  ],
+  "volumes": [
+    {"connection": "f06in", "direction": "forward", "state": "measured"},
+    {"connection": "f06in", "direction": "reverse", "state": "measured"}
+  ]
+}

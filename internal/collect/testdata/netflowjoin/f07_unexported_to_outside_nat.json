@@ -1,0 +1,29 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md, 'What this rule cannot measure': the tunnel to the upstream, of which only the post-NAT copy exists (Q2, Q4, Q7).",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "Nothing beyond the shape.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F7",
+  "legs": [
+    {"digest": "f07in", "at": 0, "device": "extun0", "dir": "in", "action": "pass", "src": "192.0.2.131",
+     "dst": "192.0.2.84", "src_port": 52007, "dst_port": 443, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4107, "tcp_seq": 7007},
+    {"digest": "f07out", "at": 0, "device": "exnic2", "dir": "out", "action": "pass", "src": "203.0.113.2",
+     "dst": "192.0.2.84", "src_port": 62007, "dst_port": 443, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4107, "tcp_seq": 7007}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "203.0.113.2", "dst": "192.0.2.84", "src_port": 62007, "dst_port": 443, "protocol": 6, "flags": 27,
+     "in": 26, "out": 25, "packets": 9, "octets": 900, "start": 0, "end": 6, "side": "forward",
+     "expect": {"join_state": "copy", "copy_kind": "translated_copy", "copy_leg": "f07out", "orientation": "forward",
+                "counted_copy": true},
+     "counts": {"connection": "f07in", "direction": "forward"}}
+  ],
+  "volumes": [
+    {"connection": "f07in", "direction": "forward", "state": "measured", "counted_copy": true},
+    {"connection": "f07in", "direction": "reverse", "state": "ingress_not_captured"}
+  ]
+}

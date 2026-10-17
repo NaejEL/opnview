@@ -13,18 +13,20 @@ import (
 	"github.com/NaejEL/opnview/internal/store/vocab"
 )
 
-// SetCaptureChangeObserver gives the collector what it tells when a flow_record provider's capture
-// configuration changed, or a read followed a stream condition.
-func (c *FlowRecordCoordinator) SetCaptureChangeObserver(observe func(key string)) {
+// SetCaptureReadObserver gives the collector what it tells after every read of a flow_record
+// provider's capture configuration: whether the read opened a new configuration, and how many sequence
+// counters the configuration in force lets the exporter run (NJ7 of the amendment "the NetFlow join with
+// every interface captured").
+func (c *FlowRecordCoordinator) SetCaptureReadObserver(observe func(key string, changed bool, counters int)) {
 	c.Netflow.Mutex.Lock()
 	defer c.Netflow.Mutex.Unlock()
-	c.Netflow.OnCaptureChange = observe
+	c.Netflow.OnCaptureRead = observe
 }
 
 // ReceivePushedFlowRecords stores the flow records the push entry of a flow_record provider delivered,
-// each with the Observation Point and the direction the configuration in force at its start gives it
-// (PS17, *Core-written columns*). Records of a provider that is not the active one are counted and
-// not stored.
+// each with what its two indexes name under the index map in force at reception (NJ3) and whether a loss
+// would have been detected over its start (NJ7). Records of a provider that is not the active one are
+// counted and not stored.
 func (c *FlowRecordCoordinator) ReceivePushedFlowRecords(ctx context.Context, key string, records []flowrecord.Record) error {
 	activeKey, providerID, active, err := c.ActiveSourceKey(ctx, derive.KindFlowRecord)
 	if err != nil {
@@ -40,17 +42,11 @@ func (c *FlowRecordCoordinator) ReceivePushedFlowRecords(ctx context.Context, ke
 	if err != nil {
 		return err
 	}
-	indexes, err := derive.On(c.Collector).InterfaceIndexes(ctx)
-	if err != nil {
-		// An index map that cannot be read maps nothing: a one-interface configuration's records are
-		// then interface_index_unmapped, never given a guessed point.
-		indexes = nil
-	}
-	byIdentifier := derive.IndexesByIdentifier(indexes)
+	indexes := c.indexMap(ctx)
 	now := c.Now()
 	rows := make([]netflow.FlowRecordRow, 0, len(records))
 	for _, record := range records {
-		row, ok := flowRecordRow(providerID, record, history, byIdentifier)
+		row, ok := flowRecordRow(providerID, record, history, indexes)
 		if !ok {
 			continue
 		}
@@ -63,9 +59,29 @@ func (c *FlowRecordCoordinator) ReceivePushedFlowRecords(ctx context.Context, ke
 	return err
 }
 
+// indexMap is the index map in force: the latest read of interfaces_info at or before reception,
+// through the broker at discovery's max age -- read afresh after the exporter restarted, before the next
+// record is mapped (NJ3). A map that cannot be read maps nothing: every index other than 0 is then
+// unmapped, never guessed.
+func (c *FlowRecordCoordinator) indexMap(ctx context.Context) derive.IndexMap {
+	c.Netflow.Mutex.Lock()
+	fresh := c.Netflow.IndexMapStale
+	c.Netflow.Mutex.Unlock()
+	indexes, err := derive.On(c.Collector).ReadIndexMap(ctx, fresh)
+	if err != nil {
+		return derive.IndexMap{}
+	}
+	if fresh {
+		c.Netflow.Mutex.Lock()
+		c.Netflow.IndexMapStale = false
+		c.Netflow.Mutex.Unlock()
+	}
+	return indexes
+}
+
 // flowRecordRow builds a record's row, its core-written columns included.
 func flowRecordRow(providerID int64, record flowrecord.Record, history *core.CaptureHistory,
-	indexes map[string]derive.MappedInterface) (netflow.FlowRecordRow, bool) {
+	indexes derive.IndexMap) (netflow.FlowRecordRow, bool) {
 	source, sourceErr := netip.ParseAddr(record.SrcAddress)
 	destination, destinationErr := netip.ParseAddr(record.DstAddress)
 	if sourceErr != nil || destinationErr != nil || record.StartMillis < 0 || record.EndMillis < record.StartMillis {
@@ -73,7 +89,7 @@ func flowRecordRow(providerID int64, record flowrecord.Record, history *core.Cap
 	}
 	source, destination = source.Unmap(), destination.Unmap()
 	start := record.StartMillis / 1000
-	row := netflow.FlowRecordRow{ProviderID: providerID, Identity: record.Identity, StartAt: start,
+	return netflow.FlowRecordRow{ProviderID: providerID, Identity: record.Identity, StartAt: start,
 		StartMillisecond: record.StartMillis % 1000, EndAt: record.EndMillis / 1000,
 		EndMillisecond: record.EndMillis % 1000, ReceivedAt: record.ReceivedAt,
 		ExporterAddress: record.ExporterAddress, ObservationDomain: record.ObservationDomain,
@@ -81,55 +97,25 @@ func flowRecordRow(providerID int64, record flowrecord.Record, history *core.Cap
 		IPVersion: record.IPVersion, Protocol: record.Protocol, SrcAddress: source.String(),
 		DstAddress: destination.String(), SrcPort: record.SrcPort, DstPort: record.DstPort,
 		TCPFlags: record.TCPFlags, Octets: record.Octets, Packets: record.Packets,
-		TupleKey: derive.TupleKey(record.IPVersion, record.Protocol, source, destination, record.SrcPort, record.DstPort)}
-	point := derive.StateAt(history, start, indexes)
-	row.CaptureState, row.LossDetectable = point.State, point.LossDetectable
-	if point.Captured >= 0 {
-		captured := point.Captured
-		row.CapturedInterfaces = &captured
-	}
-	switch point.State {
-	case netflow.CaptureObservationPoint:
-		identifier, device := point.Point.Identifier, point.Device
-		direction := derive.DirectionAt(point.Point, point.Index, record.IngressInterface)
-		row.ObservationPointIdentifier, row.ObservationPointDevice, row.Direction = &identifier, &device, &direction
-		row.JoinState = netflow.JoinPending
-	case netflow.CaptureIndexUnmapped:
-		identifier := point.Point.Identifier
-		row.ObservationPointIdentifier = &identifier
-		row.JoinState = netflow.JoinNotJoinable
-	default:
-		row.JoinState = netflow.JoinNotJoinable
-	}
-	return row, true
+		Ingress: indexes.Map(record.IngressInterface), Egress: indexes.Map(record.EgressInterface),
+		LossDetectable: history.ConfigurationAt(start).LossDetectable(),
+		TupleKey:       derive.TupleKey(record.IPVersion, record.Protocol, source, destination, record.SrcPort, record.DstPort),
+	}, true
 }
 
-// ObserveFlowRecordCondition records a condition the decoder detected on a provider's stream. A
-// sequence that interleaves while the configuration in force names one captured interface
-// contradicts it: the join is suspended from that instant until the next configuration read, and
-// the records already stored and not decided lose their Observation Point (PS18). Nothing is deduced
-// from records.
-func (c *FlowRecordCoordinator) ObserveFlowRecordCondition(ctx context.Context, key string, condition flowrecord.Condition) error {
-	providerID, err := c.Store.ProviderID(ctx, derive.KindFlowRecord, key)
-	if err != nil {
-		return err
-	}
-	if err := c.Store.RecordFlowRecordCondition(ctx, providerID, condition.Reason, condition.Scope,
-		condition.At); err != nil {
-		return err
-	}
-	derive.On(c.Collector).ForgetHistory(providerID)
-	_, err = c.Store.SuspendFlowRecords(ctx, providerID, condition.At)
-	if err == nil {
-		derive.On(c.Collector).MarkDirty(condition.At, c.Now())
-	}
-	return err
+// ObserveFlowRecordCondition is told a condition the decoder detected on a provider's stream. Every
+// condition it reports today says the exporter restarted, which can renumber interfaces: the index map
+// is read afresh before the next record is mapped (NJ3). Nothing is deduced from records.
+func (c *FlowRecordCoordinator) ObserveFlowRecordCondition(_ context.Context, _ string, _ flowrecord.Condition) error {
+	c.Netflow.Mutex.Lock()
+	defer c.Netflow.Mutex.Unlock()
+	c.Netflow.IndexMapStale = true
+	return nil
 }
 
 // FlowRecordSequenceAsserted says whether a loss the exporter's sequence numbers show over [from, to]
-// is asserted: only when the configuration in force at both ends names exactly one captured
-// interface, unsuspended. With two or more, the per-interface counters interleave under one domain and
-// no gap is asserted, whatever the decoder saw (PS18, *Loss detectability*).
+// is asserted: only when one readable configuration with the export enabled is in force over both ends,
+// and it bounds the exporter's sequence counters (NJ7).
 func (c *FlowRecordCoordinator) FlowRecordSequenceAsserted(ctx context.Context, key string, from, to int64) bool {
 	providerID, err := c.Store.ProviderID(ctx, derive.KindFlowRecord, key)
 	if err != nil {
@@ -139,14 +125,8 @@ func (c *FlowRecordCoordinator) FlowRecordSequenceAsserted(ctx context.Context, 
 	if err != nil {
 		return false
 	}
-	for _, at := range []int64{from, to} {
-		configuration := history.ConfigurationAt(at)
-		if configuration == nil || !configuration.Enabled || len(configuration.Captured()) != 1 ||
-			history.Suspended(at) {
-			return false
-		}
-	}
-	return history.ConfigurationAt(from) == history.ConfigurationAt(to)
+	configuration := history.ConfigurationAt(from)
+	return configuration.LossDetectable() && history.ConfigurationAt(to) == configuration
 }
 
 // CollectFlowRecordCapture reads the active flow_record provider's capture configuration and records
@@ -174,7 +154,8 @@ func (c *FlowRecordCoordinator) CollectFlowRecordCapture(ctx context.Context) er
 		read.InactiveTimeoutSeconds = configuration.InactiveTimeoutSeconds
 		for _, captured := range configuration.Interfaces {
 			read.Interfaces = append(read.Interfaces, netflow.CaptureInterface{Identifier: captured.Identifier,
-				Ingress: captured.Ingress, Egress: captured.Egress})
+				Ingress: captured.Ingress, Egress: captured.Egress, Exported: captured.Exported,
+				NotExportedReason: captured.NotExportedReason, ParentOf: captured.ParentOf})
 		}
 	} else {
 		read.Outcome = availabilityOutcome(result.Outcome)
@@ -186,28 +167,33 @@ func (c *FlowRecordCoordinator) CollectFlowRecordCapture(ctx context.Context) er
 	if err != nil {
 		return err
 	}
-	recorded, err := c.Store.RecordCaptureRead(ctx, providerID, readAt, read)
+	opened, err := c.Store.RecordCaptureRead(ctx, providerID, readAt, read)
 	if err != nil {
 		return err
 	}
-	if !recorded.Opened && recorded.ResolvedConditions == 0 {
+	derive.On(c.Collector).ForgetHistory(providerID)
+	counters := 0
+	if current, err := derive.On(c.Collector).History(ctx, providerID); err == nil {
+		if configuration := current.ConfigurationAt(readAt); configuration != nil && configuration.Enabled {
+			counters = configuration.SequenceCounters()
+		}
+	}
+	c.Netflow.Mutex.Lock()
+	observe := c.Netflow.OnCaptureRead
+	c.Netflow.Mutex.Unlock()
+	if observe != nil {
+		observe(key, opened, counters)
+	}
+	if !opened {
 		// The same configuration again: the interval it is in force over grew, which only the cached
-		// history needs to know.
-		derive.On(c.Collector).ForgetHistory(providerID)
+		// history needed to know.
 		return nil
 	}
-	derive.On(c.Collector).ForgetHistory(providerID)
 	from := readAt
 	if rows := previous.Configurations; len(rows) > 0 {
 		from = rows[len(rows)-1].LastReadAt
 	}
 	derive.On(c.Collector).MarkDirty(from, readAt)
-	c.Netflow.Mutex.Lock()
-	observe := c.Netflow.OnCaptureChange
-	c.Netflow.Mutex.Unlock()
-	if observe != nil {
-		observe(key)
-	}
 	return derive.On(c.Collector).Derive(ctx, derive.Derivation{})
 }
 

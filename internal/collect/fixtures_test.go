@@ -132,6 +132,22 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
+<<<<<<< HEAD
+=======
+// longestTests are this package's longest tests, longest first, and TestMain starts them before
+// every other (internal/testorder says why). Each is a single database's sequence of steps that
+// cannot be split; started in source order, the first of them began 7.7 s into a 24 s run of
+// this package alone and decided its wall time. Measured on 16 October 2026 on 16 CPUs with
+// go test -json, the package alone: 16.3, 8.1, 7.4, 4.0 and 3.7 s.
+var longestTests = []string{
+	"TestThePassesAndThePurgeRunConcurrentlyAndEverySlotHoldsEveryFlowOnce",
+	"TestASecondExporterIsAddedByItsDirectoryAlone",
+	"TestEachGatewayAbsenceIsNamedOnItsOwnAndWritesNoReading",
+	"TestTheJoinWithEveryInterfaceCaptured",
+	"TestNoCodeReadsTheAvailabilityDetail",
+}
+
+>>>>>>> worktree-agent-a8fbc3920bc7304ca
 // readTextFile returns a file's contents.
 func readTextFile(t *testing.T, path string) string {
 	t.Helper()

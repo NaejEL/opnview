@@ -1,0 +1,49 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q3 (VLAN parent copies: the parent's node re-exports VLAN ingress with the parent as INPUT_SNMP), Q4 (translated traffic exported twice: a pre-NAT copy from the ingress node and a post-NAT copy from the upstream egress node; pflog logs the post-NAT form on the upstream out leg) and Q6 (the reply appears only as the internal egress copy, destination already de-NATed, no parent copy of it).",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json; ports and sizes chosen for the fixture.",
+    "synthesised": "A second connection (f01b) whose upstream out leg was not logged, so its post-NAT copy is classified by the firewall-address signal alone (NJ4 rule 5).",
+    "captured_from_a_firewall": false
+  },
+  "name": "F1",
+  "legs": [
+    {"digest": "f01in", "at": 0, "device": "exvlan7", "dir": "in", "action": "pass", "src": "198.51.100.130",
+     "dst": "192.0.2.80", "src_port": 50001, "dst_port": 443, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4101, "tcp_seq": 7001},
+    {"digest": "f01out", "at": 0, "device": "exnic2", "dir": "out", "action": "pass", "src": "203.0.113.2",
+     "dst": "192.0.2.80", "src_port": 61001, "dst_port": 443, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4101, "tcp_seq": 7001},
+    {"digest": "f01b", "at": 0, "device": "exvlan7", "dir": "in", "action": "pass", "src": "198.51.100.131",
+     "dst": "192.0.2.81", "src_port": 50002, "dst_port": 443, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4102, "tcp_seq": 7002}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "198.51.100.130", "dst": "192.0.2.80", "src_port": 50001, "dst_port": 443, "protocol": 6, "flags": 27,
+     "in": 23, "out": 25, "packets": 10, "octets": 1000, "start": 0, "end": 10, "side": "forward",
+     "expect": {"join_state": "joined", "leg": "f01in", "orientation": "forward"},
+     "counts": {"connection": "f01in", "direction": "forward"}},
+    {"src": "198.51.100.130", "dst": "192.0.2.80", "src_port": 50001, "dst_port": 443, "protocol": 6, "flags": 27,
+     "in": 22, "out": 25, "packets": 10, "octets": 1000, "start": 0, "end": 10, "side": "forward",
+     "expect": {"join_state": "copy", "copy_kind": "parent_copy"}},
+    {"src": "203.0.113.2", "dst": "192.0.2.80", "src_port": 61001, "dst_port": 443, "protocol": 6, "flags": 27,
+     "in": 23, "out": 25, "packets": 10, "octets": 1000, "start": 0, "end": 10, "side": "forward",
+     "expect": {"join_state": "copy", "copy_kind": "translated_copy", "copy_leg": "f01out", "orientation": "forward"}},
+    {"src": "192.0.2.80", "dst": "198.51.100.130", "src_port": 443, "dst_port": 50001, "protocol": 6, "flags": 27,
+     "in": 25, "out": 23, "packets": 20, "octets": 20000, "start": 0, "end": 10, "side": "reverse",
+     "expect": {"join_state": "joined", "leg": "f01in", "orientation": "reverse"},
+     "counts": {"connection": "f01in", "direction": "reverse"}},
+    {"src": "198.51.100.131", "dst": "192.0.2.81", "src_port": 50002, "dst_port": 443, "protocol": 6, "flags": 27,
+     "in": 23, "out": 25, "packets": 3, "octets": 300, "start": 0, "end": 5, "side": "forward",
+     "expect": {"join_state": "joined", "leg": "f01b", "orientation": "forward"}},
+    {"src": "203.0.113.2", "dst": "192.0.2.81", "src_port": 61002, "dst_port": 443, "protocol": 6, "flags": 27,
+     "in": 23, "out": 25, "packets": 3, "octets": 300, "start": 0, "end": 5, "side": "forward",
+     "expect": {"join_state": "copy", "copy_kind": "translated_copy"}}
+  ],
+  "volumes": [
+    {"connection": "f01in", "direction": "forward", "state": "measured"},
+    {"connection": "f01in", "direction": "reverse", "state": "measured"},
+    {"connection": "f01b", "direction": "forward", "state": "forwarding_export_unsettled"},
+    {"connection": "f01b", "direction": "reverse", "state": "forwarding_export_unsettled"}
+  ]
+}

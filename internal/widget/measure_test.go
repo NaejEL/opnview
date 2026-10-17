@@ -68,8 +68,9 @@ func TestNetflowTwinMismatchNamesWhatDiffers(t *testing.T) {
 	}
 }
 
-// TestCoveredIsPS22sCoverage is the judgment best_available makes: a connection is covered when it is
-// joinable and none of its directions is not_captured, export_gap or not_exported_when_refused.
+// TestCoveredIsPS22sCoverage is the judgment best_available makes, as NJ5 restates it: a connection is
+// covered when its capture was known and every direction is measured, in_progress, awaiting_export or
+// missing; any other of NJ5's states, on one direction, uncovers it.
 func TestCoveredIsPS22sCoverage(t *testing.T) {
 	t.Parallel()
 	covered := reads.NetflowCoverage{Measured: 1, Partial: 3, Unmeasured: 1, Directions: reads.DirectionStates{
@@ -78,10 +79,15 @@ func TestCoveredIsPS22sCoverage(t *testing.T) {
 		t.Errorf("%+v is not covered", covered)
 	}
 	for name, uncover := range map[string]func(*reads.NetflowCoverage){
-		"not_joinable":              func(c *reads.NetflowCoverage) { c.NotJoinable = 1 },
-		"not_captured":              func(c *reads.NetflowCoverage) { c.Directions.NotCaptured = 1 },
-		"export_gap":                func(c *reads.NetflowCoverage) { c.Directions.ExportGap = 1 },
-		"not_exported_when_refused": func(c *reads.NetflowCoverage) { c.Directions.NotExportedWhenRefused = 1 },
+		"capture_not_known":             func(c *reads.NetflowCoverage) { c.CaptureNotKnown = 1 },
+		"export_gap":                    func(c *reads.NetflowCoverage) { c.Directions.ExportGap = 1 },
+		"not_exported_when_refused":     func(c *reads.NetflowCoverage) { c.Directions.NotExportedWhenRefused = 1 },
+		"forwarding_export_unsettled":   func(c *reads.NetflowCoverage) { c.Directions.ForwardingExportUnsettled = 1 },
+		"ingress_not_captured":          func(c *reads.NetflowCoverage) { c.Directions.IngressNotCaptured = 1 },
+		"parent_copies_only":            func(c *reads.NetflowCoverage) { c.Directions.ParentCopiesOnly = 1 },
+		"interface_not_exported":        func(c *reads.NetflowCoverage) { c.Directions.InterfaceNotExported = 1 },
+		"interface_not_captured":        func(c *reads.NetflowCoverage) { c.Directions.InterfaceNotCaptured = 1 },
+		"capture_configuration_unknown": func(c *reads.NetflowCoverage) { c.Directions.CaptureConfigurationUnknown = 1 },
 	} {
 		coverage := covered
 		uncover(&coverage)

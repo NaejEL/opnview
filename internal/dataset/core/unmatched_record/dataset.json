@@ -4,8 +4,8 @@
   "retention": {"column": "period_start_at"},
   "columns": [
     {"name": "period_start_at", "type": "integer", "role": "time"},
-    {"name": "observation_point", "type": "text"},
-    {"name": "direction", "type": "text"},
+    {"name": "ingress_interface", "type": "text"},
+    {"name": "egress_interface", "type": "text"},
     {"name": "protocol", "type": "integer"},
     {"name": "ip_version", "type": "integer"},
     {"name": "reason", "type": "text"},

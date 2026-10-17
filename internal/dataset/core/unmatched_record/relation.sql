@@ -1,10 +1,11 @@
--- The unmatched records (PS19 rule 7 and PS21 of the NetFlow join amendment), per hour of their start:
--- flow records with an Observation Point that joined no leg, keyed by that interface, the direction
--- at it, the IANA protocol number, the IP version and the reason. They are no logged connection's,
--- and no other dataset or family counts them.
+-- The unmatched records (NJ4 rule 9 and NJ8 of the amendment "the NetFlow join with every interface
+-- captured"), per hour of their start: flow records that joined no leg and are no copy, keyed by their
+-- ingress interface and their egress interface -- each an identifier, or the role of an index that names
+-- none -- the IANA protocol number, the IP version and the reason. They are no logged connection's, and
+-- no other dataset or family counts them.
 SELECT u.period_start_at,
-       u.observation_point_identifier AS observation_point,
-       u.direction,
+       u.ingress_interface,
+       u.egress_interface,
        u.protocol,
        u.ip_version,
        u.reason,

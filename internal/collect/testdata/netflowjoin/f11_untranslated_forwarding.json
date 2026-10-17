@@ -1,0 +1,49 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q3, 'Forwarded untranslated traffic between two captured Ethernet interfaces: none observed', and 'Not settled by this window': 0, 1 or 2 records per packet.",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "Never observed: the three variants, no record, one record, and the same record from both nodes, are written so the state can be shown not to depend on which happens.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F11",
+  "legs": [
+    {"digest": "f11ain", "at": 0, "device": "exnic0", "dir": "in", "action": "pass", "src": "198.51.100.12",
+     "dst": "192.0.2.10", "src_port": 50011, "dst_port": 80, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4111, "tcp_seq": 7011},
+    {"digest": "f11aout", "at": 0, "device": "exnic3", "dir": "out", "action": "pass", "src": "198.51.100.12",
+     "dst": "192.0.2.10", "src_port": 50011, "dst_port": 80, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4111, "tcp_seq": 7011},
+    {"digest": "f11bin", "at": 0, "device": "exnic0", "dir": "in", "action": "pass", "src": "198.51.100.12",
+     "dst": "192.0.2.10", "src_port": 50012, "dst_port": 80, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4112, "tcp_seq": 7012},
+    {"digest": "f11bout", "at": 0, "device": "exnic3", "dir": "out", "action": "pass", "src": "198.51.100.12",
+     "dst": "192.0.2.10", "src_port": 50012, "dst_port": 80, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4112, "tcp_seq": 7012},
+    {"digest": "f11cin", "at": 0, "device": "exnic0", "dir": "in", "action": "pass", "src": "198.51.100.12",
+     "dst": "192.0.2.10", "src_port": 50013, "dst_port": 80, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4113, "tcp_seq": 7013},
+    {"digest": "f11cout", "at": 0, "device": "exnic3", "dir": "out", "action": "pass", "src": "198.51.100.12",
+     "dst": "192.0.2.10", "src_port": 50013, "dst_port": 80, "protocol": "tcp", "protocol_number": 6,
+     "ip_id": 4113, "tcp_seq": 7013}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "198.51.100.12", "dst": "192.0.2.10", "src_port": 50012, "dst_port": 80, "protocol": 6, "flags": 27,
+     "in": 21, "out": 28, "packets": 2, "octets": 120, "start": 0, "end": 1, "side": "forward",
+     "expect": {"join_state": "joined", "leg": "f11bin", "orientation": "forward"}},
+    {"src": "198.51.100.12", "dst": "192.0.2.10", "src_port": 50013, "dst_port": 80, "protocol": 6, "flags": 27,
+     "in": 21, "out": 28, "packets": 2, "octets": 120, "start": 0, "end": 1, "side": "forward",
+     "expect": {"join_state": "joined", "leg": "f11cin", "orientation": "forward"}},
+    {"src": "198.51.100.12", "dst": "192.0.2.10", "src_port": 50013, "dst_port": 80, "protocol": 6, "flags": 27,
+     "in": 21, "out": 28, "packets": 2, "octets": 120, "start": 0, "end": 1, "side": "forward", "datagram": 1,
+     "expect": {"join_state": "joined", "leg": "f11cin", "orientation": "forward"}}
+  ],
+  "volumes": [
+    {"connection": "f11ain", "direction": "forward", "state": "forwarding_export_unsettled"},
+    {"connection": "f11ain", "direction": "reverse", "state": "forwarding_export_unsettled"},
+    {"connection": "f11bin", "direction": "forward", "state": "forwarding_export_unsettled"},
+    {"connection": "f11bin", "direction": "reverse", "state": "forwarding_export_unsettled"},
+    {"connection": "f11cin", "direction": "forward", "state": "forwarding_export_unsettled"},
+    {"connection": "f11cin", "direction": "reverse", "state": "forwarding_export_unsettled"}
+  ]
+}

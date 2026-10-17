@@ -48,10 +48,10 @@ const (
 	ReasonSequenceGap        = "netflow_sequence_gap"
 	ReasonPacketMalformed    = "netflow_packet_malformed"
 	ReasonTemplateLimit      = "netflow_template_limit"
-	// FlagSequenceInterleaved names an exporter and domain whose sequence numbers went backwards:
-	// several counters share one observation domain (OPNsense's per-interface nodes behind one
-	// forwarder do, survey S11), so no gap is asserted for it from then on.
-	FlagSequenceInterleaved = "netflow_sequence_interleaved"
+	// ReasonExporterRestarted is a condition: the exporter's uptime went backwards, so it restarted, and
+	// what was concluded of its stream -- its sequence counters, the interface indexes it exports -- no
+	// longer holds. opnview's own name: RFC 3954 names the uptime, not its going backwards.
+	ReasonExporterRestarted = "netflow_exporter_restarted"
 )
 
 // field is one field of a template.
@@ -91,23 +91,6 @@ type heldSet struct {
 	meta    push.Meta
 }
 
-// sequenceState follows one scope's sequence numbers.
-type sequenceState struct {
-	known       bool
-	expected    uint32
-	lastExport  time.Time
-	interleaved bool
-	// pending is a forward jump not yet confirmed by a following packet.
-	pending *pendingGap
-}
-
-type pendingGap struct {
-	from, to   time.Time
-	missing    uint32
-	nextExpect uint32
-	detectedAt time.Time
-}
-
 // scopeState is everything held for one scope.
 type scopeState struct {
 	// name is the scope as a Problem names it: "<exporter>/<domain>".
@@ -134,12 +117,13 @@ type decoder struct {
 	scopes     map[scope]*scopeState
 	seen       map[string]int64
 	generation int
-	flags      map[string]bool
+	// counters is how many sequence counters an exporter runs under one observation domain
+	// (SetSequenceCounters); 1 until told otherwise, the one counter per domain of RFC 3954 and RFC 7011.
+	counters int
 }
 
 func newDecoder(limits push.Limits) *decoder {
-	return &decoder{limits: limits, scopes: map[scope]*scopeState{}, seen: map[string]int64{},
-		flags: map[string]bool{}}
+	return &decoder{limits: limits, scopes: map[scope]*scopeState{}, seen: map[string]int64{}, counters: 1}
 }
 
 func (d *decoder) scopeOf(key scope) *scopeState {
@@ -574,75 +558,7 @@ func (d *decoder) releaseHeld(state *scopeState, decoded *push.Decoded) {
 	state.held = kept
 }
 
-// followSequence checks a packet's sequence number against the one expected. A forward jump is a
-// loss, but it is recorded only once the next packet confirms the new position: an exporter whose
-// several counters share one domain (survey S11) jumps forward and back, and a jump back marks the
-// stream interleaved, after which nothing is asserted about its loss.
-func (d *decoder) followSequence(state *scopeState, header packetHeader, advance uint32, uncounted bool,
-	meta push.Meta, decoded *push.Decoded) {
-	sequence := &state.sequence
-	wasKnown := sequence.known
-	defer func() {
-		sequence.expected = header.sequence + advance
-		sequence.lastExport = header.exportTime
-		sequence.known = !uncounted
-	}()
-	if !wasKnown || sequence.interleaved {
-		return
-	}
-	if sequence.pending != nil {
-		if header.sequence == sequence.pending.nextExpect {
-			gap := sequence.pending
-			sequence.pending = nil
-			decoded.Problems = append(decoded.Problems, sequenceGap(state.name, gap))
-		} else {
-			sequence.pending = nil
-			d.interleave(state, header, decoded)
-			return
-		}
-	}
-	difference := header.sequence - sequence.expected
-	switch {
-	case difference == 0:
-	case difference < sequenceForwardWindow:
-		sequence.pending = &pendingGap{from: sequence.lastExport, to: header.exportTime, missing: difference,
-			nextExpect: header.sequence + advance, detectedAt: meta.ReceivedAt}
-	default:
-		d.interleave(state, header, decoded)
-	}
-}
-
-// interleave marks a scope's stream interleaved and tells the subscribers so, once: a condition at the
-// export time of the packet that showed it, which a sink reading the exporter's configuration may
-// find contradicts what that configuration says (PS18 of the NetFlow join amendment).
-func (d *decoder) interleave(state *scopeState, header packetHeader, decoded *push.Decoded) {
-	state.sequence.interleaved = true
-	d.flags[FlagSequenceInterleaved] = true
-	decoded.Problems = append(decoded.Problems, push.Problem{Reason: FlagSequenceInterleaved, Count: 1,
-		Condition: true, Sequence: true, From: header.exportTime, To: header.exportTime, Scope: state.name,
-		Detail: "the exporter's sequence numbers went backwards: several counters share this observation domain, " +
-			"so no loss is asserted from them until the stream is followed afresh"})
-}
-
-// ResetSequences forgets what was concluded of every scope's sequence numbers: a stream found
-// interleaved, and a forward jump not yet confirmed, are followed afresh from the next datagram.
-// Whoever reads the exporter's configuration calls it when that configuration changes.
-func (d *decoder) ResetSequences() {
-	d.mutex.Lock()
-	defer d.mutex.Unlock()
-	for _, state := range d.scopes {
-		state.sequence = sequenceState{}
-	}
-	delete(d.flags, FlagSequenceInterleaved)
-}
-
-func sequenceGap(scope string, gap *pendingGap) push.Problem {
-	return push.Problem{Reason: ReasonSequenceGap, Count: int(gap.missing), Gap: true, From: gap.from, To: gap.to,
-		Sequence: true, Scope: scope,
-		Detail: fmt.Sprintf("the exporter's sequence number jumped by %d", gap.missing)}
-}
-
-// Expire drops held sets past their age and records a forward jump nothing contradicted within it.
+// Expire drops held sets past their age.
 func (d *decoder) Expire(now time.Time) push.Decoded {
 	d.mutex.Lock()
 	defer d.mutex.Unlock()
@@ -670,10 +586,6 @@ func (d *decoder) Expire(now time.Time) push.Decoded {
 			kept = append(kept, set)
 		}
 		state.held = kept
-		if pending := state.sequence.pending; pending != nil && now.Sub(pending.detectedAt) > bound {
-			state.sequence.pending = nil
-			decoded.Problems = append(decoded.Problems, sequenceGap(state.name, pending))
-		}
 	}
 	return decoded
 }
@@ -685,12 +597,7 @@ func (d *decoder) State() push.DecoderState {
 	for key, count := range d.seen {
 		seen[key] = count
 	}
-	var flags []string
-	for flag := range d.flags {
-		flags = append(flags, flag)
-	}
-	sort.Strings(flags)
-	return push.DecoderState{Seen: seen, Flags: flags}
+	return push.DecoderState{Seen: seen}
 }
 
 // digestOf is a datagram's identity: the SHA-256 of its octets, in hexadecimal.

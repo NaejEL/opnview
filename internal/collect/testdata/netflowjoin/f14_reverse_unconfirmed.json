@@ -1,0 +1,23 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q3 and Q5 (missing ingress records the analysis could not explain) and the reverse-join check of its Rule B (rule 3: without a forward record the reply stays pending or unmeasured).",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "Nothing beyond the shape.",
+    "captured_from_a_firewall": false
+  },
+  "name": "F14",
+  "legs": [
+    {"digest": "f14in", "at": 0, "device": "exnic0", "dir": "in", "action": "pass", "src": "198.51.100.15",
+     "dst": "192.0.2.88", "src_port": 53014, "dst_port": 80, "protocol": "tcp", "protocol_number": 6}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "192.0.2.88", "dst": "198.51.100.15", "src_port": 80, "dst_port": 53014, "protocol": 6, "flags": 16,
+     "in": 25, "out": 21, "packets": 3, "octets": 3000, "start": 0, "end": 5, "side": "reverse",
+     "expect": {"join_state": "unmatched", "reason": "reverse_unconfirmed", "pending_before_bound": true}}
+  ],
+  "volumes": [
+    {"connection": "f14in", "direction": "forward", "state": "forwarding_export_unsettled"},
+    {"connection": "f14in", "direction": "reverse", "state": "forwarding_export_unsettled"}
+  ]
+}

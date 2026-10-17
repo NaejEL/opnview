@@ -1,0 +1,32 @@
+{
+  "__provenance__": {
+    "synthesised_from": "docs/opnsense-api-survey.md",
+    "captured_from_a_firewall": false,
+    "statement": "THIS FILE IS SYNTHESISED FROM A DOCUMENT AND IS NOT A CAPTURE. It was written by reading docs/opnsense-api-survey.md (Push sources, S5c, S6, S6b and S6c, which cite opnsense/core 26.7.3's OverviewController.php and interfaces.lib.inc legacy_interfaces_details), never by recording what a firewall answered. Do not treat this file as evidence; replace it with a recorded answer rewritten under X1 once LV-NJ2 has run.",
+    "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources",
+    "field_list_from": "S5c, S6, S6b, S6c: identifier, device, macaddr (all zeros without an ether line), flags, vlan.tag, vlan.parent, statistics.index",
+    "why_these_values": "The interfaces of getconfig_every_interface.json: three Ethernet attachments, two VLANs of one parent, a tunnel with no ether line, and the loopback no assignment names.",
+    "example_values_are_not_a_network": "Every identifier, device, kernel index and MAC address is a synthesised example value, none of the analysed firewall's (X1); MAC addresses are locally administered."
+  },
+  "body": {
+    "total": 7,
+    "rowCount": 7,
+    "current": 1,
+    "rows": [
+      {"identifier": "example_if_a", "device": "exnic0", "macaddr": "02:00:5e:10:00:21", "flags": ["up", "broadcast"],
+       "statistics": {"index": "21"}},
+      {"identifier": "example_if_p", "device": "exnic1", "macaddr": "02:00:5e:10:00:22", "flags": ["up", "broadcast"],
+       "statistics": {"index": "22"}},
+      {"identifier": "example_if_v", "device": "exvlan7", "macaddr": "02:00:5e:10:00:22", "flags": ["up", "broadcast"],
+       "vlan": {"tag": "7", "parent": "exnic1"}, "statistics": {"index": "23"}},
+      {"identifier": "example_if_n", "device": "exvlan8", "macaddr": "02:00:5e:10:00:22", "flags": ["up", "broadcast"],
+       "vlan": {"tag": "8", "parent": "exnic1"}, "statistics": {"index": "24"}},
+      {"identifier": "example_if_u", "device": "exnic2", "macaddr": "02:00:5e:10:00:25", "flags": ["up", "broadcast"],
+       "statistics": {"index": "25"}},
+      {"identifier": "example_if_w", "device": "extun0", "macaddr": "00:00:00:00:00:00",
+       "flags": ["up", "pointopoint"], "statistics": {"index": "26"}},
+      {"identifier": "", "device": "exlo0", "macaddr": "00:00:00:00:00:00", "flags": ["up", "loopback"],
+       "statistics": {"index": "27"}}
+    ]
+  }
+}

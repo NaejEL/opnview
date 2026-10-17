@@ -46,8 +46,8 @@ type Response struct {
 	// answer for a stated reason (docs/widget-api.md, "Named states").
 	States []string `json:"states"`
 	// StateDetails is the detail of a state of States that carries one, keyed by the state's name:
-	// captured_interfaces for observation_point_not_exported, interval_states for
-	// netflow_not_covering_window (docs/widget-api.md, "Named states"). Absent when no state of the
+	// interval_states for netflow_not_covering_window (docs/widget-api.md, "Named states"). Absent when
+	// no state of the
 	// answer carries a detail, so an answer holding no such state is unchanged by it.
 	StateDetails map[string]StateDetail `json:"state_details,omitempty"`
 	// ResolverWindowBounded is set on a response fed by the resolver's lookups: true when
@@ -61,13 +61,9 @@ type Response struct {
 // StateDetail is what a named state says beyond its name. Each member belongs to one state, and a
 // detail carries only its own state's.
 type StateDetail struct {
-	// CapturedInterfaces is, for observation_point_not_exported, how many interfaces the capture
-	// configuration in force captures on.
-	CapturedInterfaces *int64 `json:"captured_interfaces,omitempty"`
 	// IntervalStates is, for netflow_not_covering_window, the capture states of the intervals the
-	// window meets, in name order: observation_point for an interval with one Observation Point, and
-	// the interval states of PS18 (netflow_not_configured, observation_point_not_exported,
-	// capture_configuration_unknown, interface_index_unmapped) for the others.
+	// window meets, in name order: capture_configured for an interval with a readable, enabled capture
+	// configuration, and netflow_not_configured or capture_configuration_unknown for the others.
 	IntervalStates []string `json:"interval_states,omitempty"`
 }
 
@@ -179,8 +175,10 @@ const (
 	// logging rule matched.
 	MeasureInterfaceCounter = "interface_counter"
 	// MeasureNetflow is the bytes and packets the firewall's NetFlow export reported for the
-	// logged connections, each direction counted once, at the single Observation Point the
-	// capture configuration establishes (PS22; internal/widget/request/measure.go chooses it).
+	// logged connections, each direction counted once, from the records in the first leg's form, or
+	// from the translated form where no exporter sees the first leg's form (PS22, as the amendment "the
+	// NetFlow join with every interface captured" restates it; internal/widget/request/measure.go
+	// chooses it).
 	MeasureNetflow = "netflow"
 )
 
@@ -214,47 +212,68 @@ type Volume struct {
 	UnknownCoverage    *VolumeCoverage `json:"unknown_coverage,omitempty"`
 }
 
-// VolumeCoverage is how NetFlow covered a netflow Volume's connections. The four coverage classes sum
-// to the connections: both directions measured, partial (some measured bytes, not both directions
-// measured), unmeasured (one Observation Point, no measured byte) and not joinable (no single
-// Observation Point at the connection's start). DirectionStates counts, per direction state, the
-// connections with at least one direction in it: they say which states were met, and do not sum to
-// the connections.
+// VolumeCoverage is how NetFlow covered a netflow Volume's connections (NJ5 and NJ8 of the amendment
+// "the NetFlow join with every interface captured"). The four coverage classes sum to the connections:
+// both directions measured, partial (some measured bytes, not both directions measured), unmeasured (a
+// readable configuration, no measured byte) and capture_not_known (no readable, enabled capture
+// configuration at the connection's start). DirectionStates counts, per direction state, the
+// connections with at least one direction in it, so that no direction NetFlow cannot measure is
+// silently zero: they say which states were met, and do not sum to the connections. CountedCopy counts
+// the connections with a direction counted from translated copies.
 type VolumeCoverage struct {
 	Measured        int64                 `json:"measured"`
 	Partial         int64                 `json:"partial"`
 	Unmeasured      int64                 `json:"unmeasured"`
-	NotJoinable     int64                 `json:"not_joinable"`
+	CaptureNotKnown int64                 `json:"capture_not_known"`
 	DirectionStates VolumeDirectionStates `json:"direction_states"`
+	CountedCopy     int64                 `json:"counted_copy"`
 }
 
-// VolumeDirectionStates counts connections per direction state met (PS20).
+// VolumeDirectionStates counts connections per direction state met (NJ5).
 type VolumeDirectionStates struct {
-	Measured               int64 `json:"measured"`
-	InProgress             int64 `json:"in_progress"`
-	AwaitingExport         int64 `json:"awaiting_export"`
-	Missing                int64 `json:"missing"`
-	NotCaptured            int64 `json:"not_captured"`
-	ExportGap              int64 `json:"export_gap"`
-	NotExportedWhenRefused int64 `json:"not_exported_when_refused"`
+	Measured                    int64 `json:"measured"`
+	InProgress                  int64 `json:"in_progress"`
+	AwaitingExport              int64 `json:"awaiting_export"`
+	Missing                     int64 `json:"missing"`
+	ExportGap                   int64 `json:"export_gap"`
+	NotExportedWhenRefused      int64 `json:"not_exported_when_refused"`
+	ForwardingExportUnsettled   int64 `json:"forwarding_export_unsettled"`
+	IngressNotCaptured          int64 `json:"ingress_not_captured"`
+	ParentCopiesOnly            int64 `json:"parent_copies_only"`
+	InterfaceNotExported        int64 `json:"interface_not_exported"`
+	InterfaceNotCaptured        int64 `json:"interface_not_captured"`
+	CaptureConfigurationUnknown int64 `json:"capture_configuration_unknown"`
+}
+
+// fields are the twelve counts, in the order of the store's DirectionStates.Fields.
+func (d *VolumeDirectionStates) fields() []*int64 {
+	return []*int64{&d.Measured, &d.InProgress, &d.AwaitingExport, &d.Missing, &d.ExportGap,
+		&d.NotExportedWhenRefused, &d.ForwardingExportUnsettled, &d.IngressNotCaptured, &d.ParentCopiesOnly,
+		&d.InterfaceNotExported, &d.InterfaceNotCaptured, &d.CaptureConfigurationUnknown}
 }
 
 // CoverageOf is a store coverage as a Volume carries it.
 func CoverageOf(coverage reads.NetflowCoverage) *VolumeCoverage {
-	d := coverage.Directions
-	return &VolumeCoverage{Measured: coverage.Measured, Partial: coverage.Partial, Unmeasured: coverage.Unmeasured,
-		NotJoinable: coverage.NotJoinable, DirectionStates: VolumeDirectionStates{Measured: d.Measured,
-			InProgress: d.InProgress, AwaitingExport: d.AwaitingExport, Missing: d.Missing, NotCaptured: d.NotCaptured,
-			ExportGap: d.ExportGap, NotExportedWhenRefused: d.NotExportedWhenRefused}}
+	result := &VolumeCoverage{Measured: coverage.Measured, Partial: coverage.Partial, Unmeasured: coverage.Unmeasured,
+		CaptureNotKnown: coverage.CaptureNotKnown, CountedCopy: coverage.CountedCopy}
+	from := coverage.Directions
+	into := result.DirectionStates.fields()
+	for index, value := range from.Fields() {
+		*into[index] = *value
+	}
+	return result
 }
 
 // StoreCoverage is a Volume's coverage as the store holds it.
 func (c VolumeCoverage) StoreCoverage() reads.NetflowCoverage {
-	d := c.DirectionStates
-	return reads.NetflowCoverage{Measured: c.Measured, Partial: c.Partial, Unmeasured: c.Unmeasured,
-		NotJoinable: c.NotJoinable, Directions: reads.DirectionStates{Measured: d.Measured, InProgress: d.InProgress,
-			AwaitingExport: d.AwaitingExport, Missing: d.Missing, NotCaptured: d.NotCaptured, ExportGap: d.ExportGap,
-			NotExportedWhenRefused: d.NotExportedWhenRefused}}
+	result := reads.NetflowCoverage{Measured: c.Measured, Partial: c.Partial, Unmeasured: c.Unmeasured,
+		CaptureNotKnown: c.CaptureNotKnown, CountedCopy: c.CountedCopy}
+	from := c.DirectionStates
+	into := result.Directions.Fields()
+	for index, value := range from.fields() {
+		*into[index] = *value
+	}
+	return result
 }
 
 // Logged turns store figures into logged volume figures.

@@ -6,7 +6,7 @@
 -- Same conventions as every *.statements.sql file of the tree (see service.statements.sql in
 -- internal/widget for the parameter conventions). sql/schema-checks.sh plans each statement at both
 -- seed sizes. They read what the collector stored -- the active flow_record provider, the capture
--- configurations it read and the conditions its stream showed -- and name no exporter, endpoint or
+-- configurations it read -- and name no exporter, endpoint or
 -- model field: which provider feeds the kind is its plugin's.
 
 
@@ -16,7 +16,8 @@ SELECT id FROM provider WHERE kind = 'flow_record' AND is_active = 1 ORDER BY id
 
 
 -- A provider's capture configurations, oldest first, with how many interfaces each captures on in
--- either direction: the intervals bounded by read instants of PS18.
+-- either direction: the intervals bounded by read instants of PS18, kept by NJ6 of the amendment "the
+-- NetFlow join with every interface captured".
 -- statement: widget_capture_configurations
 SELECT c.id, c.first_read_at, c.last_read_at, c.fingerprint IS NOT NULL AS readable,
        coalesce(c.enabled, 0) AS enabled
@@ -33,25 +34,3 @@ JOIN capture_configuration AS c ON c.id = i.capture_configuration_id
 WHERE c.provider_id = :provider_id
 ORDER BY i.capture_configuration_id, i.identifier;
 
-
--- The stream conditions of a provider that meet a window: each suspends the join from its instant
--- until the next configuration read.
--- statement: widget_flow_record_conditions
-SELECT observed_at, resolved_at
-FROM flow_record_condition
-WHERE provider_id = :provider_id
-  AND observed_at < :to
-  AND (resolved_at IS NULL OR resolved_at > :from)
-ORDER BY observed_at, id;
-
-
--- Whether a provider stored, inside a window, a record whose one captured interface the index
--- mapping (PS11) could not map -- the configuration named one interface, and still nothing was joined --
--- and whether it stored one that had its Observation Point.
--- statement: widget_flow_record_unmapped
-SELECT EXISTS (SELECT 1 FROM flow_record
-               WHERE provider_id = :provider_id AND start_at >= :from AND start_at < :to
-                 AND capture_state = 'interface_index_unmapped'),
-       EXISTS (SELECT 1 FROM flow_record
-               WHERE provider_id = :provider_id AND start_at >= :from AND start_at < :to
-                 AND capture_state = 'observation_point');

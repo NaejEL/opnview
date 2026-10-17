@@ -242,10 +242,12 @@ func ScalarCount(t *testing.T, database *store.Store, query string, arguments ..
 const (
 	InsideIdentifier   = "example_if_a"
 	InsideDevice       = "exdev0"
-	InsideIndex        = 3
+	InsideIndex        = 23
 	UpstreamIdentifier = "example_if_d"
 	UpstreamDevice     = "exdev3"
-	UpstreamIndex      = 5
+	UpstreamIndex      = 25
+	// LoopbackIndex is the loopback's kernel index, which the row carrying the `loopback` flag holds.
+	LoopbackIndex = 27
 )
 
 // The ends of the test connections.
@@ -262,20 +264,25 @@ var (
 	NetflowReadSecond = ReferenceEpoch()
 )
 
-// InterfacesWithIndexes is interfaces_info as discovery and the index map read it: the fixture's four
-// interfaces, each with the `statistics.index` the details argument adds (survey, S6).
+// InterfacesWithIndexes is interfaces_info as discovery, the index map and the netflow plugin read it: the
+// fixture's three assigned interfaces, each with the `statistics.index` the details argument adds (survey,
+// S6) and the `macaddr` of an interface ifconfig shows an `ether` line for (S5c), and the loopback, which no
+// assignment names and whose `flags` hold `loopback` (S6b).
 func InterfacesWithIndexes() map[string]any {
 	rows := []map[string]any{
 		{"identifier": InsideIdentifier, "device": InsideDevice, "description": "example description A",
 			"status": "example-link-state-up", "enabled": "1", "link_type": "example-link-type-ethernet",
 			"addr4": "198.51.100.1/24", "addr6": "2001:db8::1/64", "gateways": []any{},
-			"statistics": map[string]any{"index": fmt.Sprint(InsideIndex)}},
+			"macaddr": "02:00:5e:00:00:21", "statistics": map[string]any{"index": fmt.Sprint(InsideIndex)}},
 		{"identifier": "example_if_b", "device": "exdev1", "description": "example description B",
 			"status": "example-link-state-up", "enabled": "1", "link_type": "example-link-type-vlan", "vlan_tag": 101,
-			"statistics": map[string]any{"index": "4"}},
+			"macaddr": "02:00:5e:00:00:24", "statistics": map[string]any{"index": "24"}},
 		{"identifier": UpstreamIdentifier, "device": UpstreamDevice, "description": "example description D",
 			"link_type": "example-link-type-tunnel", "addr4": "203.0.113.2/24", "addr6": "",
-			"gateways": []any{"203.0.113.1"}, "statistics": map[string]any{"index": fmt.Sprint(UpstreamIndex)}},
+			"gateways": []any{"203.0.113.1"}, "macaddr": "02:00:5e:00:00:25",
+			"statistics": map[string]any{"index": fmt.Sprint(UpstreamIndex)}},
+		{"identifier": "", "device": "exlo0", "description": "Unassigned Interface", "flags": []any{"up", "loopback",
+			"running", "multicast"}, "statistics": map[string]any{"index": fmt.Sprint(LoopbackIndex)}},
 	}
 	return map[string]any{"total": len(rows), "rowCount": len(rows), "current": 1, "rows": rows}
 }
@@ -294,9 +301,14 @@ type Captured struct {
 
 // GetconfigBody is getconfig's answer for a set of captured interfaces, in the model's shape (S9a).
 func GetconfigBody(interfaces ...Captured) map[string]any {
+	return GetconfigBodyOffering([]string{InsideIdentifier, "example_if_b", UpstreamIdentifier}, interfaces...)
+}
+
+// GetconfigBodyOffering is GetconfigBody for a firewall offering some identifiers.
+func GetconfigBodyOffering(offered []string, interfaces ...Captured) map[string]any {
 	options := map[string]any{}
 	egress := map[string]any{}
-	for _, identifier := range []string{InsideIdentifier, "example_if_b", UpstreamIdentifier} {
+	for _, identifier := range offered {
 		options[identifier] = map[string]any{"value": identifier, "selected": 0}
 		egress[identifier] = map[string]any{"value": identifier, "selected": 0}
 	}
@@ -320,6 +332,8 @@ type NetflowHarness struct {
 	Key      string
 	Sequence uint32
 	Legs     []LegRow
+	// Offered are the identifiers getconfig offers in its option lists.
+	Offered []string
 }
 
 // GapRecorder records a push entry's gaps under its provider, as the service does.
@@ -354,6 +368,22 @@ func NewNetflowHarness(t *testing.T) *NetflowHarness {
 func NewNetflowHarnessWith(t *testing.T, loaded *plugin.Loaded, key string,
 	arrange func(*providertest.Firewall)) *NetflowHarness {
 	t.Helper()
+	return newNetflowHarness(t, loaded, key, arrange, InterfacesWithIndexes(),
+		[]string{InsideIdentifier, "example_if_b", UpstreamIdentifier})
+}
+
+// NewNetflowWorldHarness builds the world of a fixture: the built-in plugins, interfaces_info answering
+// the fixture's interfaces, and getconfig offering the fixture's identifiers.
+func NewNetflowWorldHarness(t *testing.T, interfacesInfo map[string]any, offered []string) *NetflowHarness {
+	t.Helper()
+	return newNetflowHarness(t, nil, "netflow", func(fake *providertest.Firewall) {
+		fake.AnswerJSON(IsEnabledEndpoint, map[string]any{"netflow": 1, "local": 0})
+	}, interfacesInfo, offered)
+}
+
+func newNetflowHarness(t *testing.T, loaded *plugin.Loaded, key string, arrange func(*providertest.Firewall),
+	interfacesInfo map[string]any, offered []string) *NetflowHarness {
+	t.Helper()
 	ctx := context.Background()
 	fake := providertest.NewFirewall(t)
 	database := NewTestStore(t)
@@ -363,8 +393,8 @@ func NewNetflowHarnessWith(t *testing.T, loaded *plugin.Loaded, key string,
 	}
 	collector := NewTestCollectorWithSources(t, providertest.NewClient(t, fake), database, clock, loaded.Set)
 	h := &NetflowHarness{ProbeHarness: &ProbeHarness{Fake: fake, Store: database, Collector: collector, Clock: clock},
-		Key: key}
-	fake.AnswerJSON(opnsense.InterfacesInfo, InterfacesWithIndexes())
+		Key: key, Offered: offered}
+	fake.AnswerJSON(opnsense.InterfacesInfo, interfacesInfo)
 	fake.AnswerFixture(opnsense.InterfaceNames, "get_interface_names.json")
 	fake.AnswerFixture(opnsense.SearchRule, "search_rule.json")
 	// The firewall's clock reads the harness's: a firewall on UTC, so its measured offset is zero.
@@ -413,6 +443,14 @@ func NewNetflowHarnessWith(t *testing.T, loaded *plugin.Loaded, key string,
 		t.Fatal(err)
 	}
 	h.Hub.Senders().Set([]netip.Addr{ExporterAddress})
+	// As the service does (cmd/opnview, push.go): after each capture read the decoders are given the
+	// sequence counters the exporter runs, and follow them afresh when the configuration changed.
+	collector.SetCaptureReadObserver(func(_ string, changed bool, counters int) {
+		if changed {
+			h.Hub.ResetSequences("netflow")
+		}
+		h.Hub.SetSequenceCounters("netflow", counters)
+	})
 	return h
 }
 
@@ -444,7 +482,7 @@ func (h *NetflowHarness) At(instant int64) {
 func (h *NetflowHarness) Capture(t *testing.T, at int64, interfaces ...Captured) {
 	t.Helper()
 	h.At(at)
-	h.Fake.AnswerJSON(GetconfigEndpoint, GetconfigBody(interfaces...))
+	h.Fake.AnswerJSON(GetconfigEndpoint, GetconfigBodyOffering(h.Offered, interfaces...))
 	if err := h.Collector.CollectFlowRecordCapture(context.Background()); err != nil {
 		t.Fatalf("the capture pass: %v", err)
 	}
@@ -461,10 +499,21 @@ type FlowRecord struct {
 	Start, End       int64
 }
 
-// Datagram builds one NetFlow v9 datagram exported at exportAt, holding ng_netflow's two templates and
-// the records, IPv4 and IPv6 each in its own data set.
+// Datagram builds one NetFlow v9 datagram exported at exportAt, source_id 0, holding ng_netflow's two
+// templates -- 256 for IPv4 and 259 for IPv6, with the analysis's Q1 field list -- and the records, IPv4
+// and IPv6 each in its own data set.
 func Datagram(exportAt int64, sequence uint32, records ...FlowRecord) []byte {
-	const uptime = 10_000_000
+	return DatagramBooted(exportAt, sequence, ExporterBootAt, records...)
+}
+
+// ExporterBootAt is when the test exporter booted: its uptime in a datagram exported at an instant is the
+// time since.
+var ExporterBootAt = ReferenceEpoch() - 100_000
+
+// DatagramBooted is Datagram from an exporter booted at bootAt: a later boot than an earlier datagram's is
+// a restart, its uptime going backwards.
+func DatagramBooted(exportAt int64, sequence uint32, bootAt int64, records ...FlowRecord) []byte {
+	uptime := (exportAt - bootAt) * 1000
 	var out []byte
 	u16 := func(b []byte, v uint16) []byte { return binary.BigEndian.AppendUint16(b, v) }
 	u32 := func(b []byte, v uint32) []byte { return binary.BigEndian.AppendUint32(b, v) }
@@ -476,7 +525,7 @@ func Datagram(exportAt int64, sequence uint32, records ...FlowRecord) []byte {
 	}
 	var templateBody []byte
 	for index, fields := range templates {
-		templateBody = u16(templateBody, uint16(256+index))
+		templateBody = u16(templateBody, []uint16{256, 259}[index])
 		templateBody = u16(templateBody, uint16(len(fields)))
 		for _, field := range fields {
 			templateBody = u16(templateBody, field[0])
@@ -484,7 +533,7 @@ func Datagram(exportAt int64, sequence uint32, records ...FlowRecord) []byte {
 		}
 	}
 	sets := [][]byte{SetOf(0, templateBody)}
-	for family, template := range map[int]uint16{4: 256, 6: 257} {
+	for family, template := range map[int]uint16{4: 256, 6: 259} {
 		var body []byte
 		for _, record := range records {
 			if (family == 4) != record.Src.Is4() {
@@ -518,7 +567,7 @@ func Datagram(exportAt int64, sequence uint32, records ...FlowRecord) []byte {
 	})
 	out = u16(out, 9)
 	out = u16(out, uint16(len(sets)))
-	out = u32(out, uptime)
+	out = u32(out, uint32(uptime))
 	out = u32(out, uint32(exportAt))
 	out = u32(out, sequence)
 	out = u32(out, 0)
@@ -602,12 +651,19 @@ func Canonical(text string) string { return netip.MustParseAddr(text).String() }
 // pass classifies, pairs, joins and measures.
 func (h *NetflowHarness) Logged(t *testing.T, legs ...LegRow) {
 	t.Helper()
+	h.LoggedAt(t, NetflowReadSecond, legs...)
+}
+
+// LoggedAt is Logged with the pass run at an instant: the filter log is then read through that instant
+// only.
+func (h *NetflowHarness) LoggedAt(t *testing.T, at int64, legs ...LegRow) {
+	t.Helper()
 	h.Legs = append(h.Legs, legs...)
 	rows := make([]any, 0, len(h.Legs))
 	for index := len(h.Legs) - 1; index >= 0; index-- {
 		rows = append(rows, h.Legs[index].Row())
 	}
-	h.At(NetflowReadSecond)
+	h.At(at)
 	h.Fake.AnswerJSON(opnsense.FirewallLog, rows)
 	if err := h.Collector.CollectFirewallLog(context.Background()); err != nil {
 		t.Fatalf("the filter-log pass: %v", err)
@@ -638,22 +694,27 @@ func NatLegs(digest string, at int64, action string) []LegRow {
 
 // RecordRow is one stored flow record as a test reads it.
 type RecordRow struct {
+	Identity                 string
 	StartAt                  int64
-	CaptureState             string
-	Captured                 *int64
-	Point, Device, Direction *string
+	IngressRole, EgressRole  string
+	IngressIdentifier        *string
+	EgressIdentifier         *string
 	JoinState                string
-	JoinedFlowID             *int64
+	JoinedFlowID, CopyFlowID *int64
+	CopyKind                 *string
 	Orientation, Reason      *string
+	CountedCopy              int64
 	LossDetectable, Octets   int64
+	Packets                  int64
 }
 
 // Records reads every stored flow record, oldest first.
 func (h *NetflowHarness) Records(t *testing.T) []RecordRow {
 	t.Helper()
 	rows, err := h.Store.DB().QueryContext(context.Background(),
-		`SELECT start_at, capture_state, captured_interfaces, observation_point_identifier, observation_point_device,
-		        direction, join_state, joined_flow_id, orientation, unmatched_reason, loss_detectable, octets
+		`SELECT identity, start_at, ingress_role, egress_role, ingress_identifier, egress_identifier, join_state,
+		        joined_flow_id, copy_flow_id, copy_kind, orientation, unmatched_reason, counted_copy, loss_detectable,
+		        octets, packets
 		 FROM flow_record ORDER BY start_at, octets, identity`)
 	if err != nil {
 		t.Fatal(err)
@@ -662,9 +723,9 @@ func (h *NetflowHarness) Records(t *testing.T) []RecordRow {
 	var read []RecordRow
 	for rows.Next() {
 		var row RecordRow
-		if err := rows.Scan(&row.StartAt, &row.CaptureState, &row.Captured, &row.Point, &row.Device, &row.Direction,
-			&row.JoinState, &row.JoinedFlowID, &row.Orientation, &row.Reason, &row.LossDetectable,
-			&row.Octets); err != nil {
+		if err := rows.Scan(&row.Identity, &row.StartAt, &row.IngressRole, &row.EgressRole, &row.IngressIdentifier,
+			&row.EgressIdentifier, &row.JoinState, &row.JoinedFlowID, &row.CopyFlowID, &row.CopyKind, &row.Orientation,
+			&row.Reason, &row.CountedCopy, &row.LossDetectable, &row.Octets, &row.Packets); err != nil {
 			t.Fatal(err)
 		}
 		read = append(read, row)
@@ -679,16 +740,14 @@ type VolumeRow struct {
 	State          string
 	Bytes, Packets int64
 	Records        int64
-	Leg            *string
-	Point          string
+	CountedCopy    int64
 }
 
 // Volumes reads every measured volume row.
 func (h *NetflowHarness) Volumes(t *testing.T) []VolumeRow {
 	t.Helper()
 	rows, err := h.Store.DB().QueryContext(context.Background(),
-		`SELECT connection_flow_id, direction, state, bytes, packets, records, measured_at_leg,
-		        observation_point_identifier
+		`SELECT connection_flow_id, direction, state, bytes, packets, records, counted_copy
 		 FROM connection_measured_volume ORDER BY connection_flow_id, direction`)
 	if err != nil {
 		t.Fatal(err)
@@ -698,7 +757,7 @@ func (h *NetflowHarness) Volumes(t *testing.T) []VolumeRow {
 	for rows.Next() {
 		var row VolumeRow
 		if err := rows.Scan(&row.Connection, &row.Direction, &row.State, &row.Bytes, &row.Packets, &row.Records,
-			&row.Leg, &row.Point); err != nil {
+			&row.CountedCopy); err != nil {
 			t.Fatal(err)
 		}
 		read = append(read, row)
@@ -784,20 +843,27 @@ func JoinFingerprint(t *testing.T, h *NetflowHarness, digests ...string) string 
 	for _, digest := range digests {
 		names[h.FlowID(t, digest)] = digest
 	}
-	var fingerprint string
-	for _, record := range h.Records(t) {
-		joined := "-"
-		if record.JoinedFlowID != nil {
-			joined = names[*record.JoinedFlowID]
+	leg := func(id *int64) string {
+		if id == nil {
+			return "-"
 		}
-		fingerprint += fmt.Sprintf("%d %d %s %s %s %s;", record.StartAt, record.Octets, record.JoinState, joined,
-			OrNull(record.Orientation), OrNull(record.Reason))
+		return names[*id]
+	}
+	// Each part is sorted: the order of rows alike in what is printed depends on their identities, which are
+	// the datagrams' digests and differ from one delivery order to another.
+	var records, volumes []string
+	for _, record := range h.Records(t) {
+		records = append(records, fmt.Sprintf("%d %d %s %s %s %s %s %s %s %d;", record.StartAt, record.Octets,
+			record.IngressRole, record.JoinState, leg(record.JoinedFlowID), OrNull(record.CopyKind), leg(record.CopyFlowID),
+			OrNull(record.Orientation), OrNull(record.Reason), record.CountedCopy))
 	}
 	for _, volume := range h.Volumes(t) {
-		fingerprint += fmt.Sprintf("%s %s %s %d %d %d %s;", names[volume.Connection], volume.Direction, volume.State,
-			volume.Bytes, volume.Packets, volume.Records, OrNull(volume.Leg))
+		volumes = append(volumes, fmt.Sprintf("%s %s %s %d %d %d %d;", names[volume.Connection], volume.Direction,
+			volume.State, volume.Bytes, volume.Packets, volume.Records, volume.CountedCopy))
 	}
-	return fingerprint
+	sort.Strings(records)
+	sort.Strings(volumes)
+	return strings.Join(records, "") + strings.Join(volumes, "")
 }
 
 // AvailabilityInstant reads when one provider's state was last determined.

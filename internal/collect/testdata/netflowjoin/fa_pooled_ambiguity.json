@@ -1,0 +1,27 @@
+{
+  "__provenance__": {
+    "follows": "REPORT.md Q5, 'Ambiguous: 109 records': a record two candidates of the pooled cases meet at one instant.",
+    "rewritten_under_x1": "Addresses from RFC 5737; interfaces, devices and kernel indexes those of world.json.",
+    "synthesised": "Two legs logged in the same second, one in each orientation on the two interfaces the record names, so rule 2(a) and rule 2(b) each offer one (NJ-AC5, pooled candidates). Not one of NJ12's numbered shapes.",
+    "captured_from_a_firewall": false
+  },
+  "name": "FA",
+  "legs": [
+    {"digest": "faina", "at": 0, "device": "exnic0", "dir": "in", "action": "pass", "src": "198.51.100.16",
+     "dst": "192.0.2.11", "src_port": 50016, "dst_port": 5000, "protocol": "udp", "protocol_number": 17},
+    {"digest": "fainc", "at": 0, "device": "exnic3", "dir": "in", "action": "pass", "src": "192.0.2.11",
+     "dst": "198.51.100.16", "src_port": 5000, "dst_port": 50016, "protocol": "udp", "protocol_number": 17}
+  ],
+  "export_at": 30,
+  "records": [
+    {"src": "198.51.100.16", "dst": "192.0.2.11", "src_port": 50016, "dst_port": 5000, "protocol": 17,
+     "in": 21, "out": 28, "packets": 1, "octets": 99, "start": 0, "end": 0, "side": "forward",
+     "expect": {"join_state": "unmatched", "reason": "ambiguous"}}
+  ],
+  "volumes": [
+    {"connection": "faina", "direction": "forward", "state": "forwarding_export_unsettled"},
+    {"connection": "faina", "direction": "reverse", "state": "forwarding_export_unsettled"},
+    {"connection": "fainc", "direction": "forward", "state": "forwarding_export_unsettled"},
+    {"connection": "fainc", "direction": "reverse", "state": "forwarding_export_unsettled"}
+  ]
+}

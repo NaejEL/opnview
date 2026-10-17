@@ -10,7 +10,7 @@
       "name": "export_state",
       "path": "/api/example/exporter/state",
       "method": "GET",
-      "note": "An example exporter's own description of what it captures: {running, points: [{name, receive, send}], active_timeout}."
+      "note": "An example exporter's own description of what it captures: {running, points: [{name, receive, send, exported, also_received_for}], active_timeout}."
     }
   ],
   "push": [

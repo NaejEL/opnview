@@ -3,7 +3,7 @@
   "name": "netflow",
   "version": "1.0.0",
   "display_name": "NetFlow export",
-  "description": "Receives the flow records OPNsense's NetFlow export sends (version 9, over UDP), and reads which interfaces the export captures on: when it captures exactly one, that interface is every record's Observation Point and the records are joined to the logged connections as their measured volume.",
+  "description": "Receives the flow records OPNsense's NetFlow export sends (version 9, over UDP) -- every interface may be captured -- and reads which interfaces the export captures on, whether each is actually exported, and which VLANs a captured interface exports again as their parent: the core joins each record to the logged connection its own interfaces name, and counts each direction of a connection once.",
   "script": "netflow.js",
   "endpoints": [
     {
@@ -21,6 +21,14 @@
       "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources",
       "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Diagnostics/Api/NetflowController.php",
       "note": "{netflow: 0|1, local: 0|1}; netflow is 1 exactly when capture.targets and capture.interfaces are both non-empty."
+    },
+    {
+      "name": "interfaces_info",
+      "path": "/api/interfaces/overview/interfaces_info",
+      "method": "GET",
+      "survey_section": "Push sources: remote syslog and NetFlow export, read from source for push sources",
+      "upstream_url": "https://github.com/opnsense/core/blob/26.7.3/src/opnsense/mvc/app/controllers/OPNsense/Interfaces/Api/OverviewController.php",
+      "note": "Read-only, called with the argument 1 (details). The standard search envelope; each row a device's ifconfig details (legacy_interfaces_details, src/etc/inc/interfaces.lib.inc). Read: identifier, device, macaddr (the ether line's address, all zeros without one: S5c) and vlan.parent (S6c)."
     }
   ],
   "push": [

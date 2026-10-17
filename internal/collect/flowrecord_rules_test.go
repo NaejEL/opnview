@@ -107,7 +107,7 @@ func TestSplitRecordsSumExactlyAndContinuityBoundsAConnection(t *testing.T) {
 // TestAnUnmatchedRecordIsCountedInNoFigure is PS-AC32: a record with no leg, a record meeting two legs
 // logged in the same second, and a record that started before the filter log's horizon each carry
 // their reason and reach no connection's figure; a record under a configuration of two captured
-// interfaces reaches nothing at all.
+// interfaces is joined all the same.
 func TestAnUnmatchedRecordIsCountedInNoFigure(t *testing.T) {
 	t.Parallel()
 	at := collecttest.LegInstant
@@ -140,13 +140,13 @@ func TestAnUnmatchedRecordIsCountedInNoFigure(t *testing.T) {
 			t.Errorf("an unmatched record reached a figure: %+v", volume)
 		}
 	}
-	// The unmatched family holds them, keyed by Observation Point, direction, protocol, version and
-	// reason, at every period; no other family counts their bytes.
+	// The unmatched family holds them, keyed by their ingress and egress interfaces, protocol, version and
+	// reason, at every period (NJ8); no other family counts their bytes.
 	for _, period := range []string{"1h", "24h", "7d", "30d"} {
 		for octets, reason := range want {
 			if got := collecttest.ScalarCount(t, h.Store, "SELECT coalesce(sum(bytes), 0) FROM unmatched_record_aggregate_"+period+
-				" WHERE reason = ? AND observation_point_identifier = ? AND direction = 'ingress'", reason,
-				collecttest.InsideIdentifier); got != int(octets) {
+				" WHERE reason = ? AND ingress_interface = ? AND egress_interface = ?", reason,
+				collecttest.InsideIdentifier, collecttest.UpstreamIdentifier); got != int(octets) {
 				t.Errorf("at %s the unmatched family holds %d bytes for %s, want %d", period, got, reason, octets)
 			}
 		}
@@ -155,17 +155,16 @@ func TestAnUnmatchedRecordIsCountedInNoFigure(t *testing.T) {
 		t.Errorf("the volume family counts %d measured bytes of unmatched records", counted)
 	}
 
+	// Under two captured interfaces the record is joined all the same: every record is joined from its own
+	// indexes (NJ2, the amendment "the NetFlow join with every interface captured").
 	two := collecttest.NewNetflowHarness(t)
 	two.Capture(t, collecttest.CaptureStartAt, collecttest.Captured{Identifier: collecttest.InsideIdentifier}, collecttest.Captured{Identifier: collecttest.UpstreamIdentifier})
 	two.At(collecttest.NetflowReadSecond)
 	two.Deliver(t, at+60, collecttest.Forward(6, 40003, 443, 0x10, 44, at, at+1))
 	two.Logged(t, singleLeg("two", at, "tcp", 6, 40003, 443, "pass"))
-	stored := two.Records(t)
-	if len(stored) != 1 || stored[0].JoinState != netflow.JoinNotJoinable || stored[0].Reason != nil {
-		t.Errorf("under two captured interfaces the record is %+v, want not joinable with no reason", stored)
-	}
-	if volumes := two.Volumes(t); len(volumes) != 0 {
-		t.Errorf("under two captured interfaces a connection has figures: %+v", volumes)
+	if stored := two.Records(t); len(stored) != 1 || stored[0].JoinState != netflow.JoinJoined ||
+		*stored[0].JoinedFlowID != two.FlowID(t, "two") {
+		t.Errorf("under two captured interfaces the record is %+v, want joined to its leg", stored)
 	}
 }
 

@@ -12,13 +12,12 @@ import (
 // The NetFlow tables of the store (PS17, PS18 and the retention of PS-AC44 of the NetFlow join
 // amendment).
 
-// flowRecordAt is one flow record of a provider starting at an instant, with no Observation Point.
+// flowRecordAt is one flow record of a provider starting at an instant, its indexes unmapped.
 func flowRecordAt(providerID, at int64, identity string) netflow.FlowRecordRow {
-	captured := int64(2)
 	return netflow.FlowRecordRow{ProviderID: providerID, Identity: identity, StartAt: at, EndAt: at + 1, ReceivedAt: at + 30,
 		ExporterAddress: "192.0.2.1", IPVersion: 4, Protocol: 17, SrcAddress: "198.51.100.10",
-		DstAddress: "192.0.2.80", Octets: 100, Packets: 1, CaptureState: netflow.CaptureObservationPointHidden,
-		CapturedInterfaces: &captured, TupleKey: "4|17|192.0.2.80|198.51.100.10", JoinState: netflow.JoinNotJoinable}
+		DstAddress: "192.0.2.80", Octets: 100, Packets: 1, Ingress: netflow.MappedIndex{Role: netflow.RoleUnmapped},
+		Egress: netflow.MappedIndex{Role: netflow.RoleUnmapped}, TupleKey: "4|17|192.0.2.80|198.51.100.10"}
 }
 
 // identityOf is a 64-hexadecimal-digit identity for a test.
@@ -129,27 +128,31 @@ func TestACaptureReadExtendsItsRunOrOpensOne(t *testing.T) {
 	two := netflow.CaptureConfiguration{Readable: true, Enabled: true, Interfaces: append(one.Interfaces,
 		netflow.CaptureInterface{Identifier: "example_if_b", Egress: true})}
 	unreadable := netflow.CaptureConfiguration{Outcome: vocab.OutcomeDenied, Detail: "HTTP 403"}
+	// The same interface, now said to be exported and to be a parent: what NJ2 adds is part of the configuration.
+	three := netflow.CaptureConfiguration{Readable: true, Enabled: true, Interfaces: []netflow.CaptureInterface{{
+		Identifier: "example_if_a", Ingress: true, Egress: true, Exported: netflow.ExportedYes,
+		ParentOf: []string{"example_if_b"}}}}
 	for _, read := range []struct {
 		at            int64
 		configuration netflow.CaptureConfiguration
 		opens         bool
 	}{
 		{1000, one, true}, {1060, one, false}, {1120, two, true}, {1180, unreadable, true}, {1240, unreadable, false},
-		{1300, one, true},
+		{1300, one, true}, {1360, three, true}, {1420, three, false},
 	} {
-		done, err := database.RecordCaptureRead(ctx, providerID, read.at, read.configuration)
+		opened, err := database.RecordCaptureRead(ctx, providerID, read.at, read.configuration)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if done.Opened != read.opens {
-			t.Errorf("the read at %d opened a run: %t, want %t", read.at, done.Opened, read.opens)
+		if opened != read.opens {
+			t.Errorf("the read at %d opened a run: %t, want %t", read.at, opened, read.opens)
 		}
 	}
 	runs, err := database.CaptureConfigurations(ctx, providerID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := [][2]int64{{1000, 1060}, {1120, 1120}, {1180, 1240}, {1300, 1300}}
+	want := [][2]int64{{1000, 1060}, {1120, 1120}, {1180, 1240}, {1300, 1300}, {1360, 1420}}
 	if len(runs) != len(want) {
 		t.Fatalf("runs %+v", runs)
 	}
@@ -160,6 +163,12 @@ func TestACaptureReadExtendsItsRunOrOpensOne(t *testing.T) {
 	}
 	if runs[2].Readable || runs[2].Outcome != vocab.OutcomeDenied || len(runs[1].Interfaces) != 2 {
 		t.Errorf("the unreadable run is %+v and the two-interface run %+v", runs[2], runs[1])
+	}
+	if captured := runs[4].Interfaces; len(captured) != 1 || captured[0].Exported != netflow.ExportedYes ||
+		len(captured[0].ParentOf) != 1 || captured[0].ParentOf[0] != "example_if_b" || runs[3].Interfaces[0].Exported !=
+		netflow.ExportedUnknown {
+		t.Errorf("the interfaces read back are %+v and %+v, want exported and parent_of as written, and unknown "+
+			"where a read did not say", runs[4].Interfaces, runs[3].Interfaces)
 	}
 }
 

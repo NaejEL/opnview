@@ -12,14 +12,14 @@
     "netflow": {
       "capture": {
         "interfaces": {
-          "lan": {"value": "Example inside", "selected": 1},
-          "opt1": {"value": "Example second inside", "selected": 0},
-          "wan": {"value": "Example upstream", "selected": 1}
+          "example_if_a": {"value": "Example inside", "selected": 1},
+          "example_if_b": {"value": "Example second inside", "selected": 0},
+          "example_if_u": {"value": "Example upstream", "selected": 1}
         },
         "egress_only": {
-          "lan": {"value": "Example inside", "selected": 0},
-          "opt1": {"value": "Example second inside", "selected": 1},
-          "wan": {"value": "Example upstream", "selected": 1}
+          "example_if_a": {"value": "Example inside", "selected": 0},
+          "example_if_b": {"value": "Example second inside", "selected": 1},
+          "example_if_u": {"value": "Example upstream", "selected": 1}
         },
         "version": {"v5": {"value": "v5", "selected": 1}, "v9": {"value": "v9", "selected": 0}},
         "targets": {"192.0.2.10:2055": {"value": "192.0.2.10:2055", "selected": 1}}
