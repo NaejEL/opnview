@@ -50,10 +50,6 @@ func TestNoTwoEntriesCarryTheSameWordsUndecided(t *testing.T) {
 		{"action.sign_in", "sign_in.title", "sign_in.heading"},
 		{"action.reset_password", "recover.title", "recover.heading"},
 		{"state.credential.undecryptable", "state.licence_key.undecryptable"},
-		// The maxmind plugin's declared settings and the settings view's words for them: one
-		// setting, one wording.
-		{"field.maxmind_account_id", "plugin.maxmind.setting.account_id"},
-		{"field.maxmind_licence_key", "plugin.maxmind.setting.licence_key"},
 		// The resolver's lookups are one thing, whether named as the kind collected or as the
 		// dataset of the data catalogue that serves them: one thing, one wording.
 		{"collection.kind.dns_lookup", "dataset.dns"},

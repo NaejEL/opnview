@@ -59,14 +59,17 @@
 
   var DURATION_UNITS = [["day", 86400], ["hour", 3600], ["minute", 60], ["second", 1]];
 
-  /* One count of one unit of a duration, in the catalogue's plural form. */
+  /* One count of one unit of a duration: the figure, then the catalogue's word for the unit in the
+   * plural form the count takes. */
   function durationPart(unit, count) {
+    var word;
     switch (unit) {
-      case "day": return opnview.strings.tp("unit.day", count);
-      case "hour": return opnview.strings.tp("unit.hour", count);
-      case "minute": return opnview.strings.tp("unit.minute", count);
-      default: return opnview.strings.tp("unit.second", count);
+      case "day": word = opnview.strings.tp("unit.day", count); break;
+      case "hour": word = opnview.strings.tp("unit.hour", count); break;
+      case "minute": word = opnview.strings.tp("unit.minute", count); break;
+      default: word = opnview.strings.tp("unit.second", count);
     }
+    return format.number(count) + " " + word;
   }
 
   var format = {

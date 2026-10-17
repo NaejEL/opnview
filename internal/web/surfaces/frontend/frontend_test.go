@@ -94,9 +94,17 @@ type frontAnswer struct {
 	} `json:"assets"`
 }
 
-func TestTheShellAndEveryAssetCarryThePolicyNosniffAndATag(t *testing.T) {
+// TestTheShellAndTheAssets runs the checks of the shell and the assets over one server: each reads
+// and changes nothing, so they share it.
+func TestTheShellAndTheAssets(t *testing.T) {
 	t.Parallel()
 	harness := webtest.New(t)
+	t.Run("headers", func(t *testing.T) { theShellAndEveryAssetCarryThePolicyNosniffAndATag(t, harness) })
+	t.Run("undeclared", func(t *testing.T) { aFileTheIndexDoesNotDeclareIsNeverServed(t, harness) })
+	t.Run("unknown", func(t *testing.T) { anUnknownAPIPathAnswersJSONAndAnyOtherPathTheShell(t, harness) })
+}
+
+func theShellAndEveryAssetCarryThePolicyNosniffAndATag(t *testing.T, harness *webtest.Harness) {
 	var front frontAnswer
 	if status := getJSON(t, harness, "/api/front", &front); status != http.StatusOK {
 		t.Fatalf("GET /api/front answered %d", status)
@@ -145,9 +153,7 @@ func TestTheShellAndEveryAssetCarryThePolicyNosniffAndATag(t *testing.T) {
 	}
 }
 
-func TestAFileTheIndexDoesNotDeclareIsNeverServed(t *testing.T) {
-	t.Parallel()
-	harness := webtest.New(t)
+func aFileTheIndexDoesNotDeclareIsNeverServed(t *testing.T, harness *webtest.Harness) {
 	targets := []string{"/front/tokens.json", "/front/shell.html", "/front/locale/en.json", "/front/../go.mod",
 		"/front/%2e%2e/go.mod", "/front/core/%2e%2e/%2e%2e/go.mod", "/front/core/..%2f..%2fgo.mod",
 		"/front/widgets/top_sites/manifest.json", "/front/widgets/top_sites/top_sites.js"}
@@ -213,9 +219,7 @@ func TestAFileTheIndexDoesNotDeclareIsNeverServed(t *testing.T) {
 	}
 }
 
-func TestAnUnknownAPIPathAnswersJSONAndAnyOtherPathTheShell(t *testing.T) {
-	t.Parallel()
-	harness := webtest.New(t)
+func anUnknownAPIPathAnswersJSONAndAnyOtherPathTheShell(t *testing.T, harness *webtest.Harness) {
 	var refused map[string]string
 	if status := getJSON(t, harness, "/api/no-such-route", &refused); status != http.StatusNotFound ||
 		refused["condition"] != "unknown_route" {

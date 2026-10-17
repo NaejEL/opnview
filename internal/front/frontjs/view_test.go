@@ -113,3 +113,16 @@ catch (e) { return String(e.message); } })()`).String()
 		}
 	}
 }
+
+// A duration is spelled exactly, each unit with its figure: 410 seconds is 6 minutes 50 seconds.
+func TestADurationIsSpelledWithItsFigures(t *testing.T) {
+	t.Parallel()
+	page := frontjs.New(t, frontjs.Options{})
+	page.Run(`opnview.strings.install("en", {}, {"unit.minute.one": "minute", "unit.minute.other": "minutes",
+  "unit.second.one": "second", "unit.second.other": "seconds", "unit.day.one": "day", "unit.day.other": "days"});`)
+	for seconds, want := range map[string]string{"410": "6 minutes 50 seconds", "86400": "1 day", "0": "0 seconds"} {
+		if got := page.Run(`opnview.format.duration(` + seconds + `)`).String(); got != want {
+			t.Errorf("%s seconds is spelled %q, want %q", seconds, got, want)
+		}
+	}
+}

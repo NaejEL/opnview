@@ -17,6 +17,7 @@ import (
 	"github.com/NaejEL/opnview/internal/front/frontjs"
 	"github.com/NaejEL/opnview/internal/store/flows"
 	"github.com/NaejEL/opnview/internal/store/owners"
+	"github.com/NaejEL/opnview/internal/web"
 	"github.com/NaejEL/opnview/internal/widget/request"
 )
 
@@ -136,9 +137,10 @@ func composedValues(t *testing.T, page *frontjs.Runtime) map[string][]string {
 	}
 }
 
-func TestEveryKeyAFrontFileUsesIsInTheEnglishCatalogue(t *testing.T) {
-	t.Parallel()
-	english := englishCatalogue(t)
+// usedKeys scans the front's files for every key they ask for: literal, plural and composed, each
+// composed prefix expanded over the values the data can reach.
+func usedKeys(t *testing.T) map[string]string {
+	t.Helper()
 	page := frontjs.New(t, frontjs.Options{})
 	enumerated := composedValues(t, page)
 	used := map[string]string{}
@@ -167,6 +169,13 @@ func TestEveryKeyAFrontFileUsesIsInTheEnglishCatalogue(t *testing.T) {
 			used[prefix+value] = name
 		}
 	}
+	return used
+}
+
+func TestEveryKeyAFrontFileUsesIsInTheEnglishCatalogue(t *testing.T) {
+	t.Parallel()
+	english := englishCatalogue(t)
+	used := usedKeys(t)
 	// The scan itself is held to finding what the views plainly use, so a regular expression that
 	// stopped matching cannot pass this test by finding nothing.
 	for _, key := range []string{"settings.title", "people.people_count.other", "error.display_name_taken",
@@ -304,6 +313,48 @@ func TestEveryViewDrawnInAPseudoLanguageShowsNoLiteral(t *testing.T) {
 		}
 		if missing := page.Run(`JSON.stringify(opnview.strings.missing())`).String(); missing != "[]" {
 			t.Errorf("%s asked for keys the catalogue does not hold: %s", entry.path, missing)
+		}
+	}
+}
+
+// TestEveryCatalogueEntryOfTheCoreTheSurfacesAndTheFrontIsReached: an entry no front file asks for,
+// no Go code chooses and no registry row composes is a word nobody can read, left behind by the
+// pages this step removed; it fails here until it is deleted or used.
+func TestEveryCatalogueEntryOfTheCoreTheSurfacesAndTheFrontIsReached(t *testing.T) {
+	t.Parallel()
+	reached := map[string]bool{"language.name": true}
+	for key := range usedKeys(t) {
+		reached[key] = true
+	}
+	for _, key := range web.AllHandlerKeys() {
+		reached[string(key)] = true
+	}
+	// Keys composed from a registry row, held to an entry by the surfaces' registry test.
+	composedByRegistry := []string{"collection.kind.", "provider.", "gap_reason.", "dataset."}
+	sources, err := web.CatalogueSources()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := fs.ReadFile(opnview.BuiltinFront(), "locale/en.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sources["front/locale/en.json"] = string(raw)
+	for file, text := range sources {
+		var catalogue struct {
+			Strings map[string]string `json:"strings"`
+		}
+		if err := json.Unmarshal([]byte(text), &catalogue); err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		for key := range catalogue.Strings {
+			composed := false
+			for _, prefix := range composedByRegistry {
+				composed = composed || strings.HasPrefix(key, prefix)
+			}
+			if !reached[key] && !composed {
+				t.Errorf("%s holds %s, which nothing reaches", file, key)
+			}
 		}
 	}
 }

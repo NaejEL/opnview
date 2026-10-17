@@ -409,10 +409,13 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/collect/services` — the service kinds, geolocation and the registrable-domain list, as their providers last answered.
 - `internal/collect/sources` — a set of provider implementations, every kind's, by key.
 - `internal/config` — the only reader of configuration.
+- `internal/dashboard` — the authoritative structural validator of the dashboard file format.
 - `internal/dataset` — the data catalogue: every dataset, its columns, its filters and its queries.
 - `internal/decode` — what an OPNsense endpoint actually said, turned into the shapes opnview reads.
 - `internal/discover` — the generator, and the check, of the one file linking a family of directories into the binary.
 - `internal/ianaprotocol` — the keywords of IANA's Assigned Internet Protocol Numbers.
+- `internal/front` — the front's index: the shell, the assets served, the themes, the languages and the widget registry.
+- `internal/front/frontjs` — runs the front's own files in the interpreter over a minimal document, for the front's tests.
 - `internal/layout` — the tests that keep this map, the fifteen-file limit and the package comments true.
 - `internal/live` — the live-interest lease.
 - `internal/live/strip` — the rolling strip.
@@ -439,6 +442,7 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/store/accounts` — accounts, sessions, encrypted credentials and setting rows.
 - `internal/store/aggregates` — the aggregate families and their refresh, and the service's downtime.
 - `internal/store/attribution` — DNS resource records, the attribution of flows to names, hostnames and the record rate.
+- `internal/store/dashboards` — the stored dashboards.
 - `internal/store/flows` — the typed writes, classification, networks, this firewall's addresses and the pairing of legs.
 - `internal/store/geo` — geolocation and autonomous-system rows.
 - `internal/store/netflow` — NetFlow records, the capture configuration, the join and the measured volumes.
@@ -454,20 +458,23 @@ collector), the parts are the directories below it and the package itself compos
 - `internal/store/vocab` — the store's closed vocabularies and row types.
 - `internal/suffixlist` — the Public Suffix List format, and a name's registrable domain.
 - `internal/testtiming` — where the everyday suite's time goes, per package, recorded while a CI-only switch is on.
-- `internal/web` — the HTTP core: the server, the route table, sessions and CSRF, the layout, the themes, the string catalogue and the surfaces' seam.
+- `internal/web` — the HTTP core: the server, the route table, sessions and CSRF, the string catalogue and the surfaces' seam.
 - `internal/web/messages` — the catalogue keys the core chooses, and the keys composed from a registry row.
 - `internal/web/settingfields` — the fields of the settings forms.
 - `internal/web/surfaces` — the generated link of every surface into the binary.
 - `internal/web/surfaces/account` — the surface that creates the first account and signs readers in and out.
 - `internal/web/surfaces/collection` — the collection surface.
+- `internal/web/surfaces/dashboards` — the API of the stored dashboards.
 - `internal/web/surfaces/datasets` — the data catalogue's API.
 - `internal/web/surfaces/firewallcatalogue` — the learned API catalogue's API.
+- `internal/web/surfaces/frontend` — the shell, the front's assets, the string catalogue, the appearance and the widget registry.
 - `internal/web/surfaces/interfaces` — the interfaces surface.
 - `internal/web/surfaces/labels` — the JSON API of the labels interfaces are given and the purposes blocklists are given.
 - `internal/web/surfaces/live` — the live figures that are not a widget's.
 - `internal/web/surfaces/netflow` — the NetFlow join's settings.
 - `internal/web/surfaces/people` — the API of the people the user creates and their machines.
 - `internal/web/surfaces/plugins` — the plugin listing and the plugin settings.
+- `internal/web/surfaces/references` — the candidates of each reference kind, and the resolution of reference objects.
 - `internal/web/surfaces/settings` — the settings surface, where credentials enter the product.
 - `internal/web/surfaces/sources` — the sources surface.
 - `internal/web/surfaces/widgetapi` — the widget API.
